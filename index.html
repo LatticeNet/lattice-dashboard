@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lattice Console</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <section class="login" id="login">
+        <form id="login-form" class="panel login-panel">
+          <h1>Lattice</h1>
+          <label>
+            Username
+            <input name="username" value="admin" autocomplete="username" />
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" />
+          </label>
+          <button type="submit">Sign in</button>
+          <p id="login-error" class="error"></p>
+        </form>
+      </section>
+
+      <section class="console hidden" id="console">
+        <header class="topbar">
+          <div>
+            <h1>Lattice</h1>
+            <span id="session-label">control plane</span>
+          </div>
+          <div class="topbar-actions">
+            <button id="refresh">Refresh</button>
+            <button id="logout" class="secondary">Logout</button>
+          </div>
+        </header>
+
+        <section class="metric-strip">
+          <article><span>Nodes</span><strong id="node-count">0</strong></article>
+          <article><span>Online</span><strong id="online-count">0</strong></article>
+          <article><span>Queued Tasks</span><strong id="queued-count">0</strong></article>
+          <article><span>Pending Approvals</span><strong id="approval-count">0</strong></article>
+        </section>
+
+        <section class="layout">
+          <section class="main-column">
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Nodes</h2>
+                <form id="enroll-form" class="inline-form">
+                  <input name="node_id" placeholder="node id" />
+                  <input name="name" placeholder="name" />
+                  <button type="submit">Enroll</button>
+                </form>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Node</th>
+                      <th>Role</th>
+                      <th>CPU</th>
+                      <th>Memory</th>
+                      <th>Disk</th>
+                      <th>Agent</th>
+                      <th>Last Seen</th>
+                    </tr>
+                  </thead>
+                  <tbody id="nodes-table"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Batch Task</h2>
+              </div>
+              <form id="task-form" class="task-grid">
+                <input name="targets" placeholder="node-a,node-b" />
+                <select name="interpreter">
+                  <option value="sh">sh</option>
+                  <option value="bash">bash</option>
+                  <option value="python3">python3</option>
+                  <option value="node">node</option>
+                </select>
+                <input name="timeout_sec" type="number" min="1" max="600" value="30" />
+                <textarea name="script" spellcheck="false">echo "hello from Lattice"</textarea>
+                <button type="submit">Queue Task</button>
+              </form>
+              <div id="task-results" class="result-list"></div>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
+                <h2>Network Guard</h2>
+              </div>
+              <form id="nft-form" class="task-grid compact">
+                <input name="node_id" placeholder="node id" />
+                <input name="public_tcp" placeholder="public tcp: 80,443" value="80,443" />
+                <input name="wg_tcp" placeholder="wg tcp: 22,9100" value="22,9100" />
+                <input name="wg_udp" placeholder="wg udp: 51820" value="51820" />
+                <button type="submit">Create Plan</button>
+              </form>
+              <div id="approvals" class="result-list"></div>
+            </div>
+          </section>
+
+          <aside class="side-column">
+            <div class="panel">
+              <h2>KV</h2>
+              <form id="kv-form" class="stack-form">
+                <input name="bucket" value="default" />
+                <input name="key" placeholder="key" />
+                <textarea name="value" placeholder="value"></textarea>
+                <button type="submit">Save</button>
+              </form>
+              <div id="kv-list" class="kv-list"></div>
+            </div>
+
+            <div class="panel">
+              <h2>Worker</h2>
+              <form id="worker-form" class="stack-form">
+                <input name="name" placeholder="name" />
+                <textarea name="source" spellcheck="false">hello {{path}} {{kv:default/message}}</textarea>
+                <button type="submit">Deploy</button>
+              </form>
+              <div id="workers" class="kv-list"></div>
+            </div>
+
+            <div class="panel">
+              <h2>Audit</h2>
+              <div id="audit-list" class="audit-list"></div>
+            </div>
+          </aside>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>
+
