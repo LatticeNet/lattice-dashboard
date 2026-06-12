@@ -16,6 +16,15 @@ import {
   oidcProviderPayload,
   confirmOIDCDelete,
 } from "./sso.js";
+import {
+  confirmPluginLifecycleTransition,
+  pluginLifecycleActions,
+  pluginLifecycleAvailability,
+  pluginLifecycleCapabilities,
+  pluginLifecycleDigestShort,
+  pluginLifecycleStatusLabel,
+  pluginLifecycleTransitionPayload,
+} from "./plugin-lifecycle.js";
 
 const state = {
   csrf: "",
@@ -27,6 +36,7 @@ const state = {
   approvals: [],
   kv: [],
   workers: [],
+  pluginInstallations: [],
   oidcProviders: [],
   audit: [],
   auditPage: {
@@ -320,6 +330,85 @@ async function deleteOIDCProvider(id) {
   }
 }
 
+// --- Plugin lifecycle -----------------------------------------------------
+
+async function loadPluginLifecycleAdmin() {
+  try {
+    const data = await api("/api/plugins/lifecycle");
+    state.pluginInstallations = Array.isArray(data) ? data : Array.isArray(data.plugins) ? data.plugins : [];
+    $("plugins-panel").classList.remove("hidden");
+    $("plugins-error").textContent = "";
+    renderPluginLifecycle();
+  } catch {
+    state.pluginInstallations = [];
+    $("plugins-panel").classList.add("hidden");
+  }
+}
+
+function renderPluginLifecycle() {
+  const list = $("plugins-list");
+  if (!state.pluginInstallations.length) {
+    list.innerHTML = `<article class="kv-item"><span class="muted">No verified plugins registered.</span></article>`;
+    return;
+  }
+  list.innerHTML = state.pluginInstallations.map(renderPluginLifecycleCard).join("");
+  list.querySelectorAll("[data-plugin-id][data-plugin-status]").forEach((button) => {
+    button.addEventListener("click", () => transitionPluginLifecycle(button.dataset.pluginId, button.dataset.pluginStatus));
+  });
+}
+
+function renderPluginLifecycleCard(plugin) {
+  const status = pluginLifecycleStatusLabel(plugin.status);
+  const availability = pluginLifecycleAvailability(plugin);
+  const caps = pluginLifecycleCapabilities(plugin);
+  const digest = pluginLifecycleDigestShort(plugin.artifact_sha256);
+  const actions = pluginLifecycleActions(plugin);
+  const actionHTML = actions.length
+    ? actions
+        .map(
+          (action) =>
+            `<button type="button" class="secondary" data-plugin-id="${escapeHtml(plugin.id)}" data-plugin-status="${escapeHtml(action.status)}">${escapeHtml(action.label)}</button>`,
+        )
+        .join("")
+    : `<span class="muted">No safe transition</span>`;
+  const capHTML = caps.length
+    ? `<div class="plugin-caps">${caps.map((cap) => `<span class="pill">${escapeHtml(cap)}</span>`).join("")}</div>`
+    : `<small class="muted">No declared capabilities</small>`;
+  return `<article class="kv-item plugin-card">
+    <div class="plugin-card-head">
+      <div>
+        <strong>${escapeHtml(plugin.name || plugin.id)}</strong>
+        <small class="mono">${escapeHtml(plugin.id || "")}</small>
+      </div>
+      <span class="plugin-actions">${actionHTML}</span>
+    </div>
+    <div class="plugin-badges">
+      <span class="pill">${escapeHtml(status)}</span>
+      <span class="${plugin.available === true ? "pill" : "danger"}">${escapeHtml(availability)}</span>
+      ${plugin.type ? `<span class="pill">${escapeHtml(plugin.type)}</span>` : ""}
+      ${plugin.version ? `<span class="pill">${escapeHtml(plugin.version)}</span>` : ""}
+    </div>
+    ${capHTML}
+    ${digest ? `<small class="mono">sha256 ${escapeHtml(digest)}</small>` : ""}
+    ${plugin.updated_at ? `<small class="muted">Updated ${escapeHtml(formatDate(plugin.updated_at))}</small>` : ""}
+  </article>`;
+}
+
+async function transitionPluginLifecycle(id, status) {
+  $("plugins-error").textContent = "";
+  const plugin = state.pluginInstallations.find((p) => p.id === id) || { id };
+  if (!confirmPluginLifecycleTransition(plugin, status, window.confirm.bind(window))) return;
+  try {
+    await api("/api/plugins/lifecycle", {
+      method: "POST",
+      body: JSON.stringify(pluginLifecycleTransitionPayload(id, status)),
+    });
+    await loadPluginLifecycleAdmin();
+  } catch (error) {
+    $("plugins-error").textContent = error.message;
+  }
+}
+
 async function refresh() {
   const [me, nodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
     api("/api/me"),
@@ -343,7 +432,9 @@ async function refresh() {
   state.audit = audit.events;
   state.auditPage = { total: audit.total, limit: audit.limit, offset: audit.offset };
   render();
-  await loadOIDCAdmin(); // self-contained: hides itself for non-admins (403)
+  // Self-contained admin panels hide themselves for non-admins (403) without
+  // breaking the main console refresh.
+  await Promise.all([loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -637,6 +728,7 @@ $("audit-prev").addEventListener("click", () => pageAudit(-1));
 $("audit-next").addEventListener("click", () => pageAudit(1));
 $("oidc-form").addEventListener("submit", submitOIDCProvider);
 $("oidc-reset").addEventListener("click", resetOIDCForm);
+$("plugins-refresh").addEventListener("click", loadPluginLifecycleAdmin);
 
 function bootstrap() {
   const redirect = readAuthRedirect(window.location.search);

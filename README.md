@@ -13,6 +13,8 @@ host.
 - Batch task form and task result cards.
 - KV editor.
 - Worker deployment form.
+- Plugin lifecycle panel for verified plugin availability and safe status
+  transitions.
 - nft plan approval view.
 - Audit stream with action, decision, node, and request-id filters, bounded
   pagination, expandable event details, and one-click request-id tracing.

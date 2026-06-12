@@ -151,6 +151,16 @@
               <div id="workers" class="kv-list"></div>
             </div>
 
+            <div class="panel hidden" id="plugins-panel">
+              <div class="panel-head">
+                <h2>Plugins</h2>
+                <button id="plugins-refresh" type="button" class="secondary">Refresh</button>
+              </div>
+              <p class="muted">Verified plugin lifecycle state. Status changes here do not execute plugin code in this build.</p>
+              <div id="plugins-list" class="kv-list"></div>
+              <p id="plugins-error" class="error"></p>
+            </div>
+
             <div class="panel">
               <h2>Security · 2FA</h2>
               <p id="twofa-status" class="muted">Two-factor: <strong>unknown</strong></p>

@@ -483,3 +483,41 @@ th {
   gap: 6px;
   flex-wrap: wrap;
 }
+
+/* Plugin lifecycle */
+.plugin-card {
+  display: grid;
+  gap: 8px;
+}
+
+.plugin-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.plugin-card-head small {
+  display: block;
+  margin-top: 3px;
+}
+
+.plugin-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.plugin-actions button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.plugin-badges,
+.plugin-caps {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
