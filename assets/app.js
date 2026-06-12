@@ -7,6 +7,15 @@ import {
   nextAuditOffset,
   normalizeAuditResponse,
 } from "./audit.js";
+import {
+  ssoErrorMessage,
+  hasAuthRedirectParams,
+  readAuthRedirect,
+  strippedAuthSearch,
+  oidcStartURL,
+  oidcProviderPayload,
+  confirmOIDCDelete,
+} from "./sso.js";
 
 const state = {
   csrf: "",
@@ -18,6 +27,7 @@ const state = {
   approvals: [],
   kv: [],
   workers: [],
+  oidcProviders: [],
   audit: [],
   auditPage: {
     total: 0,
@@ -171,6 +181,145 @@ async function disable2FA(event) {
   }
 }
 
+// --- SSO / OIDC ----------------------------------------------------------
+
+// loadSSOProviders fetches the public list of enabled providers and renders a
+// sign-in button for each on the login page.
+async function loadSSOProviders() {
+  try {
+    const data = await api("/api/auth/oidc");
+    const providers = Array.isArray(data.providers) ? data.providers : [];
+    const block = $("sso-block");
+    const list = $("sso-providers");
+    if (!providers.length) {
+      block.classList.add("hidden");
+      list.innerHTML = "";
+      return;
+    }
+    list.innerHTML = providers
+      .map(
+        (p) =>
+          `<button type="button" class="sso-button" data-sso-provider="${escapeHtml(p.id)}">Sign in with ${escapeHtml(p.display_name || p.id)}</button>`,
+      )
+      .join("");
+    list.querySelectorAll("[data-sso-provider]").forEach((button) => {
+      button.addEventListener("click", () => {
+        window.location.assign(oidcStartURL(button.dataset.ssoProvider, "/"));
+      });
+    });
+    block.classList.remove("hidden");
+  } catch {
+    $("sso-block").classList.add("hidden");
+  }
+}
+
+// loadOIDCAdmin loads the admin provider list. It is intentionally separate from
+// refresh()'s Promise.all: a non-admin receives 403, which simply hides the
+// panel instead of breaking the console.
+async function loadOIDCAdmin() {
+  try {
+    const data = await api("/api/auth/oidc/providers");
+    state.oidcProviders = Array.isArray(data.providers) ? data.providers : [];
+    $("oidc-panel").classList.remove("hidden");
+    renderOIDCProviders();
+  } catch {
+    state.oidcProviders = [];
+    $("oidc-panel").classList.add("hidden");
+  }
+}
+
+function renderOIDCProviders() {
+  $("oidc-list").innerHTML = state.oidcProviders
+    .map((p) => {
+      const badges =
+        `<span class="pill">${p.enabled ? "enabled" : "disabled"}</span>` +
+        (p.has_secret === true ? `<span class="pill">secret set</span>` : `<span class="danger">no secret</span>`);
+      const domains = Array.isArray(p.allowed_domains) && p.allowed_domains.length
+        ? `<br><small class="mono">${escapeHtml(p.allowed_domains.join(", "))}</small>`
+        : "";
+      return `<article class="kv-item oidc-provider">
+        <div class="oidc-provider-head">
+          <strong>${escapeHtml(p.display_name || p.id)}</strong>
+          <span class="oidc-actions">
+            <button type="button" class="secondary" data-oidc-edit="${escapeHtml(p.id)}">Edit</button>
+            <button type="button" class="secondary" data-oidc-delete="${escapeHtml(p.id)}">Delete</button>
+          </span>
+        </div>
+        <small class="mono">${escapeHtml(p.issuer)}</small>
+        <div class="oidc-badges">${badges}</div>
+        ${domains}
+      </article>`;
+    })
+    .join("");
+  $("oidc-list").querySelectorAll("[data-oidc-edit]").forEach((b) => {
+    b.addEventListener("click", () => editOIDCProvider(b.dataset.oidcEdit));
+  });
+  $("oidc-list").querySelectorAll("[data-oidc-delete]").forEach((b) => {
+    b.addEventListener("click", () => deleteOIDCProvider(b.dataset.oidcDelete));
+  });
+}
+
+function editOIDCProvider(id) {
+  const p = state.oidcProviders.find((x) => x.id === id);
+  if (!p) return;
+  const form = $("oidc-form");
+  form.elements["id"].value = p.id;
+  form.elements["display_name"].value = p.display_name || "";
+  form.elements["issuer"].value = p.issuer || "";
+  form.elements["client_id"].value = p.client_id || "";
+  form.elements["client_secret"].value = ""; // write-only; blank keeps current
+  form.elements["allowed_domains"].value = (p.allowed_domains || []).join(", ");
+  form.elements["scopes"].value = (p.scopes || []).join(" ");
+  form.elements["enabled"].checked = !!p.enabled;
+  $("oidc-error").textContent = "";
+}
+
+function resetOIDCForm() {
+  $("oidc-form").reset();
+  $("oidc-form").elements["id"].value = "";
+  $("oidc-error").textContent = "";
+}
+
+async function submitOIDCProvider(event) {
+  event.preventDefault();
+  $("oidc-error").textContent = "";
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  if (submitButton?.disabled) return;
+  if (submitButton) submitButton.disabled = true;
+  const form = new FormData(event.currentTarget);
+  const payload = oidcProviderPayload({
+    id: form.get("id"),
+    display_name: form.get("display_name"),
+    issuer: form.get("issuer"),
+    client_id: form.get("client_id"),
+    client_secret: form.get("client_secret"),
+    allowed_domains: form.get("allowed_domains"),
+    scopes: form.get("scopes"),
+    enabled: $("oidc-form").elements["enabled"].checked,
+  });
+  try {
+    await api("/api/auth/oidc/providers", { method: "POST", body: JSON.stringify(payload) });
+    resetOIDCForm();
+    await loadOIDCAdmin();
+  } catch (error) {
+    $("oidc-error").textContent = error.message;
+  } finally {
+    if (submitButton) submitButton.disabled = false;
+  }
+}
+
+async function deleteOIDCProvider(id) {
+  $("oidc-error").textContent = "";
+  const provider = state.oidcProviders.find((p) => p.id === id) || { id };
+  if (!confirmOIDCDelete(provider, window.confirm.bind(window))) return;
+  try {
+    await api("/api/auth/oidc/providers/delete", { method: "POST", body: JSON.stringify({ id }) });
+    await loadOIDCAdmin();
+  } catch (error) {
+    $("oidc-error").textContent = error.message;
+  }
+}
+
 async function refresh() {
   const [me, nodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
     api("/api/me"),
@@ -194,6 +343,7 @@ async function refresh() {
   state.audit = audit.events;
   state.auditPage = { total: audit.total, limit: audit.limit, offset: audit.offset };
   render();
+  await loadOIDCAdmin(); // self-contained: hides itself for non-admins (403)
 }
 
 function render() {
@@ -485,11 +635,34 @@ $("nft-form").addEventListener("submit", createNFTPlan);
 $("audit-filter-form").addEventListener("submit", filterAudit);
 $("audit-prev").addEventListener("click", () => pageAudit(-1));
 $("audit-next").addEventListener("click", () => pageAudit(1));
+$("oidc-form").addEventListener("submit", submitOIDCProvider);
+$("oidc-reset").addEventListener("click", resetOIDCForm);
 
-api("/api/me")
-  .then((me) => {
-    state.csrf = me.csrf_token || "";
-    showConsole(true);
-    return refresh();
-  })
-  .catch(() => showConsole(false));
+function bootstrap() {
+  const redirect = readAuthRedirect(window.location.search);
+  if (redirect.ssoError) {
+    $("login-error").textContent = ssoErrorMessage(redirect.ssoError);
+  }
+  // Strip the one-time SSO landing params from the address bar.
+  if (hasAuthRedirectParams(window.location.search)) {
+    window.history.replaceState({}, "", window.location.pathname + strippedAuthSearch(window.location.search));
+  }
+  loadSSOProviders();
+  if (redirect.totpChallenge) {
+    // SSO authenticated the IdP identity but the account also requires a local
+    // second factor: resume the existing TOTP step with the issued challenge.
+    state.totpChallengeId = redirect.totpChallenge;
+    showConsole(false);
+    showLoginStep("totp");
+    return;
+  }
+  api("/api/me")
+    .then((me) => {
+      state.csrf = me.csrf_token || "";
+      showConsole(true);
+      return refresh();
+    })
+    .catch(() => showConsole(false));
+}
+
+bootstrap();

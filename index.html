@@ -21,6 +21,10 @@
           </label>
           <button type="submit">Sign in</button>
           <p id="login-error" class="error"></p>
+          <div id="sso-block" class="sso-block hidden">
+            <div class="sso-divider"><span>or</span></div>
+            <div id="sso-providers" class="sso-list"></div>
+          </div>
         </form>
 
         <form id="totp-form" class="panel login-panel hidden">
@@ -172,6 +176,27 @@
                 </form>
                 <p id="twofa-disable-error" class="error"></p>
               </div>
+            </div>
+
+            <div class="panel hidden" id="oidc-panel">
+              <h2>Single Sign-On</h2>
+              <p class="muted">External identity providers (OIDC). Users sign in with a matching, pre-provisioned account.</p>
+              <div id="oidc-list" class="kv-list"></div>
+              <form id="oidc-form" class="stack-form">
+                <input type="hidden" name="id" />
+                <input name="display_name" placeholder="display name (e.g. Google)" autocomplete="off" />
+                <input name="issuer" placeholder="issuer URL (https://accounts.google.com)" autocomplete="off" />
+                <input name="client_id" placeholder="client id" autocomplete="off" />
+                <input name="client_secret" type="password" placeholder="client secret (blank = keep current)" autocomplete="off" />
+                <input name="allowed_domains" placeholder="allowed domains: example.com, corp.io" autocomplete="off" />
+                <input name="scopes" placeholder="scopes (optional): openid email profile" autocomplete="off" />
+                <label class="checkbox-row"><input type="checkbox" name="enabled" /> Enabled</label>
+                <div class="inline-form">
+                  <button type="submit">Save provider</button>
+                  <button type="button" id="oidc-reset" class="secondary">Clear</button>
+                </div>
+                <p id="oidc-error" class="error"></p>
+              </form>
             </div>
 
             <div class="panel">
