@@ -1,4 +1,5 @@
 const knownStatuses = new Set(["verified", "installed", "active", "disabled"]);
+const knownRuntimeStates = new Set(["armed", "stopped", "failed"]);
 
 export function pluginLifecycleStatusLabel(status) {
   const value = String(status || "").trim();
@@ -7,6 +8,12 @@ export function pluginLifecycleStatusLabel(status) {
 
 export function pluginLifecycleAvailability(plugin) {
   return plugin?.available === true ? "available" : "unavailable";
+}
+
+export function pluginLifecycleRuntimeLabel(plugin) {
+  const state = String(plugin?.runtime?.state || "").trim();
+  if (!state) return "";
+  return `runtime: ${knownRuntimeStates.has(state) ? state : "unknown"}`;
 }
 
 export function pluginLifecycleActions(plugin) {

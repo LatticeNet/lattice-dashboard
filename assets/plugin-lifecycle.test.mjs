@@ -6,6 +6,7 @@ import {
   pluginLifecycleAvailability,
   pluginLifecycleCapabilities,
   pluginLifecycleDigestShort,
+  pluginLifecycleRuntimeLabel,
   pluginLifecycleStatusLabel,
   pluginLifecycleTransitionMessage,
   pluginLifecycleTransitionPayload,
@@ -46,6 +47,14 @@ test("pluginLifecycleAvailability separates verified loader presence from lifecy
   assert.equal(pluginLifecycleAvailability({ available: true }), "available");
   assert.equal(pluginLifecycleAvailability({ available: false }), "unavailable");
   assert.equal(pluginLifecycleAvailability({}), "unavailable");
+});
+
+test("pluginLifecycleRuntimeLabel names armed/stopped runtime health", () => {
+  assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "armed" } }), "runtime: armed");
+  assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "stopped" } }), "runtime: stopped");
+  assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "failed" } }), "runtime: failed");
+  assert.equal(pluginLifecycleRuntimeLabel({ runtime: null }), "");
+  assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "<script>" } }), "runtime: unknown");
 });
 
 test("pluginLifecycleCapabilities normalizes capability arrays defensively", () => {

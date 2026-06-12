@@ -22,6 +22,7 @@ import {
   pluginLifecycleAvailability,
   pluginLifecycleCapabilities,
   pluginLifecycleDigestShort,
+  pluginLifecycleRuntimeLabel,
   pluginLifecycleStatusLabel,
   pluginLifecycleTransitionPayload,
 } from "./plugin-lifecycle.js";
@@ -360,6 +361,7 @@ function renderPluginLifecycle() {
 function renderPluginLifecycleCard(plugin) {
   const status = pluginLifecycleStatusLabel(plugin.status);
   const availability = pluginLifecycleAvailability(plugin);
+  const runtime = pluginLifecycleRuntimeLabel(plugin);
   const caps = pluginLifecycleCapabilities(plugin);
   const digest = pluginLifecycleDigestShort(plugin.artifact_sha256);
   const actions = pluginLifecycleActions(plugin);
@@ -385,6 +387,7 @@ function renderPluginLifecycleCard(plugin) {
     <div class="plugin-badges">
       <span class="pill">${escapeHtml(status)}</span>
       <span class="${plugin.available === true ? "pill" : "danger"}">${escapeHtml(availability)}</span>
+      ${runtime ? `<span class="pill">${escapeHtml(runtime)}</span>` : ""}
       ${plugin.type ? `<span class="pill">${escapeHtml(plugin.type)}</span>` : ""}
       ${plugin.version ? `<span class="pill">${escapeHtml(plugin.version)}</span>` : ""}
     </div>
