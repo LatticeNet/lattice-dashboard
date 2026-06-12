@@ -50,7 +50,7 @@ test("pluginLifecycleAvailability separates verified loader presence from lifecy
 });
 
 test("pluginLifecycleRuntimeLabel names armed/stopped runtime health", () => {
-  assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "armed" } }), "runtime: armed");
+  assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "armed", runner: "noop" } }), "runtime: armed (noop)");
   assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "stopped" } }), "runtime: stopped");
   assert.equal(pluginLifecycleRuntimeLabel({ runtime: { state: "failed" } }), "runtime: failed");
   assert.equal(pluginLifecycleRuntimeLabel({ runtime: null }), "");

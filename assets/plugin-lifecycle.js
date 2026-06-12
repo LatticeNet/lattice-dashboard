@@ -13,7 +13,9 @@ export function pluginLifecycleAvailability(plugin) {
 export function pluginLifecycleRuntimeLabel(plugin) {
   const state = String(plugin?.runtime?.state || "").trim();
   if (!state) return "";
-  return `runtime: ${knownRuntimeStates.has(state) ? state : "unknown"}`;
+  const label = knownRuntimeStates.has(state) ? state : "unknown";
+  const runner = String(plugin?.runtime?.runner || "").trim();
+  return runner ? `runtime: ${label} (${runner})` : `runtime: ${label}`;
 }
 
 export function pluginLifecycleActions(plugin) {
