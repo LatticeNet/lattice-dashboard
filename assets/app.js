@@ -10,6 +10,8 @@ import {
 
 const state = {
   csrf: "",
+  totpChallengeId: "",
+  totpEnabled: false,
   nodes: [],
   tasks: [],
   results: [],
@@ -62,11 +64,110 @@ async function login(event) {
         password: String(form.get("password") || ""),
       }),
     });
+    if (data.totp_required) {
+      state.totpChallengeId = data.challenge_id || "";
+      showLoginStep("totp");
+      return;
+    }
     state.csrf = data.csrf_token;
     showConsole(true);
     await refresh();
   } catch (error) {
     $("login-error").textContent = error.message;
+  }
+}
+
+function showLoginStep(step) {
+  $("login-form").classList.toggle("hidden", step === "totp");
+  $("totp-form").classList.toggle("hidden", step !== "totp");
+  if (step === "totp") {
+    $("totp-error").textContent = "";
+    const input = $("totp-form").elements["code"];
+    if (input) input.focus();
+  }
+}
+
+async function submitTotp(event) {
+  event.preventDefault();
+  $("totp-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  try {
+    const data = await api("/api/login/totp", {
+      method: "POST",
+      body: JSON.stringify({
+        challenge_id: state.totpChallengeId,
+        code: String(form.get("code") || "").trim(),
+        recovery_code: String(form.get("recovery_code") || "").trim(),
+      }),
+    });
+    state.totpChallengeId = "";
+    state.csrf = data.csrf_token;
+    event.currentTarget.reset();
+    showConsole(true);
+    await refresh();
+  } catch (error) {
+    $("totp-error").textContent = error.message;
+  }
+}
+
+function render2FA() {
+  const enabled = state.totpEnabled;
+  $("twofa-status").innerHTML = `Two-factor: <strong>${enabled ? "enabled" : "disabled"}</strong>`;
+  $("twofa-disabled").classList.toggle("hidden", enabled);
+  $("twofa-enabled").classList.toggle("hidden", !enabled);
+  if (enabled) {
+    $("twofa-enroll-box").classList.add("hidden");
+  }
+}
+
+async function enroll2FA() {
+  $("twofa-enroll-error").textContent = "";
+  try {
+    const data = await api("/api/2fa/totp/enroll", { method: "POST", body: "{}" });
+    $("twofa-secret").textContent = data.secret || "";
+    $("twofa-uri").textContent = data.otpauth_uri || "";
+    const codes = Array.isArray(data.recovery_codes) ? data.recovery_codes : [];
+    $("twofa-recovery").innerHTML =
+      `<p class="muted">Save these recovery codes — shown once:</p>` +
+      `<ul class="recovery-codes">${codes.map((c) => `<li>${escapeHtml(c)}</li>`).join("")}</ul>`;
+    $("twofa-enroll-box").classList.remove("hidden");
+    $("twofa-disabled").classList.add("hidden");
+  } catch (error) {
+    $("twofa-enroll-error").textContent = error.message;
+  }
+}
+
+async function activate2FA(event) {
+  event.preventDefault();
+  $("twofa-enroll-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  try {
+    await api("/api/2fa/totp/activate", {
+      method: "POST",
+      body: JSON.stringify({ code: String(form.get("code") || "").trim() }),
+    });
+    event.currentTarget.reset();
+    state.totpEnabled = true;
+    render2FA();
+  } catch (error) {
+    $("twofa-enroll-error").textContent = error.message;
+  }
+}
+
+async function disable2FA(event) {
+  event.preventDefault();
+  $("twofa-disable-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  try {
+    await api("/api/2fa/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ code: String(form.get("code") || "").trim() }),
+    });
+    event.currentTarget.reset();
+    state.totpEnabled = false;
+    render2FA();
+  } catch (error) {
+    $("twofa-disable-error").textContent = error.message;
   }
 }
 
@@ -83,6 +184,7 @@ async function refresh() {
   ]);
   const audit = normalizeAuditResponse(auditPayload, state.auditPage);
   state.csrf = me.csrf_token || state.csrf;
+  state.totpEnabled = !!me.totp_enabled;
   state.nodes = nodes;
   state.tasks = tasks;
   state.results = results;
@@ -105,6 +207,7 @@ function render() {
   renderKV();
   renderWorkers();
   renderAudit();
+  render2FA();
 }
 
 function renderNodes() {
@@ -329,7 +432,9 @@ async function approve(approvalId) {
 async function logout() {
   await api("/api/logout", { method: "POST", body: "{}" });
   state.csrf = "";
+  state.totpChallengeId = "";
   showConsole(false);
+  showLoginStep("login");
 }
 
 function ports(value) {
@@ -365,6 +470,11 @@ function escapeHtml(value) {
 }
 
 $("login-form").addEventListener("submit", login);
+$("totp-form").addEventListener("submit", submitTotp);
+$("totp-cancel").addEventListener("click", () => { state.totpChallengeId = ""; showLoginStep("login"); });
+$("twofa-enroll").addEventListener("click", enroll2FA);
+$("twofa-activate-form").addEventListener("submit", activate2FA);
+$("twofa-disable-form").addEventListener("submit", disable2FA);
 $("refresh").addEventListener("click", refresh);
 $("logout").addEventListener("click", logout);
 $("enroll-form").addEventListener("submit", enroll);

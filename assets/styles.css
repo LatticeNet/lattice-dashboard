@@ -381,3 +381,25 @@ th {
     flex-direction: column;
   }
 }
+
+/* 2FA */
+.twofa-secret code,
+.twofa-uri code {
+  word-break: break-all;
+  font-size: 0.78rem;
+}
+.recovery-codes {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.2rem 0.6rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+.recovery-codes li {
+  background: rgba(127, 127, 127, 0.12);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+}

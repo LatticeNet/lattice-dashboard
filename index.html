@@ -22,6 +22,25 @@
           <button type="submit">Sign in</button>
           <p id="login-error" class="error"></p>
         </form>
+
+        <form id="totp-form" class="panel login-panel hidden">
+          <h1>Two-Factor</h1>
+          <p class="muted">Enter the 6-digit code from your authenticator app.</p>
+          <label>
+            Code
+            <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" />
+          </label>
+          <details>
+            <summary>Use a recovery code</summary>
+            <label>
+              Recovery code
+              <input name="recovery_code" autocomplete="off" placeholder="recovery code" />
+            </label>
+          </details>
+          <button type="submit">Verify</button>
+          <button type="button" id="totp-cancel" class="secondary">Back</button>
+          <p id="totp-error" class="error"></p>
+        </form>
       </section>
 
       <section class="console hidden" id="console">
@@ -126,6 +145,33 @@
                 <button type="submit">Deploy</button>
               </form>
               <div id="workers" class="kv-list"></div>
+            </div>
+
+            <div class="panel">
+              <h2>Security · 2FA</h2>
+              <p id="twofa-status" class="muted">Two-factor: <strong>unknown</strong></p>
+              <div id="twofa-disabled" class="hidden">
+                <button id="twofa-enroll" type="button">Enable 2FA (TOTP)</button>
+              </div>
+              <div id="twofa-enroll-box" class="hidden">
+                <p class="muted">Add this secret to your authenticator app, then enter a code to activate.</p>
+                <p class="twofa-secret">Secret: <code id="twofa-secret"></code></p>
+                <p class="twofa-uri muted">otpauth: <code id="twofa-uri"></code></p>
+                <div id="twofa-recovery"></div>
+                <form id="twofa-activate-form" class="inline-form">
+                  <input name="code" inputmode="numeric" maxlength="6" placeholder="123456" />
+                  <button type="submit">Activate</button>
+                </form>
+                <p id="twofa-enroll-error" class="error"></p>
+              </div>
+              <div id="twofa-enabled" class="hidden">
+                <p class="muted">Two-factor is active on this account.</p>
+                <form id="twofa-disable-form" class="inline-form">
+                  <input name="code" inputmode="numeric" placeholder="code or recovery" />
+                  <button type="submit" class="secondary">Disable</button>
+                </form>
+                <p id="twofa-disable-error" class="error"></p>
+              </div>
             </div>
 
             <div class="panel">
