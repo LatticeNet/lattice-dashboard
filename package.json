@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "node --check assets/app.js",
-    "build": "node --check assets/app.js"
+    "build": "node --check assets/app.js",
+    "test": "node --test assets/*.test.mjs"
   }
 }

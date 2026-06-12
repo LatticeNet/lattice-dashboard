@@ -1,3 +1,13 @@
+import { apiErrorMessage } from "./api-error.js";
+import {
+  DEFAULT_AUDIT_LIMIT,
+  auditCorrelationFilters,
+  auditDetailRows,
+  auditPath,
+  nextAuditOffset,
+  normalizeAuditResponse,
+} from "./audit.js";
+
 const state = {
   csrf: "",
   nodes: [],
@@ -7,6 +17,17 @@ const state = {
   kv: [],
   workers: [],
   audit: [],
+  auditPage: {
+    total: 0,
+    limit: DEFAULT_AUDIT_LIMIT,
+    offset: 0,
+  },
+  auditFilters: {
+    action: "",
+    decision: "",
+    node_id: "",
+    correlation_id: "",
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -19,7 +40,7 @@ async function api(path, options = {}) {
   const res = await fetch(path, { ...options, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.error || res.statusText);
+    throw new Error(apiErrorMessage(data, res.statusText));
   }
   return data;
 }
@@ -50,7 +71,7 @@ async function login(event) {
 }
 
 async function refresh() {
-  const [me, nodes, tasks, results, approvals, kv, workers, audit] = await Promise.all([
+  const [me, nodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
     api("/api/me"),
     api("/api/nodes"),
     api("/api/tasks"),
@@ -58,8 +79,9 @@ async function refresh() {
     api("/api/network/approvals"),
     api("/api/kv?bucket=default"),
     api("/api/workers"),
-    api("/api/audit"),
+    api(auditPath({ ...state.auditFilters, limit: state.auditPage.limit, offset: state.auditPage.offset })),
   ]);
+  const audit = normalizeAuditResponse(auditPayload, state.auditPage);
   state.csrf = me.csrf_token || state.csrf;
   state.nodes = nodes;
   state.tasks = tasks;
@@ -67,7 +89,8 @@ async function refresh() {
   state.approvals = approvals;
   state.kv = kv;
   state.workers = workers;
-  state.audit = audit;
+  state.audit = audit.events;
+  state.auditPage = { total: audit.total, limit: audit.limit, offset: audit.offset };
   render();
 }
 
@@ -120,7 +143,7 @@ function renderApprovals() {
     .map((approval) => `<article class="result">
       <strong>${escapeHtml(approval.node_id)}</strong>
       <span class="pill">${escapeHtml(approval.status)}</span>
-      <button data-approval="${approval.id}" ${approval.status !== "pending" ? "disabled" : ""}>Approve Check</button>
+      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>Approve Check</button>
       <pre>${escapeHtml(approval.plan)}</pre>
     </article>`)
     .join("");
@@ -142,14 +165,82 @@ function renderWorkers() {
 }
 
 function renderAudit() {
+  const end = Math.min(state.auditPage.total, state.auditPage.offset + state.audit.length);
+  $("audit-page-label").textContent = state.auditPage.total
+    ? `${state.auditPage.offset + 1}-${end} / ${state.auditPage.total}`
+    : "0 / 0";
+  $("audit-prev").disabled = state.auditPage.offset <= 0;
+  $("audit-next").disabled = state.auditPage.offset + state.auditPage.limit >= state.auditPage.total;
   $("audit-list").innerHTML = state.audit
-    .slice(0, 16)
-    .map((event) => `<article class="audit-item">
-      <strong>${escapeHtml(event.action)}</strong>
-      <span class="${event.decision === "deny" ? "danger" : "warn"}">${escapeHtml(event.decision)}</span>
-      <br><small>${formatDate(event.at)} ${escapeHtml(event.node_id || event.actor_id || "")}</small>
-    </article>`)
+    .map(renderAuditEvent)
     .join("");
+  document.querySelectorAll("[data-audit-correlation]").forEach((button) => {
+    button.addEventListener("click", () => traceAuditCorrelation(button.dataset.auditCorrelation));
+  });
+}
+
+function renderAuditEvent(event) {
+  const rows = auditDetailRows(event);
+  const traceButton = event.correlation_id
+    ? `<button type="button" class="secondary audit-trace" data-audit-correlation="${escapeHtml(event.correlation_id)}">Trace request</button>`
+    : "";
+  const details = rows.length
+    ? `<details class="audit-details">
+        <summary>Details</summary>
+        <dl>${rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl>
+      </details>`
+    : "";
+
+  return `<article class="audit-item">
+    <div class="audit-head">
+      <div>
+        <strong>${escapeHtml(event.action)}</strong>
+        <span class="${event.decision === "deny" ? "danger" : "warn"}">${escapeHtml(event.decision)}</span>
+      </div>
+      ${traceButton}
+    </div>
+    <small>${formatDate(event.at)} ${escapeHtml(event.node_id || event.actor_id || "")}</small>
+    ${event.correlation_id ? `<small class="mono">${escapeHtml(event.correlation_id)}</small>` : ""}
+    ${details}
+  </article>`;
+}
+
+async function filterAudit(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  state.auditFilters = {
+    action: String(form.get("action") || ""),
+    decision: String(form.get("decision") || ""),
+    node_id: String(form.get("node_id") || ""),
+    correlation_id: String(form.get("correlation_id") || ""),
+  };
+  state.auditPage.offset = 0;
+  await refresh();
+}
+
+function syncAuditFilterForm() {
+  const form = $("audit-filter-form");
+  for (const [key, value] of Object.entries(state.auditFilters)) {
+    if (form.elements[key]) {
+      form.elements[key].value = value;
+    }
+  }
+}
+
+async function traceAuditCorrelation(correlationID) {
+  const filters = auditCorrelationFilters({ correlation_id: correlationID });
+  if (!filters) {
+    return;
+  }
+  state.auditFilters = filters;
+  state.auditPage.offset = 0;
+  syncAuditFilterForm();
+  await refresh();
+}
+
+async function pageAudit(direction) {
+  state.auditPage.offset = nextAuditOffset(state.auditPage, direction);
+  await refresh();
 }
 
 async function enroll(event) {
@@ -263,12 +354,13 @@ function formatDate(value) {
 }
 
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+  return String(value ?? "").replace(/[&<>"'`]/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     '"': "&quot;",
     "'": "&#39;",
+    "`": "&#96;",
   })[ch]);
 }
 
@@ -280,6 +372,9 @@ $("task-form").addEventListener("submit", queueTask);
 $("kv-form").addEventListener("submit", saveKV);
 $("worker-form").addEventListener("submit", deployWorker);
 $("nft-form").addEventListener("submit", createNFTPlan);
+$("audit-filter-form").addEventListener("submit", filterAudit);
+$("audit-prev").addEventListener("click", () => pageAudit(-1));
+$("audit-next").addEventListener("click", () => pageAudit(1));
 
 api("/api/me")
   .then((me) => {
@@ -288,4 +383,3 @@ api("/api/me")
     return refresh();
   })
   .catch(() => showConsole(false));
-

@@ -14,14 +14,20 @@ host.
 - KV editor.
 - Worker deployment form.
 - nft plan approval view.
-- Audit stream.
+- Audit stream with action, decision, node, and request-id filters, bounded
+  pagination, expandable event details, and one-click request-id tracing.
+- Structured Lattice API error display with compatibility for the legacy string
+  error response.
+- Security-sensitive API codes (`capability_denied`, `invalid_node_token`,
+  `invalid_task_lease`, `task_output_limit_exceeded`) are mapped to operator
+  guidance with the server request id when present.
 
 ## Development
 
 ```sh
 npm run check
+npm test
 ```
 
 The dashboard currently uses no install-time dependencies. A future version can
 move to Vite/Vue or React once API shape and product flows stabilize.
-

@@ -246,6 +246,32 @@ th {
   margin-top: 12px;
 }
 
+.audit-filter {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 8px;
+}
+
+.audit-filter input[name="node_id"],
+.audit-filter input[name="correlation_id"],
+.audit-filter button {
+  grid-column: 1 / -1;
+}
+
+.pager {
+  display: grid;
+  grid-template-columns: 72px 1fr 72px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pager span {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .result,
 .kv-item,
 .audit-item {
@@ -253,6 +279,57 @@ th {
   border-radius: 6px;
   background: #12151a;
   padding: 10px;
+  overflow-wrap: anywhere;
+}
+
+.audit-item {
+  display: grid;
+  gap: 6px;
+}
+
+.audit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.audit-trace {
+  min-height: 28px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.audit-details {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.audit-details summary {
+  cursor: pointer;
+}
+
+.audit-details dl {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+
+.audit-details dl div {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.audit-details dt {
+  color: var(--muted);
+}
+
+.audit-details dd {
+  margin: 0;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   overflow-wrap: anywhere;
 }
 
@@ -271,6 +348,11 @@ th {
   background: #26384b;
   color: var(--blue);
   font-size: 12px;
+}
+
+.mono {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 .danger {
@@ -299,4 +381,3 @@ th {
     flex-direction: column;
   }
 }
-

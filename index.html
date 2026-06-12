@@ -130,6 +130,23 @@
 
             <div class="panel">
               <h2>Audit</h2>
+              <form id="audit-filter-form" class="audit-filter">
+                <input name="action" placeholder="action" />
+                <select name="decision">
+                  <option value="">decision</option>
+                  <option value="allow">allow</option>
+                  <option value="deny">deny</option>
+                  <option value="observe">observe</option>
+                </select>
+                <input name="node_id" placeholder="node id" />
+                <input name="correlation_id" placeholder="request id" />
+                <button type="submit">Filter</button>
+              </form>
+              <div class="pager">
+                <button id="audit-prev" type="button" class="secondary">Prev</button>
+                <span id="audit-page-label">0 / 0</span>
+                <button id="audit-next" type="button" class="secondary">Next</button>
+              </div>
               <div id="audit-list" class="audit-list"></div>
             </div>
           </aside>
@@ -139,4 +156,3 @@
     <script type="module" src="/assets/app.js"></script>
   </body>
 </html>
-
