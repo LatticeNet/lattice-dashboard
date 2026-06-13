@@ -26,6 +26,7 @@ import {
   pluginLifecycleStatusLabel,
   pluginLifecycleTransitionPayload,
 } from "./plugin-lifecycle.js";
+import { dateInputValue, formatMoney, machinePayload, renewalState } from "./machines.js";
 
 const state = {
   csrf: "",
@@ -35,6 +36,7 @@ const state = {
   tasks: [],
   results: [],
   approvals: [],
+  machines: [],
   kv: [],
   workers: [],
   pluginInstallations: [],
@@ -412,6 +414,152 @@ async function transitionPluginLifecycle(id, status) {
   }
 }
 
+// --- Machine inventory ----------------------------------------------------
+
+async function loadMachines() {
+  try {
+    const data = await api("/api/machines");
+    state.machines = Array.isArray(data) ? data : [];
+    $("machines-panel").classList.remove("hidden");
+    renderMachines();
+  } catch {
+    state.machines = [];
+    $("machines-panel").classList.add("hidden");
+  }
+}
+
+function renderMachines() {
+  $("machines-table").innerHTML = state.machines
+    .map((machine) => {
+      const hasProfile = !!machine.id;
+      const renewal = machine.next_renewal && !String(machine.next_renewal).startsWith("0001-");
+      const renewState = renewalState(machine.days_until_renewal, renewal);
+      const renewalText = renewal
+        ? `${dateInputValue(machine.next_renewal)} (${Number(machine.days_until_renewal || 0)}d)`
+        : "-";
+      const linkBadges = [
+        machine.has_console_url ? `<span class="pill">console</span>` : "",
+        machine.has_detail_url ? `<span class="pill">detail</span>` : "",
+      ].filter(Boolean).join(" ") || `<span class="muted">-</span>`;
+      return `<tr>
+        <td><strong>${escapeHtml(machine.node_name || machine.label || machine.node_id)}</strong><br><small>${escapeHtml(machine.node_id)}</small></td>
+        <td>${machineHostSummary(machine)}</td>
+        <td>${escapeHtml([machine.vendor, machine.region].filter(Boolean).join(" / ") || "-")}</td>
+        <td>${escapeHtml(formatMoney(machine.price_cents, machine.currency) || "-")}</td>
+        <td><span class="${renewState === "overdue" ? "danger" : renewState === "soon" ? "warn" : "muted"}">${escapeHtml(renewalText)}</span></td>
+        <td>${linkBadges}</td>
+        <td class="row-actions">
+          <button type="button" class="secondary" data-machine-edit="${escapeHtml(machine.node_id)}">${hasProfile ? "Edit" : "Add"}</button>
+          ${hasProfile ? `<button type="button" class="secondary" data-machine-renew="${escapeHtml(machine.id)}">Renewed</button>` : ""}
+        </td>
+      </tr>`;
+    })
+    .join("");
+  $("machines-table").querySelectorAll("[data-machine-edit]").forEach((button) => {
+    button.addEventListener("click", () => editMachine(button.dataset.machineEdit));
+  });
+  $("machines-table").querySelectorAll("[data-machine-renew]").forEach((button) => {
+    button.addEventListener("click", () => renewMachine(button.dataset.machineRenew));
+  });
+}
+
+function machineHostSummary(machine) {
+  const facts = machine.host_facts || {};
+  const line1 = [facts.arch, facts.os, facts.platform].filter(Boolean).join(" / ") || "-";
+  const line2 = [
+    facts.cpu_cores ? `${Number(facts.cpu_cores)} cores` : "",
+    formatBytes(facts.memory_total),
+    facts.virtualization && facts.virtualization !== "unknown" ? facts.virtualization : "",
+  ].filter(Boolean).join(" · ");
+  return `<span>${escapeHtml(line1)}</span>${line2 ? `<br><small>${escapeHtml(line2)}</small>` : ""}`;
+}
+
+function editMachine(nodeID) {
+  const machine = state.machines.find((m) => m.node_id === nodeID) || { node_id: nodeID };
+  const form = $("machine-form");
+  form.elements["id"].value = machine.id || "";
+  form.elements["node_id"].value = machine.node_id || "";
+  form.elements["label"].value = machine.label || "";
+  form.elements["vendor"].value = machine.vendor || "";
+  form.elements["region"].value = machine.region || "";
+  form.elements["price_cents"].value = machine.price_cents || "";
+  form.elements["currency"].value = machine.currency || "";
+  form.elements["renewal_cycle"].value = machine.renewal_cycle || "";
+  form.elements["cycle_days"].value = machine.cycle_days || "";
+  form.elements["next_renewal"].value = dateInputValue(machine.next_renewal);
+  form.elements["remind_days_before"].value = (machine.remind_days_before || []).join(",");
+  form.elements["console_url"].value = "";
+  form.elements["detail_url"].value = "";
+  form.elements["notes"].value = machine.notes || "";
+  form.elements["auto_roll"].checked = !!machine.auto_roll;
+  form.elements["reminders_enabled"].checked = !!machine.reminders_enabled;
+  form.elements["clear_console_url"].checked = false;
+  form.elements["clear_detail_url"].checked = false;
+  $("machine-error").textContent = "";
+}
+
+function resetMachineForm() {
+  $("machine-form").reset();
+  $("machine-form").elements["id"].value = "";
+  $("machine-error").textContent = "";
+}
+
+async function submitMachine(event) {
+  event.preventDefault();
+  $("machine-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  const payload = machinePayload({
+    id: form.get("id"),
+    node_id: form.get("node_id"),
+    label: form.get("label"),
+    vendor: form.get("vendor"),
+    region: form.get("region"),
+    notes: form.get("notes"),
+    price_cents: form.get("price_cents"),
+    currency: form.get("currency"),
+    renewal_cycle: form.get("renewal_cycle"),
+    cycle_days: form.get("cycle_days"),
+    next_renewal: form.get("next_renewal"),
+    remind_days_before: form.get("remind_days_before"),
+    console_url: form.get("console_url"),
+    detail_url: form.get("detail_url"),
+    auto_roll: $("machine-form").elements["auto_roll"].checked,
+    reminders_enabled: $("machine-form").elements["reminders_enabled"].checked,
+    clear_console_url: $("machine-form").elements["clear_console_url"].checked,
+    clear_detail_url: $("machine-form").elements["clear_detail_url"].checked,
+  });
+  try {
+    const path = payload.id ? "/api/machines/update" : "/api/machines";
+    await api(path, { method: "POST", body: JSON.stringify(payload) });
+    resetMachineForm();
+    await loadMachines();
+  } catch (error) {
+    $("machine-error").textContent = error.message;
+  }
+}
+
+async function renewMachine(id) {
+  $("machine-error").textContent = "";
+  try {
+    await api("/api/machines/renew", { method: "POST", body: JSON.stringify({ id }) });
+    await loadMachines();
+  } catch (error) {
+    $("machine-error").textContent = error.message;
+  }
+}
+
+async function runMachineReminders() {
+  $("machine-error").textContent = "";
+  try {
+    const data = await api("/api/machines/reminders/run", { method: "POST", body: "{}" });
+    const count = Array.isArray(data.fired) ? data.fired.length : 0;
+    $("machine-error").textContent = count ? `Fired ${count} reminder(s).` : "No reminders due.";
+    await loadMachines();
+  } catch (error) {
+    $("machine-error").textContent = error.message;
+  }
+}
+
 async function refresh() {
   const [me, nodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
     api("/api/me"),
@@ -437,7 +585,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -760,6 +908,9 @@ $("twofa-disable-form").addEventListener("submit", disable2FA);
 $("refresh").addEventListener("click", refresh);
 $("logout").addEventListener("click", logout);
 $("enroll-form").addEventListener("submit", enroll);
+$("machine-form").addEventListener("submit", submitMachine);
+$("machine-reset").addEventListener("click", resetMachineForm);
+$("machines-reminders-run").addEventListener("click", runMachineReminders);
 $("task-form").addEventListener("submit", queueTask);
 $("kv-form").addEventListener("submit", saveKV);
 $("worker-form").addEventListener("submit", deployWorker);

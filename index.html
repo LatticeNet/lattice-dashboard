@@ -96,6 +96,61 @@
               </div>
             </div>
 
+            <div class="panel hidden" id="machines-panel">
+              <div class="panel-head">
+                <h2>Machines</h2>
+                <button id="machines-reminders-run" type="button" class="secondary">Run Reminders</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Node</th>
+                      <th>Host</th>
+                      <th>Vendor</th>
+                      <th>Cost</th>
+                      <th>Renewal</th>
+                      <th>Links</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="machines-table"></tbody>
+                </table>
+              </div>
+              <form id="machine-form" class="machine-form">
+                <input type="hidden" name="id" />
+                <input name="node_id" placeholder="node id" />
+                <input name="label" placeholder="label" />
+                <input name="vendor" placeholder="vendor" />
+                <input name="region" placeholder="region" />
+                <input name="price_cents" type="number" min="0" placeholder="price cents" />
+                <input name="currency" placeholder="currency (USD)" maxlength="3" />
+                <select name="renewal_cycle">
+                  <option value="">cycle</option>
+                  <option value="monthly">monthly</option>
+                  <option value="quarterly">quarterly</option>
+                  <option value="semiannual">semiannual</option>
+                  <option value="annual">annual</option>
+                  <option value="custom_days">custom days</option>
+                </select>
+                <input name="cycle_days" type="number" min="0" placeholder="custom days" />
+                <input name="next_renewal" type="date" />
+                <input name="remind_days_before" placeholder="reminders: 14,7,1" />
+                <input name="console_url" placeholder="console url (write-only)" autocomplete="off" />
+                <input name="detail_url" placeholder="detail url (write-only)" autocomplete="off" />
+                <textarea name="notes" placeholder="notes"></textarea>
+                <label class="checkbox-row"><input type="checkbox" name="auto_roll" /> Auto roll</label>
+                <label class="checkbox-row"><input type="checkbox" name="reminders_enabled" /> Reminders enabled</label>
+                <label class="checkbox-row"><input type="checkbox" name="clear_console_url" /> Clear console link</label>
+                <label class="checkbox-row"><input type="checkbox" name="clear_detail_url" /> Clear detail link</label>
+                <div class="inline-form">
+                  <button type="submit">Save Machine</button>
+                  <button type="button" id="machine-reset" class="secondary">Clear</button>
+                </div>
+                <p id="machine-error" class="error"></p>
+              </form>
+            </div>
+
             <div class="panel">
               <div class="panel-head">
                 <h2>Batch Task</h2>

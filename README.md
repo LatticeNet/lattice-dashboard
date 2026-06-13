@@ -11,6 +11,9 @@ host.
 - Login and session bootstrap.
 - Node table and fleet counters, including HostFacts summary (arch/platform,
   cores/RAM, uptime).
+- Machines panel for server-only inventory profiles: vendor/region, cost,
+  renewal date, write-only console/detail links, mark-renewed, and manual
+  reminder evaluation.
 - Batch task form and task result cards.
 - KV editor.
 - Worker deployment form.
