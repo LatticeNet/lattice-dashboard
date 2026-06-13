@@ -9,7 +9,8 @@ host.
 ## Features
 
 - Login and session bootstrap.
-- Node table and fleet counters.
+- Node table and fleet counters, including HostFacts summary (arch/platform,
+  cores/RAM, uptime).
 - Batch task form and task result cards.
 - KV editor.
 - Worker deployment form.

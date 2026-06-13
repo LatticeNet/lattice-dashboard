@@ -459,9 +459,11 @@ function renderNodes() {
     .map((node) => {
       const mem = percent(node.metrics?.memory_used, node.metrics?.memory_total);
       const disk = percent(node.metrics?.disk_used, node.metrics?.disk_total);
+      const host = hostSummary(node);
       return `<tr>
         <td><span class="status ${node.online ? "online" : ""}">${escapeHtml(node.name || node.id)}</span><br><small>${escapeHtml(node.id)}</small></td>
         <td>${escapeHtml(node.role || "node")}</td>
+        <td>${host}</td>
         <td>${formatNumber(node.metrics?.cpu_percent)}%</td>
         <td>${mem}</td>
         <td>${disk}</td>
@@ -691,6 +693,42 @@ function ports(value) {
 function percent(used, total) {
   if (!total) return "-";
   return `${Math.round((Number(used || 0) / Number(total)) * 100)}%`;
+}
+
+function hostSummary(node) {
+  const facts = node.host_facts || {};
+  const platform = [facts.os, facts.platform].filter(Boolean).join("/");
+  const line1 = [facts.arch, platform].filter(Boolean).join(" · ") || "-";
+  const line2 = [
+    facts.cpu_cores ? `${Number(facts.cpu_cores)} cores` : "",
+    formatBytes(facts.memory_total || node.metrics?.memory_total),
+    formatDuration(node.metrics?.uptime_seconds),
+  ].filter(Boolean).join(" · ");
+  return `<span>${escapeHtml(line1)}</span>${line2 ? `<br><small>${escapeHtml(line2)}</small>` : ""}`;
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return "";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let n = bytes;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function formatDuration(seconds) {
+  const s = Number(seconds || 0);
+  if (!s) return "";
+  const days = Math.floor(s / 86400);
+  if (days > 0) return `${days}d`;
+  const hours = Math.floor(s / 3600);
+  if (hours > 0) return `${hours}h`;
+  const minutes = Math.floor(s / 60);
+  return `${minutes}m`;
 }
 
 function formatNumber(value) {
