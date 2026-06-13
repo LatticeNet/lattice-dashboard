@@ -190,6 +190,43 @@
               <div id="nft-inputs" class="kv-list"></div>
               <div id="approvals" class="result-list"></div>
             </div>
+
+            <div class="panel hidden" id="netpolicy-panel">
+              <div class="panel-head">
+                <h2>Network Policy</h2>
+              </div>
+              <form id="netpolicy-form" class="task-grid compact">
+                <input name="target_node_id" placeholder="target node id" />
+                <select name="action">
+                  <option value="deny">deny</option>
+                  <option value="allow">allow</option>
+                </select>
+                <select name="direction">
+                  <option value="egress">egress</option>
+                  <option value="ingress">ingress</option>
+                </select>
+                <select name="protocol">
+                  <option value="tcp">tcp</option>
+                  <option value="udp">udp</option>
+                  <option value="any">any</option>
+                </select>
+                <input name="ports" placeholder="ports: 22,1234" />
+                <select name="remote_kind">
+                  <option value="node">node</option>
+                  <option value="cidr">cidr</option>
+                  <option value="any">any</option>
+                </select>
+                <input name="remote_node_id" placeholder="remote node id" />
+                <input name="remote_cidr" placeholder="remote cidr/ip" />
+                <input name="comment" placeholder="comment" />
+                <label class="checkbox-row"><input type="checkbox" name="enabled" checked /> Enabled</label>
+                <button type="submit">Save Rule</button>
+                <button type="button" id="netpolicy-reset" class="secondary">Clear</button>
+              </form>
+              <p id="netpolicy-error" class="error"></p>
+              <div id="netpolicy-list" class="kv-list"></div>
+              <div id="netpolicy-graph" class="kv-list"></div>
+            </div>
           </section>
 
           <aside class="side-column">

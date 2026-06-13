@@ -547,3 +547,48 @@ th {
   gap: 6px;
   flex-wrap: wrap;
 }
+
+/* Network policy */
+.netpolicy-card {
+  display: grid;
+  gap: 8px;
+}
+
+.netpolicy-card .mono {
+  display: block;
+  margin-top: 3px;
+}
+
+.netpolicy-rules,
+.netpolicy-graph-card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.netpolicy-rules li,
+.netpolicy-graph-card li {
+  margin: 4px 0;
+}
+
+.netpolicy-node-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.netpolicy-graph-card {
+  display: grid;
+  gap: 10px;
+}
+
+.netpolicy-graph-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1000px) {
+  .netpolicy-graph-grid {
+    grid-template-columns: 1fr;
+  }
+}

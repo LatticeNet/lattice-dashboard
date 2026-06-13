@@ -27,6 +27,7 @@ import {
   pluginLifecycleTransitionPayload,
 } from "./plugin-lifecycle.js";
 import { dateInputValue, formatMoney, machinePayload, renewalState } from "./machines.js";
+import { describeNetRule, netPolicyPayload } from "./netpolicy.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
 
 const state = {
@@ -38,6 +39,8 @@ const state = {
   results: [],
   approvals: [],
   nftInputs: [],
+  netPolicies: [],
+  netPolicyGraph: { nodes: [], edges: [], externals: [] },
   machines: [],
   kv: [],
   workers: [],
@@ -587,7 +590,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadNFTInputs(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadNFTInputs(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -599,6 +602,7 @@ function render() {
   renderResults();
   renderApprovals();
   renderNFTInputs();
+  renderNetPolicies();
   renderKV();
   renderWorkers();
   renderAudit();
@@ -714,6 +718,155 @@ async function deleteNFTInputs(nodeID) {
     await loadNFTInputs();
   } catch (error) {
     $("nft-error").textContent = error.message;
+  }
+}
+
+async function loadNetPolicies() {
+  const panel = $("netpolicy-panel");
+  if (!panel) return;
+  try {
+    const [policies, graph] = await Promise.all([
+      api("/api/netpolicy"),
+      api("/api/netpolicy/graph"),
+    ]);
+    state.netPolicies = Array.isArray(policies.policies) ? policies.policies : [];
+    state.netPolicyGraph = graph && typeof graph === "object"
+      ? {
+          nodes: Array.isArray(graph.nodes) ? graph.nodes : [],
+          edges: Array.isArray(graph.edges) ? graph.edges : [],
+          externals: Array.isArray(graph.externals) ? graph.externals : [],
+        }
+      : { nodes: [], edges: [], externals: [] };
+    panel.classList.remove("hidden");
+    $("netpolicy-error").textContent = "";
+    renderNetPolicies();
+  } catch {
+    state.netPolicies = [];
+    state.netPolicyGraph = { nodes: [], edges: [], externals: [] };
+    panel.classList.add("hidden");
+  }
+}
+
+function renderNetPolicies() {
+  renderNetPolicyList();
+  renderNetPolicyGraph();
+}
+
+function renderNetPolicyList() {
+  const container = $("netpolicy-list");
+  if (!container) return;
+  if (!state.netPolicies.length) {
+    container.innerHTML = `<article class="kv-item"><span class="muted">No policy intents saved.</span></article>`;
+    return;
+  }
+  container.innerHTML = state.netPolicies.map((policy) => {
+    const rules = Array.isArray(policy.rules) ? policy.rules : [];
+    const rulesHTML = rules.length
+      ? `<ol class="netpolicy-rules">${rules.map((rule) => `<li>${escapeHtml(describeNetRule(rule))}${rule.comment ? `<br><small class="muted">${escapeHtml(rule.comment)}</small>` : ""}</li>`).join("")}</ol>`
+      : `<small class="muted">No rules.</small>`;
+    return `<article class="kv-item netpolicy-card">
+      <div class="oidc-provider-head">
+        <div>
+          <strong>${escapeHtml(policy.target_node_name || policy.target_node_id)}</strong>
+          <small class="mono">${escapeHtml(policy.target_node_id)}</small>
+        </div>
+        <span class="oidc-actions">
+          <button type="button" class="secondary" data-netpolicy-fill="${escapeHtml(policy.target_node_id)}">Add Rule</button>
+          <button type="button" class="secondary" data-netpolicy-delete="${escapeHtml(policy.target_node_id)}">Delete</button>
+        </span>
+      </div>
+      <span class="${policy.enabled ? "pill" : "danger"}">${policy.enabled ? "enabled" : "disabled"}</span>
+      ${rulesHTML}
+    </article>`;
+  }).join("");
+  container.querySelectorAll("[data-netpolicy-fill]").forEach((button) => {
+    button.addEventListener("click", () => fillNetPolicyTarget(button.dataset.netpolicyFill));
+  });
+  container.querySelectorAll("[data-netpolicy-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteNetPolicy(button.dataset.netpolicyDelete));
+  });
+}
+
+function renderNetPolicyGraph() {
+  const container = $("netpolicy-graph");
+  if (!container) return;
+  const graph = state.netPolicyGraph || { nodes: [], edges: [], externals: [] };
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph.edges) ? graph.edges : [];
+  const externals = Array.isArray(graph.externals) ? graph.externals : [];
+  const nodeHTML = nodes.length
+    ? `<div class="netpolicy-node-row">${nodes.map((node) => `<span class="pill">${escapeHtml(node.name || node.id)}</span>`).join("")}</div>`
+    : `<small class="muted">No visible nodes.</small>`;
+  const edgeHTML = edges.length
+    ? edges.map((edge) => `<li><span class="${edge.action === "deny" ? "danger" : "pill"}">${escapeHtml(edge.action)}</span> <span class="muted">${escapeHtml(edge.direction || "")}</span> ${escapeHtml(edge.from)} -&gt; ${escapeHtml(edge.to)} <span class="mono">${escapeHtml(edge.protocol || "any")}${edge.ports?.length ? ":" + escapeHtml(edge.ports.join(",")) : ""}</span></li>`).join("")
+    : `<li><span class="muted">No node-to-node edges.</span></li>`;
+  const externalHTML = externals.length
+    ? externals.map((edge) => `<li><span class="${edge.action === "deny" ? "danger" : "pill"}">${escapeHtml(edge.action)}</span> <span class="muted">${escapeHtml(edge.direction || "")}</span> ${escapeHtml(edge.target_node_id)} &lt;-&gt; ${escapeHtml(edge.remote)} <span class="mono">${escapeHtml(edge.protocol || "any")}${edge.ports?.length ? ":" + escapeHtml(edge.ports.join(",")) : ""}</span></li>`).join("")
+    : `<li><span class="muted">No external refs.</span></li>`;
+  container.innerHTML = `<article class="kv-item netpolicy-graph-card">
+    <strong>Policy graph</strong>
+    ${nodeHTML}
+    <div class="netpolicy-graph-grid">
+      <div><small class="muted">Node rules</small><ul>${edgeHTML}</ul></div>
+      <div><small class="muted">External rules</small><ul>${externalHTML}</ul></div>
+    </div>
+  </article>`;
+}
+
+function fillNetPolicyTarget(nodeID) {
+  const form = $("netpolicy-form");
+  if (!form) return;
+  form.elements["target_node_id"].value = nodeID || "";
+  $("netpolicy-error").textContent = "";
+}
+
+function resetNetPolicyForm() {
+  const form = $("netpolicy-form");
+  if (!form) return;
+  form.reset();
+  $("netpolicy-error").textContent = "";
+}
+
+async function submitNetPolicy(event) {
+  event.preventDefault();
+  $("netpolicy-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  const target = String(form.get("target_node_id") || "").trim();
+  const existing = state.netPolicies.find((policy) => policy.target_node_id === target);
+  let payload;
+  try {
+    payload = netPolicyPayload(existing, {
+      target_node_id: form.get("target_node_id"),
+      action: form.get("action"),
+      direction: form.get("direction"),
+      protocol: form.get("protocol"),
+      ports: form.get("ports"),
+      remote_kind: form.get("remote_kind"),
+      remote_node_id: form.get("remote_node_id"),
+      remote_cidr: form.get("remote_cidr"),
+      comment: form.get("comment"),
+      enabled: $("netpolicy-form").elements["enabled"].checked,
+    });
+  } catch (error) {
+    $("netpolicy-error").textContent = error.message;
+    return;
+  }
+  try {
+    await api("/api/netpolicy", { method: "POST", body: JSON.stringify(payload) });
+    resetNetPolicyForm();
+    await loadNetPolicies();
+  } catch (error) {
+    $("netpolicy-error").textContent = error.message;
+  }
+}
+
+async function deleteNetPolicy(targetNodeID) {
+  $("netpolicy-error").textContent = "";
+  try {
+    await api("/api/netpolicy/delete", { method: "POST", body: JSON.stringify({ target_node_id: targetNodeID }) });
+    await loadNetPolicies();
+  } catch (error) {
+    $("netpolicy-error").textContent = error.message;
   }
 }
 
@@ -989,6 +1142,8 @@ $("kv-form").addEventListener("submit", saveKV);
 $("worker-form").addEventListener("submit", deployWorker);
 $("nft-form").addEventListener("submit", createNFTPlan);
 $("nft-reset").addEventListener("click", resetNFTForm);
+$("netpolicy-form").addEventListener("submit", submitNetPolicy);
+$("netpolicy-reset").addEventListener("click", resetNetPolicyForm);
 $("audit-filter-form").addEventListener("submit", filterAudit);
 $("audit-prev").addEventListener("click", () => pageAudit(-1));
 $("audit-next").addEventListener("click", () => pageAudit(1));
