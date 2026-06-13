@@ -426,12 +426,12 @@ async function refresh() {
   const audit = normalizeAuditResponse(auditPayload, state.auditPage);
   state.csrf = me.csrf_token || state.csrf;
   state.totpEnabled = !!me.totp_enabled;
-  state.nodes = nodes;
-  state.tasks = tasks;
-  state.results = results;
-  state.approvals = approvals;
-  state.kv = kv;
-  state.workers = workers;
+  state.nodes = Array.isArray(nodes) ? nodes : [];
+  state.tasks = Array.isArray(tasks) ? tasks : [];
+  state.results = Array.isArray(results) ? results : [];
+  state.approvals = Array.isArray(approvals) ? approvals : [];
+  state.kv = Array.isArray(kv) ? kv : [];
+  state.workers = Array.isArray(workers) ? workers : [];
   state.audit = audit.events;
   state.auditPage = { total: audit.total, limit: audit.limit, offset: audit.offset };
   render();
@@ -477,7 +477,7 @@ function renderResults() {
     .slice(0, 12)
     .map((result) => `<article class="result">
       <strong>${escapeHtml(result.node_id)}</strong>
-      <span class="pill">exit ${result.exit_code}</span>
+      <span class="pill">exit ${escapeHtml(result.exit_code)}</span>
       ${result.error ? `<span class="danger">${escapeHtml(result.error)}</span>` : ""}
       <pre>${escapeHtml([result.stdout, result.stderr].filter(Boolean).join("\n"))}</pre>
     </article>`)
