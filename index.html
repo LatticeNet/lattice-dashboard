@@ -176,11 +176,18 @@
               </div>
               <form id="nft-form" class="task-grid compact">
                 <input name="node_id" placeholder="node id" />
+                <input name="interface_name" placeholder="public interface: eth0" value="eth0" />
+                <input name="wireguard_cidr" placeholder="wireguard cidr: 10.66.0.0/24" value="10.66.0.0/24" />
                 <input name="public_tcp" placeholder="public tcp: 80,443" value="80,443" />
+                <input name="public_udp" placeholder="public udp: 53" />
                 <input name="wg_tcp" placeholder="wg tcp: 22,9100" value="22,9100" />
                 <input name="wg_udp" placeholder="wg udp: 51820" value="51820" />
-                <button type="submit">Create Plan</button>
+                <button type="submit" name="action" value="plan">Save & Create Plan</button>
+                <button type="submit" name="action" value="save" class="secondary">Save Inputs</button>
+                <button type="button" id="nft-reset" class="secondary">Clear</button>
               </form>
+              <p id="nft-error" class="error"></p>
+              <div id="nft-inputs" class="kv-list"></div>
               <div id="approvals" class="result-list"></div>
             </div>
           </section>

@@ -19,7 +19,8 @@ host.
 - Worker deployment form.
 - Plugin lifecycle panel for verified plugin availability and safe status
   transitions.
-- nft plan approval view.
+- Network Guard panel for persisted per-node nft inputs, public/WireGuard
+  TCP/UDP port sets, and nft plan approval review.
 - Audit stream with action, decision, node, and request-id filters, bounded
   pagination, expandable event details, and one-click request-id tracing.
 - Structured Lattice API error display with compatibility for the legacy string

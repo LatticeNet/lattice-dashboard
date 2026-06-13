@@ -27,6 +27,7 @@ import {
   pluginLifecycleTransitionPayload,
 } from "./plugin-lifecycle.js";
 import { dateInputValue, formatMoney, machinePayload, renewalState } from "./machines.js";
+import { formatPorts, nftInputsPayload } from "./nft.js";
 
 const state = {
   csrf: "",
@@ -36,6 +37,7 @@ const state = {
   tasks: [],
   results: [],
   approvals: [],
+  nftInputs: [],
   machines: [],
   kv: [],
   workers: [],
@@ -585,7 +587,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadNFTInputs(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -596,6 +598,7 @@ function render() {
   renderNodes();
   renderResults();
   renderApprovals();
+  renderNFTInputs();
   renderKV();
   renderWorkers();
   renderAudit();
@@ -647,6 +650,71 @@ function renderApprovals() {
   document.querySelectorAll("[data-approval]").forEach((button) => {
     button.addEventListener("click", () => approve(button.dataset.approval));
   });
+}
+
+async function loadNFTInputs() {
+  try {
+    const data = await api("/api/network/nft/inputs");
+    state.nftInputs = Array.isArray(data.inputs) ? data.inputs : [];
+    renderNFTInputs();
+  } catch {
+    state.nftInputs = [];
+    renderNFTInputs();
+  }
+}
+
+function renderNFTInputs() {
+  const container = $("nft-inputs");
+  if (!container) return;
+  container.innerHTML = state.nftInputs
+    .map((entry) => `<article class="kv-item">
+      <div class="oidc-provider-head">
+        <strong>${escapeHtml(entry.node_name || entry.node_id)}</strong>
+        <span class="oidc-actions">
+          <button type="button" class="secondary" data-nft-edit="${escapeHtml(entry.node_id)}">Edit</button>
+          <button type="button" class="secondary" data-nft-delete="${escapeHtml(entry.node_id)}">Delete</button>
+        </span>
+      </div>
+      <small class="mono">${escapeHtml(entry.interface_name || "eth0")} · ${escapeHtml(entry.wireguard_cidr || "10.66.0.0/24")}</small>
+      <div class="muted">public tcp ${escapeHtml(formatPorts(entry.public_tcp) || "-")} · public udp ${escapeHtml(formatPorts(entry.public_udp) || "-")}</div>
+      <div class="muted">wg tcp ${escapeHtml(formatPorts(entry.wireguard_tcp) || "-")} · wg udp ${escapeHtml(formatPorts(entry.wireguard_udp) || "-")}</div>
+    </article>`)
+    .join("");
+  container.querySelectorAll("[data-nft-edit]").forEach((button) => {
+    button.addEventListener("click", () => editNFTInputs(button.dataset.nftEdit));
+  });
+  container.querySelectorAll("[data-nft-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteNFTInputs(button.dataset.nftDelete));
+  });
+}
+
+function editNFTInputs(nodeID) {
+  const entry = state.nftInputs.find((x) => x.node_id === nodeID);
+  if (!entry) return;
+  const form = $("nft-form");
+  form.elements["node_id"].value = entry.node_id || "";
+  form.elements["interface_name"].value = entry.interface_name || "";
+  form.elements["wireguard_cidr"].value = entry.wireguard_cidr || "";
+  form.elements["public_tcp"].value = formatPorts(entry.public_tcp);
+  form.elements["public_udp"].value = formatPorts(entry.public_udp);
+  form.elements["wg_tcp"].value = formatPorts(entry.wireguard_tcp);
+  form.elements["wg_udp"].value = formatPorts(entry.wireguard_udp);
+  $("nft-error").textContent = "";
+}
+
+function resetNFTForm() {
+  $("nft-form").reset();
+  $("nft-error").textContent = "";
+}
+
+async function deleteNFTInputs(nodeID) {
+  $("nft-error").textContent = "";
+  try {
+    await api("/api/network/nft/inputs/delete", { method: "POST", body: JSON.stringify({ node_id: nodeID }) });
+    await loadNFTInputs();
+  } catch (error) {
+    $("nft-error").textContent = error.message;
+  }
 }
 
 function renderKV() {
@@ -802,17 +870,29 @@ async function deployWorker(event) {
 
 async function createNFTPlan(event) {
   event.preventDefault();
+  $("nft-error").textContent = "";
   const form = new FormData(event.currentTarget);
-  await api("/api/network/nft/plan", {
-    method: "POST",
-    body: JSON.stringify({
-      node_id: String(form.get("node_id") || ""),
-      public_tcp: ports(form.get("public_tcp")),
-      wireguard_tcp: ports(form.get("wg_tcp")),
-      wireguard_udp: ports(form.get("wg_udp")),
-    }),
+  const payload = nftInputsPayload({
+    node_id: form.get("node_id"),
+    interface_name: form.get("interface_name"),
+    wireguard_cidr: form.get("wireguard_cidr"),
+    public_tcp: form.get("public_tcp"),
+    public_udp: form.get("public_udp"),
+    wireguard_tcp: form.get("wg_tcp"),
+    wireguard_udp: form.get("wg_udp"),
   });
-  await refresh();
+  try {
+    await api("/api/network/nft/inputs", { method: "POST", body: JSON.stringify(payload) });
+    if (event.submitter?.value !== "save") {
+      await api("/api/network/nft/plan", {
+        method: "POST",
+        body: JSON.stringify({ node_id: payload.node_id }),
+      });
+    }
+    await refresh();
+  } catch (error) {
+    $("nft-error").textContent = error.message;
+  }
 }
 
 async function approve(approvalId) {
@@ -829,13 +909,6 @@ async function logout() {
   state.totpChallengeId = "";
   showConsole(false);
   showLoginStep("login");
-}
-
-function ports(value) {
-  return String(value || "")
-    .split(",")
-    .map((v) => Number(v.trim()))
-    .filter((v) => Number.isInteger(v) && v > 0);
 }
 
 function percent(used, total) {
@@ -915,6 +988,7 @@ $("task-form").addEventListener("submit", queueTask);
 $("kv-form").addEventListener("submit", saveKV);
 $("worker-form").addEventListener("submit", deployWorker);
 $("nft-form").addEventListener("submit", createNFTPlan);
+$("nft-reset").addEventListener("click", resetNFTForm);
 $("audit-filter-form").addEventListener("submit", filterAudit);
 $("audit-prev").addEventListener("click", () => pageAudit(-1));
 $("audit-next").addEventListener("click", () => pageAudit(1));
