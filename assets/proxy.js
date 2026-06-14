@@ -29,9 +29,14 @@ function optionalDate(body, key, value) {
   body[key] = raw + "T00:00:00Z";
 }
 
+function proxyCore(value) {
+  const v = String(value || "").trim();
+  return v || "sing-box";
+}
+
 export function proxyInboundPayload(fields) {
   const body = {
-    core: "sing-box",
+    core: proxyCore(fields.core),
     protocol: "vless",
     transport: "tcp",
     security: "reality",
@@ -66,7 +71,7 @@ export function proxyUserPayload(fields) {
 
 export function proxyProfilePayload(fields) {
   const body = {
-    core: "sing-box",
+    core: proxyCore(fields.core),
     inbound_ids: splitProxyList(fields.inbound_ids),
   };
   optionalString(body, "id", fields.id);

@@ -63,6 +63,20 @@ test("proxyInboundPayload omits blank write-only private key", () => {
   assert.ok(!("reality_private_key" in body));
 });
 
+test("proxyInboundPayload preserves selected xray core", () => {
+  const body = proxyInboundPayload({
+    core: "xray",
+    name: "Xray Reality",
+    port: "443",
+    reality_short_ids: "aa",
+    enabled: true,
+  });
+  assert.equal(body.core, "xray");
+  assert.equal(body.protocol, "vless");
+  assert.equal(body.transport, "tcp");
+  assert.equal(body.security, "reality");
+});
+
 test("proxyUserPayload omits raw subscription token and formats expiry", () => {
   assert.deepEqual(proxyUserPayload({
     id: " alice ",
@@ -104,6 +118,20 @@ test("proxyProfilePayload builds a node profile payload", () => {
     listen_ip: "10.66.0.2",
     config_path: "/etc/sing-box/config.json",
     stats_api: "127.0.0.1:9090",
+  });
+});
+
+test("proxyProfilePayload preserves selected xray core", () => {
+  assert.deepEqual(proxyProfilePayload({
+    node_id: "node-x",
+    core: "xray",
+    inbound_ids: "in-x",
+    config_path: "/usr/local/etc/xray/config.json",
+  }), {
+    node_id: "node-x",
+    core: "xray",
+    inbound_ids: ["in-x"],
+    config_path: "/usr/local/etc/xray/config.json",
   });
 });
 

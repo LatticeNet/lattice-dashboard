@@ -1280,6 +1280,7 @@ function editProxyInbound(id) {
   const form = $("proxy-inbound-form");
   form.elements["id"].value = inbound.id || "";
   form.elements["name"].value = inbound.name || "";
+  form.elements["core"].value = inbound.core || "sing-box";
   form.elements["port"].value = inbound.port || "";
   form.elements["listen"].value = inbound.listen || "";
   form.elements["sni"].value = inbound.sni || "";
@@ -1296,6 +1297,7 @@ function editProxyInbound(id) {
 function resetProxyInboundForm() {
   $("proxy-inbound-form").reset();
   $("proxy-inbound-form").elements["id"].value = "";
+  $("proxy-inbound-form").elements["core"].value = "sing-box";
   $("proxy-inbound-form").elements["enabled"].checked = true;
   $("proxy-error").textContent = "";
 }
@@ -1309,6 +1311,7 @@ async function submitProxyInbound(event) {
     payload = proxyInboundPayload({
       id: form.get("id"),
       name: form.get("name"),
+      core: form.get("core"),
       port: form.get("port"),
       listen: form.get("listen"),
       sni: form.get("sni"),
@@ -1474,6 +1477,7 @@ function editProxyProfile(nodeID) {
   const form = $("proxy-profile-form");
   form.elements["id"].value = profile.id || "";
   form.elements["node_id"].value = profile.node_id || "";
+  form.elements["core"].value = profile.core || "sing-box";
   form.elements["inbound_ids"].value = (profile.inbound_ids || []).join(", ");
   form.elements["hostname"].value = profile.hostname || "";
   form.elements["listen_ip"].value = profile.listen_ip || "";
@@ -1485,6 +1489,7 @@ function editProxyProfile(nodeID) {
 function resetProxyProfileForm() {
   $("proxy-profile-form").reset();
   $("proxy-profile-form").elements["id"].value = "";
+  $("proxy-profile-form").elements["core"].value = "sing-box";
   $("proxy-error").textContent = "";
 }
 
@@ -1497,6 +1502,7 @@ async function submitProxyProfile(event) {
     payload = proxyProfilePayload({
       id: form.get("id"),
       node_id: form.get("node_id"),
+      core: form.get("core"),
       inbound_ids: form.get("inbound_ids"),
       hostname: form.get("hostname"),
       listen_ip: form.get("listen_ip"),

@@ -276,6 +276,10 @@
                   <form id="proxy-inbound-form" class="proxy-form">
                     <input name="id" placeholder="id (optional)" autocomplete="off" />
                     <input name="name" placeholder="name" autocomplete="off" />
+                    <select name="core">
+                      <option value="sing-box">sing-box</option>
+                      <option value="xray">xray</option>
+                    </select>
                     <input name="port" type="number" min="1" max="65535" placeholder="port" />
                     <input name="listen" placeholder="listen ip (::)" autocomplete="off" />
                     <input name="sni" placeholder="sni: cdn.example.com" autocomplete="off" />
@@ -317,10 +321,14 @@
                   <form id="proxy-profile-form" class="proxy-form">
                     <input type="hidden" name="id" />
                     <input name="node_id" placeholder="node id" autocomplete="off" />
+                    <select name="core">
+                      <option value="sing-box">sing-box</option>
+                      <option value="xray">xray</option>
+                    </select>
                     <input name="inbound_ids" placeholder="inbound ids: in-a, in-b" autocomplete="off" />
                     <input name="hostname" placeholder="hostname: node-a.dns.example.com" autocomplete="off" />
                     <input name="listen_ip" placeholder="listen override" autocomplete="off" />
-                    <input name="config_path" placeholder="config path (/etc/sing-box/config.json)" autocomplete="off" />
+                    <input name="config_path" placeholder="config path (/etc/sing-box/config.json or /usr/local/etc/xray/config.json)" autocomplete="off" />
                     <input name="stats_api" placeholder="stats api: 127.0.0.1:9090" autocomplete="off" />
                     <div class="inline-form">
                       <button type="submit">Save Profile</button>
