@@ -7,7 +7,7 @@ import {
   nextAuditOffset,
   normalizeAuditResponse,
 } from "./audit.js";
-import { approvalById, approvalPayload } from "./approval.js";
+import { approvalActionLabel, approvalById, approvalPayload } from "./approval.js";
 import {
   ssoErrorMessage,
   hasAuthRedirectParams,
@@ -805,7 +805,7 @@ function renderApprovals() {
     .map((approval) => `<article class="result">
       <strong>${escapeHtml(approval.node_id)}</strong>
       <span class="pill">${escapeHtml(approval.status)}</span>
-      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>Approve Apply</button>
+      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>${escapeHtml(approvalActionLabel(approval))}</button>
       <pre>${escapeHtml(approval.plan)}</pre>
     </article>`)
     .join("");
@@ -912,6 +912,7 @@ function renderDNSDeployments() {
             <small class="mono">${escapeHtml(dep.node_name || dep.node_id)} · ${escapeHtml(dep.engine || "coredns")}</small>
           </div>
           <span class="oidc-actions">
+            <button type="button" class="secondary" data-dns-plan="${escapeHtml(dep.id)}">Plan review</button>
             <button type="button" class="secondary" data-dns-edit="${escapeHtml(dep.id)}">Edit</button>
             <button type="button" class="secondary" data-dns-delete="${escapeHtml(dep.id)}">Delete</button>
           </span>
@@ -928,6 +929,9 @@ function renderDNSDeployments() {
       </article>`;
     })
     .join("");
+  container.querySelectorAll("[data-dns-plan]").forEach((button) => {
+    button.addEventListener("click", () => planDNSDeployment(button.dataset.dnsPlan));
+  });
   container.querySelectorAll("[data-dns-edit]").forEach((button) => {
     button.addEventListener("click", () => editDNSDeployment(button.dataset.dnsEdit));
   });
@@ -1013,6 +1017,16 @@ async function deleteDNSDeployment(id) {
   try {
     await api("/api/dns/deployments/delete", { method: "POST", body: JSON.stringify({ id }) });
     await loadDNSDeployments();
+  } catch (error) {
+    $("dns-error").textContent = error.message;
+  }
+}
+
+async function planDNSDeployment(id) {
+  $("dns-error").textContent = "";
+  try {
+    await api("/api/dns/plan", { method: "POST", body: JSON.stringify({ id }) });
+    await refresh();
   } catch (error) {
     $("dns-error").textContent = error.message;
   }

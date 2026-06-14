@@ -16,13 +16,21 @@ export function approvalById(approvals, approvalId) {
   return (approvals || []).find((approval) => approval && approval.id === approvalId) || null;
 }
 
+export function approvalQueueApply(approval) {
+  return approval?.plugin !== "selfdns";
+}
+
+export function approvalActionLabel(approval) {
+  return approvalQueueApply(approval) ? "Approve Apply" : "Approve Review";
+}
+
 export async function approvalPayload(approval, subtle) {
   if (!approval || !approval.id) {
     throw new Error("Approval not found.");
   }
   return {
     approval_id: approval.id,
-    queue_apply: true,
+    queue_apply: approvalQueueApply(approval),
     plan_sha256: await sha256Hex(approval.plan || "", subtle),
   };
 }

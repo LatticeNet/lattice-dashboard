@@ -27,8 +27,9 @@ host.
   plan approval review with client-computed `sha256(plan)` binding.
 - Self-host DNS panel for `DNSDeployment` intent CRUD: node, engine, exposure,
   listen port, hostname/DDNS binding, write-only Cloudflare token, and a safe
-  single-zone editor. CoreDNS apply/publish controls are intentionally absent
-  until the backend plan/apply path lands.
+  single-zone editor. `Plan review` creates a pending secret-free selfdns
+  approval containing CoreDNS config plus the composed `lattice_guard` candidate;
+  it is review-only until the backend apply/publish path lands.
 - Network Policy panel for saved `NetPolicy` intents, a server-derived
   reachability graph with inline-SVG visualization, and a `Plan Apply` action
   that creates the rollback-protected `nftpolicy` approval. Execution still
