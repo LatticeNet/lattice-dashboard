@@ -70,3 +70,10 @@ export function dnsProtocols(dep) {
   if (dep?.enable_tcp) out.push("tcp");
   return out.join(",") || "-";
 }
+
+export function dnsPublishSummary(dep) {
+  const ips = [];
+  if (dep?.last_ipv4) ips.push(dep.last_ipv4);
+  if (dep?.last_ipv6) ips.push(dep.last_ipv6);
+  return ips.length ? `published ${ips.join(" / ")}` : "";
+}

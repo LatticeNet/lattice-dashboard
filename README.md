@@ -29,8 +29,9 @@ host.
   listen port, hostname/DDNS binding, write-only Cloudflare token, and a safe
   single-zone editor. `Plan review` creates a pending secret-free selfdns
   approval containing CoreDNS config plus the composed `lattice_guard` candidate;
-  approval queues the backend apply path. Cloudflare publish controls remain
-  absent until the backend publish path lands.
+  approval queues the backend apply path. `Publish` pushes the configured
+  hostname through the backend Cloudflare DDNS path and shows the last published
+  A/AAAA values.
 - Network Policy panel for saved `NetPolicy` intents, a server-derived
   reachability graph with inline-SVG visualization, and a `Plan Apply` action
   that creates the rollback-protected `nftpolicy` approval. Execution still

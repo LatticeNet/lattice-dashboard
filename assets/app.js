@@ -31,7 +31,7 @@ import { dateInputValue, formatMoney, machinePayload, renewalState } from "./mac
 import { describeNetRule, netPolicyPayload } from "./netpolicy.js";
 import { policyExternalLabel, policyGraphView } from "./policygraph.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
-import { dnsDeploymentPayload, dnsProtocols, dnsZoneSummary } from "./dns.js";
+import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary } from "./dns.js";
 import {
   GEO_MAP_HEIGHT,
   GEO_MAP_WIDTH,
@@ -905,6 +905,8 @@ function renderDNSDeployments() {
     .map((dep) => {
       const host = dep.hostname ? `<small class="mono">${escapeHtml(dep.hostname)}</small>` : `<small class="muted">No hostname publishing.</small>`;
       const credential = dep.has_credential ? `<span class="pill">credential set</span>` : dep.hostname ? `<span class="danger">no credential</span>` : "";
+      const publishSummary = dnsPublishSummary(dep);
+      const canPublish = dep.hostname && dep.has_credential && !dep.disabled;
       return `<article class="kv-item dns-card">
         <div class="oidc-provider-head">
           <div>
@@ -913,6 +915,7 @@ function renderDNSDeployments() {
           </div>
           <span class="oidc-actions">
             <button type="button" class="secondary" data-dns-plan="${escapeHtml(dep.id)}">Plan review</button>
+            <button type="button" class="secondary" data-dns-publish="${escapeHtml(dep.id)}" ${canPublish ? "" : "disabled"}>Publish</button>
             <button type="button" class="secondary" data-dns-edit="${escapeHtml(dep.id)}">Edit</button>
             <button type="button" class="secondary" data-dns-delete="${escapeHtml(dep.id)}">Delete</button>
           </span>
@@ -924,6 +927,7 @@ function renderDNSDeployments() {
           ${credential}
         </div>
         ${host}
+        ${publishSummary ? `<small class="mono">${escapeHtml(publishSummary)}</small>` : ""}
         <div class="muted">${escapeHtml(dnsZoneSummary(dep.zones))}</div>
         ${dep.last_error ? `<small class="danger">${escapeHtml(dep.last_error)}</small>` : ""}
       </article>`;
@@ -931,6 +935,9 @@ function renderDNSDeployments() {
     .join("");
   container.querySelectorAll("[data-dns-plan]").forEach((button) => {
     button.addEventListener("click", () => planDNSDeployment(button.dataset.dnsPlan));
+  });
+  container.querySelectorAll("[data-dns-publish]").forEach((button) => {
+    button.addEventListener("click", () => publishDNSDeployment(button.dataset.dnsPublish));
   });
   container.querySelectorAll("[data-dns-edit]").forEach((button) => {
     button.addEventListener("click", () => editDNSDeployment(button.dataset.dnsEdit));
@@ -1027,6 +1034,16 @@ async function planDNSDeployment(id) {
   try {
     await api("/api/dns/plan", { method: "POST", body: JSON.stringify({ id }) });
     await refresh();
+  } catch (error) {
+    $("dns-error").textContent = error.message;
+  }
+}
+
+async function publishDNSDeployment(id) {
+  $("dns-error").textContent = "";
+  try {
+    await api("/api/dns/publish", { method: "POST", body: JSON.stringify({ id }) });
+    await loadDNSDeployments();
   } catch (error) {
     $("dns-error").textContent = error.message;
   }
