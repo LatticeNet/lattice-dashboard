@@ -475,6 +475,73 @@ th {
   gap: 8px;
 }
 
+.proxy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.proxy-section {
+  min-width: 0;
+}
+
+.proxy-section h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.proxy-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.proxy-card {
+  display: grid;
+  gap: 8px;
+}
+
+.proxy-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.proxy-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.proxy-actions button {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.proxy-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.copy-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.copy-field input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .geo-node {
   display: grid;
   gap: 8px;
@@ -493,7 +560,9 @@ th {
   .task-grid.compact,
   .machine-form,
   .geo-form,
-  .dns-form {
+  .dns-form,
+  .proxy-grid,
+  .copy-field {
     grid-template-columns: 1fr;
   }
 

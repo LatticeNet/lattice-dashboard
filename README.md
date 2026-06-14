@@ -33,6 +33,11 @@ host.
   hostname through the backend Cloudflare DDNS path and shows the last published
   A/AAAA values. The card separates CoreDNS/nft service errors from Cloudflare
   publish errors so operators can see which layer failed.
+- Proxy Core panel for central sing-box MVP management: inbounds, users, and
+  node profiles. It uses secret-free list views, write-only REALITY private-key
+  input, profile plan creation through the existing approval flow, and an
+  explicit audited rotate/copy subscription URL workflow. Ordinary refresh does
+  not expose UUID/password/sub-token material.
 - Network Policy panel for saved `NetPolicy` intents, a server-derived
   reachability graph with inline-SVG visualization, and a `Plan Apply` action
   that creates the rollback-protected `nftpolicy` approval. Execution still

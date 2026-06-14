@@ -33,6 +33,13 @@ import { policyExternalLabel, policyGraphView } from "./policygraph.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
 import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary } from "./dns.js";
 import {
+  confirmProxyDelete,
+  confirmProxyRotate,
+  proxyInboundPayload,
+  proxyProfilePayload,
+  proxyUserPayload,
+} from "./proxy.js";
+import {
   GEO_MAP_HEIGHT,
   GEO_MAP_WIDTH,
   geoClearPayload,
@@ -52,6 +59,9 @@ const state = {
   approvals: [],
   nftInputs: [],
   dnsDeployments: [],
+  proxyInbounds: [],
+  proxyUsers: [],
+  proxyProfiles: [],
   geoNodes: [],
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
@@ -606,7 +616,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadNFTInputs(), loadDNSDeployments(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -1048,6 +1058,410 @@ async function publishDNSDeployment(id) {
     await loadDNSDeployments();
   } catch (error) {
     $("dns-error").textContent = error.message;
+  }
+}
+
+async function loadProxyCore() {
+  const panel = $("proxy-panel");
+  if (!panel) return;
+  try {
+    const [inbounds, users, profiles] = await Promise.all([
+      api("/api/proxy/inbounds"),
+      api("/api/proxy/users"),
+      api("/api/proxy/profiles"),
+    ]);
+    state.proxyInbounds = Array.isArray(inbounds.inbounds) ? inbounds.inbounds : [];
+    state.proxyUsers = Array.isArray(users.users) ? users.users : [];
+    state.proxyProfiles = Array.isArray(profiles.profiles) ? profiles.profiles : [];
+    panel.classList.remove("hidden");
+    $("proxy-error").textContent = "";
+    renderProxyCore();
+  } catch {
+    state.proxyInbounds = [];
+    state.proxyUsers = [];
+    state.proxyProfiles = [];
+    panel.classList.add("hidden");
+  }
+}
+
+function renderProxyCore() {
+  renderProxyInbounds();
+  renderProxyUsers();
+  renderProxyProfiles();
+}
+
+function renderProxyInbounds() {
+  const container = $("proxy-inbounds-list");
+  if (!container) return;
+  if (!state.proxyInbounds.length) {
+    container.innerHTML = `<article class="kv-item"><span class="muted">No proxy inbounds saved.</span></article>`;
+    return;
+  }
+  container.innerHTML = state.proxyInbounds.map((inbound) => {
+    const labels = [
+      `<span class="${inbound.enabled ? "pill" : "danger"}">${inbound.enabled ? "enabled" : "disabled"}</span>`,
+      `<span class="pill">${escapeHtml(inbound.protocol || "vless")}</span>`,
+      `<span class="pill">${escapeHtml(inbound.security || "reality")}:${escapeHtml(inbound.port || "")}</span>`,
+      inbound.has_reality_private_key ? `<span class="pill">private key set</span>` : `<span class="danger">no private key</span>`,
+      inbound.reality_public_key ? `<span class="pill">public key</span>` : `<span class="danger">no public key</span>`,
+    ].join("");
+    const meta = [
+      inbound.sni ? `sni ${inbound.sni}` : "",
+      Array.isArray(inbound.alpn) && inbound.alpn.length ? `alpn ${inbound.alpn.join(",")}` : "",
+      inbound.reality_dest ? `dest ${inbound.reality_dest}` : "",
+    ].filter(Boolean).join(" · ");
+    return `<article class="kv-item proxy-card">
+      <div class="proxy-card-head">
+        <div>
+          <strong>${escapeHtml(inbound.name || inbound.id)}</strong>
+          <small class="mono">${escapeHtml(inbound.id || "")}</small>
+        </div>
+        <span class="proxy-actions">
+          <button type="button" class="secondary" data-proxy-inbound-edit="${escapeHtml(inbound.id)}">Edit</button>
+          <button type="button" class="secondary" data-proxy-inbound-delete="${escapeHtml(inbound.id)}">Delete</button>
+        </span>
+      </div>
+      <div class="proxy-meta">${labels}</div>
+      ${meta ? `<small class="muted">${escapeHtml(meta)}</small>` : ""}
+    </article>`;
+  }).join("");
+  container.querySelectorAll("[data-proxy-inbound-edit]").forEach((button) => {
+    button.addEventListener("click", () => editProxyInbound(button.dataset.proxyInboundEdit));
+  });
+  container.querySelectorAll("[data-proxy-inbound-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteProxyInbound(button.dataset.proxyInboundDelete));
+  });
+}
+
+function renderProxyUsers() {
+  const container = $("proxy-users-list");
+  if (!container) return;
+  if (!state.proxyUsers.length) {
+    container.innerHTML = `<article class="kv-item"><span class="muted">No proxy users saved.</span></article>`;
+    return;
+  }
+  container.innerHTML = state.proxyUsers.map((user) => {
+    const labels = [
+      `<span class="${user.enabled ? "pill" : "danger"}">${escapeHtml(user.status || (user.enabled ? "active" : "disabled"))}</span>`,
+      user.has_uuid ? `<span class="pill">uuid</span>` : `<span class="danger">no uuid</span>`,
+      user.has_sub_token ? `<span class="pill">subscription</span>` : `<span class="danger">no subscription</span>`,
+      user.traffic_limit_bytes ? `<span class="pill">${escapeHtml(formatBytes(user.traffic_limit_bytes))}</span>` : `<span class="pill">unlimited</span>`,
+    ].join("");
+    const expires = user.expires_at && !String(user.expires_at).startsWith("0001-")
+      ? `expires ${formatDate(user.expires_at)}`
+      : "no expiry";
+    return `<article class="kv-item proxy-card">
+      <div class="proxy-card-head">
+        <div>
+          <strong>${escapeHtml(user.name || user.id)}</strong>
+          <small class="mono">${escapeHtml(user.id || "")}</small>
+        </div>
+        <span class="proxy-actions">
+          <button type="button" class="secondary" data-proxy-user-rotate="${escapeHtml(user.id)}">Rotate URL</button>
+          <button type="button" class="secondary" data-proxy-user-edit="${escapeHtml(user.id)}">Edit</button>
+          <button type="button" class="secondary" data-proxy-user-delete="${escapeHtml(user.id)}">Delete</button>
+        </span>
+      </div>
+      <div class="proxy-meta">${labels}</div>
+      <small class="muted">${escapeHtml(expires)} · inbounds ${escapeHtml((user.inbound_ids || []).join(", ") || "all")}</small>
+    </article>`;
+  }).join("");
+  container.querySelectorAll("[data-proxy-user-edit]").forEach((button) => {
+    button.addEventListener("click", () => editProxyUser(button.dataset.proxyUserEdit));
+  });
+  container.querySelectorAll("[data-proxy-user-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteProxyUser(button.dataset.proxyUserDelete));
+  });
+  container.querySelectorAll("[data-proxy-user-rotate]").forEach((button) => {
+    button.addEventListener("click", () => rotateProxyUser(button.dataset.proxyUserRotate));
+  });
+}
+
+function renderProxyProfiles() {
+  const container = $("proxy-profiles-list");
+  if (!container) return;
+  if (!state.proxyProfiles.length) {
+    container.innerHTML = `<article class="kv-item"><span class="muted">No proxy node profiles saved.</span></article>`;
+    return;
+  }
+  container.innerHTML = state.proxyProfiles.map((profile) => {
+    const applied = profile.applied_sha256 && !profile.last_error;
+    const stateLabel = profile.last_error ? "failed" : applied ? "applied" : "pending";
+    const host = profile.hostname ? `<small class="mono">${escapeHtml(profile.hostname)}</small>` : `<small class="danger">no hostname</small>`;
+    return `<article class="kv-item proxy-card">
+      <div class="proxy-card-head">
+        <div>
+          <strong>${escapeHtml(profile.node_name || profile.node_id)}</strong>
+          <small class="mono">${escapeHtml(profile.node_id || "")}</small>
+        </div>
+        <span class="proxy-actions">
+          <button type="button" class="secondary" data-proxy-profile-plan="${escapeHtml(profile.node_id)}">Plan Apply</button>
+          <button type="button" class="secondary" data-proxy-profile-edit="${escapeHtml(profile.node_id)}">Edit</button>
+          <button type="button" class="secondary" data-proxy-profile-delete="${escapeHtml(profile.node_id)}">Delete</button>
+        </span>
+      </div>
+      <div class="proxy-meta">
+        <span class="${profile.last_error ? "danger" : applied ? "pill" : "warn"}">${escapeHtml(stateLabel)}</span>
+        <span class="pill">${escapeHtml(profile.core || "sing-box")}</span>
+      </div>
+      ${host}
+      <small class="muted">inbounds ${escapeHtml((profile.inbound_ids || []).join(", ") || "-")}</small>
+      ${profile.last_error ? `<small class="danger">${escapeHtml(profile.last_error)}</small>` : ""}
+    </article>`;
+  }).join("");
+  container.querySelectorAll("[data-proxy-profile-plan]").forEach((button) => {
+    button.addEventListener("click", () => planProxyProfile(button.dataset.proxyProfilePlan));
+  });
+  container.querySelectorAll("[data-proxy-profile-edit]").forEach((button) => {
+    button.addEventListener("click", () => editProxyProfile(button.dataset.proxyProfileEdit));
+  });
+  container.querySelectorAll("[data-proxy-profile-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteProxyProfile(button.dataset.proxyProfileDelete));
+  });
+}
+
+function editProxyInbound(id) {
+  const inbound = state.proxyInbounds.find((x) => x.id === id);
+  if (!inbound) return;
+  const form = $("proxy-inbound-form");
+  form.elements["id"].value = inbound.id || "";
+  form.elements["name"].value = inbound.name || "";
+  form.elements["port"].value = inbound.port || "";
+  form.elements["listen"].value = inbound.listen || "";
+  form.elements["sni"].value = inbound.sni || "";
+  form.elements["alpn"].value = (inbound.alpn || []).join(", ");
+  form.elements["reality_private_key"].value = "";
+  form.elements["reality_public_key"].value = inbound.reality_public_key || "";
+  form.elements["reality_short_ids"].value = (inbound.reality_short_ids || []).join(", ");
+  form.elements["reality_dest"].value = inbound.reality_dest || "";
+  form.elements["enabled"].checked = inbound.enabled !== false;
+  $("proxy-error").textContent = "";
+}
+
+function resetProxyInboundForm() {
+  $("proxy-inbound-form").reset();
+  $("proxy-inbound-form").elements["id"].value = "";
+  $("proxy-inbound-form").elements["enabled"].checked = true;
+  $("proxy-error").textContent = "";
+}
+
+async function submitProxyInbound(event) {
+  event.preventDefault();
+  $("proxy-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  let payload;
+  try {
+    payload = proxyInboundPayload({
+      id: form.get("id"),
+      name: form.get("name"),
+      port: form.get("port"),
+      listen: form.get("listen"),
+      sni: form.get("sni"),
+      alpn: form.get("alpn"),
+      reality_private_key: form.get("reality_private_key"),
+      reality_public_key: form.get("reality_public_key"),
+      reality_short_ids: form.get("reality_short_ids"),
+      reality_dest: form.get("reality_dest"),
+      enabled: $("proxy-inbound-form").elements["enabled"].checked,
+    });
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+    return;
+  }
+  try {
+    await api("/api/proxy/inbounds", { method: "POST", body: JSON.stringify(payload) });
+    resetProxyInboundForm();
+    await loadProxyCore();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+async function deleteProxyInbound(id) {
+  $("proxy-error").textContent = "";
+  const inbound = state.proxyInbounds.find((x) => x.id === id) || { id };
+  if (!confirmProxyDelete("inbound", inbound, window.confirm.bind(window))) return;
+  try {
+    await api("/api/proxy/inbounds/delete", { method: "POST", body: JSON.stringify({ id }) });
+    await loadProxyCore();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+function editProxyUser(id) {
+  const user = state.proxyUsers.find((x) => x.id === id);
+  if (!user) return;
+  const form = $("proxy-user-form");
+  form.elements["id"].value = user.id || "";
+  form.elements["name"].value = user.name || "";
+  form.elements["inbound_ids"].value = (user.inbound_ids || []).join(", ");
+  form.elements["traffic_limit_bytes"].value = user.traffic_limit_bytes || "";
+  form.elements["expires_at"].value = dateInputValue(user.expires_at);
+  form.elements["enabled"].checked = user.enabled !== false;
+  $("proxy-error").textContent = "";
+}
+
+function resetProxyUserForm() {
+  $("proxy-user-form").reset();
+  $("proxy-user-form").elements["id"].value = "";
+  $("proxy-user-form").elements["enabled"].checked = true;
+  $("proxy-error").textContent = "";
+}
+
+async function submitProxyUser(event) {
+  event.preventDefault();
+  $("proxy-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  let payload;
+  try {
+    payload = proxyUserPayload({
+      id: form.get("id"),
+      name: form.get("name"),
+      inbound_ids: form.get("inbound_ids"),
+      traffic_limit_bytes: form.get("traffic_limit_bytes"),
+      expires_at: form.get("expires_at"),
+      enabled: $("proxy-user-form").elements["enabled"].checked,
+    });
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+    return;
+  }
+  try {
+    await api("/api/proxy/users", { method: "POST", body: JSON.stringify(payload) });
+    resetProxyUserForm();
+    await loadProxyCore();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+async function deleteProxyUser(id) {
+  $("proxy-error").textContent = "";
+  const user = state.proxyUsers.find((x) => x.id === id) || { id };
+  if (!confirmProxyDelete("user", user, window.confirm.bind(window))) return;
+  try {
+    await api("/api/proxy/users/delete", { method: "POST", body: JSON.stringify({ id }) });
+    await loadProxyCore();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+async function rotateProxyUser(id) {
+  $("proxy-error").textContent = "";
+  $("proxy-subscription-output").classList.add("hidden");
+  const user = state.proxyUsers.find((x) => x.id === id) || { id };
+  if (!confirmProxyRotate(user, window.confirm.bind(window))) return;
+  try {
+    const data = await api("/api/proxy/users/rotate-sub-token", { method: "POST", body: JSON.stringify({ id }) });
+    await loadProxyCore();
+    showProxySubscriptionURL(data.subscription_url || "");
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+function showProxySubscriptionURL(url) {
+  const box = $("proxy-subscription-output");
+  if (!url) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `<article class="kv-item proxy-card">
+    <strong>Subscription URL</strong>
+    <div class="copy-field">
+      <input id="proxy-subscription-url" readonly value="${escapeHtml(url)}" />
+      <button type="button" id="proxy-copy-subscription" class="secondary">Copy</button>
+    </div>
+    <small id="proxy-copy-status" class="muted"></small>
+  </article>`;
+  box.classList.remove("hidden");
+  $("proxy-copy-subscription").addEventListener("click", copyProxySubscriptionURL);
+}
+
+async function copyProxySubscriptionURL() {
+  const input = $("proxy-subscription-url");
+  if (!input) return;
+  try {
+    await navigator.clipboard.writeText(input.value);
+    $("proxy-copy-status").textContent = "Copied.";
+  } catch {
+    input.focus();
+    input.select();
+    document.execCommand("copy");
+    $("proxy-copy-status").textContent = "Selected.";
+  }
+}
+
+function editProxyProfile(nodeID) {
+  const profile = state.proxyProfiles.find((x) => x.node_id === nodeID);
+  if (!profile) return;
+  const form = $("proxy-profile-form");
+  form.elements["id"].value = profile.id || "";
+  form.elements["node_id"].value = profile.node_id || "";
+  form.elements["inbound_ids"].value = (profile.inbound_ids || []).join(", ");
+  form.elements["hostname"].value = profile.hostname || "";
+  form.elements["listen_ip"].value = profile.listen_ip || "";
+  form.elements["config_path"].value = profile.config_path || "";
+  form.elements["stats_api"].value = profile.stats_api || "";
+  $("proxy-error").textContent = "";
+}
+
+function resetProxyProfileForm() {
+  $("proxy-profile-form").reset();
+  $("proxy-profile-form").elements["id"].value = "";
+  $("proxy-error").textContent = "";
+}
+
+async function submitProxyProfile(event) {
+  event.preventDefault();
+  $("proxy-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  let payload;
+  try {
+    payload = proxyProfilePayload({
+      id: form.get("id"),
+      node_id: form.get("node_id"),
+      inbound_ids: form.get("inbound_ids"),
+      hostname: form.get("hostname"),
+      listen_ip: form.get("listen_ip"),
+      config_path: form.get("config_path"),
+      stats_api: form.get("stats_api"),
+    });
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+    return;
+  }
+  try {
+    await api("/api/proxy/profiles", { method: "POST", body: JSON.stringify(payload) });
+    resetProxyProfileForm();
+    await loadProxyCore();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+async function deleteProxyProfile(nodeID) {
+  $("proxy-error").textContent = "";
+  const profile = state.proxyProfiles.find((x) => x.node_id === nodeID) || { node_id: nodeID };
+  if (!confirmProxyDelete("profile", profile, window.confirm.bind(window))) return;
+  try {
+    await api("/api/proxy/profiles/delete", { method: "POST", body: JSON.stringify({ node_id: nodeID }) });
+    await loadProxyCore();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+async function planProxyProfile(nodeID) {
+  $("proxy-error").textContent = "";
+  try {
+    await api(`/api/proxy/nodes/${encodeURIComponent(nodeID)}/plan`, { method: "POST", body: "{}" });
+    await refresh();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
   }
 }
 
@@ -1528,6 +1942,13 @@ $("nft-form").addEventListener("submit", createNFTPlan);
 $("nft-reset").addEventListener("click", resetNFTForm);
 $("dns-form").addEventListener("submit", submitDNSDeployment);
 $("dns-reset").addEventListener("click", resetDNSForm);
+$("proxy-refresh").addEventListener("click", loadProxyCore);
+$("proxy-inbound-form").addEventListener("submit", submitProxyInbound);
+$("proxy-inbound-reset").addEventListener("click", resetProxyInboundForm);
+$("proxy-user-form").addEventListener("submit", submitProxyUser);
+$("proxy-user-reset").addEventListener("click", resetProxyUserForm);
+$("proxy-profile-form").addEventListener("submit", submitProxyProfile);
+$("proxy-profile-reset").addEventListener("click", resetProxyProfileForm);
 $("netpolicy-form").addEventListener("submit", submitNetPolicy);
 $("netpolicy-reset").addEventListener("click", resetNetPolicyForm);
 $("audit-filter-form").addEventListener("submit", filterAudit);

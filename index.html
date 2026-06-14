@@ -263,6 +263,73 @@
               </form>
             </div>
 
+            <div class="panel hidden" id="proxy-panel">
+              <div class="panel-head">
+                <h2>Proxy Core</h2>
+                <button type="button" id="proxy-refresh" class="secondary">Refresh</button>
+              </div>
+              <p id="proxy-error" class="error"></p>
+              <section class="proxy-grid">
+                <section class="proxy-section">
+                  <h3>Inbounds</h3>
+                  <div id="proxy-inbounds-list" class="kv-list"></div>
+                  <form id="proxy-inbound-form" class="proxy-form">
+                    <input name="id" placeholder="id (optional)" autocomplete="off" />
+                    <input name="name" placeholder="name" autocomplete="off" />
+                    <input name="port" type="number" min="1" max="65535" placeholder="port" />
+                    <input name="listen" placeholder="listen ip (::)" autocomplete="off" />
+                    <input name="sni" placeholder="sni: cdn.example.com" autocomplete="off" />
+                    <input name="alpn" placeholder="alpn: h2, http/1.1" autocomplete="off" />
+                    <input name="reality_private_key" type="password" placeholder="reality private key (blank = keep current)" autocomplete="off" />
+                    <input name="reality_public_key" placeholder="reality public key" autocomplete="off" />
+                    <input name="reality_short_ids" placeholder="short ids: aa, 0123456789abcdef" autocomplete="off" />
+                    <input name="reality_dest" placeholder="reality dest: www.microsoft.com:443" autocomplete="off" />
+                    <label class="checkbox-row"><input type="checkbox" name="enabled" checked /> Enabled</label>
+                    <div class="inline-form">
+                      <button type="submit">Save Inbound</button>
+                      <button type="button" id="proxy-inbound-reset" class="secondary">Clear</button>
+                    </div>
+                  </form>
+                </section>
+
+                <section class="proxy-section">
+                  <h3>Users</h3>
+                  <div id="proxy-users-list" class="kv-list"></div>
+                  <form id="proxy-user-form" class="proxy-form">
+                    <input name="id" placeholder="id (optional)" autocomplete="off" />
+                    <input name="name" placeholder="name" autocomplete="off" />
+                    <input name="inbound_ids" placeholder="inbound ids: in-a, in-b" autocomplete="off" />
+                    <input name="traffic_limit_bytes" type="number" min="0" placeholder="traffic limit bytes" />
+                    <input name="expires_at" type="date" />
+                    <label class="checkbox-row"><input type="checkbox" name="enabled" checked /> Enabled</label>
+                    <div class="inline-form">
+                      <button type="submit">Save User</button>
+                      <button type="button" id="proxy-user-reset" class="secondary">Clear</button>
+                    </div>
+                  </form>
+                  <div id="proxy-subscription-output" class="hidden"></div>
+                </section>
+
+                <section class="proxy-section">
+                  <h3>Node Profiles</h3>
+                  <div id="proxy-profiles-list" class="kv-list"></div>
+                  <form id="proxy-profile-form" class="proxy-form">
+                    <input type="hidden" name="id" />
+                    <input name="node_id" placeholder="node id" autocomplete="off" />
+                    <input name="inbound_ids" placeholder="inbound ids: in-a, in-b" autocomplete="off" />
+                    <input name="hostname" placeholder="hostname: node-a.dns.example.com" autocomplete="off" />
+                    <input name="listen_ip" placeholder="listen override" autocomplete="off" />
+                    <input name="config_path" placeholder="config path (/etc/sing-box/config.json)" autocomplete="off" />
+                    <input name="stats_api" placeholder="stats api: 127.0.0.1:9090" autocomplete="off" />
+                    <div class="inline-form">
+                      <button type="submit">Save Profile</button>
+                      <button type="button" id="proxy-profile-reset" class="secondary">Clear</button>
+                    </div>
+                  </form>
+                </section>
+              </section>
+            </div>
+
             <div class="panel hidden" id="netpolicy-panel">
               <div class="panel-head">
                 <h2>Network Policy</h2>
