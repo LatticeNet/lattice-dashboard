@@ -21,6 +21,7 @@ export function netPolicyPayload(existing, fields) {
   const remote = { kind: remoteKind };
   if (remoteKind === "node") remote.node_id = String(fields.remote_node_id || "").trim();
   if (remoteKind === "cidr") remote.cidr = String(fields.remote_cidr || "").trim();
+  if (remoteKind === "domain") remote.domain = String(fields.remote_domain || "").trim();
   const rule = {
     comment: String(fields.comment || "").trim(),
     action: String(fields.action || "deny").trim(),
@@ -43,7 +44,9 @@ export function describeNetRule(rule) {
     ? `node:${remote.node_id || ""}`
     : remote.kind === "cidr"
       ? remote.cidr || "cidr"
-      : "any";
+      : remote.kind === "domain"
+        ? `domain:${remote.domain || ""}`
+        : "any";
   const ports = Array.isArray(rule?.ports) && rule.ports.length ? `:${rule.ports.join(",")}` : "";
   return `${rule?.action || ""} ${rule?.direction || ""} ${remoteText} ${rule?.protocol || ""}${ports}`.trim();
 }

@@ -28,12 +28,17 @@ test("netPolicyPayload appends a normalized node rule", () => {
   });
 });
 
-test("netPolicyPayload handles cidr and any remotes", () => {
+test("netPolicyPayload handles cidr, domain, and any remotes", () => {
   assert.deepEqual(netPolicyPayload(null, {
     target_node_id: "n1",
     remote_kind: "cidr",
     remote_cidr: " 192.0.2.0/24 ",
   }).rules[0].remote, { kind: "cidr", cidr: "192.0.2.0/24" });
+  assert.deepEqual(netPolicyPayload(null, {
+    target_node_id: "n1",
+    remote_kind: "domain",
+    remote_domain: " API.Example.COM. ",
+  }).rules[0].remote, { kind: "domain", domain: "API.Example.COM." });
   assert.deepEqual(netPolicyPayload(null, {
     target_node_id: "n1",
     remote_kind: "any",
@@ -48,6 +53,13 @@ test("describeNetRule returns compact operator text", () => {
     ports: [1234],
     remote: { kind: "node", node_id: "node-b" },
   }), "deny egress node:node-b tcp:1234");
+  assert.equal(describeNetRule({
+    action: "allow",
+    direction: "egress",
+    protocol: "tcp",
+    ports: [443],
+    remote: { kind: "domain", domain: "api.example.com" },
+  }), "allow egress domain:api.example.com tcp:443");
 });
 
 test("parseNetPolicyPorts rejects invalid ports instead of silently widening", () => {

@@ -1033,6 +1033,7 @@ async function submitNetPolicy(event) {
       remote_kind: form.get("remote_kind"),
       remote_node_id: form.get("remote_node_id"),
       remote_cidr: form.get("remote_cidr"),
+      remote_domain: form.get("remote_domain"),
       comment: form.get("comment"),
       enabled: $("netpolicy-form").elements["enabled"].checked,
     });
