@@ -153,6 +153,30 @@
 
             <div class="panel">
               <div class="panel-head">
+                <h2>Fleet Map</h2>
+              </div>
+              <div id="geo-map" class="geo-map"></div>
+              <div id="geo-list" class="kv-list"></div>
+              <form id="geo-form" class="geo-form">
+                <input name="node_id" placeholder="node id" autocomplete="off" />
+                <input name="country" placeholder="country: JP" maxlength="2" autocomplete="off" />
+                <input name="city" placeholder="city" autocomplete="off" />
+                <input name="lat" type="number" step="0.000001" placeholder="latitude" />
+                <input name="lon" type="number" step="0.000001" placeholder="longitude" />
+                <input name="asn" type="number" min="0" placeholder="asn" />
+                <input name="as_org" placeholder="as org" autocomplete="off" />
+                <input name="provider" placeholder="provider" autocomplete="off" />
+                <div class="inline-form">
+                  <button type="submit">Save Location</button>
+                  <button type="button" id="geo-clear" class="secondary">Clear Location</button>
+                  <button type="button" id="geo-reset" class="secondary">Clear Form</button>
+                </div>
+                <p id="geo-error" class="error"></p>
+              </form>
+            </div>
+
+            <div class="panel">
+              <div class="panel-head">
                 <h2>Batch Task</h2>
               </div>
               <form id="task-form" class="task-grid">

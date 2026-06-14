@@ -14,6 +14,9 @@ host.
 - Machines panel for server-only inventory profiles: vendor/region, cost,
   renewal date, write-only console/detail links, mark-renewed, and manual
   reminder evaluation.
+- Fleet Map panel for operator-owned NodeGeo records: dependency-free inline SVG
+  world map, online/offline pins, and geo edit/clear form. It does not call
+  external map tiles or live geo-IP APIs.
 - Batch task form and task result cards.
 - KV editor.
 - Worker deployment form.

@@ -29,6 +29,15 @@ import {
 import { dateInputValue, formatMoney, machinePayload, renewalState } from "./machines.js";
 import { describeNetRule, netPolicyPayload } from "./netpolicy.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
+import {
+  GEO_MAP_HEIGHT,
+  GEO_MAP_WIDTH,
+  geoClearPayload,
+  geoLabel,
+  geoPayload,
+  nodesWithGeo,
+  projectGeoPoint,
+} from "./geomap.js";
 
 const state = {
   csrf: "",
@@ -39,6 +48,7 @@ const state = {
   results: [],
   approvals: [],
   nftInputs: [],
+  geoNodes: [],
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
   machines: [],
@@ -566,9 +576,10 @@ async function runMachineReminders() {
 }
 
 async function refresh() {
-  const [me, nodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
+  const [me, nodes, geoNodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
     api("/api/me"),
     api("/api/nodes"),
+    api("/api/nodes/geo"),
     api("/api/tasks"),
     api("/api/task-results"),
     api("/api/network/approvals"),
@@ -580,6 +591,7 @@ async function refresh() {
   state.csrf = me.csrf_token || state.csrf;
   state.totpEnabled = !!me.totp_enabled;
   state.nodes = Array.isArray(nodes) ? nodes : [];
+  state.geoNodes = Array.isArray(geoNodes) ? geoNodes : [];
   state.tasks = Array.isArray(tasks) ? tasks : [];
   state.results = Array.isArray(results) ? results : [];
   state.approvals = Array.isArray(approvals) ? approvals : [];
@@ -599,6 +611,7 @@ function render() {
   $("queued-count").textContent = state.tasks.filter((t) => t.status === "queued").length;
   $("approval-count").textContent = state.approvals.filter((a) => a.status === "pending").length;
   renderNodes();
+  renderGeoMap();
   renderResults();
   renderApprovals();
   renderNFTInputs();
@@ -627,6 +640,146 @@ function renderNodes() {
       </tr>`;
     })
     .join("");
+}
+
+function renderGeoMap() {
+  const map = $("geo-map");
+  const list = $("geo-list");
+  if (!map || !list) return;
+  const visible = Array.isArray(state.geoNodes) ? state.geoNodes : [];
+  const located = nodesWithGeo(visible);
+  const pins = located
+    .map((node) => {
+      const point = projectGeoPoint(node.geo.lat, node.geo.lon);
+      const label = geoLabel(node);
+      const stateClass = node.online ? "online" : "offline";
+      return `<g class="geo-pin ${stateClass}" transform="translate(${point.x.toFixed(1)} ${point.y.toFixed(1)})" data-geo-pin="${escapeHtml(node.id)}">
+        <title>${escapeHtml(label)}</title>
+        <circle r="7"></circle>
+        <circle r="2.5" class="geo-pin-core"></circle>
+      </g>`;
+    })
+    .join("");
+  const emptyText = located.length
+    ? ""
+    : `<text x="${GEO_MAP_WIDTH / 2}" y="${GEO_MAP_HEIGHT / 2}" text-anchor="middle" class="geo-empty">No node locations configured</text>`;
+  map.innerHTML = `<svg viewBox="0 0 ${GEO_MAP_WIDTH} ${GEO_MAP_HEIGHT}" role="img" aria-label="Lattice fleet map">
+    <rect class="geo-ocean" x="0" y="0" width="${GEO_MAP_WIDTH}" height="${GEO_MAP_HEIGHT}" rx="10"></rect>
+    <path class="geo-grid" d="M167 0V460M333 0V460M500 0V460M667 0V460M833 0V460M0 115H1000M0 230H1000M0 345H1000"></path>
+    <path class="geo-land" d="M138 125l52-35 86 18 45 48-24 55 42 48-44 61-94 23-76-35-27-80 18-69zM347 114l92-39 92 24 35 72-31 64 47 55-50 61-96 14-76-43-9-75-47-39zM587 118l118-32 120 39 74 78-25 92-99 44-98-18-54-77-67 7-35-50zM674 306l84 24 36 59-41 44-91-12-38-56zM452 269l48 29 12 70-41 58-52-39-6-73z"></path>
+    ${emptyText}
+    ${pins}
+  </svg>`;
+  map.querySelectorAll("[data-geo-pin]").forEach((pin) => {
+    pin.addEventListener("click", () => fillGeoForm(pin.dataset.geoPin));
+  });
+
+  if (!visible.length) {
+    list.innerHTML = `<article class="kv-item"><span class="muted">No visible nodes.</span></article>`;
+    return;
+  }
+  list.innerHTML = visible
+    .map((node) => {
+      const geo = node.geo || {};
+      const place = [geo.city, geo.country].filter(Boolean).join(", ") || "not set";
+      const coords = geo.lat !== undefined && geo.lon !== undefined
+        ? `${Number(geo.lat).toFixed(4)}, ${Number(geo.lon).toFixed(4)}`
+        : "-";
+      return `<article class="kv-item geo-node">
+        <div class="oidc-provider-head">
+          <div>
+            <strong>${escapeHtml(node.name || node.id)}</strong>
+            <small class="mono">${escapeHtml(node.id)}</small>
+          </div>
+          <span class="oidc-actions">
+            <button type="button" class="secondary" data-geo-fill="${escapeHtml(node.id)}">${node.geo ? "Edit" : "Add"}</button>
+          </span>
+        </div>
+        <div class="geo-node-meta">
+          <span class="${node.online ? "pill" : "danger"}">${node.online ? "online" : "offline"}</span>
+          <span class="muted">${escapeHtml(place)}</span>
+          <span class="mono">${escapeHtml(coords)}</span>
+          ${geo.asn ? `<span class="pill">AS${escapeHtml(geo.asn)}</span>` : ""}
+          ${geo.provider ? `<span class="pill">${escapeHtml(geo.provider)}</span>` : ""}
+        </div>
+      </article>`;
+    })
+    .join("");
+  list.querySelectorAll("[data-geo-fill]").forEach((button) => {
+    button.addEventListener("click", () => fillGeoForm(button.dataset.geoFill));
+  });
+}
+
+function findGeoNode(nodeID) {
+  return state.geoNodes.find((node) => node.id === nodeID) || state.nodes.find((node) => node.id === nodeID);
+}
+
+function fillGeoForm(nodeID) {
+  const node = findGeoNode(nodeID);
+  if (!node) return;
+  const geo = node.geo || {};
+  const form = $("geo-form");
+  form.elements["node_id"].value = node.id || "";
+  form.elements["country"].value = geo.country || "";
+  form.elements["city"].value = geo.city || "";
+  form.elements["lat"].value = geo.lat ?? "";
+  form.elements["lon"].value = geo.lon ?? "";
+  form.elements["asn"].value = geo.asn || "";
+  form.elements["as_org"].value = geo.as_org || "";
+  form.elements["provider"].value = geo.provider || "";
+  $("geo-error").textContent = "";
+}
+
+function resetGeoForm() {
+  $("geo-form").reset();
+  $("geo-error").textContent = "";
+}
+
+async function submitGeo(event) {
+  event.preventDefault();
+  $("geo-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  let payload;
+  try {
+    payload = geoPayload({
+      node_id: form.get("node_id"),
+      country: form.get("country"),
+      city: form.get("city"),
+      lat: form.get("lat"),
+      lon: form.get("lon"),
+      asn: form.get("asn"),
+      as_org: form.get("as_org"),
+      provider: form.get("provider"),
+    });
+  } catch (error) {
+    $("geo-error").textContent = error.message;
+    return;
+  }
+  try {
+    await api("/api/nodes/geo", { method: "POST", body: JSON.stringify(payload) });
+    resetGeoForm();
+    await refresh();
+  } catch (error) {
+    $("geo-error").textContent = error.message;
+  }
+}
+
+async function clearGeo() {
+  $("geo-error").textContent = "";
+  let payload;
+  try {
+    payload = geoClearPayload($("geo-form").elements["node_id"].value);
+  } catch (error) {
+    $("geo-error").textContent = error.message;
+    return;
+  }
+  try {
+    await api("/api/nodes/geo", { method: "POST", body: JSON.stringify(payload) });
+    resetGeoForm();
+    await refresh();
+  } catch (error) {
+    $("geo-error").textContent = error.message;
+  }
 }
 
 function renderResults() {
@@ -1151,6 +1304,9 @@ $("enroll-form").addEventListener("submit", enroll);
 $("machine-form").addEventListener("submit", submitMachine);
 $("machine-reset").addEventListener("click", resetMachineForm);
 $("machines-reminders-run").addEventListener("click", runMachineReminders);
+$("geo-form").addEventListener("submit", submitGeo);
+$("geo-clear").addEventListener("click", clearGeo);
+$("geo-reset").addEventListener("click", resetGeoForm);
 $("task-form").addEventListener("submit", queueTask);
 $("kv-form").addEventListener("submit", saveKV);
 $("worker-form").addEventListener("submit", deployWorker);
