@@ -35,11 +35,12 @@ host.
   publish errors so operators can see which layer failed.
 - Proxy Core panel for central sing-box MVP management: inbounds, users, and
   node profiles. It uses secret-free list views, write-only REALITY private-key
-  input, profile plan creation through the existing approval flow, and an
-  explicit audited rotate/copy subscription URL workflow. It also shows
-  baseline usage/quota progress, last-seen timestamps, and per-profile usage
-  snapshot freshness. Ordinary refresh does not expose UUID/password/sub-token
-  material.
+  input, an optional client `fingerprint` field, profile plan creation through
+  the existing approval flow, focused pending `proxycore/apply-config` review
+  with plan-hash-bound queue apply, and an explicit audited rotate/copy
+  subscription URL workflow. It also shows baseline usage/quota progress,
+  last-seen timestamps, and per-profile usage snapshot freshness. Ordinary
+  refresh does not expose UUID/password/sub-token material.
 - Network Policy panel for saved `NetPolicy` intents, a server-derived
   reachability graph with inline-SVG visualization, and a `Plan Apply` action
   that creates the rollback-protected `nftpolicy` approval. Execution still

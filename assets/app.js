@@ -35,6 +35,7 @@ import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary }
 import {
   confirmProxyDelete,
   confirmProxyRotate,
+  proxyCoreApprovalQueue,
   proxyInboundPayload,
   proxyProfilePayload,
   proxyUsageLabel,
@@ -1094,6 +1095,7 @@ function renderProxyCore() {
   renderProxyInbounds();
   renderProxyUsers();
   renderProxyProfiles();
+  renderProxyApprovals();
 }
 
 function renderProxyInbounds() {
@@ -1113,6 +1115,7 @@ function renderProxyInbounds() {
     ].join("");
     const meta = [
       inbound.sni ? `sni ${inbound.sni}` : "",
+      inbound.fingerprint ? `fp ${inbound.fingerprint}` : "",
       Array.isArray(inbound.alpn) && inbound.alpn.length ? `alpn ${inbound.alpn.join(",")}` : "",
       inbound.reality_dest ? `dest ${inbound.reality_dest}` : "",
     ].filter(Boolean).join(" · ");
@@ -1236,6 +1239,36 @@ function renderProxyProfiles() {
   });
 }
 
+function renderProxyApprovals() {
+  const container = $("proxy-approvals-list");
+  if (!container) return;
+  const approvals = proxyCoreApprovalQueue(state.approvals);
+  if (!approvals.length) {
+    container.innerHTML = `<article class="kv-item"><span class="muted">No pending proxy apply reviews.</span></article>`;
+    return;
+  }
+  container.innerHTML = approvals.map((approval) => `<article class="kv-item proxy-card proxy-approval">
+    <div class="proxy-card-head">
+      <div>
+        <strong>${escapeHtml(approval.node_id)}</strong>
+        <small class="mono">${escapeHtml(approval.id)}</small>
+      </div>
+      <span class="proxy-actions">
+        <button type="button" data-proxy-approval="${escapeHtml(approval.id)}">Queue Apply</button>
+      </span>
+    </div>
+    <div class="proxy-meta">
+      <span class="warn">${escapeHtml(approval.status)}</span>
+      <span class="pill">${escapeHtml(approval.action)}</span>
+      ${approval.created_at ? `<span class="pill">${escapeHtml(formatDate(approval.created_at))}</span>` : ""}
+    </div>
+    <pre>${escapeHtml(approval.plan || "")}</pre>
+  </article>`).join("");
+  container.querySelectorAll("[data-proxy-approval]").forEach((button) => {
+    button.addEventListener("click", () => approveProxyCore(button.dataset.proxyApproval));
+  });
+}
+
 function editProxyInbound(id) {
   const inbound = state.proxyInbounds.find((x) => x.id === id);
   if (!inbound) return;
@@ -1245,6 +1278,7 @@ function editProxyInbound(id) {
   form.elements["port"].value = inbound.port || "";
   form.elements["listen"].value = inbound.listen || "";
   form.elements["sni"].value = inbound.sni || "";
+  form.elements["fingerprint"].value = inbound.fingerprint || "";
   form.elements["alpn"].value = (inbound.alpn || []).join(", ");
   form.elements["reality_private_key"].value = "";
   form.elements["reality_public_key"].value = inbound.reality_public_key || "";
@@ -1273,6 +1307,7 @@ async function submitProxyInbound(event) {
       port: form.get("port"),
       listen: form.get("listen"),
       sni: form.get("sni"),
+      fingerprint: form.get("fingerprint"),
       alpn: form.get("alpn"),
       reality_private_key: form.get("reality_private_key"),
       reality_public_key: form.get("reality_public_key"),
@@ -1475,6 +1510,20 @@ async function planProxyProfile(nodeID) {
   $("proxy-error").textContent = "";
   try {
     await api(`/api/proxy/nodes/${encodeURIComponent(nodeID)}/plan`, { method: "POST", body: "{}" });
+    await refresh();
+  } catch (error) {
+    $("proxy-error").textContent = error.message;
+  }
+}
+
+async function approveProxyCore(approvalId) {
+  $("proxy-error").textContent = "";
+  try {
+    const payload = await approvalPayload(approvalById(proxyCoreApprovalQueue(state.approvals), approvalId));
+    await api("/api/network/approvals/approve", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
     await refresh();
   } catch (error) {
     $("proxy-error").textContent = error.message;

@@ -43,6 +43,7 @@ export function proxyInboundPayload(fields) {
   optionalInt(body, "port", fields.port);
   optionalString(body, "listen", fields.listen);
   optionalString(body, "sni", fields.sni);
+  optionalString(body, "fingerprint", fields.fingerprint);
   const alpn = splitProxyList(fields.alpn);
   if (alpn.length) body.alpn = alpn;
   optionalString(body, "reality_private_key", fields.reality_private_key);
@@ -111,4 +112,18 @@ export function proxyUsageLabel(user, formatBytes = String) {
   if (!Number.isFinite(limit) || limit <= 0) return `${formatBytes(used)} used`;
   const pct = proxyUsagePercent({ used_bytes: used, traffic_limit_bytes: limit });
   return `${formatBytes(used)} / ${formatBytes(limit)} (${pct}%)`;
+}
+
+export function proxyCoreApprovalQueue(approvals) {
+  return (approvals || [])
+    .filter((approval) =>
+      approval &&
+      approval.plugin === "proxycore" &&
+      approval.action === "apply-config" &&
+      approval.status === "pending" &&
+      approval.id &&
+      approval.node_id,
+    )
+    .slice()
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
 }

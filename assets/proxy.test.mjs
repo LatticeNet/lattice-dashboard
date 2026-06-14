@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   confirmProxyDelete,
   confirmProxyRotate,
+  proxyCoreApprovalQueue,
   proxyDeleteConfirmMessage,
   proxyInboundPayload,
   proxyProfilePayload,
@@ -26,6 +27,7 @@ test("proxyInboundPayload builds the narrow sing-box VLESS REALITY payload", () 
     port: "443",
     listen: "::",
     sni: "cdn.example.com",
+    fingerprint: " chrome ",
     alpn: "h2, http/1.1",
     reality_private_key: " private-key ",
     reality_public_key: " public-key ",
@@ -42,6 +44,7 @@ test("proxyInboundPayload builds the narrow sing-box VLESS REALITY payload", () 
     listen: "::",
     port: 443,
     sni: "cdn.example.com",
+    fingerprint: "chrome",
     alpn: ["h2", "http/1.1"],
     reality_private_key: "private-key",
     reality_public_key: "public-key",
@@ -122,4 +125,16 @@ test("proxy usage labels show quota progress without leaking credentials", () =>
   assert.equal(proxyUsageLabel({ used_bytes: 50, traffic_limit_bytes: 200 }, fmt), "50B / 200B (25%)");
   assert.equal(proxyUsageLabel({ used_bytes: 50 }, fmt), "50B used");
   assert.equal(proxyUsageLabel({ used_bytes: "not-a-number" }, fmt), "0B used");
+});
+
+test("proxyCoreApprovalQueue selects only pending proxy apply reviews", () => {
+  const approvals = [
+    { id: "old", plugin: "proxycore", action: "apply-config", status: "pending", node_id: "node-a", created_at: "2026-06-14T10:00:00Z" },
+    { id: "new", plugin: "proxycore", action: "apply-config", status: "pending", node_id: "node-b", created_at: "2026-06-14T11:00:00Z" },
+    { id: "applied", plugin: "proxycore", action: "apply-config", status: "applied", node_id: "node-c", created_at: "2026-06-14T12:00:00Z" },
+    { id: "nft", plugin: "nft", action: "apply", status: "pending", node_id: "node-d", created_at: "2026-06-14T13:00:00Z" },
+    { id: "proxy-other", plugin: "proxycore", action: "rotate", status: "pending", node_id: "node-e", created_at: "2026-06-14T14:00:00Z" },
+    { id: "missing-node", plugin: "proxycore", action: "apply-config", status: "pending", created_at: "2026-06-14T15:00:00Z" },
+  ];
+  assert.deepEqual(proxyCoreApprovalQueue(approvals).map((a) => a.id), ["new", "old"]);
 });

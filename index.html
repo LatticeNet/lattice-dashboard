@@ -279,6 +279,7 @@
                     <input name="port" type="number" min="1" max="65535" placeholder="port" />
                     <input name="listen" placeholder="listen ip (::)" autocomplete="off" />
                     <input name="sni" placeholder="sni: cdn.example.com" autocomplete="off" />
+                    <input name="fingerprint" placeholder="fingerprint: chrome" autocomplete="off" />
                     <input name="alpn" placeholder="alpn: h2, http/1.1" autocomplete="off" />
                     <input name="reality_private_key" type="password" placeholder="reality private key (blank = keep current)" autocomplete="off" />
                     <input name="reality_public_key" placeholder="reality public key" autocomplete="off" />
@@ -326,6 +327,11 @@
                       <button type="button" id="proxy-profile-reset" class="secondary">Clear</button>
                     </div>
                   </form>
+                </section>
+
+                <section class="proxy-section proxy-apply-section">
+                  <h3>Apply Review</h3>
+                  <div id="proxy-approvals-list" class="kv-list"></div>
                 </section>
               </section>
             </div>
