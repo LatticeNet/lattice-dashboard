@@ -215,6 +215,54 @@
               <div id="approvals" class="result-list"></div>
             </div>
 
+            <div class="panel hidden" id="dns-panel">
+              <div class="panel-head">
+                <h2>Self-host DNS</h2>
+              </div>
+              <div id="dns-list" class="kv-list"></div>
+              <form id="dns-form" class="dns-form">
+                <input type="hidden" name="id" />
+                <input name="name" placeholder="name" autocomplete="off" />
+                <input name="node_id" placeholder="node id" autocomplete="off" />
+                <select name="engine">
+                  <option value="coredns">CoreDNS</option>
+                </select>
+                <input name="listen_port" type="number" min="1" max="65535" placeholder="listen port (53)" />
+                <select name="exposure">
+                  <option value="mesh">mesh only</option>
+                  <option value="public">public</option>
+                </select>
+                <input name="hostname" placeholder="hostname: node.dns.example.com" autocomplete="off" />
+                <input name="ddns_profile_id" placeholder="ddns profile id (optional)" autocomplete="off" />
+                <input name="cf_api_token" type="password" placeholder="Cloudflare token (blank = keep current)" autocomplete="off" />
+                <input name="record_ttl" type="number" min="1" max="86400" placeholder="record ttl (60)" />
+                <input name="zone_suffix" placeholder="zone suffix: . or mesh.local" value="." autocomplete="off" />
+                <select name="zone_mode">
+                  <option value="forward">forward</option>
+                  <option value="static">static</option>
+                  <option value="block">block</option>
+                </select>
+                <input name="upstreams" placeholder="forward upstreams: 1.1.1.1, 9.9.9.9" autocomplete="off" />
+                <input name="record_name" placeholder="static record name" autocomplete="off" />
+                <select name="record_type">
+                  <option value="A">A</option>
+                  <option value="AAAA">AAAA</option>
+                  <option value="CNAME">CNAME</option>
+                </select>
+                <input name="record_value" placeholder="static record value" autocomplete="off" />
+                <label class="checkbox-row"><input type="checkbox" name="enable_udp" checked /> UDP</label>
+                <label class="checkbox-row"><input type="checkbox" name="enable_tcp" checked /> TCP</label>
+                <label class="checkbox-row"><input type="checkbox" name="publish_ipv4" checked /> Publish IPv4</label>
+                <label class="checkbox-row"><input type="checkbox" name="publish_ipv6" /> Publish IPv6</label>
+                <label class="checkbox-row"><input type="checkbox" name="disabled" /> Disabled</label>
+                <div class="inline-form">
+                  <button type="submit">Save DNS</button>
+                  <button type="button" id="dns-reset" class="secondary">Clear</button>
+                </div>
+                <p id="dns-error" class="error"></p>
+              </form>
+            </div>
+
             <div class="panel hidden" id="netpolicy-panel">
               <div class="panel-head">
                 <h2>Network Policy</h2>

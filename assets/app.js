@@ -31,6 +31,7 @@ import { dateInputValue, formatMoney, machinePayload, renewalState } from "./mac
 import { describeNetRule, netPolicyPayload } from "./netpolicy.js";
 import { policyExternalLabel, policyGraphView } from "./policygraph.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
+import { dnsDeploymentPayload, dnsProtocols, dnsZoneSummary } from "./dns.js";
 import {
   GEO_MAP_HEIGHT,
   GEO_MAP_WIDTH,
@@ -50,6 +51,7 @@ const state = {
   results: [],
   approvals: [],
   nftInputs: [],
+  dnsDeployments: [],
   geoNodes: [],
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
@@ -604,7 +606,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadNFTInputs(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadNFTInputs(), loadDNSDeployments(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -617,6 +619,7 @@ function render() {
   renderResults();
   renderApprovals();
   renderNFTInputs();
+  renderDNSDeployments();
   renderNetPolicies();
   renderKV();
   renderWorkers();
@@ -873,6 +876,145 @@ async function deleteNFTInputs(nodeID) {
     await loadNFTInputs();
   } catch (error) {
     $("nft-error").textContent = error.message;
+  }
+}
+
+async function loadDNSDeployments() {
+  const panel = $("dns-panel");
+  if (!panel) return;
+  try {
+    const data = await api("/api/dns/deployments");
+    state.dnsDeployments = Array.isArray(data.deployments) ? data.deployments : [];
+    panel.classList.remove("hidden");
+    $("dns-error").textContent = "";
+    renderDNSDeployments();
+  } catch {
+    state.dnsDeployments = [];
+    panel.classList.add("hidden");
+  }
+}
+
+function renderDNSDeployments() {
+  const container = $("dns-list");
+  if (!container) return;
+  if (!state.dnsDeployments.length) {
+    container.innerHTML = `<article class="kv-item"><span class="muted">No DNS deployments saved.</span></article>`;
+    return;
+  }
+  container.innerHTML = state.dnsDeployments
+    .map((dep) => {
+      const host = dep.hostname ? `<small class="mono">${escapeHtml(dep.hostname)}</small>` : `<small class="muted">No hostname publishing.</small>`;
+      const credential = dep.has_credential ? `<span class="pill">credential set</span>` : dep.hostname ? `<span class="danger">no credential</span>` : "";
+      return `<article class="kv-item dns-card">
+        <div class="oidc-provider-head">
+          <div>
+            <strong>${escapeHtml(dep.name || dep.id)}</strong>
+            <small class="mono">${escapeHtml(dep.node_name || dep.node_id)} · ${escapeHtml(dep.engine || "coredns")}</small>
+          </div>
+          <span class="oidc-actions">
+            <button type="button" class="secondary" data-dns-edit="${escapeHtml(dep.id)}">Edit</button>
+            <button type="button" class="secondary" data-dns-delete="${escapeHtml(dep.id)}">Delete</button>
+          </span>
+        </div>
+        <div class="plugin-badges">
+          <span class="${dep.disabled ? "danger" : "pill"}">${escapeHtml(dep.status || (dep.disabled ? "disabled" : "pending"))}</span>
+          <span class="pill">${escapeHtml(dep.exposure || "mesh")}</span>
+          <span class="pill">${escapeHtml(dnsProtocols(dep))}:${escapeHtml(dep.listen_port || 53)}</span>
+          ${credential}
+        </div>
+        ${host}
+        <div class="muted">${escapeHtml(dnsZoneSummary(dep.zones))}</div>
+        ${dep.last_error ? `<small class="danger">${escapeHtml(dep.last_error)}</small>` : ""}
+      </article>`;
+    })
+    .join("");
+  container.querySelectorAll("[data-dns-edit]").forEach((button) => {
+    button.addEventListener("click", () => editDNSDeployment(button.dataset.dnsEdit));
+  });
+  container.querySelectorAll("[data-dns-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteDNSDeployment(button.dataset.dnsDelete));
+  });
+}
+
+function editDNSDeployment(id) {
+  const dep = state.dnsDeployments.find((d) => d.id === id);
+  if (!dep) return;
+  const form = $("dns-form");
+  const zone = Array.isArray(dep.zones) && dep.zones.length ? dep.zones[0] : {};
+  const record = Array.isArray(zone.records) && zone.records.length ? zone.records[0] : {};
+  form.elements["id"].value = dep.id || "";
+  form.elements["name"].value = dep.name || "";
+  form.elements["node_id"].value = dep.node_id || "";
+  form.elements["engine"].value = dep.engine || "coredns";
+  form.elements["listen_port"].value = dep.listen_port || "";
+  form.elements["exposure"].value = dep.exposure || "mesh";
+  form.elements["hostname"].value = dep.hostname || "";
+  form.elements["ddns_profile_id"].value = dep.ddns_profile_id || "";
+  form.elements["cf_api_token"].value = "";
+  form.elements["record_ttl"].value = dep.record_ttl || "";
+  form.elements["zone_suffix"].value = zone.suffix || ".";
+  form.elements["zone_mode"].value = zone.mode || "forward";
+  form.elements["upstreams"].value = Array.isArray(zone.upstreams) ? zone.upstreams.join(", ") : "";
+  form.elements["record_name"].value = record.name || "";
+  form.elements["record_type"].value = record.type || "A";
+  form.elements["record_value"].value = record.value || "";
+  form.elements["enable_udp"].checked = dep.enable_udp !== false;
+  form.elements["enable_tcp"].checked = dep.enable_tcp !== false;
+  form.elements["publish_ipv4"].checked = dep.publish_ipv4 !== false;
+  form.elements["publish_ipv6"].checked = dep.publish_ipv6 === true;
+  form.elements["disabled"].checked = dep.disabled === true;
+  $("dns-error").textContent = "";
+}
+
+function resetDNSForm() {
+  $("dns-form").reset();
+  $("dns-form").elements["id"].value = "";
+  $("dns-error").textContent = "";
+}
+
+async function submitDNSDeployment(event) {
+  event.preventDefault();
+  $("dns-error").textContent = "";
+  const form = new FormData(event.currentTarget);
+  const payload = dnsDeploymentPayload({
+    id: form.get("id"),
+    name: form.get("name"),
+    node_id: form.get("node_id"),
+    engine: form.get("engine"),
+    listen_port: form.get("listen_port"),
+    exposure: form.get("exposure"),
+    hostname: form.get("hostname"),
+    ddns_profile_id: form.get("ddns_profile_id"),
+    cf_api_token: form.get("cf_api_token"),
+    record_ttl: form.get("record_ttl"),
+    zone_suffix: form.get("zone_suffix"),
+    zone_mode: form.get("zone_mode"),
+    upstreams: form.get("upstreams"),
+    record_name: form.get("record_name"),
+    record_type: form.get("record_type"),
+    record_value: form.get("record_value"),
+    enable_udp: $("dns-form").elements["enable_udp"].checked,
+    enable_tcp: $("dns-form").elements["enable_tcp"].checked,
+    publish_ipv4: $("dns-form").elements["publish_ipv4"].checked,
+    publish_ipv6: $("dns-form").elements["publish_ipv6"].checked,
+    disabled: $("dns-form").elements["disabled"].checked,
+  });
+  try {
+    await api("/api/dns/deployments", { method: "POST", body: JSON.stringify(payload) });
+    resetDNSForm();
+    await loadDNSDeployments();
+  } catch (error) {
+    $("dns-error").textContent = error.message;
+  }
+}
+
+async function deleteDNSDeployment(id) {
+  $("dns-error").textContent = "";
+  try {
+    await api("/api/dns/deployments/delete", { method: "POST", body: JSON.stringify({ id }) });
+    await loadDNSDeployments();
+  } catch (error) {
+    $("dns-error").textContent = error.message;
   }
 }
 
@@ -1351,6 +1493,8 @@ $("kv-form").addEventListener("submit", saveKV);
 $("worker-form").addEventListener("submit", deployWorker);
 $("nft-form").addEventListener("submit", createNFTPlan);
 $("nft-reset").addEventListener("click", resetNFTForm);
+$("dns-form").addEventListener("submit", submitDNSDeployment);
+$("dns-reset").addEventListener("click", resetDNSForm);
 $("netpolicy-form").addEventListener("submit", submitNetPolicy);
 $("netpolicy-reset").addEventListener("click", resetNetPolicyForm);
 $("audit-filter-form").addEventListener("submit", filterAudit);

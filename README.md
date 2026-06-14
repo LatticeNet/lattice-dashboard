@@ -25,10 +25,16 @@ host.
 - Network Guard panel for persisted per-node nft inputs, public/WireGuard
   TCP/UDP port sets, ingress policy composition into `lattice_guard`, and nft
   plan approval review with client-computed `sha256(plan)` binding.
+- Self-host DNS panel for `DNSDeployment` intent CRUD: node, engine, exposure,
+  listen port, hostname/DDNS binding, write-only Cloudflare token, and a safe
+  single-zone editor. CoreDNS apply/publish controls are intentionally absent
+  until the backend plan/apply path lands.
 - Network Policy panel for saved `NetPolicy` intents, a server-derived
   reachability graph with inline-SVG visualization, and a `Plan Apply` action
   that creates the rollback-protected `nftpolicy` approval. Execution still
-  requires the existing approvals panel and is currently egress-only.
+  requires the existing approvals panel; egress rules apply through the
+  dedicated policy table, while ingress rules compose into the Network Guard
+  input render.
 - Audit stream with action, decision, node, and request-id filters, bounded
   pagination, expandable event details, and one-click request-id tracing.
 - Structured Lattice API error display with compatibility for the legacy string

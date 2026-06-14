@@ -456,9 +456,23 @@ th {
   margin-top: 12px;
 }
 
+.dns-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
 .geo-form .inline-form,
-.geo-form .error {
+.geo-form .error,
+.dns-form .inline-form,
+.dns-form .error {
   grid-column: 1 / -1;
+}
+
+.dns-card {
+  display: grid;
+  gap: 8px;
 }
 
 .geo-node {
@@ -478,7 +492,8 @@ th {
   .metric-strip,
   .task-grid.compact,
   .machine-form,
-  .geo-form {
+  .geo-form,
+  .dns-form {
     grid-template-columns: 1fr;
   }
 
