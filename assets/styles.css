@@ -667,6 +667,100 @@ th {
   gap: 10px;
 }
 
+.netpolicy-graph-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.38fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.netpolicy-graph-visual {
+  min-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1419;
+  overflow: hidden;
+}
+
+.netpolicy-graph-visual.empty {
+  display: grid;
+  place-items: center;
+}
+
+.netpolicy-graph-visual svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.policy-graph-bg {
+  fill: #101820;
+}
+
+.policy-edge {
+  fill: none;
+  stroke-width: 2.2;
+  opacity: 0.9;
+}
+
+.policy-edge.allow {
+  stroke: var(--green);
+}
+
+.policy-edge.deny {
+  stroke: var(--red);
+}
+
+.policy-arrow.allow {
+  fill: var(--green);
+}
+
+.policy-arrow.deny {
+  fill: var(--red);
+}
+
+.policy-node {
+  cursor: pointer;
+}
+
+.policy-node circle {
+  fill: #18202a;
+  stroke: var(--muted);
+  stroke-width: 2;
+}
+
+.policy-node.online circle {
+  stroke: var(--green);
+}
+
+.policy-node.offline circle {
+  stroke: var(--red);
+}
+
+.policy-node text {
+  fill: var(--text);
+  font-size: 12px;
+}
+
+.netpolicy-external-summary {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #12151a;
+}
+
+.netpolicy-external-summary ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.netpolicy-external-summary li {
+  margin: 4px 0;
+}
+
 .netpolicy-graph-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -674,6 +768,7 @@ th {
 }
 
 @media (max-width: 1000px) {
+  .netpolicy-graph-shell,
   .netpolicy-graph-grid {
     grid-template-columns: 1fr;
   }

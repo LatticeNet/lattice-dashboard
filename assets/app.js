@@ -28,6 +28,7 @@ import {
 } from "./plugin-lifecycle.js";
 import { dateInputValue, formatMoney, machinePayload, renewalState } from "./machines.js";
 import { describeNetRule, netPolicyPayload } from "./netpolicy.js";
+import { policyExternalLabel, policyGraphView } from "./policygraph.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
 import {
   GEO_MAP_HEIGHT,
@@ -948,9 +949,32 @@ function renderNetPolicyGraph() {
   const container = $("netpolicy-graph");
   if (!container) return;
   const graph = state.netPolicyGraph || { nodes: [], edges: [], externals: [] };
+  const graphView = policyGraphView(graph);
   const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph.edges) ? graph.edges : [];
   const externals = Array.isArray(graph.externals) ? graph.externals : [];
+  const svgHTML = graphView.nodes.length
+    ? `<div class="netpolicy-graph-visual">
+      <svg viewBox="0 0 ${graphView.width} ${graphView.height}" role="img" aria-label="Network policy reachability graph">
+        <rect class="policy-graph-bg" x="0" y="0" width="${graphView.width}" height="${graphView.height}" rx="10"></rect>
+        ${graphView.edges.map((edge) => `<g class="policy-edge-group">
+          <path class="policy-edge ${edge.className}" d="${edge.path}"><title>${escapeHtml(edge.label)}</title></path>
+          <polygon class="policy-arrow ${edge.className}" points="${edge.arrow}"><title>${escapeHtml(edge.label)}</title></polygon>
+        </g>`).join("")}
+        ${graphView.nodes.map((node) => `<g class="policy-node ${node.online ? "online" : "offline"}" transform="translate(${node.x.toFixed(1)} ${node.y.toFixed(1)})" data-netpolicy-graph-node="${escapeHtml(node.id)}">
+          <title>${escapeHtml(node.title)}</title>
+          <circle r="18"></circle>
+          <text y="34" text-anchor="middle">${escapeHtml(node.label)}</text>
+        </g>`).join("")}
+      </svg>
+    </div>`
+    : `<div class="netpolicy-graph-visual empty"><span class="muted">No visible graph nodes.</span></div>`;
+  const externalSummaryHTML = graphView.externalGroups.length
+    ? `<div class="netpolicy-external-summary">${graphView.externalGroups.map((group) => `<div>
+        <strong>${escapeHtml(group.targetNodeID)}</strong>
+        <ul>${group.edges.map((edge) => `<li><span class="${edge.action === "deny" ? "danger" : "pill"}">${escapeHtml(edge.action)}</span> ${escapeHtml(policyExternalLabel(edge))}</li>`).join("")}</ul>
+      </div>`).join("")}</div>`
+    : `<small class="muted">No external refs.</small>`;
   const nodeHTML = nodes.length
     ? `<div class="netpolicy-node-row">${nodes.map((node) => `<span class="pill">${escapeHtml(node.name || node.id)}</span>`).join("")}</div>`
     : `<small class="muted">No visible nodes.</small>`;
@@ -962,12 +986,19 @@ function renderNetPolicyGraph() {
     : `<li><span class="muted">No external refs.</span></li>`;
   container.innerHTML = `<article class="kv-item netpolicy-graph-card">
     <strong>Policy graph</strong>
+    <div class="netpolicy-graph-shell">
+      ${svgHTML}
+      ${externalSummaryHTML}
+    </div>
     ${nodeHTML}
     <div class="netpolicy-graph-grid">
       <div><small class="muted">Node rules</small><ul>${edgeHTML}</ul></div>
       <div><small class="muted">External rules</small><ul>${externalHTML}</ul></div>
     </div>
   </article>`;
+  container.querySelectorAll("[data-netpolicy-graph-node]").forEach((node) => {
+    node.addEventListener("click", () => fillNetPolicyTarget(node.dataset.netpolicyGraphNode));
+  });
 }
 
 function fillNetPolicyTarget(nodeID) {
