@@ -21,9 +21,10 @@ host.
   transitions.
 - Network Guard panel for persisted per-node nft inputs, public/WireGuard
   TCP/UDP port sets, and nft plan approval review.
-- Network Policy panel for saved `NetPolicy` intents and a server-derived
-  reachability graph. It does not apply firewall rules yet; nft commit support
-  belongs to the later rollback-protected `nftpolicy` approval path.
+- Network Policy panel for saved `NetPolicy` intents, a server-derived
+  reachability graph, and a `Plan Apply` action that creates the rollback-
+  protected `nftpolicy` approval. Execution still requires the existing
+  approvals panel and is currently egress-only.
 - Audit stream with action, decision, node, and request-id filters, bounded
   pagination, expandable event details, and one-click request-id tracing.
 - Structured Lattice API error display with compatibility for the legacy string

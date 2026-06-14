@@ -772,6 +772,7 @@ function renderNetPolicyList() {
         </div>
         <span class="oidc-actions">
           <button type="button" class="secondary" data-netpolicy-fill="${escapeHtml(policy.target_node_id)}">Add Rule</button>
+          <button type="button" class="secondary" data-netpolicy-plan="${escapeHtml(policy.target_node_id)}">Plan Apply</button>
           <button type="button" class="secondary" data-netpolicy-delete="${escapeHtml(policy.target_node_id)}">Delete</button>
         </span>
       </div>
@@ -781,6 +782,9 @@ function renderNetPolicyList() {
   }).join("");
   container.querySelectorAll("[data-netpolicy-fill]").forEach((button) => {
     button.addEventListener("click", () => fillNetPolicyTarget(button.dataset.netpolicyFill));
+  });
+  container.querySelectorAll("[data-netpolicy-plan]").forEach((button) => {
+    button.addEventListener("click", () => planNetPolicy(button.dataset.netpolicyPlan));
   });
   container.querySelectorAll("[data-netpolicy-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteNetPolicy(button.dataset.netpolicyDelete));
@@ -865,6 +869,16 @@ async function deleteNetPolicy(targetNodeID) {
   try {
     await api("/api/netpolicy/delete", { method: "POST", body: JSON.stringify({ target_node_id: targetNodeID }) });
     await loadNetPolicies();
+  } catch (error) {
+    $("netpolicy-error").textContent = error.message;
+  }
+}
+
+async function planNetPolicy(targetNodeID) {
+  $("netpolicy-error").textContent = "";
+  try {
+    await api("/api/netpolicy/plan", { method: "POST", body: JSON.stringify({ node_id: targetNodeID }) });
+    await refresh();
   } catch (error) {
     $("netpolicy-error").textContent = error.message;
   }
