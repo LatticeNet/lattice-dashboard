@@ -7,6 +7,7 @@ import {
   nextAuditOffset,
   normalizeAuditResponse,
 } from "./audit.js";
+import { approvalById, approvalPayload } from "./approval.js";
 import {
   ssoErrorMessage,
   hasAuthRedirectParams,
@@ -801,7 +802,7 @@ function renderApprovals() {
     .map((approval) => `<article class="result">
       <strong>${escapeHtml(approval.node_id)}</strong>
       <span class="pill">${escapeHtml(approval.status)}</span>
-      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>Approve Check</button>
+      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>Approve Apply</button>
       <pre>${escapeHtml(approval.plan)}</pre>
     </article>`)
     .join("");
@@ -1247,11 +1248,17 @@ async function createNFTPlan(event) {
 }
 
 async function approve(approvalId) {
-  await api("/api/network/approvals/approve", {
-    method: "POST",
-    body: JSON.stringify({ approval_id: approvalId, queue_apply: true }),
-  });
-  await refresh();
+  $("nft-error").textContent = "";
+  try {
+    const payload = await approvalPayload(approvalById(state.approvals, approvalId));
+    await api("/api/network/approvals/approve", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await refresh();
+  } catch (error) {
+    $("nft-error").textContent = error.message;
+  }
 }
 
 async function logout() {
