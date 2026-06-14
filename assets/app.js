@@ -906,6 +906,7 @@ function renderDNSDeployments() {
       const host = dep.hostname ? `<small class="mono">${escapeHtml(dep.hostname)}</small>` : `<small class="muted">No hostname publishing.</small>`;
       const credential = dep.has_credential ? `<span class="pill">credential set</span>` : dep.hostname ? `<span class="danger">no credential</span>` : "";
       const publishSummary = dnsPublishSummary(dep);
+      const publishWhen = dep.last_published_at ? ` · ${escapeHtml(formatDate(dep.last_published_at))}` : "";
       const canPublish = dep.hostname && dep.has_credential && !dep.disabled;
       return `<article class="kv-item dns-card">
         <div class="oidc-provider-head">
@@ -927,9 +928,10 @@ function renderDNSDeployments() {
           ${credential}
         </div>
         ${host}
-        ${publishSummary ? `<small class="mono">${escapeHtml(publishSummary)}</small>` : ""}
+        ${publishSummary ? `<small class="mono">${escapeHtml(publishSummary)}${publishWhen}</small>` : ""}
         <div class="muted">${escapeHtml(dnsZoneSummary(dep.zones))}</div>
-        ${dep.last_error ? `<small class="danger">${escapeHtml(dep.last_error)}</small>` : ""}
+        ${dep.last_error ? `<small class="danger">service error: ${escapeHtml(dep.last_error)}</small>` : ""}
+        ${dep.last_publish_error ? `<small class="danger">publish error: ${escapeHtml(dep.last_publish_error)}</small>` : ""}
       </article>`;
     })
     .join("");

@@ -75,5 +75,6 @@ export function dnsPublishSummary(dep) {
   const ips = [];
   if (dep?.last_ipv4) ips.push(dep.last_ipv4);
   if (dep?.last_ipv6) ips.push(dep.last_ipv6);
-  return ips.length ? `published ${ips.join(" / ")}` : "";
+  if (ips.length) return `published ${ips.join(" / ")}`;
+  return dep?.last_published_at ? "publish attempted" : "";
 }

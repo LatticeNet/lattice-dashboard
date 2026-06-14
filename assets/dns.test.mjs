@@ -68,6 +68,7 @@ test("dns summaries are compact and stable", () => {
   assert.equal(dnsZoneSummary([{ suffix: "mesh.local.", mode: "static", records: [{ name: "gw" }] }]), "mesh.local. static 1 record(s)");
   assert.equal(dnsZoneSummary([]), "-");
   assert.equal(dnsPublishSummary({}), "");
+  assert.equal(dnsPublishSummary({ last_published_at: "2026-06-14T12:00:00Z" }), "publish attempted");
   assert.equal(dnsPublishSummary({ last_ipv4: "203.0.113.7" }), "published 203.0.113.7");
   assert.equal(dnsPublishSummary({ last_ipv4: "203.0.113.7", last_ipv6: "2001:db8::7" }), "published 203.0.113.7 / 2001:db8::7");
 });

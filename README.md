@@ -31,7 +31,8 @@ host.
   approval containing CoreDNS config plus the composed `lattice_guard` candidate;
   approval queues the backend apply path. `Publish` pushes the configured
   hostname through the backend Cloudflare DDNS path and shows the last published
-  A/AAAA values.
+  A/AAAA values. The card separates CoreDNS/nft service errors from Cloudflare
+  publish errors so operators can see which layer failed.
 - Network Policy panel for saved `NetPolicy` intents, a server-derived
   reachability graph with inline-SVG visualization, and a `Plan Apply` action
   that creates the rollback-protected `nftpolicy` approval. Execution still
