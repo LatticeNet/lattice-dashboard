@@ -9,6 +9,7 @@ import {
   proxyInboundPayload,
   proxyProfilePayload,
   proxyRotateConfirmMessage,
+  proxySubscriptionImportTargets,
   proxyUsageLabel,
   proxyUsagePercent,
   proxyUserPayload,
@@ -125,6 +126,22 @@ test("proxy usage labels show quota progress without leaking credentials", () =>
   assert.equal(proxyUsageLabel({ used_bytes: 50, traffic_limit_bytes: 200 }, fmt), "50B / 200B (25%)");
   assert.equal(proxyUsageLabel({ used_bytes: 50 }, fmt), "50B used");
   assert.equal(proxyUsageLabel({ used_bytes: "not-a-number" }, fmt), "0B used");
+});
+
+test("proxySubscriptionImportTargets derives copy-safe format URLs", () => {
+  const relative = proxySubscriptionImportTargets("/sub/abc?format=plain&keep=1");
+  assert.deepEqual(relative.map((x) => [x.format, x.url]), [
+    ["base64", "/sub/abc?keep=1"],
+    ["plain", "/sub/abc?keep=1&format=plain"],
+    ["sing-box", "/sub/abc?keep=1&format=sing-box"],
+    ["clash-meta", "/sub/abc?keep=1&format=clash-meta"],
+  ]);
+  assert.deepEqual(relative.map((x) => x.label), ["Base64", "Plain links", "sing-box JSON", "Clash/Mihomo YAML"]);
+
+  const absolute = proxySubscriptionImportTargets("https://dash.example/sub/abc");
+  assert.equal(absolute.find((x) => x.format === "sing-box").url, "https://dash.example/sub/abc?format=sing-box");
+  assert.deepEqual(proxySubscriptionImportTargets(""), []);
+  assert.deepEqual(proxySubscriptionImportTargets("not a valid url"), []);
 });
 
 test("proxyCoreApprovalQueue selects only pending proxy apply reviews", () => {

@@ -114,6 +114,56 @@ export function proxyUsageLabel(user, formatBytes = String) {
   return `${formatBytes(used)} / ${formatBytes(limit)} (${pct}%)`;
 }
 
+export const proxySubscriptionFormats = Object.freeze([
+  {
+    format: "base64",
+    label: "Base64",
+    target: "Generic subscription clients",
+    description: "Default /sub token output; compatible with simple VLESS subscription importers.",
+  },
+  {
+    format: "plain",
+    label: "Plain links",
+    target: "Manual VLESS link import",
+    description: "One vless:// link per eligible node/inbound.",
+  },
+  {
+    format: "sing-box",
+    label: "sing-box JSON",
+    target: "sing-box clients",
+    description: "A client-side sing-box config containing the eligible outbounds.",
+  },
+  {
+    format: "clash-meta",
+    label: "Clash/Mihomo YAML",
+    target: "Clash.Meta and Mihomo",
+    description: "YAML provider output for Clash.Meta-compatible clients.",
+  },
+]);
+
+function urlWithSubscriptionFormat(rawURL, format) {
+  const input = String(rawURL || "").trim();
+  if (!input) return "";
+  const relative = input.startsWith("/");
+  const parsed = new URL(input, relative ? "https://lattice.invalid" : undefined);
+  parsed.searchParams.delete("format");
+  if (format && format !== "base64") parsed.searchParams.set("format", format);
+  return relative ? parsed.pathname + parsed.search + parsed.hash : parsed.toString();
+}
+
+export function proxySubscriptionImportTargets(rawURL) {
+  const input = String(rawURL || "").trim();
+  if (!input) return [];
+  try {
+    return proxySubscriptionFormats.map((entry) => ({
+      ...entry,
+      url: urlWithSubscriptionFormat(input, entry.format),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function proxyCoreApprovalQueue(approvals) {
   return (approvals || [])
     .filter((approval) =>

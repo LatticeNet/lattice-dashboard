@@ -38,6 +38,7 @@ import {
   proxyCoreApprovalQueue,
   proxyInboundPayload,
   proxyProfilePayload,
+  proxySubscriptionImportTargets,
   proxyUsageLabel,
   proxyUsagePercent,
   proxyUserPayload,
@@ -1420,29 +1421,46 @@ function showProxySubscriptionURL(url) {
     box.innerHTML = "";
     return;
   }
-  box.innerHTML = `<article class="kv-item proxy-card">
-    <strong>Subscription URL</strong>
-    <div class="copy-field">
-      <input id="proxy-subscription-url" readonly value="${escapeHtml(url)}" />
-      <button type="button" id="proxy-copy-subscription" class="secondary">Copy</button>
+  const targets = proxySubscriptionImportTargets(url);
+  const rows = targets.map((target, index) => `<div class="proxy-import-target">
+    <div class="proxy-import-head">
+      <strong>${escapeHtml(target.label)}</strong>
+      <small class="muted">${escapeHtml(target.target)}</small>
     </div>
-    <small id="proxy-copy-status" class="muted"></small>
+    <small class="muted">${escapeHtml(target.description)}</small>
+    <div class="copy-field">
+      <input id="proxy-subscription-url-${index}" readonly value="${escapeHtml(target.url)}" />
+      <button type="button" class="secondary" data-proxy-copy-subscription="${index}">Copy</button>
+    </div>
+    <small id="proxy-copy-status-${index}" class="muted"></small>
+  </div>`).join("");
+  box.innerHTML = `<article class="kv-item proxy-card">
+    <div class="proxy-card-head">
+      <div>
+        <strong>Subscription imports</strong>
+        <small class="muted">Token shown after rotation only.</small>
+      </div>
+    </div>
+    <div class="proxy-import-list">${rows}</div>
   </article>`;
   box.classList.remove("hidden");
-  $("proxy-copy-subscription").addEventListener("click", copyProxySubscriptionURL);
+  box.querySelectorAll("[data-proxy-copy-subscription]").forEach((button) => {
+    button.addEventListener("click", () => copyProxySubscriptionURL(button.dataset.proxyCopySubscription));
+  });
 }
 
-async function copyProxySubscriptionURL() {
-  const input = $("proxy-subscription-url");
+async function copyProxySubscriptionURL(index) {
+  const input = $("proxy-subscription-url-" + index);
+  const status = $("proxy-copy-status-" + index);
   if (!input) return;
   try {
     await navigator.clipboard.writeText(input.value);
-    $("proxy-copy-status").textContent = "Copied.";
+    status.textContent = "Copied.";
   } catch {
     input.focus();
     input.select();
     document.execCommand("copy");
-    $("proxy-copy-status").textContent = "Selected.";
+    status.textContent = "Selected.";
   }
 }
 

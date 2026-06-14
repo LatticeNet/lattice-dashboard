@@ -543,6 +543,27 @@ th {
   white-space: pre-wrap;
 }
 
+.proxy-import-list {
+  display: grid;
+  gap: 10px;
+}
+
+.proxy-import-target {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.proxy-import-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .copy-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
