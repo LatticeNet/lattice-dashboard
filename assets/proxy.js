@@ -96,3 +96,19 @@ export function confirmProxyDelete(kind, item, confirmFn) {
   if (typeof confirmFn !== "function") return false;
   return Boolean(confirmFn(proxyDeleteConfirmMessage(kind, item)));
 }
+
+export function proxyUsagePercent(user) {
+  const used = Number(user?.used_bytes || 0);
+  const limit = Number(user?.traffic_limit_bytes || 0);
+  if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return null;
+  return Math.floor((Math.max(0, used) / limit) * 100);
+}
+
+export function proxyUsageLabel(user, formatBytes = String) {
+  const rawUsed = Number(user?.used_bytes || 0);
+  const used = Number.isFinite(rawUsed) ? Math.max(0, rawUsed) : 0;
+  const limit = Number(user?.traffic_limit_bytes || 0);
+  if (!Number.isFinite(limit) || limit <= 0) return `${formatBytes(used)} used`;
+  const pct = proxyUsagePercent({ used_bytes: used, traffic_limit_bytes: limit });
+  return `${formatBytes(used)} / ${formatBytes(limit)} (${pct}%)`;
+}

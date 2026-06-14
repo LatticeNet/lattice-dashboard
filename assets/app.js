@@ -37,6 +37,8 @@ import {
   confirmProxyRotate,
   proxyInboundPayload,
   proxyProfilePayload,
+  proxyUsageLabel,
+  proxyUsagePercent,
   proxyUserPayload,
 } from "./proxy.js";
 import {
@@ -62,6 +64,7 @@ const state = {
   proxyInbounds: [],
   proxyUsers: [],
   proxyProfiles: [],
+  proxyUsageSnapshots: [],
   geoNodes: [],
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
@@ -1065,14 +1068,16 @@ async function loadProxyCore() {
   const panel = $("proxy-panel");
   if (!panel) return;
   try {
-    const [inbounds, users, profiles] = await Promise.all([
+    const [inbounds, users, profiles, usage] = await Promise.all([
       api("/api/proxy/inbounds"),
       api("/api/proxy/users"),
       api("/api/proxy/profiles"),
+      api("/api/proxy/usage"),
     ]);
     state.proxyInbounds = Array.isArray(inbounds.inbounds) ? inbounds.inbounds : [];
     state.proxyUsers = Array.isArray(users.users) ? users.users : [];
     state.proxyProfiles = Array.isArray(profiles.profiles) ? profiles.profiles : [];
+    state.proxyUsageSnapshots = Array.isArray(usage.snapshots) ? usage.snapshots : [];
     panel.classList.remove("hidden");
     $("proxy-error").textContent = "";
     renderProxyCore();
@@ -1080,6 +1085,7 @@ async function loadProxyCore() {
     state.proxyInbounds = [];
     state.proxyUsers = [];
     state.proxyProfiles = [];
+    state.proxyUsageSnapshots = [];
     panel.classList.add("hidden");
   }
 }
@@ -1141,15 +1147,20 @@ function renderProxyUsers() {
     return;
   }
   container.innerHTML = state.proxyUsers.map((user) => {
+    const usagePct = proxyUsagePercent(user);
+    const usageClass = usagePct !== null && usagePct >= 100 ? "danger" : usagePct !== null && usagePct >= 80 ? "warn" : "pill";
     const labels = [
       `<span class="${user.enabled ? "pill" : "danger"}">${escapeHtml(user.status || (user.enabled ? "active" : "disabled"))}</span>`,
       user.has_uuid ? `<span class="pill">uuid</span>` : `<span class="danger">no uuid</span>`,
       user.has_sub_token ? `<span class="pill">subscription</span>` : `<span class="danger">no subscription</span>`,
-      user.traffic_limit_bytes ? `<span class="pill">${escapeHtml(formatBytes(user.traffic_limit_bytes))}</span>` : `<span class="pill">unlimited</span>`,
+      `<span class="${usageClass}">${escapeHtml(proxyUsageLabel(user, formatBytes))}</span>`,
     ].join("");
     const expires = user.expires_at && !String(user.expires_at).startsWith("0001-")
       ? `expires ${formatDate(user.expires_at)}`
       : "no expiry";
+    const seen = user.last_seen_at && !String(user.last_seen_at).startsWith("0001-")
+      ? ` · last seen ${formatDate(user.last_seen_at)}`
+      : "";
     return `<article class="kv-item proxy-card">
       <div class="proxy-card-head">
         <div>
@@ -1163,7 +1174,7 @@ function renderProxyUsers() {
         </span>
       </div>
       <div class="proxy-meta">${labels}</div>
-      <small class="muted">${escapeHtml(expires)} · inbounds ${escapeHtml((user.inbound_ids || []).join(", ") || "all")}</small>
+      <small class="muted">${escapeHtml(expires)}${escapeHtml(seen)} · inbounds ${escapeHtml((user.inbound_ids || []).join(", ") || "all")}</small>
     </article>`;
   }).join("");
   container.querySelectorAll("[data-proxy-user-edit]").forEach((button) => {
@@ -1188,6 +1199,10 @@ function renderProxyProfiles() {
     const applied = profile.applied_sha256 && !profile.last_error;
     const stateLabel = profile.last_error ? "failed" : applied ? "applied" : "pending";
     const host = profile.hostname ? `<small class="mono">${escapeHtml(profile.hostname)}</small>` : `<small class="danger">no hostname</small>`;
+    const snapshot = state.proxyUsageSnapshots.find((s) => s.node_id === profile.node_id);
+    const usageLine = snapshot
+      ? `<small class="muted">usage ${escapeHtml(formatDate(snapshot.at))} · core uptime ${escapeHtml(formatDuration(snapshot.core_uptime_sec || 0))}</small>`
+      : `<small class="muted">usage not reported</small>`;
     return `<article class="kv-item proxy-card">
       <div class="proxy-card-head">
         <div>
@@ -1206,6 +1221,7 @@ function renderProxyProfiles() {
       </div>
       ${host}
       <small class="muted">inbounds ${escapeHtml((profile.inbound_ids || []).join(", ") || "-")}</small>
+      ${usageLine}
       ${profile.last_error ? `<small class="danger">${escapeHtml(profile.last_error)}</small>` : ""}
     </article>`;
   }).join("");

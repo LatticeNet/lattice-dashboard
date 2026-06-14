@@ -8,6 +8,8 @@ import {
   proxyInboundPayload,
   proxyProfilePayload,
   proxyRotateConfirmMessage,
+  proxyUsageLabel,
+  proxyUsagePercent,
   proxyUserPayload,
   splitProxyList,
 } from "./proxy.js";
@@ -111,4 +113,13 @@ test("confirmProxyDelete delegates destructive delete confirmation", () => {
   assert.equal(confirmProxyDelete("inbound", { id: "in-a" }, () => true), true);
   assert.equal(confirmProxyDelete("profile", { node_id: "node-a" }, () => false), false);
   assert.equal(confirmProxyDelete("user", { id: "alice" }, null), false);
+});
+
+test("proxy usage labels show quota progress without leaking credentials", () => {
+  const fmt = (v) => `${v}B`;
+  assert.equal(proxyUsagePercent({ used_bytes: 50, traffic_limit_bytes: 200 }), 25);
+  assert.equal(proxyUsagePercent({ used_bytes: 50, traffic_limit_bytes: 0 }), null);
+  assert.equal(proxyUsageLabel({ used_bytes: 50, traffic_limit_bytes: 200 }, fmt), "50B / 200B (25%)");
+  assert.equal(proxyUsageLabel({ used_bytes: 50 }, fmt), "50B used");
+  assert.equal(proxyUsageLabel({ used_bytes: "not-a-number" }, fmt), "0B used");
 });
