@@ -7,7 +7,7 @@ import {
   nextAuditOffset,
   normalizeAuditResponse,
 } from "./audit.js";
-import { approvalActionLabel, approvalById, approvalPayload } from "./approval.js";
+import { approvalById, approvalPayload } from "./approval.js";
 import {
   ssoErrorMessage,
   hasAuthRedirectParams,
@@ -805,7 +805,7 @@ function renderApprovals() {
     .map((approval) => `<article class="result">
       <strong>${escapeHtml(approval.node_id)}</strong>
       <span class="pill">${escapeHtml(approval.status)}</span>
-      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>${escapeHtml(approvalActionLabel(approval))}</button>
+      <button data-approval="${escapeHtml(approval.id)}" ${approval.status !== "pending" ? "disabled" : ""}>Approve Apply</button>
       <pre>${escapeHtml(approval.plan)}</pre>
     </article>`)
     .join("");

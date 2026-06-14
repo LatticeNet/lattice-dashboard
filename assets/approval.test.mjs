@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { webcrypto } from "node:crypto";
 
-import { approvalActionLabel, approvalById, approvalPayload, approvalQueueApply, sha256Hex } from "./approval.js";
+import { approvalById, approvalPayload, sha256Hex } from "./approval.js";
 
 test("sha256Hex hashes the exact plan text", async () => {
   assert.equal(
@@ -20,14 +20,12 @@ test("approvalPayload binds queue apply to the reviewed plan hash", async () => 
   });
 });
 
-test("approvalPayload treats selfdns as review-only until apply lands", async () => {
+test("approvalPayload queues selfdns apply once the reviewed plan is approved", async () => {
   const approval = { id: "approval_dns", plugin: "selfdns", plan: "dns plan" };
   const payload = await approvalPayload(approval, webcrypto.subtle);
-  assert.equal(approvalQueueApply(approval), false);
-  assert.equal(approvalActionLabel(approval), "Approve Review");
   assert.deepEqual(payload, {
     approval_id: "approval_dns",
-    queue_apply: false,
+    queue_apply: true,
     plan_sha256: await sha256Hex("dns plan", webcrypto.subtle),
   });
 });
