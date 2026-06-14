@@ -114,6 +114,31 @@ export function proxyUsageLabel(user, formatBytes = String) {
   return `${formatBytes(used)} / ${formatBytes(limit)} (${pct}%)`;
 }
 
+export function proxyCollectorStatusClass(profile) {
+  switch (profile?.usage_collector_status) {
+    case "ok":
+      return "pill";
+    case "error":
+      return "danger";
+    default:
+      return "muted";
+  }
+}
+
+export function proxyCollectorLabel(profile, formatDate = String) {
+  const status = String(profile?.usage_collector_status || "").trim();
+  if (!status) return "collector not reported";
+  const source = String(profile?.usage_collector_source || "").trim();
+  const checked = profile?.usage_collector_checked_at ? ` · checked ${formatDate(profile.usage_collector_checked_at)}` : "";
+  const sourceText = source ? ` (${source})` : "";
+  if (status === "ok") return `collector ok${sourceText}${checked}`;
+  if (status === "error") {
+    const err = String(profile?.usage_collector_last_error || "error").trim();
+    return `collector error${sourceText}: ${err}${checked}`;
+  }
+  return `collector ${status}${sourceText}${checked}`;
+}
+
 export const proxySubscriptionFormats = Object.freeze([
   {
     format: "base64",

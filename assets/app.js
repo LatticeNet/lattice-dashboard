@@ -35,6 +35,8 @@ import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary }
 import {
   confirmProxyDelete,
   confirmProxyRotate,
+  proxyCollectorLabel,
+  proxyCollectorStatusClass,
   proxyCoreApprovalQueue,
   proxyInboundPayload,
   proxyProfilePayload,
@@ -1207,6 +1209,7 @@ function renderProxyProfiles() {
     const usageLine = snapshot
       ? `<small class="muted">usage ${escapeHtml(formatDate(snapshot.at))} · core uptime ${escapeHtml(formatDuration(snapshot.core_uptime_sec || 0))}</small>`
       : `<small class="muted">usage not reported</small>`;
+    const collectorLine = `<small class="${proxyCollectorStatusClass(profile)}">${escapeHtml(proxyCollectorLabel(profile, formatDate))}</small>`;
     return `<article class="kv-item proxy-card">
       <div class="proxy-card-head">
         <div>
@@ -1226,6 +1229,7 @@ function renderProxyProfiles() {
       ${host}
       <small class="muted">inbounds ${escapeHtml((profile.inbound_ids || []).join(", ") || "-")}</small>
       ${usageLine}
+      ${collectorLine}
       ${profile.last_error ? `<small class="danger">${escapeHtml(profile.last_error)}</small>` : ""}
     </article>`;
   }).join("");

@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   confirmProxyDelete,
   confirmProxyRotate,
+  proxyCollectorLabel,
+  proxyCollectorStatusClass,
   proxyCoreApprovalQueue,
   proxyDeleteConfirmMessage,
   proxyInboundPayload,
@@ -126,6 +128,24 @@ test("proxy usage labels show quota progress without leaking credentials", () =>
   assert.equal(proxyUsageLabel({ used_bytes: 50, traffic_limit_bytes: 200 }, fmt), "50B / 200B (25%)");
   assert.equal(proxyUsageLabel({ used_bytes: 50 }, fmt), "50B used");
   assert.equal(proxyUsageLabel({ used_bytes: "not-a-number" }, fmt), "0B used");
+});
+
+test("proxy collector labels summarize health without changing policy", () => {
+  const fmt = (v) => `date:${v}`;
+  assert.equal(proxyCollectorLabel({}, fmt), "collector not reported");
+  assert.equal(proxyCollectorStatusClass({}), "muted");
+  assert.equal(proxyCollectorLabel({
+    usage_collector_status: "ok",
+    usage_collector_source: "http",
+    usage_collector_checked_at: "2026-06-14T10:00:00Z",
+  }, fmt), "collector ok (http) · checked date:2026-06-14T10:00:00Z");
+  assert.equal(proxyCollectorStatusClass({ usage_collector_status: "ok" }), "pill");
+  assert.equal(proxyCollectorLabel({
+    usage_collector_status: "error",
+    usage_collector_source: "file",
+    usage_collector_last_error: "open /run/usage.json: no such file",
+  }, fmt), "collector error (file): open /run/usage.json: no such file");
+  assert.equal(proxyCollectorStatusClass({ usage_collector_status: "error" }), "danger");
 });
 
 test("proxySubscriptionImportTargets derives copy-safe format URLs", () => {
