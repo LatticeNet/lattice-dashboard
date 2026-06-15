@@ -263,6 +263,41 @@
               </form>
             </div>
 
+            <div class="panel hidden" id="georouting-panel">
+              <div class="panel-head">
+                <h2>Geo-Routing</h2>
+                <button id="georouting-refresh" type="button" class="secondary">Refresh</button>
+              </div>
+              <p id="georouting-error" class="error"></p>
+              <p class="muted">Resolve a shared apex (e.g. dns.roobli.org) to the nearest healthy node by client location. Set NodeGeo coordinates on the participating nodes first; the authoritative DNS node(s) run self-host DNS and need the GeoLite2 DB + an NS delegation of the subdomain.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Name</th><th>Hostname</th><th>Strategy</th><th>Nodes</th><th>Status</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody id="georouting-table"></tbody>
+                </table>
+              </div>
+              <form id="georouting-form" class="machine-form">
+                <input type="hidden" name="id" />
+                <input name="name" placeholder="name" />
+                <input name="hostname" placeholder="dns.roobli.org" />
+                <select name="strategy">
+                  <option value="geoip">geoip (nearest by continent)</option>
+                  <option value="all-healthy">all-healthy (round-robin)</option>
+                </select>
+                <input name="node_ids" placeholder="participating node ids (comma/space)" />
+                <input name="dns_node_ids" placeholder="authoritative DNS node ids" />
+                <input name="ttl" type="number" min="10" max="3600" placeholder="ttl (60)" />
+                <input name="geoip_db_path" placeholder="GeoLite2 path on node (optional)" />
+                <div class="form-actions">
+                  <button type="submit">Save</button>
+                  <button type="button" id="georouting-reset" class="secondary">Clear</button>
+                </div>
+              </form>
+              <pre id="georouting-plan" class="logs-results"></pre>
+            </div>
+
             <div class="panel hidden" id="logs-panel">
               <div class="panel-head">
                 <h2>Logs</h2>

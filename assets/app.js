@@ -33,6 +33,7 @@ import { policyExternalLabel, policyGraphView } from "./policygraph.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
 import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary } from "./dns.js";
 import { logSourcePayload, logQueryString } from "./logs.js";
+import { geoRoutingPayload } from "./georouting.js";
 import {
   confirmProxyDelete,
   confirmProxyRotate,
@@ -74,6 +75,7 @@ const state = {
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
   machines: [],
+  geoRoutings: [],
   logSources: [],
   logQuery: { sourceID: "", lines: [], beforeSeq: 0 },
   kv: [],
@@ -453,6 +455,110 @@ async function transitionPluginLifecycle(id, status) {
   }
 }
 
+// --- Geo-Routing ----------------------------------------------------------
+
+async function loadGeoRouting() {
+  try {
+    const data = await api("/api/geo-routing");
+    state.geoRoutings = Array.isArray(data.geo_routings) ? data.geo_routings : [];
+    $("georouting-panel").classList.remove("hidden");
+    renderGeoRouting();
+  } catch {
+    state.geoRoutings = [];
+    $("georouting-panel").classList.add("hidden");
+  }
+}
+
+function renderGeoRouting() {
+  $("georouting-table").innerHTML = state.geoRoutings.map((gr) => {
+    const nodes = (gr.node_ids || []).length;
+    return `<tr>
+      <td><strong>${escapeHtml(gr.name || gr.id)}</strong></td>
+      <td><small class="mono">${escapeHtml(gr.hostname || "")}</small></td>
+      <td><span class="pill">${escapeHtml(gr.strategy || "geoip")}</span></td>
+      <td>${nodes}</td>
+      <td>${escapeHtml(gr.status || "")}</td>
+      <td class="row-actions">
+        <button type="button" class="secondary" data-geo-plan="${escapeHtml(gr.id)}">Preview</button>
+        <button type="button" class="secondary" data-geo-edit="${escapeHtml(gr.id)}">Edit</button>
+        <button type="button" class="secondary" data-geo-delete="${escapeHtml(gr.id)}">Delete</button>
+      </td>
+    </tr>`;
+  }).join("");
+  $("georouting-table").querySelectorAll("[data-geo-plan]").forEach((b) => {
+    b.addEventListener("click", () => planGeoRouting(b.dataset.geoPlan));
+  });
+  $("georouting-table").querySelectorAll("[data-geo-edit]").forEach((b) => {
+    b.addEventListener("click", () => editGeoRouting(b.dataset.geoEdit));
+  });
+  $("georouting-table").querySelectorAll("[data-geo-delete]").forEach((b) => {
+    b.addEventListener("click", () => deleteGeoRouting(b.dataset.geoDelete));
+  });
+}
+
+function editGeoRouting(id) {
+  const gr = state.geoRoutings.find((x) => x.id === id);
+  if (!gr) return;
+  const form = $("georouting-form");
+  form.elements["id"].value = gr.id || "";
+  form.elements["name"].value = gr.name || "";
+  form.elements["hostname"].value = gr.hostname || "";
+  form.elements["strategy"].value = gr.strategy || "geoip";
+  form.elements["node_ids"].value = (gr.node_ids || []).join(", ");
+  form.elements["dns_node_ids"].value = (gr.dns_node_ids || []).join(", ");
+  form.elements["ttl"].value = gr.ttl || "";
+  form.elements["geoip_db_path"].value = gr.geoip_db_path || "";
+}
+
+async function submitGeoRouting(event) {
+  event.preventDefault();
+  const form = $("georouting-form");
+  const payload = geoRoutingPayload({
+    id: form.elements["id"].value,
+    name: form.elements["name"].value,
+    hostname: form.elements["hostname"].value,
+    strategy: form.elements["strategy"].value,
+    node_ids: form.elements["node_ids"].value,
+    dns_node_ids: form.elements["dns_node_ids"].value,
+    ttl: form.elements["ttl"].value,
+    geoip_db_path: form.elements["geoip_db_path"].value,
+  });
+  try {
+    await api("/api/geo-routing", { method: "POST", body: JSON.stringify(payload) });
+    resetGeoRoutingForm();
+    await loadGeoRouting();
+  } catch (error) {
+    $("georouting-error").textContent = error.message;
+  }
+}
+
+function resetGeoRoutingForm() {
+  $("georouting-form").reset();
+  $("georouting-form").elements["id"].value = "";
+  $("georouting-error").textContent = "";
+}
+
+async function deleteGeoRouting(id) {
+  try {
+    await api("/api/geo-routing/delete", { method: "POST", body: JSON.stringify({ id }) });
+    await loadGeoRouting();
+  } catch (error) {
+    $("georouting-error").textContent = error.message;
+  }
+}
+
+async function planGeoRouting(id) {
+  try {
+    const plan = await api("/api/geo-routing/plan", { method: "POST", body: JSON.stringify({ id }) });
+    const warnings = (plan.warnings || []).map((w) => `# ${w}`).join("\n");
+    // textContent is XSS-safe under the strict CSP.
+    $("georouting-plan").textContent = (warnings ? warnings + "\n\n" : "") + (plan.config || "");
+    $("georouting-error").textContent = "";
+  } catch (error) {
+    $("georouting-error").textContent = error.message;
+  }
+}
+
 // --- Logs -----------------------------------------------------------------
 
 async function loadLogs() {
@@ -746,7 +852,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadLogs(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadGeoRouting(), loadLogs(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -2150,6 +2256,9 @@ $("twofa-disable-form").addEventListener("submit", disable2FA);
 $("refresh").addEventListener("click", refresh);
 $("logout").addEventListener("click", logout);
 $("enroll-form").addEventListener("submit", enroll);
+$("georouting-refresh").addEventListener("click", loadGeoRouting);
+$("georouting-form").addEventListener("submit", submitGeoRouting);
+$("georouting-reset").addEventListener("click", resetGeoRoutingForm);
 $("logs-refresh").addEventListener("click", loadLogs);
 $("logs-source-form").addEventListener("submit", submitLogSource);
 $("logs-source-reset").addEventListener("click", resetLogSourceForm);
