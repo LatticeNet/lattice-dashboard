@@ -263,6 +263,49 @@
               </form>
             </div>
 
+            <div class="panel hidden" id="logs-panel">
+              <div class="panel-head">
+                <h2>Logs</h2>
+                <button id="logs-refresh" type="button" class="secondary">Refresh</button>
+              </div>
+              <p id="logs-error" class="error"></p>
+              <p class="muted">⚠ Logs may contain secrets (tokens in URLs, stack traces). Set a master key to encrypt logs at rest; access is restricted to the log:read scope.</p>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Name</th><th>Node</th><th>Path</th><th>Status</th><th>Lines</th><th>Last ingest</th><th>Actions</th></tr>
+                  </thead>
+                  <tbody id="logs-sources-table"></tbody>
+                </table>
+              </div>
+              <form id="logs-source-form" class="machine-form">
+                <input type="hidden" name="id" />
+                <input name="name" placeholder="name" />
+                <input name="node_id" placeholder="node id" />
+                <input name="path" placeholder="/var/log/nginx/error.log" />
+                <input name="max_line_bytes" type="number" min="0" placeholder="max line bytes (16384)" />
+                <input name="max_batch_lines" type="number" min="0" placeholder="max batch lines (500)" />
+                <label><input type="checkbox" name="enabled" checked /> enabled</label>
+                <div class="form-actions">
+                  <button type="submit">Save Source</button>
+                  <button type="button" id="logs-source-reset" class="secondary">Clear</button>
+                </div>
+              </form>
+              <section class="logs-query">
+                <h3>Query</h3>
+                <form id="logs-query-form" class="machine-form">
+                  <select name="source_id" id="logs-query-source"></select>
+                  <input name="q" placeholder="substring" />
+                  <input name="since" type="datetime-local" />
+                  <input name="until" type="datetime-local" />
+                  <input name="limit" type="number" min="1" max="1000" placeholder="limit (200)" />
+                  <button type="submit">Run</button>
+                </form>
+                <pre id="logs-results" class="logs-results"></pre>
+                <button type="button" id="logs-load-older" class="secondary hidden">Load older</button>
+              </section>
+            </div>
+
             <div class="panel hidden" id="proxy-panel">
               <div class="panel-head">
                 <h2>Proxy Core</h2>

@@ -32,6 +32,7 @@ import { describeNetRule, netPolicyPayload } from "./netpolicy.js";
 import { policyExternalLabel, policyGraphView } from "./policygraph.js";
 import { formatPorts, nftInputsPayload } from "./nft.js";
 import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary } from "./dns.js";
+import { logSourcePayload, logQueryString } from "./logs.js";
 import {
   confirmProxyDelete,
   confirmProxyRotate,
@@ -73,6 +74,8 @@ const state = {
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
   machines: [],
+  logSources: [],
+  logQuery: { sourceID: "", lines: [], beforeSeq: 0 },
   kv: [],
   workers: [],
   pluginInstallations: [],
@@ -450,6 +453,126 @@ async function transitionPluginLifecycle(id, status) {
   }
 }
 
+// --- Logs -----------------------------------------------------------------
+
+async function loadLogs() {
+  try {
+    const data = await api("/api/logs/stats");
+    state.logSources = Array.isArray(data.stats) ? data.stats : [];
+    $("logs-panel").classList.remove("hidden");
+    renderLogSources();
+  } catch {
+    state.logSources = [];
+    $("logs-panel").classList.add("hidden");
+  }
+}
+
+function renderLogSources() {
+  $("logs-sources-table").innerHTML = state.logSources.map((s) => {
+    const lastIngest = s.last_ingest_at && !String(s.last_ingest_at).startsWith("0001-")
+      ? formatDate(s.last_ingest_at) : "-";
+    return `<tr>
+      <td><strong>${escapeHtml(s.name || s.source_id)}</strong></td>
+      <td>${escapeHtml(s.node_id || "")}</td>
+      <td><small class="mono">${escapeHtml(s.path || "")}</small></td>
+      <td><span class="${s.enabled ? "pill" : "muted"}">${s.enabled ? "enabled" : "disabled"}</span></td>
+      <td>${Number(s.lines || 0)}</td>
+      <td>${escapeHtml(lastIngest)}</td>
+      <td class="row-actions"><button type="button" class="secondary" data-log-source-delete="${escapeHtml(s.source_id)}">Delete</button></td>
+    </tr>`;
+  }).join("");
+  $("logs-sources-table").querySelectorAll("[data-log-source-delete]").forEach((b) => {
+    b.addEventListener("click", () => deleteLogSource(b.dataset.logSourceDelete));
+  });
+  const select = $("logs-query-source");
+  const current = select.value;
+  select.innerHTML = state.logSources
+    .map((s) => `<option value="${escapeHtml(s.source_id)}">${escapeHtml((s.name || s.source_id) + " — " + (s.node_id || ""))}</option>`)
+    .join("");
+  if (current) select.value = current;
+}
+
+async function submitLogSource(event) {
+  event.preventDefault();
+  const form = $("logs-source-form");
+  const payload = logSourcePayload({
+    id: form.elements["id"].value,
+    name: form.elements["name"].value,
+    node_id: form.elements["node_id"].value,
+    path: form.elements["path"].value,
+    max_line_bytes: form.elements["max_line_bytes"].value,
+    max_batch_lines: form.elements["max_batch_lines"].value,
+    enabled: form.elements["enabled"].checked,
+  });
+  try {
+    await api("/api/logs/sources", { method: "POST", body: JSON.stringify(payload) });
+    resetLogSourceForm();
+    await loadLogs();
+  } catch (error) {
+    $("logs-error").textContent = error.message;
+  }
+}
+
+function resetLogSourceForm() {
+  $("logs-source-form").reset();
+  $("logs-source-form").elements["id"].value = "";
+  $("logs-error").textContent = "";
+}
+
+async function deleteLogSource(id) {
+  try {
+    await api("/api/logs/sources/delete", { method: "POST", body: JSON.stringify({ id }) });
+    await loadLogs();
+  } catch (error) {
+    $("logs-error").textContent = error.message;
+  }
+}
+
+async function runLogQuery(event) {
+  if (event) event.preventDefault();
+  const sourceID = $("logs-query-form").elements["source_id"].value;
+  if (!sourceID) {
+    $("logs-error").textContent = "select a source to query";
+    return;
+  }
+  state.logQuery = { sourceID, lines: [], beforeSeq: 0 };
+  await fetchLogPage();
+}
+
+async function loadOlderLogs() {
+  await fetchLogPage();
+}
+
+async function fetchLogPage() {
+  const form = $("logs-query-form");
+  const qs = logQueryString({
+    source_id: state.logQuery.sourceID,
+    q: form.elements["q"].value,
+    since: form.elements["since"].value,
+    until: form.elements["until"].value,
+    limit: form.elements["limit"].value,
+    before_seq: state.logQuery.beforeSeq,
+  });
+  try {
+    const data = await api(`/api/logs/query?${qs}`);
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    state.logQuery.lines = state.logQuery.lines.concat(lines);
+    state.logQuery.beforeSeq = data.next_before_seq || 0;
+    renderLogResults(!!data.next_before_seq, !!data.truncated);
+    $("logs-error").textContent = "";
+  } catch (error) {
+    $("logs-error").textContent = error.message;
+  }
+}
+
+function renderLogResults(hasMore, truncated) {
+  const lines = state.logQuery.lines.map((l) => `${formatDate(l.at)}  ${l.line || ""}${l.truncated ? " …" : ""}`);
+  const prefix = truncated ? "⚠ some stored data could not be decoded and was skipped\n" : "";
+  // textContent is XSS-safe under the strict CSP — never innerHTML for log content.
+  $("logs-results").textContent = prefix + lines.join("\n");
+  $("logs-load-older").classList.toggle("hidden", !hasMore);
+}
+
 // --- Machine inventory ----------------------------------------------------
 
 async function loadMachines() {
@@ -623,7 +746,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadLogs(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -2027,6 +2150,11 @@ $("twofa-disable-form").addEventListener("submit", disable2FA);
 $("refresh").addEventListener("click", refresh);
 $("logout").addEventListener("click", logout);
 $("enroll-form").addEventListener("submit", enroll);
+$("logs-refresh").addEventListener("click", loadLogs);
+$("logs-source-form").addEventListener("submit", submitLogSource);
+$("logs-source-reset").addEventListener("click", resetLogSourceForm);
+$("logs-query-form").addEventListener("submit", runLogQuery);
+$("logs-load-older").addEventListener("click", loadOlderLogs);
 $("machine-form").addEventListener("submit", submitMachine);
 $("machine-reset").addEventListener("click", resetMachineForm);
 $("machines-reminders-run").addEventListener("click", runMachineReminders);
