@@ -89,11 +89,37 @@
                       <th>Disk</th>
                       <th>Agent</th>
                       <th>Last Seen</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody id="nodes-table"></tbody>
                 </table>
               </div>
+            </div>
+
+            <div class="panel hidden" id="agent-update-panel">
+              <div class="panel-head">
+                <h2>Agent Updates</h2>
+                <button id="agent-update-refresh" type="button" class="secondary">Refresh</button>
+              </div>
+              <p id="agent-update-error" class="error"></p>
+              <div id="agent-update-list" class="kv-list"></div>
+              <form id="agent-update-form" class="machine-form">
+                <input name="node_id" placeholder="node id" autocomplete="off" />
+                <input name="target_version" placeholder="target version (e.g. 0.2.0)" autocomplete="off" />
+                <input name="binary_url" placeholder="https://.../lattice-agent-linux-amd64" autocomplete="off" />
+                <input name="sha256" placeholder="sha256 digest" autocomplete="off" />
+                <input name="install_path" placeholder="/usr/local/bin/lattice-agent" autocomplete="off" />
+                <input name="service_name" placeholder="lattice-agent.service" autocomplete="off" />
+                <label class="checkbox-row"><input type="checkbox" name="enabled" checked /> Enabled</label>
+                <label class="checkbox-row"><input type="checkbox" name="auto_plan" /> Auto-plan when version differs</label>
+                <div class="inline-form">
+                  <button type="submit">Save Policy</button>
+                  <button type="button" id="agent-update-plan">Plan Update</button>
+                  <button type="button" id="agent-update-delete" class="secondary">Delete Policy</button>
+                  <button type="button" id="agent-update-reset" class="secondary">Clear</button>
+                </div>
+              </form>
             </div>
 
             <div class="panel hidden" id="machines-panel">

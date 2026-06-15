@@ -34,6 +34,7 @@ import { formatPorts, nftInputsPayload } from "./nft.js";
 import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary } from "./dns.js";
 import { logSourcePayload, logQueryString } from "./logs.js";
 import { geoRoutingPayload } from "./georouting.js";
+import { agentUpdatePayload, agentUpdateStatus } from "./agent-update.js";
 import {
   confirmProxyDelete,
   confirmProxyRotate,
@@ -71,6 +72,7 @@ const state = {
   proxyUsers: [],
   proxyProfiles: [],
   proxyUsageSnapshots: [],
+  agentUpdates: [],
   geoNodes: [],
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
@@ -825,6 +827,129 @@ async function runMachineReminders() {
   }
 }
 
+// --- Agent updates -------------------------------------------------------
+
+async function loadAgentUpdates() {
+  try {
+    const data = await api("/api/nodes/agent-updates");
+    state.agentUpdates = Array.isArray(data.policies) ? data.policies : [];
+    $("agent-update-panel").classList.remove("hidden");
+    renderAgentUpdates();
+  } catch {
+    state.agentUpdates = [];
+    $("agent-update-panel").classList.add("hidden");
+  }
+}
+
+function renderAgentUpdates() {
+  const list = $("agent-update-list");
+  if (!state.agentUpdates.length) {
+    list.innerHTML = `<article class="kv-item"><span class="muted">No agent update policies configured.</span></article>`;
+    return;
+  }
+  list.innerHTML = state.agentUpdates.map((policy) => {
+    const node = state.nodes.find((n) => n.id === policy.node_id);
+    const status = agentUpdateStatus(policy, node);
+    const statusClass = status === "update available" ? "warn" : status === "current" ? "pill" : "muted";
+    return `<article class="kv-item">
+      <div class="proxy-card-head">
+        <div>
+          <strong>${escapeHtml(node?.name || policy.node_id)}</strong>
+          <small class="mono">${escapeHtml(policy.node_id || "")}</small>
+        </div>
+        <span class="proxy-actions">
+          <button type="button" class="secondary" data-agent-update-edit="${escapeHtml(policy.node_id)}">Edit</button>
+          <button type="button" data-agent-update-plan="${escapeHtml(policy.node_id)}">Plan Update</button>
+        </span>
+      </div>
+      <div class="proxy-meta">
+        <span class="${statusClass}">${escapeHtml(status)}</span>
+        <span class="pill">${escapeHtml(policy.target_version || "-")}</span>
+        ${policy.auto_plan ? `<span class="pill">auto-plan</span>` : ""}
+      </div>
+      <small class="mono">${escapeHtml(policy.install_path || "/usr/local/bin/lattice-agent")}</small>
+      ${policy.last_error ? `<small class="danger">${escapeHtml(policy.last_error)}</small>` : ""}
+    </article>`;
+  }).join("");
+  list.querySelectorAll("[data-agent-update-edit]").forEach((button) => {
+    button.addEventListener("click", () => fillAgentUpdateForm(button.dataset.agentUpdateEdit));
+  });
+  list.querySelectorAll("[data-agent-update-plan]").forEach((button) => {
+    button.addEventListener("click", () => planAgentUpdate(button.dataset.agentUpdatePlan));
+  });
+}
+
+function fillAgentUpdateForm(nodeID) {
+  const policy = state.agentUpdates.find((p) => p.node_id === nodeID);
+  const form = $("agent-update-form");
+  form.elements["node_id"].value = nodeID || "";
+  form.elements["target_version"].value = policy?.target_version || "";
+  form.elements["binary_url"].value = policy?.binary_url || "";
+  form.elements["sha256"].value = policy?.sha256 || "";
+  form.elements["install_path"].value = policy?.install_path || "/usr/local/bin/lattice-agent";
+  form.elements["service_name"].value = policy?.service_name || "lattice-agent.service";
+  form.elements["enabled"].checked = policy ? !!policy.enabled : true;
+  form.elements["auto_plan"].checked = !!policy?.auto_plan;
+  $("agent-update-error").textContent = "";
+}
+
+function resetAgentUpdateForm() {
+  $("agent-update-form").reset();
+  $("agent-update-form").elements["install_path"].value = "/usr/local/bin/lattice-agent";
+  $("agent-update-form").elements["service_name"].value = "lattice-agent.service";
+  $("agent-update-form").elements["enabled"].checked = true;
+  $("agent-update-error").textContent = "";
+}
+
+async function submitAgentUpdate(event) {
+  event.preventDefault();
+  $("agent-update-error").textContent = "";
+  const form = $("agent-update-form");
+  try {
+    await api("/api/nodes/agent-updates", {
+      method: "POST",
+      body: JSON.stringify(agentUpdatePayload({
+        node_id: form.elements["node_id"].value,
+        target_version: form.elements["target_version"].value,
+        binary_url: form.elements["binary_url"].value,
+        sha256: form.elements["sha256"].value,
+        install_path: form.elements["install_path"].value,
+        service_name: form.elements["service_name"].value,
+        enabled: form.elements["enabled"].checked,
+        auto_plan: form.elements["auto_plan"].checked,
+      })),
+    });
+    await loadAgentUpdates();
+  } catch (error) {
+    $("agent-update-error").textContent = error.message;
+  }
+}
+
+async function planAgentUpdate(nodeID = "") {
+  $("agent-update-error").textContent = "";
+  const formNodeID = $("agent-update-form").elements["node_id"].value;
+  const target = nodeID || formNodeID;
+  try {
+    await api("/api/nodes/agent-updates/plan", { method: "POST", body: JSON.stringify({ node_id: target }) });
+    $("agent-update-error").textContent = "Update plan queued for review.";
+    await refresh();
+  } catch (error) {
+    $("agent-update-error").textContent = error.message;
+  }
+}
+
+async function deleteAgentUpdate() {
+  $("agent-update-error").textContent = "";
+  const nodeID = $("agent-update-form").elements["node_id"].value;
+  try {
+    await api("/api/nodes/agent-updates/delete", { method: "POST", body: JSON.stringify({ node_id: nodeID }) });
+    resetAgentUpdateForm();
+    await loadAgentUpdates();
+  } catch (error) {
+    $("agent-update-error").textContent = error.message;
+  }
+}
+
 async function refresh() {
   const [me, nodes, geoNodes, tasks, results, approvals, kv, workers, auditPayload] = await Promise.all([
     api("/api/me"),
@@ -852,7 +977,7 @@ async function refresh() {
   render();
   // Self-contained admin panels hide themselves for non-admins (403) without
   // breaking the main console refresh.
-  await Promise.all([loadMachines(), loadGeoRouting(), loadLogs(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
+  await Promise.all([loadMachines(), loadGeoRouting(), loadLogs(), loadAgentUpdates(), loadNFTInputs(), loadDNSDeployments(), loadProxyCore(), loadNetPolicies(), loadOIDCAdmin(), loadPluginLifecycleAdmin()]);
 }
 
 function render() {
@@ -888,9 +1013,13 @@ function renderNodes() {
         <td>${disk}</td>
         <td>${escapeHtml(node.agent_version || "-")}</td>
         <td>${formatDate(node.last_seen)}</td>
+        <td><button type="button" class="secondary" data-agent-update-node="${escapeHtml(node.id)}">Update</button></td>
       </tr>`;
     })
     .join("");
+  $("nodes-table").querySelectorAll("[data-agent-update-node]").forEach((button) => {
+    button.addEventListener("click", () => fillAgentUpdateForm(button.dataset.agentUpdateNode));
+  });
 }
 
 function renderGeoMap() {
@@ -2264,6 +2393,11 @@ $("logs-source-form").addEventListener("submit", submitLogSource);
 $("logs-source-reset").addEventListener("click", resetLogSourceForm);
 $("logs-query-form").addEventListener("submit", runLogQuery);
 $("logs-load-older").addEventListener("click", loadOlderLogs);
+$("agent-update-refresh").addEventListener("click", loadAgentUpdates);
+$("agent-update-form").addEventListener("submit", submitAgentUpdate);
+$("agent-update-plan").addEventListener("click", () => planAgentUpdate());
+$("agent-update-delete").addEventListener("click", deleteAgentUpdate);
+$("agent-update-reset").addEventListener("click", resetAgentUpdateForm);
 $("machine-form").addEventListener("submit", submitMachine);
 $("machine-reset").addEventListener("click", resetMachineForm);
 $("machines-reminders-run").addEventListener("click", runMachineReminders);
