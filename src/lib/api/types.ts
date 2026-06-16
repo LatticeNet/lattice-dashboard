@@ -188,6 +188,8 @@ export interface MonitorView {
   assign_all?: boolean;
   node_ids?: string[];
   enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface MonitorResult {
@@ -197,4 +199,14 @@ export interface MonitorResult {
   success: boolean;
   latency_ms?: number;
   error?: string;
+}
+
+export interface MonitorCreateInput {
+  name: string;
+  type: "tcp" | "http";
+  target: string;
+  interval_sec?: number;
+  timeout_sec?: number;
+  assign_all?: boolean;
+  node_ids?: string[];
 }

@@ -89,8 +89,9 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   to login because the server invalidates old sessions.
 - **Phase 2 — Fleet & Ops:** **Nodes** (+enroll, host facts, detail dialog,
   rotate/disable), **Fleet Map** (CSP-safe SVG projection + node geo editor),
-  **Approvals** inbox (plan review + client-side sha bind), **Tasks** runner,
-  and **Audit** viewer are live. Monitoring and Inventory remain queued.
+  **Monitoring** (TCP/HTTP monitor create/delete, assignments, result history,
+  latency trend), **Approvals** inbox (plan review + client-side sha bind),
+  **Tasks** runner, and **Audit** viewer are live. Inventory remains queued.
 - **Phase 3 — Networking & Proxy (flagship):** Proxy inbounds/users/profiles/
   subscriptions/usage; Network Guard, Network Policy + graph, DNS, Geo-Routing,
   DDNS, Tunnels, WireGuard.

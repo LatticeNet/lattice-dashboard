@@ -12,6 +12,7 @@ import type {
   TaskResult,
   ApprovalView,
   AuditQueryResponse,
+  MonitorCreateInput,
   MonitorView,
   MonitorResult,
 } from "./types";
@@ -80,6 +81,8 @@ export const api = {
 
   monitors: {
     list: () => http.get<{ monitors: MonitorView[] } | MonitorView[]>("/api/monitors"),
+    create: (input: MonitorCreateInput) => http.post<MonitorView>("/api/monitors", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/monitors/delete", { id }),
     results: (monitor_id: string) =>
       http.get<{ results: MonitorResult[] } | MonitorResult[]>("/api/monitors/results", {
         monitor_id,
