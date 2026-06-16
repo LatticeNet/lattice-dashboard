@@ -15,6 +15,9 @@ import type {
   MonitorCreateInput,
   MonitorView,
   MonitorResult,
+  MachineProfileInput,
+  MachineView,
+  RenewalReminderFire,
 } from "./types";
 
 export * from "./types";
@@ -87,6 +90,18 @@ export const api = {
       http.get<{ results: MonitorResult[] } | MonitorResult[]>("/api/monitors/results", {
         monitor_id,
       }),
+  },
+
+  machines: {
+    list: () => http.get<{ machines: MachineView[] } | MachineView[]>("/api/machines"),
+    create: (input: MachineProfileInput) => http.post<MachineView>("/api/machines", input),
+    update: (input: MachineProfileInput & { id: string }) =>
+      http.post<MachineView>("/api/machines/update", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/machines/delete", { id }),
+    renew: (id: string, next_renewal?: string) =>
+      http.post<MachineView>("/api/machines/renew", { id, next_renewal }),
+    runReminders: (id?: string) =>
+      http.post<{ fired: RenewalReminderFire[] }>("/api/machines/reminders/run", id ? { id } : {}),
   },
 
   audit: {

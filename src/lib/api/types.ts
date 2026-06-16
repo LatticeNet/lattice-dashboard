@@ -210,3 +210,59 @@ export interface MonitorCreateInput {
   assign_all?: boolean;
   node_ids?: string[];
 }
+
+export type RenewalCycle = "" | "monthly" | "quarterly" | "semiannual" | "annual" | "custom_days";
+
+export interface MachineView {
+  id?: string;
+  node_id: string;
+  node_name?: string;
+  label?: string;
+  online: boolean;
+  host_facts?: HostFacts;
+  vendor?: string;
+  region?: string;
+  has_console_url?: boolean;
+  has_detail_url?: boolean;
+  notes?: string;
+  price_cents?: number;
+  currency?: string;
+  renewal_cycle?: RenewalCycle | string;
+  cycle_days?: number;
+  next_renewal?: string;
+  days_until_renewal?: number;
+  auto_roll?: boolean;
+  remind_days_before?: number[];
+  reminders_enabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MachineProfileInput {
+  id?: string;
+  node_id: string;
+  label?: string;
+  vendor?: string;
+  console_url?: string;
+  detail_url?: string;
+  clear_console_url?: boolean;
+  clear_detail_url?: boolean;
+  region?: string;
+  notes?: string;
+  price_cents?: number;
+  currency?: string;
+  renewal_cycle?: RenewalCycle | string;
+  cycle_days?: number;
+  next_renewal?: string;
+  auto_roll?: boolean;
+  remind_days_before?: number[];
+  reminders_enabled?: boolean;
+}
+
+export interface RenewalReminderFire {
+  machine_id: string;
+  node_id: string;
+  node_name?: string;
+  offset_days: number;
+  next_renewal: string;
+}
