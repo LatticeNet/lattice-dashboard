@@ -87,9 +87,10 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   password rotation, TOTP enrollment, activation, recovery-code display, and
   disable flow. Password and 2FA disable actions intentionally return the user
   to login because the server invalidates old sessions.
-- **Phase 2 — Fleet & Ops:** Nodes (+enroll, host facts, detail drawer), Fleet
-  Map (bundled-geo), Approvals inbox (plan diff + sha bind), Tasks runner,
-  Audit viewer, Monitoring, Inventory.
+- **Phase 2 — Fleet & Ops:** **Nodes** (+enroll, host facts, detail dialog,
+  rotate/disable), **Fleet Map** (CSP-safe SVG projection + node geo editor),
+  **Approvals** inbox (plan review + client-side sha bind), **Tasks** runner,
+  and **Audit** viewer are live. Monitoring and Inventory remain queued.
 - **Phase 3 — Networking & Proxy (flagship):** Proxy inbounds/users/profiles/
   subscriptions/usage; Network Guard, Network Policy + graph, DNS, Geo-Routing,
   DDNS, Tunnels, WireGuard.

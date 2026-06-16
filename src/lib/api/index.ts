@@ -5,6 +5,7 @@ import type {
   TOTPEnrollResponse,
   SSOProvider,
   Node,
+  NodeGeoInput,
   NodeGeoView,
   EnrollTokenResponse,
   TaskView,
@@ -49,6 +50,10 @@ export const api = {
     disable: (node_id: string, disabled: boolean) =>
       http.post<void>("/api/nodes/disable", { node_id, disabled }),
     geo: () => http.get<{ nodes: NodeGeoView[] } | NodeGeoView[]>("/api/nodes/geo"),
+    updateGeo: (node_id: string, geo: NodeGeoInput) =>
+      http.post<NodeGeoView>("/api/nodes/geo", { node_id, geo }),
+    clearGeo: (node_id: string) =>
+      http.post<NodeGeoView>("/api/nodes/geo", { node_id, clear: true }),
   },
 
   tasks: {

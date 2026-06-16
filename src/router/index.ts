@@ -6,6 +6,16 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "./nav";
 
+const concreteRoutes: Record<string, () => Promise<unknown>> = {
+  overview: () => import("@/views/OverviewView.vue"),
+  nodes: () => import("@/views/fleet/NodesView.vue"),
+  map: () => import("@/views/fleet/MapView.vue"),
+  approvals: () => import("@/views/operations/ApprovalsView.vue"),
+  tasks: () => import("@/views/operations/TasksView.vue"),
+  audit: () => import("@/views/operations/AuditView.vue"),
+  "settings-security": () => import("@/views/settings/SecurityView.vue"),
+};
+
 /**
  * Build the authenticated child routes from the nav IA so every NAV item has a
  * destination. "/" renders the real Overview; every other path renders the
@@ -13,26 +23,19 @@ import { NAV } from "./nav";
  */
 const childRoutes: RouteRecordRaw[] = NAV.flatMap((section) =>
   section.items.map<RouteRecordRaw>((item) => {
+    const component = concreteRoutes[item.name] ?? (() => import("@/views/PlaceholderView.vue"));
     if (item.path === "/") {
       return {
         path: "",
         name: item.name,
-        component: () => import("@/views/OverviewView.vue"),
-        meta: { title: item.title, section: section.title, scopes: item.scopes ?? [] },
-      };
-    }
-    if (item.name === "settings-security") {
-      return {
-        path: item.path.replace(/^\//, ""),
-        name: item.name,
-        component: () => import("@/views/settings/SecurityView.vue"),
+        component,
         meta: { title: item.title, section: section.title, scopes: item.scopes ?? [] },
       };
     }
     return {
       path: item.path.replace(/^\//, ""),
       name: item.name,
-      component: () => import("@/views/PlaceholderView.vue"),
+      component,
       meta: { title: item.title, section: section.title, scopes: item.scopes ?? [] },
     };
   }),

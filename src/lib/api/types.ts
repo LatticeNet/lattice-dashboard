@@ -96,6 +96,16 @@ export interface NodeGeoView {
   geo?: NodeGeo;
 }
 
+export interface NodeGeoInput {
+  country?: string;
+  city?: string;
+  lat?: number;
+  lon?: number;
+  asn?: number;
+  as_org?: string;
+  provider?: string;
+}
+
 export interface EnrollTokenResponse {
   node_id: string;
   token: string;
@@ -105,14 +115,20 @@ export interface EnrollTokenResponse {
 
 export interface TaskView {
   id: string;
+  actor_id?: string;
+  token_id?: string;
   approval_id?: string;
   targets: string[];
   interpreter: string;
   script_sha256?: string;
   script_size_bytes?: number;
+  timeout_sec?: number;
+  output_limit?: number;
   status: "queued" | "leased" | "finished" | "failed";
   leased_by?: string;
   created_at?: string;
+  started_at?: string;
+  finished_at?: string;
 }
 
 export interface TaskResult {
