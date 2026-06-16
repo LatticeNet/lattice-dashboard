@@ -575,6 +575,48 @@ th {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+.enroll-output {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+  margin-bottom: 12px;
+}
+
+.enroll-output label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.enroll-output-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.enroll-output-head small {
+  display: block;
+  margin-top: 3px;
+}
+
+.mono-textarea,
+#enroll-command,
+#enroll-install-script {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+#enroll-command {
+  min-height: 104px;
+}
+
+#enroll-install-script {
+  min-height: 280px;
+}
+
 .geo-node {
   display: grid;
   gap: 8px;
@@ -605,6 +647,7 @@ th {
 
   .topbar,
   .panel-head,
+  .enroll-output-head,
   .inline-form {
     align-items: stretch;
     flex-direction: column;

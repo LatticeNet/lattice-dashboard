@@ -34,6 +34,7 @@ import { formatPorts, nftInputsPayload } from "./nft.js";
 import { dnsDeploymentPayload, dnsProtocols, dnsPublishSummary, dnsZoneSummary } from "./dns.js";
 import { logSourcePayload, logQueryString } from "./logs.js";
 import { geoRoutingPayload } from "./georouting.js";
+import { agentRunCommand, agentSystemdInstallScript, normalizeAgentServerURL } from "./agent-install.js";
 import { agentUpdatePayload, agentUpdateStatus } from "./agent-update.js";
 import {
   confirmProxyDelete,
@@ -74,6 +75,7 @@ const state = {
   proxyUsageSnapshots: [],
   agentUpdates: [],
   geoNodes: [],
+  enrollment: null,
   netPolicies: [],
   netPolicyGraph: { nodes: [], edges: [], externals: [] },
   machines: [],
@@ -986,6 +988,7 @@ function render() {
   $("queued-count").textContent = state.tasks.filter((t) => t.status === "queued").length;
   $("approval-count").textContent = state.approvals.filter((a) => a.status === "pending").length;
   renderNodes();
+  renderEnrollment();
   renderGeoMap();
   renderResults();
   renderApprovals();
@@ -1020,6 +1023,30 @@ function renderNodes() {
   $("nodes-table").querySelectorAll("[data-agent-update-node]").forEach((button) => {
     button.addEventListener("click", () => fillAgentUpdateForm(button.dataset.agentUpdateNode));
   });
+}
+
+function renderEnrollment() {
+  const output = $("enroll-output");
+  if (!output) return;
+  const enrollment = state.enrollment;
+  output.classList.toggle("hidden", !enrollment);
+  if (!enrollment) return;
+  $("enroll-output-node").textContent = enrollment.nodeID;
+  $("enroll-token").value = enrollment.token;
+  $("enroll-command").value = enrollment.command;
+  $("enroll-install-script").value = enrollment.installScript;
+}
+
+function enrollmentFromResponse(data) {
+  const serverURL = normalizeAgentServerURL(data.server_url || window.location.origin);
+  const nodeID = String(data.node_id || "");
+  const token = String(data.token || "");
+  return {
+    nodeID,
+    token,
+    command: String(data.command || "") || agentRunCommand({ serverURL, nodeID, token }),
+    installScript: agentSystemdInstallScript({ serverURL, nodeID, token }),
+  };
 }
 
 function renderGeoMap() {
@@ -2216,9 +2243,23 @@ async function enroll(event) {
       name: String(form.get("name") || ""),
     }),
   });
-  alert(`Token for ${data.node_id}:\n${data.token}\n\n${data.command}`);
+  state.enrollment = enrollmentFromResponse(data);
   event.currentTarget.reset();
   await refresh();
+}
+
+async function copyElementValue(id) {
+  const element = $(id);
+  if (!element) return;
+  const value = element.value || element.textContent || "";
+  try {
+    await navigator.clipboard.writeText(value);
+    return;
+  } catch {
+    element.focus();
+    element.select?.();
+    document.execCommand?.("copy");
+  }
 }
 
 async function queueTask(event) {
@@ -2385,6 +2426,9 @@ $("twofa-disable-form").addEventListener("submit", disable2FA);
 $("refresh").addEventListener("click", refresh);
 $("logout").addEventListener("click", logout);
 $("enroll-form").addEventListener("submit", enroll);
+$("enroll-copy-token").addEventListener("click", () => copyElementValue("enroll-token"));
+$("enroll-copy-command").addEventListener("click", () => copyElementValue("enroll-command"));
+$("enroll-copy-install").addEventListener("click", () => copyElementValue("enroll-install-script"));
 $("georouting-refresh").addEventListener("click", loadGeoRouting);
 $("georouting-form").addEventListener("submit", submitGeoRouting);
 $("georouting-reset").addEventListener("click", resetGeoRoutingForm);

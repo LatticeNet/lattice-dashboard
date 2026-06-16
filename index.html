@@ -77,6 +77,33 @@
                   <button type="submit">Enroll</button>
                 </form>
               </div>
+              <div id="enroll-output" class="enroll-output hidden" aria-live="polite">
+                <div class="enroll-output-head">
+                  <div>
+                    <strong>Enrollment command</strong>
+                    <small id="enroll-output-node" class="mono"></small>
+                  </div>
+                  <button id="enroll-copy-install" type="button" class="secondary">Copy install script</button>
+                </div>
+                <label>
+                  One-time token
+                  <div class="copy-field">
+                    <input id="enroll-token" readonly autocomplete="off" />
+                    <button id="enroll-copy-token" type="button" class="secondary">Copy</button>
+                  </div>
+                </label>
+                <label>
+                  Quick test
+                  <div class="copy-field">
+                    <textarea id="enroll-command" readonly></textarea>
+                    <button id="enroll-copy-command" type="button" class="secondary">Copy</button>
+                  </div>
+                </label>
+                <label>
+                  systemd install
+                  <textarea id="enroll-install-script" class="mono-textarea" readonly></textarea>
+                </label>
+              </div>
               <div class="table-wrap">
                 <table>
                   <thead>
