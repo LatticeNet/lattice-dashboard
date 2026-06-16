@@ -1,0 +1,255 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Lattice operator console — design tokens.
+   Built on the shadcn-vue OKLCH token system, re-skinned with Lattice's own
+   identity: a deep slate-indigo surface set and an indigo brand accent.
+   Two-axis theming: (1) light/dark via the .dark class (pre-painted by
+   /theme-init.js before mount, no FOUC); (2) brand palette via inline CSS
+   vars set on :root by the theme store (src/theme/palettes.ts). */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  /* Status semantics — this is a status-heavy control plane. */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-mono:
+    ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+}
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.99 0.0015 280);
+  --foreground: oklch(0.21 0.02 281);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 281);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 281);
+
+  --primary: oklch(0.541 0.205 278.5);
+  --primary-foreground: oklch(0.985 0.005 280);
+  --secondary: oklch(0.965 0.006 280);
+  --secondary-foreground: oklch(0.27 0.025 281);
+  --muted: oklch(0.965 0.006 280);
+  --muted-foreground: oklch(0.524 0.022 281);
+  --accent: oklch(0.95 0.014 279);
+  --accent-foreground: oklch(0.30 0.05 279);
+  --destructive: oklch(0.583 0.231 27.5);
+  --destructive-foreground: oklch(0.985 0.01 20);
+
+  --success: oklch(0.62 0.16 150);
+  --success-foreground: oklch(0.985 0.01 155);
+  --warning: oklch(0.72 0.16 73);
+  --warning-foreground: oklch(0.26 0.05 70);
+  --info: oklch(0.6 0.14 240);
+  --info-foreground: oklch(0.985 0.01 240);
+
+  --border: oklch(0.91 0.006 281);
+  --input: oklch(0.91 0.006 281);
+  --ring: oklch(0.541 0.205 278.5);
+
+  --chart-1: oklch(0.541 0.205 278.5);
+  --chart-2: oklch(0.62 0.16 195);
+  --chart-3: oklch(0.66 0.18 142);
+  --chart-4: oklch(0.74 0.17 60);
+  --chart-5: oklch(0.64 0.22 12);
+
+  --sidebar: oklch(0.985 0.004 280);
+  --sidebar-foreground: oklch(0.30 0.02 281);
+  --sidebar-primary: oklch(0.541 0.205 278.5);
+  --sidebar-primary-foreground: oklch(0.985 0.005 280);
+  --sidebar-accent: oklch(0.95 0.014 279);
+  --sidebar-accent-foreground: oklch(0.30 0.05 279);
+  --sidebar-border: oklch(0.91 0.006 281);
+  --sidebar-ring: oklch(0.541 0.205 278.5);
+}
+
+.dark {
+  --background: oklch(0.165 0.014 281);
+  --foreground: oklch(0.97 0.004 280);
+  --card: oklch(0.205 0.016 281);
+  --card-foreground: oklch(0.97 0.004 280);
+  --popover: oklch(0.205 0.016 281);
+  --popover-foreground: oklch(0.97 0.004 280);
+
+  --primary: oklch(0.672 0.17 277);
+  --primary-foreground: oklch(0.165 0.014 281);
+  --secondary: oklch(0.27 0.016 281);
+  --secondary-foreground: oklch(0.97 0.004 280);
+  --muted: oklch(0.27 0.016 281);
+  --muted-foreground: oklch(0.712 0.013 281);
+  --accent: oklch(0.30 0.03 279);
+  --accent-foreground: oklch(0.97 0.004 280);
+  --destructive: oklch(0.704 0.191 22.2);
+  --destructive-foreground: oklch(0.97 0.01 20);
+
+  --success: oklch(0.706 0.15 156);
+  --success-foreground: oklch(0.16 0.02 156);
+  --warning: oklch(0.8 0.16 80);
+  --warning-foreground: oklch(0.2 0.04 75);
+  --info: oklch(0.68 0.13 238);
+  --info-foreground: oklch(0.16 0.02 238);
+
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.55 0.12 278);
+
+  --chart-1: oklch(0.672 0.17 277);
+  --chart-2: oklch(0.7 0.14 195);
+  --chart-3: oklch(0.72 0.17 145);
+  --chart-4: oklch(0.79 0.16 65);
+  --chart-5: oklch(0.7 0.2 13);
+
+  --sidebar: oklch(0.185 0.015 281);
+  --sidebar-foreground: oklch(0.9 0.006 280);
+  --sidebar-primary: oklch(0.672 0.17 277);
+  --sidebar-primary-foreground: oklch(0.165 0.014 281);
+  --sidebar-accent: oklch(0.30 0.03 279);
+  --sidebar-accent-foreground: oklch(0.97 0.004 280);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.55 0.12 278);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei",
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle grid texture used behind hero surfaces (login, empty states). */
+@utility lattice-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--foreground) 6%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--foreground) 6%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* ---- Motion: page + list + fade transitions ---- */
+.page-enter-active,
+.page-leave-active {
+  transition:
+    opacity 0.22s ease,
+    transform 0.22s ease;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.list-move,
+.list-enter-active,
+.list-leave-active {
+  transition: all 0.35s ease;
+}
+.list-enter-from,
+.list-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.list-leave-active {
+  position: absolute;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Status pulse for live "online" dots. */
+@keyframes lattice-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.animate-pulse-dot {
+  animation: lattice-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}

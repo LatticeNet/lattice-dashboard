@@ -1,11 +1,10 @@
 node_modules/
 dist/
-*.local
-.DS_Store
 .vite/
 .omc/
 .omx/
-node_modules/.tmp/
+*.local
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+.DS_Store
