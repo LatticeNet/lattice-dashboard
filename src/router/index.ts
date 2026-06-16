@@ -15,7 +15,33 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   approvals: () => import("@/views/operations/ApprovalsView.vue"),
   tasks: () => import("@/views/operations/TasksView.vue"),
   audit: () => import("@/views/operations/AuditView.vue"),
+  // Networking
+  "network-guard": () => import("@/views/networking/GuardView.vue"),
+  "network-policy": () => import("@/views/networking/PolicyView.vue"),
+  "network-dns": () => import("@/views/networking/DnsView.vue"),
+  "network-geo-routing": () => import("@/views/networking/GeoRoutingView.vue"),
+  "network-ddns": () => import("@/views/networking/DdnsView.vue"),
+  "network-tunnels": () => import("@/views/networking/TunnelsView.vue"),
+  "network-wireguard": () => import("@/views/networking/WireGuardView.vue"),
+  // Proxy (flagship)
+  "proxy-inbounds": () => import("@/views/proxy/InboundsView.vue"),
+  "proxy-users": () => import("@/views/proxy/UsersView.vue"),
+  "proxy-profiles": () => import("@/views/proxy/ProfilesView.vue"),
+  "proxy-subscriptions": () => import("@/views/proxy/SubscriptionsView.vue"),
+  "proxy-usage": () => import("@/views/proxy/UsageView.vue"),
+  // Platform
+  "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
+  "platform-workers": () => import("@/views/platform/WorkersView.vue"),
+  "platform-kv": () => import("@/views/platform/KvView.vue"),
+  "platform-static": () => import("@/views/platform/StaticView.vue"),
+  "platform-logs": () => import("@/views/platform/LogsView.vue"),
+  "platform-notifications": () => import("@/views/platform/NotificationsView.vue"),
+  "platform-agent-updates": () => import("@/views/platform/AgentUpdatesView.vue"),
+  // Settings
   "settings-security": () => import("@/views/settings/SecurityView.vue"),
+  "settings-sso": () => import("@/views/settings/SsoView.vue"),
+  "settings-tokens": () => import("@/views/settings/TokensView.vue"),
+  "settings-appearance": () => import("@/views/settings/AppearanceView.vue"),
 };
 
 /**

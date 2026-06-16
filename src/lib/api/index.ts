@@ -18,6 +18,52 @@ import type {
   MachineProfileInput,
   MachineView,
   RenewalReminderFire,
+  ProxyInboundView,
+  ProxyInboundUpsertRequest,
+  ProxyUserView,
+  ProxyUserUpsertRequest,
+  RotateSubTokenResponse,
+  ProxyNodeProfileView,
+  ProxyNodeProfileUpsertRequest,
+  ProxyUsageResponse,
+  NFTInputsView,
+  NFTInputsUpsertBody,
+  NetPolicyView,
+  NetPolicyUpsertRequest,
+  NetPolicyGraph,
+  DNSDeploymentView,
+  DNSDeploymentBody,
+  DNSPublishResponse,
+  GeoRouting,
+  GeoRoutingUpsertRequest,
+  GeoRoutingPlanView,
+  DDNSView,
+  DDNSUpsertRequest,
+  TunnelView,
+  TunnelUpsertRequest,
+  WireGuardPlanRequest,
+  PluginView,
+  PluginInstallationView,
+  PluginLifecycleStatus,
+  PluginVerifyResponse,
+  WorkerScript,
+  WorkerRunResponse,
+  KVEntry,
+  StaticObject,
+  LogSource,
+  LogSourceUpsertRequest,
+  LogQueryResponse,
+  LogSourceStatsView,
+  NotifyChannelView,
+  NotifyChannelUpsertRequest,
+  NotifyTestRequest,
+  AgentUpdatePolicy,
+  AgentUpdatePolicyUpsertRequest,
+  OIDCProviderView,
+  OIDCProviderUpsertRequest,
+  TokenView,
+  TokenCreateRequest,
+  TokenCreateResponse,
 } from "./types";
 
 export * from "./types";
@@ -116,6 +162,167 @@ export const api = {
     }) => http.get<AuditQueryResponse>("/api/audit", params as Record<string, unknown>),
     verify: () =>
       http.get<{ enabled: boolean; ok: boolean; count: number; head?: string }>("/api/audit/verify"),
+  },
+
+  proxy: {
+    inbounds: () => http.get<{ inbounds: ProxyInboundView[] }>("/api/proxy/inbounds"),
+    upsertInbound: (input: ProxyInboundUpsertRequest) =>
+      http.post<ProxyInboundView>("/api/proxy/inbounds", input),
+    deleteInbound: (id: string, force?: boolean) =>
+      http.post<{ ok: boolean }>("/api/proxy/inbounds/delete", { id, force }),
+    users: () => http.get<{ users: ProxyUserView[] }>("/api/proxy/users"),
+    upsertUser: (input: ProxyUserUpsertRequest) =>
+      http.post<ProxyUserView>("/api/proxy/users", input),
+    deleteUser: (id: string) => http.post<{ ok: boolean }>("/api/proxy/users/delete", { id }),
+    rotateSubToken: (id: string) =>
+      http.post<RotateSubTokenResponse>("/api/proxy/users/rotate-sub-token", { id }),
+    profiles: () => http.get<{ profiles: ProxyNodeProfileView[] }>("/api/proxy/profiles"),
+    upsertProfile: (input: ProxyNodeProfileUpsertRequest) =>
+      http.post<ProxyNodeProfileView>("/api/proxy/profiles", input),
+    deleteProfile: (node_id: string) =>
+      http.post<{ ok: boolean }>("/api/proxy/profiles/delete", { node_id }),
+    planNode: (node_id: string) =>
+      http.post<ApprovalView>(`/api/proxy/nodes/${encodeURIComponent(node_id)}/plan`, {}),
+    usage: () => http.get<ProxyUsageResponse>("/api/proxy/usage"),
+  },
+
+  nft: {
+    inputs: () => http.get<{ inputs: NFTInputsView[] }>("/api/network/nft/inputs"),
+    upsertInputs: (input: NFTInputsUpsertBody) =>
+      http.post<NFTInputsView>("/api/network/nft/inputs", input),
+    deleteInputs: (node_id: string) =>
+      http.post<{ ok: boolean }>("/api/network/nft/inputs/delete", { node_id }),
+    plan: (input: NFTInputsUpsertBody) =>
+      http.post<ApprovalView>("/api/network/nft/plan", input),
+  },
+
+  netpolicy: {
+    list: () => http.get<{ policies: NetPolicyView[] }>("/api/netpolicy"),
+    upsert: (input: NetPolicyUpsertRequest) => http.post<NetPolicyView>("/api/netpolicy", input),
+    delete: (target_node_id: string) =>
+      http.post<{ ok: boolean }>("/api/netpolicy/delete", { target_node_id }),
+    plan: (node_id: string) => http.post<ApprovalView>("/api/netpolicy/plan", { node_id }),
+    graph: () => http.get<NetPolicyGraph>("/api/netpolicy/graph"),
+  },
+
+  dns: {
+    deployments: () => http.get<{ deployments: DNSDeploymentView[] }>("/api/dns/deployments"),
+    upsert: (input: DNSDeploymentBody) =>
+      http.post<DNSDeploymentView>("/api/dns/deployments", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/dns/deployments/delete", { id }),
+    plan: (id: string) => http.post<ApprovalView>("/api/dns/plan", { id }),
+    publish: (id: string) => http.post<DNSPublishResponse>("/api/dns/publish", { id }),
+  },
+
+  geoRouting: {
+    list: () => http.get<{ geo_routings: GeoRouting[] }>("/api/geo-routing"),
+    upsert: (input: GeoRoutingUpsertRequest) => http.post<GeoRouting>("/api/geo-routing", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/geo-routing/delete", { id }),
+    plan: (id: string) => http.post<GeoRoutingPlanView>("/api/geo-routing/plan", { id }),
+  },
+
+  ddns: {
+    list: () => http.get<DDNSView[]>("/api/ddns"),
+    create: (input: DDNSUpsertRequest) => http.post<DDNSView>("/api/ddns", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/ddns/delete", { id }),
+    run: (id: string) => http.post<DDNSView>("/api/ddns/run", { id }),
+  },
+
+  tunnels: {
+    list: () => http.get<TunnelView[]>("/api/tunnels"),
+    create: (input: TunnelUpsertRequest) => http.post<TunnelView>("/api/tunnels", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/tunnels/delete", { id }),
+    plan: (id: string) => http.post<ApprovalView>("/api/tunnels/plan", { id }),
+  },
+
+  wireguard: {
+    plan: (input: WireGuardPlanRequest) =>
+      http.post<ApprovalView>("/api/network/wireguard/plan", input),
+  },
+
+  plugins: {
+    list: () => http.get<PluginView[]>("/api/plugins"),
+    lifecycle: () => http.get<PluginInstallationView[]>("/api/plugins/lifecycle"),
+    setLifecycle: (id: string, status: PluginLifecycleStatus) =>
+      http.post<PluginInstallationView>("/api/plugins/lifecycle", { id, status }),
+    verify: (manifest: unknown, artifact_base64: string) =>
+      http.post<PluginVerifyResponse>("/api/plugins/verify", { manifest, artifact_base64 }),
+  },
+
+  workers: {
+    list: () => http.get<WorkerScript[]>("/api/workers"),
+    deploy: (input: { name: string; source: string; capabilities?: string[]; public?: boolean }) =>
+      http.post<WorkerScript>("/api/workers", input),
+    run: (worker_id: string, path: string) =>
+      http.post<WorkerRunResponse>("/api/workers/run", { worker_id, path }),
+  },
+
+  kv: {
+    list: (bucket?: string) => http.get<KVEntry[]>("/api/kv", bucket ? { bucket } : undefined),
+    put: (input: { bucket?: string; key: string; value: string }) =>
+      http.post<KVEntry>("/api/kv", input),
+  },
+
+  static: {
+    list: (bucket?: string) =>
+      http.get<StaticObject[]>("/api/static", bucket ? { bucket } : undefined),
+    put: (input: { bucket?: string; path: string; content: string; content_type: string }) =>
+      http.post<StaticObject>("/api/static", input),
+  },
+
+  logs: {
+    sources: () => http.get<{ sources: LogSource[] }>("/api/logs/sources"),
+    upsertSource: (input: LogSourceUpsertRequest) =>
+      http.post<LogSource>("/api/logs/sources", input),
+    deleteSource: (id: string) =>
+      http.post<{ ok: boolean }>("/api/logs/sources/delete", { id }),
+    query: (params: {
+      source_id: string;
+      q?: string;
+      since?: string;
+      until?: string;
+      limit?: number;
+      before_seq?: number;
+    }) => http.get<LogQueryResponse>("/api/logs/query", params as Record<string, unknown>),
+    stats: (source_id?: string) =>
+      http.get<{ stats: LogSourceStatsView[] }>(
+        "/api/logs/stats",
+        source_id ? { source_id } : undefined,
+      ),
+  },
+
+  notify: {
+    channels: () => http.get<NotifyChannelView[]>("/api/notify/channels"),
+    upsertChannel: (input: NotifyChannelUpsertRequest) =>
+      http.post<NotifyChannelView>("/api/notify/channels", input),
+    deleteChannel: (id: string) =>
+      http.post<{ ok: boolean }>("/api/notify/channels/delete", { id }),
+    test: (input: NotifyTestRequest) =>
+      http.post<{ ok: boolean; channel: string }>("/api/notify/test", input),
+  },
+
+  agentUpdates: {
+    list: () => http.get<{ policies: AgentUpdatePolicy[] }>("/api/nodes/agent-updates"),
+    upsert: (input: AgentUpdatePolicyUpsertRequest) =>
+      http.post<AgentUpdatePolicy>("/api/nodes/agent-updates", input),
+    delete: (node_id: string) =>
+      http.post<{ ok: boolean }>("/api/nodes/agent-updates/delete", { node_id }),
+    plan: (node_id: string, force?: boolean) =>
+      http.post<ApprovalView>("/api/nodes/agent-updates/plan", { node_id, force }),
+  },
+
+  oidc: {
+    providers: () => http.get<{ providers: OIDCProviderView[] }>("/api/auth/oidc/providers"),
+    upsertProvider: (input: OIDCProviderUpsertRequest) =>
+      http.post<OIDCProviderView>("/api/auth/oidc/providers", input),
+    deleteProvider: (id: string) =>
+      http.post<{ status: string }>("/api/auth/oidc/providers/delete", { id }),
+  },
+
+  tokens: {
+    list: () => http.get<TokenView[]>("/api/tokens"),
+    create: (input: TokenCreateRequest) => http.post<TokenCreateResponse>("/api/tokens", input),
+    revoke: (token_id: string) => http.post<TokenView>("/api/tokens/revoke", { token_id }),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),
