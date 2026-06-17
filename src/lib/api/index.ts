@@ -7,6 +7,7 @@ import type {
   SSOProvider,
   Node,
   NodeGeoInput,
+  NodeGeoResolveResponse,
   NodeGeoView,
   EnrollTokenResponse,
   TaskView,
@@ -115,6 +116,8 @@ export const api = {
       http.post<NodeGeoView>("/api/nodes/geo", { node_id, geo }),
     clearGeo: (node_id: string) =>
       http.post<NodeGeoView>("/api/nodes/geo", { node_id, clear: true }),
+    resolveGeo: (input: { node_id?: string; all?: boolean; missing_only?: boolean; overwrite?: boolean }) =>
+      http.post<NodeGeoResolveResponse>("/api/nodes/geo/resolve", input),
   },
 
   tasks: {

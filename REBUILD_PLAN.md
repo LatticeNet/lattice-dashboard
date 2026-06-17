@@ -10,7 +10,9 @@
 > are complete. Diagnostics patch 2026-06-17: Nodes detail now exposes the
 > server-owned node-agent debug policy, including local-only debug mode versus
 > central Logs collection; SSO New Provider includes a field guide and public
-> docs link.
+> docs link. Fleet Map patch 2026-06-17: the map is now a refined CSP-safe world
+> SVG with IP-based auto-location controls backed by an opt-in server GeoIP
+> resolver.
 
 ## Why rebuild
 
@@ -130,6 +132,9 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
 - **SSO setup guidance — DONE.** The New Provider dialog includes the exact
   redirect URI, an IdP checklist, field-by-field explanations, and a deep link
   to `https://latticenet.github.io/guide/sso`.
+- **Fleet Map auto-location — DONE.** `/map` now shows a proper SVG world map,
+  region rollups, source-aware manual/GeoIP placement, and one-click missing
+  node location using server-side `LATTICE_GEOIP_LOOKUP_URL`.
 - **Protocol-level future work — NOT dashboard-only.** KV Store v2
   (bucket-bound credentials and domain/IP binding), Static hosting v2
   (domain-bound sites / optional Cloudflare Pages workflow), browser terminal

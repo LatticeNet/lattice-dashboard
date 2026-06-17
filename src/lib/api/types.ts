@@ -70,12 +70,15 @@ export interface HostFacts {
 
 export interface NodeGeo {
   country?: string;
+  region?: string;
   city?: string;
   lat?: number;
   lon?: number;
+  ip?: string;
   asn?: number;
   as_org?: string;
   provider?: string;
+  source?: "operator" | "auto" | string;
   updated_at?: string;
 }
 
@@ -109,17 +112,33 @@ export interface NodeGeoView {
   name: string;
   role?: string;
   online: boolean;
+  public_ip?: string;
+  public_ipv6?: string;
   geo?: NodeGeo;
 }
 
 export interface NodeGeoInput {
   country?: string;
+  region?: string;
   city?: string;
   lat?: number;
   lon?: number;
   asn?: number;
   as_org?: string;
   provider?: string;
+}
+
+export interface NodeGeoResolveResult {
+  node_id: string;
+  ip?: string;
+  status: "updated" | "skipped_existing" | "no_public_ip" | "resolver_disabled" | "lookup_failed" | "store_failed" | "not_found" | string;
+  message?: string;
+  node?: NodeGeoView;
+  geo?: NodeGeo;
+}
+
+export interface NodeGeoResolveResponse {
+  results: NodeGeoResolveResult[];
 }
 
 export interface EnrollTokenResponse {
