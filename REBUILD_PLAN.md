@@ -7,7 +7,10 @@
 > and live-server E2E. `vue-tsc` + `vite build` clean; strict-CSP verified.
 > Reliability patch 2026-06-17: stale chunk recovery, server cache headers,
 > SSO docs linking, permission-correct empty states, and first-cycle CPU telemetry
-> are complete.
+> are complete. Diagnostics patch 2026-06-17: Nodes detail now exposes the
+> server-owned node-agent debug policy, including local-only debug mode versus
+> central Logs collection; SSO New Provider includes a field guide and public
+> docs link.
 
 ## Why rebuild
 
@@ -121,6 +124,12 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
 - **Deployment reliability — DONE.** Server static hosting now sends `no-cache`
   for app-shell/fallback routes and immutable cache headers for hashed assets;
   the router performs one guarded reload on stale dynamic-import chunk failures.
+- **Operator diagnostics — DONE.** Node detail exposes server-controlled
+  `lattice-agent v0.2.1+` debug policy: enable local node diagnostics, collect
+  centrally by default into managed Logs, or keep debug output local only.
+- **SSO setup guidance — DONE.** The New Provider dialog includes the exact
+  redirect URI, an IdP checklist, field-by-field explanations, and a deep link
+  to `https://latticenet.github.io/guide/sso`.
 - **Protocol-level future work — NOT dashboard-only.** KV Store v2
   (bucket-bound credentials and domain/IP binding), Static hosting v2
   (domain-bound sites / optional Cloudflare Pages workflow), browser terminal
