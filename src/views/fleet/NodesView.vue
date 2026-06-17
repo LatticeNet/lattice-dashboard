@@ -72,6 +72,7 @@ const enrollResult = ref<EnrollTokenResponse | undefined>();
 
 const selectedNode = ref<Node | undefined>();
 const pendingNode = ref<string | undefined>();
+const debugPendingNode = ref<string | undefined>();
 const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -152,6 +153,21 @@ async function setDisabled(node: Node, disabled: boolean) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.updateFailed"));
   } finally {
     pendingNode.value = undefined;
+  }
+}
+
+async function setNodeDebug(node: Node, enabled: boolean, collect?: boolean) {
+  if (!canAdminNodes.value) return;
+  debugPendingNode.value = node.id;
+  try {
+    const updated = await api.nodes.setDebug(node.id, enabled, collect);
+    selectedNode.value = updated;
+    toast.success(t("fleet.nodes.toast.debugUpdated"));
+    nodesQuery.refresh();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.debugFailed"));
+  } finally {
+    debugPendingNode.value = undefined;
   }
 }
 
@@ -381,6 +397,46 @@ function closeDetail(open: boolean) {
             <div class="rounded-md border border-border p-3">
               <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.wireguard') }}</p>
               <p class="mt-1 font-mono text-sm">{{ selectedNode.wireguard_ip || $t('fleet.nodes.detail.notSet') }}</p>
+            </div>
+          </div>
+
+          <div v-if="canAdminNodes" class="rounded-md border border-border p-4">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="space-y-1">
+                <h3 class="text-sm font-medium">{{ $t('fleet.nodes.detail.diagnostics') }}</h3>
+                <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.debugDescription') }}</p>
+              </div>
+              <Badge :variant="selectedNode.agent_debug?.enabled ? 'warning' : 'secondary'">
+                {{ selectedNode.agent_debug?.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+              </Badge>
+            </div>
+            <div class="mt-4 grid gap-3">
+              <label class="flex items-start gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  class="mt-0.5 size-4 accent-primary"
+                  :checked="!!selectedNode.agent_debug?.enabled"
+                  :disabled="debugPendingNode === selectedNode.id"
+                  @change="setNodeDebug(selectedNode, ($event.target as HTMLInputElement).checked, selectedNode.agent_debug?.collect ?? true)"
+                />
+                <span class="space-y-1">
+                  <span class="block font-medium">{{ $t('fleet.nodes.detail.debugEnabled') }}</span>
+                  <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugLocalHint') }}</span>
+                </span>
+              </label>
+              <label class="flex items-start gap-3 text-sm" :class="!selectedNode.agent_debug?.enabled && 'opacity-60'">
+                <input
+                  type="checkbox"
+                  class="mt-0.5 size-4 accent-primary"
+                  :checked="!!selectedNode.agent_debug?.collect"
+                  :disabled="!selectedNode.agent_debug?.enabled || debugPendingNode === selectedNode.id"
+                  @change="setNodeDebug(selectedNode, true, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="space-y-1">
+                  <span class="block font-medium">{{ $t('fleet.nodes.detail.debugCollect') }}</span>
+                  <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugCollectHint', { path: `agent-debug://${selectedNode.id}` }) }}</span>
+                </span>
+              </label>
             </div>
           </div>
 

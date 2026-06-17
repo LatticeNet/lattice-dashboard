@@ -108,6 +108,8 @@ export const api = {
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),
     disable: (node_id: string, disabled: boolean) =>
       http.post<void>("/api/nodes/disable", { node_id, disabled }),
+    setDebug: (node_id: string, enabled: boolean, collect?: boolean) =>
+      http.post<Node>("/api/nodes/debug", { node_id, enabled, collect }),
     geo: () => http.get<{ nodes: NodeGeoView[] } | NodeGeoView[]>("/api/nodes/geo"),
     updateGeo: (node_id: string, geo: NodeGeoInput) =>
       http.post<NodeGeoView>("/api/nodes/geo", { node_id, geo }),

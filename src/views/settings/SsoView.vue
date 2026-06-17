@@ -54,6 +54,7 @@ const SSO_GUIDE_URL = "https://latticenet.github.io/guide/sso";
 const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("oidc:admin"));
+const redirectUri = computed(() => `${window.location.origin}/api/auth/oidc/callback`);
 
 // Wrapped object endpoint — unwrap "providers".
 const providersQuery = useAsyncData(
@@ -357,6 +358,66 @@ async function confirmDelete() {
             {{ $t("settings.sso.form.description") }}
           </DialogDescription>
         </DialogHeader>
+
+        <div class="space-y-4 rounded-md border border-border bg-muted/30 p-4">
+          <div class="flex items-start gap-3">
+            <ShieldCheck class="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
+            <div class="space-y-1">
+              <p class="text-sm font-medium">{{ $t("settings.sso.form.tutorialTitle") }}</p>
+              <p class="text-sm text-muted-foreground">{{ $t("settings.sso.form.tutorialBody") }}</p>
+            </div>
+          </div>
+          <ol class="grid gap-2 pl-5 text-sm text-muted-foreground">
+            <li>{{ $t("settings.sso.form.stepCreateApp") }}</li>
+            <li>
+              {{ $t("settings.sso.form.stepRedirect") }}
+              <code class="block mt-1 overflow-x-auto rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
+                {{ redirectUri }}
+              </code>
+            </li>
+            <li>{{ $t("settings.sso.form.stepCopyFields") }}</li>
+            <li>{{ $t("settings.sso.form.stepSaveTest") }}</li>
+          </ol>
+          <a
+            :href="SSO_GUIDE_URL"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+          >
+            {{ $t("settings.sso.form.fullGuide") }}
+            <ExternalLink class="size-3.5" aria-hidden="true" />
+          </a>
+        </div>
+
+        <div class="rounded-md border border-border p-4">
+          <p class="text-sm font-medium">{{ $t("settings.sso.form.fieldGuideTitle") }}</p>
+          <dl class="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt class="font-medium">{{ $t("settings.sso.form.displayName") }}</dt>
+              <dd class="text-muted-foreground">{{ $t("settings.sso.form.displayNameGuide") }}</dd>
+            </div>
+            <div>
+              <dt class="font-medium">{{ $t("settings.sso.form.issuer") }}</dt>
+              <dd class="text-muted-foreground">{{ $t("settings.sso.form.issuerGuide") }}</dd>
+            </div>
+            <div>
+              <dt class="font-medium">{{ $t("settings.sso.form.clientId") }}</dt>
+              <dd class="text-muted-foreground">{{ $t("settings.sso.form.clientIdGuide") }}</dd>
+            </div>
+            <div>
+              <dt class="font-medium">{{ $t("settings.sso.form.clientSecret") }}</dt>
+              <dd class="text-muted-foreground">{{ $t("settings.sso.form.clientSecretGuide") }}</dd>
+            </div>
+            <div>
+              <dt class="font-medium">{{ $t("settings.sso.form.scopes") }}</dt>
+              <dd class="text-muted-foreground">{{ $t("settings.sso.form.scopesGuide") }}</dd>
+            </div>
+            <div>
+              <dt class="font-medium">{{ $t("settings.sso.form.allowedDomains") }}</dt>
+              <dd class="text-muted-foreground">{{ $t("settings.sso.form.allowedDomainsGuide") }}</dd>
+            </div>
+          </dl>
+        </div>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-2">

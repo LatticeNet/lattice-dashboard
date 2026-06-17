@@ -79,6 +79,12 @@ export interface NodeGeo {
   updated_at?: string;
 }
 
+export interface AgentDebugPolicy {
+  enabled: boolean;
+  collect: boolean;
+  updated_at?: string;
+}
+
 export interface Node {
   id: string;
   name: string;
@@ -95,6 +101,7 @@ export interface Node {
   metrics?: Metrics;
   host_facts?: HostFacts;
   geo?: NodeGeo;
+  agent_debug?: AgentDebugPolicy;
 }
 
 export interface NodeGeoView {
