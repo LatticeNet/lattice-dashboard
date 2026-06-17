@@ -11,6 +11,11 @@ const route = useRoute();
 
 const title = computed(() => (route.meta.title as string) || "Coming soon");
 const section = computed(() => (route.meta.section as string) || "");
+const description = computed(() =>
+  section.value
+    ? `${section.value} · ${String(route.meta.title ?? title.value)}`
+    : String(route.meta.title ?? title.value),
+);
 
 /** Resolve the section's nav icon so the placeholder feels in-context. */
 const icon = computed(() => {
@@ -24,10 +29,10 @@ const icon = computed(() => {
   <div class="p-6 space-y-6">
     <PageHeader
       :title="title"
-      :description="section ? `${section} · part of the dashboard rebuild` : 'Part of the dashboard rebuild'"
+      :description="$t('placeholder.description', { scope: description })"
     >
       <template #actions>
-        <Badge variant="secondary">Planned</Badge>
+        <Badge variant="secondary">{{ $t('common.status.planned') }}</Badge>
       </template>
     </PageHeader>
 
@@ -41,12 +46,12 @@ const icon = computed(() => {
         <div class="space-y-1.5">
           <h2 class="text-lg font-semibold tracking-tight">{{ title }}</h2>
           <p class="mx-auto max-w-md text-sm text-muted-foreground">
-            This panel is part of the dashboard rebuild and lands in an upcoming pass.
+            {{ $t('placeholder.body') }}
           </p>
         </div>
         <Badge variant="outline" class="gap-1.5">
           <span class="size-1.5 rounded-full bg-warning" />
-          Coming soon in this rebuild
+          {{ $t('placeholder.badge') }}
         </Badge>
       </div>
     </Card>

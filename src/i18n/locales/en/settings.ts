@@ -64,9 +64,11 @@ export default {
       title: "Single Sign-On",
       description: "OIDC identity providers for operator login via external IdPs",
       newProvider: "New provider",
+      guide: "Setup guide",
       explainer: {
         title: "Auth-code flow with PKCE",
         body: "Lattice authenticates against each provider using the authorization-code flow with PKCE. A Lattice-local TOTP second factor is still enforced after SSO when it is enabled — single sign-on never bypasses 2FA. Client secrets are write-only and never returned by the API.",
+        guideLink: "Open the OIDC provider setup guide",
       },
       list: {
         title: "Identity Providers",

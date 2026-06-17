@@ -57,7 +57,7 @@ const steps = computed<Step[]>(() => [
     to: "/monitoring",
     cta: t("onboarding.addMonitorCta"),
     done: !!props.monitorCount && props.monitorCount > 0,
-    allowed: true,
+    allowed: auth.can("monitor:admin"),
   },
   {
     key: "proxy-inbound",

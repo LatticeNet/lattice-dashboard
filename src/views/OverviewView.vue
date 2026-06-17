@@ -81,9 +81,16 @@ const auth = useAuthStore();
 const nodes = computed<Node[]>(() => fleet.data.value ?? []);
 const onlineNodes = computed(() => nodes.value.filter((n) => n.online).length);
 const offlineNodes = computed(() => nodes.value.length - onlineNodes.value);
+const canReadFleet = computed(() => auth.can("node:read"));
 
 /** First-run state: no nodes enrolled yet and the fleet query has settled. */
-const isEmptyFleet = computed(() => !fleet.loading.value && nodes.value.length === 0);
+const isEmptyFleet = computed(
+  () =>
+    canReadFleet.value &&
+    !fleet.loading.value &&
+    fleet.data.value !== undefined &&
+    nodes.value.length === 0,
+);
 
 const pendingApprovals = computed(
   () => (approvals.data.value ?? []).filter((a) => a.status === "pending"),
@@ -151,7 +158,7 @@ function refreshAll() {
         :value="onlineNodes"
         tone="success"
         :icon="Wifi"
-        :hint="offlineNodes > 0 ? `${offlineNodes} offline` : 'all online'"
+        :hint="offlineNodes > 0 ? $t('overview.offlineCount', { count: offlineNodes }) : $t('overview.allOnline')"
       />
       <StatCard
         :label="$t('overview.kpi.approvals')"
@@ -176,16 +183,16 @@ function refreshAll() {
             {{ $t('overview.fleet') }}
           </CardTitle>
           <CardDescription>
-            {{ onlineNodes }} of {{ nodes.length }} nodes online
+            {{ $t('overview.fleetOnline', { online: onlineNodes, total: nodes.length }) }}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <DataState
             :loading="fleet.loading.value"
             :error="fleet.error.value"
-            :empty="nodes.length === 0"
+            :is-empty="nodes.length === 0"
             :empty-title="$t('overview.noNodes')"
-            empty-description="Enroll your first node to start monitoring the fleet."
+            :empty-description="$t('overview.noNodesDescription')"
           >
             <div class="grid gap-3 sm:grid-cols-2">
               <div
@@ -292,15 +299,15 @@ function refreshAll() {
               <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
               {{ $t('overview.approvalsInbox') }}
             </CardTitle>
-            <CardDescription>Pending changes awaiting review</CardDescription>
+            <CardDescription>{{ $t('overview.approvalsDescription') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <DataState
               :loading="approvals.loading.value"
               :error="approvals.error.value"
-              :empty="pendingApprovals.length === 0"
-              empty-title="No pending approvals"
-              empty-description="Everything is up to date."
+              :is-empty="pendingApprovals.length === 0"
+              :empty-title="$t('overview.noPendingApprovals')"
+              :empty-description="$t('overview.everythingUpToDate')"
               :empty-tone="'positive'"
             >
               <ul class="divide-y divide-border">
@@ -335,15 +342,15 @@ function refreshAll() {
               <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
               {{ $t('overview.recentActivity') }}
             </CardTitle>
-            <CardDescription>Latest audit decisions</CardDescription>
+            <CardDescription>{{ $t('overview.recentActivityDescription') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <DataState
               :loading="audit.loading.value"
               :error="audit.error.value"
-              :empty="auditEvents.length === 0"
-              empty-title="No recent activity"
-              empty-description="Audit events will appear here."
+              :is-empty="auditEvents.length === 0"
+              :empty-title="$t('overview.noRecentActivity')"
+              :empty-description="$t('overview.auditWillAppear')"
             >
               <ul class="divide-y divide-border">
                 <li

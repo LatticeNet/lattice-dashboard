@@ -16,6 +16,7 @@ export default {
       create: "创建",
       copy: "复制到剪贴板",
       copied: "已复制",
+      copyFailed: "复制失败",
       search: "搜索",
       retry: "重试",
       confirm: "确认",
@@ -50,6 +51,7 @@ export default {
       success: "成功",
       error: "错误",
       warning: "警告",
+      info: "信息",
       ok: "正常",
       running: "运行中",
       expired: "已过期",
@@ -57,6 +59,7 @@ export default {
       set: "已设置",
       missing: "未设置",
       configured: "已配置",
+      planned: "计划中",
     },
     state: {
       loading: "加载中…",
@@ -65,6 +68,14 @@ export default {
       somethingWrong: "出了点问题。",
       request: "请求",
       empty: "无结果",
+    },
+    chart: {
+      min: "最小",
+      max: "最大",
+      last: "最新",
+      trendNoData: "趋势图，暂无数据",
+      trendOnePoint: "趋势，1 个数据点，数值 {value}",
+      trendSummary: "趋势，{count} 个数据点，最小 {min}，最大 {max}，最新 {last}",
     },
     misc: {
       global: "全局",
@@ -137,6 +148,7 @@ export default {
       language: "语言",
       logout: "退出登录",
       skipToContent: "跳到主内容",
+      signedInAs: "当前登录为",
     },
   },
 
@@ -172,6 +184,16 @@ export default {
     approvalsInbox: "审批",
     recentActivity: "近期活动",
     noNodes: "尚未接入任何节点。",
+    noNodesDescription: "接入第一个节点后即可开始监控机群。",
+    offlineCount: "{count} 个离线",
+    allOnline: "全部在线",
+    fleetOnline: "{online} / {total} 个节点在线",
+    approvalsDescription: "等待审核的待处理变更",
+    noPendingApprovals: "暂无待审批",
+    everythingUpToDate: "当前没有需要处理的事项。",
+    recentActivityDescription: "最新审计决策",
+    noRecentActivity: "暂无近期活动",
+    auditWillAppear: "审计事件会显示在这里。",
   },
 
   appearance: {
@@ -195,6 +217,23 @@ export default {
     livePreviewHint: "当前主题在常见界面元素上的效果。",
     language: "语言",
     languageHint: "控制台的显示语言。",
+    paletteVarHint: "每个色板会覆盖主色系中的 {count} 个 CSS 变量。",
+    customSwitchHint: "输入十六进制值或使用取色器会把品牌色切换为 ",
+    previewButtons: "按钮",
+    previewPrimary: "主要",
+    previewOutline: "描边",
+    previewSecondary: "次要",
+    previewBadges: "徽标",
+    previewCard: "卡片",
+    previewEdgeNode: "边缘节点",
+    previewCardDescription: "示例界面会用当前强调色呈现重点、链接和焦点描边。",
+    previewApply: "应用",
+  },
+
+  placeholder: {
+    description: "{scope} 属于 dashboard 重建范围",
+    body: "这个面板属于 dashboard 重建计划，会在后续迭代中落地。",
+    badge: "本轮重建后续交付",
   },
 
   onboarding: {

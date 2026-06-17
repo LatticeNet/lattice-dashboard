@@ -17,6 +17,7 @@ export default {
       create: "Create",
       copy: "Copy to clipboard",
       copied: "Copied",
+      copyFailed: "Copy failed",
       search: "Search",
       retry: "Retry",
       confirm: "Confirm",
@@ -51,6 +52,7 @@ export default {
       success: "success",
       error: "error",
       warning: "warning",
+      info: "info",
       ok: "ok",
       running: "running",
       expired: "expired",
@@ -58,6 +60,7 @@ export default {
       set: "set",
       missing: "missing",
       configured: "configured",
+      planned: "planned",
     },
     state: {
       loading: "Loading…",
@@ -66,6 +69,14 @@ export default {
       somethingWrong: "Something went wrong.",
       request: "request",
       empty: "No results",
+    },
+    chart: {
+      min: "min",
+      max: "max",
+      last: "last",
+      trendNoData: "Trend chart, no data",
+      trendOnePoint: "Trend, 1 point, value {value}",
+      trendSummary: "Trend, {count} points, min {min}, max {max}, last {last}",
     },
     misc: {
       global: "global",
@@ -138,6 +149,7 @@ export default {
       language: "Language",
       logout: "Sign out",
       skipToContent: "Skip to content",
+      signedInAs: "Signed in as",
     },
   },
 
@@ -173,6 +185,16 @@ export default {
     approvalsInbox: "Approvals",
     recentActivity: "Recent activity",
     noNodes: "No nodes enrolled yet.",
+    noNodesDescription: "Enroll your first node to start monitoring the fleet.",
+    offlineCount: "{count} offline",
+    allOnline: "all online",
+    fleetOnline: "{online} of {total} nodes online",
+    approvalsDescription: "Pending changes awaiting review",
+    noPendingApprovals: "No pending approvals",
+    everythingUpToDate: "Everything is up to date.",
+    recentActivityDescription: "Latest audit decisions",
+    noRecentActivity: "No recent activity",
+    auditWillAppear: "Audit events will appear here.",
   },
 
   appearance: {
@@ -196,6 +218,23 @@ export default {
     livePreviewHint: "The current theme applied to common interface elements.",
     language: "Language",
     languageHint: "Display language for the console.",
+    paletteVarHint: "Each palette overrides {count} CSS variables in the primary family.",
+    customSwitchHint: "Selecting a hex or using the picker switches the brand color to ",
+    previewButtons: "Buttons",
+    previewPrimary: "Primary",
+    previewOutline: "Outline",
+    previewSecondary: "Secondary",
+    previewBadges: "Badges",
+    previewCard: "Card",
+    previewEdgeNode: "Edge node",
+    previewCardDescription: "A sample surface using the active accent for emphasis, links, and focus rings.",
+    previewApply: "Apply",
+  },
+
+  placeholder: {
+    description: "{scope} is part of the dashboard rebuild",
+    body: "This panel is part of the dashboard rebuild and lands in an upcoming pass.",
+    badge: "Coming soon in this rebuild",
   },
 
   onboarding: {

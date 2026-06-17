@@ -92,6 +92,50 @@ export const router = createRouter({
   },
 });
 
+const chunkReloadKey = "lattice:chunk-reload-attempted";
+let chunkReloadAttempted = false;
+
+function isDynamicImportFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return [
+    "Failed to fetch dynamically imported module",
+    "Importing a module script failed",
+    "error loading dynamically imported module",
+    "Unable to preload CSS",
+  ].some((needle) => message.includes(needle)) || /Loading chunk \d+ failed/i.test(message);
+}
+
+function safeInternalRedirect(value: unknown): string {
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
+    ? value
+    : "/";
+}
+
+router.onError((error) => {
+  if (!isDynamicImportFailure(error) || typeof window === "undefined") return;
+  try {
+    if (window.sessionStorage.getItem(chunkReloadKey) === "1") {
+      window.sessionStorage.removeItem(chunkReloadKey);
+      return;
+    }
+    window.sessionStorage.setItem(chunkReloadKey, "1");
+  } catch {
+    if (chunkReloadAttempted) return;
+    chunkReloadAttempted = true;
+  }
+  window.location.reload();
+});
+
+router.afterEach(() => {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(chunkReloadKey);
+  } catch {
+    // Ignore storage errors.
+  }
+  chunkReloadAttempted = false;
+});
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
   if (!auth.ready) await auth.bootstrap();
@@ -105,7 +149,7 @@ router.beforeEach(async (to) => {
     }
   }
   if (to.name === "login" && auth.isAuthenticated) {
-    return { path: (to.query.redirect as string) || "/" };
+    return { path: safeInternalRedirect(to.query.redirect) };
   }
 });
 

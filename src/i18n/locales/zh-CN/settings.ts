@@ -63,9 +63,11 @@ export default {
       title: "单点登录",
       description: "通过外部 IdP 进行运维登录的 OIDC 身份提供方",
       newProvider: "新增提供方",
+      guide: "配置指南",
       explainer: {
         title: "带 PKCE 的授权码流程",
         body: "Lattice 使用带 PKCE 的授权码流程与各提供方进行认证。启用后,SSO 登录之后仍会强制执行 Lattice 本地的 TOTP 第二因子——单点登录绝不会绕过 2FA。客户端密钥为只写,API 永不返回。",
+        guideLink: "打开 OIDC 提供方配置指南",
       },
       list: {
         title: "身份提供方",

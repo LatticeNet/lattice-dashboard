@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Trash2,
   Unlock,
+  ExternalLink,
 } from "lucide-vue-next";
 import {
   api,
@@ -48,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 
 const DEFAULT_SCOPES = "openid,profile,email";
+const SSO_GUIDE_URL = "https://latticenet.github.io/guide/sso";
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -191,6 +193,12 @@ async function confirmDelete() {
       :description="$t('settings.sso.description')"
     >
       <template #actions>
+        <Button variant="outline" size="sm" as-child>
+          <a :href="SSO_GUIDE_URL" target="_blank" rel="noreferrer">
+            <ExternalLink class="size-4" aria-hidden="true" />
+            {{ $t("settings.sso.guide") }}
+          </a>
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -215,6 +223,15 @@ async function confirmDelete() {
           <p class="text-muted-foreground">
             {{ $t("settings.sso.explainer.body") }}
           </p>
+          <a
+            :href="SSO_GUIDE_URL"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
+          >
+            {{ $t("settings.sso.explainer.guideLink") }}
+            <ExternalLink class="size-3.5" aria-hidden="true" />
+          </a>
         </div>
       </CardContent>
     </Card>

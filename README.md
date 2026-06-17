@@ -40,6 +40,15 @@ LATTICE_WEB_ROOT=/path/to/lattice-dashboard/dist lattice-server
 For container deployments, `lattice-server` builds this repository as a named
 BuildKit context and embeds `dist/` into `/app/dashboard`.
 
+The server serves `index.html`, SPA fallbacks, and `theme-init.js` with
+`Cache-Control: no-cache`, while Vite content-hashed files under `/assets/` are
+long-lived immutable assets. The router also reloads once when a stale app shell
+tries to import an old chunk after a deploy.
+
 `LATTICE_ADMIN_PASSWORD` is a first-run bootstrap input. After the state file
 exists, rotate the password through the authenticated API instead of changing the
 environment variable and expecting restart-time mutation.
+
+SSO provider setup notes are maintained at
+`https://latticenet.github.io/guide/sso` and linked from Settings -> Single
+Sign-On.

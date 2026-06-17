@@ -29,7 +29,7 @@ async function copy() {
       copied.value = false;
     }, 1500);
   } catch {
-    toast.error("Copy failed");
+    toast.error(t("common.actions.copyFailed"));
   }
 }
 

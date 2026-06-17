@@ -25,7 +25,7 @@ const { t } = useI18n();
 const title = computed(() =>
   route.name ? t("nav.items." + String(route.name)) : t("nav.items.overview"),
 );
-const actorId = computed(() => auth.principal?.actor_id ?? "Account");
+const actorId = computed(() => auth.principal?.actor_id ?? t("shell.header.account"));
 
 async function logout() {
   await auth.logout();
@@ -85,7 +85,7 @@ async function logout() {
             class="z-50 w-56 rounded-md border bg-popover p-1 text-popover-foreground shadow-lg outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
           >
             <div class="px-2 py-1.5">
-              <p class="text-xs text-muted-foreground">Signed in as</p>
+              <p class="text-xs text-muted-foreground">{{ $t('shell.header.signedInAs') }}</p>
               <p class="truncate font-mono text-sm font-medium">{{ actorId }}</p>
             </div>
             <Separator class="my-1" />

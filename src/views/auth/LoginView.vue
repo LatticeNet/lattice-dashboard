@@ -41,7 +41,7 @@ const totpInput = ref<InstanceType<typeof Input> | null>(null);
 
 const redirect = computed(() => {
   const r = route.query.redirect;
-  return typeof r === "string" && r.startsWith("/") ? r : "/";
+  return typeof r === "string" && r.startsWith("/") && !r.startsWith("//") ? r : "/";
 });
 
 function setError(e: unknown) {
@@ -90,7 +90,7 @@ async function onSubmitPassword() {
   try {
     const loggedIn = await auth.login(username.value, password.value);
     if (loggedIn) {
-      router.push(redirect.value);
+      await router.push(redirect.value);
     } else {
       step.value = "totp";
       focusTotp();
@@ -112,7 +112,7 @@ async function onSubmitTotp() {
     } else {
       await auth.completeTotp(code.value.trim());
     }
-    router.push(redirect.value);
+    await router.push(redirect.value);
   } catch (e) {
     setError(e);
   } finally {

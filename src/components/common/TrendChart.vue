@@ -7,6 +7,7 @@
  * CSP-safe — no canvas, no runtime style injection, no inline scripts.
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
 type Tone = "primary" | "success" | "warning" | "info" | "destructive";
 
@@ -55,6 +56,7 @@ const toneTextClass: Record<Tone, string> = {
 };
 
 const lineClass = computed(() => toneTextClass[props.tone]);
+const { t } = useI18n();
 
 const fmt = (n: number): string => (props.formatValue ? props.formatValue(n) : String(n));
 
@@ -128,9 +130,14 @@ const maxLabel = computed(() => `${fmt(stats.value.max)}${props.unit}`);
 const lastLabel = computed(() => `${fmt(stats.value.last)}${props.unit}`);
 
 const ariaLabel = computed(() => {
-  if (!hasData.value) return "Trend chart, no data";
-  if (count.value === 1) return `Trend, 1 point, value ${lastLabel.value}`;
-  return `Trend, ${count.value} points, min ${minLabel.value}, max ${maxLabel.value}, last ${lastLabel.value}`;
+  if (!hasData.value) return t("common.chart.trendNoData");
+  if (count.value === 1) return t("common.chart.trendOnePoint", { value: lastLabel.value });
+  return t("common.chart.trendSummary", {
+    count: count.value,
+    min: minLabel.value,
+    max: maxLabel.value,
+    last: lastLabel.value,
+  });
 });
 </script>
 
@@ -142,9 +149,9 @@ const ariaLabel = computed(() => {
       class="flex items-center justify-center rounded-md border border-dashed border-border text-xs text-muted-foreground"
       :style="{ height: height + 'px' }"
       role="img"
-      aria-label="No data"
+      :aria-label="$t('common.state.noData')"
     >
-      No data
+      {{ $t('common.state.noData') }}
     </div>
 
     <template v-else>
@@ -203,13 +210,13 @@ const ariaLabel = computed(() => {
       <!-- Crisp, non-stretched labels overlaid as normal HTML text. -->
       <figcaption class="mt-2 flex items-center justify-between gap-2 text-xs">
         <span class="text-muted-foreground">
-          min <span class="font-mono tabular">{{ minLabel }}</span>
+          {{ $t('common.chart.min') }} <span class="font-mono tabular">{{ minLabel }}</span>
         </span>
         <span class="text-muted-foreground">
-          max <span class="font-mono tabular">{{ maxLabel }}</span>
+          {{ $t('common.chart.max') }} <span class="font-mono tabular">{{ maxLabel }}</span>
         </span>
         <span :class="['font-medium', lineClass]">
-          last <span class="font-mono tabular">{{ lastLabel }}</span>
+          {{ $t('common.chart.last') }} <span class="font-mono tabular">{{ lastLabel }}</span>
         </span>
       </figcaption>
     </template>

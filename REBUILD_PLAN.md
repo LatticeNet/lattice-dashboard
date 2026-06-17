@@ -5,6 +5,9 @@
 > 31 sidebar routes is a real, API-backed screen — all 18 server domains are
 > covered. Remaining work is polish (i18n, charts, a11y/perf budgets, onboarding)
 > and live-server E2E. `vue-tsc` + `vite build` clean; strict-CSP verified.
+> Reliability patch 2026-06-17: stale chunk recovery, server cache headers,
+> SSO docs linking, permission-correct empty states, and first-cycle CPU telemetry
+> are complete.
 
 ## Why rebuild
 
@@ -115,6 +118,15 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   and **i18n** (all 33 views in English + Simplified Chinese with a language
   switcher) are shipped. Only **live-server E2E** against a deployed control
   plane remains, which happens during deploy validation.
+- **Deployment reliability — DONE.** Server static hosting now sends `no-cache`
+  for app-shell/fallback routes and immutable cache headers for hashed assets;
+  the router performs one guarded reload on stale dynamic-import chunk failures.
+- **Protocol-level future work — NOT dashboard-only.** KV Store v2
+  (bucket-bound credentials and domain/IP binding), Static hosting v2
+  (domain-bound sites / optional Cloudflare Pages workflow), browser terminal
+  (audited interactive PTY/session transport), and group-leader topology require
+  server model/API/auth/audit and agent protocol work before dashboard controls
+  can honestly claim full support.
 
 ## Serving
 

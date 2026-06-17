@@ -161,7 +161,7 @@ function changeLocale(code: string): void {
               </button>
             </div>
             <p class="text-xs text-muted-foreground">
-              Each palette overrides {{ controlledVarCount }} CSS variables in the primary family.
+              {{ $t('appearance.paletteVarHint', { count: controlledVarCount }) }}
             </p>
           </CardContent>
         </Card>
@@ -212,7 +212,7 @@ function changeLocale(code: string): void {
               </div>
             </div>
             <p class="mt-3 text-xs text-muted-foreground">
-              Selecting a hex or using the picker switches the brand color to
+              {{ $t('appearance.customSwitchHint') }}
               <code class="font-mono">custom</code>.
             </p>
           </CardContent>
@@ -271,34 +271,34 @@ function changeLocale(code: string): void {
         </CardHeader>
         <CardContent class="space-y-5">
           <div class="space-y-2">
-            <p class="text-xs font-medium uppercase text-muted-foreground">Buttons</p>
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('appearance.previewButtons') }}</p>
             <div class="flex flex-wrap gap-2">
-              <Button>Primary</Button>
-              <Button variant="outline">Outline</Button>
-              <Button variant="secondary">Secondary</Button>
+              <Button>{{ $t('appearance.previewPrimary') }}</Button>
+              <Button variant="outline">{{ $t('appearance.previewOutline') }}</Button>
+              <Button variant="secondary">{{ $t('appearance.previewSecondary') }}</Button>
             </div>
           </div>
 
           <div class="space-y-2">
-            <p class="text-xs font-medium uppercase text-muted-foreground">Badges</p>
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('appearance.previewBadges') }}</p>
             <div class="flex flex-wrap gap-2">
-              <Badge variant="success">success</Badge>
-              <Badge variant="warning">warning</Badge>
-              <Badge variant="info">info</Badge>
-              <Badge variant="destructive">destructive</Badge>
+              <Badge variant="success">{{ $t('common.status.success') }}</Badge>
+              <Badge variant="warning">{{ $t('common.status.warning') }}</Badge>
+              <Badge variant="info">{{ $t('common.status.info') }}</Badge>
+              <Badge variant="destructive">{{ $t('common.status.error') }}</Badge>
             </div>
           </div>
 
           <div class="space-y-2">
-            <p class="text-xs font-medium uppercase text-muted-foreground">Card</p>
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('appearance.previewCard') }}</p>
             <Card class="bg-primary/5">
               <CardContent class="space-y-3 p-4">
                 <div class="flex items-center justify-between">
-                  <span class="text-sm font-medium">Edge node</span>
-                  <Badge variant="success">online</Badge>
+                  <span class="text-sm font-medium">{{ $t('appearance.previewEdgeNode') }}</span>
+                  <Badge variant="success">{{ $t('common.status.online') }}</Badge>
                 </div>
                 <p class="text-sm text-muted-foreground">
-                  A sample surface using the active accent for emphasis, links, and focus rings.
+                  {{ $t('appearance.previewCardDescription') }}
                 </p>
                 <div class="flex items-center gap-2">
                   <span
@@ -306,7 +306,7 @@ function changeLocale(code: string): void {
                     :style="{ backgroundColor: theme.activeSwatch }"
                   />
                   <span class="font-mono text-xs text-muted-foreground">{{ theme.color }}</span>
-                  <Button size="sm" class="ml-auto">Apply</Button>
+                  <Button size="sm" class="ml-auto">{{ $t('appearance.previewApply') }}</Button>
                 </div>
               </CardContent>
             </Card>
