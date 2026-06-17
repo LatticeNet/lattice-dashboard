@@ -11,6 +11,12 @@ const mobileOpen = ref(false);
 
 <template>
   <TooltipProvider :delay-duration="200">
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring"
+    >
+      Skip to content
+    </a>
     <div class="flex h-screen overflow-hidden bg-background text-foreground">
       <AppSidebar
         v-model:collapsed="collapsed"
@@ -20,7 +26,7 @@ const mobileOpen = ref(false);
       <div class="flex min-w-0 flex-1 flex-col">
         <AppHeader @toggle-mobile="mobileOpen = !mobileOpen" />
 
-        <main class="flex-1 overflow-y-auto">
+        <main id="main-content" role="main" tabindex="-1" class="flex-1 overflow-y-auto">
           <RouterView v-slot="{ Component, route }">
             <Transition name="page" mode="out-in">
               <component :is="Component" :key="route.path" />

@@ -80,7 +80,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
     <PageHeader title="Approvals" description="Review plans, bind plan hashes, and queue approved changes">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="approvalsQuery.refresh">
-          <RefreshCw :class="cn('size-4', approvalsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', approvalsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -93,7 +93,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
             <p class="text-sm text-muted-foreground">Total</p>
             <p class="text-2xl font-semibold">{{ approvals.length }}</p>
           </div>
-          <ShieldCheck class="size-5 text-muted-foreground" />
+          <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -102,7 +102,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
             <p class="text-sm text-muted-foreground">Pending</p>
             <p class="text-2xl font-semibold text-warning">{{ pending.length }}</p>
           </div>
-          <GitCompare class="size-5 text-warning" />
+          <GitCompare class="size-5 text-warning" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -111,7 +111,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
             <p class="text-sm text-muted-foreground">Can apply</p>
             <p class="text-2xl font-semibold">{{ canApply ? "Yes" : "No" }}</p>
           </div>
-          <CheckCircle2 class="size-5 text-muted-foreground" />
+          <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -192,7 +192,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
               :disabled="pendingApproval === selected.id"
               @click="digestFor(selected)"
             >
-              <GitCompare class="size-4" />
+              <GitCompare class="size-4" aria-hidden="true" />
               Compute hash
             </Button>
             <Button
@@ -202,7 +202,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
               :disabled="!canApply || pendingApproval === selected.id"
               @click="approve(selected, false)"
             >
-              <CheckCircle2 class="size-4" />
+              <CheckCircle2 class="size-4" aria-hidden="true" />
               Approve only
             </Button>
             <Button
@@ -211,8 +211,8 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
               :disabled="!canApply || pendingApproval === selected.id"
               @click="approve(selected, true)"
             >
-              <RefreshCw v-if="pendingApproval === selected.id" class="size-4 animate-spin" />
-              <Play v-else class="size-4" />
+              <RefreshCw v-if="pendingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+              <Play v-else class="size-4" aria-hidden="true" />
               Approve and queue
             </Button>
           </div>

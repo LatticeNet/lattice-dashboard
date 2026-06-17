@@ -293,15 +293,15 @@ async function confirmDelete() {
           :disabled="usersQuery.refreshing.value"
           @click="usersQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', usersQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', usersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New user
         </Button>
         <Button v-else size="sm" disabled :title="adminReason">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New user
         </Button>
       </template>
@@ -310,7 +310,7 @@ async function confirmDelete() {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Users class="size-4 text-muted-foreground" />
+          <Users class="size-4 text-muted-foreground" aria-hidden="true" />
           Subscribers
         </CardTitle>
         <CardDescription>
@@ -330,13 +330,13 @@ async function confirmDelete() {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th class="px-3 py-2 text-left font-medium">Name</th>
-                  <th class="px-3 py-2 text-left font-medium">Status</th>
-                  <th class="px-3 py-2 text-left font-medium">Usage</th>
-                  <th class="px-3 py-2 text-left font-medium">Expires</th>
-                  <th class="px-3 py-2 text-left font-medium">Inbound scope</th>
-                  <th class="px-3 py-2 text-left font-medium">Sub-token</th>
-                  <th class="px-3 py-2 text-right font-medium">Actions</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Name</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Status</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Usage</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Expires</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Inbound scope</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Sub-token</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -378,7 +378,7 @@ async function confirmDelete() {
                   </td>
                   <td class="px-3 py-3">
                     <Badge :variant="user.has_sub_token ? 'success' : 'secondary'" class="gap-1">
-                      <Lock class="size-3" />
+                      <Lock class="size-3" aria-hidden="true" />
                       {{ user.has_sub_token ? "set" : "none" }}
                     </Badge>
                   </td>
@@ -389,6 +389,7 @@ async function confirmDelete() {
                         variant="ghost"
                         :disabled="!canAdmin || rotating === user.id"
                         :title="canAdmin ? 'Rotate subscription token' : adminReason"
+                        aria-label="Rotate"
                         @click="rotate(user)"
                       >
                         <RefreshCw v-if="rotating === user.id" class="size-4 animate-spin" />
@@ -399,6 +400,7 @@ async function confirmDelete() {
                         variant="ghost"
                         :disabled="!canAdmin"
                         :title="canAdmin ? 'Edit user' : adminReason"
+                        aria-label="Edit"
                         @click="openEdit(user)"
                       >
                         <Pencil class="size-4" />
@@ -408,6 +410,7 @@ async function confirmDelete() {
                         variant="ghost"
                         :disabled="!canAdmin"
                         :title="canAdmin ? 'Delete user' : adminReason"
+                        aria-label="Delete"
                         @click="askDelete(user)"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -508,8 +511,8 @@ async function confirmDelete() {
           <DialogFooter>
             <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!formValid || saving">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <UserPlus v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <UserPlus v-else class="size-4" aria-hidden="true" />
               {{ isEditing ? "Save changes" : "Create user" }}
             </Button>
           </DialogFooter>
@@ -529,7 +532,7 @@ async function confirmDelete() {
 
         <div v-if="revealed" class="space-y-4">
           <div class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
-            <TriangleAlert class="mt-0.5 size-4 shrink-0" />
+            <TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <span>Copy now — the token is shown once. Rotating again invalidates this URL.</span>
           </div>
 
@@ -580,8 +583,8 @@ async function confirmDelete() {
         <DialogFooter>
           <Button type="button" variant="outline" @click="deleteOpen = false">Cancel</Button>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>

@@ -63,7 +63,7 @@ const controlledVarCount = PALETTE_KEYS.length;
     >
       <template #actions>
         <Badge variant="secondary" class="gap-1.5">
-          <Palette class="size-3.5" />
+          <Palette class="size-3.5" aria-hidden="true" />
           {{ theme.isDark ? "Dark" : "Light" }}
         </Badge>
       </template>
@@ -75,7 +75,7 @@ const controlledVarCount = PALETTE_KEYS.length;
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Sun class="size-4 text-muted-foreground" />
+              <Sun class="size-4 text-muted-foreground" aria-hidden="true" />
               Mode
             </CardTitle>
             <CardDescription>
@@ -98,7 +98,7 @@ const controlledVarCount = PALETTE_KEYS.length;
                 "
                 @click="theme.setMode(m.value)"
               >
-                <component :is="m.icon" class="size-4" />
+                <component :is="m.icon" class="size-4" aria-hidden="true" />
                 {{ m.label }}
                 <span class="text-[10px] font-normal text-muted-foreground">{{ m.hint }}</span>
               </button>
@@ -110,7 +110,7 @@ const controlledVarCount = PALETTE_KEYS.length;
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Palette class="size-4 text-muted-foreground" />
+              <Palette class="size-4 text-muted-foreground" aria-hidden="true" />
               Brand color
             </CardTitle>
             <CardDescription>
@@ -137,6 +137,7 @@ const controlledVarCount = PALETTE_KEYS.length;
                 <Check
                   v-if="theme.color === key"
                   class="absolute top-1.5 right-1.5 size-4 text-white drop-shadow"
+                  aria-hidden="true"
                 />
                 <span class="relative z-10 pb-1 text-[10px] font-medium text-foreground">
                   {{ label(key) }}
@@ -153,7 +154,7 @@ const controlledVarCount = PALETTE_KEYS.length;
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Paintbrush class="size-4 text-muted-foreground" />
+              <Paintbrush class="size-4 text-muted-foreground" aria-hidden="true" />
               Custom color
             </CardTitle>
             <CardDescription>
@@ -206,7 +207,7 @@ const controlledVarCount = PALETTE_KEYS.length;
       <Card class="self-start">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Palette class="size-4 text-muted-foreground" />
+            <Palette class="size-4 text-muted-foreground" aria-hidden="true" />
             Live preview
           </CardTitle>
           <CardDescription>

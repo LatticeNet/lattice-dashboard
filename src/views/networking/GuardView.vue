@@ -243,7 +243,7 @@ function closePlan(open: boolean) {
           :disabled="inputsQuery.refreshing.value"
           @click="inputsQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', inputsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', inputsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button
@@ -251,7 +251,7 @@ function closePlan(open: boolean) {
           size="sm"
           @click="openCreate"
         >
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New inputs
         </Button>
       </template>
@@ -260,7 +260,7 @@ function closePlan(open: boolean) {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Shield class="size-4 text-muted-foreground" />
+          <Shield class="size-4 text-muted-foreground" aria-hidden="true" />
           Baseline firewall inputs
         </CardTitle>
         <CardDescription>
@@ -280,13 +280,13 @@ function closePlan(open: boolean) {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-3 font-medium">Node</th>
-                  <th class="py-2 pr-3 font-medium">Interface</th>
-                  <th class="py-2 pr-3 font-medium">WireGuard CIDR</th>
-                  <th class="py-2 pr-3 font-medium">Public ports</th>
-                  <th class="py-2 pr-3 font-medium">WireGuard ports</th>
-                  <th class="py-2 pr-3 font-medium">Updated</th>
-                  <th class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Node</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Interface</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">WireGuard CIDR</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Public ports</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">WireGuard ports</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Updated</th>
+                  <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -347,8 +347,8 @@ function closePlan(open: boolean) {
                         :disabled="planning === row.node_id"
                         @click="plan(row)"
                       >
-                        <RefreshCw v-if="planning === row.node_id" class="size-4 animate-spin" />
-                        <Play v-else class="size-4" />
+                        <RefreshCw v-if="planning === row.node_id" class="size-4 animate-spin" aria-hidden="true" />
+                        <Play v-else class="size-4" aria-hidden="true" />
                         Plan
                       </Button>
                       <Button
@@ -437,7 +437,7 @@ function closePlan(open: boolean) {
           <DialogFooter>
             <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               {{ editingId ? "Save changes" : "Create inputs" }}
             </Button>
           </DialogFooter>
@@ -459,8 +459,8 @@ function closePlan(open: boolean) {
         <DialogFooter>
           <Button type="button" variant="outline" @click="deleteTarget = undefined">Cancel</Button>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>
@@ -501,7 +501,7 @@ function closePlan(open: boolean) {
           <Button type="button" variant="outline" @click="closePlan(false)">Close</Button>
           <Button as-child>
             <RouterLink to="/approvals">
-              <ExternalLink class="size-4" />
+              <ExternalLink class="size-4" aria-hidden="true" />
               Go to Approvals
             </RouterLink>
           </Button>

@@ -221,13 +221,13 @@ onMounted(async () => {
           <ul class="space-y-3 text-sm">
             <li class="flex items-center gap-3 text-muted-foreground">
               <span class="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <ShieldCheck class="size-4" />
+                <ShieldCheck class="size-4" aria-hidden="true" />
               </span>
               Secure by default
             </li>
             <li class="flex items-center gap-3 text-muted-foreground">
               <span class="flex size-7 items-center justify-center rounded-md bg-primary/10 text-primary">
-                <ArrowRight class="size-4" />
+                <ArrowRight class="size-4" aria-hidden="true" />
               </span>
               Plan &rarr; approve &rarr; apply
             </li>
@@ -293,7 +293,7 @@ onMounted(async () => {
                 role="alert"
                 class="mb-4 flex items-start gap-2.5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
               >
-                <CircleAlert class="mt-0.5 size-4 shrink-0" />
+                <CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                 <div class="min-w-0 space-y-0.5">
                   <p class="break-words">{{ errorMsg }}</p>
                   <p v-if="errorRequestId" class="font-mono text-xs text-muted-foreground tabular">
@@ -309,6 +309,7 @@ onMounted(async () => {
                   <div class="relative">
                     <User
                       class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
                     />
                     <Input
                       id="username"
@@ -329,6 +330,7 @@ onMounted(async () => {
                   <div class="relative">
                     <Lock
                       class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                      aria-hidden="true"
                     />
                     <Input
                       id="password"
@@ -343,7 +345,7 @@ onMounted(async () => {
                 </div>
 
                 <Button type="submit" class="w-full" :disabled="pending">
-                  <Loader2 v-if="pending" class="size-4 animate-spin" />
+                  <Loader2 v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
                   <span>{{ pending ? "Signing in…" : "Sign in" }}</span>
                 </Button>
               </form>
@@ -356,6 +358,7 @@ onMounted(async () => {
                     <div class="relative">
                       <KeyRound
                         class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden="true"
                       />
                       <Input
                         id="totp"
@@ -380,6 +383,7 @@ onMounted(async () => {
                     <div class="relative">
                       <KeyRound
                         class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden="true"
                       />
                       <Input
                         id="recovery"
@@ -398,7 +402,7 @@ onMounted(async () => {
                 </template>
 
                 <Button type="submit" class="w-full" :disabled="pending">
-                  <Loader2 v-if="pending" class="size-4 animate-spin" />
+                  <Loader2 v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
                   <span>{{ pending ? "Verifying…" : "Verify" }}</span>
                 </Button>
 
@@ -408,7 +412,7 @@ onMounted(async () => {
                     class="inline-flex items-center gap-1 text-muted-foreground transition-colors hover:text-foreground"
                     @click="backToPassword"
                   >
-                    <ArrowLeft class="size-3.5" />
+                    <ArrowLeft class="size-3.5" aria-hidden="true" />
                     Back
                   </button>
                   <button

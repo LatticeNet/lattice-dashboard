@@ -400,11 +400,11 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           :disabled="policiesQuery.refreshing.value"
           @click="policiesQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New policy
         </Button>
       </template>
@@ -421,7 +421,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Network class="size-4 text-muted-foreground" />
+              <Network class="size-4 text-muted-foreground" aria-hidden="true" />
               Node policies
             </CardTitle>
             <CardDescription>
@@ -441,13 +441,13 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th class="py-2 pr-3 font-medium">Target node</th>
-                      <th class="py-2 pr-3 font-medium">Enabled</th>
-                      <th class="py-2 pr-3 text-right font-medium">Rules</th>
-                      <th class="py-2 pr-3 font-medium">Last plan</th>
-                      <th class="py-2 pr-3 font-medium">Last applied</th>
-                      <th class="py-2 pr-3 font-medium">Last error</th>
-                      <th class="py-2 pl-3 text-right font-medium">Actions</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Target node</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Enabled</th>
+                      <th scope="col" class="py-2 pr-3 text-right font-medium">Rules</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Last plan</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Last applied</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Last error</th>
+                      <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -485,8 +485,8 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                             :disabled="planning === p.target_node_id"
                             @click="plan(p)"
                           >
-                            <RefreshCw v-if="planning === p.target_node_id" class="size-4 animate-spin" />
-                            <Play v-else class="size-4" />
+                            <RefreshCw v-if="planning === p.target_node_id" class="size-4 animate-spin" aria-hidden="true" />
+                            <Play v-else class="size-4" aria-hidden="true" />
                             Plan
                           </Button>
                           <Button
@@ -525,7 +525,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <CardTitle class="flex items-center gap-2">
-                  <Network class="size-4 text-muted-foreground" />
+                  <Network class="size-4 text-muted-foreground" aria-hidden="true" />
                   Topology graph
                 </CardTitle>
                 <CardDescription>
@@ -538,7 +538,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 :disabled="graphQuery.refreshing.value"
                 @click="graphQuery.refresh"
               >
-                <RefreshCw :class="cn('size-4', graphQuery.refreshing.value && 'animate-spin')" />
+                <RefreshCw :class="cn('size-4', graphQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
                 Reload graph
               </Button>
             </div>
@@ -661,12 +661,12 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                   <table class="w-full text-sm">
                     <thead>
                       <tr class="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                        <th class="px-3 py-2 font-medium">Target node</th>
-                        <th class="px-3 py-2 font-medium">Direction</th>
-                        <th class="px-3 py-2 font-medium">Action</th>
-                        <th class="px-3 py-2 font-medium">Remote</th>
-                        <th class="px-3 py-2 font-medium">Protocol</th>
-                        <th class="px-3 py-2 font-medium">Ports</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Target node</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Direction</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Action</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Remote</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Protocol</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Ports</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -732,7 +732,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             <div class="flex items-center justify-between">
               <Label>Rules</Label>
               <Button type="button" variant="outline" size="sm" @click="addRule">
-                <Plus class="size-4" />
+                <Plus class="size-4" aria-hidden="true" />
                 Add rule
               </Button>
             </div>
@@ -848,7 +848,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           <DialogFooter>
             <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               {{ editingId ? "Save changes" : "Create policy" }}
             </Button>
           </DialogFooter>
@@ -870,8 +870,8 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
         <DialogFooter>
           <Button type="button" variant="outline" @click="deleteTarget = undefined">Cancel</Button>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>
@@ -912,7 +912,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           <Button type="button" variant="outline" @click="closePlan(false)">Close</Button>
           <Button as-child>
             <RouterLink to="/approvals">
-              <ExternalLink class="size-4" />
+              <ExternalLink class="size-4" aria-hidden="true" />
               Go to Approvals
             </RouterLink>
           </Button>

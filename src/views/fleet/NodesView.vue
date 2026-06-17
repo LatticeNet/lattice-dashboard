@@ -163,7 +163,7 @@ function closeDetail(open: boolean) {
     <PageHeader title="Nodes" description="Enroll, inspect, and administer fleet nodes">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value" @click="nodesQuery.refresh">
-          <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" />
+          <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -176,7 +176,7 @@ function closeDetail(open: boolean) {
             <p class="text-sm text-muted-foreground">Total</p>
             <p class="text-2xl font-semibold">{{ nodes.length }}</p>
           </div>
-          <Server class="size-5 text-muted-foreground" />
+          <Server class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -185,7 +185,7 @@ function closeDetail(open: boolean) {
             <p class="text-sm text-muted-foreground">Online</p>
             <p class="text-2xl font-semibold text-success">{{ onlineCount }}</p>
           </div>
-          <Wifi class="size-5 text-success" />
+          <Wifi class="size-5 text-success" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -194,7 +194,7 @@ function closeDetail(open: boolean) {
             <p class="text-sm text-muted-foreground">Disabled</p>
             <p class="text-2xl font-semibold text-muted-foreground">{{ disabledCount }}</p>
           </div>
-          <Power class="size-5 text-muted-foreground" />
+          <Power class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -202,7 +202,7 @@ function closeDetail(open: boolean) {
     <Card v-if="canAdminNodes" id="enroll-node-section">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Plus class="size-4 text-muted-foreground" />
+          <Plus class="size-4 text-muted-foreground" aria-hidden="true" />
           Enroll Node
         </CardTitle>
         <CardDescription>Create a one-time node enrollment token and install command.</CardDescription>
@@ -231,8 +231,8 @@ function closeDetail(open: boolean) {
           </div>
           <div class="flex items-end">
             <Button type="submit" :disabled="enrollPending || !enrollName.trim()">
-              <RefreshCw v-if="enrollPending" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="enrollPending" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               Enroll
             </Button>
           </div>
@@ -287,7 +287,7 @@ function closeDetail(open: boolean) {
               description="Create an enrollment token to bring your first node online."
             >
               <Button v-if="canAdminNodes" size="sm" @click="focusEnroll">
-                <Plus class="size-4" />
+                <Plus class="size-4" aria-hidden="true" />
                 Enroll a node
               </Button>
             </EmptyState>
@@ -328,14 +328,14 @@ function closeDetail(open: boolean) {
               </div>
 
               <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span class="inline-flex items-center gap-1"><Activity class="size-3" />{{ formatDuration(node.metrics?.uptime_seconds) }}</span>
+                <span class="inline-flex items-center gap-1"><Activity class="size-3" aria-hidden="true" />{{ formatDuration(node.metrics?.uptime_seconds) }}</span>
                 <span>{{ formatBytesPerSec(node.metrics?.net_rx_speed) }} down</span>
                 <span>{{ formatBytesPerSec(node.metrics?.net_tx_speed) }} up</span>
               </div>
 
               <div v-if="canAdminNodes" class="mt-4 flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" :disabled="pendingNode === node.id" @click="rotateToken(node)">
-                  <KeyRound class="size-4" />
+                  <KeyRound class="size-4" aria-hidden="true" />
                   Rotate token
                 </Button>
                 <Button
@@ -344,7 +344,7 @@ function closeDetail(open: boolean) {
                   :disabled="pendingNode === node.id"
                   @click="setDisabled(node, !node.disabled)"
                 >
-                  <Power class="size-4" />
+                  <Power class="size-4" aria-hidden="true" />
                   {{ node.disabled ? "Enable" : "Disable" }}
                 </Button>
               </div>
@@ -394,7 +394,7 @@ function closeDetail(open: boolean) {
           </div>
 
           <div v-else class="flex items-center gap-2 rounded-md border border-border p-3 text-sm text-muted-foreground">
-            <AlertTriangle class="size-4" />
+            <AlertTriangle class="size-4" aria-hidden="true" />
             Host facts have not been reported yet.
           </div>
         </div>

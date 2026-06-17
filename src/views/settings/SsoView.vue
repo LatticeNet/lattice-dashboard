@@ -195,11 +195,11 @@ async function confirmDelete() {
           :disabled="providersQuery.refreshing.value"
           @click="providersQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', providersQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', providersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New provider
         </Button>
       </template>
@@ -207,7 +207,7 @@ async function confirmDelete() {
 
     <Card class="border-primary/30 bg-primary/5">
       <CardContent class="flex items-start gap-3 p-4">
-        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" />
+        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
         <div class="space-y-1 text-sm">
           <p class="font-medium">Auth-code flow with PKCE</p>
           <p class="text-muted-foreground">
@@ -223,7 +223,7 @@ async function confirmDelete() {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <KeyRound class="size-4 text-muted-foreground" />
+          <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
           Identity Providers
         </CardTitle>
         <CardDescription>
@@ -243,14 +243,14 @@ async function confirmDelete() {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Display name</th>
-                  <th class="py-2 pr-4 font-medium">Issuer</th>
-                  <th class="py-2 pr-4 font-medium">Client ID</th>
-                  <th class="py-2 pr-4 font-medium">Secret</th>
-                  <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pr-4 font-medium">Scopes</th>
-                  <th class="py-2 pr-4 font-medium">Allowed domains</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Display name</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Issuer</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Client ID</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Secret</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Scopes</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Allowed domains</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -271,8 +271,8 @@ async function confirmDelete() {
                   </td>
                   <td class="py-3 pr-4">
                     <Badge :variant="provider.has_secret ? 'success' : 'warning'">
-                      <Lock v-if="provider.has_secret" class="size-3" />
-                      <Unlock v-else class="size-3" />
+                      <Lock v-if="provider.has_secret" class="size-3" aria-hidden="true" />
+                      <Unlock v-else class="size-3" aria-hidden="true" />
                       {{ provider.has_secret ? "set" : "missing" }}
                     </Badge>
                   </td>
@@ -413,8 +413,8 @@ async function confirmDelete() {
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               {{ editing ? "Save changes" : "Create" }}
             </Button>
           </DialogFooter>
@@ -437,8 +437,8 @@ async function confirmDelete() {
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>

@@ -388,11 +388,11 @@ function closePlan(open: boolean) {
           :disabled="deploymentsQuery.refreshing.value"
           @click="deploymentsQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', deploymentsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', deploymentsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New deployment
         </Button>
       </template>
@@ -401,7 +401,7 @@ function closePlan(open: boolean) {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Globe2 class="size-4 text-muted-foreground" />
+          <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
           CoreDNS deployments
         </CardTitle>
         <CardDescription>
@@ -421,16 +421,16 @@ function closePlan(open: boolean) {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-3 font-medium">Name</th>
-                  <th class="py-2 pr-3 font-medium">Node</th>
-                  <th class="py-2 pr-3 font-medium">Listen</th>
-                  <th class="py-2 pr-3 font-medium">Exposure</th>
-                  <th class="py-2 pr-3 text-right font-medium">Zones</th>
-                  <th class="py-2 pr-3 font-medium">Hostname</th>
-                  <th class="py-2 pr-3 font-medium">Status</th>
-                  <th class="py-2 pr-3 font-medium">Credential</th>
-                  <th class="py-2 pr-3 font-medium">Published</th>
-                  <th class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Node</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Listen</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Exposure</th>
+                  <th scope="col" class="py-2 pr-3 text-right font-medium">Zones</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Hostname</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Status</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Credential</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Published</th>
+                  <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -464,7 +464,7 @@ function closePlan(open: boolean) {
                   </td>
                   <td class="py-3 pr-3">
                     <Badge v-if="dep.has_credential" variant="success">
-                      <KeyRound class="size-3" /> set
+                      <KeyRound class="size-3" aria-hidden="true" /> set
                     </Badge>
                     <Badge v-else variant="outline">none</Badge>
                   </td>
@@ -481,8 +481,8 @@ function closePlan(open: boolean) {
                         :disabled="planning === dep.id"
                         @click="plan(dep)"
                       >
-                        <RefreshCw v-if="planning === dep.id" class="size-4 animate-spin" />
-                        <Play v-else class="size-4" />
+                        <RefreshCw v-if="planning === dep.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <Play v-else class="size-4" aria-hidden="true" />
                         Plan
                       </Button>
                       <Button
@@ -492,8 +492,8 @@ function closePlan(open: boolean) {
                         :disabled="publishing === dep.id"
                         @click="publish(dep)"
                       >
-                        <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" />
-                        <UploadCloud v-else class="size-4" />
+                        <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <UploadCloud v-else class="size-4" aria-hidden="true" />
                         Publish
                       </Button>
                       <Button
@@ -588,7 +588,7 @@ function closePlan(open: boolean) {
             <div class="flex items-center justify-between">
               <Label>Zones</Label>
               <Button type="button" variant="outline" size="sm" @click="addZone">
-                <Plus class="size-4" />
+                <Plus class="size-4" aria-hidden="true" />
                 Add zone
               </Button>
             </div>
@@ -632,7 +632,7 @@ function closePlan(open: boolean) {
                 <div class="flex items-center justify-between">
                   <Label class="text-xs">Records</Label>
                   <Button type="button" variant="outline" size="sm" @click="addRecord(zone)">
-                    <Plus class="size-4" /> Add record
+                    <Plus class="size-4" aria-hidden="true" /> Add record
                   </Button>
                 </div>
                 <div
@@ -720,7 +720,7 @@ function closePlan(open: boolean) {
           <DialogFooter>
             <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               {{ editingId ? "Save changes" : "Create deployment" }}
             </Button>
           </DialogFooter>
@@ -741,8 +741,8 @@ function closePlan(open: boolean) {
         <DialogFooter>
           <Button type="button" variant="outline" @click="deleteTarget = undefined">Cancel</Button>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>
@@ -783,7 +783,7 @@ function closePlan(open: boolean) {
           <Button type="button" variant="outline" @click="closePlan(false)">Close</Button>
           <Button as-child>
             <RouterLink to="/approvals">
-              <ExternalLink class="size-4" />
+              <ExternalLink class="size-4" aria-hidden="true" />
               Go to Approvals
             </RouterLink>
           </Button>

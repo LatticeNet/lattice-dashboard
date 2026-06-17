@@ -75,7 +75,7 @@ async function verifyAudit() {
     <PageHeader title="Audit" description="Search security decisions and verify the append-only audit chain">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="auditQuery.refreshing.value" @click="auditQuery.refresh">
-          <RefreshCw :class="cn('size-4', auditQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', auditQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -88,7 +88,7 @@ async function verifyAudit() {
             <p class="text-sm text-muted-foreground">Returned</p>
             <p class="text-2xl font-semibold">{{ events.length }}</p>
           </div>
-          <ScrollText class="size-5 text-muted-foreground" />
+          <ScrollText class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -97,7 +97,7 @@ async function verifyAudit() {
             <p class="text-sm text-muted-foreground">Total match</p>
             <p class="text-2xl font-semibold">{{ total }}</p>
           </div>
-          <ShieldCheck class="size-5 text-muted-foreground" />
+          <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -108,7 +108,7 @@ async function verifyAudit() {
               {{ verifyResult ? (verifyResult.ok ? "OK" : "Bad") : "—" }}
             </p>
           </div>
-          <CheckCircle2 class="size-5 text-muted-foreground" />
+          <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -147,14 +147,14 @@ async function verifyAudit() {
           </div>
           <div class="flex items-end">
             <Button type="submit">
-              <RefreshCw class="size-4" />
+              <RefreshCw class="size-4" aria-hidden="true" />
               Query
             </Button>
           </div>
           <div class="flex items-end">
             <Button type="button" variant="outline" :disabled="verifyPending" @click="verifyAudit">
-              <RefreshCw v-if="verifyPending" class="size-4 animate-spin" />
-              <ShieldCheck v-else class="size-4" />
+              <RefreshCw v-if="verifyPending" class="size-4 animate-spin" aria-hidden="true" />
+              <ShieldCheck v-else class="size-4" aria-hidden="true" />
               Verify
             </Button>
           </div>

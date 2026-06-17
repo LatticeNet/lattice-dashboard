@@ -220,11 +220,11 @@ async function runNow(profile: DDNSView) {
           :disabled="profilesQuery.refreshing.value"
           @click="profilesQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', profilesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', profilesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New profile
         </Button>
       </template>
@@ -233,7 +233,7 @@ async function runNow(profile: DDNSView) {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <RefreshCw class="size-4 text-muted-foreground" />
+          <RefreshCw class="size-4 text-muted-foreground" aria-hidden="true" />
           Profiles
         </CardTitle>
         <CardDescription>
@@ -253,16 +253,16 @@ async function runNow(profile: DDNSView) {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Node</th>
-                  <th class="py-2 pr-4 font-medium">Provider</th>
-                  <th class="py-2 pr-4 font-medium">Domains</th>
-                  <th class="py-2 pr-4 font-medium">Stack</th>
-                  <th class="py-2 pr-4 font-medium">Credential</th>
-                  <th class="py-2 pr-4 font-medium">Last run</th>
-                  <th class="py-2 pr-4 font-medium">Last IPs</th>
-                  <th class="py-2 pr-4 font-medium">Last error</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Provider</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Domains</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Stack</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Credential</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Last run</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Last IPs</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Last error</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -294,8 +294,8 @@ async function runNow(profile: DDNSView) {
                   </td>
                   <td class="py-3 pr-4">
                     <Badge :variant="profile.has_credential ? 'success' : 'secondary'">
-                      <Lock v-if="profile.has_credential" class="size-3" />
-                      <Unlock v-else class="size-3" />
+                      <Lock v-if="profile.has_credential" class="size-3" aria-hidden="true" />
+                      <Unlock v-else class="size-3" aria-hidden="true" />
                       {{ profile.has_credential ? "set" : "none" }}
                     </Badge>
                   </td>
@@ -322,8 +322,8 @@ async function runNow(profile: DDNSView) {
                         :disabled="running === profile.id"
                         @click="runNow(profile)"
                       >
-                        <RefreshCw v-if="running === profile.id" class="size-4 animate-spin" />
-                        <Play v-else class="size-4" />
+                        <RefreshCw v-if="running === profile.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <Play v-else class="size-4" aria-hidden="true" />
                         Run now
                       </Button>
                       <Button
@@ -475,8 +475,8 @@ async function runNow(profile: DDNSView) {
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               Create
             </Button>
           </DialogFooter>
@@ -498,8 +498,8 @@ async function runNow(profile: DDNSView) {
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>

@@ -66,13 +66,13 @@ function closeMobile() {
       <div
         class="flex size-7 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground"
       >
-        <Hexagon class="size-4" />
+        <Hexagon class="size-4" aria-hidden="true" />
       </div>
       <span v-if="!collapsed" class="text-sm font-semibold tracking-tight">Lattice</span>
     </div>
 
     <!-- Nav -->
-    <nav class="flex-1 space-y-4 overflow-y-auto px-2 py-3">
+    <nav aria-label="Primary" class="flex-1 space-y-4 overflow-y-auto px-2 py-3">
       <div v-for="section in visibleSections" :key="section.id" class="space-y-1">
         <p
           v-if="!collapsed"
@@ -94,11 +94,12 @@ function closeMobile() {
     <div class="hidden shrink-0 border-t border-sidebar-border p-2 md:block">
       <Button
         variant="ghost"
+        aria-label="Toggle sidebar"
         :class="cn('w-full justify-start gap-3 text-sidebar-foreground/80', collapsed && 'justify-center')"
         @click="toggleCollapse"
       >
-        <PanelLeftClose v-if="!collapsed" class="size-4" />
-        <PanelLeftOpen v-else class="size-4" />
+        <PanelLeftClose v-if="!collapsed" class="size-4" aria-hidden="true" />
+        <PanelLeftOpen v-else class="size-4" aria-hidden="true" />
         <span v-if="!collapsed">Collapse</span>
       </Button>
     </div>

@@ -233,7 +233,7 @@ const continentEntries = computed(() =>
           :disabled="routesQuery.refreshing.value"
           @click="routesQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', routesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', routesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button
@@ -241,7 +241,7 @@ const continentEntries = computed(() =>
           size="sm"
           @click="openCreate"
         >
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New geo-routing
         </Button>
       </template>
@@ -250,7 +250,7 @@ const continentEntries = computed(() =>
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Route class="size-4 text-muted-foreground" />
+          <Route class="size-4 text-muted-foreground" aria-hidden="true" />
           Routings
         </CardTitle>
         <CardDescription>
@@ -270,15 +270,15 @@ const continentEntries = computed(() =>
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Hostname</th>
-                  <th class="py-2 pr-4 font-medium">Strategy</th>
-                  <th class="py-2 pr-4 text-right font-medium">Nodes</th>
-                  <th class="py-2 pr-4 text-right font-medium">DNS</th>
-                  <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pr-4 font-medium">Last applied</th>
-                  <th class="py-2 pr-4 font-medium">Last error</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Hostname</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Strategy</th>
+                  <th scope="col" class="py-2 pr-4 text-right font-medium">Nodes</th>
+                  <th scope="col" class="py-2 pr-4 text-right font-medium">DNS</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Last applied</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Last error</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -321,8 +321,8 @@ const continentEntries = computed(() =>
                         :disabled="planning === route.id"
                         @click="openPlan(route)"
                       >
-                        <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" />
-                        <FileCode2 v-else class="size-4" />
+                        <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <FileCode2 v-else class="size-4" aria-hidden="true" />
                         Plan
                       </Button>
                       <Button
@@ -473,8 +473,8 @@ const continentEntries = computed(() =>
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               {{ editingId ? "Save changes" : "Create" }}
             </Button>
           </DialogFooter>
@@ -496,8 +496,8 @@ const continentEntries = computed(() =>
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>
@@ -509,7 +509,7 @@ const continentEntries = computed(() =>
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
-            <FileCode2 class="size-5 text-muted-foreground" />
+            <FileCode2 class="size-5 text-muted-foreground" aria-hidden="true" />
             Geo-routing preview
           </DialogTitle>
           <DialogDescription v-if="plan">
@@ -519,7 +519,7 @@ const continentEntries = computed(() =>
 
         <div v-if="plan" class="space-y-4">
           <div class="flex items-start gap-2 rounded-md border border-info/40 bg-info/5 p-3 text-sm">
-            <Globe class="mt-0.5 size-4 shrink-0 text-info" />
+            <Globe class="mt-0.5 size-4 shrink-0 text-info" aria-hidden="true" />
             <p class="text-muted-foreground">
               This is a <span class="font-medium text-foreground">render-only preview</span> of the CoreDNS
               configuration. Nothing is queued or applied — no approval is created.
@@ -542,7 +542,7 @@ const continentEntries = computed(() =>
 
           <div v-if="plan.warnings && plan.warnings.length" class="space-y-2">
             <p class="flex items-center gap-2 text-sm font-medium text-warning">
-              <AlertTriangle class="size-4" />
+              <AlertTriangle class="size-4" aria-hidden="true" />
               Warnings
             </p>
             <ul class="space-y-1 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-muted-foreground">
@@ -556,8 +556,8 @@ const continentEntries = computed(() =>
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th class="px-3 py-2 font-medium">Continent</th>
-                    <th class="px-3 py-2 font-medium">Node</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Continent</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Node</th>
                   </tr>
                 </thead>
                 <tbody>

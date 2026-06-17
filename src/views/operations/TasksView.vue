@@ -106,7 +106,7 @@ async function createTask() {
     <PageHeader title="Tasks" description="Queue bounded batch tasks and inspect node results">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="tasksQuery.refreshing.value || resultsQuery.refreshing.value" @click="refreshAll">
-          <RefreshCw :class="cn('size-4', (tasksQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', (tasksQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -119,7 +119,7 @@ async function createTask() {
             <p class="text-sm text-muted-foreground">Tasks</p>
             <p class="text-2xl font-semibold">{{ tasks.length }}</p>
           </div>
-          <Terminal class="size-5 text-muted-foreground" />
+          <Terminal class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -128,7 +128,7 @@ async function createTask() {
             <p class="text-sm text-muted-foreground">Queued</p>
             <p class="text-2xl font-semibold text-warning">{{ queuedCount }}</p>
           </div>
-          <Timer class="size-5 text-warning" />
+          <Timer class="size-5 text-warning" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -137,7 +137,7 @@ async function createTask() {
             <p class="text-sm text-muted-foreground">Finished</p>
             <p class="text-2xl font-semibold text-success">{{ finishedCount }}</p>
           </div>
-          <CheckCircle2 class="size-5 text-success" />
+          <CheckCircle2 class="size-5 text-success" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -145,7 +145,7 @@ async function createTask() {
     <Card v-if="canRunTasks">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Play class="size-4 text-muted-foreground" />
+          <Play class="size-4 text-muted-foreground" aria-hidden="true" />
           Queue Task
         </CardTitle>
         <CardDescription>Tasks run only on selected nodes and within server-enforced limits.</CardDescription>
@@ -207,8 +207,8 @@ async function createTask() {
           </div>
 
           <Button type="submit" :disabled="createPending || selectedTargets.length === 0 || !script.trim()">
-            <RefreshCw v-if="createPending" class="size-4 animate-spin" />
-            <Play v-else class="size-4" />
+            <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
+            <Play v-else class="size-4" aria-hidden="true" />
             Queue task
           </Button>
         </form>
@@ -256,8 +256,8 @@ async function createTask() {
                 >
                   <div class="flex flex-wrap items-center gap-2">
                     <Badge :variant="result.error || result.exit_code ? 'destructive' : 'success'">
-                      <XCircle v-if="result.error || result.exit_code" class="size-3" />
-                      <CheckCircle2 v-else class="size-3" />
+                      <XCircle v-if="result.error || result.exit_code" class="size-3" aria-hidden="true" />
+                      <CheckCircle2 v-else class="size-3" aria-hidden="true" />
                       {{ nodeName(result.node_id) }}
                     </Badge>
                     <span class="text-xs text-muted-foreground">exit {{ result.exit_code ?? 0 }}</span>

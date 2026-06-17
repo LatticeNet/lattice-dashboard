@@ -40,11 +40,11 @@ onBeforeUnmount(() => {
     type="button"
     variant="ghost"
     :size="label ? 'sm' : 'icon-sm'"
-    :aria-label="label ?? 'Copy'"
+    :aria-label="copied ? 'Copied' : (label ?? 'Copy to clipboard')"
     @click="copy"
   >
-    <Check v-if="copied" class="text-success" />
-    <Copy v-else />
+    <Check v-if="copied" class="text-success" aria-hidden="true" />
+    <Copy v-else aria-hidden="true" />
     <span v-if="label">{{ label }}</span>
   </Button>
 </template>

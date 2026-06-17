@@ -273,11 +273,11 @@ function refreshAll() {
           :disabled="profilesQuery.refreshing.value"
           @click="refreshAll"
         >
-          <RefreshCw :class="cn('size-4', profilesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', profilesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New profile
         </Button>
       </template>
@@ -290,7 +290,7 @@ function refreshAll() {
             <p class="text-sm text-muted-foreground">Profiles</p>
             <p class="text-2xl font-semibold tabular">{{ profiles.length }}</p>
           </div>
-          <ServerCog class="size-5 text-muted-foreground" />
+          <ServerCog class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -299,7 +299,7 @@ function refreshAll() {
             <p class="text-sm text-muted-foreground">Applied</p>
             <p class="text-2xl font-semibold tabular text-success">{{ appliedCount }}</p>
           </div>
-          <Cpu class="size-5 text-success" />
+          <Cpu class="size-5 text-success" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -310,7 +310,7 @@ function refreshAll() {
               {{ driftCount }}
             </p>
           </div>
-          <AlertTriangle :class="cn('size-5', driftCount > 0 ? 'text-warning' : 'text-muted-foreground')" />
+          <AlertTriangle :class="cn('size-5', driftCount > 0 ? 'text-warning' : 'text-muted-foreground')" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -336,15 +336,15 @@ function refreshAll() {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="px-3 py-2 font-medium">Node</th>
-                  <th class="px-3 py-2 font-medium">Core</th>
-                  <th class="px-3 py-2 font-medium">Inbounds</th>
-                  <th class="px-3 py-2 font-medium">Hostname</th>
-                  <th class="px-3 py-2 font-medium">Applied config</th>
-                  <th class="px-3 py-2 font-medium">Drift</th>
-                  <th class="px-3 py-2 font-medium">Collector</th>
-                  <th class="px-3 py-2 font-medium">Last apply</th>
-                  <th class="px-3 py-2 text-right font-medium">Actions</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Node</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Core</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Inbounds</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Hostname</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Applied config</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Drift</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Collector</th>
+                  <th scope="col" class="px-3 py-2 font-medium">Last apply</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -391,7 +391,7 @@ function refreshAll() {
                         <TooltipTrigger as-child>
                           <span class="w-fit cursor-default">
                             <Badge variant="warning">
-                              <AlertTriangle class="size-3" />
+                              <AlertTriangle class="size-3" aria-hidden="true" />
                               drift
                             </Badge>
                           </span>
@@ -451,8 +451,8 @@ function refreshAll() {
                         :disabled="planning === profile.node_id"
                         @click="planNode(profile)"
                       >
-                        <RefreshCw v-if="planning === profile.node_id" class="size-4 animate-spin" />
-                        <ArrowRight v-else class="size-4" />
+                        <RefreshCw v-if="planning === profile.node_id" class="size-4 animate-spin" aria-hidden="true" />
+                        <ArrowRight v-else class="size-4" aria-hidden="true" />
                         Plan
                       </Button>
                       <Button
@@ -579,8 +579,8 @@ function refreshAll() {
         <DialogFooter>
           <Button variant="outline" :disabled="saving" @click="formOpen = false">Cancel</Button>
           <Button :disabled="!canSubmit" @click="submitForm">
-            <RefreshCw v-if="saving" class="size-4 animate-spin" />
-            <Plus v-else class="size-4" />
+            <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+            <Plus v-else class="size-4" aria-hidden="true" />
             {{ editingId ? "Save changes" : "Create profile" }}
           </Button>
         </DialogFooter>
@@ -601,8 +601,8 @@ function refreshAll() {
         <DialogFooter>
           <Button variant="outline" :disabled="deleting" @click="deleteTarget = undefined">Cancel</Button>
           <Button variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>
@@ -646,7 +646,7 @@ function refreshAll() {
           <RouterLink to="/approvals">
             <Button>
               Review in Approvals
-              <ArrowRight class="size-4" />
+              <ArrowRight class="size-4" aria-hidden="true" />
             </Button>
           </RouterLink>
         </DialogFooter>

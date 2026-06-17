@@ -259,6 +259,7 @@ async function deleteMonitor() {
         >
           <RefreshCw
             :class="cn('size-4', (monitorsQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')"
+            aria-hidden="true"
           />
           Refresh
         </Button>
@@ -276,7 +277,7 @@ async function deleteMonitor() {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <RadioTower class="size-4 text-muted-foreground" />
+            <RadioTower class="size-4 text-muted-foreground" aria-hidden="true" />
             Probe Definitions
           </CardTitle>
           <CardDescription>{{ enabledCount }} active probes across {{ monitors.length }} definitions</CardDescription>
@@ -306,6 +307,7 @@ async function deleteMonitor() {
                     <div class="flex min-w-0 items-center gap-2">
                       <Activity
                         :class="cn('size-4 shrink-0', monitor.enabled ? 'text-success' : 'text-muted-foreground')"
+                        aria-hidden="true"
                       />
                       <span class="truncate font-medium">{{ monitor.name || monitor.id }}</span>
                     </div>
@@ -329,7 +331,7 @@ async function deleteMonitor() {
 
                 <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span class="inline-flex items-center gap-1">
-                    <Timer class="size-3" />
+                    <Timer class="size-3" aria-hidden="true" />
                     every {{ monitor.interval_sec }}s, timeout {{ monitor.timeout_sec }}s
                   </span>
                   <span>{{ assignmentLabel(monitor) }}</span>
@@ -344,7 +346,7 @@ async function deleteMonitor() {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Plus class="size-4 text-muted-foreground" />
+            <Plus class="size-4 text-muted-foreground" aria-hidden="true" />
             Create Monitor
           </CardTitle>
           <CardDescription>Agents run assigned checks and report bounded result history.</CardDescription>
@@ -434,8 +436,8 @@ async function deleteMonitor() {
             </DataState>
 
             <Button type="submit" :disabled="createPending || !canSubmit">
-              <RefreshCw v-if="createPending" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               Create monitor
             </Button>
           </form>
@@ -454,7 +456,7 @@ async function deleteMonitor() {
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle class="flex items-center gap-2">
-              <Activity class="size-4 text-muted-foreground" />
+              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
               Result History
             </CardTitle>
             <CardDescription>
@@ -471,8 +473,8 @@ async function deleteMonitor() {
             :disabled="deletePending"
             @click="deleteMonitor"
           >
-            <RefreshCw v-if="deletePending" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </div>
@@ -573,8 +575,8 @@ async function deleteMonitor() {
                   </div>
                   <div>
                     <Badge :variant="result.success ? 'success' : 'destructive'">
-                      <CheckCircle2 v-if="result.success" class="size-3" />
-                      <XCircle v-else class="size-3" />
+                      <CheckCircle2 v-if="result.success" class="size-3" aria-hidden="true" />
+                      <XCircle v-else class="size-3" aria-hidden="true" />
                       {{ result.success ? "ok" : "fail" }}
                     </Badge>
                   </div>

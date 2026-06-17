@@ -371,7 +371,7 @@ async function runReminders(selectedOnly = false) {
     <PageHeader title="Inventory" description="Machine profiles, cost metadata, and renewal reminders">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
-          <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -388,7 +388,7 @@ async function runReminders(selectedOnly = false) {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Server class="size-4 text-muted-foreground" />
+            <Server class="size-4 text-muted-foreground" aria-hidden="true" />
             Machines
           </CardTitle>
           <CardDescription>{{ profiledCount }} profiles, {{ missingCount }} visible nodes without metadata</CardDescription>
@@ -435,7 +435,7 @@ async function runReminders(selectedOnly = false) {
 
                 <div class="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
                   <span class="inline-flex items-center gap-1">
-                    <DollarSign class="size-3" />
+                    <DollarSign class="size-3" aria-hidden="true" />
                     {{ formatPrice(machine) }}
                   </span>
                   <span>{{ formatCycle(machine) }}</span>
@@ -445,15 +445,15 @@ async function runReminders(selectedOnly = false) {
 
                 <div class="mt-3 flex flex-wrap gap-1.5">
                   <Badge v-if="machine.has_console_url" variant="info">
-                    <Link class="size-3" />
+                    <Link class="size-3" aria-hidden="true" />
                     console link stored
                   </Badge>
                   <Badge v-if="machine.has_detail_url" variant="info">
-                    <Link class="size-3" />
+                    <Link class="size-3" aria-hidden="true" />
                     detail link stored
                   </Badge>
                   <Badge v-if="machine.reminders_enabled" variant="outline">
-                    <Bell class="size-3" />
+                    <Bell class="size-3" aria-hidden="true" />
                     reminders
                   </Badge>
                 </div>
@@ -466,7 +466,7 @@ async function runReminders(selectedOnly = false) {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Pencil class="size-4 text-muted-foreground" />
+            <Pencil class="size-4 text-muted-foreground" aria-hidden="true" />
             Machine Profile
           </CardTitle>
           <CardDescription>
@@ -593,8 +593,8 @@ async function runReminders(selectedOnly = false) {
 
             <div class="flex flex-wrap gap-2">
               <Button type="submit" :disabled="pending || !canSave">
-                <RefreshCw v-if="pending" class="size-4 animate-spin" />
-                <Save v-else class="size-4" />
+                <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
+                <Save v-else class="size-4" aria-hidden="true" />
                 {{ selectedHasProfile ? "Save profile" : "Create profile" }}
               </Button>
               <Button
@@ -604,8 +604,8 @@ async function runReminders(selectedOnly = false) {
                 :disabled="renewPending || (!autoRoll && !nextRenewal)"
                 @click="renewProfile"
               >
-                <RefreshCw v-if="renewPending" class="size-4 animate-spin" />
-                <CalendarClock v-else class="size-4" />
+                <RefreshCw v-if="renewPending" class="size-4 animate-spin" aria-hidden="true" />
+                <CalendarClock v-else class="size-4" aria-hidden="true" />
                 Record renewal
               </Button>
               <Button
@@ -615,7 +615,7 @@ async function runReminders(selectedOnly = false) {
                 :disabled="remindersPending"
                 @click="runReminders(true)"
               >
-                <Bell class="size-4" />
+                <Bell class="size-4" aria-hidden="true" />
                 Run reminders
               </Button>
               <Button
@@ -625,8 +625,8 @@ async function runReminders(selectedOnly = false) {
                 :disabled="deletePending"
                 @click="deleteProfile"
               >
-                <RefreshCw v-if="deletePending" class="size-4 animate-spin" />
-                <Trash2 v-else class="size-4" />
+                <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
+                <Trash2 v-else class="size-4" aria-hidden="true" />
                 Delete
               </Button>
             </div>
@@ -651,7 +651,7 @@ async function runReminders(selectedOnly = false) {
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle class="flex items-center gap-2">
-              <HardDrive class="size-4 text-muted-foreground" />
+              <HardDrive class="size-4 text-muted-foreground" aria-hidden="true" />
               Selected Machine Facts
             </CardTitle>
             <CardDescription>
@@ -666,8 +666,8 @@ async function runReminders(selectedOnly = false) {
             :disabled="remindersPending"
             @click="runReminders(false)"
           >
-            <RefreshCw v-if="remindersPending" class="size-4 animate-spin" />
-            <Bell v-else class="size-4" />
+            <RefreshCw v-if="remindersPending" class="size-4 animate-spin" aria-hidden="true" />
+            <Bell v-else class="size-4" aria-hidden="true" />
             Run all reminders
           </Button>
         </div>

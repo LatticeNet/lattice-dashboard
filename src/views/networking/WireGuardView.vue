@@ -118,7 +118,7 @@ function nodeName(id: string): string {
           :disabled="nodesQuery.refreshing.value"
           @click="nodesQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -127,7 +127,7 @@ function nodeName(id: string): string {
     <!-- Security explainer -->
     <Card class="border-info/40 bg-info/5">
       <CardContent class="flex items-start gap-3 p-4">
-        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-info" />
+        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-info" aria-hidden="true" />
         <div class="space-y-1 text-sm">
           <p class="font-medium">Private keys never reach the server.</p>
           <p class="text-muted-foreground">
@@ -145,7 +145,7 @@ function nodeName(id: string): string {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Spline class="size-4 text-muted-foreground" />
+          <Spline class="size-4 text-muted-foreground" aria-hidden="true" />
           Mesh nodes
         </CardTitle>
         <CardDescription>
@@ -165,12 +165,12 @@ function nodeName(id: string): string {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Node</th>
-                  <th class="py-2 pr-4 font-medium">WireGuard IP</th>
-                  <th class="py-2 pr-4 font-medium">Endpoint</th>
-                  <th class="py-2 pr-4 font-medium">Role</th>
-                  <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">WireGuard IP</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Endpoint</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Role</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -207,8 +207,8 @@ function nodeName(id: string): string {
                         :title="!node.wireguard_ip ? 'Node has no WireGuard IP' : undefined"
                         @click="openParams(node)"
                       >
-                        <RefreshCw v-if="planning === node.id" class="size-4 animate-spin" />
-                        <FileCode2 v-else class="size-4" />
+                        <RefreshCw v-if="planning === node.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <FileCode2 v-else class="size-4" aria-hidden="true" />
                         Plan mesh config
                       </Button>
                     </div>
@@ -253,8 +253,8 @@ function nodeName(id: string): string {
             :disabled="planning === paramsNode?.id"
             @click="submitPlan"
           >
-            <RefreshCw v-if="planning === paramsNode?.id" class="size-4 animate-spin" />
-            <FileCode2 v-else class="size-4" />
+            <RefreshCw v-if="planning === paramsNode?.id" class="size-4 animate-spin" aria-hidden="true" />
+            <FileCode2 v-else class="size-4" aria-hidden="true" />
             Plan
           </Button>
         </DialogFooter>
@@ -266,7 +266,7 @@ function nodeName(id: string): string {
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
-            <FileCode2 class="size-5 text-muted-foreground" />
+            <FileCode2 class="size-5 text-muted-foreground" aria-hidden="true" />
             WireGuard mesh plan
           </DialogTitle>
           <DialogDescription v-if="approval">
@@ -281,7 +281,7 @@ function nodeName(id: string): string {
           </div>
 
           <div class="flex items-start gap-2 rounded-md border border-info/40 bg-info/5 p-3 text-xs text-muted-foreground">
-            <KeyRound class="mt-0.5 size-4 shrink-0 text-info" />
+            <KeyRound class="mt-0.5 size-4 shrink-0 text-info" aria-hidden="true" />
             <p>
               The <code class="font-mono">[Interface]</code> PrivateKey is the placeholder
               <code class="font-mono">{{ PLACEHOLDER }}</code> — the node-agent substitutes the real key locally.

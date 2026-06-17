@@ -90,7 +90,7 @@ async function logout() {
               class="w-full justify-start gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
               @click="logout"
             >
-              <LogOut class="size-4" />
+              <LogOut class="size-4" aria-hidden="true" />
               Log out
             </Button>
           </PopoverContent>

@@ -222,11 +222,11 @@ async function openPlan(tunnel: TunnelView) {
           :disabled="tunnelsQuery.refreshing.value"
           @click="tunnelsQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', tunnelsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', tunnelsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New tunnel
         </Button>
       </template>
@@ -235,7 +235,7 @@ async function openPlan(tunnel: TunnelView) {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Cable class="size-4 text-muted-foreground" />
+          <Cable class="size-4 text-muted-foreground" aria-hidden="true" />
           Tunnels
         </CardTitle>
         <CardDescription>
@@ -256,12 +256,12 @@ async function openPlan(tunnel: TunnelView) {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Node</th>
-                  <th class="py-2 pr-4 font-medium">Tunnel ID</th>
-                  <th class="py-2 pr-4 font-medium">Credentials file</th>
-                  <th class="py-2 pr-4 font-medium">Ingress</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Tunnel ID</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Credentials file</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Ingress</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -287,8 +287,8 @@ async function openPlan(tunnel: TunnelView) {
                         class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs hover:bg-muted/60"
                         @click="toggleExpand(tunnel.id)"
                       >
-                        <ChevronDown v-if="expanded[tunnel.id]" class="size-3.5" />
-                        <ChevronRight v-else class="size-3.5" />
+                        <ChevronDown v-if="expanded[tunnel.id]" class="size-3.5" aria-hidden="true" />
+                        <ChevronRight v-else class="size-3.5" aria-hidden="true" />
                         {{ tunnel.ingress.length }} {{ tunnel.ingress.length === 1 ? "rule" : "rules" }}
                       </button>
                     </td>
@@ -301,8 +301,8 @@ async function openPlan(tunnel: TunnelView) {
                           :disabled="planning === tunnel.id"
                           @click="openPlan(tunnel)"
                         >
-                          <RefreshCw v-if="planning === tunnel.id" class="size-4 animate-spin" />
-                          <FileCode2 v-else class="size-4" />
+                          <RefreshCw v-if="planning === tunnel.id" class="size-4 animate-spin" aria-hidden="true" />
+                          <FileCode2 v-else class="size-4" aria-hidden="true" />
                           Plan
                         </Button>
                         <Button
@@ -399,7 +399,7 @@ async function openPlan(tunnel: TunnelView) {
             <div class="flex items-center justify-between">
               <Label>Ingress rules</Label>
               <Button type="button" variant="outline" size="sm" @click="addRow">
-                <Plus class="size-4" />
+                <Plus class="size-4" aria-hidden="true" />
                 Add rule
               </Button>
             </div>
@@ -436,8 +436,8 @@ async function openPlan(tunnel: TunnelView) {
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               Create
             </Button>
           </DialogFooter>
@@ -459,8 +459,8 @@ async function openPlan(tunnel: TunnelView) {
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
         </DialogFooter>
@@ -472,7 +472,7 @@ async function openPlan(tunnel: TunnelView) {
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
-            <FileCode2 class="size-5 text-muted-foreground" />
+            <FileCode2 class="size-5 text-muted-foreground" aria-hidden="true" />
             Tunnel config plan
           </DialogTitle>
           <DialogDescription v-if="approval">

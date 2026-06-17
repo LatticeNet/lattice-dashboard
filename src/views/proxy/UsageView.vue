@@ -136,7 +136,7 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
           :disabled="usageQuery.refreshing.value"
           @click="usageQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', usageQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', usageQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -168,10 +168,10 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th class="px-3 py-2 font-medium">Node</th>
-                    <th class="px-3 py-2 font-medium">Reported at</th>
-                    <th class="px-3 py-2 font-medium">Core uptime</th>
-                    <th class="px-3 py-2 text-right font-medium">Bytes this snapshot</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Node</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Reported at</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Core uptime</th>
+                    <th scope="col" class="px-3 py-2 text-right font-medium">Bytes this snapshot</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -234,12 +234,12 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th class="px-3 py-2 font-medium">Name</th>
-                    <th class="px-3 py-2 font-medium">Status</th>
-                    <th class="px-3 py-2 text-right font-medium">Used</th>
-                    <th class="px-3 py-2 text-right font-medium">Limit</th>
-                    <th class="px-3 py-2 font-medium">Quota</th>
-                    <th class="px-3 py-2 font-medium">Last seen</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Name</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Status</th>
+                    <th scope="col" class="px-3 py-2 text-right font-medium">Used</th>
+                    <th scope="col" class="px-3 py-2 text-right font-medium">Limit</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Quota</th>
+                    <th scope="col" class="px-3 py-2 font-medium">Last seen</th>
                   </tr>
                 </thead>
                 <tbody>

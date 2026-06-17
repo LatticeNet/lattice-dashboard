@@ -146,7 +146,7 @@ function closeReveal(open: boolean) {
           :disabled="usersQuery.refreshing.value"
           @click="usersQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', usersQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', usersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -163,7 +163,7 @@ function closeReveal(open: boolean) {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Rss class="size-4 text-muted-foreground" />
+          <Rss class="size-4 text-muted-foreground" aria-hidden="true" />
           Subscription Delivery
         </CardTitle>
         <CardDescription>
@@ -183,12 +183,12 @@ function closeReveal(open: boolean) {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th class="px-3 py-2 text-left font-medium">User</th>
-                  <th class="px-3 py-2 text-left font-medium">Status</th>
-                  <th class="px-3 py-2 text-left font-medium">Quota usage</th>
-                  <th class="px-3 py-2 text-left font-medium">Expiry</th>
-                  <th class="px-3 py-2 text-left font-medium">Sub-token</th>
-                  <th class="px-3 py-2 text-right font-medium">Delivery</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">User</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Status</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Quota usage</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Expiry</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Sub-token</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">Delivery</th>
                 </tr>
               </thead>
               <tbody>
@@ -226,7 +226,7 @@ function closeReveal(open: boolean) {
                   </td>
                   <td class="px-3 py-3">
                     <Badge :variant="user.has_sub_token ? 'success' : 'secondary'" class="gap-1">
-                      <Lock class="size-3" />
+                      <Lock class="size-3" aria-hidden="true" />
                       {{ user.has_sub_token ? "set" : "none" }}
                     </Badge>
                   </td>
@@ -240,8 +240,8 @@ function closeReveal(open: boolean) {
                         :title="canAdmin ? 'Reveal subscription (rotates token)' : adminReason"
                         @click="reveal(user)"
                       >
-                        <RefreshCw v-if="rotating === user.id" class="size-4 animate-spin" />
-                        <Rss v-else class="size-4" />
+                        <RefreshCw v-if="rotating === user.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <Rss v-else class="size-4" aria-hidden="true" />
                         Reveal
                       </Button>
                       <span v-else class="text-xs text-muted-foreground">no token — create in Users</span>
@@ -290,7 +290,7 @@ function closeReveal(open: boolean) {
 
         <div v-if="revealed" class="space-y-4">
           <div class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
-            <TriangleAlert class="mt-0.5 size-4 shrink-0" />
+            <TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <span>
               Copy now — the token is shown once. Revealing rotated the token, so any previously shared URL for this
               user no longer works.

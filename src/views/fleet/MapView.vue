@@ -131,7 +131,7 @@ async function clearGeo() {
     <PageHeader title="Fleet Map" description="Operator-owned node locations, rendered without external map tiles">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="geoQuery.refreshing.value" @click="geoQuery.refresh">
-          <RefreshCw :class="cn('size-4', geoQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', geoQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
       </template>
@@ -141,7 +141,7 @@ async function clearGeo() {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Globe2 class="size-4 text-muted-foreground" />
+            <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
             Nodes by Location
           </CardTitle>
           <CardDescription>{{ withGeo.length }} of {{ nodes.length }} nodes have coordinates</CardDescription>
@@ -217,7 +217,7 @@ async function clearGeo() {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <LocateFixed class="size-4 text-muted-foreground" />
+            <LocateFixed class="size-4 text-muted-foreground" aria-hidden="true" />
             Location Editor
           </CardTitle>
           <CardDescription>Set or clear operator-owned coordinates for a node.</CardDescription>
@@ -282,12 +282,12 @@ async function clearGeo() {
 
             <div class="flex flex-wrap gap-2">
               <Button type="submit" :disabled="pending || !selectedNodeId">
-                <RefreshCw v-if="pending" class="size-4 animate-spin" />
-                <LocateFixed v-else class="size-4" />
+                <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
+                <LocateFixed v-else class="size-4" aria-hidden="true" />
                 Save location
               </Button>
               <Button type="button" variant="outline" :disabled="pending || !selectedNodeId" @click="clearGeo">
-                <Trash2 class="size-4" />
+                <Trash2 class="size-4" aria-hidden="true" />
                 Clear
               </Button>
             </div>

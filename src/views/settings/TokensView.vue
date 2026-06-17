@@ -215,11 +215,11 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
           :disabled="tokensQuery.refreshing.value"
           @click="tokensQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', tokensQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', tokensQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New token
         </Button>
       </template>
@@ -227,7 +227,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
 
     <Card class="border-primary/30 bg-primary/5">
       <CardContent class="flex items-start gap-3 p-4">
-        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" />
+        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
         <div class="space-y-1 text-sm">
           <p class="font-medium">Privilege-contained minting</p>
           <p class="text-muted-foreground">
@@ -242,7 +242,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <KeyRound class="size-4 text-muted-foreground" />
+          <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
           Tokens
         </CardTitle>
         <CardDescription>
@@ -262,13 +262,13 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Actor</th>
-                  <th class="py-2 pr-4 font-medium">Scopes</th>
-                  <th class="py-2 pr-4 font-medium">Server allowlist</th>
-                  <th class="py-2 pr-4 font-medium">Created</th>
-                  <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Actor</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Scopes</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Server allowlist</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Created</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -320,7 +320,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
                         size="sm"
                         @click="revokeTarget = token"
                       >
-                        <ShieldOff class="size-4 text-destructive" />
+                        <ShieldOff class="size-4 text-destructive" aria-hidden="true" />
                         Revoke
                       </Button>
                     </div>
@@ -402,8 +402,8 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
               Create token
             </Button>
           </DialogFooter>
@@ -416,7 +416,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
       <DialogContent class="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
-            <TriangleAlert class="size-5 text-warning" />
+            <TriangleAlert class="size-5 text-warning" aria-hidden="true" />
             Copy your token now
           </DialogTitle>
           <DialogDescription>
@@ -483,8 +483,8 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="revoking" @click="confirmRevoke">
-            <RefreshCw v-if="revoking" class="size-4 animate-spin" />
-            <ShieldOff v-else class="size-4" />
+            <RefreshCw v-if="revoking" class="size-4 animate-spin" aria-hidden="true" />
+            <ShieldOff v-else class="size-4" aria-hidden="true" />
             Revoke
           </Button>
         </DialogFooter>

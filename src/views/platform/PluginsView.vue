@@ -219,12 +219,13 @@ async function runVerify() {
       <template #actions>
         <Button variant="outline" size="sm" :disabled="registeredQuery.refreshing.value || lifecycleQuery.refreshing.value" @click="refreshAll">
           <RefreshCw
+            aria-hidden="true"
             :class="cn('size-4', (registeredQuery.refreshing.value || lifecycleQuery.refreshing.value) && 'animate-spin')"
           />
           Refresh
         </Button>
         <Button v-if="canVerify" size="sm" @click="openVerify">
-          <ShieldCheck class="size-4" />
+          <ShieldCheck aria-hidden="true" class="size-4" />
           Verify manifest
         </Button>
       </template>
@@ -241,7 +242,7 @@ async function runVerify() {
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Blocks class="size-4 text-muted-foreground" />
+              <Blocks aria-hidden="true" class="size-4 text-muted-foreground" />
               Registered plugins
             </CardTitle>
             <CardDescription>In-memory verified/registered bundles (no signatures or digests).</CardDescription>
@@ -260,12 +261,12 @@ async function runVerify() {
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th class="py-2 pr-3 font-medium">ID</th>
-                      <th class="py-2 pr-3 font-medium">Name</th>
-                      <th class="py-2 pr-3 font-medium">Type</th>
-                      <th class="py-2 pr-3 font-medium">Version</th>
-                      <th class="py-2 pr-3 font-medium">Publisher</th>
-                      <th class="py-2 pr-3 font-medium">Capabilities</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">ID</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Name</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Type</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Version</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Publisher</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Capabilities</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -302,7 +303,7 @@ async function runVerify() {
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <CircleDot class="size-4 text-muted-foreground" />
+              <CircleDot aria-hidden="true" class="size-4 text-muted-foreground" />
               Lifecycle
             </CardTitle>
             <CardDescription>
@@ -323,15 +324,15 @@ async function runVerify() {
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th class="py-2 pr-3 font-medium">Name</th>
-                      <th class="py-2 pr-3 font-medium">Type</th>
-                      <th class="py-2 pr-3 font-medium">Version</th>
-                      <th class="py-2 pr-3 font-medium">Status</th>
-                      <th class="py-2 pr-3 font-medium">Runtime</th>
-                      <th class="py-2 pr-3 font-medium">Available</th>
-                      <th class="py-2 pr-3 font-medium">Artifact</th>
-                      <th class="py-2 pr-3 font-medium">Capabilities</th>
-                      <th class="py-2 pl-3 text-right font-medium">Actions</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Name</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Type</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Version</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Status</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Runtime</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Available</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Artifact</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">Capabilities</th>
+                      <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -376,8 +377,8 @@ async function runVerify() {
                             :variant="status === 'disabled' ? 'destructive' : 'outline'"
                             @click="requestTransition(row, status)"
                           >
-                            <Power v-if="status === 'disabled'" class="size-4" />
-                            <Play v-else class="size-4" />
+                            <Power v-if="status === 'disabled'" aria-hidden="true" class="size-4" />
+                            <Play v-else aria-hidden="true" class="size-4" />
                             {{ transitionLabel(status) }}
                           </Button>
                           <span v-if="!nextStates(row).length" class="text-xs text-muted-foreground">—</span>
@@ -418,8 +419,8 @@ async function runVerify() {
             :disabled="transitioning"
             @click="confirmTransition"
           >
-            <RefreshCw v-if="transitioning" class="size-4 animate-spin" />
-            <CheckCircle2 v-else class="size-4" />
+            <RefreshCw v-if="transitioning" aria-hidden="true" class="size-4 animate-spin" />
+            <CheckCircle2 v-else aria-hidden="true" class="size-4" />
             {{ transitionTarget ? transitionLabel(transitionTarget.status) : "Confirm" }}
           </Button>
         </DialogFooter>
@@ -463,7 +464,7 @@ async function runVerify() {
           <div v-if="verifyResult" class="space-y-4 rounded-md border border-success/40 bg-success/5 p-4">
             <div class="flex flex-wrap items-center gap-2">
               <Badge variant="success" class="gap-1.5">
-                <ShieldCheck class="size-3.5" />
+                <ShieldCheck aria-hidden="true" class="size-3.5" />
                 {{ verifyResult.trusted ? "trusted" : "untrusted" }}
               </Badge>
               <Badge variant="outline">{{ verifyResult.manifest.type }}</Badge>
@@ -507,8 +508,8 @@ async function runVerify() {
           <DialogFooter>
             <Button type="button" variant="outline" @click="verifyOpen = false">Close</Button>
             <Button type="submit" :disabled="verifying || !manifestText.trim() || !artifactText.trim()">
-              <RefreshCw v-if="verifying" class="size-4 animate-spin" />
-              <ShieldCheck v-else class="size-4" />
+              <RefreshCw v-if="verifying" aria-hidden="true" class="size-4 animate-spin" />
+              <ShieldCheck v-else aria-hidden="true" class="size-4" />
               Verify
             </Button>
           </DialogFooter>

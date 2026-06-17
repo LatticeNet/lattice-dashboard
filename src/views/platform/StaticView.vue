@@ -117,11 +117,11 @@ async function submitPut() {
     >
       <template #actions>
         <Button variant="outline" size="sm" :disabled="objectsQuery.refreshing.value" @click="objectsQuery.refresh">
-          <RefreshCw :class="cn('size-4', objectsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw aria-hidden="true" :class="cn('size-4', objectsQuery.refreshing.value && 'animate-spin')" />
           Refresh
         </Button>
         <Button v-if="canWrite" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus aria-hidden="true" class="size-4" />
           New object
         </Button>
       </template>
@@ -130,7 +130,7 @@ async function submitPut() {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <FolderOpen class="size-4 text-muted-foreground" />
+          <FolderOpen aria-hidden="true" class="size-4 text-muted-foreground" />
           Bucket
         </CardTitle>
         <CardDescription>
@@ -160,11 +160,11 @@ async function submitPut() {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-3 font-medium">Path</th>
-                  <th class="py-2 pr-3 font-medium">Content type</th>
-                  <th class="py-2 pr-3 text-right font-medium">Size</th>
-                  <th class="py-2 pr-3 font-medium">Updated</th>
-                  <th class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Path</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Content type</th>
+                  <th scope="col" class="py-2 pr-3 text-right font-medium">Size</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Updated</th>
+                  <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -232,8 +232,8 @@ async function submitPut() {
           <DialogFooter>
             <Button type="button" variant="outline" @click="putOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Save v-else class="size-4" />
+              <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
+              <Save v-else aria-hidden="true" class="size-4" />
               {{ editing ? "Save" : "Create" }}
             </Button>
           </DialogFooter>

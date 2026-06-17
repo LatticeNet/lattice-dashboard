@@ -352,11 +352,11 @@ function refreshAll(): void {
           :disabled="sourcesQuery.refreshing.value"
           @click="refreshAll"
         >
-          <RefreshCw :class="cn('size-4', sourcesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw aria-hidden="true" :class="cn('size-4', sourcesQuery.refreshing.value && 'animate-spin')" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus aria-hidden="true" class="size-4" />
           New source
         </Button>
       </template>
@@ -367,7 +367,7 @@ function refreshAll(): void {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <FileText class="size-4 text-muted-foreground" />
+            <FileText aria-hidden="true" class="size-4 text-muted-foreground" />
             Sources
           </CardTitle>
           <CardDescription>
@@ -433,7 +433,7 @@ function refreshAll(): void {
         <Card v-if="selectedSource">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Database class="size-4 text-muted-foreground" />
+              <Database aria-hidden="true" class="size-4 text-muted-foreground" />
               {{ selectedSource.name || selectedSource.id }}
             </CardTitle>
             <CardDescription class="break-all font-mono">
@@ -500,8 +500,8 @@ function refreshAll(): void {
                 <Input id="log-limit" v-model.number="queryLimit" type="number" min="1" max="5000" />
               </div>
               <Button type="submit" variant="outline" :disabled="loadingLines">
-                <RefreshCw v-if="loadingLines" class="size-4 animate-spin" />
-                <Search v-else class="size-4" />
+                <RefreshCw v-if="loadingLines" aria-hidden="true" class="size-4 animate-spin" />
+                <Search v-else aria-hidden="true" class="size-4" />
                 Query
               </Button>
             </form>
@@ -517,7 +517,7 @@ function refreshAll(): void {
               <div class="space-y-3">
                 <div v-if="nextBeforeSeq !== undefined" class="flex justify-center">
                   <Button variant="outline" size="sm" :disabled="loadingOlder" @click="loadOlder">
-                    <RefreshCw v-if="loadingOlder" class="size-4 animate-spin" />
+                    <RefreshCw v-if="loadingOlder" aria-hidden="true" class="size-4 animate-spin" />
                     Load older
                   </Button>
                 </div>
@@ -526,9 +526,9 @@ function refreshAll(): void {
                   <table class="w-full text-xs">
                     <thead>
                       <tr class="border-b border-border text-left text-muted-foreground">
-                        <th class="px-3 py-2 font-medium">Seq</th>
-                        <th class="px-3 py-2 font-medium">Time</th>
-                        <th class="px-3 py-2 font-medium">Line</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Seq</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Time</th>
+                        <th scope="col" class="px-3 py-2 font-medium">Line</th>
                       </tr>
                     </thead>
                     <tbody class="font-mono">
@@ -640,9 +640,9 @@ function refreshAll(): void {
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else-if="!editingId" class="size-4" />
-              <Pencil v-else class="size-4" />
+              <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
+              <Plus v-else-if="!editingId" aria-hidden="true" class="size-4" />
+              <Pencil v-else aria-hidden="true" class="size-4" />
               {{ editingId ? "Save" : "Create" }}
             </Button>
           </DialogFooter>
@@ -664,8 +664,8 @@ function refreshAll(): void {
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
+            <Trash2 v-else aria-hidden="true" class="size-4" />
             Delete
           </Button>
         </DialogFooter>

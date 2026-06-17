@@ -36,7 +36,7 @@ const icon = computed(() => {
         <div
           class="flex size-14 items-center justify-center rounded-xl border bg-card text-muted-foreground shadow-xs"
         >
-          <component :is="icon" class="size-6" />
+          <component :is="icon" class="size-6" aria-hidden="true" />
         </div>
         <div class="space-y-1.5">
           <h2 class="text-lg font-semibold tracking-tight">{{ title }}</h2>

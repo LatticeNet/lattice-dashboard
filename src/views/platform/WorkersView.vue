@@ -154,15 +154,15 @@ async function submitRun() {
     >
       <template #actions>
         <Button variant="outline" size="sm" :disabled="workersQuery.refreshing.value" @click="workersQuery.refresh">
-          <RefreshCw :class="cn('size-4', workersQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw aria-hidden="true" :class="cn('size-4', workersQuery.refreshing.value && 'animate-spin')" />
           Refresh
         </Button>
         <Button v-if="canDeploy" variant="outline" size="sm" @click="openRun()">
-          <Play class="size-4" />
+          <Play aria-hidden="true" class="size-4" />
           Run
         </Button>
         <Button v-if="canDeploy" size="sm" @click="openDeploy">
-          <Plus class="size-4" />
+          <Plus aria-hidden="true" class="size-4" />
           Deploy worker
         </Button>
       </template>
@@ -171,7 +171,7 @@ async function submitRun() {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Code2 class="size-4 text-muted-foreground" />
+          <Code2 aria-hidden="true" class="size-4 text-muted-foreground" />
           Worker scripts
         </CardTitle>
         <CardDescription>{{ workers.length }} deployed worker{{ workers.length === 1 ? "" : "s" }}.</CardDescription>
@@ -190,12 +190,12 @@ async function submitRun() {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-3 font-medium">Name</th>
-                  <th class="py-2 pr-3 font-medium">Capabilities</th>
-                  <th class="py-2 pr-3 font-medium">Public</th>
-                  <th class="py-2 pr-3 font-medium">Updated</th>
-                  <th class="py-2 pr-3 font-medium">Source</th>
-                  <th class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Capabilities</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Public</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Updated</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">Source</th>
+                  <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -231,7 +231,7 @@ async function submitRun() {
                   <td class="py-3 pl-3">
                     <div class="flex items-center justify-end gap-1">
                       <Button variant="outline" size="sm" @click="openRun(worker)">
-                        <Play class="size-4" />
+                        <Play aria-hidden="true" class="size-4" />
                         Run
                       </Button>
                     </div>
@@ -299,8 +299,8 @@ async function submitRun() {
           <DialogFooter>
             <Button type="button" variant="outline" @click="deployOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!canSubmitDeploy || deploying">
-              <RefreshCw v-if="deploying" class="size-4 animate-spin" />
-              <Rocket v-else class="size-4" />
+              <RefreshCw v-if="deploying" aria-hidden="true" class="size-4 animate-spin" />
+              <Rocket v-else aria-hidden="true" class="size-4" />
               Deploy
             </Button>
           </DialogFooter>
@@ -347,8 +347,8 @@ async function submitRun() {
           <DialogFooter>
             <Button type="button" variant="outline" @click="runOpen = false">Close</Button>
             <Button type="submit" :disabled="!canSubmitRun || running">
-              <RefreshCw v-if="running" class="size-4 animate-spin" />
-              <Play v-else class="size-4" />
+              <RefreshCw v-if="running" aria-hidden="true" class="size-4 animate-spin" />
+              <Play v-else aria-hidden="true" class="size-4" />
               Run
             </Button>
           </DialogFooter>

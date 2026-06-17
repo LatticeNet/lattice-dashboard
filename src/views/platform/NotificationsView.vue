@@ -240,11 +240,11 @@ async function confirmDelete(): Promise<void> {
           :disabled="channelsQuery.refreshing.value"
           @click="channelsQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', channelsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw aria-hidden="true" :class="cn('size-4', channelsQuery.refreshing.value && 'animate-spin')" />
           Refresh
         </Button>
         <Button v-if="canSend" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus aria-hidden="true" class="size-4" />
           New channel
         </Button>
       </template>
@@ -253,7 +253,7 @@ async function confirmDelete(): Promise<void> {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Bell class="size-4 text-muted-foreground" />
+          <Bell aria-hidden="true" class="size-4 text-muted-foreground" />
           Channels
         </CardTitle>
         <CardDescription>
@@ -274,12 +274,12 @@ async function confirmDelete(): Promise<void> {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Name</th>
-                  <th class="py-2 pr-4 font-medium">Kind</th>
-                  <th class="py-2 pr-4 font-medium">Configured keys</th>
-                  <th class="py-2 pr-4 font-medium">Status</th>
-                  <th class="py-2 pr-4 font-medium">Updated</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Kind</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Configured keys</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Updated</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -418,8 +418,8 @@ async function confirmDelete(): Promise<void> {
               :disabled="testing || !configComplete"
               @click="sendTest"
             >
-              <RefreshCw v-if="testing" class="size-4 animate-spin" />
-              <Send v-else class="size-4" />
+              <RefreshCw v-if="testing" aria-hidden="true" class="size-4 animate-spin" />
+              <Send v-else aria-hidden="true" class="size-4" />
               Send test
             </Button>
             <p class="text-xs text-muted-foreground">
@@ -432,9 +432,9 @@ async function confirmDelete(): Promise<void> {
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else-if="!editingId" class="size-4" />
-              <Pencil v-else class="size-4" />
+              <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
+              <Plus v-else-if="!editingId" aria-hidden="true" class="size-4" />
+              <Pencil v-else aria-hidden="true" class="size-4" />
               {{ editingId ? "Save" : "Create" }}
             </Button>
           </DialogFooter>
@@ -456,8 +456,8 @@ async function confirmDelete(): Promise<void> {
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
+            <Trash2 v-else aria-hidden="true" class="size-4" />
             Delete
           </Button>
         </DialogFooter>

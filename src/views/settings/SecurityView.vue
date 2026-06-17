@@ -181,8 +181,8 @@ function cancelEnrollment() {
     >
       <template #actions>
         <Badge :variant="totpEnabled ? 'success' : 'secondary'" class="gap-1.5">
-          <CheckCircle2 v-if="totpEnabled" class="size-3.5" />
-          <AlertTriangle v-else class="size-3.5" />
+          <CheckCircle2 v-if="totpEnabled" class="size-3.5" aria-hidden="true" />
+          <AlertTriangle v-else class="size-3.5" aria-hidden="true" />
           2FA {{ totpEnabled ? "enabled" : "off" }}
         </Badge>
       </template>
@@ -192,7 +192,7 @@ function cancelEnrollment() {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <KeyRound class="size-4 text-muted-foreground" />
+            <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
             Password
           </CardTitle>
           <CardDescription>
@@ -241,7 +241,7 @@ function cancelEnrollment() {
               v-if="passwordError"
               class="flex items-center gap-2 text-sm text-destructive"
             >
-              <AlertTriangle class="size-4" />
+              <AlertTriangle class="size-4" aria-hidden="true" />
               {{ passwordError }}
             </p>
 
@@ -253,12 +253,13 @@ function cancelEnrollment() {
                 <RefreshCw
                   v-if="passwordPending"
                   class="size-4 animate-spin"
+                  aria-hidden="true"
                 />
-                <LockKeyhole v-else class="size-4" />
+                <LockKeyhole v-else class="size-4" aria-hidden="true" />
                 Change password
               </Button>
               <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <LogOut class="size-3.5" />
+                <LogOut class="size-3.5" aria-hidden="true" />
                 Redirects to login after success
               </span>
             </div>
@@ -269,7 +270,7 @@ function cancelEnrollment() {
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <ShieldCheck class="size-4 text-muted-foreground" />
+            <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
             Session
           </CardTitle>
           <CardDescription>
@@ -309,7 +310,7 @@ function cancelEnrollment() {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Smartphone class="size-4 text-muted-foreground" />
+          <Smartphone class="size-4 text-muted-foreground" aria-hidden="true" />
           Authenticator App
         </CardTitle>
         <CardDescription>
@@ -337,7 +338,7 @@ function cancelEnrollment() {
           v-if="totpError"
           class="flex items-center gap-2 text-sm text-destructive"
         >
-          <AlertTriangle class="size-4" />
+          <AlertTriangle class="size-4" aria-hidden="true" />
           {{ totpError }}
         </p>
 
@@ -351,8 +352,9 @@ function cancelEnrollment() {
               <RefreshCw
                 v-if="totpPending === 'enroll'"
                 class="size-4 animate-spin"
+                aria-hidden="true"
               />
-              <ShieldCheck v-else class="size-4" />
+              <ShieldCheck v-else class="size-4" aria-hidden="true" />
               Start enrollment
             </Button>
             <span class="text-xs text-muted-foreground">
@@ -429,8 +431,9 @@ function cancelEnrollment() {
                   <RefreshCw
                     v-if="totpPending === 'activate'"
                     :class="cn('size-4 animate-spin')"
+                    aria-hidden="true"
                   />
-                  <CheckCircle2 v-else class="size-4" />
+                  <CheckCircle2 v-else class="size-4" aria-hidden="true" />
                   Activate
                 </Button>
                 <Button
@@ -468,8 +471,9 @@ function cancelEnrollment() {
             <RefreshCw
               v-if="totpPending === 'disable'"
               class="size-4 animate-spin"
+              aria-hidden="true"
             />
-            <AlertTriangle v-else class="size-4" />
+            <AlertTriangle v-else class="size-4" aria-hidden="true" />
             Disable 2FA
           </Button>
         </form>

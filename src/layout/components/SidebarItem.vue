@@ -30,7 +30,7 @@ const active =
         :active-class="item.path === '/' ? '' : active"
         :class="cn(base, idle, 'justify-center px-0')"
       >
-        <component :is="item.icon" class="size-4 shrink-0" />
+        <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
         <span class="sr-only">{{ item.title }}</span>
       </RouterLink>
     </TooltipTrigger>
@@ -44,7 +44,7 @@ const active =
     :active-class="item.path === '/' ? '' : active"
     :class="cn(base, idle)"
   >
-    <component :is="item.icon" class="size-4 shrink-0" />
+    <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
     <span class="truncate">{{ item.title }}</span>
   </RouterLink>
 </template>

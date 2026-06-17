@@ -124,7 +124,7 @@ function refreshAll() {
             updated {{ formatRelativeTime(fleet.lastUpdated.value) }}
           </span>
           <Button variant="outline" size="sm" :disabled="fleet.refreshing.value" @click="refreshAll">
-            <RotateCw :class="cn('size-4', fleet.refreshing.value && 'animate-spin')" />
+            <RotateCw :class="cn('size-4', fleet.refreshing.value && 'animate-spin')" aria-hidden="true" />
             Refresh
           </Button>
         </div>
@@ -172,7 +172,7 @@ function refreshAll() {
       <Card class="lg:col-span-2">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Server class="size-4 text-muted-foreground" />
+            <Server class="size-4 text-muted-foreground" aria-hidden="true" />
             Fleet
           </CardTitle>
           <CardDescription>
@@ -261,19 +261,19 @@ function refreshAll() {
                   class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground tabular"
                 >
                   <span class="inline-flex items-center gap-1">
-                    <ArrowDown class="size-3" />
+                    <ArrowDown class="size-3" aria-hidden="true" />
                     {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
                   </span>
                   <span class="inline-flex items-center gap-1">
-                    <ArrowUp class="size-3" />
+                    <ArrowUp class="size-3" aria-hidden="true" />
                     {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
                   </span>
                   <span class="inline-flex items-center gap-1">
-                    <Activity class="size-3" />
+                    <Activity class="size-3" aria-hidden="true" />
                     {{ formatDuration(node.metrics?.uptime_seconds) }}
                   </span>
                   <span class="inline-flex items-center gap-1">
-                    <Clock class="size-3" />
+                    <Clock class="size-3" aria-hidden="true" />
                     {{ formatRelativeTime(node.last_seen) }}
                   </span>
                 </div>
@@ -289,7 +289,7 @@ function refreshAll() {
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <ShieldCheck class="size-4 text-muted-foreground" />
+              <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
               Approvals
             </CardTitle>
             <CardDescription>Pending changes awaiting review</CardDescription>
@@ -332,7 +332,7 @@ function refreshAll() {
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Activity class="size-4 text-muted-foreground" />
+              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
               Recent activity
             </CardTitle>
             <CardDescription>Latest audit decisions</CardDescription>

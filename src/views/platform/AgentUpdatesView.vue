@@ -257,11 +257,11 @@ function forcePlan(): void {
           :disabled="policiesQuery.refreshing.value"
           @click="policiesQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw aria-hidden="true" :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" />
           Refresh
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+          <Plus aria-hidden="true" class="size-4" />
           New policy
         </Button>
       </template>
@@ -270,7 +270,7 @@ function forcePlan(): void {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <DownloadCloud class="size-4 text-muted-foreground" />
+          <DownloadCloud aria-hidden="true" class="size-4 text-muted-foreground" />
           Update policies
         </CardTitle>
         <CardDescription>
@@ -291,14 +291,14 @@ function forcePlan(): void {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th class="py-2 pr-4 font-medium">Node</th>
-                  <th class="py-2 pr-4 font-medium">State</th>
-                  <th class="py-2 pr-4 font-medium">Target</th>
-                  <th class="py-2 pr-4 font-medium">Applied</th>
-                  <th class="py-2 pr-4 font-medium">Last planned</th>
-                  <th class="py-2 pr-4 font-medium">Binary URL</th>
-                  <th class="py-2 pr-4 font-medium">sha256</th>
-                  <th class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">State</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Target</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Applied</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Last planned</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">Binary URL</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">sha256</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -352,8 +352,8 @@ function forcePlan(): void {
                         :disabled="planning === policy.node_id"
                         @click="runPlan(policy.node_id, false)"
                       >
-                        <RefreshCw v-if="planning === policy.node_id" class="size-4 animate-spin" />
-                        <FileCode2 v-else class="size-4" />
+                        <RefreshCw v-if="planning === policy.node_id" aria-hidden="true" class="size-4 animate-spin" />
+                        <FileCode2 v-else aria-hidden="true" class="size-4" />
                         Plan
                       </Button>
                       <Button
@@ -483,9 +483,9 @@ function forcePlan(): void {
               <Button type="button" variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Plus v-else-if="!editing" class="size-4" />
-              <Pencil v-else class="size-4" />
+              <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
+              <Plus v-else-if="!editing" aria-hidden="true" class="size-4" />
+              <Pencil v-else aria-hidden="true" class="size-4" />
               {{ editing ? "Save" : "Create" }}
             </Button>
           </DialogFooter>
@@ -507,8 +507,8 @@ function forcePlan(): void {
             <Button type="button" variant="outline">Cancel</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
+            <Trash2 v-else aria-hidden="true" class="size-4" />
             Delete
           </Button>
         </DialogFooter>
@@ -534,8 +534,8 @@ function forcePlan(): void {
             :disabled="!!noopNodeId && planning === noopNodeId"
             @click="forcePlan"
           >
-            <RefreshCw v-if="!!noopNodeId && planning === noopNodeId" class="size-4 animate-spin" />
-            <FileCode2 v-else class="size-4" />
+            <RefreshCw v-if="!!noopNodeId && planning === noopNodeId" aria-hidden="true" class="size-4 animate-spin" />
+            <FileCode2 v-else aria-hidden="true" class="size-4" />
             Force plan
           </Button>
         </DialogFooter>
@@ -547,7 +547,7 @@ function forcePlan(): void {
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
-            <FileCode2 class="size-5 text-muted-foreground" />
+            <FileCode2 aria-hidden="true" class="size-5 text-muted-foreground" />
             Agent update plan
           </DialogTitle>
           <DialogDescription v-if="approval">

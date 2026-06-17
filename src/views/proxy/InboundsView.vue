@@ -264,7 +264,7 @@ async function confirmDelete(force: boolean) {
           :disabled="inboundsQuery.refreshing.value"
           @click="inboundsQuery.refresh"
         >
-          <RefreshCw :class="cn('size-4', inboundsQuery.refreshing.value && 'animate-spin')" />
+          <RefreshCw :class="cn('size-4', inboundsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           Refresh
         </Button>
         <Button
@@ -272,11 +272,11 @@ async function confirmDelete(force: boolean) {
           size="sm"
           @click="openCreate"
         >
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New inbound
         </Button>
         <Button v-else size="sm" disabled :title="adminReason">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New inbound
         </Button>
       </template>
@@ -289,7 +289,7 @@ async function confirmDelete(force: boolean) {
             <p class="text-sm text-muted-foreground">Inbounds</p>
             <p class="text-2xl font-semibold tabular">{{ inbounds.length }}</p>
           </div>
-          <Network class="size-5 text-muted-foreground" />
+          <Network class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -298,7 +298,7 @@ async function confirmDelete(force: boolean) {
             <p class="text-sm text-muted-foreground">Enabled</p>
             <p class="text-2xl font-semibold tabular text-success">{{ enabledCount }}</p>
           </div>
-          <ShieldCheck class="size-5 text-success" />
+          <ShieldCheck class="size-5 text-success" aria-hidden="true" />
         </CardContent>
       </Card>
       <Card>
@@ -311,7 +311,7 @@ async function confirmDelete(force: boolean) {
               {{ realitySetCount }} / {{ inbounds.length }}
             </p>
           </div>
-          <KeyRound class="size-5 text-muted-foreground" />
+          <KeyRound class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -319,7 +319,7 @@ async function confirmDelete(force: boolean) {
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
-          <Network class="size-4 text-muted-foreground" />
+          <Network class="size-4 text-muted-foreground" aria-hidden="true" />
           Listeners
         </CardTitle>
         <CardDescription>
@@ -339,15 +339,15 @@ async function confirmDelete(force: boolean) {
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th class="px-3 py-2 text-left font-medium">Name</th>
-                  <th class="px-3 py-2 text-left font-medium">Core</th>
-                  <th class="px-3 py-2 text-left font-medium">Protocol / Port</th>
-                  <th class="px-3 py-2 text-left font-medium">Security</th>
-                  <th class="px-3 py-2 text-left font-medium">REALITY dest</th>
-                  <th class="px-3 py-2 text-left font-medium">Private key</th>
-                  <th class="px-3 py-2 text-left font-medium">State</th>
-                  <th class="px-3 py-2 text-left font-medium">Updated</th>
-                  <th class="px-3 py-2 text-right font-medium">Actions</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Name</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Core</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Protocol / Port</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Security</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">REALITY dest</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Private key</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">State</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">Updated</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -380,7 +380,7 @@ async function confirmDelete(force: boolean) {
                       :variant="inbound.has_reality_private_key ? 'success' : 'destructive'"
                       class="gap-1"
                     >
-                      <Lock class="size-3" />
+                      <Lock class="size-3" aria-hidden="true" />
                       {{ inbound.has_reality_private_key ? "set" : "missing" }}
                     </Badge>
                   </td>
@@ -401,6 +401,7 @@ async function confirmDelete(force: boolean) {
                         variant="ghost"
                         :disabled="!canAdmin"
                         :title="canAdmin ? 'Edit inbound' : adminReason"
+                        aria-label="Edit"
                         @click="openEdit(inbound)"
                       >
                         <Pencil class="size-4" />
@@ -410,6 +411,7 @@ async function confirmDelete(force: boolean) {
                         variant="ghost"
                         :disabled="!canAdmin"
                         :title="canAdmin ? 'Delete inbound' : adminReason"
+                        aria-label="Delete"
                         @click="askDelete(inbound)"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -531,8 +533,8 @@ async function confirmDelete(force: boolean) {
           <DialogFooter>
             <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
             <Button type="submit" :disabled="!formValid || saving">
-              <RefreshCw v-if="saving" class="size-4 animate-spin" />
-              <Server v-else class="size-4" />
+              <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Server v-else class="size-4" aria-hidden="true" />
               {{ isEditing ? "Save changes" : "Create inbound" }}
             </Button>
           </DialogFooter>
@@ -569,8 +571,8 @@ async function confirmDelete(force: boolean) {
             :disabled="deleting"
             @click="confirmDelete(false)"
           >
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Delete
           </Button>
           <Button
@@ -580,8 +582,8 @@ async function confirmDelete(force: boolean) {
             :disabled="deleting"
             @click="confirmDelete(true)"
           >
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" />
-            <Trash2 v-else class="size-4" />
+            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
             Force delete
           </Button>
         </DialogFooter>

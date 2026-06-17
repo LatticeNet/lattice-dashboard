@@ -50,7 +50,7 @@ function label(key: string): string {
           "
           @click="theme.setMode(m.value)"
         >
-          <component :is="m.icon" class="size-3.5" />
+          <component :is="m.icon" class="size-3.5" aria-hidden="true" />
           {{ m.label }}
         </button>
       </div>
@@ -75,7 +75,7 @@ function label(key: string): string {
           :style="{ backgroundColor: swatchColor(key) }"
           @click="theme.setColor(key)"
         >
-          <Check v-if="theme.color === key" class="size-4 text-white drop-shadow" />
+          <Check v-if="theme.color === key" class="size-4 text-white drop-shadow" aria-hidden="true" />
         </button>
       </div>
     </div>
