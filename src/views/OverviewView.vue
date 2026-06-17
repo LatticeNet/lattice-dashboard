@@ -17,6 +17,7 @@ import {
 import { api, unwrap, ApiError } from "@/lib/api";
 import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useAuthStore } from "@/stores/auth";
 import {
   formatBytesPerSec,
   formatDuration,
@@ -31,6 +32,7 @@ import StatCard from "@/components/common/StatCard.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import DataState from "@/components/common/DataState.vue";
+import GettingStarted from "@/components/common/GettingStarted.vue";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -74,9 +76,14 @@ const audit = useAsyncData<AuditEvent[] | undefined>(
   { pollInterval: 15000 },
 );
 
+const auth = useAuthStore();
+
 const nodes = computed<Node[]>(() => fleet.data.value ?? []);
 const onlineNodes = computed(() => nodes.value.filter((n) => n.online).length);
 const offlineNodes = computed(() => nodes.value.length - onlineNodes.value);
+
+/** First-run state: no nodes enrolled yet and the fleet query has settled. */
+const isEmptyFleet = computed(() => !fleet.loading.value && nodes.value.length === 0);
 
 const pendingApprovals = computed(
   () => (approvals.data.value ?? []).filter((a) => a.status === "pending"),
@@ -124,6 +131,14 @@ function refreshAll() {
       </template>
     </PageHeader>
 
+    <!-- First-run onboarding: shown only when no nodes are enrolled yet. -->
+    <GettingStarted
+      v-if="isEmptyFleet"
+      :node-count="0"
+      :two-factor-enabled="auth.principal?.totp_enabled"
+    />
+
+    <template v-else>
     <!-- KPI row -->
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatCard
@@ -353,5 +368,6 @@ function refreshAll() {
         </Card>
       </div>
     </div>
+    </template>
   </div>
 </template>

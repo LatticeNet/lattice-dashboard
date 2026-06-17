@@ -34,6 +34,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import DataState from "@/components/common/DataState.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -89,6 +90,15 @@ function parseTags(): string[] {
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+/** Scroll the enroll form into view and focus its first field. */
+function focusEnroll() {
+  document
+    .getElementById("enroll-node-section")
+    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const input = document.getElementById("enroll-name");
+  if (input instanceof HTMLInputElement) input.focus({ preventScroll: true });
 }
 
 async function enrollNode() {
@@ -189,7 +199,7 @@ function closeDetail(open: boolean) {
       </Card>
     </div>
 
-    <Card v-if="canAdminNodes">
+    <Card v-if="canAdminNodes" id="enroll-node-section">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Plus class="size-4 text-muted-foreground" />
@@ -270,6 +280,18 @@ function closeDetail(open: boolean) {
           empty-description="Create an enrollment token to add the first node."
           @retry="nodesQuery.refresh"
         >
+          <template #empty>
+            <EmptyState
+              :icon="Server"
+              title="No nodes enrolled yet"
+              description="Create an enrollment token to bring your first node online."
+            >
+              <Button v-if="canAdminNodes" size="sm" @click="focusEnroll">
+                <Plus class="size-4" />
+                Enroll a node
+              </Button>
+            </EmptyState>
+          </template>
           <div class="grid gap-3 xl:grid-cols-2">
             <div
               v-for="node in sortedNodes"
