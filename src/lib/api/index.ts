@@ -12,6 +12,8 @@ import type {
   EnrollTokenResponse,
   TaskView,
   TaskResult,
+  TerminalEventsResponse,
+  TerminalSession,
   ApprovalView,
   AuditQueryResponse,
   MonitorCreateInput,
@@ -130,6 +132,22 @@ export const api = {
       timeout_sec?: number;
       output_limit?: number;
     }) => http.post<TaskView>("/api/tasks", input),
+  },
+
+  terminal: {
+    list: () => http.get<{ sessions: TerminalSession[] }>("/api/terminal/sessions"),
+    create: (input: { node_id: string; shell?: string; cols?: number; rows?: number }) =>
+      http.post<TerminalSession>("/api/terminal/sessions", input),
+    events: (session_id: string, cursor = 0) =>
+      http.get<TerminalEventsResponse>(`/api/terminal/sessions/${encodeURIComponent(session_id)}/events`, {
+        cursor,
+      }),
+    input: (session_id: string, data: string) =>
+      http.post<TerminalSession>(`/api/terminal/sessions/${encodeURIComponent(session_id)}/input`, { data }),
+    resize: (session_id: string, cols: number, rows: number) =>
+      http.post<TerminalSession>(`/api/terminal/sessions/${encodeURIComponent(session_id)}/resize`, { cols, rows }),
+    close: (session_id: string) =>
+      http.post<TerminalSession>(`/api/terminal/sessions/${encodeURIComponent(session_id)}/close`, {}),
   },
 
   approvals: {

@@ -14,6 +14,7 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   monitoring: () => import("@/views/fleet/MonitoringView.vue"),
   approvals: () => import("@/views/operations/ApprovalsView.vue"),
   tasks: () => import("@/views/operations/TasksView.vue"),
+  terminal: () => import("@/views/operations/TerminalView.vue"),
   audit: () => import("@/views/operations/AuditView.vue"),
   // Networking
   "network-guard": () => import("@/views/networking/GuardView.vue"),

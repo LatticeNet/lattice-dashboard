@@ -113,6 +113,7 @@ export default {
       monitoring: "Monitoring",
       approvals: "Approvals",
       tasks: "Tasks",
+      terminal: "Terminal",
       audit: "Audit",
       "network-guard": "Network Guard",
       "network-policy": "Network Policy",

@@ -112,6 +112,7 @@ export default {
       monitoring: "监控",
       approvals: "审批",
       tasks: "任务",
+      terminal: "终端",
       audit: "审计",
       "network-guard": "网络防护",
       "network-policy": "网络策略",

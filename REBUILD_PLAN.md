@@ -11,8 +11,9 @@
 > server-owned node-agent debug policy, including local-only debug mode versus
 > central Logs collection; SSO New Provider includes a field guide and public
 > docs link. Fleet Map patch 2026-06-17: the map is now a refined CSP-safe world
-> SVG with IP-based auto-location controls backed by an opt-in server GeoIP
-> resolver.
+> SVG with IP-based auto-location controls backed by the server GeoIP resolver.
+> Terminal patch 2026-06-17: Operations now includes a real browser terminal
+> page backed by the server Terminal API and agent-side opt-in PTY sessions.
 
 ## Why rebuild
 
@@ -134,11 +135,17 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   to `https://latticenet.github.io/guide/sso`.
 - **Fleet Map auto-location — DONE.** `/map` now shows a proper SVG world map,
   region rollups, source-aware manual/GeoIP placement, and one-click missing
-  node location using server-side `LATTICE_GEOIP_LOOKUP_URL`.
+  node location using the server-side no-token default GeoIP provider. Set
+  `LATTICE_GEOIP_LOOKUP_URL=off` to disable external lookup, or point it at an
+  internal HTTPS provider.
+- **Browser Terminal MVP — DONE.** `/terminal` is a real Operations page that
+  creates in-memory server sessions, polls output, sends input/close controls,
+  and requires `terminal:open`. The node agent must opt in with
+  `LATTICE_AGENT_ALLOW_TERMINAL=1`; this is an agent PTY path, not inbound SSH.
 - **Protocol-level future work — NOT dashboard-only.** KV Store v2
   (bucket-bound credentials and domain/IP binding), Static hosting v2
-  (domain-bound sites / optional Cloudflare Pages workflow), browser terminal
-  (audited interactive PTY/session transport), and group-leader topology require
+  (domain-bound sites / optional Cloudflare Pages workflow), Terminal v2
+  (recorded transcripts, stronger idle timeout controls), and group-leader topology require
   server model/API/auth/audit and agent protocol work before dashboard controls
   can honestly claim full support.
 

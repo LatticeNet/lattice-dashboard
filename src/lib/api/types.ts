@@ -178,6 +178,36 @@ export interface TaskResult {
   finished_at?: string;
 }
 
+export interface TerminalSession {
+  id: string;
+  node_id: string;
+  actor_id?: string;
+  token_id?: string;
+  shell?: string;
+  cols?: number;
+  rows?: number;
+  status: "pending" | "open" | "closed" | "failed" | string;
+  error?: string;
+  bytes_in?: number;
+  bytes_out?: number;
+  created_at: string;
+  opened_at?: string;
+  closed_at?: string;
+  last_seen?: string;
+}
+
+export interface TerminalEvent {
+  seq: number;
+  kind: "output" | string;
+  data?: string;
+  created_at: string;
+}
+
+export interface TerminalEventsResponse {
+  session: TerminalSession;
+  events: TerminalEvent[];
+}
+
 export type ApprovalStatus = "pending" | "approved" | "applied" | "rejected" | "failed";
 
 export interface ApprovalView {
