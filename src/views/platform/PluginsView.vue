@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Blocks,
@@ -44,6 +45,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAudit = computed(() => auth.can("audit:read"));
 const canAdmin = computed(() => auth.can("plugin:admin"));
@@ -123,13 +125,13 @@ function nextStates(row: PluginInstallationView): PluginLifecycleStatus[] {
 function transitionLabel(status: PluginLifecycleStatus): string {
   switch (status) {
     case "installed":
-      return "Install";
+      return t("platform.plugins.install");
     case "active":
-      return "Activate";
+      return t("platform.plugins.activate");
     case "disabled":
-      return "Disable";
+      return t("common.actions.disable");
     case "verified":
-      return "Mark verified";
+      return t("platform.plugins.markVerified");
     default:
       return status;
   }
@@ -155,7 +157,7 @@ async function confirmTransition() {
     transitionTarget.value = undefined;
     lifecycleQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Lifecycle transition failed");
+    toast.error(error instanceof Error ? error.message : t("platform.plugins.transitionFailed"));
   } finally {
     transitioning.value = false;
   }
@@ -194,16 +196,16 @@ async function runVerify() {
   try {
     manifest = JSON.parse(manifestText.value);
   } catch {
-    toast.error("Manifest is not valid JSON");
+    toast.error(t("platform.plugins.manifestInvalidJson"));
     return;
   }
   verifying.value = true;
   verifyResult.value = undefined;
   try {
     verifyResult.value = await api.plugins.verify(manifest, artifactText.value.trim());
-    toast.success("Manifest verified against trust policy");
+    toast.success(t("platform.plugins.manifestVerified"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Verification failed");
+    toast.error(error instanceof Error ? error.message : t("platform.plugins.verificationFailed"));
   } finally {
     verifying.value = false;
   }
@@ -213,8 +215,8 @@ async function runVerify() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Plugins"
-      description="Verified, capability-gated extension bundles and their lifecycle state machine"
+      :title="$t('platform.plugins.title')"
+      :description="$t('platform.plugins.description')"
     >
       <template #actions>
         <Button variant="outline" size="sm" :disabled="registeredQuery.refreshing.value || lifecycleQuery.refreshing.value" @click="refreshAll">
@@ -222,19 +224,19 @@ async function runVerify() {
             aria-hidden="true"
             :class="cn('size-4', (registeredQuery.refreshing.value || lifecycleQuery.refreshing.value) && 'animate-spin')"
           />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canVerify" size="sm" @click="openVerify">
           <ShieldCheck aria-hidden="true" class="size-4" />
-          Verify manifest
+          {{ $t('platform.plugins.verifyManifest') }}
         </Button>
       </template>
     </PageHeader>
 
     <Tabs v-model="tab">
       <TabsList class="w-full sm:w-auto">
-        <TabsTrigger value="registered">Registered</TabsTrigger>
-        <TabsTrigger value="lifecycle">Lifecycle</TabsTrigger>
+        <TabsTrigger value="registered">{{ $t('platform.plugins.tabRegistered') }}</TabsTrigger>
+        <TabsTrigger value="lifecycle">{{ $t('platform.plugins.tabLifecycle') }}</TabsTrigger>
       </TabsList>
 
       <!-- Registered tab -->
@@ -243,9 +245,9 @@ async function runVerify() {
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Blocks aria-hidden="true" class="size-4 text-muted-foreground" />
-              Registered plugins
+              {{ $t('platform.plugins.registeredTitle') }}
             </CardTitle>
-            <CardDescription>In-memory verified/registered bundles (no signatures or digests).</CardDescription>
+            <CardDescription>{{ $t('platform.plugins.registeredHint') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <DataState
@@ -253,20 +255,20 @@ async function runVerify() {
               :loading="registeredQuery.loading.value"
               :error="registeredQuery.error.value"
               :is-empty="registered.length === 0"
-              empty-title="No plugins registered"
-              empty-description="Verify and install a plugin bundle to populate the registry."
+              :empty-title="$t('platform.plugins.registeredEmptyTitle')"
+              :empty-description="$t('platform.plugins.registeredEmptyDescription')"
               @retry="registeredQuery.refresh"
             >
               <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th scope="col" class="py-2 pr-3 font-medium">ID</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Name</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Type</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Version</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Publisher</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Capabilities</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colId') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colName') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colType') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colVersion') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colPublisher') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colCapabilities') }}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -283,7 +285,7 @@ async function runVerify() {
                       <td class="py-3 pr-3">
                         <div class="flex flex-wrap gap-1">
                           <Badge v-for="cap in plugin.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                          <span v-if="!plugin.capabilities.length" class="text-xs text-muted-foreground">none</span>
+                          <span v-if="!plugin.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                         </div>
                       </td>
                     </tr>
@@ -292,7 +294,9 @@ async function runVerify() {
               </div>
             </DataState>
             <p v-else class="text-sm text-muted-foreground">
-              The <code class="font-mono">audit:read</code> scope is required to list registered plugins.
+              <i18n-t keypath="platform.plugins.auditScopeRequired" tag="span" scope="global">
+                <template #scope><code class="font-mono">audit:read</code></template>
+              </i18n-t>
             </p>
           </CardContent>
         </Card>
@@ -304,10 +308,10 @@ async function runVerify() {
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <CircleDot aria-hidden="true" class="size-4 text-muted-foreground" />
-              Lifecycle
+              {{ $t('platform.plugins.lifecycleTitle') }}
             </CardTitle>
             <CardDescription>
-              Installation records and runtime state. Transitions: verified → installed → active; active ↔ disabled.
+              {{ $t('platform.plugins.lifecycleHint') }}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -316,23 +320,23 @@ async function runVerify() {
               :loading="lifecycleQuery.loading.value"
               :error="lifecycleQuery.error.value"
               :is-empty="lifecycle.length === 0"
-              empty-title="No installations"
-              empty-description="Verified plugin bundles will appear here once installed."
+              :empty-title="$t('platform.plugins.lifecycleEmptyTitle')"
+              :empty-description="$t('platform.plugins.lifecycleEmptyDescription')"
               @retry="lifecycleQuery.refresh"
             >
               <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th scope="col" class="py-2 pr-3 font-medium">Name</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Type</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Version</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Status</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Runtime</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Available</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Artifact</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Capabilities</th>
-                      <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colName') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colType') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colVersion') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colStatus') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colRuntime') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colAvailable') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colArtifact') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colCapabilities') }}</th>
+                      <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.plugins.colActions') }}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -353,7 +357,7 @@ async function runVerify() {
                         <span v-else class="text-xs text-muted-foreground">—</span>
                       </td>
                       <td class="py-3 pr-3">
-                        <Badge :variant="row.available ? 'success' : 'secondary'">{{ row.available ? "yes" : "no" }}</Badge>
+                        <Badge :variant="row.available ? 'success' : 'secondary'">{{ row.available ? $t('common.misc.yes') : $t('common.misc.no') }}</Badge>
                       </td>
                       <td class="py-3 pr-3">
                         <div v-if="row.artifact_sha256" class="flex items-center gap-1">
@@ -390,7 +394,9 @@ async function runVerify() {
               </div>
             </DataState>
             <p v-else class="text-sm text-muted-foreground">
-              The <code class="font-mono">plugin:admin</code> scope is required to manage plugin lifecycle.
+              <i18n-t keypath="platform.plugins.adminScopeRequired" tag="span" scope="global">
+                <template #scope><code class="font-mono">plugin:admin</code></template>
+              </i18n-t>
             </p>
           </CardContent>
         </Card>
@@ -401,18 +407,18 @@ async function runVerify() {
     <Dialog :open="!!transitionTarget" @update:open="(v) => { if (!v) transitionTarget = undefined; }">
       <DialogScrollContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Confirm lifecycle transition</DialogTitle>
+          <DialogTitle>{{ $t('platform.plugins.confirmTransitionTitle') }}</DialogTitle>
           <DialogDescription>
-            Move
+            {{ $t('platform.plugins.confirmTransitionMove') }}
             <span class="font-medium">{{ transitionTarget?.row.name || transitionTarget?.row.id }}</span>
-            from <Badge :variant="statusVariant(transitionTarget?.row.status ?? '')">{{ transitionTarget?.row.status }}</Badge>
-            to <Badge :variant="statusVariant(transitionTarget?.status ?? '')">{{ transitionTarget?.status }}</Badge>?
-            <template v-if="transitionTarget?.status === 'active'"> Activating starts the plugin runtime.</template>
-            <template v-else-if="transitionTarget?.status === 'disabled'"> Disabling stops the plugin runtime.</template>
+            {{ $t('platform.plugins.confirmTransitionFrom') }} <Badge :variant="statusVariant(transitionTarget?.row.status ?? '')">{{ transitionTarget?.row.status }}</Badge>
+            {{ $t('platform.plugins.confirmTransitionTo') }} <Badge :variant="statusVariant(transitionTarget?.status ?? '')">{{ transitionTarget?.status }}</Badge>?
+            <template v-if="transitionTarget?.status === 'active'"> {{ $t('platform.plugins.activatingStarts') }}</template>
+            <template v-else-if="transitionTarget?.status === 'disabled'"> {{ $t('platform.plugins.disablingStops') }}</template>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="transitionTarget = undefined">Cancel</Button>
+          <Button type="button" variant="outline" @click="transitionTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
           <Button
             type="button"
             :variant="transitionTarget?.status === 'disabled' ? 'destructive' : 'default'"
@@ -421,7 +427,7 @@ async function runVerify() {
           >
             <RefreshCw v-if="transitioning" aria-hidden="true" class="size-4 animate-spin" />
             <CheckCircle2 v-else aria-hidden="true" class="size-4" />
-            {{ transitionTarget ? transitionLabel(transitionTarget.status) : "Confirm" }}
+            {{ transitionTarget ? transitionLabel(transitionTarget.status) : $t('common.actions.confirm') }}
           </Button>
         </DialogFooter>
       </DialogScrollContent>
@@ -431,15 +437,15 @@ async function runVerify() {
     <Dialog v-model:open="verifyOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Verify plugin manifest</DialogTitle>
+          <DialogTitle>{{ $t('platform.plugins.verifyTitle') }}</DialogTitle>
           <DialogDescription>
-            Preflight a candidate manifest + artifact against the operator trust policy. Nothing is installed or executed.
+            {{ $t('platform.plugins.verifyHint') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="runVerify">
           <div class="grid gap-2">
-            <Label for="verify-manifest">Manifest (JSON)</Label>
+            <Label for="verify-manifest">{{ $t('platform.plugins.manifestLabel') }}</Label>
             <textarea
               id="verify-manifest"
               v-model="manifestText"
@@ -450,13 +456,13 @@ async function runVerify() {
             />
           </div>
           <div class="grid gap-2">
-            <Label for="verify-artifact">Artifact (base64)</Label>
+            <Label for="verify-artifact">{{ $t('platform.plugins.artifactLabel') }}</Label>
             <textarea
               id="verify-artifact"
               v-model="artifactText"
               rows="4"
               spellcheck="false"
-              placeholder="base64 of the artifact bytes"
+              :placeholder="$t('platform.plugins.artifactPlaceholder')"
               class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
           </div>
@@ -465,7 +471,7 @@ async function runVerify() {
             <div class="flex flex-wrap items-center gap-2">
               <Badge variant="success" class="gap-1.5">
                 <ShieldCheck aria-hidden="true" class="size-3.5" />
-                {{ verifyResult.trusted ? "trusted" : "untrusted" }}
+                {{ verifyResult.trusted ? $t('platform.plugins.trusted') : $t('platform.plugins.untrusted') }}
               </Badge>
               <Badge variant="outline">{{ verifyResult.manifest.type }}</Badge>
               <span class="text-sm font-medium">{{ verifyResult.manifest.name || verifyResult.manifest.id }}</span>
@@ -473,23 +479,23 @@ async function runVerify() {
 
             <div class="grid gap-2 text-xs sm:grid-cols-2">
               <div class="rounded-md border border-border p-2">
-                <p class="font-medium uppercase text-muted-foreground">Manifest id</p>
+                <p class="font-medium uppercase text-muted-foreground">{{ $t('platform.plugins.manifestId') }}</p>
                 <p class="mt-1 break-all font-mono">{{ verifyResult.manifest.id }}</p>
               </div>
               <div class="rounded-md border border-border p-2">
-                <p class="font-medium uppercase text-muted-foreground">Version / publisher</p>
+                <p class="font-medium uppercase text-muted-foreground">{{ $t('platform.plugins.versionPublisher') }}</p>
                 <p class="mt-1 font-mono">{{ verifyResult.manifest.version || "—" }} · {{ verifyResult.manifest.publisher || "—" }}</p>
               </div>
             </div>
 
             <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-              <span class="font-medium">artifact sha256</span>
+              <span class="font-medium">{{ $t('platform.plugins.artifactSha256') }}</span>
               <code class="break-all font-mono">{{ verifyResult.artifact_sha256 }}</code>
               <CopyButton :value="verifyResult.artifact_sha256" />
             </div>
 
             <div class="space-y-2">
-              <p class="text-xs font-medium uppercase text-muted-foreground">Capabilities</p>
+              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.plugins.colCapabilities') }}</p>
               <div class="flex flex-wrap gap-1.5">
                 <Badge
                   v-for="cap in verifyResult.capabilities"
@@ -500,17 +506,17 @@ async function runVerify() {
                   {{ cap.name }}
                   <span class="opacity-70">({{ cap.risk }})</span>
                 </Badge>
-                <span v-if="!verifyResult.capabilities.length" class="text-xs text-muted-foreground">none declared</span>
+                <span v-if="!verifyResult.capabilities.length" class="text-xs text-muted-foreground">{{ $t('platform.plugins.noneDeclared') }}</span>
               </div>
             </div>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="verifyOpen = false">Close</Button>
+            <Button type="button" variant="outline" @click="verifyOpen = false">{{ $t('common.actions.close') }}</Button>
             <Button type="submit" :disabled="verifying || !manifestText.trim() || !artifactText.trim()">
               <RefreshCw v-if="verifying" aria-hidden="true" class="size-4 animate-spin" />
               <ShieldCheck v-else aria-hidden="true" class="size-4" />
-              Verify
+              {{ $t('common.actions.verify') }}
             </Button>
           </DialogFooter>
         </form>

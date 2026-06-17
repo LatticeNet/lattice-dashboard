@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   FileCode2,
@@ -43,6 +44,7 @@ import {
 
 const PLACEHOLDER = "__LATTICE_WG_PRIVATE_KEY__";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canPlan = computed(() => auth.can("network:plan"));
 
@@ -92,9 +94,9 @@ async function submitPlan() {
     planDigest.value = await sha256Hex(result.plan || "");
     paramsOpen.value = false;
     planOpen.value = true;
-    toast.success("Plan created — review in Approvals");
+    toast.success(t("networking.wireguard.toastPlanCreated"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Plan failed");
+    toast.error(error instanceof Error ? error.message : t("networking.wireguard.toastPlanFailed"));
   } finally {
     planning.value = undefined;
   }
@@ -108,8 +110,8 @@ function nodeName(id: string): string {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="WireGuard"
-      description="Mesh config planner — the server emits a wg0.conf for any node from cluster topology"
+      :title="$t('networking.wireguard.title')"
+      :description="$t('networking.wireguard.description')"
     >
       <template #actions>
         <Button
@@ -119,7 +121,7 @@ function nodeName(id: string): string {
           @click="nodesQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
@@ -129,14 +131,14 @@ function nodeName(id: string): string {
       <CardContent class="flex items-start gap-3 p-4">
         <ShieldCheck class="mt-0.5 size-5 shrink-0 text-info" aria-hidden="true" />
         <div class="space-y-1 text-sm">
-          <p class="font-medium">Private keys never reach the server.</p>
+          <p class="font-medium">{{ $t('networking.wireguard.keysNeverReachServer') }}</p>
           <p class="text-muted-foreground">
-            This is a planner, not a key generator. The planned
-            <code class="font-mono">[Interface]</code> carries the placeholder
-            <code class="font-mono">{{ PLACEHOLDER }}</code>, which the node-agent substitutes from its
-            local key file at apply time. Only peer <span class="font-medium text-foreground">public</span>
-            keys appear in the config, and each peer's <code class="font-mono">AllowedIPs</code> is pinned to
-            its own <code class="font-mono">/32</code> or <code class="font-mono">/128</code> host route.
+            {{ $t('networking.wireguard.keysExplainerLead') }}
+            <code class="font-mono">[Interface]</code> {{ $t('networking.wireguard.keysExplainerCarries') }}
+            <code class="font-mono">{{ PLACEHOLDER }}</code>, {{ $t('networking.wireguard.keysExplainerSubstitutes') }}
+            <span class="font-medium text-foreground">{{ $t('networking.wireguard.keysExplainerPublic') }}</span>
+            {{ $t('networking.wireguard.keysExplainerKeys') }} <code class="font-mono">AllowedIPs</code> {{ $t('networking.wireguard.keysExplainerPinned') }}
+            <code class="font-mono">/32</code> {{ $t('networking.wireguard.keysExplainerOr') }} <code class="font-mono">/128</code> {{ $t('networking.wireguard.keysExplainerHostRoute') }}
           </p>
         </div>
       </CardContent>
@@ -146,10 +148,10 @@ function nodeName(id: string): string {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Spline class="size-4 text-muted-foreground" aria-hidden="true" />
-          Mesh nodes
+          {{ $t('networking.wireguard.meshNodes') }}
         </CardTitle>
         <CardDescription>
-          {{ meshReadyCount }} of {{ nodes.length }} {{ nodes.length === 1 ? "node has" : "nodes have" }} a mesh IP
+          {{ nodes.length === 1 ? $t('networking.wireguard.meshReadyOne', { ready: meshReadyCount, total: nodes.length }) : $t('networking.wireguard.meshReady', { ready: meshReadyCount, total: nodes.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -157,20 +159,20 @@ function nodeName(id: string): string {
           :loading="nodesQuery.loading.value"
           :error="nodesQuery.error.value"
           :is-empty="nodes.length === 0"
-          empty-title="No nodes enrolled"
-          empty-description="Enroll nodes with a WireGuard IP to plan a mesh."
+          :empty-title="$t('networking.wireguard.emptyTitle')"
+          :empty-description="$t('networking.wireguard.emptyDescription')"
           @retry="nodesQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">WireGuard IP</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Endpoint</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Role</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colNode') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colWireguardIp') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colEndpoint') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colRole') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colStatus') }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.wireguard.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -185,7 +187,7 @@ function nodeName(id: string): string {
                   </td>
                   <td class="py-3 pr-4 font-mono text-xs">
                     <span v-if="node.wireguard_ip">{{ node.wireguard_ip }}</span>
-                    <span v-else class="text-warning">not set</span>
+                    <span v-else class="text-warning">{{ $t('networking.wireguard.notSet') }}</span>
                   </td>
                   <td class="py-3 pr-4 font-mono text-xs text-muted-foreground">
                     {{ node.wireguard_endpoint || "—" }}
@@ -195,7 +197,7 @@ function nodeName(id: string): string {
                     <span v-else class="text-xs text-muted-foreground">—</span>
                   </td>
                   <td class="py-3 pr-4">
-                    <StatusDot :online="node.online && !node.disabled" :label="node.online ? 'online' : 'offline'" />
+                    <StatusDot :online="node.online && !node.disabled" :label="node.online ? $t('common.status.online') : $t('common.status.offline')" />
                   </td>
                   <td class="py-3 pl-4">
                     <div class="flex justify-end">
@@ -204,12 +206,12 @@ function nodeName(id: string): string {
                         variant="outline"
                         size="sm"
                         :disabled="planning === node.id || !node.wireguard_ip"
-                        :title="!node.wireguard_ip ? 'Node has no WireGuard IP' : undefined"
+                        :title="!node.wireguard_ip ? $t('networking.wireguard.noWireguardIp') : undefined"
                         @click="openParams(node)"
                       >
                         <RefreshCw v-if="planning === node.id" class="size-4 animate-spin" aria-hidden="true" />
                         <FileCode2 v-else class="size-4" aria-hidden="true" />
-                        Plan mesh config
+                        {{ $t('networking.wireguard.planMeshConfig') }}
                       </Button>
                     </div>
                   </td>
@@ -225,28 +227,28 @@ function nodeName(id: string): string {
     <Dialog v-model:open="paramsOpen">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Plan mesh config</DialogTitle>
+          <DialogTitle>{{ $t('networking.wireguard.planMeshTitle') }}</DialogTitle>
           <DialogDescription>
-            Render a wg0.conf for {{ paramsNode?.name || paramsNode?.id }} and queue it as a pending approval.
+            {{ $t('networking.wireguard.planMeshDescription', { node: paramsNode?.name || paramsNode?.id }) }}
           </DialogDescription>
         </DialogHeader>
         <div class="space-y-4">
           <div class="grid gap-2">
-            <Label for="wg-listen-port">Listen port (optional)</Label>
+            <Label for="wg-listen-port">{{ $t('networking.wireguard.listenPort') }}</Label>
             <Input
               id="wg-listen-port"
               v-model="listenPort"
               type="number"
               min="1"
               max="65535"
-              placeholder="defaults to the node's WireGuardPort, else 51820"
+              :placeholder="$t('networking.wireguard.listenPortPlaceholder')"
             />
-            <p class="text-xs text-muted-foreground">Overrides the target's listen port when greater than 0.</p>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.wireguard.listenPortHint') }}</p>
           </div>
         </div>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button
             type="button"
@@ -255,7 +257,7 @@ function nodeName(id: string): string {
           >
             <RefreshCw v-if="planning === paramsNode?.id" class="size-4 animate-spin" aria-hidden="true" />
             <FileCode2 v-else class="size-4" aria-hidden="true" />
-            Plan
+            {{ $t('networking.shared.plan') }}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -267,25 +269,25 @@ function nodeName(id: string): string {
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <FileCode2 class="size-5 text-muted-foreground" aria-hidden="true" />
-            WireGuard mesh plan
+            {{ $t('networking.wireguard.planTitle') }}
           </DialogTitle>
           <DialogDescription v-if="approval">
-            {{ approval.plugin }} / {{ approval.action }} on {{ nodeName(approval.node_id) }}
+            {{ $t('networking.wireguard.planSubtitle', { plugin: approval.plugin, action: approval.action, node: nodeName(approval.node_id) }) }}
           </DialogDescription>
         </DialogHeader>
 
         <div v-if="approval" class="space-y-4">
-          <div class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground">
-            Plan created. Review and approve under
-            <span class="font-medium text-foreground">Operations → Approvals</span> before the node applies it.
-          </div>
+          <i18n-t keypath="networking.wireguard.planReviewHint" tag="div" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground" scope="global">
+            <template #approvals>
+              <span class="font-medium text-foreground">{{ $t('networking.wireguard.approvalsLabel') }}</span>
+            </template>
+          </i18n-t>
 
           <div class="flex items-start gap-2 rounded-md border border-info/40 bg-info/5 p-3 text-xs text-muted-foreground">
             <KeyRound class="mt-0.5 size-4 shrink-0 text-info" aria-hidden="true" />
             <p>
-              The <code class="font-mono">[Interface]</code> PrivateKey is the placeholder
-              <code class="font-mono">{{ PLACEHOLDER }}</code> — the node-agent substitutes the real key locally.
-              Only peer public keys appear below.
+              <code class="font-mono">[Interface]</code> {{ $t('networking.wireguard.keyNoticeInterface') }}
+              <code class="font-mono">{{ PLACEHOLDER }}</code> — {{ $t('networking.wireguard.keyNoticeSubstitutes') }}
             </p>
           </div>
 
@@ -304,7 +306,7 @@ function nodeName(id: string): string {
           </div>
 
           <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">approval {{ shortId(approval.id, 12) }}</Badge>
+            <Badge variant="outline">{{ $t('networking.wireguard.approvalLabel', { id: shortId(approval.id, 12) }) }}</Badge>
             <Badge variant="warning">{{ approval.status }}</Badge>
             <span v-if="approval.created_at">{{ formatDateTime(approval.created_at) }}</span>
           </div>
@@ -312,10 +314,10 @@ function nodeName(id: string): string {
 
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Close</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.close') }}</Button>
           </DialogClose>
           <RouterLink to="/approvals">
-            <Button type="button">Go to Approvals</Button>
+            <Button type="button">{{ $t('networking.shared.goToApprovals') }}</Button>
           </RouterLink>
         </DialogFooter>
       </DialogScrollContent>

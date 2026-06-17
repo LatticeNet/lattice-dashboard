@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   KeyRound,
@@ -54,6 +55,7 @@ import {
 } from "@/components/ui/select";
 
 const auth = useAuthStore();
+const { t } = useI18n();
 
 const inboundsQuery = useAsyncData(
   () => api.proxy.inbounds().then((r) => unwrap(r, "inbounds")),
@@ -62,7 +64,7 @@ const inboundsQuery = useAsyncData(
 
 const inbounds = computed(() => inboundsQuery.data.value ?? []);
 const canAdmin = computed(() => auth.can("proxy:admin"));
-const adminReason = "proxy:admin scope is required to manage inbounds.";
+const adminReason = computed(() => t("proxy.inbounds.adminReason"));
 
 const enabledCount = computed(() => inbounds.value.filter((i) => i.enabled).length);
 const realitySetCount = computed(
@@ -200,11 +202,11 @@ async function submitForm() {
     // On create, formValid guarantees reality_private_key is present; on edit the
     // server keeps the stored key when it is omitted.
     await api.proxy.upsertInbound(req as ProxyInboundUpsertRequest);
-    toast.success(editingId.value ? "Inbound updated" : "Inbound created");
+    toast.success(editingId.value ? t("proxy.inbounds.toastUpdated") : t("proxy.inbounds.toastCreated"));
     dialogOpen.value = false;
     inboundsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to save inbound");
+    toast.error(error instanceof Error ? error.message : t("proxy.inbounds.toastSaveFailed"));
   } finally {
     saving.value = false;
   }
@@ -231,12 +233,12 @@ async function confirmDelete(force: boolean) {
   deleting.value = true;
   try {
     await api.proxy.deleteInbound(target.id, force || undefined);
-    toast.success("Inbound deleted");
+    toast.success(t("proxy.inbounds.toastDeleted"));
     deleteOpen.value = false;
     deleteTarget.value = undefined;
     inboundsQuery.refresh();
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to delete inbound";
+    const message = error instanceof Error ? error.message : t("proxy.inbounds.toastDeleteFailed");
     const isConflict =
       error instanceof ApiError && (error.status === 409 || error.code === "conflict");
     if (isConflict && !force) {
@@ -254,8 +256,8 @@ async function confirmDelete(force: boolean) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Proxy Inbounds"
-      description="VLESS + REALITY listener definitions shared by node profiles and users"
+      :title="$t('proxy.inbounds.title')"
+      :description="$t('proxy.inbounds.description')"
     >
       <template #actions>
         <Button
@@ -265,7 +267,7 @@ async function confirmDelete(force: boolean) {
           @click="inboundsQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', inboundsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button
           v-if="canAdmin"
@@ -273,11 +275,11 @@ async function confirmDelete(force: boolean) {
           @click="openCreate"
         >
           <Plus class="size-4" aria-hidden="true" />
-          New inbound
+          {{ $t('proxy.inbounds.newInbound') }}
         </Button>
         <Button v-else size="sm" disabled :title="adminReason">
           <Plus class="size-4" aria-hidden="true" />
-          New inbound
+          {{ $t('proxy.inbounds.newInbound') }}
         </Button>
       </template>
     </PageHeader>
@@ -286,7 +288,7 @@ async function confirmDelete(force: boolean) {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Inbounds</p>
+            <p class="text-sm text-muted-foreground">{{ $t('proxy.inbounds.kpiInbounds') }}</p>
             <p class="text-2xl font-semibold tabular">{{ inbounds.length }}</p>
           </div>
           <Network class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -295,7 +297,7 @@ async function confirmDelete(force: boolean) {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Enabled</p>
+            <p class="text-sm text-muted-foreground">{{ $t('proxy.inbounds.kpiEnabled') }}</p>
             <p class="text-2xl font-semibold tabular text-success">{{ enabledCount }}</p>
           </div>
           <ShieldCheck class="size-5 text-success" aria-hidden="true" />
@@ -304,7 +306,7 @@ async function confirmDelete(force: boolean) {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">REALITY key set</p>
+            <p class="text-sm text-muted-foreground">{{ $t('proxy.inbounds.kpiRealityKeySet') }}</p>
             <p
               :class="cn('text-2xl font-semibold tabular', realitySetCount < inbounds.length && 'text-warning')"
             >
@@ -320,10 +322,10 @@ async function confirmDelete(force: boolean) {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Network class="size-4 text-muted-foreground" aria-hidden="true" />
-          Listeners
+          {{ $t('proxy.inbounds.listeners') }}
         </CardTitle>
         <CardDescription>
-          Global VLESS + REALITY inbounds. The REALITY private key is write-only and never returned.
+          {{ $t('proxy.inbounds.listenersDescription') }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -331,23 +333,23 @@ async function confirmDelete(force: boolean) {
           :loading="inboundsQuery.loading.value"
           :error="inboundsQuery.error.value"
           :is-empty="inbounds.length === 0"
-          empty-title="No inbounds configured"
-          empty-description="Create a VLESS + REALITY inbound to start binding profiles and users."
+          :empty-title="$t('proxy.inbounds.emptyTitle')"
+          :empty-description="$t('proxy.inbounds.emptyDescription')"
           @retry="inboundsQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Name</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Core</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Protocol / Port</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Security</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">REALITY dest</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Private key</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">State</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Updated</th>
-                  <th scope="col" class="px-3 py-2 text-right font-medium">Actions</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colName') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colCore') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colProtocolPort') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colSecurity') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colRealityDest') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colPrivateKey') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colState') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colUpdated') }}</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.inbounds.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -381,12 +383,12 @@ async function confirmDelete(force: boolean) {
                       class="gap-1"
                     >
                       <Lock class="size-3" aria-hidden="true" />
-                      {{ inbound.has_reality_private_key ? "set" : "missing" }}
+                      {{ inbound.has_reality_private_key ? $t('common.status.set') : $t('common.status.missing') }}
                     </Badge>
                   </td>
                   <td class="px-3 py-3">
                     <Badge :variant="inbound.enabled ? 'success' : 'secondary'">
-                      {{ inbound.enabled ? "enabled" : "disabled" }}
+                      {{ inbound.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                     </Badge>
                   </td>
                   <td class="px-3 py-3 text-xs text-muted-foreground">
@@ -400,8 +402,8 @@ async function confirmDelete(force: boolean) {
                         size="icon-sm"
                         variant="ghost"
                         :disabled="!canAdmin"
-                        :title="canAdmin ? 'Edit inbound' : adminReason"
-                        aria-label="Edit"
+                        :title="canAdmin ? $t('proxy.inbounds.editInbound') : adminReason"
+                        :aria-label="$t('common.actions.edit')"
                         @click="openEdit(inbound)"
                       >
                         <Pencil class="size-4" />
@@ -410,8 +412,8 @@ async function confirmDelete(force: boolean) {
                         size="icon-sm"
                         variant="ghost"
                         :disabled="!canAdmin"
-                        :title="canAdmin ? 'Delete inbound' : adminReason"
-                        aria-label="Delete"
+                        :title="canAdmin ? $t('proxy.inbounds.deleteInbound') : adminReason"
+                        :aria-label="$t('common.actions.delete')"
                         @click="askDelete(inbound)"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -430,23 +432,23 @@ async function confirmDelete(force: boolean) {
     <Dialog v-model:open="dialogOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{{ isEditing ? "Edit inbound" : "New inbound" }}</DialogTitle>
+          <DialogTitle>{{ isEditing ? $t('proxy.inbounds.dialogTitleEdit') : $t('proxy.inbounds.dialogTitleNew') }}</DialogTitle>
           <DialogDescription>
-            VLESS + REALITY over TCP. Required fields are marked with an asterisk.
+            {{ $t('proxy.inbounds.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="inbound-name">Name *</Label>
-              <Input id="inbound-name" v-model="form.name" required placeholder="reality-edge" />
+              <Label for="inbound-name">{{ $t('proxy.inbounds.fieldName') }}</Label>
+              <Input id="inbound-name" v-model="form.name" required :placeholder="$t('proxy.inbounds.fieldNamePlaceholder')" />
             </div>
             <div class="grid gap-2">
-              <Label for="inbound-core">Core</Label>
+              <Label for="inbound-core">{{ $t('proxy.inbounds.fieldCore') }}</Label>
               <Select v-model="form.core">
                 <SelectTrigger id="inbound-core">
-                  <SelectValue placeholder="Select core" />
+                  <SelectValue :placeholder="$t('proxy.inbounds.selectCore')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="sing-box">sing-box</SelectItem>
@@ -458,7 +460,7 @@ async function confirmDelete(force: boolean) {
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="inbound-port">Port *</Label>
+              <Label for="inbound-port">{{ $t('proxy.inbounds.fieldPort') }}</Label>
               <Input
                 id="inbound-port"
                 v-model="form.port"
@@ -466,76 +468,76 @@ async function confirmDelete(force: boolean) {
                 min="1"
                 max="65535"
                 required
-                placeholder="443"
+                :placeholder="$t('proxy.inbounds.fieldPortPlaceholder')"
               />
             </div>
             <div class="grid gap-2">
-              <Label for="inbound-listen">Listen IP</Label>
-              <Input id="inbound-listen" v-model="form.listen" placeholder="optional, e.g. 0.0.0.0" />
+              <Label for="inbound-listen">{{ $t('proxy.inbounds.fieldListen') }}</Label>
+              <Input id="inbound-listen" v-model="form.listen" :placeholder="$t('proxy.inbounds.fieldListenPlaceholder')" />
             </div>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="inbound-sni">SNI</Label>
-              <Input id="inbound-sni" v-model="form.sni" placeholder="optional, e.g. www.apple.com" />
+              <Label for="inbound-sni">{{ $t('proxy.inbounds.fieldSni') }}</Label>
+              <Input id="inbound-sni" v-model="form.sni" :placeholder="$t('proxy.inbounds.fieldSniPlaceholder')" />
             </div>
             <div class="grid gap-2">
-              <Label for="inbound-fingerprint">Fingerprint</Label>
-              <Input id="inbound-fingerprint" v-model="form.fingerprint" placeholder="optional, e.g. chrome" />
+              <Label for="inbound-fingerprint">{{ $t('proxy.inbounds.fieldFingerprint') }}</Label>
+              <Input id="inbound-fingerprint" v-model="form.fingerprint" :placeholder="$t('proxy.inbounds.fieldFingerprintPlaceholder')" />
             </div>
           </div>
 
           <div class="grid gap-2">
-            <Label for="inbound-alpn">ALPN</Label>
-            <Input id="inbound-alpn" v-model="form.alpn" placeholder="optional, comma separated, e.g. h2, http/1.1" />
+            <Label for="inbound-alpn">{{ $t('proxy.inbounds.fieldAlpn') }}</Label>
+            <Input id="inbound-alpn" v-model="form.alpn" :placeholder="$t('proxy.inbounds.fieldAlpnPlaceholder')" />
           </div>
 
           <div class="grid gap-2">
-            <Label for="inbound-dest">REALITY dest *</Label>
-            <Input id="inbound-dest" v-model="form.reality_dest" required placeholder="www.apple.com:443" />
+            <Label for="inbound-dest">{{ $t('proxy.inbounds.fieldRealityDest') }}</Label>
+            <Input id="inbound-dest" v-model="form.reality_dest" required :placeholder="$t('proxy.inbounds.fieldRealityDestPlaceholder')" />
           </div>
 
           <div class="grid gap-2">
-            <Label for="inbound-shortids">REALITY short IDs *</Label>
+            <Label for="inbound-shortids">{{ $t('proxy.inbounds.fieldShortIds') }}</Label>
             <Input
               id="inbound-shortids"
               v-model="form.reality_short_ids"
               required
-              placeholder="comma separated hex, e.g. 0123, abcd"
+              :placeholder="$t('proxy.inbounds.fieldShortIdsPlaceholder')"
             />
-            <p class="text-xs text-muted-foreground">At least one even-length hex short ID is required.</p>
+            <p class="text-xs text-muted-foreground">{{ $t('proxy.inbounds.shortIdsHint') }}</p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="inbound-private">REALITY private key {{ isEditing ? "" : "*" }}</Label>
+              <Label for="inbound-private">{{ $t('proxy.inbounds.fieldPrivateKey') }} {{ isEditing ? "" : "*" }}</Label>
               <Input
                 id="inbound-private"
                 v-model="form.reality_private_key"
                 type="password"
                 autocomplete="off"
                 :required="!isEditing"
-                :placeholder="isEditing ? 'leave blank to keep current' : 'write-only secret'"
+                :placeholder="isEditing ? $t('proxy.inbounds.fieldPrivateKeyPlaceholderKeep') : $t('proxy.inbounds.fieldPrivateKeyPlaceholderNew')"
               />
             </div>
             <div class="grid gap-2">
-              <Label for="inbound-public">REALITY public key</Label>
-              <Input id="inbound-public" v-model="form.reality_public_key" placeholder="optional" />
+              <Label for="inbound-public">{{ $t('proxy.inbounds.fieldPublicKey') }}</Label>
+              <Input id="inbound-public" v-model="form.reality_public_key" :placeholder="$t('proxy.inbounds.fieldPublicKeyPlaceholder')" />
             </div>
           </div>
 
           <label class="flex items-center gap-2 text-sm">
             <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-            Enabled
+            {{ $t('proxy.inbounds.enabled') }}
           </label>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
+            <Button type="button" variant="outline" @click="dialogOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!formValid || saving">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Server v-else class="size-4" aria-hidden="true" />
-              {{ isEditing ? "Save changes" : "Create inbound" }}
+              {{ isEditing ? $t('common.actions.saveChanges') : $t('proxy.inbounds.createInbound') }}
             </Button>
           </DialogFooter>
         </form>
@@ -546,9 +548,9 @@ async function confirmDelete(force: boolean) {
     <Dialog v-model:open="deleteOpen">
       <DialogScrollContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete inbound</DialogTitle>
+          <DialogTitle>{{ $t('proxy.inbounds.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            Delete "{{ deleteTarget?.name || deleteTarget?.id }}"? This cannot be undone.
+            {{ $t('proxy.inbounds.deleteConfirm', { name: deleteTarget?.name || deleteTarget?.id }) }}
           </DialogDescription>
         </DialogHeader>
 
@@ -558,12 +560,12 @@ async function confirmDelete(force: boolean) {
         >
           {{ deleteConflictMessage }}
           <p class="mt-1 text-xs text-muted-foreground">
-            This inbound is referenced by a node profile. Force delete will remove it anyway.
+            {{ $t('proxy.inbounds.deleteConflictHint') }}
           </p>
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteOpen = false">Cancel</Button>
+          <Button type="button" variant="outline" @click="deleteOpen = false">{{ $t('common.actions.cancel') }}</Button>
           <Button
             v-if="!deleteConflict"
             type="button"
@@ -573,7 +575,7 @@ async function confirmDelete(force: boolean) {
           >
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
           <Button
             v-else
@@ -584,7 +586,7 @@ async function confirmDelete(force: boolean) {
           >
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Force delete
+            {{ $t('common.actions.forceDelete') }}
           </Button>
         </DialogFooter>
       </DialogScrollContent>

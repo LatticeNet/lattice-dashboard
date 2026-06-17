@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, type HTMLAttributes } from "vue";
+import { useI18n } from "vue-i18n";
 import { cn } from "@/lib/utils";
 import { ApiError } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,7 +21,7 @@ const props = withDefaults(
   {
     error: null,
     isEmpty: false,
-    emptyTitle: "Nothing here yet",
+    emptyTitle: undefined,
     emptyDescription: undefined,
     skeletonRows: 3,
   },
@@ -28,14 +29,21 @@ const props = withDefaults(
 
 const emit = defineEmits<{ retry: [] }>();
 
+const { t } = useI18n();
+
 const rows = computed(() => Math.max(1, props.skeletonRows));
 
 const apiRequestId = computed(() =>
   props.error instanceof ApiError ? props.error.requestId : undefined,
 );
 
+/** Caller-provided empty title, falling back to the shared default. */
+const resolvedEmptyTitle = computed(
+  () => props.emptyTitle ?? t("common.state.nothingHere"),
+);
+
 const errorMessage = computed(
-  () => props.error?.message || "Something went wrong.",
+  () => props.error?.message || t("common.state.somethingWrong"),
 );
 </script>
 
@@ -62,7 +70,7 @@ const errorMessage = computed(
             v-if="apiRequestId"
             class="font-mono text-xs text-muted-foreground"
           >
-            request {{ apiRequestId }}
+            {{ $t('common.state.request') }} {{ apiRequestId }}
           </p>
         </div>
         <div>
@@ -72,7 +80,7 @@ const errorMessage = computed(
             size="sm"
             @click="emit('retry')"
           >
-            Retry
+            {{ $t('common.actions.retry') }}
           </Button>
         </div>
       </CardContent>
@@ -80,7 +88,7 @@ const errorMessage = computed(
 
     <slot v-else-if="isEmpty" name="empty">
       <EmptyState
-        :title="emptyTitle"
+        :title="resolvedEmptyTitle"
         :description="emptyDescription"
       />
     </slot>

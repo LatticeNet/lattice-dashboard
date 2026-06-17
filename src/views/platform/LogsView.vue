@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Database,
@@ -60,6 +61,7 @@ const MAX_BATCH_LINES_DEFAULT = 500;
 const MAX_BATCH_LINES_CAP = 2000;
 const TAIL_POLL_MS = 10000;
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("log:admin"));
 
@@ -143,7 +145,7 @@ async function loadNewest(): Promise<void> {
     truncated.value = res.truncated;
     nextBeforeSeq.value = res.next_before_seq;
   } catch (error) {
-    viewerError.value = error instanceof Error ? error.message : "Query failed";
+    viewerError.value = error instanceof Error ? error.message : t("platform.logs.queryFailed");
   } finally {
     loadingLines.value = false;
   }
@@ -166,7 +168,7 @@ async function loadOlder(): Promise<void> {
     lines.value = merged.sort((a, b) => a.seq - b.seq);
     nextBeforeSeq.value = res.next_before_seq;
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Load older failed");
+    toast.error(error instanceof Error ? error.message : t("platform.logs.loadOlderFailed"));
   } finally {
     loadingOlder.value = false;
   }
@@ -304,12 +306,12 @@ async function submitForm(): Promise<void> {
     };
     if (editingId.value) req.id = editingId.value;
     const saved = await api.logs.upsertSource(req);
-    toast.success(editingId.value ? "Log source updated" : "Log source created");
+    toast.success(editingId.value ? t("platform.logs.sourceUpdated") : t("platform.logs.sourceCreated"));
     formOpen.value = false;
     selectedSourceId.value = saved.id;
     sourcesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Save failed");
+    toast.error(error instanceof Error ? error.message : t("platform.logs.saveFailed"));
   } finally {
     saving.value = false;
   }
@@ -324,12 +326,12 @@ async function confirmDelete(): Promise<void> {
   deleting.value = true;
   try {
     await api.logs.deleteSource(deleteTarget.value.id);
-    toast.success("Log source deleted");
+    toast.success(t("platform.logs.sourceDeleted"));
     if (selectedSourceId.value === deleteTarget.value.id) selectedSourceId.value = "";
     deleteTarget.value = undefined;
     sourcesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("platform.logs.deleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -344,7 +346,7 @@ function refreshAll(): void {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Logs" description="Tailable node log sources with bounded query history">
+    <PageHeader :title="$t('platform.logs.title')" :description="$t('platform.logs.description')">
       <template #actions>
         <Button
           variant="outline"
@@ -353,11 +355,11 @@ function refreshAll(): void {
           @click="refreshAll"
         >
           <RefreshCw aria-hidden="true" :class="cn('size-4', sourcesQuery.refreshing.value && 'animate-spin')" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
-          New source
+          {{ $t('platform.logs.newSource') }}
         </Button>
       </template>
     </PageHeader>
@@ -368,10 +370,10 @@ function refreshAll(): void {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <FileText aria-hidden="true" class="size-4 text-muted-foreground" />
-            Sources
+            {{ $t('platform.logs.sourcesTitle') }}
           </CardTitle>
           <CardDescription>
-            {{ sources.length }} {{ sources.length === 1 ? "source" : "sources" }} visible to your token
+            {{ $t('platform.logs.sourcesVisible', { count: sources.length }) }}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -379,8 +381,8 @@ function refreshAll(): void {
             :loading="sourcesQuery.loading.value"
             :error="sourcesQuery.error.value"
             :is-empty="sources.length === 0"
-            empty-title="No log sources"
-            empty-description="Register a node log source to start tailing."
+            :empty-title="$t('platform.logs.sourcesEmptyTitle')"
+            :empty-description="$t('platform.logs.sourcesEmptyDescription')"
             @retry="sourcesQuery.refresh"
           >
             <div class="space-y-2">
@@ -400,7 +402,7 @@ function refreshAll(): void {
                   <div class="flex items-start justify-between gap-2">
                     <span class="truncate font-medium">{{ source.name || source.id }}</span>
                     <Badge :variant="source.enabled ? 'success' : 'secondary'">
-                      {{ source.enabled ? "enabled" : "disabled" }}
+                      {{ source.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                     </Badge>
                   </div>
                   <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
@@ -409,13 +411,13 @@ function refreshAll(): void {
                   <p class="mt-1 text-xs text-muted-foreground">{{ nodeName(source.node_id) }}</p>
                 </button>
                 <div v-if="canAdmin" class="mt-2 flex justify-end gap-1">
-                  <Button variant="ghost" size="icon-sm" aria-label="Edit source" @click="openEdit(source)">
+                  <Button variant="ghost" size="icon-sm" :aria-label="$t('platform.logs.editSourceAria')" @click="openEdit(source)">
                     <Pencil class="size-4" />
                   </Button>
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    aria-label="Delete source"
+                    :aria-label="$t('platform.logs.deleteSourceAria')"
                     @click="deleteTarget = source"
                   >
                     <Trash2 class="size-4 text-destructive" />
@@ -443,29 +445,29 @@ function refreshAll(): void {
           <CardContent>
             <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div class="rounded-md border border-border p-3">
-                <p class="text-xs text-muted-foreground">Lines</p>
+                <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLines') }}</p>
                 <p class="mt-1 text-lg font-semibold tabular">{{ selectedStats?.lines ?? 0 }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
-                <p class="text-xs text-muted-foreground">Stored bytes</p>
+                <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statStoredBytes') }}</p>
                 <p class="mt-1 text-lg font-semibold tabular">{{ formatBytes(selectedStats?.bytes) }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
-                <p class="text-xs text-muted-foreground">Limits</p>
+                <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLimits') }}</p>
                 <p class="mt-1 text-sm tabular">
-                  {{ selectedSource.max_line_bytes }} B/line · {{ selectedSource.max_batch_lines }}/batch
+                  {{ $t('platform.logs.limitsValue', { bytes: selectedSource.max_line_bytes, lines: selectedSource.max_batch_lines }) }}
                 </p>
               </div>
               <div class="rounded-md border border-border p-3">
-                <p class="text-xs text-muted-foreground">First seen</p>
+                <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statFirstSeen') }}</p>
                 <p class="mt-1 text-sm">{{ selectedStats?.first_at ? formatDateTime(selectedStats.first_at) : "—" }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
-                <p class="text-xs text-muted-foreground">Last line</p>
+                <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLastLine') }}</p>
                 <p class="mt-1 text-sm">{{ selectedStats?.last_at ? formatDateTime(selectedStats.last_at) : "—" }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
-                <p class="text-xs text-muted-foreground">Last ingest</p>
+                <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLastIngest') }}</p>
                 <p class="mt-1 text-sm">{{ selectedStats?.last_ingest_at ? formatDateTime(selectedStats.last_ingest_at) : "—" }}</p>
               </div>
             </div>
@@ -477,10 +479,10 @@ function refreshAll(): void {
           <CardHeader>
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <CardTitle>Log viewer</CardTitle>
+                <CardTitle>{{ $t('platform.logs.viewerTitle') }}</CardTitle>
                 <CardDescription>
-                  <template v-if="selectedSource">Newest lines first; polls every 10s when idle.</template>
-                  <template v-else>Select a source to view its lines.</template>
+                  <template v-if="selectedSource">{{ $t('platform.logs.viewerHintActive') }}</template>
+                  <template v-else>{{ $t('platform.logs.viewerHintIdle') }}</template>
                 </CardDescription>
               </div>
             </div>
@@ -492,17 +494,17 @@ function refreshAll(): void {
               @submit.prevent="applyFilter"
             >
               <div class="grid flex-1 gap-2" style="min-width: 200px">
-                <Label for="log-q">Filter</Label>
-                <Input id="log-q" v-model="queryText" placeholder="substring match" />
+                <Label for="log-q">{{ $t('platform.logs.filterLabel') }}</Label>
+                <Input id="log-q" v-model="queryText" :placeholder="$t('platform.logs.filterPlaceholder')" />
               </div>
               <div class="grid w-28 gap-2">
-                <Label for="log-limit">Limit</Label>
+                <Label for="log-limit">{{ $t('platform.logs.limitLabel') }}</Label>
                 <Input id="log-limit" v-model.number="queryLimit" type="number" min="1" max="5000" />
               </div>
               <Button type="submit" variant="outline" :disabled="loadingLines">
                 <RefreshCw v-if="loadingLines" aria-hidden="true" class="size-4 animate-spin" />
                 <Search v-else aria-hidden="true" class="size-4" />
-                Query
+                {{ $t('platform.logs.query') }}
               </Button>
             </form>
 
@@ -510,15 +512,15 @@ function refreshAll(): void {
               :loading="loadingLines && lines.length === 0"
               :error="viewerError ? new Error(viewerError) : null"
               :is-empty="!selectedSource || lines.length === 0"
-              empty-title="No lines"
-              empty-description="No log lines match the current filter for this source."
+              :empty-title="$t('platform.logs.linesEmptyTitle')"
+              :empty-description="$t('platform.logs.linesEmptyDescription')"
               @retry="loadNewest"
             >
               <div class="space-y-3">
                 <div v-if="nextBeforeSeq !== undefined" class="flex justify-center">
                   <Button variant="outline" size="sm" :disabled="loadingOlder" @click="loadOlder">
                     <RefreshCw v-if="loadingOlder" aria-hidden="true" class="size-4 animate-spin" />
-                    Load older
+                    {{ $t('common.actions.loadOlder') }}
                   </Button>
                 </div>
 
@@ -526,9 +528,9 @@ function refreshAll(): void {
                   <table class="w-full text-xs">
                     <thead>
                       <tr class="border-b border-border text-left text-muted-foreground">
-                        <th scope="col" class="px-3 py-2 font-medium">Seq</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Time</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Line</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.colSeq') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.colTime') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.colLine') }}</th>
                       </tr>
                     </thead>
                     <tbody class="font-mono">
@@ -541,7 +543,7 @@ function refreshAll(): void {
                         <td class="whitespace-nowrap px-3 py-1.5 text-muted-foreground">{{ formatDateTime(line.at) }}</td>
                         <td class="px-3 py-1.5">
                           <span class="whitespace-pre-wrap break-all">{{ line.line }}</span>
-                          <Badge v-if="line.truncated" variant="warning" class="ml-2">truncated</Badge>
+                          <Badge v-if="line.truncated" variant="warning" class="ml-2">{{ $t('platform.logs.lineTruncated') }}</Badge>
                         </td>
                       </tr>
                     </tbody>
@@ -549,7 +551,7 @@ function refreshAll(): void {
                 </div>
 
                 <p v-if="truncated" class="text-xs text-warning">
-                  Result truncated to the requested limit. Increase the limit or load older pages.
+                  {{ $t('platform.logs.resultTruncated') }}
                 </p>
               </div>
             </DataState>
@@ -562,24 +564,25 @@ function refreshAll(): void {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? "Edit log source" : "New log source" }}</DialogTitle>
+          <DialogTitle>{{ editingId ? $t('platform.logs.editSourceTitle') : $t('platform.logs.newSourceTitle') }}</DialogTitle>
           <DialogDescription>
-            Pin a tailable file on a node. Paths must be absolute and under
-            <code class="font-mono">/var/log</code>.
+            <i18n-t keypath="platform.logs.formHint" tag="span" scope="global">
+              <template #path><code class="font-mono">/var/log</code></template>
+            </i18n-t>
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="src-name">Name</Label>
+              <Label for="src-name">{{ $t('platform.logs.nameLabel') }}</Label>
               <Input id="src-name" v-model="form.name" required placeholder="nginx-access" />
             </div>
             <div class="grid gap-2">
-              <Label for="src-node">Node</Label>
+              <Label for="src-node">{{ $t('platform.logs.nodeLabel') }}</Label>
               <Select v-model="form.node_id" :disabled="!!editingId">
                 <SelectTrigger id="src-node">
-                  <SelectValue placeholder="Select a node" />
+                  <SelectValue :placeholder="$t('platform.logs.selectNode')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -587,12 +590,12 @@ function refreshAll(): void {
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <p v-if="editingId" class="text-xs text-muted-foreground">Node is immutable on update.</p>
+              <p v-if="editingId" class="text-xs text-muted-foreground">{{ $t('platform.logs.nodeImmutable') }}</p>
             </div>
           </div>
 
           <div class="grid gap-2">
-            <Label for="src-path">Path</Label>
+            <Label for="src-path">{{ $t('platform.logs.pathLabel') }}</Label>
             <Input
               id="src-path"
               v-model="form.path"
@@ -601,13 +604,13 @@ function refreshAll(): void {
               :class="cn(form.path && !pathValid && 'border-destructive')"
             />
             <p v-if="form.path && !pathValid" class="text-xs text-destructive">
-              Must be absolute and under /var/log (no "..").
+              {{ $t('platform.logs.pathInvalid') }}
             </p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="src-line-bytes">Max line bytes</Label>
+              <Label for="src-line-bytes">{{ $t('platform.logs.maxLineBytesLabel') }}</Label>
               <Input
                 id="src-line-bytes"
                 v-model.number="form.max_line_bytes"
@@ -615,10 +618,10 @@ function refreshAll(): void {
                 min="1"
                 :max="MAX_LINE_BYTES_CAP"
               />
-              <p class="text-xs text-muted-foreground">default 16384 · max 65536</p>
+              <p class="text-xs text-muted-foreground">{{ $t('platform.logs.maxLineBytesHint') }}</p>
             </div>
             <div class="grid gap-2">
-              <Label for="src-batch-lines">Max batch lines</Label>
+              <Label for="src-batch-lines">{{ $t('platform.logs.maxBatchLinesLabel') }}</Label>
               <Input
                 id="src-batch-lines"
                 v-model.number="form.max_batch_lines"
@@ -626,24 +629,24 @@ function refreshAll(): void {
                 min="1"
                 :max="MAX_BATCH_LINES_CAP"
               />
-              <p class="text-xs text-muted-foreground">default 500 · max 2000</p>
+              <p class="text-xs text-muted-foreground">{{ $t('platform.logs.maxBatchLinesHint') }}</p>
             </div>
           </div>
 
           <label class="flex items-center gap-2 text-sm">
             <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-            Enabled
+            {{ $t('platform.logs.enabledLabel') }}
           </label>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
               <Plus v-else-if="!editingId" aria-hidden="true" class="size-4" />
               <Pencil v-else aria-hidden="true" class="size-4" />
-              {{ editingId ? "Save" : "Create" }}
+              {{ editingId ? $t('common.actions.save') : $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>
@@ -654,19 +657,19 @@ function refreshAll(): void {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete log source?</DialogTitle>
+          <DialogTitle>{{ $t('platform.logs.deleteSourceTitle') }}</DialogTitle>
           <DialogDescription>
-            Remove "{{ deleteTarget?.name || deleteTarget?.id }}" and purge its stored lines. This cannot be undone.
+            {{ $t('platform.logs.deleteSourceConfirm', { name: deleteTarget?.name || deleteTarget?.id }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
             <Trash2 v-else aria-hidden="true" class="size-4" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogContent>

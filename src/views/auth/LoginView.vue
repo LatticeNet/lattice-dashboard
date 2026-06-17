@@ -275,14 +275,10 @@ onMounted(async () => {
           <div class="rounded-xl border border-border bg-card text-card-foreground shadow-sm">
             <div class="space-y-1.5 p-6 pb-4">
               <h2 class="text-2xl font-semibold tracking-tight">
-                {{ step === "password" ? "Sign in" : "Two-factor authentication" }}
+                {{ step === "password" ? $t('auth.signIn') : $t('auth.totpTitle') }}
               </h2>
               <p class="text-sm text-muted-foreground">
-                {{
-                  step === "password"
-                    ? "Enter your credentials to access the console."
-                    : "Enter the 6-digit code from your authenticator app."
-                }}
+                {{ step === "password" ? $t('auth.subtitle') : $t('auth.totpSubtitle') }}
               </p>
             </div>
 
@@ -305,7 +301,7 @@ onMounted(async () => {
               <!-- Password step -->
               <form v-if="step === 'password'" class="space-y-4" @submit.prevent="onSubmitPassword">
                 <div class="space-y-2">
-                  <Label for="username">Username</Label>
+                  <Label for="username">{{ $t('auth.username') }}</Label>
                   <div class="relative">
                     <User
                       class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -326,7 +322,7 @@ onMounted(async () => {
                 </div>
 
                 <div class="space-y-2">
-                  <Label for="password">Password</Label>
+                  <Label for="password">{{ $t('auth.password') }}</Label>
                   <div class="relative">
                     <Lock
                       class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -346,7 +342,7 @@ onMounted(async () => {
 
                 <Button type="submit" class="w-full" :disabled="pending">
                   <Loader2 v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
-                  <span>{{ pending ? "Signing in…" : "Sign in" }}</span>
+                  <span>{{ pending ? $t('auth.signingIn') : $t('auth.signIn') }}</span>
                 </Button>
               </form>
 
@@ -354,7 +350,7 @@ onMounted(async () => {
               <form v-else class="space-y-4" @submit.prevent="onSubmitTotp">
                 <template v-if="!useRecovery">
                   <div class="space-y-2">
-                    <Label for="totp">Authentication code</Label>
+                    <Label for="totp">{{ $t('auth.totpCode') }}</Label>
                     <div class="relative">
                       <KeyRound
                         class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -379,7 +375,7 @@ onMounted(async () => {
 
                 <template v-else>
                   <div class="space-y-2">
-                    <Label for="recovery">Recovery code</Label>
+                    <Label for="recovery">{{ $t('auth.recoveryCode') }}</Label>
                     <div class="relative">
                       <KeyRound
                         class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -403,7 +399,7 @@ onMounted(async () => {
 
                 <Button type="submit" class="w-full" :disabled="pending">
                   <Loader2 v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
-                  <span>{{ pending ? "Verifying…" : "Verify" }}</span>
+                  <span>{{ pending ? $t('auth.signingIn') : $t('auth.verify') }}</span>
                 </Button>
 
                 <div class="flex items-center justify-between text-sm">
@@ -413,14 +409,14 @@ onMounted(async () => {
                     @click="backToPassword"
                   >
                     <ArrowLeft class="size-3.5" aria-hidden="true" />
-                    Back
+                    {{ $t('common.actions.back') }}
                   </button>
                   <button
                     type="button"
                     class="text-muted-foreground transition-colors hover:text-foreground"
                     @click="(useRecovery = !useRecovery), clearError()"
                   >
-                    {{ useRecovery ? "Use authenticator code" : "Use a recovery code" }}
+                    {{ useRecovery ? $t('auth.useTotp') : $t('auth.useRecovery') }}
                   </button>
                 </div>
               </form>
@@ -432,7 +428,7 @@ onMounted(async () => {
                   <span
                     class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-2 text-xs uppercase tracking-wide text-muted-foreground"
                   >
-                    or
+                    {{ $t('auth.ssoOr') }}
                   </span>
                 </div>
                 <div class="space-y-2">
@@ -444,7 +440,7 @@ onMounted(async () => {
                     class="w-full"
                     @click="startSso(p.id)"
                   >
-                    Sign in with {{ p.display_name || p.id }}
+                    {{ $t('auth.ssoContinue', { provider: p.display_name || p.id }) }}
                   </Button>
                 </div>
               </template>

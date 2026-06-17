@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   KeyRound,
@@ -48,6 +49,7 @@ import {
 
 const DEFAULT_SCOPES = "openid,profile,email";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("oidc:admin"));
 
@@ -152,11 +154,11 @@ async function submitForm() {
     if (form.client_secret.trim()) req.client_secret = form.client_secret;
 
     await api.oidc.upsertProvider(req);
-    toast.success(editing.value ? "Provider updated" : "Provider created");
+    toast.success(editing.value ? t("settings.sso.toast.updated") : t("settings.sso.toast.created"));
     formOpen.value = false;
     providersQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Save failed");
+    toast.error(error instanceof Error ? error.message : t("settings.sso.toast.saveFailed"));
   } finally {
     saving.value = false;
   }
@@ -171,11 +173,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.oidc.deleteProvider(deleteTarget.value.id);
-    toast.success("Provider deleted");
+    toast.success(t("settings.sso.toast.deleted"));
     deleteTarget.value = undefined;
     providersQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("settings.sso.toast.deleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -185,8 +187,8 @@ async function confirmDelete() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Single Sign-On"
-      description="OIDC identity providers for operator login via external IdPs"
+      :title="$t('settings.sso.title')"
+      :description="$t('settings.sso.description')"
     >
       <template #actions>
         <Button
@@ -196,11 +198,11 @@ async function confirmDelete() {
           @click="providersQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', providersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t("common.actions.refresh") }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New provider
+          {{ $t("settings.sso.newProvider") }}
         </Button>
       </template>
     </PageHeader>
@@ -209,12 +211,9 @@ async function confirmDelete() {
       <CardContent class="flex items-start gap-3 p-4">
         <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
         <div class="space-y-1 text-sm">
-          <p class="font-medium">Auth-code flow with PKCE</p>
+          <p class="font-medium">{{ $t("settings.sso.explainer.title") }}</p>
           <p class="text-muted-foreground">
-            Lattice authenticates against each provider using the authorization-code flow
-            with PKCE. A Lattice-local TOTP second factor is still enforced after SSO when it
-            is enabled — single sign-on never bypasses 2FA. Client secrets are write-only and
-            never returned by the API.
+            {{ $t("settings.sso.explainer.body") }}
           </p>
         </div>
       </CardContent>
@@ -224,10 +223,10 @@ async function confirmDelete() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
-          Identity Providers
+          {{ $t("settings.sso.list.title") }}
         </CardTitle>
         <CardDescription>
-          {{ providers.length }} {{ providers.length === 1 ? "provider" : "providers" }} configured
+          {{ $t("settings.sso.list.count", { count: providers.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -235,22 +234,22 @@ async function confirmDelete() {
           :loading="providersQuery.loading.value"
           :error="providersQuery.error.value"
           :is-empty="providers.length === 0"
-          empty-title="No identity providers"
-          empty-description="Add an OIDC provider to let operators sign in through an external IdP."
+          :empty-title="$t('settings.sso.list.emptyTitle')"
+          :empty-description="$t('settings.sso.list.emptyDescription')"
           @retry="providersQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Display name</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Issuer</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Client ID</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Secret</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Scopes</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Allowed domains</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.displayName") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.issuer") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.clientId") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.secret") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.status") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.scopes") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.allowedDomains") }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t("settings.sso.list.actions") }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -273,12 +272,12 @@ async function confirmDelete() {
                     <Badge :variant="provider.has_secret ? 'success' : 'warning'">
                       <Lock v-if="provider.has_secret" class="size-3" aria-hidden="true" />
                       <Unlock v-else class="size-3" aria-hidden="true" />
-                      {{ provider.has_secret ? "set" : "missing" }}
+                      {{ provider.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
                     </Badge>
                   </td>
                   <td class="py-3 pr-4">
                     <Badge :variant="provider.enabled ? 'success' : 'secondary'">
-                      {{ provider.enabled ? "enabled" : "disabled" }}
+                      {{ provider.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
                     </Badge>
                   </td>
                   <td class="py-3 pr-4 max-w-[200px]">
@@ -300,7 +299,7 @@ async function confirmDelete() {
                         {{ domain }}
                       </Badge>
                     </div>
-                    <span v-else class="text-xs text-muted-foreground">any</span>
+                    <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
                   </td>
                   <td class="py-3 pl-4">
                     <div class="flex justify-end gap-1">
@@ -308,7 +307,7 @@ async function confirmDelete() {
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Edit"
+                        :aria-label="$t('common.actions.edit')"
                         @click="openEdit(provider)"
                       >
                         <Pencil class="size-4" />
@@ -317,7 +316,7 @@ async function confirmDelete() {
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete"
+                        :aria-label="$t('common.actions.delete')"
                         @click="deleteTarget = provider"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -336,20 +335,20 @@ async function confirmDelete() {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{{ editing ? "Edit identity provider" : "New identity provider" }}</DialogTitle>
+          <DialogTitle>{{ editing ? $t("settings.sso.form.editTitle") : $t("settings.sso.form.createTitle") }}</DialogTitle>
           <DialogDescription>
-            Configure an OIDC provider. The client secret is write-only and never returned.
+            {{ $t("settings.sso.form.description") }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-2">
-            <Label for="oidc-display">Display name</Label>
-            <Input id="oidc-display" v-model="form.display_name" placeholder="Defaults to the issuer if left blank" />
+            <Label for="oidc-display">{{ $t("settings.sso.form.displayName") }}</Label>
+            <Input id="oidc-display" v-model="form.display_name" :placeholder="$t('settings.sso.form.displayNamePlaceholder')" />
           </div>
 
           <div class="grid gap-2">
-            <Label for="oidc-issuer">Issuer</Label>
+            <Label for="oidc-issuer">{{ $t("settings.sso.form.issuer") }}</Label>
             <Input
               id="oidc-issuer"
               v-model="form.issuer"
@@ -357,65 +356,65 @@ async function confirmDelete() {
               placeholder="https://idp.example.com"
             />
             <p v-if="form.issuer && !issuerValid" class="text-xs text-destructive">
-              Issuer must start with https://
+              {{ $t("settings.sso.form.issuerInvalid") }}
             </p>
             <p v-else-if="form.issuer && !issuerUnique" class="text-xs text-destructive">
-              Another provider already uses this issuer.
+              {{ $t("settings.sso.form.issuerDuplicate") }}
             </p>
             <p v-else class="text-xs text-muted-foreground">
-              The provider's discovery base URL. Must be unique across providers.
+              {{ $t("settings.sso.form.issuerHint") }}
             </p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="oidc-client-id">Client ID</Label>
+              <Label for="oidc-client-id">{{ $t("settings.sso.form.clientId") }}</Label>
               <Input id="oidc-client-id" v-model="form.client_id" required placeholder="lattice-console" />
             </div>
             <div class="grid gap-2">
-              <Label for="oidc-client-secret">Client secret</Label>
+              <Label for="oidc-client-secret">{{ $t("settings.sso.form.clientSecret") }}</Label>
               <Input
                 id="oidc-client-secret"
                 v-model="form.client_secret"
                 type="password"
                 autocomplete="off"
-                :placeholder="editing ? 'leave blank to keep' : 'write-only — stored at rest'"
+                :placeholder="editing ? $t('settings.sso.form.clientSecretPlaceholderEdit') : $t('settings.sso.form.clientSecretPlaceholderCreate')"
               />
               <p class="text-xs text-muted-foreground">
-                Write-only.
-                <template v-if="editing">Leave blank to keep the existing secret.</template>
-                <template v-else>Stored encrypted; never returned by the API.</template>
+                {{ $t("settings.sso.form.clientSecretHint") }}
+                <template v-if="editing">{{ $t("settings.sso.form.clientSecretHintEdit") }}</template>
+                <template v-else>{{ $t("settings.sso.form.clientSecretHintCreate") }}</template>
               </p>
             </div>
           </div>
 
           <div class="grid gap-2">
-            <Label for="oidc-scopes">Scopes</Label>
+            <Label for="oidc-scopes">{{ $t("settings.sso.form.scopes") }}</Label>
             <Input id="oidc-scopes" v-model="form.scopes" placeholder="openid, profile, email" />
-            <p class="text-xs text-muted-foreground">Comma-separated OIDC scopes requested at login.</p>
+            <p class="text-xs text-muted-foreground">{{ $t("settings.sso.form.scopesHint") }}</p>
           </div>
 
           <div class="grid gap-2">
-            <Label for="oidc-domains">Allowed domains</Label>
+            <Label for="oidc-domains">{{ $t("settings.sso.form.allowedDomains") }}</Label>
             <Input id="oidc-domains" v-model="form.allowed_domains" placeholder="example.com, corp.example.com" />
             <p class="text-xs text-muted-foreground">
-              Comma-separated. Leave empty to allow any verified email domain.
+              {{ $t("settings.sso.form.allowedDomainsHint") }}
             </p>
           </div>
 
           <label class="flex items-center gap-2 text-sm">
             <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-            Enabled (offer this provider on the login screen)
+            {{ $t("settings.sso.form.enabled") }}
           </label>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              {{ editing ? "Save changes" : "Create" }}
+              {{ editing ? $t("common.actions.saveChanges") : $t("common.actions.create") }}
             </Button>
           </DialogFooter>
         </form>
@@ -426,20 +425,19 @@ async function confirmDelete() {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete identity provider?</DialogTitle>
+          <DialogTitle>{{ $t("settings.sso.deleteTitle") }}</DialogTitle>
           <DialogDescription>
-            Remove "{{ deleteTarget?.display_name || deleteTarget?.issuer }}". Operators linked to this
-            provider will no longer be able to sign in through it. This cannot be undone.
+            {{ $t("settings.sso.deleteDescription", { name: deleteTarget?.display_name || deleteTarget?.issuer }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t("common.actions.delete") }}
           </Button>
         </DialogFooter>
       </DialogContent>

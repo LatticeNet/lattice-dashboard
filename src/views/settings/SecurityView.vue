@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import {
   AlertTriangle,
@@ -30,6 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const router = useRouter();
 
@@ -62,7 +64,7 @@ const passwordReady = computed(() => {
 function toMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
-  return "Request failed";
+  return t("settings.security.requestFailed");
 }
 
 async function clearSessionAndLogin() {
@@ -75,10 +77,10 @@ async function clearSessionAndLogin() {
 }
 
 function validatePasswordForm(): string | undefined {
-  if (!currentPassword.value.trim()) return "Current password is required.";
-  if (newPassword.value.length < 12) return "New password must be at least 12 characters.";
-  if (newPassword.value !== confirmPassword.value) return "New passwords do not match.";
-  if (newPassword.value === currentPassword.value) return "Use a different new password.";
+  if (!currentPassword.value.trim()) return t("settings.security.password.currentRequired");
+  if (newPassword.value.length < 12) return t("settings.security.password.tooShort");
+  if (newPassword.value !== confirmPassword.value) return t("settings.security.password.mismatch");
+  if (newPassword.value === currentPassword.value) return t("settings.security.password.reuse");
   return undefined;
 }
 
@@ -96,11 +98,11 @@ async function submitPassword() {
     currentPassword.value = "";
     newPassword.value = "";
     confirmPassword.value = "";
-    toast.success("Password changed");
+    toast.success(t("settings.security.password.changed"));
     await clearSessionAndLogin();
   } catch (error) {
     passwordError.value = toMessage(error);
-    toast.error("Password change failed");
+    toast.error(t("settings.security.password.changeFailed"));
   } finally {
     passwordPending.value = false;
   }
@@ -112,10 +114,10 @@ async function startEnrollment() {
   try {
     enrollment.value = await api.auth.totpEnroll();
     activationCode.value = "";
-    toast.success("2FA enrollment started");
+    toast.success(t("settings.security.totp.enrollmentStarted"));
   } catch (error) {
     totpError.value = toMessage(error);
-    toast.error("2FA enrollment failed");
+    toast.error(t("settings.security.totp.enrollmentFailed"));
   } finally {
     totpPending.value = undefined;
   }
@@ -124,7 +126,7 @@ async function startEnrollment() {
 async function activateTotp() {
   const code = activationCode.value.trim();
   if (!code) {
-    totpError.value = "Enter the code from your authenticator app.";
+    totpError.value = t("settings.security.totp.enterAuthenticatorCode");
     return;
   }
 
@@ -135,10 +137,10 @@ async function activateTotp() {
     enrollment.value = undefined;
     activationCode.value = "";
     await auth.bootstrap();
-    toast.success("2FA enabled");
+    toast.success(t("settings.security.totp.enabled"));
   } catch (error) {
     totpError.value = toMessage(error);
-    toast.error("2FA activation failed");
+    toast.error(t("settings.security.totp.activationFailed"));
   } finally {
     totpPending.value = undefined;
   }
@@ -147,7 +149,7 @@ async function activateTotp() {
 async function disableTotp() {
   const code = disableCode.value.trim();
   if (!code) {
-    totpError.value = "Enter a TOTP code or recovery code.";
+    totpError.value = t("settings.security.totp.enterDisableCode");
     return;
   }
 
@@ -156,11 +158,11 @@ async function disableTotp() {
   try {
     await api.auth.totpDisable(code);
     disableCode.value = "";
-    toast.success("2FA disabled");
+    toast.success(t("settings.security.totp.disabled"));
     await clearSessionAndLogin();
   } catch (error) {
     totpError.value = toMessage(error);
-    toast.error("2FA disable failed");
+    toast.error(t("settings.security.totp.disableFailed"));
   } finally {
     totpPending.value = undefined;
   }
@@ -176,14 +178,14 @@ function cancelEnrollment() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Security & 2FA"
-      description="Password rotation and second-factor controls for this admin session"
+      :title="$t('settings.security.title')"
+      :description="$t('settings.security.description')"
     >
       <template #actions>
         <Badge :variant="totpEnabled ? 'success' : 'secondary'" class="gap-1.5">
           <CheckCircle2 v-if="totpEnabled" class="size-3.5" aria-hidden="true" />
           <AlertTriangle v-else class="size-3.5" aria-hidden="true" />
-          2FA {{ totpEnabled ? "enabled" : "off" }}
+          {{ totpEnabled ? $t("settings.security.badgeEnabled") : $t("settings.security.badgeOff") }}
         </Badge>
       </template>
     </PageHeader>
@@ -193,16 +195,16 @@ function cancelEnrollment() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
-            Password
+            {{ $t("settings.security.password.title") }}
           </CardTitle>
           <CardDescription>
-            Change the admin password. All existing sessions must sign in again.
+            {{ $t("settings.security.password.description") }}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form class="grid max-w-xl gap-4" @submit.prevent="submitPassword">
             <div class="grid gap-2">
-              <Label for="current-password">Current password</Label>
+              <Label for="current-password">{{ $t("settings.security.password.current") }}</Label>
               <Input
                 id="current-password"
                 v-model="currentPassword"
@@ -213,7 +215,7 @@ function cancelEnrollment() {
             </div>
 
             <div class="grid gap-2">
-              <Label for="new-password">New password</Label>
+              <Label for="new-password">{{ $t("settings.security.password.new") }}</Label>
               <Input
                 id="new-password"
                 v-model="newPassword"
@@ -222,12 +224,12 @@ function cancelEnrollment() {
                 :aria-invalid="!!passwordError"
               />
               <p class="text-xs text-muted-foreground">
-                Use at least 12 characters.
+                {{ $t("settings.security.password.newHint") }}
               </p>
             </div>
 
             <div class="grid gap-2">
-              <Label for="confirm-password">Confirm new password</Label>
+              <Label for="confirm-password">{{ $t("settings.security.password.confirm") }}</Label>
               <Input
                 id="confirm-password"
                 v-model="confirmPassword"
@@ -256,11 +258,11 @@ function cancelEnrollment() {
                   aria-hidden="true"
                 />
                 <LockKeyhole v-else class="size-4" aria-hidden="true" />
-                Change password
+                {{ $t("settings.security.password.submit") }}
               </Button>
               <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                 <LogOut class="size-3.5" aria-hidden="true" />
-                Redirects to login after success
+                {{ $t("settings.security.password.redirectHint") }}
               </span>
             </div>
           </form>
@@ -271,21 +273,21 @@ function cancelEnrollment() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
-            Session
+            {{ $t("settings.security.session.title") }}
           </CardTitle>
           <CardDescription>
-            Current authenticated principal
+            {{ $t("settings.security.session.description") }}
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4 text-sm">
           <div class="grid gap-1">
-            <span class="text-xs font-medium uppercase text-muted-foreground">Actor</span>
+            <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.security.session.actor") }}</span>
             <span class="break-all font-mono text-xs">
-              {{ auth.principal?.actor_id || "unknown" }}
+              {{ auth.principal?.actor_id || $t("settings.security.session.unknown") }}
             </span>
           </div>
           <div class="grid gap-2">
-            <span class="text-xs font-medium uppercase text-muted-foreground">Scopes</span>
+            <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.security.session.scopes") }}</span>
             <div class="flex flex-wrap gap-1.5">
               <Badge
                 v-for="scope in (auth.principal?.scopes ?? []).slice(0, 10)"
@@ -311,10 +313,10 @@ function cancelEnrollment() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Smartphone class="size-4 text-muted-foreground" aria-hidden="true" />
-          Authenticator App
+          {{ $t("settings.security.totp.title") }}
         </CardTitle>
         <CardDescription>
-          TOTP enrollment, activation, recovery, and disable controls
+          {{ $t("settings.security.totp.description") }}
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-5">
@@ -323,14 +325,14 @@ function cancelEnrollment() {
         >
           <div class="space-y-1">
             <p class="text-sm font-medium">
-              Status
+              {{ $t("settings.security.totp.status") }}
             </p>
             <p class="text-sm text-muted-foreground">
-              {{ totpEnabled ? "A second factor is required after password sign-in." : "Password-only sign-in is active." }}
+              {{ totpEnabled ? $t("settings.security.totp.requiredAfterSignIn") : $t("settings.security.totp.passwordOnlyActive") }}
             </p>
           </div>
           <Badge :variant="totpEnabled ? 'success' : 'secondary'" class="w-fit">
-            {{ totpEnabled ? "Enabled" : "Disabled" }}
+            {{ totpEnabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
           </Badge>
         </div>
 
@@ -355,10 +357,10 @@ function cancelEnrollment() {
                 aria-hidden="true"
               />
               <ShieldCheck v-else class="size-4" aria-hidden="true" />
-              Start enrollment
+              {{ $t("settings.security.totp.startEnrollment") }}
             </Button>
             <span class="text-xs text-muted-foreground">
-              Creates a setup key and one-time recovery codes.
+              {{ $t("settings.security.totp.startEnrollmentHint") }}
             </span>
           </div>
 
@@ -366,7 +368,7 @@ function cancelEnrollment() {
             <div class="grid gap-4 lg:grid-cols-2">
               <div class="space-y-2 rounded-md border border-border p-4">
                 <div class="flex items-center justify-between gap-3">
-                  <Label>Setup key</Label>
+                  <Label>{{ $t("settings.security.totp.setupKey") }}</Label>
                   <CopyButton :value="enrollment.secret" />
                 </div>
                 <code class="block break-all font-mono text-xs text-foreground">
@@ -376,7 +378,7 @@ function cancelEnrollment() {
 
               <div class="space-y-2 rounded-md border border-border p-4">
                 <div class="flex items-center justify-between gap-3">
-                  <Label>Provisioning URI</Label>
+                  <Label>{{ $t("settings.security.totp.provisioningUri") }}</Label>
                   <CopyButton :value="enrollment.otpauth_uri" />
                 </div>
                 <code class="line-clamp-3 block break-all font-mono text-xs text-muted-foreground">
@@ -389,16 +391,16 @@ function cancelEnrollment() {
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p class="text-sm font-medium text-warning-foreground">
-                    Recovery codes
+                    {{ $t("settings.security.totp.recoveryCodes") }}
                   </p>
                   <p class="text-xs text-muted-foreground">
-                    Save these now. They are shown once.
+                    {{ $t("settings.security.totp.recoveryCodesHint") }}
                   </p>
                 </div>
                 <CopyButton
                   v-if="recoveryText"
                   :value="recoveryText"
-                  label="Copy all"
+                  :label="$t('settings.security.totp.copyAll')"
                 />
               </div>
               <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -414,7 +416,7 @@ function cancelEnrollment() {
 
             <form class="flex flex-col gap-3 sm:flex-row sm:items-end" @submit.prevent="activateTotp">
               <div class="grid min-w-0 flex-1 gap-2">
-                <Label for="totp-activate-code">Authenticator code</Label>
+                <Label for="totp-activate-code">{{ $t("settings.security.totp.activateCode") }}</Label>
                 <Input
                   id="totp-activate-code"
                   v-model="activationCode"
@@ -434,7 +436,7 @@ function cancelEnrollment() {
                     aria-hidden="true"
                   />
                   <CheckCircle2 v-else class="size-4" aria-hidden="true" />
-                  Activate
+                  {{ $t("settings.security.totp.activate") }}
                 </Button>
                 <Button
                   type="button"
@@ -442,7 +444,7 @@ function cancelEnrollment() {
                   :disabled="totpPending === 'activate'"
                   @click="cancelEnrollment"
                 >
-                  Cancel
+                  {{ $t("common.actions.cancel") }}
                 </Button>
               </div>
             </form>
@@ -455,12 +457,12 @@ function cancelEnrollment() {
           @submit.prevent="disableTotp"
         >
           <div class="grid min-w-0 flex-1 gap-2">
-            <Label for="totp-disable-code">TOTP or recovery code</Label>
+            <Label for="totp-disable-code">{{ $t("settings.security.totp.disableCode") }}</Label>
             <Input
               id="totp-disable-code"
               v-model="disableCode"
               autocomplete="one-time-code"
-              placeholder="123456 or recovery code"
+              :placeholder="$t('settings.security.totp.disableCodePlaceholder')"
             />
           </div>
           <Button
@@ -474,7 +476,7 @@ function cancelEnrollment() {
               aria-hidden="true"
             />
             <AlertTriangle v-else class="size-4" aria-hidden="true" />
-            Disable 2FA
+            {{ $t("settings.security.totp.disable") }}
           </Button>
         </form>
       </CardContent>

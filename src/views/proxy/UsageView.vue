@@ -126,8 +126,8 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Proxy Usage"
-      description="Traffic accounting from agent-reported usage snapshots (read-only)"
+      :title="$t('proxy.usage.title')"
+      :description="$t('proxy.usage.description')"
     >
       <template #actions>
         <Button
@@ -137,41 +137,41 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
           @click="usageQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', usageQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="Tracked users" :value="totalUsers" :icon="Users" />
-      <StatCard label="Total used" :value="formatBytes(totalUsedBytes)" :icon="Database" />
-      <StatCard label="Active nodes" :value="activeNodes" :icon="Server" tone="success" />
-      <StatCard label="Aggregate uptime" :value="formatDuration(aggregateUptimeSec)" :icon="Activity" />
+      <StatCard :label="$t('proxy.usage.kpiTrackedUsers')" :value="totalUsers" :icon="Users" />
+      <StatCard :label="$t('proxy.usage.kpiTotalUsed')" :value="formatBytes(totalUsedBytes)" :icon="Database" />
+      <StatCard :label="$t('proxy.usage.kpiActiveNodes')" :value="activeNodes" :icon="Server" tone="success" />
+      <StatCard :label="$t('proxy.usage.kpiAggregateUptime')" :value="formatDuration(aggregateUptimeSec)" :icon="Activity" />
     </div>
 
     <DataState
       :loading="usageQuery.loading.value"
       :error="usageQuery.error.value"
       :is-empty="isEmpty"
-      empty-title="No usage reported"
-      empty-description="Agents will report per-user byte counters after their next collection interval."
+      :empty-title="$t('proxy.usage.emptyTitle')"
+      :empty-description="$t('proxy.usage.emptyDescription')"
       @retry="usageQuery.refresh"
     >
       <div class="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>Per-node Snapshots</CardTitle>
-            <CardDescription>Latest core uptime and reported bytes per node</CardDescription>
+            <CardTitle>{{ $t('proxy.usage.snapshotsTitle') }}</CardTitle>
+            <CardDescription>{{ $t('proxy.usage.snapshotsDescription') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <div v-if="sortedSnapshots.length" class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th scope="col" class="px-3 py-2 font-medium">Node</th>
-                    <th scope="col" class="px-3 py-2 font-medium">Reported at</th>
-                    <th scope="col" class="px-3 py-2 font-medium">Core uptime</th>
-                    <th scope="col" class="px-3 py-2 text-right font-medium">Bytes this snapshot</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colNode') }}</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colReportedAt') }}</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colCoreUptime') }}</th>
+                    <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.usage.colBytesThisSnapshot') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -195,14 +195,14 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
                 </tbody>
               </table>
             </div>
-            <p v-else class="text-sm text-muted-foreground">No node snapshots reported yet.</p>
+            <p v-else class="text-sm text-muted-foreground">{{ $t('proxy.usage.noSnapshots') }}</p>
           </CardContent>
         </Card>
 
         <Card v-if="topUsers.length">
           <CardHeader>
-            <CardTitle>Top users by traffic</CardTitle>
-            <CardDescription>Highest {{ topUsers.length }} consumers, relative to the heaviest user</CardDescription>
+            <CardTitle>{{ $t('proxy.usage.topUsersTitle') }}</CardTitle>
+            <CardDescription>{{ $t('proxy.usage.topUsersDescription', { count: topUsers.length }) }}</CardDescription>
           </CardHeader>
           <CardContent>
             <ul class="space-y-3">
@@ -226,20 +226,20 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
 
         <Card>
           <CardHeader>
-            <CardTitle>Per-user Usage</CardTitle>
-            <CardDescription>Sorted by bytes used, descending</CardDescription>
+            <CardTitle>{{ $t('proxy.usage.perUserTitle') }}</CardTitle>
+            <CardDescription>{{ $t('proxy.usage.perUserDescription') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <div v-if="sortedUsers.length" class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th scope="col" class="px-3 py-2 font-medium">Name</th>
-                    <th scope="col" class="px-3 py-2 font-medium">Status</th>
-                    <th scope="col" class="px-3 py-2 text-right font-medium">Used</th>
-                    <th scope="col" class="px-3 py-2 text-right font-medium">Limit</th>
-                    <th scope="col" class="px-3 py-2 font-medium">Quota</th>
-                    <th scope="col" class="px-3 py-2 font-medium">Last seen</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colName') }}</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colStatus') }}</th>
+                    <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.usage.colUsed') }}</th>
+                    <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.usage.colLimit') }}</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colQuota') }}</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.usage.colLastSeen') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -255,7 +255,7 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
                       </div>
                     </td>
                     <td class="px-3 py-3">
-                      <Badge :variant="statusVariant(user.status)">{{ user.status }}</Badge>
+                      <Badge :variant="statusVariant(user.status)">{{ $t('common.status.' + (user.status === 'over_quota' ? 'overQuota' : user.status)) }}</Badge>
                     </td>
                     <td class="px-3 py-3 text-right font-mono tabular text-xs">
                       {{ formatBytes(user.used_bytes) }}
@@ -275,13 +275,13 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
                       </div>
                     </td>
                     <td class="px-3 py-3 text-xs text-muted-foreground">
-                      {{ user.last_seen_at ? formatRelativeTime(user.last_seen_at) : "never" }}
+                      {{ user.last_seen_at ? formatRelativeTime(user.last_seen_at) : $t('common.misc.never') }}
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
-            <p v-else class="text-sm text-muted-foreground">No user usage reported yet.</p>
+            <p v-else class="text-sm text-muted-foreground">{{ $t('proxy.usage.noUserUsage') }}</p>
           </CardContent>
         </Card>
       </div>

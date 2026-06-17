@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -47,6 +48,7 @@ import { Label } from "@/components/ui/label";
 type RenewalTone = "default" | "success" | "warning" | "destructive";
 
 const auth = useAuthStore();
+const { t } = useI18n();
 
 const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(r, "machines")), {
   pollInterval: 12000,
@@ -123,7 +125,7 @@ const totalCostLabel = computed(() => {
       .filter((machine) => (machine.price_cents ?? 0) > 0)
       .map((machine) => machine.currency || "USD"),
   );
-  if (currencies.size > 1) return "mixed";
+  if (currencies.size > 1) return t("fleet.inventory.cost.mixed");
   return formatMoney(totalCostCents.value, totalCostCurrency.value);
 });
 const canSave = computed(() => !!nodeId.value && canAdminInventory.value);
@@ -159,8 +161,8 @@ function displayName(machine: MachineView): string {
 }
 
 function profileLabel(machine: MachineView): string {
-  if (machine.id) return "profiled";
-  return "needs profile";
+  if (machine.id) return t("fleet.inventory.badge.profiled");
+  return t("fleet.inventory.badge.needsProfile");
 }
 
 function profileVariant(machine: MachineView): "success" | "warning" {
@@ -176,12 +178,12 @@ function renewalTone(machine?: MachineView): RenewalTone {
 }
 
 function renewalLabel(machine?: MachineView): string {
-  if (!machine?.next_renewal) return "not tracked";
+  if (!machine?.next_renewal) return t("fleet.inventory.renewal.notTracked");
   const days = machine.days_until_renewal;
   if (days === undefined) return formatDate(machine.next_renewal);
-  if (days < 0) return `${Math.abs(days)}d overdue`;
-  if (days === 0) return "due today";
-  return `${days}d left`;
+  if (days < 0) return t("fleet.inventory.renewal.overdue", { days: Math.abs(days) });
+  if (days === 0) return t("fleet.inventory.renewal.dueToday");
+  return t("fleet.inventory.renewal.daysLeft", { days });
 }
 
 function formatDate(input?: string): string {
@@ -214,13 +216,14 @@ function parseReminderDays(): number[] {
 }
 
 function formatPrice(machine: MachineView): string {
-  if (!machine.price_cents) return "not priced";
+  if (!machine.price_cents) return t("fleet.inventory.price.notPriced");
   return formatMoney(machine.price_cents, machine.currency || "USD");
 }
 
 function formatCycle(machine: MachineView): string {
-  if (!machine.renewal_cycle) return "no cycle";
-  if (machine.renewal_cycle === "custom_days") return `${machine.cycle_days || 0} days`;
+  if (!machine.renewal_cycle) return t("fleet.inventory.cycleLabel.noCycle");
+  if (machine.renewal_cycle === "custom_days")
+    return t("fleet.inventory.cycleLabel.customDays", { days: machine.cycle_days || 0 });
   return machine.renewal_cycle;
 }
 
@@ -307,12 +310,12 @@ async function saveProfile() {
     const saved = profileId.value
       ? await api.machines.update({ ...input, id: profileId.value })
       : await api.machines.create(input);
-    toast.success(profileId.value ? "Machine profile updated" : "Machine profile created");
+    toast.success(profileId.value ? t("fleet.inventory.toast.profileUpdated") : t("fleet.inventory.toast.profileCreated"));
     selectedKey.value = machineKey(saved);
     loadForm(saved);
     refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Inventory save failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.saveFailed"));
   } finally {
     pending.value = false;
   }
@@ -320,16 +323,16 @@ async function saveProfile() {
 
 async function deleteProfile() {
   if (!profileId.value) return;
-  const ok = window.confirm(`Delete machine profile for ${displayName(selectedMachine.value as MachineView)}?`);
+  const ok = window.confirm(t("fleet.inventory.confirm.delete", { name: displayName(selectedMachine.value as MachineView) }));
   if (!ok) return;
   deletePending.value = true;
   try {
     await api.machines.delete(profileId.value);
-    toast.success("Machine profile deleted");
+    toast.success(t("fleet.inventory.toast.profileDeleted"));
     profileId.value = "";
     refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.deleteFailed"));
   } finally {
     deletePending.value = false;
   }
@@ -343,11 +346,11 @@ async function renewProfile() {
       profileId.value,
       autoRoll.value ? undefined : isoDate(nextRenewal.value),
     );
-    toast.success("Renewal recorded");
+    toast.success(t("fleet.inventory.toast.renewalRecorded"));
     loadForm(renewed);
     refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Renewal update failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.renewalFailed"));
   } finally {
     renewPending.value = false;
   }
@@ -357,9 +360,9 @@ async function runReminders(selectedOnly = false) {
   remindersPending.value = true;
   try {
     const res = await api.machines.runReminders(selectedOnly ? profileId.value : undefined);
-    toast.success(`${res.fired.length} reminder${res.fired.length === 1 ? "" : "s"} fired`);
+    toast.success(t("fleet.inventory.toast.remindersFired", { count: res.fired.length }));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Reminder run failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.reminderFailed"));
   } finally {
     remindersPending.value = false;
   }
@@ -368,20 +371,20 @@ async function runReminders(selectedOnly = false) {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Inventory" description="Machine profiles, cost metadata, and renewal reminders">
+    <PageHeader :title="$t('fleet.inventory.title')" :description="$t('fleet.inventory.description')">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
           <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="Machines" :value="machines.length" :icon="Boxes" />
-      <StatCard label="Profiled" :value="profiledCount" :icon="CheckCircle2" tone="success" />
-      <StatCard label="Needs Profile" :value="missingCount" :icon="Pencil" :tone="missingCount > 0 ? 'warning' : 'success'" />
-      <StatCard label="Renewal Risk" :value="renewalSoonCount" :icon="CalendarClock" :tone="renewalSoonCount > 0 ? 'warning' : 'success'" :hint="`listed cost ${totalCostLabel}`" />
+      <StatCard :label="$t('fleet.inventory.stats.machines')" :value="machines.length" :icon="Boxes" />
+      <StatCard :label="$t('fleet.inventory.stats.profiled')" :value="profiledCount" :icon="CheckCircle2" tone="success" />
+      <StatCard :label="$t('fleet.inventory.stats.needsProfile')" :value="missingCount" :icon="Pencil" :tone="missingCount > 0 ? 'warning' : 'success'" />
+      <StatCard :label="$t('fleet.inventory.stats.renewalRisk')" :value="renewalSoonCount" :icon="CalendarClock" :tone="renewalSoonCount > 0 ? 'warning' : 'success'" :hint="$t('fleet.inventory.stats.listedCost', { cost: totalCostLabel })" />
     </div>
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]">
@@ -389,17 +392,17 @@ async function runReminders(selectedOnly = false) {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Server class="size-4 text-muted-foreground" aria-hidden="true" />
-            Machines
+            {{ $t('fleet.inventory.list.title') }}
           </CardTitle>
-          <CardDescription>{{ profiledCount }} profiles, {{ missingCount }} visible nodes without metadata</CardDescription>
+          <CardDescription>{{ $t('fleet.inventory.list.description', { profiled: profiledCount, missing: missingCount }) }}</CardDescription>
         </CardHeader>
         <CardContent>
           <DataState
             :loading="machinesQuery.loading.value"
             :error="machinesQuery.error.value"
             :is-empty="machines.length === 0"
-            empty-title="No inventory-visible nodes"
-            empty-description="Nodes appear here when your token has inventory:read for them."
+            :empty-title="$t('fleet.inventory.list.emptyTitle')"
+            :empty-description="$t('fleet.inventory.list.emptyDescription')"
             @retry="machinesQuery.refresh"
           >
             <div class="space-y-3">
@@ -439,22 +442,22 @@ async function runReminders(selectedOnly = false) {
                     {{ formatPrice(machine) }}
                   </span>
                   <span>{{ formatCycle(machine) }}</span>
-                  <span>{{ machine.region || "region unset" }}</span>
-                  <span v-if="machine.updated_at">updated {{ formatRelativeTime(machine.updated_at) }}</span>
+                  <span>{{ machine.region || $t('fleet.inventory.list.regionUnset') }}</span>
+                  <span v-if="machine.updated_at">{{ $t('fleet.inventory.list.updated', { time: formatRelativeTime(machine.updated_at) }) }}</span>
                 </div>
 
                 <div class="mt-3 flex flex-wrap gap-1.5">
                   <Badge v-if="machine.has_console_url" variant="info">
                     <Link class="size-3" aria-hidden="true" />
-                    console link stored
+                    {{ $t('fleet.inventory.list.consoleLinkStored') }}
                   </Badge>
                   <Badge v-if="machine.has_detail_url" variant="info">
                     <Link class="size-3" aria-hidden="true" />
-                    detail link stored
+                    {{ $t('fleet.inventory.list.detailLinkStored') }}
                   </Badge>
                   <Badge v-if="machine.reminders_enabled" variant="outline">
                     <Bell class="size-3" aria-hidden="true" />
-                    reminders
+                    {{ $t('fleet.inventory.list.reminders') }}
                   </Badge>
                 </div>
               </button>
@@ -467,17 +470,17 @@ async function runReminders(selectedOnly = false) {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Pencil class="size-4 text-muted-foreground" aria-hidden="true" />
-            Machine Profile
+            {{ $t('fleet.inventory.profile.title') }}
           </CardTitle>
           <CardDescription>
             <template v-if="selectedMachine">{{ displayName(selectedMachine) }}</template>
-            <template v-else>Select a machine to edit inventory metadata</template>
+            <template v-else>{{ $t('fleet.inventory.profile.selectPrompt') }}</template>
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form v-if="selectedMachine && canAdminInventory" class="space-y-4" @submit.prevent="saveProfile">
             <div class="grid gap-2">
-              <Label for="machine-node">Node</Label>
+              <Label for="machine-node">{{ $t('fleet.inventory.profile.node') }}</Label>
               <select
                 id="machine-node"
                 v-model="nodeId"
@@ -494,100 +497,100 @@ async function runReminders(selectedOnly = false) {
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="machine-label">Label</Label>
+                <Label for="machine-label">{{ $t('fleet.inventory.profile.label') }}</Label>
                 <Input id="machine-label" v-model="label" placeholder="gmami-jp1" />
               </div>
               <div class="grid gap-2">
-                <Label for="machine-vendor">Vendor</Label>
+                <Label for="machine-vendor">{{ $t('fleet.inventory.profile.vendor') }}</Label>
                 <Input id="machine-vendor" v-model="vendor" placeholder="DMIT" />
               </div>
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="machine-region">Region</Label>
-                <Input id="machine-region" v-model="region" placeholder="JP-Tokyo" />
+                <Label for="machine-region">{{ $t('fleet.inventory.profile.region') }}</Label>
+                <Input id="machine-region" v-model="region" :placeholder="$t('fleet.inventory.profile.regionPlaceholder')" />
               </div>
               <div class="grid gap-2">
-                <Label for="machine-currency">Currency</Label>
+                <Label for="machine-currency">{{ $t('fleet.inventory.profile.currency') }}</Label>
                 <Input id="machine-currency" v-model="currency" maxlength="3" placeholder="USD" />
               </div>
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="machine-price">Price</Label>
+                <Label for="machine-price">{{ $t('fleet.inventory.profile.price') }}</Label>
                 <Input id="machine-price" v-model="priceMajor" type="number" min="0" step="0.01" placeholder="9.90" />
               </div>
               <div class="grid gap-2">
-                <Label for="machine-renewal">Next renewal</Label>
+                <Label for="machine-renewal">{{ $t('fleet.inventory.profile.nextRenewal') }}</Label>
                 <Input id="machine-renewal" v-model="nextRenewal" type="date" />
               </div>
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="machine-cycle">Renewal cycle</Label>
+                <Label for="machine-cycle">{{ $t('fleet.inventory.profile.renewalCycle') }}</Label>
                 <select
                   id="machine-cycle"
                   v-model="renewalCycle"
                   class="h-9 rounded-md border border-input bg-background px-3 text-sm"
                 >
-                  <option value="">None</option>
-                  <option value="monthly">Monthly</option>
-                  <option value="quarterly">Quarterly</option>
-                  <option value="semiannual">Semiannual</option>
-                  <option value="annual">Annual</option>
-                  <option value="custom_days">Custom days</option>
+                  <option value="">{{ $t('fleet.inventory.profile.cycle.none') }}</option>
+                  <option value="monthly">{{ $t('fleet.inventory.profile.cycle.monthly') }}</option>
+                  <option value="quarterly">{{ $t('fleet.inventory.profile.cycle.quarterly') }}</option>
+                  <option value="semiannual">{{ $t('fleet.inventory.profile.cycle.semiannual') }}</option>
+                  <option value="annual">{{ $t('fleet.inventory.profile.cycle.annual') }}</option>
+                  <option value="custom_days">{{ $t('fleet.inventory.profile.cycle.customDays') }}</option>
                 </select>
               </div>
               <div class="grid gap-2">
-                <Label for="machine-cycle-days">Cycle days</Label>
+                <Label for="machine-cycle-days">{{ $t('fleet.inventory.profile.cycleDays') }}</Label>
                 <Input id="machine-cycle-days" v-model="cycleDays" type="number" min="1" :disabled="renewalCycle !== 'custom_days'" />
               </div>
             </div>
 
             <div class="grid gap-2">
-              <Label for="machine-reminders">Reminder days before</Label>
+              <Label for="machine-reminders">{{ $t('fleet.inventory.profile.remindersBefore') }}</Label>
               <Input id="machine-reminders" v-model="remindDays" placeholder="14,7,1" />
             </div>
 
             <div class="grid gap-2">
-              <Label for="machine-console">Console URL</Label>
-              <Input id="machine-console" v-model="consoleUrl" placeholder="blank keeps existing write-only link" />
+              <Label for="machine-console">{{ $t('fleet.inventory.profile.consoleUrl') }}</Label>
+              <Input id="machine-console" v-model="consoleUrl" :placeholder="$t('fleet.inventory.profile.consoleUrlPlaceholder')" />
               <label class="flex items-center gap-2 text-xs text-muted-foreground">
                 <input v-model="clearConsoleUrl" type="checkbox" class="size-4 accent-primary" />
-                Clear stored console URL
+                {{ $t('fleet.inventory.profile.clearConsoleUrl') }}
               </label>
             </div>
 
             <div class="grid gap-2">
-              <Label for="machine-detail">Detail URL</Label>
-              <Input id="machine-detail" v-model="detailUrl" placeholder="blank keeps existing write-only link" />
+              <Label for="machine-detail">{{ $t('fleet.inventory.profile.detailUrl') }}</Label>
+              <Input id="machine-detail" v-model="detailUrl" :placeholder="$t('fleet.inventory.profile.detailUrlPlaceholder')" />
               <label class="flex items-center gap-2 text-xs text-muted-foreground">
                 <input v-model="clearDetailUrl" type="checkbox" class="size-4 accent-primary" />
-                Clear stored detail URL
+                {{ $t('fleet.inventory.profile.clearDetailUrl') }}
               </label>
             </div>
 
             <div class="grid gap-2">
-              <Label for="machine-notes">Notes</Label>
+              <Label for="machine-notes">{{ $t('fleet.inventory.profile.notes') }}</Label>
               <textarea
                 id="machine-notes"
                 v-model="notes"
                 class="min-h-24 rounded-md border border-input bg-background p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-                placeholder="Billing account, plan, support notes"
+                :placeholder="$t('fleet.inventory.profile.notesPlaceholder')"
               />
             </div>
 
             <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
               <label class="flex items-center gap-2">
                 <input v-model="autoRoll" type="checkbox" class="size-4 accent-primary" />
-                Auto-roll next renewal when recording a renewal
+                {{ $t('fleet.inventory.profile.autoRoll') }}
               </label>
               <label class="flex items-center gap-2">
                 <input v-model="remindersEnabled" type="checkbox" class="size-4 accent-primary" />
-                Enable renewal reminders
+                {{ $t('fleet.inventory.profile.enableReminders') }}
               </label>
             </div>
 
@@ -595,7 +598,7 @@ async function runReminders(selectedOnly = false) {
               <Button type="submit" :disabled="pending || !canSave">
                 <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
                 <Save v-else class="size-4" aria-hidden="true" />
-                {{ selectedHasProfile ? "Save profile" : "Create profile" }}
+                {{ selectedHasProfile ? $t('fleet.inventory.profile.saveProfile') : $t('fleet.inventory.profile.createProfile') }}
               </Button>
               <Button
                 v-if="selectedHasProfile"
@@ -606,7 +609,7 @@ async function runReminders(selectedOnly = false) {
               >
                 <RefreshCw v-if="renewPending" class="size-4 animate-spin" aria-hidden="true" />
                 <CalendarClock v-else class="size-4" aria-hidden="true" />
-                Record renewal
+                {{ $t('fleet.inventory.profile.recordRenewal') }}
               </Button>
               <Button
                 v-if="selectedHasProfile"
@@ -616,7 +619,7 @@ async function runReminders(selectedOnly = false) {
                 @click="runReminders(true)"
               >
                 <Bell class="size-4" aria-hidden="true" />
-                Run reminders
+                {{ $t('fleet.inventory.profile.runReminders') }}
               </Button>
               <Button
                 v-if="selectedHasProfile"
@@ -627,20 +630,20 @@ async function runReminders(selectedOnly = false) {
               >
                 <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
                 <Trash2 v-else class="size-4" aria-hidden="true" />
-                Delete
+                {{ $t('common.actions.delete') }}
               </Button>
             </div>
           </form>
 
           <EmptyState
             v-else-if="selectedMachine"
-            title="Read-only access"
-            description="Your token can inspect inventory, but inventory:admin is required to edit machine profiles."
+            :title="$t('fleet.inventory.profile.readOnlyTitle')"
+            :description="$t('fleet.inventory.profile.readOnlyDescription')"
           />
           <EmptyState
             v-else
-            title="No machine selected"
-            description="Choose a visible node or machine profile from the inventory list."
+            :title="$t('fleet.inventory.profile.noSelectionTitle')"
+            :description="$t('fleet.inventory.profile.noSelectionDescription')"
           />
         </CardContent>
       </Card>
@@ -652,11 +655,11 @@ async function runReminders(selectedOnly = false) {
           <div>
             <CardTitle class="flex items-center gap-2">
               <HardDrive class="size-4 text-muted-foreground" aria-hidden="true" />
-              Selected Machine Facts
+              {{ $t('fleet.inventory.facts.title') }}
             </CardTitle>
             <CardDescription>
               <template v-if="selectedMachine">{{ selectedMachine.node_name || selectedMachine.node_id }}</template>
-              <template v-else>Host facts are reported by the node agent</template>
+              <template v-else>{{ $t('fleet.inventory.facts.description') }}</template>
             </CardDescription>
           </div>
           <Button
@@ -668,33 +671,33 @@ async function runReminders(selectedOnly = false) {
           >
             <RefreshCw v-if="remindersPending" class="size-4 animate-spin" aria-hidden="true" />
             <Bell v-else class="size-4" aria-hidden="true" />
-            Run all reminders
+            {{ $t('fleet.inventory.facts.runAllReminders') }}
           </Button>
         </div>
       </CardHeader>
       <CardContent>
         <div v-if="selectedMachine" class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div class="rounded-lg border border-border p-4">
-            <p class="text-sm text-muted-foreground">OS</p>
-            <p class="mt-1 font-medium">{{ selectedMachine.host_facts?.os || selectedMachine.host_facts?.platform || "unknown" }}</p>
+            <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.facts.os') }}</p>
+            <p class="mt-1 font-medium">{{ selectedMachine.host_facts?.os || selectedMachine.host_facts?.platform || $t('fleet.inventory.facts.unknown') }}</p>
             <p class="mt-1 text-xs text-muted-foreground">{{ selectedMachine.host_facts?.kernel || selectedMachine.host_facts?.platform_version || "" }}</p>
           </div>
           <div class="rounded-lg border border-border p-4">
-            <p class="text-sm text-muted-foreground">CPU</p>
-            <p class="mt-1 font-medium">{{ selectedMachine.host_facts?.cpu_cores || 0 }} cores</p>
-            <p class="mt-1 truncate text-xs text-muted-foreground">{{ selectedMachine.host_facts?.cpu_model || "model unknown" }}</p>
+            <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.facts.cpu') }}</p>
+            <p class="mt-1 font-medium">{{ $t('fleet.inventory.facts.cpuCores', { value: selectedMachine.host_facts?.cpu_cores || 0 }) }}</p>
+            <p class="mt-1 truncate text-xs text-muted-foreground">{{ selectedMachine.host_facts?.cpu_model || $t('fleet.inventory.facts.modelUnknown') }}</p>
           </div>
           <div class="rounded-lg border border-border p-4">
-            <p class="text-sm text-muted-foreground">Memory</p>
+            <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.facts.memory') }}</p>
             <p class="mt-1 font-medium">{{ formatBytes(selectedMachine.host_facts?.memory_total) }}</p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ selectedMachine.host_facts?.arch || "arch unknown" }}</p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ selectedMachine.host_facts?.arch || $t('fleet.inventory.facts.archUnknown') }}</p>
           </div>
           <div class="rounded-lg border border-border p-4">
-            <p class="text-sm text-muted-foreground">Renewal</p>
+            <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.facts.renewal') }}</p>
             <p :class="cn('mt-1 font-medium', selectedRenewalTone === 'destructive' && 'text-destructive', selectedRenewalTone === 'warning' && 'text-warning', selectedRenewalTone === 'success' && 'text-success')">
               {{ renewalLabel(selectedMachine) }}
             </p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ selectedMachine.next_renewal ? formatDateTime(selectedMachine.next_renewal) : "date unset" }}</p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ selectedMachine.next_renewal ? formatDateTime(selectedMachine.next_renewal) : $t('fleet.inventory.facts.dateUnset') }}</p>
           </div>
         </div>
       </CardContent>

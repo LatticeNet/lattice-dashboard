@@ -34,7 +34,7 @@ function label(key: string): string {
   <div class="w-72 space-y-4 p-1">
     <!-- Mode segmented control -->
     <div class="space-y-2">
-      <p class="text-xs font-medium text-muted-foreground">Mode</p>
+      <p class="text-xs font-medium text-muted-foreground">{{ $t('appearance.mode') }}</p>
       <div class="grid grid-cols-3 gap-1 rounded-md bg-muted p-1">
         <button
           v-for="m in MODES"
@@ -51,14 +51,14 @@ function label(key: string): string {
           @click="theme.setMode(m.value)"
         >
           <component :is="m.icon" class="size-3.5" aria-hidden="true" />
-          {{ m.label }}
+          {{ $t('appearance.' + m.value) }}
         </button>
       </div>
     </div>
 
     <!-- Color swatches -->
     <div class="space-y-2">
-      <p class="text-xs font-medium text-muted-foreground">Accent color</p>
+      <p class="text-xs font-medium text-muted-foreground">{{ $t('appearance.brandColor') }}</p>
       <div class="grid grid-cols-5 gap-2">
         <button
           v-for="key in swatchKeys"
@@ -82,7 +82,7 @@ function label(key: string): string {
 
     <!-- Custom color -->
     <div class="space-y-2">
-      <p class="text-xs font-medium text-muted-foreground">Custom</p>
+      <p class="text-xs font-medium text-muted-foreground">{{ $t('appearance.customColor') }}</p>
       <label
         :class="
           cn(

@@ -31,10 +31,10 @@ const active =
         :class="cn(base, idle, 'justify-center px-0')"
       >
         <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
-        <span class="sr-only">{{ item.title }}</span>
+        <span class="sr-only">{{ $t('nav.items.' + item.name) }}</span>
       </RouterLink>
     </TooltipTrigger>
-    <TooltipContent side="right">{{ item.title }}</TooltipContent>
+    <TooltipContent side="right">{{ $t('nav.items.' + item.name) }}</TooltipContent>
   </Tooltip>
 
   <RouterLink
@@ -45,6 +45,6 @@ const active =
     :class="cn(base, idle)"
   >
     <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
-    <span class="truncate">{{ item.title }}</span>
+    <span class="truncate">{{ $t('nav.items.' + item.name) }}</span>
   </RouterLink>
 </template>

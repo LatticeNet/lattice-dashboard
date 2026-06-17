@@ -129,7 +129,7 @@ export default {
   },
 
   shell: {
-    sidebar: { toggle: "切换侧边栏", primaryNav: "主导航" },
+    sidebar: { toggle: "切换侧边栏", primaryNav: "主导航", collapse: "收起" },
     header: {
       toggleTheme: "切换主题",
       appearance: "外观",

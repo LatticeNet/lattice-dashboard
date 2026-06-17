@@ -72,13 +72,13 @@ function closeMobile() {
     </div>
 
     <!-- Nav -->
-    <nav aria-label="Primary" class="flex-1 space-y-4 overflow-y-auto px-2 py-3">
+    <nav :aria-label="$t('shell.sidebar.primaryNav')" class="flex-1 space-y-4 overflow-y-auto px-2 py-3">
       <div v-for="section in visibleSections" :key="section.id" class="space-y-1">
         <p
           v-if="!collapsed"
           class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
         >
-          {{ section.title }}
+          {{ $t('nav.sections.' + section.id) }}
         </p>
         <SidebarItem
           v-for="item in section.items"
@@ -94,13 +94,13 @@ function closeMobile() {
     <div class="hidden shrink-0 border-t border-sidebar-border p-2 md:block">
       <Button
         variant="ghost"
-        aria-label="Toggle sidebar"
+        :aria-label="$t('shell.sidebar.toggle')"
         :class="cn('w-full justify-start gap-3 text-sidebar-foreground/80', collapsed && 'justify-center')"
         @click="toggleCollapse"
       >
         <PanelLeftClose v-if="!collapsed" class="size-4" aria-hidden="true" />
         <PanelLeftOpen v-else class="size-4" aria-hidden="true" />
-        <span v-if="!collapsed">Collapse</span>
+        <span v-if="!collapsed">{{ $t('shell.sidebar.collapse') }}</span>
       </Button>
     </div>
   </aside>

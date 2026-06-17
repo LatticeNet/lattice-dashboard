@@ -117,15 +117,15 @@ function refreshAll() {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Overview" description="Fleet health at a glance">
+    <PageHeader :title="$t('overview.title')" :description="$t('overview.description')">
       <template #actions>
         <div class="flex items-center gap-3">
           <span v-if="fleet.lastUpdated.value" class="text-xs text-muted-foreground">
-            updated {{ formatRelativeTime(fleet.lastUpdated.value) }}
+            {{ $t('common.misc.updated') }} {{ formatRelativeTime(fleet.lastUpdated.value) }}
           </span>
           <Button variant="outline" size="sm" :disabled="fleet.refreshing.value" @click="refreshAll">
             <RotateCw :class="cn('size-4', fleet.refreshing.value && 'animate-spin')" aria-hidden="true" />
-            Refresh
+            {{ $t('common.actions.refresh') }}
           </Button>
         </div>
       </template>
@@ -142,25 +142,25 @@ function refreshAll() {
     <!-- KPI row -->
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatCard
-        label="Nodes"
+        :label="$t('overview.kpi.nodes')"
         :value="nodes.length"
         :icon="Server"
       />
       <StatCard
-        label="Online"
+        :label="$t('overview.kpi.online')"
         :value="onlineNodes"
         tone="success"
         :icon="Wifi"
         :hint="offlineNodes > 0 ? `${offlineNodes} offline` : 'all online'"
       />
       <StatCard
-        label="Pending Approvals"
+        :label="$t('overview.kpi.approvals')"
         :value="pendingApprovals.length"
         :tone="pendingApprovals.length > 0 ? 'warning' : 'default'"
         :icon="ShieldCheck"
       />
       <StatCard
-        label="Queued Tasks"
+        :label="$t('nav.items.tasks')"
         :value="queuedTasks"
         :icon="Terminal"
       />
@@ -173,7 +173,7 @@ function refreshAll() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Server class="size-4 text-muted-foreground" aria-hidden="true" />
-            Fleet
+            {{ $t('overview.fleet') }}
           </CardTitle>
           <CardDescription>
             {{ onlineNodes }} of {{ nodes.length }} nodes online
@@ -184,7 +184,7 @@ function refreshAll() {
             :loading="fleet.loading.value"
             :error="fleet.error.value"
             :empty="nodes.length === 0"
-            empty-title="No nodes enrolled yet"
+            :empty-title="$t('overview.noNodes')"
             empty-description="Enroll your first node to start monitoring the fleet."
           >
             <div class="grid gap-3 sm:grid-cols-2">
@@ -290,7 +290,7 @@ function refreshAll() {
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
-              Approvals
+              {{ $t('overview.approvalsInbox') }}
             </CardTitle>
             <CardDescription>Pending changes awaiting review</CardDescription>
           </CardHeader>
@@ -333,7 +333,7 @@ function refreshAll() {
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
-              Recent activity
+              {{ $t('overview.recentActivity') }}
             </CardTitle>
             <CardDescription>Latest audit decisions</CardDescription>
           </CardHeader>

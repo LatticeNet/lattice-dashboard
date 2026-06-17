@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Activity,
@@ -36,6 +37,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const auth = useAuthStore();
+const { t } = useI18n();
 
 const monitorsQuery = useAsyncData(() => api.monitors.list().then((r) => unwrap(r, "monitors")), {
   pollInterval: 10000,
@@ -173,9 +175,9 @@ function nodeName(id: string): string {
 }
 
 function assignmentLabel(monitor: MonitorView): string {
-  if (monitor.assign_all) return "all nodes";
+  if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
   const count = monitor.node_ids?.length ?? 0;
-  return `${count} node${count === 1 ? "" : "s"}`;
+  return t("fleet.monitoring.assignment.nodeCount", { count });
 }
 
 function resultVariant(result?: MonitorResult): "success" | "destructive" | "secondary" {
@@ -184,8 +186,8 @@ function resultVariant(result?: MonitorResult): "success" | "destructive" | "sec
 }
 
 function resultLabel(result?: MonitorResult): string {
-  if (!result) return "no result";
-  return result.success ? "passing" : "failing";
+  if (!result) return t("fleet.monitoring.result.noResult");
+  return result.success ? t("fleet.monitoring.result.passing") : t("fleet.monitoring.result.failing");
 }
 
 function resultBarClass(result: MonitorResult): string {
@@ -220,10 +222,10 @@ async function createMonitor() {
     assignAll.value = true;
     selectedNodeIds.value = [];
     selectedMonitorId.value = created.id;
-    toast.success("Monitor created");
+    toast.success(t("fleet.monitoring.toast.created"));
     refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Monitor creation failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.monitoring.toast.createFailed"));
   } finally {
     createPending.value = false;
   }
@@ -231,16 +233,16 @@ async function createMonitor() {
 
 async function deleteMonitor() {
   if (!selectedMonitor.value) return;
-  const ok = window.confirm(`Delete monitor "${selectedMonitor.value.name || selectedMonitor.value.id}"?`);
+  const ok = window.confirm(t("fleet.monitoring.confirm.delete", { name: selectedMonitor.value.name || selectedMonitor.value.id }));
   if (!ok) return;
   deletePending.value = true;
   try {
     await api.monitors.delete(selectedMonitor.value.id);
-    toast.success("Monitor deleted");
+    toast.success(t("fleet.monitoring.toast.deleted"));
     selectedMonitorId.value = "";
     refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Monitor deletion failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.monitoring.toast.deleteFailed"));
   } finally {
     deletePending.value = false;
   }
@@ -249,7 +251,7 @@ async function deleteMonitor() {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Monitoring" description="TCP and HTTP probes distributed through enrolled agents">
+    <PageHeader :title="$t('fleet.monitoring.title')" :description="$t('fleet.monitoring.description')">
       <template #actions>
         <Button
           variant="outline"
@@ -261,16 +263,16 @@ async function deleteMonitor() {
             :class="cn('size-4', (monitorsQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')"
             aria-hidden="true"
           />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="Monitors" :value="monitors.length" :icon="RadioTower" />
-      <StatCard label="Enabled" :value="enabledCount" :icon="Activity" tone="success" />
-      <StatCard label="Selected Success" :value="selectedSuccessRate" :icon="CheckCircle2" :tone="failureCount > 0 ? 'warning' : 'success'" />
-      <StatCard label="Average Latency" :value="averageLatency" :icon="Gauge" />
+      <StatCard :label="$t('fleet.monitoring.stats.monitors')" :value="monitors.length" :icon="RadioTower" />
+      <StatCard :label="$t('fleet.monitoring.stats.enabled')" :value="enabledCount" :icon="Activity" tone="success" />
+      <StatCard :label="$t('fleet.monitoring.stats.selectedSuccess')" :value="selectedSuccessRate" :icon="CheckCircle2" :tone="failureCount > 0 ? 'warning' : 'success'" />
+      <StatCard :label="$t('fleet.monitoring.stats.averageLatency')" :value="averageLatency" :icon="Gauge" />
     </div>
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
@@ -278,17 +280,17 @@ async function deleteMonitor() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <RadioTower class="size-4 text-muted-foreground" aria-hidden="true" />
-            Probe Definitions
+            {{ $t('fleet.monitoring.definitions.title') }}
           </CardTitle>
-          <CardDescription>{{ enabledCount }} active probes across {{ monitors.length }} definitions</CardDescription>
+          <CardDescription>{{ $t('fleet.monitoring.definitions.description', { enabled: enabledCount, total: monitors.length }) }}</CardDescription>
         </CardHeader>
         <CardContent>
           <DataState
             :loading="monitorsQuery.loading.value"
             :error="monitorsQuery.error.value"
             :is-empty="monitors.length === 0"
-            empty-title="No monitors configured"
-            empty-description="Create a TCP or HTTP monitor to start collecting agent results."
+            :empty-title="$t('fleet.monitoring.definitions.emptyTitle')"
+            :empty-description="$t('fleet.monitoring.definitions.emptyDescription')"
             @retry="monitorsQuery.refresh"
           >
             <div class="space-y-3">
@@ -318,7 +320,7 @@ async function deleteMonitor() {
                   <div class="flex flex-wrap justify-end gap-1.5">
                     <Badge variant="outline">{{ monitor.type }}</Badge>
                     <Badge :variant="monitor.enabled ? 'success' : 'secondary'">
-                      {{ monitor.enabled ? "enabled" : "disabled" }}
+                      {{ monitor.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                     </Badge>
                     <Badge
                       v-if="selectedMonitorId === monitor.id"
@@ -332,10 +334,10 @@ async function deleteMonitor() {
                 <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   <span class="inline-flex items-center gap-1">
                     <Timer class="size-3" aria-hidden="true" />
-                    every {{ monitor.interval_sec }}s, timeout {{ monitor.timeout_sec }}s
+                    {{ $t('fleet.monitoring.definitions.interval', { interval: monitor.interval_sec, timeout: monitor.timeout_sec }) }}
                   </span>
                   <span>{{ assignmentLabel(monitor) }}</span>
-                  <span v-if="monitor.updated_at">updated {{ formatRelativeTime(monitor.updated_at) }}</span>
+                  <span v-if="monitor.updated_at">{{ $t('fleet.monitoring.definitions.updated', { time: formatRelativeTime(monitor.updated_at) }) }}</span>
                 </div>
               </button>
             </div>
@@ -347,30 +349,30 @@ async function deleteMonitor() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Plus class="size-4 text-muted-foreground" aria-hidden="true" />
-            Create Monitor
+            {{ $t('fleet.monitoring.create.title') }}
           </CardTitle>
-          <CardDescription>Agents run assigned checks and report bounded result history.</CardDescription>
+          <CardDescription>{{ $t('fleet.monitoring.create.description') }}</CardDescription>
         </CardHeader>
         <CardContent>
           <form v-if="canAdminMonitors" class="space-y-4" @submit.prevent="createMonitor">
             <div class="grid gap-2">
-              <Label for="monitor-name">Name</Label>
-              <Input id="monitor-name" v-model="monitorName" required placeholder="public api" />
+              <Label for="monitor-name">{{ $t('fleet.monitoring.create.name') }}</Label>
+              <Input id="monitor-name" v-model="monitorName" required :placeholder="$t('fleet.monitoring.create.namePlaceholder')" />
             </div>
 
             <div class="grid gap-2">
-              <Label for="monitor-target">Target</Label>
+              <Label for="monitor-target">{{ $t('fleet.monitoring.create.target') }}</Label>
               <Input
                 id="monitor-target"
                 v-model="monitorTarget"
                 required
-                :placeholder="monitorType === 'tcp' ? 'example.com:443' : 'https://example.com/health'"
+                :placeholder="monitorType === 'tcp' ? $t('fleet.monitoring.create.targetTcpPlaceholder') : $t('fleet.monitoring.create.targetHttpPlaceholder')"
               />
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="monitor-type">Type</Label>
+                <Label for="monitor-type">{{ $t('fleet.monitoring.create.type') }}</Label>
                 <select
                   id="monitor-type"
                   v-model="monitorType"
@@ -381,21 +383,21 @@ async function deleteMonitor() {
                 </select>
               </div>
               <div class="grid gap-2">
-                <Label>Assignment</Label>
+                <Label>{{ $t('fleet.monitoring.create.assignment') }}</Label>
                 <div class="grid grid-cols-2 rounded-md border border-input p-1">
                   <button
                     type="button"
                     :class="cn('rounded px-2 py-1.5 text-sm transition-colors', assignAll && 'bg-primary text-primary-foreground')"
                     @click="assignAll = true"
                   >
-                    All
+                    {{ $t('fleet.monitoring.create.all') }}
                   </button>
                   <button
                     type="button"
                     :class="cn('rounded px-2 py-1.5 text-sm transition-colors', !assignAll && 'bg-primary text-primary-foreground')"
                     @click="assignAll = false"
                   >
-                    Selected
+                    {{ $t('fleet.monitoring.create.selected') }}
                   </button>
                 </div>
               </div>
@@ -403,11 +405,11 @@ async function deleteMonitor() {
 
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="monitor-interval">Interval sec</Label>
+                <Label for="monitor-interval">{{ $t('fleet.monitoring.create.intervalSec') }}</Label>
                 <Input id="monitor-interval" v-model="intervalSec" type="number" min="5" max="86400" />
               </div>
               <div class="grid gap-2">
-                <Label for="monitor-timeout">Timeout sec</Label>
+                <Label for="monitor-timeout">{{ $t('fleet.monitoring.create.timeoutSec') }}</Label>
                 <Input id="monitor-timeout" v-model="timeoutSec" type="number" min="1" max="300" />
               </div>
             </div>
@@ -417,8 +419,8 @@ async function deleteMonitor() {
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
               :is-empty="nodes.length === 0"
-              empty-title="No nodes available"
-              empty-description="Enroll nodes before assigning a monitor to specific agents."
+              :empty-title="$t('fleet.monitoring.create.noNodesTitle')"
+              :empty-description="$t('fleet.monitoring.create.noNodesDescription')"
               :skeleton-rows="2"
               @retry="nodesQuery.refresh"
             >
@@ -430,7 +432,7 @@ async function deleteMonitor() {
                 >
                   <input v-model="selectedNodeIds" type="checkbox" :value="node.id" class="size-4 accent-primary" />
                   <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
-                  <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? "on" : "off" }}</Badge>
+                  <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</Badge>
                 </label>
               </div>
             </DataState>
@@ -438,14 +440,14 @@ async function deleteMonitor() {
             <Button type="submit" :disabled="createPending || !canSubmit">
               <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              Create monitor
+              {{ $t('fleet.monitoring.create.submit') }}
             </Button>
           </form>
 
           <EmptyState
             v-else
-            title="Read-only access"
-            description="Your token can inspect monitors, but monitor:admin is required to create or delete them."
+            :title="$t('fleet.monitoring.create.readOnlyTitle')"
+            :description="$t('fleet.monitoring.create.readOnlyDescription')"
           />
         </CardContent>
       </Card>
@@ -457,13 +459,13 @@ async function deleteMonitor() {
           <div>
             <CardTitle class="flex items-center gap-2">
               <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
-              Result History
+              {{ $t('fleet.monitoring.history.title') }}
             </CardTitle>
             <CardDescription>
               <template v-if="selectedMonitor">
                 {{ selectedMonitor.name }} - {{ selectedMonitor.target }}
               </template>
-              <template v-else>Select a monitor to inspect probe results</template>
+              <template v-else>{{ $t('fleet.monitoring.history.selectPrompt') }}</template>
             </CardDescription>
           </div>
           <Button
@@ -475,7 +477,7 @@ async function deleteMonitor() {
           >
             <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </div>
       </CardHeader>
@@ -484,19 +486,19 @@ async function deleteMonitor() {
           :loading="resultsQuery.loading.value && !!selectedMonitor"
           :error="resultsQuery.error.value"
           :is-empty="!selectedMonitor || selectedResults.length === 0"
-          empty-title="No results collected"
-          empty-description="Agents will report results after their next polling interval."
+          :empty-title="$t('fleet.monitoring.history.emptyTitle')"
+          :empty-description="$t('fleet.monitoring.history.emptyDescription')"
           @retry="resultsQuery.refresh"
         >
           <div class="space-y-5">
             <div class="rounded-lg border border-border bg-muted/20 p-4">
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p class="text-sm font-medium">Latency trend</p>
+                  <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.latencyTrend') }}</p>
                   <p class="text-xs text-muted-foreground">
-                    Successful probes, oldest → newest
+                    {{ $t('fleet.monitoring.history.successfulProbes') }}
                     <template v-if="latencyTrend.length">
-                      ({{ latencyTrend.length }} point{{ latencyTrend.length === 1 ? "" : "s" }})
+                      {{ $t('fleet.monitoring.history.points', { count: latencyTrend.length }) }}
                     </template>
                   </p>
                 </div>
@@ -515,8 +517,8 @@ async function deleteMonitor() {
               <div class="rounded-lg border border-border bg-muted/20 p-4">
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p class="text-sm font-medium">Latency trend</p>
-                    <p class="text-xs text-muted-foreground">Last {{ recentResults.length }} results</p>
+                    <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.latencyTrend') }}</p>
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.history.recentResults', { count: recentResults.length }) }}</p>
                   </div>
                   <Badge :variant="resultVariant(latestResult)">{{ resultLabel(latestResult) }}</Badge>
                 </div>
@@ -531,27 +533,27 @@ async function deleteMonitor() {
                     stroke-linejoin="round"
                   />
                   <text v-else x="50" y="13" text-anchor="middle" class="fill-muted-foreground text-[4px]">
-                    waiting for latency samples
+                    {{ $t('fleet.monitoring.history.waitingSamples') }}
                   </text>
                 </svg>
                 <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                  <span>{{ selectedSuccessRate }} success</span>
-                  <span class="text-right">{{ averageLatency }} average</span>
+                  <span>{{ $t('fleet.monitoring.history.successSuffix', { rate: selectedSuccessRate }) }}</span>
+                  <span class="text-right">{{ $t('fleet.monitoring.history.averageSuffix', { latency: averageLatency }) }}</span>
                 </div>
               </div>
 
               <div class="rounded-lg border border-border p-4">
-                <p class="text-sm font-medium">Recent checks</p>
+                <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.recentChecks') }}</p>
                 <div class="mt-3 grid grid-cols-[repeat(24,minmax(0,1fr))] gap-1">
                   <span
                     v-for="result in recentResults.slice(-48)"
                     :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
                     :class="cn('h-8 rounded-sm', resultBarClass(result))"
-                    :title="`${nodeName(result.node_id)} ${result.success ? 'ok' : 'failed'} ${formatLatency(result.latency_ms)}`"
+                    :title="`${nodeName(result.node_id)} ${result.success ? $t('fleet.monitoring.result.ok') : $t('common.status.failed')} ${formatLatency(result.latency_ms)}`"
                   />
                 </div>
                 <p class="mt-3 text-xs text-muted-foreground">
-                  {{ failureCount }} failures in retained visible history
+                  {{ $t('fleet.monitoring.history.failuresInHistory', { count: failureCount }) }}
                 </p>
               </div>
             </div>
@@ -559,10 +561,10 @@ async function deleteMonitor() {
             <div class="overflow-x-auto rounded-lg border border-border">
               <div class="min-w-[640px]">
                 <div class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
-                  <span>Node</span>
-                  <span>Status</span>
-                  <span>Latency</span>
-                  <span>Observed</span>
+                  <span>{{ $t('fleet.monitoring.history.colNode') }}</span>
+                  <span>{{ $t('fleet.monitoring.history.colStatus') }}</span>
+                  <span>{{ $t('fleet.monitoring.history.colLatency') }}</span>
+                  <span>{{ $t('fleet.monitoring.history.colObserved') }}</span>
                 </div>
                 <div
                   v-for="result in sortedResultsDesc.slice(0, 40)"
@@ -577,7 +579,7 @@ async function deleteMonitor() {
                     <Badge :variant="result.success ? 'success' : 'destructive'">
                       <CheckCircle2 v-if="result.success" class="size-3" aria-hidden="true" />
                       <XCircle v-else class="size-3" aria-hidden="true" />
-                      {{ result.success ? "ok" : "fail" }}
+                      {{ result.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}
                     </Badge>
                   </div>
                   <span class="font-mono text-xs text-muted-foreground">{{ formatLatency(result.latency_ms) }}</span>

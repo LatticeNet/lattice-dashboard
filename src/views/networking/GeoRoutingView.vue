@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   AlertTriangle,
@@ -51,6 +52,7 @@ import {
 
 type Strategy = "geoip" | "all-healthy";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("geo:read"));
 const canAdmin = computed(() => auth.can("geo:admin"));
@@ -165,11 +167,11 @@ async function submitForm() {
       req.ddns_profile_id = form.ddns_profile_id.trim();
     }
     await api.geoRouting.upsert(req);
-    toast.success(editingId.value ? "Geo-routing updated" : "Geo-routing created");
+    toast.success(editingId.value ? t("networking.geoRouting.toastUpdated") : t("networking.geoRouting.toastCreated"));
     formOpen.value = false;
     routesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Save failed");
+    toast.error(error instanceof Error ? error.message : t("networking.geoRouting.toastSaveFailed"));
   } finally {
     saving.value = false;
   }
@@ -184,11 +186,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.geoRouting.delete(deleteTarget.value.id);
-    toast.success("Geo-routing deleted");
+    toast.success(t("networking.geoRouting.toastDeleted"));
     deleteTarget.value = undefined;
     routesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("networking.geoRouting.toastDeleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -209,7 +211,7 @@ async function openPlan(route: GeoRouting) {
     planDigest.value = await sha256Hex(result.config || "");
     planOpen.value = true;
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Plan preview failed");
+    toast.error(error instanceof Error ? error.message : t("networking.geoRouting.toastPlanFailed"));
   } finally {
     planning.value = undefined;
   }
@@ -223,8 +225,8 @@ const continentEntries = computed(() =>
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Geo-Routing"
-      description="Geo-aware DNS apex routing — resolve each hostname to the nearest healthy node"
+      :title="$t('networking.geoRouting.title')"
+      :description="$t('networking.geoRouting.description')"
     >
       <template #actions>
         <Button
@@ -234,7 +236,7 @@ const continentEntries = computed(() =>
           @click="routesQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', routesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button
           v-if="canAdmin"
@@ -242,7 +244,7 @@ const continentEntries = computed(() =>
           @click="openCreate"
         >
           <Plus class="size-4" aria-hidden="true" />
-          New geo-routing
+          {{ $t('networking.geoRouting.newRouting') }}
         </Button>
       </template>
     </PageHeader>
@@ -251,10 +253,10 @@ const continentEntries = computed(() =>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Route class="size-4 text-muted-foreground" aria-hidden="true" />
-          Routings
+          {{ $t('networking.geoRouting.routings') }}
         </CardTitle>
         <CardDescription>
-          {{ routes.length }} geo-aware apex {{ routes.length === 1 ? "record" : "records" }}
+          {{ routes.length === 1 ? $t('networking.geoRouting.apexRecord', { count: routes.length }) : $t('networking.geoRouting.apexRecords', { count: routes.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -262,23 +264,23 @@ const continentEntries = computed(() =>
           :loading="routesQuery.loading.value"
           :error="routesQuery.error.value"
           :is-empty="routes.length === 0"
-          empty-title="No geo-routings configured"
-          empty-description="Create a geo-aware DNS apex to steer clients to the nearest healthy node."
+          :empty-title="$t('networking.geoRouting.emptyTitle')"
+          :empty-description="$t('networking.geoRouting.emptyDescription')"
           @retry="routesQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Hostname</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Strategy</th>
-                  <th scope="col" class="py-2 pr-4 text-right font-medium">Nodes</th>
-                  <th scope="col" class="py-2 pr-4 text-right font-medium">DNS</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Last applied</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Last error</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colName') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colHostname') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colStrategy') }}</th>
+                  <th scope="col" class="py-2 pr-4 text-right font-medium">{{ $t('networking.geoRouting.colNodes') }}</th>
+                  <th scope="col" class="py-2 pr-4 text-right font-medium">{{ $t('networking.geoRouting.colDns') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colStatus') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colLastApplied') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colLastError') }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.geoRouting.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -304,7 +306,7 @@ const continentEntries = computed(() =>
                     <span v-else class="text-xs text-muted-foreground">—</span>
                   </td>
                   <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    {{ route.last_applied_at ? formatDateTime(route.last_applied_at) : "never" }}
+                    {{ route.last_applied_at ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
                   </td>
                   <td class="py-3 pr-4 max-w-[180px]">
                     <span v-if="route.last_error" class="break-words text-xs text-destructive">
@@ -323,13 +325,13 @@ const continentEntries = computed(() =>
                       >
                         <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" aria-hidden="true" />
                         <FileCode2 v-else class="size-4" aria-hidden="true" />
-                        Plan
+                        {{ $t('networking.shared.plan') }}
                       </Button>
                       <Button
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Edit"
+                        :aria-label="$t('common.actions.edit')"
                         @click="openEdit(route)"
                       >
                         <Pencil class="size-4" />
@@ -338,7 +340,7 @@ const continentEntries = computed(() =>
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete"
+                        :aria-label="$t('common.actions.delete')"
                         @click="deleteTarget = route"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -357,63 +359,63 @@ const continentEntries = computed(() =>
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? "Edit geo-routing" : "New geo-routing" }}</DialogTitle>
+          <DialogTitle>{{ editingId ? $t('networking.geoRouting.editTitle') : $t('networking.geoRouting.newTitle') }}</DialogTitle>
           <DialogDescription>
-            Bind a DNS apex to participating answer nodes and authoritative DNS nodes.
+            {{ $t('networking.geoRouting.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="geo-name">Name</Label>
+              <Label for="geo-name">{{ $t('networking.geoRouting.name') }}</Label>
               <Input id="geo-name" v-model="form.name" required placeholder="apex-edge" />
             </div>
             <div class="grid gap-2">
-              <Label for="geo-hostname">Hostname</Label>
+              <Label for="geo-hostname">{{ $t('networking.geoRouting.hostname') }}</Label>
               <Input id="geo-hostname" v-model="form.hostname" required placeholder="app.example.com" />
             </div>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="geo-strategy">Strategy</Label>
+              <Label for="geo-strategy">{{ $t('networking.geoRouting.strategy') }}</Label>
               <select
                 id="geo-strategy"
                 v-model="form.strategy"
                 class="h-9 rounded-md border border-input bg-background px-3 text-sm"
               >
-                <option value="geoip">geoip (CoreDNS geoip + view)</option>
-                <option value="all-healthy">all-healthy (round-robin failover)</option>
+                <option value="geoip">{{ $t('networking.geoRouting.strategyGeoip') }}</option>
+                <option value="all-healthy">{{ $t('networking.geoRouting.strategyAllHealthy') }}</option>
               </select>
             </div>
             <div class="grid gap-2">
-              <Label for="geo-ttl">TTL (seconds)</Label>
+              <Label for="geo-ttl">{{ $t('networking.geoRouting.ttlSeconds') }}</Label>
               <Input id="geo-ttl" v-model.number="form.ttl" type="number" min="10" max="3600" />
             </div>
           </div>
 
           <div v-if="form.strategy === 'geoip'" class="grid gap-2">
-            <Label for="geo-db">GeoIP database path</Label>
+            <Label for="geo-db">{{ $t('networking.geoRouting.geoipDbPath') }}</Label>
             <Input
               id="geo-db"
               v-model="form.geoip_db_path"
-              placeholder="/var/lib/lattice/GeoLite2-Country.mmdb (optional)"
+              :placeholder="$t('networking.geoRouting.geoipDbPlaceholder')"
             />
             <p class="text-xs text-muted-foreground">
-              Absolute path to a GeoLite2 mmdb on the DNS node. Leave blank to use the node default.
+              {{ $t('networking.geoRouting.geoipDbHint') }}
             </p>
           </div>
 
           <div class="grid gap-2">
-            <Label>Participating nodes</Label>
-            <p class="text-xs text-muted-foreground">Answer targets — each needs geo lat/lon, a public IP, and health.</p>
+            <Label>{{ $t('networking.geoRouting.participatingNodes') }}</Label>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.participatingNodesHint') }}</p>
             <DataState
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
               :is-empty="nodes.length === 0"
-              empty-title="No nodes available"
-              empty-description="Enroll nodes before configuring geo-routing."
+              :empty-title="$t('networking.geoRouting.noNodesTitle')"
+              :empty-description="$t('networking.geoRouting.noNodesDescription')"
               :skeleton-rows="2"
               @retry="nodesQuery.refresh"
             >
@@ -430,15 +432,15 @@ const continentEntries = computed(() =>
                     @change="toggleId('node_ids', node.id)"
                   />
                   <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
-                  <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? "on" : "off" }}</Badge>
+                  <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('networking.geoRouting.on') : $t('networking.geoRouting.off') }}</Badge>
                 </label>
               </div>
             </DataState>
           </div>
 
           <div class="grid gap-2">
-            <Label>Authoritative DNS nodes</Label>
-            <p class="text-xs text-muted-foreground">Self-host DNS nodes that serve the rendered zone.</p>
+            <Label>{{ $t('networking.geoRouting.authoritativeNodes') }}</Label>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.authoritativeNodesHint') }}</p>
             <div class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
               <label
                 v-for="node in nodes"
@@ -452,30 +454,30 @@ const continentEntries = computed(() =>
                   @change="toggleId('dns_node_ids', node.id)"
                 />
                 <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
-                <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? "on" : "off" }}</Badge>
+                <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('networking.geoRouting.on') : $t('networking.geoRouting.off') }}</Badge>
               </label>
             </div>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="geo-ddns">DDNS profile id (NS delegation)</Label>
-              <Input id="geo-ddns" v-model="form.ddns_profile_id" placeholder="optional" />
+              <Label for="geo-ddns">{{ $t('networking.geoRouting.ddnsProfileId') }}</Label>
+              <Input id="geo-ddns" v-model="form.ddns_profile_id" :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')" />
             </div>
             <label class="flex items-center gap-2 self-end pb-2 text-sm">
               <input v-model="form.publish_ns" type="checkbox" class="size-4 accent-primary" />
-              Publish parent-zone NS delegation
+              {{ $t('networking.geoRouting.publishNs') }}
             </label>
           </div>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              {{ editingId ? "Save changes" : "Create" }}
+              {{ editingId ? $t('common.actions.saveChanges') : $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>
@@ -486,19 +488,19 @@ const continentEntries = computed(() =>
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete geo-routing?</DialogTitle>
+          <DialogTitle>{{ $t('networking.geoRouting.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            Remove "{{ deleteTarget?.name || deleteTarget?.id }}" ({{ deleteTarget?.hostname }}). This cannot be undone.
+            {{ $t('networking.geoRouting.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id, hostname: deleteTarget?.hostname }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -510,25 +512,26 @@ const continentEntries = computed(() =>
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <FileCode2 class="size-5 text-muted-foreground" aria-hidden="true" />
-            Geo-routing preview
+            {{ $t('networking.geoRouting.previewTitle') }}
           </DialogTitle>
           <DialogDescription v-if="plan">
-            {{ plan.hostname }} · strategy {{ plan.strategy }}
+            {{ $t('networking.geoRouting.previewSubtitle', { hostname: plan.hostname, strategy: plan.strategy }) }}
           </DialogDescription>
         </DialogHeader>
 
         <div v-if="plan" class="space-y-4">
           <div class="flex items-start gap-2 rounded-md border border-info/40 bg-info/5 p-3 text-sm">
             <Globe class="mt-0.5 size-4 shrink-0 text-info" aria-hidden="true" />
-            <p class="text-muted-foreground">
-              This is a <span class="font-medium text-foreground">render-only preview</span> of the CoreDNS
-              configuration. Nothing is queued or applied — no approval is created.
-            </p>
+            <i18n-t keypath="networking.geoRouting.renderOnlyHint" tag="p" class="text-muted-foreground" scope="global">
+              <template #renderOnly>
+                <span class="font-medium text-foreground">{{ $t('networking.geoRouting.renderOnlyLead') }}</span>
+              </template>
+            </i18n-t>
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">CoreDNS server-block</span>
+              <span class="text-sm font-medium">{{ $t('networking.geoRouting.serverBlock') }}</span>
               <CopyButton :value="plan.config || ''" />
             </div>
             <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ plan.config }}</pre>
@@ -543,7 +546,7 @@ const continentEntries = computed(() =>
           <div v-if="plan.warnings && plan.warnings.length" class="space-y-2">
             <p class="flex items-center gap-2 text-sm font-medium text-warning">
               <AlertTriangle class="size-4" aria-hidden="true" />
-              Warnings
+              {{ $t('networking.geoRouting.warnings') }}
             </p>
             <ul class="space-y-1 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs text-muted-foreground">
               <li v-for="(warning, index) in plan.warnings" :key="index" class="break-words">{{ warning }}</li>
@@ -551,13 +554,13 @@ const continentEntries = computed(() =>
           </div>
 
           <div v-if="continentEntries.length" class="space-y-2">
-            <p class="text-sm font-medium">Per-continent node choice</p>
+            <p class="text-sm font-medium">{{ $t('networking.geoRouting.perContinentTitle') }}</p>
             <div class="overflow-x-auto rounded-md border border-border">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                    <th scope="col" class="px-3 py-2 font-medium">Continent</th>
-                    <th scope="col" class="px-3 py-2 font-medium">Node</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.geoRouting.colContinent') }}</th>
+                    <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.geoRouting.colChoiceNode') }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -577,7 +580,7 @@ const continentEntries = computed(() =>
 
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Close</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.close') }}</Button>
           </DialogClose>
         </DialogFooter>
       </DialogScrollContent>

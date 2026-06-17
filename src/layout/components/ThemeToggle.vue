@@ -17,7 +17,7 @@ const theme = useThemeStore();
       <Button
         variant="ghost"
         size="icon"
-        aria-label="Toggle dark mode"
+        :aria-label="$t('shell.header.toggleTheme')"
         @click="theme.toggleDark()"
       >
         <Sun
@@ -31,7 +31,7 @@ const theme = useThemeStore();
       </Button>
     </TooltipTrigger>
     <TooltipContent side="bottom">
-      {{ theme.isDark ? "Switch to light" : "Switch to dark" }}
+      {{ $t('shell.header.toggleTheme') }}
     </TooltipContent>
   </Tooltip>
 </template>

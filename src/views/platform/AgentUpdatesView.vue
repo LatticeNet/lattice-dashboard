@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   DownloadCloud,
@@ -60,6 +61,7 @@ const SHA256_RE = /^[a-f0-9]{64}$/;
 const DEFAULT_INSTALL_PATH = "/usr/local/bin/lattice-agent";
 const DEFAULT_SERVICE_NAME = "lattice-agent.service";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("node:admin"));
 const canPlan = computed(() => auth.can("node:admin") && auth.can("network:plan"));
@@ -174,11 +176,11 @@ async function submitForm(): Promise<void> {
     if (form.value.install_path.trim()) req.install_path = form.value.install_path.trim();
     if (form.value.service_name.trim()) req.service_name = form.value.service_name.trim();
     await api.agentUpdates.upsert(req);
-    toast.success(editing.value ? "Policy updated" : "Policy created");
+    toast.success(editing.value ? t("platform.agentUpdates.policyUpdated") : t("platform.agentUpdates.policyCreated"));
     formOpen.value = false;
     policiesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Save failed");
+    toast.error(error instanceof Error ? error.message : t("platform.agentUpdates.saveFailed"));
   } finally {
     saving.value = false;
   }
@@ -193,11 +195,11 @@ async function confirmDelete(): Promise<void> {
   deleting.value = true;
   try {
     await api.agentUpdates.delete(deleteTarget.value.node_id);
-    toast.success("Policy deleted");
+    toast.success(t("platform.agentUpdates.policyDeleted"));
     deleteTarget.value = undefined;
     policiesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("platform.agentUpdates.deleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -223,16 +225,16 @@ async function runPlan(nodeId: string, force: boolean): Promise<void> {
     planDigest.value = await sha256Hex(result.plan || "");
     noopOpen.value = false;
     planOpen.value = true;
-    toast.success("Plan created — review in Approvals");
+    toast.success(t("platform.agentUpdates.planCreated"));
     policiesQuery.refresh();
   } catch (error) {
     // 409 = node already at target / noop. Offer a forced re-plan.
     if (error instanceof ApiError && error.status === 409 && !force) {
       noopNodeId.value = nodeId;
-      noopMessage.value = error.message || "Node already reports the target version.";
+      noopMessage.value = error.message || t("platform.agentUpdates.nodeAlreadyTarget");
       noopOpen.value = true;
     } else {
-      toast.error(error instanceof Error ? error.message : "Plan failed");
+      toast.error(error instanceof Error ? error.message : t("platform.agentUpdates.planFailed"));
     }
   } finally {
     planning.value = undefined;
@@ -247,8 +249,8 @@ function forcePlan(): void {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Agent Updates"
-      description="Per-node lattice-agent update policies with plan → approve rollout"
+      :title="$t('platform.agentUpdates.title')"
+      :description="$t('platform.agentUpdates.description')"
     >
       <template #actions>
         <Button
@@ -258,11 +260,11 @@ function forcePlan(): void {
           @click="policiesQuery.refresh"
         >
           <RefreshCw aria-hidden="true" :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
-          New policy
+          {{ $t('platform.agentUpdates.newPolicy') }}
         </Button>
       </template>
     </PageHeader>
@@ -271,11 +273,10 @@ function forcePlan(): void {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <DownloadCloud aria-hidden="true" class="size-4 text-muted-foreground" />
-          Update policies
+          {{ $t('platform.agentUpdates.policiesTitle') }}
         </CardTitle>
         <CardDescription>
-          {{ policies.length }} {{ policies.length === 1 ? "policy" : "policies" }} ·
-          binary URL + sha256 are integrity pins, applied via approved plans
+          {{ $t('platform.agentUpdates.policiesCount', { count: policies.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -283,22 +284,22 @@ function forcePlan(): void {
           :loading="policiesQuery.loading.value"
           :error="policiesQuery.error.value"
           :is-empty="policies.length === 0"
-          empty-title="No update policies"
-          empty-description="Define a per-node policy to pin and roll out lattice-agent versions."
+          :empty-title="$t('platform.agentUpdates.emptyTitle')"
+          :empty-description="$t('platform.agentUpdates.emptyDescription')"
           @retry="policiesQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">State</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Target</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Applied</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Last planned</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Binary URL</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">sha256</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colNode') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colState') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colTarget') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colApplied') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colLastPlanned') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colBinaryUrl') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.colSha256') }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('platform.agentUpdates.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -314,10 +315,10 @@ function forcePlan(): void {
                   <td class="py-3 pr-4">
                     <div class="flex flex-wrap gap-1">
                       <Badge :variant="policy.enabled ? 'success' : 'secondary'">
-                        {{ policy.enabled ? "enabled" : "disabled" }}
+                        {{ policy.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                       </Badge>
                       <Badge :variant="policy.auto_plan ? 'info' : 'outline'">
-                        {{ policy.auto_plan ? "auto-plan" : "manual" }}
+                        {{ policy.auto_plan ? $t('platform.agentUpdates.autoPlan') : $t('platform.agentUpdates.manual') }}
                       </Badge>
                     </div>
                     <p v-if="policy.last_error" class="mt-1 max-w-[220px] break-words text-xs text-destructive">
@@ -354,13 +355,13 @@ function forcePlan(): void {
                       >
                         <RefreshCw v-if="planning === policy.node_id" aria-hidden="true" class="size-4 animate-spin" />
                         <FileCode2 v-else aria-hidden="true" class="size-4" />
-                        Plan
+                        {{ $t('platform.agentUpdates.plan') }}
                       </Button>
                       <Button
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Edit policy"
+                        :aria-label="$t('platform.agentUpdates.editPolicyAria')"
                         @click="openEdit(policy)"
                       >
                         <Pencil class="size-4" />
@@ -369,7 +370,7 @@ function forcePlan(): void {
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete policy"
+                        :aria-label="$t('platform.agentUpdates.deletePolicyAria')"
                         @click="deleteTarget = policy"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -388,20 +389,19 @@ function forcePlan(): void {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{{ editing ? "Edit update policy" : "New update policy" }}</DialogTitle>
+          <DialogTitle>{{ editing ? $t('platform.agentUpdates.editPolicyTitle') : $t('platform.agentUpdates.newPolicyTitle') }}</DialogTitle>
           <DialogDescription>
-            Pin the desired lattice-agent version with an HTTPS binary URL and its SHA-256 digest.
-            Rollout still requires an approved plan and an exec-enabled agent.
+            {{ $t('platform.agentUpdates.formHint') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="pol-node">Node</Label>
+              <Label for="pol-node">{{ $t('platform.agentUpdates.nodeLabel') }}</Label>
               <Select v-model="form.node_id" :disabled="editing">
                 <SelectTrigger id="pol-node">
-                  <SelectValue placeholder="Select a node" />
+                  <SelectValue :placeholder="$t('platform.agentUpdates.selectNode')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -409,10 +409,10 @@ function forcePlan(): void {
                   </SelectItem>
                 </SelectContent>
               </Select>
-              <p v-if="editing" class="text-xs text-muted-foreground">Node is the policy key and cannot change.</p>
+              <p v-if="editing" class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.nodeImmutable') }}</p>
             </div>
             <div class="grid gap-2">
-              <Label for="pol-version">Target version</Label>
+              <Label for="pol-version">{{ $t('platform.agentUpdates.targetVersionLabel') }}</Label>
               <Input
                 id="pol-version"
                 v-model="form.target_version"
@@ -421,13 +421,13 @@ function forcePlan(): void {
                 :class="cn(form.target_version && !versionValid && 'border-destructive')"
               />
               <p v-if="form.target_version && !versionValid" class="text-xs text-destructive">
-                Must match ^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$
+                {{ $t('platform.agentUpdates.versionInvalid') }}
               </p>
             </div>
           </div>
 
           <div class="grid gap-2">
-            <Label for="pol-url">Binary URL</Label>
+            <Label for="pol-url">{{ $t('platform.agentUpdates.binaryUrlLabel') }}</Label>
             <Input
               id="pol-url"
               v-model="form.binary_url"
@@ -436,57 +436,57 @@ function forcePlan(): void {
               :class="cn(form.binary_url && !urlValid && 'border-destructive')"
             />
             <p v-if="form.binary_url && !urlValid" class="text-xs text-destructive">
-              Must be a valid HTTPS URL.
+              {{ $t('platform.agentUpdates.urlInvalid') }}
             </p>
           </div>
 
           <div class="grid gap-2">
-            <Label for="pol-sha">SHA-256</Label>
+            <Label for="pol-sha">{{ $t('platform.agentUpdates.sha256Label') }}</Label>
             <Input
               id="pol-sha"
               v-model="form.sha256"
               required
-              placeholder="64-char lowercase hex"
+              :placeholder="$t('platform.agentUpdates.sha256Placeholder')"
               :class="cn('font-mono', form.sha256 && !shaValid && 'border-destructive')"
             />
             <p v-if="form.sha256 && !shaValid" class="text-xs text-destructive">
-              Must be 64-character lowercase hex.
+              {{ $t('platform.agentUpdates.sha256Invalid') }}
             </p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="pol-install">Install path</Label>
+              <Label for="pol-install">{{ $t('platform.agentUpdates.installPathLabel') }}</Label>
               <Input id="pol-install" v-model="form.install_path" :placeholder="DEFAULT_INSTALL_PATH" />
-              <p class="text-xs text-muted-foreground">defaults to {{ DEFAULT_INSTALL_PATH }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.installPathHint', { path: DEFAULT_INSTALL_PATH }) }}</p>
             </div>
             <div class="grid gap-2">
-              <Label for="pol-service">Service name</Label>
+              <Label for="pol-service">{{ $t('platform.agentUpdates.serviceNameLabel') }}</Label>
               <Input id="pol-service" v-model="form.service_name" :placeholder="DEFAULT_SERVICE_NAME" />
-              <p class="text-xs text-muted-foreground">defaults to {{ DEFAULT_SERVICE_NAME }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.serviceNameHint', { name: DEFAULT_SERVICE_NAME }) }}</p>
             </div>
           </div>
 
           <div class="flex flex-wrap gap-6">
             <label class="flex items-center gap-2 text-sm">
               <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-              Enabled
+              {{ $t('platform.agentUpdates.enabledLabel') }}
             </label>
             <label class="flex items-center gap-2 text-sm">
               <input v-model="form.auto_plan" type="checkbox" class="size-4 accent-primary" />
-              Auto-plan
+              {{ $t('platform.agentUpdates.autoPlanLabel') }}
             </label>
           </div>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
               <Plus v-else-if="!editing" aria-hidden="true" class="size-4" />
               <Pencil v-else aria-hidden="true" class="size-4" />
-              {{ editing ? "Save" : "Create" }}
+              {{ editing ? $t('common.actions.save') : $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>
@@ -497,19 +497,19 @@ function forcePlan(): void {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete update policy?</DialogTitle>
+          <DialogTitle>{{ $t('platform.agentUpdates.deletePolicyTitle') }}</DialogTitle>
           <DialogDescription>
-            Remove the policy for "{{ deleteTarget ? nodeName(deleteTarget.node_id) : "" }}". This cannot be undone.
+            {{ $t('platform.agentUpdates.deletePolicyConfirm', { node: deleteTarget ? nodeName(deleteTarget.node_id) : "" }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
             <Trash2 v-else aria-hidden="true" class="size-4" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -519,15 +519,15 @@ function forcePlan(): void {
     <Dialog v-model:open="noopOpen">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Nothing to plan</DialogTitle>
+          <DialogTitle>{{ $t('platform.agentUpdates.noopTitle') }}</DialogTitle>
           <DialogDescription>{{ noopMessage }}</DialogDescription>
         </DialogHeader>
         <p class="text-sm text-muted-foreground">
-          Force a plan anyway to re-roll the pinned version even though the node already reports it.
+          {{ $t('platform.agentUpdates.noopHint') }}
         </p>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button
             type="button"
@@ -536,7 +536,7 @@ function forcePlan(): void {
           >
             <RefreshCw v-if="!!noopNodeId && planning === noopNodeId" aria-hidden="true" class="size-4 animate-spin" />
             <FileCode2 v-else aria-hidden="true" class="size-4" />
-            Force plan
+            {{ $t('platform.agentUpdates.forcePlan') }}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -548,23 +548,22 @@ function forcePlan(): void {
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <FileCode2 aria-hidden="true" class="size-5 text-muted-foreground" />
-            Agent update plan
+            {{ $t('platform.agentUpdates.planTitle') }}
           </DialogTitle>
           <DialogDescription v-if="approval">
-            {{ approval.plugin }} / {{ approval.action }} on {{ nodeName(approval.node_id) }}
+            {{ $t('platform.agentUpdates.planReviewOn', { plugin: approval.plugin, action: approval.action, node: nodeName(approval.node_id) }) }}
           </DialogDescription>
         </DialogHeader>
 
         <div v-if="approval" class="space-y-4">
           <div class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground">
-            Plan created. Review and approve under
-            <span class="font-medium text-foreground">Operations → Approvals</span>; the target node-agent
-            applies it after approval.
+            {{ $t('platform.agentUpdates.planCreatedReview') }}
+            <span class="font-medium text-foreground">{{ $t('platform.agentUpdates.operationsApprovals') }}</span>{{ $t('platform.agentUpdates.planAppliesAfter') }}
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">Plan</span>
+              <span class="text-sm font-medium">{{ $t('platform.agentUpdates.plan') }}</span>
               <CopyButton :value="approval.plan || ''" />
             </div>
             <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ approval.plan }}</pre>
@@ -577,7 +576,7 @@ function forcePlan(): void {
           </div>
 
           <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">approval {{ shortId(approval.id, 12) }}</Badge>
+            <Badge variant="outline">{{ $t('platform.agentUpdates.approvalLabel', { id: shortId(approval.id, 12) }) }}</Badge>
             <Badge variant="warning">{{ approval.status }}</Badge>
             <span v-if="approval.created_at">{{ formatDateTime(approval.created_at) }}</span>
           </div>
@@ -585,10 +584,10 @@ function forcePlan(): void {
 
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Close</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.close') }}</Button>
           </DialogClose>
           <RouterLink to="/approvals">
-            <Button type="button">Go to Approvals</Button>
+            <Button type="button">{{ $t('platform.agentUpdates.goToApprovals') }}</Button>
           </RouterLink>
         </DialogFooter>
       </DialogScrollContent>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Code2, Play, Plus, RefreshCw, Rocket } from "lucide-vue-next";
 import { api, type WorkerRunResponse, type WorkerScript } from "@/lib/api";
@@ -37,6 +38,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canDeploy = computed(() => auth.can("worker:deploy"));
 
@@ -94,11 +96,11 @@ async function submitDeploy() {
       capabilities: parseCapabilities(deployCapabilities.value),
       public: deployPublic.value,
     });
-    toast.success("Worker deployed");
+    toast.success(t("platform.workers.deployed"));
     deployOpen.value = false;
     workersQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Worker deploy failed");
+    toast.error(error instanceof Error ? error.message : t("platform.workers.deployFailed"));
   } finally {
     deploying.value = false;
   }
@@ -137,9 +139,9 @@ async function submitRun() {
   runResult.value = undefined;
   try {
     runResult.value = await api.workers.run(runWorkerId.value, runPath.value);
-    toast.success("Worker executed");
+    toast.success(t("platform.workers.executed"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Worker run failed");
+    toast.error(error instanceof Error ? error.message : t("platform.workers.runFailed"));
   } finally {
     running.value = false;
   }
@@ -149,21 +151,21 @@ async function submitRun() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Workers"
-      description="Deployable in-process request handlers executed against a request path"
+      :title="$t('platform.workers.title')"
+      :description="$t('platform.workers.description')"
     >
       <template #actions>
         <Button variant="outline" size="sm" :disabled="workersQuery.refreshing.value" @click="workersQuery.refresh">
           <RefreshCw aria-hidden="true" :class="cn('size-4', workersQuery.refreshing.value && 'animate-spin')" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canDeploy" variant="outline" size="sm" @click="openRun()">
           <Play aria-hidden="true" class="size-4" />
-          Run
+          {{ $t('common.actions.run') }}
         </Button>
         <Button v-if="canDeploy" size="sm" @click="openDeploy">
           <Plus aria-hidden="true" class="size-4" />
-          Deploy worker
+          {{ $t('platform.workers.deployWorker') }}
         </Button>
       </template>
     </PageHeader>
@@ -172,9 +174,9 @@ async function submitRun() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Code2 aria-hidden="true" class="size-4 text-muted-foreground" />
-          Worker scripts
+          {{ $t('platform.workers.scriptsTitle') }}
         </CardTitle>
-        <CardDescription>{{ workers.length }} deployed worker{{ workers.length === 1 ? "" : "s" }}.</CardDescription>
+        <CardDescription>{{ $t('platform.workers.scriptsCount', { count: workers.length }) }}</CardDescription>
       </CardHeader>
       <CardContent>
         <DataState
@@ -182,20 +184,20 @@ async function submitRun() {
           :loading="workersQuery.loading.value"
           :error="workersQuery.error.value"
           :is-empty="workers.length === 0"
-          empty-title="No workers deployed"
-          empty-description="Deploy a worker script to handle requests in-process."
+          :empty-title="$t('platform.workers.emptyTitle')"
+          :empty-description="$t('platform.workers.emptyDescription')"
           @retry="workersQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Capabilities</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Public</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Updated</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Source</th>
-                  <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colName') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colCapabilities') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colPublic') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colUpdated') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colSource') }}</th>
+                  <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.workers.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -211,28 +213,28 @@ async function submitRun() {
                   <td class="py-3 pr-3">
                     <div class="flex flex-wrap gap-1">
                       <Badge v-for="cap in worker.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                      <span v-if="!worker.capabilities.length" class="text-xs text-muted-foreground">none</span>
+                      <span v-if="!worker.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                     </div>
                   </td>
                   <td class="py-3 pr-3">
-                    <Badge :variant="worker.public ? 'info' : 'secondary'">{{ worker.public ? "public" : "private" }}</Badge>
+                    <Badge :variant="worker.public ? 'info' : 'secondary'">{{ worker.public ? $t('platform.workers.public') : $t('platform.workers.private') }}</Badge>
                   </td>
                   <td class="py-3 pr-3 text-xs text-muted-foreground">{{ formatDateTime(worker.updated_at) }}</td>
                   <td class="py-3 pr-3">
                     <button
                       type="button"
                       class="max-w-[280px] truncate text-left font-mono text-xs text-muted-foreground hover:text-primary"
-                      :title="'View source'"
+                      :title="$t('platform.workers.viewSource')"
                       @click="sourceTarget = worker"
                     >
-                      {{ sourcePreview(worker.source) || "(empty)" }}
+                      {{ sourcePreview(worker.source) || $t('platform.workers.sourceEmpty') }}
                     </button>
                   </td>
                   <td class="py-3 pl-3">
                     <div class="flex items-center justify-end gap-1">
                       <Button variant="outline" size="sm" @click="openRun(worker)">
                         <Play aria-hidden="true" class="size-4" />
-                        Run
+                        {{ $t('common.actions.run') }}
                       </Button>
                     </div>
                   </td>
@@ -242,7 +244,9 @@ async function submitRun() {
           </div>
         </DataState>
         <p v-else class="text-sm text-muted-foreground">
-          The <code class="font-mono">worker:deploy</code> scope is required to list and deploy workers.
+          <i18n-t keypath="platform.workers.deployScopeRequired" tag="span" scope="global">
+            <template #scope><code class="font-mono">worker:deploy</code></template>
+          </i18n-t>
         </p>
       </CardContent>
     </Card>
@@ -256,7 +260,7 @@ async function submitRun() {
         </DialogHeader>
         <pre class="max-h-[480px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-4 font-mono text-xs leading-relaxed">{{ sourceTarget?.source }}</pre>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="sourceTarget = undefined">Close</Button>
+          <Button type="button" variant="outline" @click="sourceTarget = undefined">{{ $t('common.actions.close') }}</Button>
         </DialogFooter>
       </DialogScrollContent>
     </Dialog>
@@ -265,43 +269,43 @@ async function submitRun() {
     <Dialog v-model:open="deployOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Deploy worker</DialogTitle>
-          <DialogDescription>The server validates the source before storing the script.</DialogDescription>
+          <DialogTitle>{{ $t('platform.workers.deployWorker') }}</DialogTitle>
+          <DialogDescription>{{ $t('platform.workers.deployHint') }}</DialogDescription>
         </DialogHeader>
         <form class="space-y-4" @submit.prevent="submitDeploy">
           <div class="grid gap-2">
-            <Label for="worker-name">Name</Label>
+            <Label for="worker-name">{{ $t('platform.workers.nameLabel') }}</Label>
             <Input id="worker-name" v-model="deployName" required placeholder="hello-worker" />
           </div>
           <div class="grid gap-2">
-            <Label for="worker-source">Source</Label>
+            <Label for="worker-source">{{ $t('platform.workers.sourceLabel') }}</Label>
             <textarea
               id="worker-source"
               v-model="deploySource"
               rows="10"
               spellcheck="false"
-              placeholder="// worker source"
+              :placeholder="$t('platform.workers.sourcePlaceholder')"
               class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="worker-caps">Capabilities</Label>
+              <Label for="worker-caps">{{ $t('platform.workers.capabilitiesLabel') }}</Label>
               <Input id="worker-caps" v-model="deployCapabilities" placeholder="kv:read, static:read" />
             </div>
             <div class="flex items-end">
               <label class="flex items-center gap-2 text-sm">
                 <input v-model="deployPublic" type="checkbox" class="size-4 accent-primary" />
-                Public worker
+                {{ $t('platform.workers.publicWorker') }}
               </label>
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" @click="deployOpen = false">Cancel</Button>
+            <Button type="button" variant="outline" @click="deployOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmitDeploy || deploying">
               <RefreshCw v-if="deploying" aria-hidden="true" class="size-4 animate-spin" />
               <Rocket v-else aria-hidden="true" class="size-4" />
-              Deploy
+              {{ $t('platform.workers.deploy') }}
             </Button>
           </DialogFooter>
         </form>
@@ -312,16 +316,16 @@ async function submitRun() {
     <Dialog v-model:open="runOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Run worker</DialogTitle>
-          <DialogDescription>Synchronously execute a stored worker against a request path.</DialogDescription>
+          <DialogTitle>{{ $t('platform.workers.runTitle') }}</DialogTitle>
+          <DialogDescription>{{ $t('platform.workers.runHint') }}</DialogDescription>
         </DialogHeader>
         <form class="space-y-4" @submit.prevent="submitRun">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="run-worker">Worker</Label>
+              <Label for="run-worker">{{ $t('platform.workers.workerLabel') }}</Label>
               <Select v-model="runWorkerId">
                 <SelectTrigger id="run-worker" class="w-full">
-                  <SelectValue placeholder="Select a worker" />
+                  <SelectValue :placeholder="$t('platform.workers.selectWorker')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="worker in sortedWorkers" :key="worker.id" :value="worker.id">
@@ -331,25 +335,25 @@ async function submitRun() {
               </Select>
             </div>
             <div class="grid gap-2">
-              <Label for="run-path">Path</Label>
+              <Label for="run-path">{{ $t('platform.workers.pathLabel') }}</Label>
               <Input id="run-path" v-model="runPath" placeholder="/" />
             </div>
           </div>
 
           <div v-if="runResult" class="space-y-3 rounded-md border border-border p-4">
             <div class="flex items-center gap-2">
-              <span class="text-xs font-medium uppercase text-muted-foreground">Status</span>
+              <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.workers.statusLabel') }}</span>
               <Badge :variant="statusVariant(runResult.status)">{{ runResult.status }}</Badge>
             </div>
             <pre class="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-3 font-mono text-xs leading-relaxed">{{ runResult.body }}</pre>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="runOpen = false">Close</Button>
+            <Button type="button" variant="outline" @click="runOpen = false">{{ $t('common.actions.close') }}</Button>
             <Button type="submit" :disabled="!canSubmitRun || running">
               <RefreshCw v-if="running" aria-hidden="true" class="size-4 animate-spin" />
               <Play v-else aria-hidden="true" class="size-4" />
-              Run
+              {{ $t('common.actions.run') }}
             </Button>
           </DialogFooter>
         </form>

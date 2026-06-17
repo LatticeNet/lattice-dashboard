@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Cable,
@@ -59,6 +60,7 @@ import {
 
 const TUNNEL_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("tunnel:admin"));
 
@@ -157,11 +159,11 @@ async function submitForm() {
       req.credentials_file = form.credentials_file.trim();
     }
     await api.tunnels.create(req);
-    toast.success("Tunnel created");
+    toast.success(t("networking.tunnels.toastCreated"));
     formOpen.value = false;
     tunnelsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Create failed");
+    toast.error(error instanceof Error ? error.message : t("networking.tunnels.toastCreateFailed"));
   } finally {
     saving.value = false;
   }
@@ -176,11 +178,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.tunnels.delete(deleteTarget.value.id);
-    toast.success("Tunnel deleted");
+    toast.success(t("networking.tunnels.toastDeleted"));
     deleteTarget.value = undefined;
     tunnelsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("networking.tunnels.toastDeleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -200,9 +202,9 @@ async function openPlan(tunnel: TunnelView) {
     approval.value = result;
     planDigest.value = await sha256Hex(result.plan || "");
     planOpen.value = true;
-    toast.success("Plan created — review in Approvals");
+    toast.success(t("networking.tunnels.toastPlanCreated"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Plan failed");
+    toast.error(error instanceof Error ? error.message : t("networking.tunnels.toastPlanFailed"));
   } finally {
     planning.value = undefined;
   }
@@ -212,8 +214,8 @@ async function openPlan(tunnel: TunnelView) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Tunnels"
-      description="Cloudflare Tunnels (cloudflared) — map public hostnames to node-local services"
+      :title="$t('networking.tunnels.title')"
+      :description="$t('networking.tunnels.description')"
     >
       <template #actions>
         <Button
@@ -223,11 +225,11 @@ async function openPlan(tunnel: TunnelView) {
           @click="tunnelsQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', tunnelsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New tunnel
+          {{ $t('networking.tunnels.newTunnel') }}
         </Button>
       </template>
     </PageHeader>
@@ -236,11 +238,11 @@ async function openPlan(tunnel: TunnelView) {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Cable class="size-4 text-muted-foreground" aria-hidden="true" />
-          Tunnels
+          {{ $t('networking.tunnels.tunnels') }}
         </CardTitle>
         <CardDescription>
-          {{ tunnels.length }} {{ tunnels.length === 1 ? "tunnel" : "tunnels" }} ·
-          credentials are node-local and never stored by the server
+          {{ tunnels.length === 1 ? $t('networking.tunnels.tunnelCountOne', { count: tunnels.length }) : $t('networking.tunnels.tunnelCount', { count: tunnels.length }) }} ·
+          {{ $t('networking.tunnels.credentialsNote') }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -248,20 +250,20 @@ async function openPlan(tunnel: TunnelView) {
           :loading="tunnelsQuery.loading.value"
           :error="tunnelsQuery.error.value"
           :is-empty="tunnels.length === 0"
-          empty-title="No tunnels configured"
-          empty-description="Create a cloudflared tunnel to expose node-local services."
+          :empty-title="$t('networking.tunnels.emptyTitle')"
+          :empty-description="$t('networking.tunnels.emptyDescription')"
           @retry="tunnelsQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Tunnel ID</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Credentials file</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Ingress</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.tunnels.colName') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.tunnels.colNode') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.tunnels.colTunnelId') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.tunnels.colCredentialsFile') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.tunnels.colIngress') }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.tunnels.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -289,7 +291,7 @@ async function openPlan(tunnel: TunnelView) {
                       >
                         <ChevronDown v-if="expanded[tunnel.id]" class="size-3.5" aria-hidden="true" />
                         <ChevronRight v-else class="size-3.5" aria-hidden="true" />
-                        {{ tunnel.ingress.length }} {{ tunnel.ingress.length === 1 ? "rule" : "rules" }}
+                        {{ tunnel.ingress.length === 1 ? $t('networking.tunnels.rulesCountOne', { count: tunnel.ingress.length }) : $t('networking.tunnels.rulesCount', { count: tunnel.ingress.length }) }}
                       </button>
                     </td>
                     <td class="py-3 pl-4">
@@ -303,13 +305,13 @@ async function openPlan(tunnel: TunnelView) {
                         >
                           <RefreshCw v-if="planning === tunnel.id" class="size-4 animate-spin" aria-hidden="true" />
                           <FileCode2 v-else class="size-4" aria-hidden="true" />
-                          Plan
+                          {{ $t('networking.shared.plan') }}
                         </Button>
                         <Button
                           v-if="canAdmin"
                           variant="ghost"
                           size="icon-sm"
-                          aria-label="Delete"
+                          :aria-label="$t('common.actions.delete')"
                           @click="deleteTarget = tunnel"
                         >
                           <Trash2 class="size-4 text-destructive" />
@@ -345,23 +347,23 @@ async function openPlan(tunnel: TunnelView) {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New tunnel</DialogTitle>
+          <DialogTitle>{{ $t('networking.tunnels.newTunnelTitle') }}</DialogTitle>
           <DialogDescription>
-            Describe a cloudflared tunnel. Credentials live node-local — the server only stores topology.
+            {{ $t('networking.tunnels.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="tun-name">Name</Label>
+              <Label for="tun-name">{{ $t('networking.tunnels.name') }}</Label>
               <Input id="tun-name" v-model="form.name" required placeholder="edge-tunnel" />
             </div>
             <div class="grid gap-2">
-              <Label for="tun-node">Node</Label>
+              <Label for="tun-node">{{ $t('networking.tunnels.nodeLabel') }}</Label>
               <Select v-model="form.node_id">
                 <SelectTrigger id="tun-node">
-                  <SelectValue placeholder="Select a node" />
+                  <SelectValue :placeholder="$t('networking.tunnels.selectNode')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -373,34 +375,34 @@ async function openPlan(tunnel: TunnelView) {
           </div>
 
           <div class="grid gap-2">
-            <Label for="tun-id">Tunnel ID</Label>
+            <Label for="tun-id">{{ $t('networking.tunnels.tunnelId') }}</Label>
             <Input
               id="tun-id"
               v-model="form.tunnel_id"
               required
-              placeholder="cloudflare tunnel UUID or name"
+              :placeholder="$t('networking.tunnels.tunnelIdPlaceholder')"
               :class="cn(form.tunnel_id && !tunnelIdValid && 'border-destructive')"
             />
             <p v-if="form.tunnel_id && !tunnelIdValid" class="text-xs text-destructive">
-              Must match ^[A-Za-z0-9._-]{1,128}$
+              {{ $t('networking.tunnels.tunnelIdError') }}
             </p>
           </div>
 
           <div class="grid gap-2">
-            <Label for="tun-creds">Credentials file</Label>
+            <Label for="tun-creds">{{ $t('networking.tunnels.credentialsFile') }}</Label>
             <Input id="tun-creds" v-model="form.credentials_file" :placeholder="credentialsPlaceholder" />
             <p class="text-xs text-muted-foreground">
-              Path on the node. Leave blank to default to
+              {{ $t('networking.tunnels.credentialsHint') }}
               <code class="font-mono">{{ credentialsPlaceholder }}</code>.
             </p>
           </div>
 
           <div class="grid gap-2">
             <div class="flex items-center justify-between">
-              <Label>Ingress rules</Label>
+              <Label>{{ $t('networking.tunnels.ingressRules') }}</Label>
               <Button type="button" variant="outline" size="sm" @click="addRow">
                 <Plus class="size-4" aria-hidden="true" />
-                Add rule
+                {{ $t('networking.tunnels.addRule') }}
               </Button>
             </div>
             <div class="space-y-2">
@@ -409,14 +411,14 @@ async function openPlan(tunnel: TunnelView) {
                 :key="index"
                 class="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_1fr_120px_auto]"
               >
-                <Input v-model="rule.hostname" placeholder="app.example.com" />
-                <Input v-model="rule.service" placeholder="http://localhost:8088" />
-                <Input v-model="rule.path" placeholder="path (opt)" />
+                <Input v-model="rule.hostname" :placeholder="$t('networking.tunnels.hostnamePlaceholder')" />
+                <Input v-model="rule.service" :placeholder="$t('networking.tunnels.servicePlaceholder')" />
+                <Input v-model="rule.path" :placeholder="$t('networking.tunnels.pathPlaceholder')" />
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label="Remove rule"
+                  :aria-label="$t('networking.tunnels.removeRule')"
                   :disabled="form.ingress.length === 1"
                   @click="removeRow(index)"
                 >
@@ -424,21 +426,27 @@ async function openPlan(tunnel: TunnelView) {
                 </Button>
               </div>
             </div>
-            <p class="text-xs text-muted-foreground">
-              Service examples: <code class="font-mono">http://localhost:8088</code>,
-              <code class="font-mono">ssh://localhost:22</code>, or
-              <code class="font-mono">http_status:404</code>. A catch-all 404 is appended automatically.
-            </p>
+            <i18n-t keypath="networking.tunnels.serviceExamples" tag="p" class="text-xs text-muted-foreground" scope="global">
+              <template #http>
+                <code class="font-mono">http://localhost:8088</code>
+              </template>
+              <template #ssh>
+                <code class="font-mono">ssh://localhost:22</code>
+              </template>
+              <template #status>
+                <code class="font-mono">http_status:404</code>
+              </template>
+            </i18n-t>
           </div>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              Create
+              {{ $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>
@@ -449,19 +457,19 @@ async function openPlan(tunnel: TunnelView) {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete tunnel?</DialogTitle>
+          <DialogTitle>{{ $t('networking.tunnels.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            Remove "{{ deleteTarget?.name || deleteTarget?.id }}". This cannot be undone.
+            {{ $t('networking.tunnels.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -473,20 +481,22 @@ async function openPlan(tunnel: TunnelView) {
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <FileCode2 class="size-5 text-muted-foreground" aria-hidden="true" />
-            Tunnel config plan
+            {{ $t('networking.tunnels.planTitle') }}
           </DialogTitle>
           <DialogDescription v-if="approval">
-            {{ approval.plugin }} / {{ approval.action }} on {{ nodeName(approval.node_id) }}
+            {{ $t('networking.tunnels.planSubtitle', { plugin: approval.plugin, action: approval.action, node: nodeName(approval.node_id) }) }}
           </DialogDescription>
         </DialogHeader>
 
         <div v-if="approval" class="space-y-4">
-          <div class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground">
-            Plan created. Review and approve under
-            <span class="font-medium text-foreground">Operations → Approvals</span> before the node applies it.
-            The rendered <code class="font-mono">config.yml</code> references the credentials file path only —
-            no credential material is embedded.
-          </div>
+          <i18n-t keypath="networking.tunnels.planReviewHint" tag="div" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground" scope="global">
+            <template #approvals>
+              <span class="font-medium text-foreground">{{ $t('networking.tunnels.approvalsLabel') }}</span>
+            </template>
+            <template #configYml>
+              <code class="font-mono">config.yml</code>
+            </template>
+          </i18n-t>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
@@ -503,7 +513,7 @@ async function openPlan(tunnel: TunnelView) {
           </div>
 
           <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">approval {{ shortId(approval.id, 12) }}</Badge>
+            <Badge variant="outline">{{ $t('networking.tunnels.approvalLabel', { id: shortId(approval.id, 12) }) }}</Badge>
             <Badge variant="warning">{{ approval.status }}</Badge>
             <span v-if="approval.created_at">{{ formatDateTime(approval.created_at) }}</span>
           </div>
@@ -511,10 +521,10 @@ async function openPlan(tunnel: TunnelView) {
 
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Close</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.close') }}</Button>
           </DialogClose>
           <RouterLink to="/approvals">
-            <Button type="button">Go to Approvals</Button>
+            <Button type="button">{{ $t('networking.shared.goToApprovals') }}</Button>
           </RouterLink>
         </DialogFooter>
       </DialogScrollContent>

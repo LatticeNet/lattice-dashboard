@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -55,19 +56,19 @@ type FieldDef = { key: string; label: string; required: boolean; placeholder: st
 
 const KIND_FIELDS: Record<NotifyKind, FieldDef[]> = {
   telegram: [
-    { key: "token", label: "Bot token", required: true, placeholder: "123456:ABC-DEF…" },
-    { key: "chat_id", label: "Chat ID", required: true, placeholder: "-1001234567890" },
-    { key: "base_url", label: "Base URL", required: false, placeholder: "https://api.telegram.org (optional)" },
+    { key: "token", label: "platform.notifications.fieldBotToken", required: true, placeholder: "123456:ABC-DEF…" },
+    { key: "chat_id", label: "platform.notifications.fieldChatId", required: true, placeholder: "-1001234567890" },
+    { key: "base_url", label: "platform.notifications.fieldBaseUrl", required: false, placeholder: "https://api.telegram.org (optional)" },
   ],
   bark: [
-    { key: "base_url", label: "Base URL", required: true, placeholder: "https://api.day.app" },
-    { key: "key", label: "Device key", required: true, placeholder: "device key" },
+    { key: "base_url", label: "platform.notifications.fieldBaseUrl", required: true, placeholder: "https://api.day.app" },
+    { key: "key", label: "platform.notifications.fieldDeviceKey", required: true, placeholder: "platform.notifications.deviceKeyPlaceholder" },
   ],
   discord: [
-    { key: "webhook_url", label: "Webhook URL", required: true, placeholder: "https://discord.com/api/webhooks/…" },
+    { key: "webhook_url", label: "platform.notifications.fieldWebhookUrl", required: true, placeholder: "https://discord.com/api/webhooks/…" },
   ],
   webhook: [
-    { key: "url", label: "URL", required: true, placeholder: "https://example.com/hook" },
+    { key: "url", label: "platform.notifications.fieldUrl", required: true, placeholder: "https://example.com/hook" },
   ],
 };
 
@@ -86,6 +87,7 @@ function kindBadgeVariant(kind: string): "info" | "secondary" | "default" | "war
   }
 }
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canSend = computed(() => auth.can("notify:send"));
 
@@ -176,11 +178,11 @@ async function submitForm(): Promise<void> {
       enabled: formEnabled.value,
     };
     await api.notify.upsertChannel(req);
-    toast.success(editingId.value ? "Channel updated" : "Channel created");
+    toast.success(editingId.value ? t("platform.notifications.channelUpdated") : t("platform.notifications.channelCreated"));
     formOpen.value = false;
     channelsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Save failed");
+    toast.error(error instanceof Error ? error.message : t("platform.notifications.saveFailed"));
   } finally {
     saving.value = false;
   }
@@ -189,7 +191,7 @@ async function submitForm(): Promise<void> {
 async function sendTest(): Promise<void> {
   if (!canSend.value) return;
   if (!configComplete.value) {
-    toast.error("Enter the required config fields before testing.");
+    toast.error(t("platform.notifications.enterRequiredFields"));
     return;
   }
   testing.value = true;
@@ -200,11 +202,11 @@ async function sendTest(): Promise<void> {
       title: formTitle.value.trim() || undefined,
       body: formBody.value.trim() || undefined,
     });
-    if (res.ok) toast.success(`Test delivered via ${res.channel}`);
-    else toast.error("Test delivery failed");
+    if (res.ok) toast.success(t("platform.notifications.testDelivered", { channel: res.channel }));
+    else toast.error(t("platform.notifications.testDeliveryFailed"));
   } catch (error) {
     // Delivery failure surfaces as 502 from the API; message is human-readable.
-    toast.error(error instanceof Error ? error.message : "Test delivery failed");
+    toast.error(error instanceof Error ? error.message : t("platform.notifications.testDeliveryFailed"));
   } finally {
     testing.value = false;
   }
@@ -219,11 +221,11 @@ async function confirmDelete(): Promise<void> {
   deleting.value = true;
   try {
     await api.notify.deleteChannel(deleteTarget.value.id);
-    toast.success("Channel deleted");
+    toast.success(t("platform.notifications.channelDeleted"));
     deleteTarget.value = undefined;
     channelsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("platform.notifications.deleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -232,7 +234,7 @@ async function confirmDelete(): Promise<void> {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Notifications" description="Outbound notification channels for alerts and monitor flips">
+    <PageHeader :title="$t('platform.notifications.title')" :description="$t('platform.notifications.description')">
       <template #actions>
         <Button
           variant="outline"
@@ -241,11 +243,11 @@ async function confirmDelete(): Promise<void> {
           @click="channelsQuery.refresh"
         >
           <RefreshCw aria-hidden="true" :class="cn('size-4', channelsQuery.refreshing.value && 'animate-spin')" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canSend" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
-          New channel
+          {{ $t('platform.notifications.newChannel') }}
         </Button>
       </template>
     </PageHeader>
@@ -254,11 +256,10 @@ async function confirmDelete(): Promise<void> {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Bell aria-hidden="true" class="size-4 text-muted-foreground" />
-          Channels
+          {{ $t('platform.notifications.channelsTitle') }}
         </CardTitle>
         <CardDescription>
-          {{ channels.length }} {{ channels.length === 1 ? "channel" : "channels" }} ·
-          secrets are write-only and never returned by the server
+          {{ $t('platform.notifications.channelsCount', { count: channels.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -266,20 +267,20 @@ async function confirmDelete(): Promise<void> {
           :loading="channelsQuery.loading.value"
           :error="channelsQuery.error.value"
           :is-empty="channels.length === 0"
-          empty-title="No channels configured"
-          empty-description="Add a telegram, bark, discord, or webhook channel to receive notifications."
+          :empty-title="$t('platform.notifications.emptyTitle')"
+          :empty-description="$t('platform.notifications.emptyDescription')"
           @retry="channelsQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Kind</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Configured keys</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Updated</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colName') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colKind') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colConfiguredKeys') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colStatus') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colUpdated') }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('platform.notifications.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -304,12 +305,12 @@ async function confirmDelete(): Promise<void> {
                       >
                         {{ key }}
                       </Badge>
-                      <span v-if="channel.config_keys.length === 0" class="text-xs text-muted-foreground">none</span>
+                      <span v-if="channel.config_keys.length === 0" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                     </div>
                   </td>
                   <td class="py-3 pr-4">
                     <Badge :variant="channel.enabled ? 'success' : 'secondary'">
-                      {{ channel.enabled ? "enabled" : "disabled" }}
+                      {{ channel.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                     </Badge>
                   </td>
                   <td class="py-3 pr-4 text-xs text-muted-foreground">{{ formatDateTime(channel.updated_at) }}</td>
@@ -319,7 +320,7 @@ async function confirmDelete(): Promise<void> {
                         v-if="canSend"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Edit channel"
+                        :aria-label="$t('platform.notifications.editChannelAria')"
                         @click="openEdit(channel)"
                       >
                         <Pencil class="size-4" />
@@ -328,7 +329,7 @@ async function confirmDelete(): Promise<void> {
                         v-if="canSend"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete channel"
+                        :aria-label="$t('platform.notifications.deleteChannelAria')"
                         @click="deleteTarget = channel"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -347,24 +348,23 @@ async function confirmDelete(): Promise<void> {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? "Edit channel" : "New channel" }}</DialogTitle>
+          <DialogTitle>{{ editingId ? $t('platform.notifications.editChannelTitle') : $t('platform.notifications.newChannelTitle') }}</DialogTitle>
           <DialogDescription>
-            Configure an outbound destination. Secrets are write-only — on edit, leave fields filled to set
-            new values (stored secrets are never returned).
+            {{ $t('platform.notifications.formHint') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="ch-name">Name</Label>
+              <Label for="ch-name">{{ $t('platform.notifications.nameLabel') }}</Label>
               <Input id="ch-name" v-model="formName" required placeholder="ops-alerts" />
             </div>
             <div class="grid gap-2">
-              <Label for="ch-kind">Kind</Label>
+              <Label for="ch-kind">{{ $t('platform.notifications.kindLabel') }}</Label>
               <Select v-model="formKind" @update:model-value="onKindChange">
                 <SelectTrigger id="ch-kind">
-                  <SelectValue placeholder="Select kind" />
+                  <SelectValue :placeholder="$t('platform.notifications.selectKind')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="kind in KIND_OPTIONS" :key="kind" :value="kind">
@@ -376,39 +376,39 @@ async function confirmDelete(): Promise<void> {
           </div>
 
           <div class="space-y-3 rounded-md border border-border p-3">
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ formKind }} config</p>
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.kindConfig', { kind: formKind }) }}</p>
             <div v-for="field in activeFields" :key="field.key" class="grid gap-2">
               <Label :for="`cfg-${field.key}`">
-                {{ field.label }}
+                {{ $t(field.label) }}
                 <span v-if="field.required" class="text-destructive">*</span>
               </Label>
               <Input
                 :id="`cfg-${field.key}`"
                 v-model="formConfig[field.key]"
-                :placeholder="editingId ? 'leave blank to keep current' : field.placeholder"
+                :placeholder="editingId ? $t('common.misc.keepBlank') : (field.placeholder.startsWith('platform.') ? $t(field.placeholder) : field.placeholder)"
                 autocomplete="off"
               />
             </div>
             <p v-if="editingId" class="text-xs text-muted-foreground">
-              Editing replaces the full config. Re-enter every required field to update the channel.
+              {{ $t('platform.notifications.replaceConfigHint') }}
             </p>
           </div>
 
           <label class="flex items-center gap-2 text-sm">
             <input v-model="formEnabled" type="checkbox" class="size-4 accent-primary" />
-            Enabled
+            {{ $t('platform.notifications.enabledLabel') }}
           </label>
 
           <div class="space-y-3 rounded-md border border-dashed border-border p-3">
-            <p class="text-xs font-medium uppercase text-muted-foreground">Send test</p>
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.sendTest') }}</p>
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
-                <Label for="test-title">Title</Label>
-                <Input id="test-title" v-model="formTitle" placeholder="Lattice test" />
+                <Label for="test-title">{{ $t('platform.notifications.testTitleLabel') }}</Label>
+                <Input id="test-title" v-model="formTitle" :placeholder="$t('platform.notifications.testTitlePlaceholder')" />
               </div>
               <div class="grid gap-2">
-                <Label for="test-body">Body</Label>
-                <Input id="test-body" v-model="formBody" placeholder="Notification channel verified." />
+                <Label for="test-body">{{ $t('platform.notifications.testBodyLabel') }}</Label>
+                <Input id="test-body" v-model="formBody" :placeholder="$t('platform.notifications.testBodyPlaceholder')" />
               </div>
             </div>
             <Button
@@ -420,22 +420,22 @@ async function confirmDelete(): Promise<void> {
             >
               <RefreshCw v-if="testing" aria-hidden="true" class="size-4 animate-spin" />
               <Send v-else aria-hidden="true" class="size-4" />
-              Send test
+              {{ $t('platform.notifications.sendTest') }}
             </Button>
             <p class="text-xs text-muted-foreground">
-              Tests deliver through the config entered above (not a stored channel).
+              {{ $t('platform.notifications.testThroughConfigHint') }}
             </p>
           </div>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
               <Plus v-else-if="!editingId" aria-hidden="true" class="size-4" />
               <Pencil v-else aria-hidden="true" class="size-4" />
-              {{ editingId ? "Save" : "Create" }}
+              {{ editingId ? $t('common.actions.save') : $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>
@@ -446,19 +446,19 @@ async function confirmDelete(): Promise<void> {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete channel?</DialogTitle>
+          <DialogTitle>{{ $t('platform.notifications.deleteChannelTitle') }}</DialogTitle>
           <DialogDescription>
-            Remove "{{ deleteTarget?.name || deleteTarget?.id }}". This cannot be undone.
+            {{ $t('platform.notifications.deleteChannelConfirm', { name: deleteTarget?.name || deleteTarget?.id }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
             <Trash2 v-else aria-hidden="true" class="size-4" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogContent>

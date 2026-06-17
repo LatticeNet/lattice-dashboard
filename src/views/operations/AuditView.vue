@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CheckCircle2, RefreshCw, ScrollText, ShieldCheck } from "lucide-vue-next";
 import { api, type AuditEvent } from "@/lib/api";
@@ -22,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 
+const { t } = useI18n();
 const action = ref("");
 const decision = ref("");
 const nodeId = ref("");
@@ -61,9 +63,9 @@ async function verifyAudit() {
   verifyPending.value = true;
   try {
     verifyResult.value = await api.audit.verify();
-    toast.success(verifyResult.value.ok ? "Audit chain verified" : "Audit verification failed");
+    toast.success(verifyResult.value.ok ? t("operations.audit.toastVerified") : t("operations.audit.toastVerifyFailed"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Audit verification failed");
+    toast.error(error instanceof Error ? error.message : t("operations.audit.toastVerifyFailed"));
   } finally {
     verifyPending.value = false;
   }
@@ -72,11 +74,11 @@ async function verifyAudit() {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Audit" description="Search security decisions and verify the append-only audit chain">
+    <PageHeader :title="$t('operations.audit.title')" :description="$t('operations.audit.description')">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="auditQuery.refreshing.value" @click="auditQuery.refresh">
           <RefreshCw :class="cn('size-4', auditQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
@@ -85,7 +87,7 @@ async function verifyAudit() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Returned</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.audit.returned') }}</p>
             <p class="text-2xl font-semibold">{{ events.length }}</p>
           </div>
           <ScrollText class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -94,7 +96,7 @@ async function verifyAudit() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Total match</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.audit.totalMatch') }}</p>
             <p class="text-2xl font-semibold">{{ total }}</p>
           </div>
           <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -103,9 +105,9 @@ async function verifyAudit() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Chain</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.audit.chain') }}</p>
             <p class="text-2xl font-semibold" :class="verifyResult?.ok === false ? 'text-destructive' : 'text-success'">
-              {{ verifyResult ? (verifyResult.ok ? "OK" : "Bad") : "—" }}
+              {{ verifyResult ? (verifyResult.ok ? $t('operations.audit.chainOk') : $t('operations.audit.chainBad')) : "—" }}
             </p>
           </div>
           <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -115,47 +117,47 @@ async function verifyAudit() {
 
     <Card>
       <CardHeader>
-        <CardTitle>Filters</CardTitle>
-        <CardDescription>Query parameters are passed directly to the audit API.</CardDescription>
+        <CardTitle>{{ $t('operations.audit.filters') }}</CardTitle>
+        <CardDescription>{{ $t('operations.audit.filtersHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
         <form class="grid gap-3 lg:grid-cols-[1fr_160px_1fr_1fr_110px_auto_auto]" @submit.prevent="auditQuery.refresh">
           <div class="grid gap-2">
-            <Label for="audit-action">Action</Label>
+            <Label for="audit-action">{{ $t('operations.audit.action') }}</Label>
             <Input id="audit-action" v-model="action" placeholder="task.create" />
           </div>
           <div class="grid gap-2">
-            <Label for="audit-decision">Decision</Label>
+            <Label for="audit-decision">{{ $t('operations.audit.decision') }}</Label>
             <select id="audit-decision" v-model="decision" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="">Any</option>
+              <option value="">{{ $t('operations.audit.any') }}</option>
               <option value="allow">allow</option>
               <option value="deny">deny</option>
               <option value="observe">observe</option>
             </select>
           </div>
           <div class="grid gap-2">
-            <Label for="audit-node">Node</Label>
-            <Input id="audit-node" v-model="nodeId" placeholder="node id" />
+            <Label for="audit-node">{{ $t('operations.audit.node') }}</Label>
+            <Input id="audit-node" v-model="nodeId" :placeholder="$t('operations.audit.nodePlaceholder')" />
           </div>
           <div class="grid gap-2">
-            <Label for="audit-correlation">Correlation</Label>
+            <Label for="audit-correlation">{{ $t('operations.audit.correlation') }}</Label>
             <Input id="audit-correlation" v-model="correlationId" placeholder="req_..." />
           </div>
           <div class="grid gap-2">
-            <Label for="audit-limit">Limit</Label>
+            <Label for="audit-limit">{{ $t('operations.audit.limit') }}</Label>
             <Input id="audit-limit" v-model="limit" type="number" min="1" max="500" />
           </div>
           <div class="flex items-end">
             <Button type="submit">
               <RefreshCw class="size-4" aria-hidden="true" />
-              Query
+              {{ $t('operations.audit.query') }}
             </Button>
           </div>
           <div class="flex items-end">
             <Button type="button" variant="outline" :disabled="verifyPending" @click="verifyAudit">
               <RefreshCw v-if="verifyPending" class="size-4 animate-spin" aria-hidden="true" />
               <ShieldCheck v-else class="size-4" aria-hidden="true" />
-              Verify
+              {{ $t('common.actions.verify') }}
             </Button>
           </div>
         </form>
@@ -163,9 +165,9 @@ async function verifyAudit() {
         <div v-if="verifyResult" class="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2">
             <Badge :variant="verifyResult.ok ? 'success' : 'destructive'">
-              {{ verifyResult.ok ? "chain ok" : "chain failed" }}
+              {{ verifyResult.ok ? $t('operations.audit.chainOkBadge') : $t('operations.audit.chainFailedBadge') }}
             </Badge>
-            <span>{{ verifyResult.count }} events</span>
+            <span>{{ $t('operations.audit.eventsCount', { count: verifyResult.count }) }}</span>
             <code v-if="verifyResult.head" class="break-all font-mono text-xs text-muted-foreground">{{ verifyResult.head }}</code>
           </div>
         </div>
@@ -174,16 +176,16 @@ async function verifyAudit() {
 
     <Card>
       <CardHeader>
-        <CardTitle>Events</CardTitle>
-        <CardDescription>Newest matching entries from the audit log</CardDescription>
+        <CardTitle>{{ $t('operations.audit.events') }}</CardTitle>
+        <CardDescription>{{ $t('operations.audit.eventsHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
         <DataState
           :loading="auditQuery.loading.value"
           :error="auditQuery.error.value"
           :is-empty="events.length === 0"
-          empty-title="No events match"
-          empty-description="Adjust filters or wait for new audited activity."
+          :empty-title="$t('operations.audit.emptyTitle')"
+          :empty-description="$t('operations.audit.emptyDescription')"
           @retry="auditQuery.refresh"
         >
           <div class="space-y-3">
@@ -196,7 +198,7 @@ async function verifyAudit() {
                     <Badge v-if="event.scope" variant="outline">{{ event.scope }}</Badge>
                   </div>
                   <p class="mt-1 text-xs text-muted-foreground">
-                    {{ formatDateTime(event.at) }} · actor {{ event.actor_id || "system" }} · node {{ event.node_id || "global" }}
+                    {{ formatDateTime(event.at) }} · {{ $t('operations.audit.actorPrefix') }} {{ event.actor_id || "system" }} · {{ $t('operations.audit.nodePrefix') }} {{ event.node_id || $t('common.misc.global') }}
                   </p>
                 </div>
                 <div class="flex items-center gap-2">
@@ -207,7 +209,7 @@ async function verifyAudit() {
 
               <div v-if="event.reason || event.correlation_id" class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <span v-if="event.reason">{{ event.reason }}</span>
-                <span v-if="event.correlation_id" class="font-mono">corr {{ event.correlation_id }}</span>
+                <span v-if="event.correlation_id" class="font-mono">{{ $t('operations.audit.corrPrefix') }} {{ event.correlation_id }}</span>
               </div>
 
               <pre v-if="metadataText(event)" class="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 font-mono text-xs">{{ metadataText(event) }}</pre>

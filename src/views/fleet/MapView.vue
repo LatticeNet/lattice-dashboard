@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Globe2, LocateFixed, RefreshCw, Trash2 } from "lucide-vue-next";
 import { api, unwrap, type NodeGeoView } from "@/lib/api";
@@ -24,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 
 const auth = useAuthStore();
+const { t } = useI18n();
 const geoQuery = useAsyncData(() => api.nodes.geo().then((r) => unwrap(r, "nodes")), {
   pollInterval: 10000,
 });
@@ -81,7 +83,7 @@ async function saveGeo() {
   const parsedLat = parseNumber(lat.value);
   const parsedLon = parseNumber(lon.value);
   if (parsedLat === undefined || parsedLon === undefined) {
-    toast.error("Latitude and longitude are required");
+    toast.error(t("fleet.map.toast.coordinatesRequired"));
     return;
   }
   pending.value = true;
@@ -95,10 +97,10 @@ async function saveGeo() {
       asn: parseNumber(asn.value),
       as_org: asOrg.value.trim() || undefined,
     });
-    toast.success("Node location saved");
+    toast.success(t("fleet.map.toast.locationSaved"));
     geoQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Location update failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.saveFailed"));
   } finally {
     pending.value = false;
   }
@@ -109,7 +111,7 @@ async function clearGeo() {
   pending.value = true;
   try {
     await api.nodes.clearGeo(selectedNodeId.value);
-    toast.success("Node location cleared");
+    toast.success(t("fleet.map.toast.locationCleared"));
     country.value = "";
     city.value = "";
     lat.value = "";
@@ -119,7 +121,7 @@ async function clearGeo() {
     asOrg.value = "";
     geoQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Location clear failed");
+    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.clearFailed"));
   } finally {
     pending.value = false;
   }
@@ -128,11 +130,11 @@ async function clearGeo() {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Fleet Map" description="Operator-owned node locations, rendered without external map tiles">
+    <PageHeader :title="$t('fleet.map.title')" :description="$t('fleet.map.description')">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="geoQuery.refreshing.value" @click="geoQuery.refresh">
           <RefreshCw :class="cn('size-4', geoQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
@@ -142,17 +144,17 @@ async function clearGeo() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
-            Nodes by Location
+            {{ $t('fleet.map.byLocation') }}
           </CardTitle>
-          <CardDescription>{{ withGeo.length }} of {{ nodes.length }} nodes have coordinates</CardDescription>
+          <CardDescription>{{ $t('fleet.map.coordinatesSummary', { withGeo: withGeo.length, total: nodes.length }) }}</CardDescription>
         </CardHeader>
         <CardContent>
           <DataState
             :loading="geoQuery.loading.value"
             :error="geoQuery.error.value"
             :is-empty="nodes.length === 0"
-            empty-title="No nodes visible"
-            empty-description="Nodes with coordinates appear on the map."
+            :empty-title="$t('fleet.map.emptyTitle')"
+            :empty-description="$t('fleet.map.emptyDescription')"
             @retry="geoQuery.refresh"
           >
             <div class="relative aspect-[1.8] overflow-hidden rounded-lg border border-border bg-muted/20">
@@ -204,9 +206,9 @@ async function clearGeo() {
                 </div>
                 <p class="mt-1 text-xs text-muted-foreground">
                   <template v-if="node.geo">
-                    {{ node.geo.city || "unknown city" }} {{ node.geo.country || "" }}
+                    {{ node.geo.city || $t('fleet.map.unknownCity') }} {{ node.geo.country || "" }}
                   </template>
-                  <template v-else>No coordinates</template>
+                  <template v-else>{{ $t('fleet.map.noCoordinates') }}</template>
                 </p>
               </button>
             </div>
@@ -218,21 +220,21 @@ async function clearGeo() {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <LocateFixed class="size-4 text-muted-foreground" aria-hidden="true" />
-            Location Editor
+            {{ $t('fleet.map.editor.title') }}
           </CardTitle>
-          <CardDescription>Set or clear operator-owned coordinates for a node.</CardDescription>
+          <CardDescription>{{ $t('fleet.map.editor.description') }}</CardDescription>
         </CardHeader>
         <CardContent>
           <form v-if="canAdminNodes" class="space-y-4" @submit.prevent="saveGeo">
             <div class="grid gap-2">
-              <Label for="geo-node">Node</Label>
+              <Label for="geo-node">{{ $t('fleet.map.editor.node') }}</Label>
               <select
                 id="geo-node"
                 v-model="selectedNodeId"
                 class="h-9 rounded-md border border-input bg-background px-3 text-sm"
                 @change="selectedNode && selectNode(selectedNode)"
               >
-                <option value="">Select a node</option>
+                <option value="">{{ $t('fleet.map.editor.selectNode') }}</option>
                 <option v-for="node in nodes" :key="node.id" :value="node.id">
                   {{ node.name || node.id }}
                 </option>
@@ -241,59 +243,59 @@ async function clearGeo() {
 
             <div class="grid grid-cols-2 gap-3">
               <div class="grid gap-2">
-                <Label for="geo-lat">Latitude</Label>
+                <Label for="geo-lat">{{ $t('fleet.map.editor.latitude') }}</Label>
                 <Input id="geo-lat" v-model="lat" inputmode="decimal" placeholder="37.7749" />
               </div>
               <div class="grid gap-2">
-                <Label for="geo-lon">Longitude</Label>
+                <Label for="geo-lon">{{ $t('fleet.map.editor.longitude') }}</Label>
                 <Input id="geo-lon" v-model="lon" inputmode="decimal" placeholder="-122.4194" />
               </div>
             </div>
 
             <div class="grid grid-cols-2 gap-3">
               <div class="grid gap-2">
-                <Label for="geo-country">Country</Label>
+                <Label for="geo-country">{{ $t('fleet.map.editor.country') }}</Label>
                 <Input id="geo-country" v-model="country" maxlength="2" placeholder="US" />
               </div>
               <div class="grid gap-2">
-                <Label for="geo-city">City</Label>
-                <Input id="geo-city" v-model="city" placeholder="San Francisco" />
+                <Label for="geo-city">{{ $t('fleet.map.editor.city') }}</Label>
+                <Input id="geo-city" v-model="city" :placeholder="$t('fleet.map.editor.cityPlaceholder')" />
               </div>
             </div>
 
             <div class="grid gap-2">
-              <Label for="geo-provider">Provider</Label>
-              <Input id="geo-provider" v-model="provider" placeholder="cloud or colo" />
+              <Label for="geo-provider">{{ $t('fleet.map.editor.provider') }}</Label>
+              <Input id="geo-provider" v-model="provider" :placeholder="$t('fleet.map.editor.providerPlaceholder')" />
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div class="grid gap-2">
-                <Label for="geo-asn">ASN</Label>
+                <Label for="geo-asn">{{ $t('fleet.map.editor.asn') }}</Label>
                 <Input id="geo-asn" v-model="asn" inputmode="numeric" />
               </div>
               <div class="grid gap-2">
-                <Label for="geo-asorg">AS Org</Label>
+                <Label for="geo-asorg">{{ $t('fleet.map.editor.asOrg') }}</Label>
                 <Input id="geo-asorg" v-model="asOrg" />
               </div>
             </div>
 
             <div v-if="selectedNode?.geo?.updated_at" class="text-xs text-muted-foreground">
-              Last updated {{ formatDateTime(selectedNode.geo.updated_at) }}
+              {{ $t('fleet.map.editor.lastUpdated', { time: formatDateTime(selectedNode.geo.updated_at) }) }}
             </div>
 
             <div class="flex flex-wrap gap-2">
               <Button type="submit" :disabled="pending || !selectedNodeId">
                 <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
                 <LocateFixed v-else class="size-4" aria-hidden="true" />
-                Save location
+                {{ $t('fleet.map.editor.save') }}
               </Button>
               <Button type="button" variant="outline" :disabled="pending || !selectedNodeId" @click="clearGeo">
                 <Trash2 class="size-4" aria-hidden="true" />
-                Clear
+                {{ $t('fleet.map.editor.clear') }}
               </Button>
             </div>
           </form>
           <div v-else class="rounded-md border border-border p-4 text-sm text-muted-foreground">
-            `node:admin` is required to edit locations.
+            {{ $t('fleet.map.editor.adminRequired') }}
           </div>
         </CardContent>
       </Card>

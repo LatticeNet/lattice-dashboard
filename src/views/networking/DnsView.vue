@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
@@ -58,6 +59,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("dns:admin"));
 const canPlan = computed(() => auth.can("dns:admin") && auth.can("network:plan"));
@@ -233,12 +235,12 @@ const hostnameNeedsCredential = computed(
 );
 
 function zoneError(zone: ZoneDraft): string | undefined {
-  if (!zone.suffix.trim()) return "suffix is required";
+  if (!zone.suffix.trim()) return t("networking.dns.errSuffixRequired");
   if (zone.mode === "forward" && splitList(zone.upstreams).length === 0) {
-    return "forward zones require at least one upstream";
+    return t("networking.dns.errForwardUpstream");
   }
   if (zone.mode === "static" && zone.records.length === 0) {
-    return "static zones require at least one record";
+    return t("networking.dns.errStaticRecord");
   }
   return undefined;
 }
@@ -301,11 +303,11 @@ async function submit() {
   saving.value = true;
   try {
     await api.dns.upsert(buildBody());
-    toast.success(editingId.value ? "Deployment updated" : "Deployment created");
+    toast.success(editingId.value ? t("networking.dns.toastUpdated") : t("networking.dns.toastCreated"));
     dialogOpen.value = false;
     deploymentsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to save deployment");
+    toast.error(error instanceof Error ? error.message : t("networking.dns.toastSaveFailed"));
   } finally {
     saving.value = false;
   }
@@ -320,11 +322,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.dns.delete(deleteTarget.value.id);
-    toast.success("Deployment deleted");
+    toast.success(t("networking.dns.toastDeleted"));
     deleteTarget.value = undefined;
     deploymentsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to delete deployment");
+    toast.error(error instanceof Error ? error.message : t("networking.dns.toastDeleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -338,10 +340,10 @@ async function publish(dep: DNSDeploymentView) {
   publishing.value = dep.id;
   try {
     const res = await api.dns.publish(dep.id);
-    toast.success(`published ipv4=${res.ipv4 || "—"} ipv6=${res.ipv6 || "—"}`);
+    toast.success(t("networking.dns.toastPublished", { ipv4: res.ipv4 || "—", ipv6: res.ipv6 || "—" }));
     deploymentsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Publish failed");
+    toast.error(error instanceof Error ? error.message : t("networking.dns.toastPublishFailed"));
   } finally {
     publishing.value = undefined;
   }
@@ -359,9 +361,9 @@ async function plan(dep: DNSDeploymentView) {
     const approval = await api.dns.plan(dep.id);
     planApproval.value = approval;
     planSha.value = await sha256Hex(approval.plan || "");
-    toast.success("Plan created — review in Approvals");
+    toast.success(t("networking.shared.toastPlanCreated"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Plan failed");
+    toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
   } finally {
     planning.value = undefined;
   }
@@ -378,8 +380,8 @@ function closePlan(open: boolean) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Self-host DNS"
-      description="Per-node CoreDNS deployments with forward/static/block zones and optional public publishing"
+      :title="$t('networking.dns.title')"
+      :description="$t('networking.dns.description')"
     >
       <template #actions>
         <Button
@@ -389,11 +391,11 @@ function closePlan(open: boolean) {
           @click="deploymentsQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', deploymentsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New deployment
+          {{ $t('networking.dns.newDeployment') }}
         </Button>
       </template>
     </PageHeader>
@@ -402,10 +404,10 @@ function closePlan(open: boolean) {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
-          CoreDNS deployments
+          {{ $t('networking.dns.cardTitle') }}
         </CardTitle>
         <CardDescription>
-          Plan changes go through Approvals; publishing pushes public IPs to Cloudflare directly.
+          {{ $t('networking.dns.cardDescription') }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -413,24 +415,24 @@ function closePlan(open: boolean) {
           :loading="deploymentsQuery.loading.value"
           :error="deploymentsQuery.error.value"
           :is-empty="deployments.length === 0"
-          empty-title="No DNS deployments"
-          empty-description="Create a CoreDNS deployment to serve zones from a node."
+          :empty-title="$t('networking.dns.emptyTitle')"
+          :empty-description="$t('networking.dns.emptyDescription')"
           @retry="deploymentsQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Node</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Listen</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Exposure</th>
-                  <th scope="col" class="py-2 pr-3 text-right font-medium">Zones</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Hostname</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Status</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Credential</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Published</th>
-                  <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colName') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colNode') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colListen') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colExposure') }}</th>
+                  <th scope="col" class="py-2 pr-3 text-right font-medium">{{ $t('networking.dns.colZones') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colHostname') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colStatus') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colCredential') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colPublished') }}</th>
+                  <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('networking.dns.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -464,9 +466,9 @@ function closePlan(open: boolean) {
                   </td>
                   <td class="py-3 pr-3">
                     <Badge v-if="dep.has_credential" variant="success">
-                      <KeyRound class="size-3" aria-hidden="true" /> set
+                      <KeyRound class="size-3" aria-hidden="true" /> {{ $t('networking.dns.credSet') }}
                     </Badge>
-                    <Badge v-else variant="outline">none</Badge>
+                    <Badge v-else variant="outline">{{ $t('networking.dns.credNone') }}</Badge>
                   </td>
                   <td class="py-3 pr-3 text-xs text-muted-foreground">
                     <div>{{ dep.last_published_at ? formatDateTime(dep.last_published_at) : "—" }}</div>
@@ -483,7 +485,7 @@ function closePlan(open: boolean) {
                       >
                         <RefreshCw v-if="planning === dep.id" class="size-4 animate-spin" aria-hidden="true" />
                         <Play v-else class="size-4" aria-hidden="true" />
-                        Plan
+                        {{ $t('networking.shared.plan') }}
                       </Button>
                       <Button
                         v-if="canAdmin && dep.hostname"
@@ -494,13 +496,13 @@ function closePlan(open: boolean) {
                       >
                         <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" aria-hidden="true" />
                         <UploadCloud v-else class="size-4" aria-hidden="true" />
-                        Publish
+                        {{ $t('common.actions.publish') }}
                       </Button>
                       <Button
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Edit"
+                        :aria-label="$t('common.actions.edit')"
                         @click="openEdit(dep)"
                       >
                         <Pencil class="size-4" />
@@ -509,7 +511,7 @@ function closePlan(open: boolean) {
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete"
+                        :aria-label="$t('common.actions.delete')"
                         @click="deleteTarget = dep"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -528,23 +530,23 @@ function closePlan(open: boolean) {
     <Dialog v-model:open="dialogOpen">
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? "Edit deployment" : "New deployment" }}</DialogTitle>
+          <DialogTitle>{{ editingId ? $t('networking.dns.editTitle') : $t('networking.dns.newTitle') }}</DialogTitle>
           <DialogDescription>
-            CoreDNS engine. A public hostname requires a Cloudflare credential.
+            {{ $t('networking.dns.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-5" @submit.prevent="submit">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="dns-name">Name</Label>
+              <Label for="dns-name">{{ $t('networking.dns.name') }}</Label>
               <Input id="dns-name" v-model="form.name" placeholder="edge-resolver" required />
             </div>
             <div class="grid gap-2">
-              <Label for="dns-node">Node</Label>
+              <Label for="dns-node">{{ $t('networking.dns.nodeLabel') }}</Label>
               <Select v-model="form.node_id" :disabled="!!editingId">
                 <SelectTrigger id="dns-node" class="w-full">
-                  <SelectValue placeholder="Select a node" />
+                  <SelectValue :placeholder="$t('networking.dns.selectNode')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -557,11 +559,11 @@ function closePlan(open: boolean) {
 
           <div class="grid gap-3 sm:grid-cols-3">
             <div class="grid gap-2">
-              <Label for="dns-port">Listen port</Label>
+              <Label for="dns-port">{{ $t('networking.dns.listenPort') }}</Label>
               <Input id="dns-port" v-model="form.listen_port" type="number" min="1" max="65535" />
             </div>
             <div class="grid gap-2">
-              <Label>Protocols</Label>
+              <Label>{{ $t('networking.dns.protocols') }}</Label>
               <div class="flex h-9 items-center gap-4 rounded-md border border-input px-3 text-sm">
                 <label class="flex items-center gap-1.5">
                   <input v-model="form.enable_udp" type="checkbox" class="size-4 accent-primary" /> UDP
@@ -572,7 +574,7 @@ function closePlan(open: boolean) {
               </div>
             </div>
             <div class="grid gap-2">
-              <Label for="dns-exposure">Exposure</Label>
+              <Label for="dns-exposure">{{ $t('networking.dns.exposure') }}</Label>
               <Select v-model="form.exposure">
                 <SelectTrigger id="dns-exposure" class="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -586,10 +588,10 @@ function closePlan(open: boolean) {
           <!-- Zones editor -->
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <Label>Zones</Label>
+              <Label>{{ $t('networking.dns.zones') }}</Label>
               <Button type="button" variant="outline" size="sm" @click="addZone">
                 <Plus class="size-4" aria-hidden="true" />
-                Add zone
+                {{ $t('networking.dns.addZone') }}
               </Button>
             </div>
 
@@ -599,19 +601,19 @@ function closePlan(open: boolean) {
               class="space-y-3 rounded-lg border border-border p-3"
             >
               <div class="flex items-center justify-between">
-                <span class="text-xs font-medium text-muted-foreground">Zone {{ zIndex + 1 }}</span>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove zone" @click="removeZone(zIndex)">
+                <span class="text-xs font-medium text-muted-foreground">{{ $t('networking.dns.zoneLabel', { index: zIndex + 1 }) }}</span>
+                <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.dns.removeZone')" @click="removeZone(zIndex)">
                   <Trash2 class="size-4 text-destructive" />
                 </Button>
               </div>
 
               <div class="grid gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Suffix</Label>
+                  <Label class="text-xs">{{ $t('networking.dns.suffix') }}</Label>
                   <Input v-model="zone.suffix" placeholder="internal.example.com" />
                 </div>
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Mode</Label>
+                  <Label class="text-xs">{{ $t('networking.dns.mode') }}</Label>
                   <Select v-model="zone.mode">
                     <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -624,15 +626,15 @@ function closePlan(open: boolean) {
               </div>
 
               <div v-if="zone.mode === 'forward'" class="grid gap-1.5">
-                <Label class="text-xs">Upstreams</Label>
+                <Label class="text-xs">{{ $t('networking.dns.upstreams') }}</Label>
                 <Input v-model="zone.upstreams" placeholder="1.1.1.1, tls://9.9.9.9" />
               </div>
 
               <div v-else-if="zone.mode === 'static'" class="space-y-2">
                 <div class="flex items-center justify-between">
-                  <Label class="text-xs">Records</Label>
+                  <Label class="text-xs">{{ $t('networking.dns.records') }}</Label>
                   <Button type="button" variant="outline" size="sm" @click="addRecord(zone)">
-                    <Plus class="size-4" aria-hidden="true" /> Add record
+                    <Plus class="size-4" aria-hidden="true" /> {{ $t('networking.dns.addRecord') }}
                   </Button>
                 </div>
                 <div
@@ -641,11 +643,11 @@ function closePlan(open: boolean) {
                   class="grid items-end gap-2 sm:grid-cols-[1.3fr_0.8fr_1.5fr_0.7fr_auto]"
                 >
                   <div class="grid gap-1">
-                    <Label class="text-[10px] uppercase text-muted-foreground">Name</Label>
+                    <Label class="text-[10px] uppercase text-muted-foreground">{{ $t('networking.dns.recordName') }}</Label>
                     <Input v-model="record.name" placeholder="www" />
                   </div>
                   <div class="grid gap-1">
-                    <Label class="text-[10px] uppercase text-muted-foreground">Type</Label>
+                    <Label class="text-[10px] uppercase text-muted-foreground">{{ $t('networking.dns.recordType') }}</Label>
                     <Select v-model="record.type">
                       <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -656,20 +658,20 @@ function closePlan(open: boolean) {
                     </Select>
                   </div>
                   <div class="grid gap-1">
-                    <Label class="text-[10px] uppercase text-muted-foreground">Value</Label>
+                    <Label class="text-[10px] uppercase text-muted-foreground">{{ $t('networking.dns.recordValue') }}</Label>
                     <Input v-model="record.value" placeholder="10.0.0.5" />
                   </div>
                   <div class="grid gap-1">
-                    <Label class="text-[10px] uppercase text-muted-foreground">TTL</Label>
+                    <Label class="text-[10px] uppercase text-muted-foreground">{{ $t('networking.dns.recordTtl') }}</Label>
                     <Input v-model="record.ttl" type="number" min="1" max="86400" />
                   </div>
-                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove record" @click="removeRecord(zone, rIndex)">
+                  <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.dns.removeRecord')" @click="removeRecord(zone, rIndex)">
                     <Trash2 class="size-4 text-destructive" />
                   </Button>
                 </div>
               </div>
 
-              <p v-else class="text-xs text-muted-foreground">block mode returns NXDOMAIN for this suffix.</p>
+              <p v-else class="text-xs text-muted-foreground">{{ $t('networking.dns.blockModeHint') }}</p>
               <p v-if="zoneErrors[zIndex]" class="text-xs text-destructive">{{ zoneErrors[zIndex] }}</p>
             </div>
           </div>
@@ -677,51 +679,51 @@ function closePlan(open: boolean) {
           <!-- Public publishing -->
           <div class="space-y-3 rounded-lg border border-border p-3">
             <div class="flex items-center justify-between">
-              <Label>Public publishing (optional)</Label>
+              <Label>{{ $t('networking.dns.publicPublishing') }}</Label>
             </div>
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
-                <Label class="text-xs">Hostname</Label>
+                <Label class="text-xs">{{ $t('networking.dns.hostname') }}</Label>
                 <Input v-model="form.hostname" placeholder="dns.example.com" />
               </div>
               <div class="grid gap-1.5">
-                <Label class="text-xs">Record TTL</Label>
+                <Label class="text-xs">{{ $t('networking.dns.recordTtlLabel') }}</Label>
                 <Input v-model="form.record_ttl" type="number" min="1" max="86400" :disabled="!form.hostname.trim()" />
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-4 text-sm">
               <label class="flex items-center gap-1.5">
-                <input v-model="form.publish_ipv4" type="checkbox" class="size-4 accent-primary" :disabled="!form.hostname.trim()" /> Publish IPv4
+                <input v-model="form.publish_ipv4" type="checkbox" class="size-4 accent-primary" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv4') }}
               </label>
               <label class="flex items-center gap-1.5">
-                <input v-model="form.publish_ipv6" type="checkbox" class="size-4 accent-primary" :disabled="!form.hostname.trim()" /> Publish IPv6
+                <input v-model="form.publish_ipv6" type="checkbox" class="size-4 accent-primary" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv6') }}
               </label>
             </div>
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
-                <Label class="text-xs">Cloudflare API token</Label>
+                <Label class="text-xs">{{ $t('networking.dns.cfApiToken') }}</Label>
                 <Input
                   v-model="form.cf_api_token"
                   type="password"
                   autocomplete="off"
-                  :placeholder="editingHasCredential ? 'leave blank to keep current' : 'cf token'"
+                  :placeholder="editingHasCredential ? $t('common.misc.keepBlank') : $t('networking.dns.cfTokenPlaceholder')"
                 />
               </div>
               <div class="grid gap-1.5">
-                <Label class="text-xs">DDNS profile id</Label>
-                <Input v-model="form.ddns_profile_id" placeholder="optional alternative to token" />
+                <Label class="text-xs">{{ $t('networking.dns.ddnsProfileId') }}</Label>
+                <Input v-model="form.ddns_profile_id" :placeholder="$t('networking.dns.ddnsProfilePlaceholder')" />
               </div>
             </div>
             <p v-if="hostnameNeedsCredential" class="text-xs text-destructive">
-              A hostname requires a Cloudflare credential — provide a token or a DDNS profile id.
+              {{ $t('networking.dns.hostnameNeedsCredential') }}
             </p>
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
+            <Button type="button" variant="outline" @click="dialogOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
-              {{ editingId ? "Save changes" : "Create deployment" }}
+              {{ editingId ? $t('common.actions.saveChanges') : $t('networking.dns.createDeployment') }}
             </Button>
           </DialogFooter>
         </form>
@@ -732,18 +734,18 @@ function closePlan(open: boolean) {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogScrollContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete deployment</DialogTitle>
+          <DialogTitle>{{ $t('networking.dns.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            Delete the DNS deployment
-            <span class="font-medium">{{ deleteTarget?.name }}</span>? This cannot be undone.
+            {{ $t('networking.dns.deleteDescription') }}
+            <span class="font-medium">{{ deleteTarget?.name }}</span>? {{ $t('networking.dns.deleteIrreversible') }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteTarget = undefined">Cancel</Button>
+          <Button type="button" variant="outline" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogScrollContent>
@@ -753,21 +755,21 @@ function closePlan(open: boolean) {
     <Dialog :open="!!planApproval" @update:open="closePlan">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Plan created</DialogTitle>
+          <DialogTitle>{{ $t('networking.shared.planCreated') }}</DialogTitle>
           <DialogDescription>
-            Review &amp; approve under Operations → Approvals. Nothing is applied until approved.
+            {{ $t('networking.shared.planReviewHint') }}
           </DialogDescription>
         </DialogHeader>
         <div v-if="planApproval" class="space-y-4">
           <div class="flex flex-wrap items-center gap-2">
             <Badge variant="warning">{{ planApproval.status }}</Badge>
             <Badge variant="outline">{{ planApproval.plugin }} · {{ planApproval.action }}</Badge>
-            <Badge variant="secondary">id {{ shortId(planApproval.id, 12) }}</Badge>
+            <Badge variant="secondary">{{ $t('networking.shared.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">Plan</span>
+              <span class="text-sm font-medium">{{ $t('networking.shared.planLabel') }}</span>
               <CopyButton :value="planApproval.plan || ''" />
             </div>
             <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
@@ -780,11 +782,11 @@ function closePlan(open: boolean) {
           </div>
         </div>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="closePlan(false)">Close</Button>
+          <Button type="button" variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
           <Button as-child>
             <RouterLink to="/approvals">
               <ExternalLink class="size-4" aria-hidden="true" />
-              Go to Approvals
+              {{ $t('networking.shared.goToApprovals') }}
             </RouterLink>
           </Button>
         </DialogFooter>

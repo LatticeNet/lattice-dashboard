@@ -9,6 +9,7 @@ import {
   KeyRound,
   Sparkles,
 } from "lucide-vue-next";
+import { useI18n } from "vue-i18n";
 import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ const props = defineProps<{
 }>();
 
 const auth = useAuthStore();
+const { t } = useI18n();
 
 type Step = {
   key: string;
@@ -40,40 +42,40 @@ const steps = computed<Step[]>(() => [
   {
     key: "enroll-node",
     icon: Server,
-    title: "Enroll your first node",
-    description: "Generate an enrollment token and bring an agent online.",
+    title: t("onboarding.enrollNode"),
+    description: t("onboarding.enrollNodeHint"),
     to: "/nodes",
-    cta: "Enroll node",
+    cta: t("onboarding.enrollNodeCta"),
     done: props.nodeCount > 0,
     allowed: auth.can("node:admin"),
   },
   {
     key: "service-monitor",
     icon: Activity,
-    title: "Add a service monitor",
-    description: "Track uptime and latency for the things that matter.",
+    title: t("onboarding.addMonitor"),
+    description: t("onboarding.addMonitorHint"),
     to: "/monitoring",
-    cta: "Add monitor",
+    cta: t("onboarding.addMonitorCta"),
     done: !!props.monitorCount && props.monitorCount > 0,
     allowed: true,
   },
   {
     key: "proxy-inbound",
     icon: DoorOpen,
-    title: "Set up a proxy inbound",
-    description: "Expose a secure entry point for your proxy traffic.",
+    title: t("onboarding.addInbound"),
+    description: t("onboarding.addInboundHint"),
     to: "/proxy/inbounds",
-    cta: "Add inbound",
+    cta: t("onboarding.addInboundCta"),
     done: !!props.proxyInboundCount && props.proxyInboundCount > 0,
     allowed: auth.can("proxy:admin"),
   },
   {
     key: "two-factor",
     icon: KeyRound,
-    title: "Secure your account with 2FA",
-    description: "Add a second factor to protect operator access.",
+    title: t("onboarding.enable2fa"),
+    description: t("onboarding.enable2faHint"),
     to: "/settings/security",
-    cta: "Enable 2FA",
+    cta: t("onboarding.enable2faCta"),
     done: !!props.twoFactorEnabled,
     allowed: true,
   },
@@ -102,14 +104,14 @@ const primaryKey = computed(() => steps.value.find((s) => !s.done)?.key);
             >
               <Sparkles class="size-4" />
             </span>
-            <h2 class="text-lg font-semibold tracking-tight">Welcome to Lattice</h2>
+            <h2 class="text-lg font-semibold tracking-tight">{{ $t('onboarding.welcome') }}</h2>
           </div>
           <p class="text-sm text-muted-foreground">
-            Bring your fleet online and lock things down in a few steps.
+            {{ $t('onboarding.subtitle') }}
           </p>
         </div>
         <Badge variant="secondary" class="shrink-0 tabular">
-          {{ doneCount }} of {{ totalCount }} done
+          {{ $t('onboarding.progress', { done: doneCount, total: totalCount }) }}
         </Badge>
       </div>
     </div>
@@ -142,7 +144,7 @@ const primaryKey = computed(() => steps.value.find((s) => !s.done)?.key);
             >
               <RouterLink :to="step.to">{{ step.cta }}</RouterLink>
             </Button>
-            <Badge v-else-if="step.done" variant="success" class="shrink-0">Done</Badge>
+            <Badge v-else-if="step.done" variant="success" class="shrink-0">{{ $t('common.actions.done') }}</Badge>
           </div>
         </li>
       </ul>

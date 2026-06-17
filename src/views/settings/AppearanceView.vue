@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Check, Monitor, Moon, Paintbrush, Palette, Sun } from "lucide-vue-next";
+import { Check, Languages, Monitor, Moon, Paintbrush, Palette, Sun } from "lucide-vue-next";
+import { useI18n } from "vue-i18n";
 import { cn } from "@/lib/utils";
 import { useThemeStore, type ThemeMode } from "@/stores/theme";
 import {
@@ -7,6 +8,7 @@ import {
   PALETTES,
   type ColorThemeName,
 } from "@/theme/palettes";
+import { SUPPORTED_LOCALES, setLocale, currentLocale } from "@/i18n";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import { Button } from "@/components/ui/button";
@@ -23,10 +25,13 @@ import { Label } from "@/components/ui/label";
 
 const theme = useThemeStore();
 
-const MODES: { value: ThemeMode; label: string; icon: typeof Sun; hint: string }[] = [
-  { value: "light", label: "Light", icon: Sun, hint: "Always light surfaces" },
-  { value: "system", label: "System", icon: Monitor, hint: "Follow OS preference" },
-  { value: "dark", label: "Dark", icon: Moon, hint: "Always dark surfaces" },
+// Use the i18n composable so the view reacts to locale changes.
+const { locale } = useI18n();
+
+const MODES: { value: ThemeMode; icon: typeof Sun }[] = [
+  { value: "light", icon: Sun },
+  { value: "system", icon: Monitor },
+  { value: "dark", icon: Moon },
 ];
 
 // Palette swatch keys, sourced from PALETTE_KEYS-backed PALETTES (custom excluded).
@@ -53,18 +58,29 @@ function onColorPicker(event: Event) {
 // PALETTE_KEYS is referenced so the view stays aligned with the variables a
 // palette controls; surfaced as a small caption in the brand-color section.
 const controlledVarCount = PALETTE_KEYS.length;
+
+/** True when `code` is the active console locale (reactive via `locale`). */
+function isActiveLocale(code: string): boolean {
+  void locale.value;
+  return currentLocale() === code;
+}
+
+/** Persist and apply the chosen console locale. */
+function changeLocale(code: string): void {
+  setLocale(code as (typeof SUPPORTED_LOCALES)[number]["code"]);
+}
 </script>
 
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Appearance"
-      description="Theme mode and brand color for this console. Stored locally in your browser."
+      :title="$t('appearance.title')"
+      :description="$t('appearance.description')"
     >
       <template #actions>
         <Badge variant="secondary" class="gap-1.5">
           <Palette class="size-3.5" aria-hidden="true" />
-          {{ theme.isDark ? "Dark" : "Light" }}
+          {{ theme.isDark ? $t('appearance.dark') : $t('appearance.light') }}
         </Badge>
       </template>
     </PageHeader>
@@ -76,10 +92,10 @@ const controlledVarCount = PALETTE_KEYS.length;
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Sun class="size-4 text-muted-foreground" aria-hidden="true" />
-              Mode
+              {{ $t('appearance.mode') }}
             </CardTitle>
             <CardDescription>
-              Choose light, dark, or follow your operating system preference.
+              {{ $t('appearance.modeHint') }}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -99,8 +115,8 @@ const controlledVarCount = PALETTE_KEYS.length;
                 @click="theme.setMode(m.value)"
               >
                 <component :is="m.icon" class="size-4" aria-hidden="true" />
-                {{ m.label }}
-                <span class="text-[10px] font-normal text-muted-foreground">{{ m.hint }}</span>
+                {{ $t('appearance.' + m.value) }}
+                <span class="text-[10px] font-normal text-muted-foreground">{{ $t('appearance.' + m.value + 'Hint') }}</span>
               </button>
             </div>
           </CardContent>
@@ -111,10 +127,10 @@ const controlledVarCount = PALETTE_KEYS.length;
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Palette class="size-4 text-muted-foreground" aria-hidden="true" />
-              Brand color
+              {{ $t('appearance.brandColor') }}
             </CardTitle>
             <CardDescription>
-              The accent applied to primary actions, focus rings, and the sidebar.
+              {{ $t('appearance.brandColorHint') }}
             </CardDescription>
           </CardHeader>
           <CardContent class="space-y-3">
@@ -155,10 +171,10 @@ const controlledVarCount = PALETTE_KEYS.length;
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Paintbrush class="size-4 text-muted-foreground" aria-hidden="true" />
-              Custom color
+              {{ $t('appearance.customColor') }}
             </CardTitle>
             <CardDescription>
-              Provide a hex value to derive a custom accent palette.
+              {{ $t('appearance.customColorHint') }}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -175,7 +191,7 @@ const controlledVarCount = PALETTE_KEYS.length;
                 :style="{ backgroundColor: theme.customColor }"
               />
               <div class="grid flex-1 gap-2">
-                <Label for="custom-hex">Hex value</Label>
+                <Label for="custom-hex">{{ $t('appearance.hexValue') }}</Label>
                 <Input
                   id="custom-hex"
                   :model-value="theme.customColor"
@@ -185,7 +201,7 @@ const controlledVarCount = PALETTE_KEYS.length;
                 />
               </div>
               <div class="grid gap-2">
-                <Label for="custom-picker">Picker</Label>
+                <Label for="custom-picker">{{ $t('appearance.picker') }}</Label>
                 <input
                   id="custom-picker"
                   type="color"
@@ -201,6 +217,45 @@ const controlledVarCount = PALETTE_KEYS.length;
             </p>
           </CardContent>
         </Card>
+
+        <!-- Language -->
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <Languages class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('appearance.language') }}
+            </CardTitle>
+            <CardDescription>
+              {{ $t('appearance.languageHint') }}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div class="grid grid-cols-2 gap-2 rounded-md bg-muted p-1 sm:inline-grid sm:auto-cols-fr sm:grid-flow-col">
+              <button
+                v-for="loc in SUPPORTED_LOCALES"
+                :key="loc.code"
+                type="button"
+                :aria-pressed="isActiveLocale(loc.code)"
+                :class="
+                  cn(
+                    'flex items-center justify-center gap-1.5 rounded-sm px-3 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+                    isActiveLocale(loc.code)
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )
+                "
+                @click="changeLocale(loc.code)"
+              >
+                <Check
+                  v-if="isActiveLocale(loc.code)"
+                  class="size-3.5"
+                  aria-hidden="true"
+                />
+                {{ loc.label }}
+              </button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <!-- Live preview -->
@@ -208,10 +263,10 @@ const controlledVarCount = PALETTE_KEYS.length;
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Palette class="size-4 text-muted-foreground" aria-hidden="true" />
-            Live preview
+            {{ $t('appearance.livePreview') }}
           </CardTitle>
           <CardDescription>
-            The current theme applied to common interface elements.
+            {{ $t('appearance.livePreviewHint') }}
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-5">

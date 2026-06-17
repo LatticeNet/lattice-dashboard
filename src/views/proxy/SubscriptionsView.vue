@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   CircleSlash,
@@ -44,6 +45,7 @@ import {
 } from "@/components/ui/dialog";
 
 const auth = useAuthStore();
+const { t } = useI18n();
 
 const usersQuery = useAsyncData(
   () => api.proxy.users().then((r) => unwrap(r, "users")),
@@ -52,7 +54,7 @@ const usersQuery = useAsyncData(
 
 const users = computed(() => usersQuery.data.value ?? []);
 const canAdmin = computed(() => auth.can("proxy:admin"));
-const adminReason = "proxy:admin scope is required to reveal subscription tokens.";
+const adminReason = computed(() => t("proxy.subscriptions.adminReason"));
 
 const sortedUsers = computed(() =>
   [...users.value].sort((a, b) => {
@@ -90,7 +92,7 @@ function usagePercent(user: ProxyUserView): number {
 }
 
 function limitLabel(user: ProxyUserView): string {
-  return isUnlimited(user) ? "unlimited" : formatBytes(user.traffic_limit_bytes);
+  return isUnlimited(user) ? t("proxy.subscriptions.unlimited") : formatBytes(user.traffic_limit_bytes);
 }
 
 // ---- Reveal subscription (rotate) ----
@@ -121,7 +123,7 @@ async function reveal(user: ProxyUserView) {
     revealOpen.value = true;
     usersQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to reveal subscription");
+    toast.error(error instanceof Error ? error.message : t("proxy.subscriptions.toastRevealFailed"));
   } finally {
     rotating.value = undefined;
   }
@@ -136,8 +138,8 @@ function closeReveal(open: boolean) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Subscriptions"
-      description="Subscriber-facing distribution and health for proxy users"
+      :title="$t('proxy.subscriptions.title')"
+      :description="$t('proxy.subscriptions.description')"
     >
       <template #actions>
         <Button
@@ -147,27 +149,27 @@ function closeReveal(open: boolean) {
           @click="usersQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', usersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
     <div class="grid gap-4 sm:grid-cols-3 xl:grid-cols-5">
-      <StatCard label="Total" :value="kpis.total" :icon="Rss" />
-      <StatCard label="Active" :value="kpis.active" :icon="Rss" tone="success" />
-      <StatCard label="Expired" :value="kpis.expired" :icon="TriangleAlert" :tone="kpis.expired > 0 ? 'warning' : 'default'" />
-      <StatCard label="Over quota" :value="kpis.overQuota" :icon="TriangleAlert" :tone="kpis.overQuota > 0 ? 'warning' : 'default'" />
-      <StatCard label="Disabled" :value="kpis.disabled" :icon="CircleSlash" />
+      <StatCard :label="$t('proxy.subscriptions.kpiTotal')" :value="kpis.total" :icon="Rss" />
+      <StatCard :label="$t('proxy.subscriptions.kpiActive')" :value="kpis.active" :icon="Rss" tone="success" />
+      <StatCard :label="$t('proxy.subscriptions.kpiExpired')" :value="kpis.expired" :icon="TriangleAlert" :tone="kpis.expired > 0 ? 'warning' : 'default'" />
+      <StatCard :label="$t('proxy.subscriptions.kpiOverQuota')" :value="kpis.overQuota" :icon="TriangleAlert" :tone="kpis.overQuota > 0 ? 'warning' : 'default'" />
+      <StatCard :label="$t('proxy.subscriptions.kpiDisabled')" :value="kpis.disabled" :icon="CircleSlash" />
     </div>
 
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Rss class="size-4 text-muted-foreground" aria-hidden="true" />
-          Subscription Delivery
+          {{ $t('proxy.subscriptions.delivery') }}
         </CardTitle>
         <CardDescription>
-          Distribution health per subscriber. Revealing a subscription rotates the token and invalidates the old one.
+          {{ $t('proxy.subscriptions.deliveryDescription') }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -175,20 +177,20 @@ function closeReveal(open: boolean) {
           :loading="usersQuery.loading.value"
           :error="usersQuery.error.value"
           :is-empty="users.length === 0"
-          empty-title="No subscribers"
-          empty-description="Create proxy users to distribute subscriptions."
+          :empty-title="$t('proxy.subscriptions.emptyTitle')"
+          :empty-description="$t('proxy.subscriptions.emptyDescription')"
           @retry="usersQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th scope="col" class="px-3 py-2 text-left font-medium">User</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Status</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Quota usage</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Expiry</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">Sub-token</th>
-                  <th scope="col" class="px-3 py-2 text-right font-medium">Delivery</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colUser') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colStatus') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colQuotaUsage') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colExpiry') }}</th>
+                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colSubToken') }}</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.subscriptions.colDelivery') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -202,7 +204,7 @@ function closeReveal(open: boolean) {
                     <div class="font-mono text-xs text-muted-foreground">{{ shortId(user.id, 16) }}</div>
                   </td>
                   <td class="px-3 py-3">
-                    <Badge :variant="statusVariant(user.status)">{{ user.status }}</Badge>
+                    <Badge :variant="statusVariant(user.status)">{{ $t('common.status.' + (user.status === 'over_quota' ? 'overQuota' : user.status)) }}</Badge>
                   </td>
                   <td class="px-3 py-3">
                     <div class="min-w-[160px] space-y-1">
@@ -215,19 +217,19 @@ function closeReveal(open: boolean) {
                         :model-value="usagePercent(user)"
                         :indicator-class="usagePercent(user) >= 100 ? 'bg-warning' : undefined"
                       />
-                      <div v-else class="text-xs text-muted-foreground">no quota limit</div>
+                      <div v-else class="text-xs text-muted-foreground">{{ $t('proxy.subscriptions.noQuotaLimit') }}</div>
                     </div>
                   </td>
                   <td class="px-3 py-3 text-xs">
                     <span v-if="user.expires_at" :class="cn(user.status === 'expired' && 'text-warning')">
                       {{ formatRelativeTime(user.expires_at) }}
                     </span>
-                    <span v-else class="text-muted-foreground">never</span>
+                    <span v-else class="text-muted-foreground">{{ $t('common.misc.never') }}</span>
                   </td>
                   <td class="px-3 py-3">
                     <Badge :variant="user.has_sub_token ? 'success' : 'secondary'" class="gap-1">
                       <Lock class="size-3" aria-hidden="true" />
-                      {{ user.has_sub_token ? "set" : "none" }}
+                      {{ user.has_sub_token ? $t('common.status.set') : $t('common.misc.none') }}
                     </Badge>
                   </td>
                   <td class="px-3 py-3">
@@ -237,14 +239,14 @@ function closeReveal(open: boolean) {
                         size="sm"
                         variant="outline"
                         :disabled="!canAdmin || rotating === user.id"
-                        :title="canAdmin ? 'Reveal subscription (rotates token)' : adminReason"
+                        :title="canAdmin ? $t('proxy.subscriptions.revealTitleAction') : adminReason"
                         @click="reveal(user)"
                       >
                         <RefreshCw v-if="rotating === user.id" class="size-4 animate-spin" aria-hidden="true" />
                         <Rss v-else class="size-4" aria-hidden="true" />
-                        Reveal
+                        {{ $t('proxy.subscriptions.reveal') }}
                       </Button>
-                      <span v-else class="text-xs text-muted-foreground">no token — create in Users</span>
+                      <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.subscriptions.noTokenCreateInUsers') }}</span>
                     </div>
                   </td>
                 </tr>
@@ -257,23 +259,22 @@ function closeReveal(open: boolean) {
 
     <Card>
       <CardHeader>
-        <CardTitle>How clients consume subscriptions</CardTitle>
-        <CardDescription>Operator reference for the public <code class="font-mono">/sub/&lt;token&gt;</code> endpoint.</CardDescription>
+        <CardTitle>{{ $t('proxy.subscriptions.howTitle') }}</CardTitle>
+        <CardDescription>{{ $t('proxy.subscriptions.howDescriptionPrefix') }} <code class="font-mono">/sub/&lt;token&gt;</code> {{ $t('proxy.subscriptions.howDescriptionSuffix') }}</CardDescription>
       </CardHeader>
       <CardContent class="space-y-3 text-sm text-muted-foreground">
         <p>
-          Clients fetch <code class="font-mono text-foreground">/sub/&lt;token&gt;</code>. The default body is
-          base64-encoded; append <code class="font-mono text-foreground">?format=plain</code>,
-          <code class="font-mono text-foreground">?format=sing-box</code>, or
-          <code class="font-mono text-foreground">?format=clash</code> for other client formats.
+          {{ $t('proxy.subscriptions.howClientsFetchPrefix') }} <code class="font-mono text-foreground">/sub/&lt;token&gt;</code>{{ $t('proxy.subscriptions.howClientsFetchMid') }}
+          <code class="font-mono text-foreground">?format=plain</code>{{ $t('proxy.subscriptions.howClientsFetchOr') }}
+          <code class="font-mono text-foreground">?format=sing-box</code>{{ $t('proxy.subscriptions.howClientsFetchOr2') }}
+          <code class="font-mono text-foreground">?format=clash</code> {{ $t('proxy.subscriptions.howClientsFetchSuffix') }}
         </p>
         <p>
-          The server enforces quota and expiry by serving an <span class="text-foreground">empty subscription</span>
-          for ineligible users — the token stays valid, it simply yields zero links until the user is eligible again.
+          {{ $t('proxy.subscriptions.howQuotaPrefix') }} <span class="text-foreground">{{ $t('proxy.subscriptions.howQuotaEmphasis') }}</span>
+          {{ $t('proxy.subscriptions.howQuotaSuffix') }}
         </p>
         <p>
-          Tokens are <span class="text-foreground">write-only and revealed once</span>. The usable URL is only
-          returned by a rotate, which invalidates any previously distributed URL for that user.
+          {{ $t('proxy.subscriptions.howTokensPrefix') }} <span class="text-foreground">{{ $t('proxy.subscriptions.howTokensEmphasis') }}</span>{{ $t('proxy.subscriptions.howTokensSuffix') }}
         </p>
       </CardContent>
     </Card>
@@ -282,9 +283,9 @@ function closeReveal(open: boolean) {
     <Dialog :open="revealOpen" @update:open="closeReveal">
       <DialogScrollContent class="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Subscription revealed</DialogTitle>
+          <DialogTitle>{{ $t('proxy.subscriptions.revealedTitle') }}</DialogTitle>
           <DialogDescription>
-            {{ revealed?.user.name || revealed?.user.id }} — copy now, the token is shown once.
+            {{ $t('proxy.subscriptions.revealedDescription', { name: revealed?.user.name || revealed?.user.id }) }}
           </DialogDescription>
         </DialogHeader>
 
@@ -292,21 +293,20 @@ function closeReveal(open: boolean) {
           <div class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
             <TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <span>
-              Copy now — the token is shown once. Revealing rotated the token, so any previously shared URL for this
-              user no longer works.
+              {{ $t('proxy.subscriptions.revealedWarning') }}
             </span>
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">Subscription URL</span>
-              <CopyButton :value="revealed.subscription_url" label="Copy" />
+              <span class="text-sm font-medium">{{ $t('proxy.subscriptions.subscriptionUrl') }}</span>
+              <CopyButton :value="revealed.subscription_url" :label="$t('common.actions.copy')" />
             </div>
             <code class="block break-all p-3 font-mono text-xs">{{ revealed.subscription_url }}</code>
           </div>
 
           <div class="space-y-2">
-            <p class="text-xs font-medium text-muted-foreground">Client format URLs</p>
+            <p class="text-xs font-medium text-muted-foreground">{{ $t('proxy.subscriptions.clientFormatUrls') }}</p>
             <div
               v-for="fmt in revealedFormats"
               :key="fmt.label"
@@ -321,13 +321,13 @@ function closeReveal(open: boolean) {
           </div>
 
           <div class="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span class="font-medium">token sha256</span>
+            <span class="font-medium">{{ $t('proxy.subscriptions.tokenSha256') }}</span>
             <code class="break-all font-mono">{{ revealed.token_sha256 }}</code>
           </div>
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="outline" @click="closeReveal(false)">Done</Button>
+          <Button type="button" variant="outline" @click="closeReveal(false)">{{ $t('common.actions.done') }}</Button>
         </DialogFooter>
       </DialogScrollContent>
     </Dialog>

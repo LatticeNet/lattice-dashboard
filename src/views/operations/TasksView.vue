@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Play, RefreshCw, Terminal, Timer, CheckCircle2, XCircle } from "lucide-vue-next";
 import { api, unwrap, type TaskResult, type TaskView } from "@/lib/api";
@@ -22,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const tasksQuery = useAsyncData(() => api.tasks.list().then((r) => unwrap(r, "tasks")), {
   pollInterval: 8000,
@@ -91,10 +93,10 @@ async function createTask() {
       output_limit: Number(outputLimit.value),
     });
     script.value = "";
-    toast.success("Task queued");
+    toast.success(t("operations.tasks.toastQueued"));
     refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Task creation failed");
+    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastFailed"));
   } finally {
     createPending.value = false;
   }
@@ -103,11 +105,11 @@ async function createTask() {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Tasks" description="Queue bounded batch tasks and inspect node results">
+    <PageHeader :title="$t('operations.tasks.title')" :description="$t('operations.tasks.description')">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="tasksQuery.refreshing.value || resultsQuery.refreshing.value" @click="refreshAll">
           <RefreshCw :class="cn('size-4', (tasksQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
@@ -116,7 +118,7 @@ async function createTask() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Tasks</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.tasks') }}</p>
             <p class="text-2xl font-semibold">{{ tasks.length }}</p>
           </div>
           <Terminal class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -125,7 +127,7 @@ async function createTask() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Queued</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.queued') }}</p>
             <p class="text-2xl font-semibold text-warning">{{ queuedCount }}</p>
           </div>
           <Timer class="size-5 text-warning" aria-hidden="true" />
@@ -134,7 +136,7 @@ async function createTask() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Finished</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.finished') }}</p>
             <p class="text-2xl font-semibold text-success">{{ finishedCount }}</p>
           </div>
           <CheckCircle2 class="size-5 text-success" aria-hidden="true" />
@@ -146,21 +148,21 @@ async function createTask() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Play class="size-4 text-muted-foreground" aria-hidden="true" />
-          Queue Task
+          {{ $t('operations.tasks.queueTask') }}
         </CardTitle>
-        <CardDescription>Tasks run only on selected nodes and within server-enforced limits.</CardDescription>
+        <CardDescription>{{ $t('operations.tasks.queueTaskHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
         <form class="space-y-4" @submit.prevent="createTask">
           <div class="grid gap-3 xl:grid-cols-[1fr_140px_140px]">
             <div class="grid gap-2">
-              <Label>Targets</Label>
+              <Label>{{ $t('operations.tasks.targets') }}</Label>
               <DataState
                 :loading="nodesQuery.loading.value"
                 :error="nodesQuery.error.value"
                 :is-empty="nodes.length === 0"
-                empty-title="No nodes"
-                empty-description="Enroll nodes before queueing tasks."
+                :empty-title="$t('operations.tasks.noNodesTitle')"
+                :empty-description="$t('operations.tasks.noNodesDescription')"
                 @retry="nodesQuery.refresh"
               >
                 <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -171,23 +173,23 @@ async function createTask() {
                   >
                     <input v-model="selectedTargets" type="checkbox" :value="node.id" class="size-4 accent-primary" />
                     <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
-                    <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? "on" : "off" }}</Badge>
+                    <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('operations.tasks.on') : $t('operations.tasks.off') }}</Badge>
                   </label>
                 </div>
               </DataState>
             </div>
             <div class="grid gap-2">
-              <Label for="task-timeout">Timeout sec</Label>
+              <Label for="task-timeout">{{ $t('operations.tasks.timeoutSec') }}</Label>
               <Input id="task-timeout" v-model="timeoutSec" type="number" min="1" max="3600" />
             </div>
             <div class="grid gap-2">
-              <Label for="task-output">Output limit</Label>
+              <Label for="task-output">{{ $t('operations.tasks.outputLimit') }}</Label>
               <Input id="task-output" v-model="outputLimit" type="number" min="1024" max="1048576" />
             </div>
           </div>
 
           <div class="grid gap-2">
-            <Label for="task-interpreter">Interpreter</Label>
+            <Label for="task-interpreter">{{ $t('operations.tasks.interpreter') }}</Label>
             <select id="task-interpreter" v-model="interpreter" class="h-9 max-w-xs rounded-md border border-input bg-background px-3 text-sm">
               <option value="sh">sh</option>
               <option value="bash">bash</option>
@@ -197,7 +199,7 @@ async function createTask() {
           </div>
 
           <div class="grid gap-2">
-            <Label for="task-script">Script</Label>
+            <Label for="task-script">{{ $t('operations.tasks.script') }}</Label>
             <textarea
               id="task-script"
               v-model="script"
@@ -209,7 +211,7 @@ async function createTask() {
           <Button type="submit" :disabled="createPending || selectedTargets.length === 0 || !script.trim()">
             <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
             <Play v-else class="size-4" aria-hidden="true" />
-            Queue task
+            {{ $t('operations.tasks.queueTaskCta') }}
           </Button>
         </form>
       </CardContent>
@@ -217,16 +219,16 @@ async function createTask() {
 
     <Card>
       <CardHeader>
-        <CardTitle>Task History</CardTitle>
-        <CardDescription>Queued tasks and collected per-node results</CardDescription>
+        <CardTitle>{{ $t('operations.tasks.history') }}</CardTitle>
+        <CardDescription>{{ $t('operations.tasks.historyHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
         <DataState
           :loading="tasksQuery.loading.value || resultsQuery.loading.value"
           :error="tasksQuery.error.value || resultsQuery.error.value"
           :is-empty="tasks.length === 0"
-          empty-title="No tasks queued"
-          empty-description="Created tasks appear here with their node results."
+          :empty-title="$t('operations.tasks.emptyTitle')"
+          :empty-description="$t('operations.tasks.emptyDescription')"
           @retry="refreshAll"
         >
           <div class="space-y-3">
@@ -243,8 +245,8 @@ async function createTask() {
                   </p>
                 </div>
                 <div class="flex flex-wrap gap-1">
-                  <Badge variant="outline">{{ task.script_size_bytes || 0 }} bytes</Badge>
-                  <Badge v-if="task.timeout_sec" variant="outline">{{ task.timeout_sec }}s</Badge>
+                  <Badge variant="outline">{{ $t('operations.tasks.bytes', { count: task.script_size_bytes || 0 }) }}</Badge>
+                  <Badge v-if="task.timeout_sec" variant="outline">{{ $t('operations.tasks.seconds', { count: task.timeout_sec }) }}</Badge>
                 </div>
               </div>
 
@@ -260,7 +262,7 @@ async function createTask() {
                       <CheckCircle2 v-else class="size-3" aria-hidden="true" />
                       {{ nodeName(result.node_id) }}
                     </Badge>
-                    <span class="text-xs text-muted-foreground">exit {{ result.exit_code ?? 0 }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('operations.tasks.exit', { code: result.exit_code ?? 0 }) }}</span>
                     <span class="text-xs text-muted-foreground">{{ formatDateTime(result.finished_at || result.started_at) }}</span>
                   </div>
                   <pre v-if="result.stdout" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-2 font-mono text-xs">{{ result.stdout }}</pre>

@@ -130,7 +130,7 @@ export default {
   },
 
   shell: {
-    sidebar: { toggle: "Toggle sidebar", primaryNav: "Primary" },
+    sidebar: { toggle: "Toggle sidebar", primaryNav: "Primary", collapse: "Collapse" },
     header: {
       toggleTheme: "Toggle theme",
       appearance: "Appearance",

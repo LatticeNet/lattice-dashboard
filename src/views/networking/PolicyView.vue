@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
@@ -61,6 +62,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("netpolicy:read"));
 const canAdmin = computed(() => auth.can("netpolicy:admin"));
@@ -198,13 +200,13 @@ function removeRule(index: number) {
 /** domain remotes are egress-only; clear protocol ports when protocol=any. */
 function ruleError(draft: RuleDraft): string | undefined {
   if (draft.remoteKind === "domain" && draft.direction === "ingress") {
-    return "domain remotes are egress-only";
+    return t("networking.policy.errDomainEgressOnly");
   }
-  if (draft.remoteKind === "node" && !draft.remoteNodeId) return "select a node";
-  if (draft.remoteKind === "cidr" && !draft.remoteCidr.trim()) return "enter a CIDR";
-  if (draft.remoteKind === "domain" && !draft.remoteDomain.trim()) return "enter a domain";
+  if (draft.remoteKind === "node" && !draft.remoteNodeId) return t("networking.policy.errSelectNode");
+  if (draft.remoteKind === "cidr" && !draft.remoteCidr.trim()) return t("networking.policy.errEnterCidr");
+  if (draft.remoteKind === "domain" && !draft.remoteDomain.trim()) return t("networking.policy.errEnterDomain");
   if (draft.protocol === "any" && parsePorts(draft.ports).length > 0) {
-    return "protocol any cannot carry ports";
+    return t("networking.policy.errAnyNoPorts");
   }
   return undefined;
 }
@@ -243,11 +245,11 @@ async function submit() {
       rules: form.rules.map(draftToRule),
     };
     await api.netpolicy.upsert(body);
-    toast.success(editingId.value ? "Policy updated" : "Policy created");
+    toast.success(editingId.value ? t("networking.policy.toastUpdated") : t("networking.policy.toastCreated"));
     dialogOpen.value = false;
     policiesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to save policy");
+    toast.error(error instanceof Error ? error.message : t("networking.policy.toastSaveFailed"));
   } finally {
     saving.value = false;
   }
@@ -262,11 +264,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.netpolicy.delete(deleteTarget.value.target_node_id);
-    toast.success("Policy deleted");
+    toast.success(t("networking.policy.toastDeleted"));
     deleteTarget.value = undefined;
     policiesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to delete policy");
+    toast.error(error instanceof Error ? error.message : t("networking.policy.toastDeleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -284,9 +286,9 @@ async function plan(p: NetPolicyView) {
     const approval = await api.netpolicy.plan(p.target_node_id);
     planApproval.value = approval;
     planSha.value = await sha256Hex(approval.plan || "");
-    toast.success("Plan created — review in Approvals");
+    toast.success(t("networking.shared.toastPlanCreated"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Plan failed");
+    toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
   } finally {
     planning.value = undefined;
   }
@@ -390,8 +392,8 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Network Policy"
-      description="Per-node L3/L4 network intent compiled into nftables, plus a topology view"
+      :title="$t('networking.policy.title')"
+      :description="$t('networking.policy.description')"
     >
       <template #actions>
         <Button
@@ -401,19 +403,19 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           @click="policiesQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New policy
+          {{ $t('networking.policy.newPolicy') }}
         </Button>
       </template>
     </PageHeader>
 
     <Tabs :model-value="tab" @update:model-value="onTabChange">
       <TabsList>
-        <TabsTrigger value="policies">Policies</TabsTrigger>
-        <TabsTrigger value="graph">Topology graph</TabsTrigger>
+        <TabsTrigger value="policies">{{ $t('networking.policy.tabPolicies') }}</TabsTrigger>
+        <TabsTrigger value="graph">{{ $t('networking.policy.tabGraph') }}</TabsTrigger>
       </TabsList>
 
       <!-- Policies tab -->
@@ -422,10 +424,10 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Network class="size-4 text-muted-foreground" aria-hidden="true" />
-              Node policies
+              {{ $t('networking.policy.nodePolicies') }}
             </CardTitle>
             <CardDescription>
-              Each policy is an ordered set of allow/deny L3/L4 rules for one target node.
+              {{ $t('networking.policy.nodePoliciesHint') }}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -433,21 +435,21 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               :loading="policiesQuery.loading.value"
               :error="policiesQuery.error.value"
               :is-empty="policies.length === 0"
-              empty-title="No network policies"
-              :empty-description="canRead ? 'Create a policy to control egress and ingress for a node.' : 'netpolicy:read is required to view policies.'"
+              :empty-title="$t('networking.policy.emptyTitle')"
+              :empty-description="canRead ? $t('networking.policy.emptyWithRead') : $t('networking.policy.emptyNeedRead')"
               @retry="policiesQuery.refresh"
             >
               <div class="overflow-x-auto">
                 <table class="w-full text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th scope="col" class="py-2 pr-3 font-medium">Target node</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Enabled</th>
-                      <th scope="col" class="py-2 pr-3 text-right font-medium">Rules</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Last plan</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Last applied</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">Last error</th>
-                      <th scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colTargetNode') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colEnabled') }}</th>
+                      <th scope="col" class="py-2 pr-3 text-right font-medium">{{ $t('networking.policy.colRules') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colLastPlan') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colLastApplied') }}</th>
+                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colLastError') }}</th>
+                      <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('networking.policy.colActions') }}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -462,7 +464,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                       </td>
                       <td class="py-3 pr-3">
                         <Badge :variant="p.enabled ? 'success' : 'secondary'">
-                          {{ p.enabled ? "enabled" : "disabled" }}
+                          {{ p.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                         </Badge>
                       </td>
                       <td class="py-3 pr-3 text-right tabular">{{ activeRuleCount(p) }} / {{ p.rules.length }}</td>
@@ -487,13 +489,13 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                           >
                             <RefreshCw v-if="planning === p.target_node_id" class="size-4 animate-spin" aria-hidden="true" />
                             <Play v-else class="size-4" aria-hidden="true" />
-                            Plan
+                            {{ $t('networking.shared.plan') }}
                           </Button>
                           <Button
                             v-if="canAdmin"
                             variant="ghost"
                             size="icon-sm"
-                            aria-label="Edit"
+                            :aria-label="$t('common.actions.edit')"
                             @click="openEdit(p)"
                           >
                             <Pencil class="size-4" />
@@ -502,7 +504,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                             v-if="canAdmin"
                             variant="ghost"
                             size="icon-sm"
-                            aria-label="Delete"
+                            :aria-label="$t('common.actions.delete')"
                             @click="deleteTarget = p"
                           >
                             <Trash2 class="size-4 text-destructive" />
@@ -526,10 +528,10 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               <div>
                 <CardTitle class="flex items-center gap-2">
                   <Network class="size-4 text-muted-foreground" aria-hidden="true" />
-                  Topology graph
+                  {{ $t('networking.policy.graphTitle') }}
                 </CardTitle>
                 <CardDescription>
-                  Node-to-node edges from policy rules. Green = allow, red = deny.
+                  {{ $t('networking.policy.graphHint') }}
                 </CardDescription>
               </div>
               <Button
@@ -539,7 +541,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 @click="graphQuery.refresh"
               >
                 <RefreshCw :class="cn('size-4', graphQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-                Reload graph
+                {{ $t('networking.policy.reloadGraph') }}
               </Button>
             </div>
           </CardHeader>
@@ -548,24 +550,24 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               :loading="graphQuery.loading.value"
               :error="graphQuery.error.value"
               :is-empty="(graph?.nodes.length ?? 0) === 0"
-              empty-title="No nodes in graph"
-              empty-description="Only nodes you can read with active policies appear in the topology."
+              :empty-title="$t('networking.policy.graphEmptyTitle')"
+              :empty-description="$t('networking.policy.graphEmptyDescription')"
               @retry="graphQuery.refresh"
             >
               <div class="space-y-6">
                 <!-- Legend -->
                 <div class="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                   <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block h-0.5 w-6 rounded bg-success"></span> allow
+                    <span class="inline-block h-0.5 w-6 rounded bg-success"></span> {{ $t('networking.policy.legendAllow') }}
                   </span>
                   <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block h-0.5 w-6 rounded bg-destructive"></span> deny
+                    <span class="inline-block h-0.5 w-6 rounded bg-destructive"></span> {{ $t('networking.policy.legendDeny') }}
                   </span>
                   <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block size-2 rounded-full bg-success"></span> online
+                    <span class="inline-block size-2 rounded-full bg-success"></span> {{ $t('networking.policy.legendOnline') }}
                   </span>
                   <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block size-2 rounded-full bg-muted-foreground"></span> offline
+                    <span class="inline-block size-2 rounded-full bg-muted-foreground"></span> {{ $t('networking.policy.legendOffline') }}
                   </span>
                 </div>
 
@@ -575,7 +577,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                     :viewBox="`0 0 ${GRAPH_SIZE} ${GRAPH_SIZE}`"
                     class="mx-auto block h-[480px] w-full max-w-[640px]"
                     role="img"
-                    aria-label="Network policy topology"
+                    :aria-label="$t('networking.policy.graphAriaLabel')"
                   >
                     <defs>
                       <marker
@@ -652,7 +654,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                     </g>
                   </svg>
                   <p v-if="!hasGraphEdges" class="pb-2 text-center text-xs text-muted-foreground">
-                    No node-to-node edges. External endpoints are listed below.
+                    {{ $t('networking.policy.noEdges') }}
                   </p>
                 </div>
 
@@ -661,12 +663,12 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                   <table class="w-full text-sm">
                     <thead>
                       <tr class="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                        <th scope="col" class="px-3 py-2 font-medium">Target node</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Direction</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Action</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Remote</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Protocol</th>
-                        <th scope="col" class="px-3 py-2 font-medium">Ports</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extTargetNode') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extDirection') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extAction') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extRemote') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extProtocol') }}</th>
+                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extPorts') }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -682,7 +684,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                         </td>
                         <td class="px-3 py-2 font-mono text-xs">{{ ext.remote }}</td>
                         <td class="px-3 py-2 text-xs">{{ ext.protocol }}</td>
-                        <td class="px-3 py-2 font-mono text-xs">{{ ext.ports?.length ? ext.ports.join(", ") : "all" }}</td>
+                        <td class="px-3 py-2 font-mono text-xs">{{ ext.ports?.length ? ext.ports.join(", ") : $t('common.misc.all') }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -698,19 +700,19 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
     <Dialog v-model:open="dialogOpen">
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? "Edit policy" : "New policy" }}</DialogTitle>
+          <DialogTitle>{{ editingId ? $t('networking.policy.editTitle') : $t('networking.policy.newTitle') }}</DialogTitle>
           <DialogDescription>
-            Define ordered rules. Domain remotes are egress-only; protocol "any" carries no ports.
+            {{ $t('networking.policy.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-5" @submit.prevent="submit">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="policy-node">Target node</Label>
+              <Label for="policy-node">{{ $t('networking.policy.targetNode') }}</Label>
               <Select v-model="form.target_node_id" :disabled="!!editingId">
                 <SelectTrigger id="policy-node" class="w-full">
-                  <SelectValue placeholder="Select a node" />
+                  <SelectValue :placeholder="$t('networking.policy.selectNode')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -720,25 +722,25 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               </Select>
             </div>
             <div class="grid gap-2">
-              <Label>Policy state</Label>
+              <Label>{{ $t('networking.policy.policyState') }}</Label>
               <label class="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
                 <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-                Enabled
+                {{ $t('networking.policy.enabled') }}
               </label>
             </div>
           </div>
 
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <Label>Rules</Label>
+              <Label>{{ $t('networking.policy.rules') }}</Label>
               <Button type="button" variant="outline" size="sm" @click="addRule">
                 <Plus class="size-4" aria-hidden="true" />
-                Add rule
+                {{ $t('networking.policy.addRule') }}
               </Button>
             </div>
 
             <p v-if="form.rules.length === 0" class="rounded-md border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-              No rules. An empty enabled policy denies all non-baseline traffic.
+              {{ $t('networking.policy.noRules') }}
             </p>
 
             <div
@@ -747,15 +749,15 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               class="space-y-3 rounded-lg border border-border p-3"
             >
               <div class="flex items-center justify-between">
-                <span class="text-xs font-medium text-muted-foreground">Rule {{ index + 1 }}</span>
-                <Button type="button" variant="ghost" size="icon-sm" aria-label="Remove rule" @click="removeRule(index)">
+                <span class="text-xs font-medium text-muted-foreground">{{ $t('networking.policy.ruleLabel', { index: index + 1 }) }}</span>
+                <Button type="button" variant="ghost" size="icon-sm" :aria-label="$t('networking.policy.removeRule')" @click="removeRule(index)">
                   <Trash2 class="size-4 text-destructive" />
                 </Button>
               </div>
 
               <div class="grid gap-3 sm:grid-cols-3">
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Action</Label>
+                  <Label class="text-xs">{{ $t('networking.policy.action') }}</Label>
                   <Select v-model="rule.action">
                     <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -765,7 +767,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                   </Select>
                 </div>
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Direction</Label>
+                  <Label class="text-xs">{{ $t('networking.policy.direction') }}</Label>
                   <Select v-model="rule.direction">
                     <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -775,7 +777,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                   </Select>
                 </div>
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Protocol</Label>
+                  <Label class="text-xs">{{ $t('networking.policy.protocol') }}</Label>
                   <Select v-model="rule.protocol">
                     <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -789,15 +791,15 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
 
               <div class="grid gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Ports</Label>
+                  <Label class="text-xs">{{ $t('networking.policy.ports') }}</Label>
                   <Input
                     v-model="rule.ports"
                     :disabled="rule.protocol === 'any'"
-                    placeholder="empty = all ports"
+                    :placeholder="$t('networking.policy.portsPlaceholder')"
                   />
                 </div>
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Remote kind</Label>
+                  <Label class="text-xs">{{ $t('networking.policy.remoteKind') }}</Label>
                   <Select v-model="rule.remoteKind">
                     <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -811,9 +813,9 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               </div>
 
               <div v-if="rule.remoteKind === 'node'" class="grid gap-1.5">
-                <Label class="text-xs">Remote node</Label>
+                <Label class="text-xs">{{ $t('networking.policy.remoteNode') }}</Label>
                 <Select v-model="rule.remoteNodeId">
-                  <SelectTrigger class="w-full"><SelectValue placeholder="Select a node" /></SelectTrigger>
+                  <SelectTrigger class="w-full"><SelectValue :placeholder="$t('networking.policy.selectNode')" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
                       {{ node.name || node.id }}
@@ -822,22 +824,22 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </Select>
               </div>
               <div v-else-if="rule.remoteKind === 'cidr'" class="grid gap-1.5">
-                <Label class="text-xs">Remote CIDR</Label>
+                <Label class="text-xs">{{ $t('networking.policy.remoteCidr') }}</Label>
                 <Input v-model="rule.remoteCidr" placeholder="10.0.0.0/24 or 1.2.3.4" />
               </div>
               <div v-else-if="rule.remoteKind === 'domain'" class="grid gap-1.5">
-                <Label class="text-xs">Remote domain (egress only)</Label>
+                <Label class="text-xs">{{ $t('networking.policy.remoteDomain') }}</Label>
                 <Input v-model="rule.remoteDomain" placeholder="api.example.com" />
               </div>
 
               <div class="grid gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
-                  <Label class="text-xs">Comment</Label>
-                  <Input v-model="rule.comment" placeholder="optional" />
+                  <Label class="text-xs">{{ $t('networking.policy.comment') }}</Label>
+                  <Input v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />
                 </div>
                 <label class="flex items-center gap-2 self-end pb-2 text-sm">
                   <input v-model="rule.disabled" type="checkbox" class="size-4 accent-primary" />
-                  Disabled
+                  {{ $t('networking.policy.disabled') }}
                 </label>
               </div>
 
@@ -846,10 +848,10 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="dialogOpen = false">Cancel</Button>
+            <Button type="button" variant="outline" @click="dialogOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
-              {{ editingId ? "Save changes" : "Create policy" }}
+              {{ editingId ? $t('common.actions.saveChanges') : $t('networking.policy.createPolicy') }}
             </Button>
           </DialogFooter>
         </form>
@@ -860,19 +862,19 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogScrollContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete policy</DialogTitle>
+          <DialogTitle>{{ $t('networking.policy.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            Delete the network policy for
+            {{ $t('networking.policy.deleteDescription') }}
             <span class="font-medium">{{ deleteTarget ? policyNodeLabel(deleteTarget) : "" }}</span>?
-            This cannot be undone.
+            {{ $t('networking.policy.deleteIrreversible') }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteTarget = undefined">Cancel</Button>
+          <Button type="button" variant="outline" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogScrollContent>
@@ -882,21 +884,21 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
     <Dialog :open="!!planApproval" @update:open="closePlan">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Plan created</DialogTitle>
+          <DialogTitle>{{ $t('networking.shared.planCreated') }}</DialogTitle>
           <DialogDescription>
-            Review &amp; approve under Operations → Approvals. Nothing is applied until approved.
+            {{ $t('networking.shared.planReviewHint') }}
           </DialogDescription>
         </DialogHeader>
         <div v-if="planApproval" class="space-y-4">
           <div class="flex flex-wrap items-center gap-2">
             <Badge variant="warning">{{ planApproval.status }}</Badge>
             <Badge variant="outline">{{ planApproval.plugin }} · {{ planApproval.action }}</Badge>
-            <Badge variant="secondary">id {{ shortId(planApproval.id, 12) }}</Badge>
+            <Badge variant="secondary">{{ $t('networking.shared.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">Plan</span>
+              <span class="text-sm font-medium">{{ $t('networking.shared.planLabel') }}</span>
               <CopyButton :value="planApproval.plan || ''" />
             </div>
             <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
@@ -909,11 +911,11 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           </div>
         </div>
         <DialogFooter>
-          <Button type="button" variant="outline" @click="closePlan(false)">Close</Button>
+          <Button type="button" variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
           <Button as-child>
             <RouterLink to="/approvals">
               <ExternalLink class="size-4" aria-hidden="true" />
-              Go to Approvals
+              {{ $t('networking.shared.goToApprovals') }}
             </RouterLink>
           </Button>
         </DialogFooter>

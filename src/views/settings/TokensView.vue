@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   KeyRound,
@@ -87,6 +88,7 @@ const SCOPE_CATALOG = [
   "worker:deploy",
 ] as const;
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("token:admin"));
 
@@ -167,10 +169,10 @@ async function submitForm() {
     const created = await api.tokens.create(req);
     formOpen.value = false;
     revealed.value = created; // one-time reveal — never re-fetched.
-    toast.success("Token created — copy it now");
+    toast.success(t("settings.tokens.toast.created"));
     tokensQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Token creation failed");
+    toast.error(error instanceof Error ? error.message : t("settings.tokens.toast.createFailed"));
   } finally {
     saving.value = false;
   }
@@ -189,11 +191,11 @@ async function confirmRevoke() {
   revoking.value = true;
   try {
     await api.tokens.revoke(revokeTarget.value.id);
-    toast.success("Token revoked");
+    toast.success(t("settings.tokens.toast.revoked"));
     revokeTarget.value = undefined;
     tokensQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Revoke failed");
+    toast.error(error instanceof Error ? error.message : t("settings.tokens.toast.revokeFailed"));
   } finally {
     revoking.value = false;
   }
@@ -205,8 +207,8 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Access Tokens"
-      description="Personal access tokens (PATs) — Bearer credentials carrying RBAC scopes"
+      :title="$t('settings.tokens.title')"
+      :description="$t('settings.tokens.description')"
     >
       <template #actions>
         <Button
@@ -216,11 +218,11 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
           @click="tokensQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', tokensQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t("common.actions.refresh") }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New token
+          {{ $t("settings.tokens.newToken") }}
         </Button>
       </template>
     </PageHeader>
@@ -229,11 +231,9 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
       <CardContent class="flex items-start gap-3 p-4">
         <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
         <div class="space-y-1 text-sm">
-          <p class="font-medium">Privilege-contained minting</p>
+          <p class="font-medium">{{ $t("settings.tokens.explainer.title") }}</p>
           <p class="text-muted-foreground">
-            A token can only grant scopes that are a subset of your own, and a server allowlist no
-            broader than yours. The plaintext credential is shown exactly once at creation and never
-            again — only its salted hash is stored. Revocation is one-way and idempotent.
+            {{ $t("settings.tokens.explainer.body") }}
           </p>
         </div>
       </CardContent>
@@ -243,10 +243,10 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
-          Tokens
+          {{ $t("settings.tokens.list.title") }}
         </CardTitle>
         <CardDescription>
-          {{ activeCount }} active of {{ tokens.length }} {{ tokens.length === 1 ? "token" : "tokens" }}
+          {{ $t("settings.tokens.list.count", { active: activeCount, total: tokens.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -254,21 +254,21 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
           :loading="tokensQuery.loading.value"
           :error="tokensQuery.error.value"
           :is-empty="tokens.length === 0"
-          empty-title="No access tokens"
-          empty-description="Mint a scoped PAT to authenticate automation or CLI callers."
+          :empty-title="$t('settings.tokens.list.emptyTitle')"
+          :empty-description="$t('settings.tokens.list.emptyDescription')"
           @retry="tokensQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Actor</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Scopes</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Server allowlist</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Created</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Status</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.name") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.actor") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.scopes") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.serverAllowlist") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.created") }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.status") }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t("settings.tokens.list.actions") }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -302,14 +302,14 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
                         {{ node }}
                       </Badge>
                     </div>
-                    <Badge v-else variant="info">all</Badge>
+                    <Badge v-else variant="info">{{ $t("common.misc.all") }}</Badge>
                   </td>
                   <td class="py-3 pr-4 text-xs text-muted-foreground">
                     {{ token.created_at ? formatDateTime(token.created_at) : "—" }}
                   </td>
                   <td class="py-3 pr-4">
                     <Badge :variant="token.revoked_at ? 'destructive' : 'success'">
-                      {{ token.revoked_at ? "revoked" : "active" }}
+                      {{ token.revoked_at ? $t("common.status.revoked") : $t("common.status.active") }}
                     </Badge>
                   </td>
                   <td class="py-3 pl-4">
@@ -321,7 +321,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
                         @click="revokeTarget = token"
                       >
                         <ShieldOff class="size-4 text-destructive" aria-hidden="true" />
-                        Revoke
+                        {{ $t("settings.tokens.list.revoke") }}
                       </Button>
                     </div>
                   </td>
@@ -337,29 +337,31 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New access token</DialogTitle>
+          <DialogTitle>{{ $t("settings.tokens.form.title") }}</DialogTitle>
           <DialogDescription>
-            Granted scopes must be a subset of your own. The server rejects any scope you do not hold.
+            {{ $t("settings.tokens.form.description") }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-2">
-            <Label for="token-name">Name</Label>
+            <Label for="token-name">{{ $t("settings.tokens.form.name") }}</Label>
             <Input id="token-name" v-model="form.name" required placeholder="ci-deploy-bot" />
           </div>
 
           <div class="grid gap-2">
             <div class="flex items-center justify-between">
-              <Label>Scopes</Label>
-              <span class="text-xs text-muted-foreground">{{ form.scopes.length }} selected</span>
+              <Label>{{ $t("settings.tokens.form.scopes") }}</Label>
+              <span class="text-xs text-muted-foreground">{{ $t("settings.tokens.form.selected", { count: form.scopes.length }) }}</span>
             </div>
             <p class="text-xs text-muted-foreground">
               <template v-if="isSuperuser">
-                You hold <code class="font-mono">*</code> (superuser) — any scope may be granted.
+                <i18n-t keypath="settings.tokens.form.superuserHint" scope="global">
+                  <template #star><code class="font-mono">*</code></template>
+                </i18n-t>
               </template>
               <template v-else>
-                Only the scopes you currently hold are offered.
+                {{ $t("settings.tokens.form.scopedHint") }}
               </template>
             </p>
             <div class="grid max-h-72 grid-cols-1 gap-1.5 overflow-auto rounded-md border border-border p-2 sm:grid-cols-2">
@@ -380,31 +382,31 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
                 v-if="grantableScopes.length === 0"
                 class="col-span-full px-2 py-1.5 text-xs text-muted-foreground"
               >
-                You hold no grantable scopes from the catalog.
+                {{ $t("settings.tokens.form.noGrantableScopes") }}
               </p>
             </div>
           </div>
 
           <div class="grid gap-2">
-            <Label for="token-allowlist">Server allowlist</Label>
+            <Label for="token-allowlist">{{ $t("settings.tokens.form.serverAllowlist") }}</Label>
             <Input id="token-allowlist" v-model="form.server_allowlist" placeholder="node_a1b2, node_c3d4" />
             <p class="text-xs text-muted-foreground">
-              Comma-separated node IDs. Must be a subset of your own allowlist. Leave empty for all nodes.
+              {{ $t("settings.tokens.form.serverAllowlistHint") }}
             </p>
             <p v-if="!isSuperuser && grantableAllowlist.length" class="text-xs text-muted-foreground">
-              Your scopes:
+              {{ $t("settings.tokens.form.yourScopes") }}
               <code class="font-mono">{{ grantableAllowlist.slice(0, 6).join(", ") }}</code>
             </p>
           </div>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              Create token
+              {{ $t("settings.tokens.form.submit") }}
             </Button>
           </DialogFooter>
         </form>
@@ -417,25 +419,24 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <TriangleAlert class="size-5 text-warning" aria-hidden="true" />
-            Copy your token now
+            {{ $t("settings.tokens.reveal.title") }}
           </DialogTitle>
           <DialogDescription>
-            This is the only time the full credential is shown. It is never stored in plaintext and
-            cannot be retrieved again.
+            {{ $t("settings.tokens.reveal.description") }}
           </DialogDescription>
         </DialogHeader>
 
         <div class="space-y-4">
           <div class="space-y-2 rounded-md border border-warning/40 bg-warning/5 p-4">
             <div class="flex items-center justify-between gap-3">
-              <Label>Token ({{ "<id>.<secret>" }})</Label>
-              <CopyButton v-if="revealed" :value="revealed.token" label="Copy" />
+              <Label>{{ $t("settings.tokens.reveal.tokenLabel", { format: "<id>.<secret>" }) }}</Label>
+              <CopyButton v-if="revealed" :value="revealed.token" :label="$t('common.actions.copy')" />
             </div>
             <code class="block break-all font-mono text-xs text-foreground">
               {{ revealed?.token }}
             </code>
             <p class="text-xs text-muted-foreground">
-              Copy now — this is shown once and never again.
+              {{ $t("settings.tokens.reveal.copyOnce") }}
             </p>
           </div>
 
@@ -443,11 +444,11 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
 
           <div class="grid gap-3 text-sm">
             <div class="grid gap-1">
-              <span class="text-xs font-medium uppercase text-muted-foreground">Name</span>
+              <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.tokens.reveal.name") }}</span>
               <span>{{ revealed?.view.name }}</span>
             </div>
             <div class="grid gap-1">
-              <span class="text-xs font-medium uppercase text-muted-foreground">Scopes</span>
+              <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.tokens.reveal.scopes") }}</span>
               <div class="flex flex-wrap gap-1">
                 <Badge
                   v-for="scope in revealed?.view.scopes ?? []"
@@ -463,7 +464,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
         </div>
 
         <DialogFooter>
-          <Button type="button" @click="closeReveal">Done</Button>
+          <Button type="button" @click="closeReveal">{{ $t("common.actions.done") }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -472,20 +473,19 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
     <Dialog :open="!!revokeTarget" @update:open="(v) => { if (!v) revokeTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Revoke token?</DialogTitle>
+          <DialogTitle>{{ $t("settings.tokens.revokeTitle") }}</DialogTitle>
           <DialogDescription>
-            Revoke "{{ revokeTarget?.name || revokeTarget?.id }}". Any caller using this credential will
-            immediately lose access. This is one-way and cannot be undone.
+            {{ $t("settings.tokens.revokeDescription", { name: revokeTarget?.name || revokeTarget?.id }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="revoking" @click="confirmRevoke">
             <RefreshCw v-if="revoking" class="size-4 animate-spin" aria-hidden="true" />
             <ShieldOff v-else class="size-4" aria-hidden="true" />
-            Revoke
+            {{ $t("settings.tokens.list.revoke") }}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Lock,
@@ -54,6 +55,7 @@ import {
 
 type Provider = "cloudflare" | "webhook";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("ddns:admin"));
 
@@ -156,11 +158,11 @@ async function submitForm() {
       if (form.webhook_headers.trim()) req.webhook_headers = form.webhook_headers;
     }
     await api.ddns.create(req);
-    toast.success("DDNS profile created");
+    toast.success(t("networking.ddns.toastCreated"));
     formOpen.value = false;
     profilesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Create failed");
+    toast.error(error instanceof Error ? error.message : t("networking.ddns.toastCreateFailed"));
   } finally {
     saving.value = false;
   }
@@ -175,11 +177,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.ddns.delete(deleteTarget.value.id);
-    toast.success("DDNS profile deleted");
+    toast.success(t("networking.ddns.toastDeleted"));
     deleteTarget.value = undefined;
     profilesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Delete failed");
+    toast.error(error instanceof Error ? error.message : t("networking.ddns.toastDeleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -193,13 +195,13 @@ async function runNow(profile: DDNSView) {
   running.value = profile.id;
   try {
     await api.ddns.run(profile.id);
-    toast.success("Published current node IP to DNS");
+    toast.success(t("networking.ddns.toastRunSuccess"));
     profilesQuery.refresh();
   } catch (error) {
     if (error instanceof ApiError && error.status === 502) {
-      toast.error("Provider/network failure (502) — DNS publish did not complete");
+      toast.error(t("networking.ddns.toastRunBadGateway"));
     } else {
-      toast.error(error instanceof Error ? error.message : "Run failed");
+      toast.error(error instanceof Error ? error.message : t("networking.ddns.toastRunFailed"));
     }
   } finally {
     running.value = undefined;
@@ -210,8 +212,8 @@ async function runNow(profile: DDNSView) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="DDNS"
-      description="Dynamic DNS profiles — push each node's public IP to DNS when it changes"
+      :title="$t('networking.ddns.title')"
+      :description="$t('networking.ddns.description')"
     >
       <template #actions>
         <Button
@@ -221,11 +223,11 @@ async function runNow(profile: DDNSView) {
           @click="profilesQuery.refresh"
         >
           <RefreshCw :class="cn('size-4', profilesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New profile
+          {{ $t('networking.ddns.newProfile') }}
         </Button>
       </template>
     </PageHeader>
@@ -234,10 +236,10 @@ async function runNow(profile: DDNSView) {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <RefreshCw class="size-4 text-muted-foreground" aria-hidden="true" />
-          Profiles
+          {{ $t('networking.ddns.profiles') }}
         </CardTitle>
         <CardDescription>
-          {{ profiles.length }} DDNS {{ profiles.length === 1 ? "profile" : "profiles" }}
+          {{ profiles.length === 1 ? $t('networking.ddns.profileCountOne', { count: profiles.length }) : $t('networking.ddns.profileCount', { count: profiles.length }) }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -245,24 +247,24 @@ async function runNow(profile: DDNSView) {
           :loading="profilesQuery.loading.value"
           :error="profilesQuery.error.value"
           :is-empty="profiles.length === 0"
-          empty-title="No DDNS profiles"
-          empty-description="Create a profile to publish a node's public IP to Cloudflare or a webhook."
+          :empty-title="$t('networking.ddns.emptyTitle')"
+          :empty-description="$t('networking.ddns.emptyDescription')"
           @retry="profilesQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">Name</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Node</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Provider</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Domains</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Stack</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Credential</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Last run</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Last IPs</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">Last error</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colName') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colNode') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colProvider') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colDomains') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colStack') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colCredential') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colLastRun') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colLastIps') }}</th>
+                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colLastError') }}</th>
+                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.ddns.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -296,11 +298,11 @@ async function runNow(profile: DDNSView) {
                     <Badge :variant="profile.has_credential ? 'success' : 'secondary'">
                       <Lock v-if="profile.has_credential" class="size-3" aria-hidden="true" />
                       <Unlock v-else class="size-3" aria-hidden="true" />
-                      {{ profile.has_credential ? "set" : "none" }}
+                      {{ profile.has_credential ? $t('networking.ddns.credSet') : $t('networking.ddns.credNone') }}
                     </Badge>
                   </td>
                   <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    {{ profile.last_run_at ? formatDateTime(profile.last_run_at) : "never" }}
+                    {{ profile.last_run_at ? formatDateTime(profile.last_run_at) : $t('common.misc.never') }}
                   </td>
                   <td class="py-3 pr-4 font-mono text-xs text-muted-foreground">
                     <div v-if="profile.last_ipv4">{{ profile.last_ipv4 }}</div>
@@ -324,13 +326,13 @@ async function runNow(profile: DDNSView) {
                       >
                         <RefreshCw v-if="running === profile.id" class="size-4 animate-spin" aria-hidden="true" />
                         <Play v-else class="size-4" aria-hidden="true" />
-                        Run now
+                        {{ $t('common.actions.runNow') }}
                       </Button>
                       <Button
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete"
+                        :aria-label="$t('common.actions.delete')"
                         @click="deleteTarget = profile"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -349,23 +351,23 @@ async function runNow(profile: DDNSView) {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New DDNS profile</DialogTitle>
+          <DialogTitle>{{ $t('networking.ddns.newProfileTitle') }}</DialogTitle>
           <DialogDescription>
-            Bind a node to a DNS publishing backend. Credentials are write-only and never returned.
+            {{ $t('networking.ddns.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="ddns-name">Name</Label>
+              <Label for="ddns-name">{{ $t('networking.ddns.name') }}</Label>
               <Input id="ddns-name" v-model="form.name" required placeholder="edge-ddns" />
             </div>
             <div class="grid gap-2">
-              <Label for="ddns-node">Node</Label>
+              <Label for="ddns-node">{{ $t('networking.ddns.nodeLabel') }}</Label>
               <Select v-model="form.node_id">
                 <SelectTrigger id="ddns-node">
-                  <SelectValue placeholder="Select a node" />
+                  <SelectValue :placeholder="$t('networking.ddns.selectNode')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -377,14 +379,14 @@ async function runNow(profile: DDNSView) {
           </div>
 
           <div class="grid gap-2">
-            <Label for="ddns-domains">Domains</Label>
+            <Label for="ddns-domains">{{ $t('networking.ddns.domains') }}</Label>
             <Input id="ddns-domains" v-model="form.domains" required placeholder="a.example.com, b.example.com" />
-            <p class="text-xs text-muted-foreground">Comma-separated. Records are pushed for every entry.</p>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.domainsHint') }}</p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="ddns-provider">Provider</Label>
+              <Label for="ddns-provider">{{ $t('networking.ddns.provider') }}</Label>
               <select
                 id="ddns-provider"
                 v-model="form.provider"
@@ -408,42 +410,42 @@ async function runNow(profile: DDNSView) {
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="ddns-ttl">TTL (seconds)</Label>
+              <Label for="ddns-ttl">{{ $t('networking.ddns.ttlSeconds') }}</Label>
               <Input id="ddns-ttl" v-model.number="form.ttl" type="number" min="1" />
             </div>
             <div class="grid gap-2">
-              <Label for="ddns-retries">Max retries</Label>
+              <Label for="ddns-retries">{{ $t('networking.ddns.maxRetries') }}</Label>
               <Input id="ddns-retries" v-model.number="form.max_retries" type="number" min="0" />
             </div>
           </div>
 
           <!-- Cloudflare -->
           <div v-if="form.provider === 'cloudflare'" class="grid gap-2">
-            <Label for="ddns-cf-token">Cloudflare API token</Label>
+            <Label for="ddns-cf-token">{{ $t('networking.ddns.cfApiToken') }}</Label>
             <Input
               id="ddns-cf-token"
               v-model="form.cf_api_token"
               type="password"
               autocomplete="off"
-              placeholder="write-only — needs Zone:Read + DNS:Edit"
+              :placeholder="$t('networking.ddns.cfTokenPlaceholder')"
             />
-            <p class="text-xs text-muted-foreground">Stored write-only; never returned by the API.</p>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.cfTokenHint') }}</p>
           </div>
 
           <!-- Webhook -->
           <template v-else>
             <div class="grid gap-3 sm:grid-cols-[1fr_140px]">
               <div class="grid gap-2">
-                <Label for="ddns-wh-url">Webhook URL</Label>
+                <Label for="ddns-wh-url">{{ $t('networking.ddns.webhookUrl') }}</Label>
                 <Input id="ddns-wh-url" v-model="form.webhook_url" placeholder="https://example.com/ddns" />
               </div>
               <div class="grid gap-2">
-                <Label for="ddns-wh-method">Method</Label>
+                <Label for="ddns-wh-method">{{ $t('networking.ddns.method') }}</Label>
                 <Input id="ddns-wh-method" v-model="form.webhook_method" placeholder="POST" />
               </div>
             </div>
             <div class="grid gap-2">
-              <Label for="ddns-wh-body">Webhook body</Label>
+              <Label for="ddns-wh-body">{{ $t('networking.ddns.webhookBody') }}</Label>
               <textarea
                 id="ddns-wh-body"
                 v-model="form.webhook_body"
@@ -452,13 +454,13 @@ async function runNow(profile: DDNSView) {
                 placeholder='{"ip":"#ip#","domain":"#domain#","type":"#type#"}'
               />
               <p class="text-xs text-muted-foreground">
-                Write-only. Supports template tokens
+                {{ $t('networking.ddns.webhookBodyHint') }}
                 <code class="font-mono">#ip#</code>, <code class="font-mono">#domain#</code>,
                 <code class="font-mono">#type#</code>.
               </p>
             </div>
             <div class="grid gap-2">
-              <Label for="ddns-wh-headers">Webhook headers</Label>
+              <Label for="ddns-wh-headers">{{ $t('networking.ddns.webhookHeaders') }}</Label>
               <textarea
                 id="ddns-wh-headers"
                 v-model="form.webhook_headers"
@@ -466,18 +468,18 @@ async function runNow(profile: DDNSView) {
                 class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
                 placeholder="Authorization: Bearer xxx&#10;Content-Type: application/json"
               />
-              <p class="text-xs text-muted-foreground">Write-only. One "Key: Value" per line.</p>
+              <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.webhookHeadersHint') }}</p>
             </div>
           </template>
 
           <DialogFooter>
             <DialogClose as-child>
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
             </DialogClose>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              Create
+              {{ $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>
@@ -488,19 +490,19 @@ async function runNow(profile: DDNSView) {
     <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete DDNS profile?</DialogTitle>
+          <DialogTitle>{{ $t('networking.ddns.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            Remove "{{ deleteTarget?.name || deleteTarget?.id }}". This cannot be undone.
+            {{ $t('networking.ddns.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id }) }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <DialogClose as-child>
-            <Button type="button" variant="outline">Cancel</Button>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
           </DialogClose>
           <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogContent>

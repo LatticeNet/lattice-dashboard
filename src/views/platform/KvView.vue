@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Database, Pencil, Plus, RefreshCw, Save } from "lucide-vue-next";
 import { api, type KVEntry } from "@/lib/api";
@@ -29,6 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("kv:read"));
 const canWrite = computed(() => auth.can("kv:write"));
@@ -94,11 +96,11 @@ async function submitPut() {
       key: putKey.value.trim(),
       value: putValue.value,
     });
-    toast.success(editing.value ? "Entry updated" : "Entry created");
+    toast.success(editing.value ? t("platform.kv.entryUpdated") : t("platform.kv.entryCreated"));
     putOpen.value = false;
     entriesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Failed to write entry");
+    toast.error(error instanceof Error ? error.message : t("platform.kv.writeFailed"));
   } finally {
     saving.value = false;
   }
@@ -108,17 +110,17 @@ async function submitPut() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="KV Store"
-      description="Flat operator key/value store organized into named buckets"
+      :title="$t('platform.kv.title')"
+      :description="$t('platform.kv.description')"
     >
       <template #actions>
         <Button variant="outline" size="sm" :disabled="entriesQuery.refreshing.value" @click="entriesQuery.refresh">
           <RefreshCw aria-hidden="true" :class="cn('size-4', entriesQuery.refreshing.value && 'animate-spin')" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canWrite" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
-          New entry
+          {{ $t('platform.kv.newEntry') }}
         </Button>
       </template>
     </PageHeader>
@@ -127,20 +129,26 @@ async function submitPut() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Database aria-hidden="true" class="size-4 text-muted-foreground" />
-          Bucket
+          {{ $t('platform.kv.bucketTitle') }}
         </CardTitle>
         <CardDescription>
-          Entries in <span class="font-mono">{{ activeBucket }}</span>.
-          <span v-if="!canWrite" class="text-muted-foreground">Read-only — kv:write is required to modify entries.</span>
+          <i18n-t keypath="platform.kv.entriesIn" tag="span" scope="global">
+            <template #bucket><span class="font-mono">{{ activeBucket }}</span></template>
+          </i18n-t>
+          <span v-if="!canWrite" class="text-muted-foreground">
+            <i18n-t keypath="platform.kv.readOnlyHint" tag="span" scope="global">
+              <template #scope>kv:write</template>
+            </i18n-t>
+          </span>
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-4">
         <form class="flex flex-wrap items-end gap-2" @submit.prevent="loadBucket">
           <div class="grid gap-2">
-            <Label for="kv-bucket">Bucket</Label>
+            <Label for="kv-bucket">{{ $t('platform.kv.bucketLabel') }}</Label>
             <Input id="kv-bucket" v-model="bucket" class="w-64" placeholder="default" />
           </div>
-          <Button type="submit" variant="outline">Load</Button>
+          <Button type="submit" variant="outline">{{ $t('platform.kv.load') }}</Button>
         </form>
 
         <DataState
@@ -148,18 +156,18 @@ async function submitPut() {
           :loading="entriesQuery.loading.value"
           :error="entriesQuery.error.value"
           :is-empty="entries.length === 0"
-          empty-title="No entries"
-          empty-description="This bucket has no keys yet."
+          :empty-title="$t('platform.kv.emptyTitle')"
+          :empty-description="$t('platform.kv.emptyDescription')"
           @retry="entriesQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">Key</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Value</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">Updated</th>
-                  <th v-if="canWrite" scope="col" class="py-2 pl-3 text-right font-medium">Actions</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.kv.colKey') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.kv.colValue') }}</th>
+                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.kv.colUpdated') }}</th>
+                  <th v-if="canWrite" scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.kv.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -181,7 +189,7 @@ async function submitPut() {
                         class="mt-1 text-xs text-primary hover:underline"
                         @click="toggleExpand(entry.key)"
                       >
-                        {{ expanded.has(entry.key) ? "Collapse" : "Expand" }}
+                        {{ expanded.has(entry.key) ? $t('platform.kv.collapse') : $t('platform.kv.expand') }}
                       </button>
                     </template>
                     <span v-else class="font-mono text-xs">{{ entry.value || "—" }}</span>
@@ -189,7 +197,7 @@ async function submitPut() {
                   <td class="py-3 pr-3 text-xs text-muted-foreground">{{ formatDateTime(entry.updated_at) }}</td>
                   <td v-if="canWrite" class="py-3 pl-3">
                     <div class="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon-sm" aria-label="Edit" @click="openEdit(entry)">
+                      <Button variant="ghost" size="icon-sm" :aria-label="$t('common.actions.edit')" @click="openEdit(entry)">
                         <Pencil class="size-4" />
                       </Button>
                     </div>
@@ -200,7 +208,9 @@ async function submitPut() {
           </div>
         </DataState>
         <p v-else class="text-sm text-muted-foreground">
-          The <code class="font-mono">kv:read</code> scope is required to list entries.
+          <i18n-t keypath="platform.kv.readScopeRequired" tag="span" scope="global">
+            <template #scope><code class="font-mono">kv:read</code></template>
+          </i18n-t>
         </p>
       </CardContent>
     </Card>
@@ -209,18 +219,20 @@ async function submitPut() {
     <Dialog v-model:open="putOpen">
       <DialogScrollContent class="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{{ editing ? "Edit entry" : "New entry" }}</DialogTitle>
+          <DialogTitle>{{ editing ? $t('platform.kv.editEntry') : $t('platform.kv.newEntry') }}</DialogTitle>
           <DialogDescription>
-            Writing to bucket <span class="font-mono">{{ activeBucket }}</span>.
+            <i18n-t keypath="platform.kv.writingToBucket" tag="span" scope="global">
+              <template #bucket><span class="font-mono">{{ activeBucket }}</span></template>
+            </i18n-t>
           </DialogDescription>
         </DialogHeader>
         <form class="space-y-4" @submit.prevent="submitPut">
           <div class="grid gap-2">
-            <Label for="kv-key">Key</Label>
+            <Label for="kv-key">{{ $t('platform.kv.keyLabel') }}</Label>
             <Input id="kv-key" v-model="putKey" required :disabled="editing" placeholder="my-key" />
           </div>
           <div class="grid gap-2">
-            <Label for="kv-value">Value</Label>
+            <Label for="kv-value">{{ $t('platform.kv.valueLabel') }}</Label>
             <textarea
               id="kv-value"
               v-model="putValue"
@@ -230,11 +242,11 @@ async function submitPut() {
             />
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" @click="putOpen = false">Cancel</Button>
+            <Button type="button" variant="outline" @click="putOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
               <RefreshCw v-if="saving" aria-hidden="true" class="size-4 animate-spin" />
               <Save v-else aria-hidden="true" class="size-4" />
-              {{ editing ? "Save" : "Create" }}
+              {{ editing ? $t('common.actions.save') : $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>

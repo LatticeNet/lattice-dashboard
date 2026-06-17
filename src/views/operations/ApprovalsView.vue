@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
 import { api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
+const { t } = useI18n();
 const auth = useAuthStore();
 const approvalsQuery = useAsyncData(() => api.approvals.list().then((r) => unwrap(r, "approvals")), {
   pollInterval: 8000,
@@ -65,10 +67,10 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
   try {
     const digest = await digestFor(approval);
     await api.approvals.approve(approval.id, queueApply, digest);
-    toast.success(queueApply ? "Approval queued for apply" : "Approval recorded");
+    toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
     approvalsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Approval failed");
+    toast.error(error instanceof Error ? error.message : t("operations.approvals.toastFailed"));
   } finally {
     pendingApproval.value = undefined;
   }
@@ -77,11 +79,11 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
 
 <template>
   <div class="p-6 space-y-6">
-    <PageHeader title="Approvals" description="Review plans, bind plan hashes, and queue approved changes">
+    <PageHeader :title="$t('operations.approvals.title')" :description="$t('operations.approvals.description')">
       <template #actions>
         <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="approvalsQuery.refresh">
           <RefreshCw :class="cn('size-4', approvalsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
@@ -90,7 +92,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Total</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.approvals.total') }}</p>
             <p class="text-2xl font-semibold">{{ approvals.length }}</p>
           </div>
           <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -99,7 +101,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Pending</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.approvals.pending') }}</p>
             <p class="text-2xl font-semibold text-warning">{{ pending.length }}</p>
           </div>
           <GitCompare class="size-5 text-warning" aria-hidden="true" />
@@ -108,8 +110,8 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Can apply</p>
-            <p class="text-2xl font-semibold">{{ canApply ? "Yes" : "No" }}</p>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.approvals.canApply') }}</p>
+            <p class="text-2xl font-semibold">{{ canApply ? $t('common.misc.yes') : $t('common.misc.no') }}</p>
           </div>
           <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
@@ -119,16 +121,16 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
     <div class="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
       <Card>
         <CardHeader>
-          <CardTitle>Inbox</CardTitle>
-          <CardDescription>Newest and pending approvals first</CardDescription>
+          <CardTitle>{{ $t('operations.approvals.inbox') }}</CardTitle>
+          <CardDescription>{{ $t('operations.approvals.inboxHint') }}</CardDescription>
         </CardHeader>
         <CardContent>
           <DataState
             :loading="approvalsQuery.loading.value"
             :error="approvalsQuery.error.value"
             :is-empty="approvals.length === 0"
-            empty-title="No approvals"
-            empty-description="Planned network and platform changes appear here."
+            :empty-title="$t('operations.approvals.emptyTitle')"
+            :empty-description="$t('operations.approvals.emptyDescription')"
             @retry="approvalsQuery.refresh"
           >
             <div class="space-y-2">
@@ -141,11 +143,11 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
               >
                 <div class="flex items-center justify-between gap-2">
                   <span class="truncate text-sm font-medium">{{ approval.plugin }} · {{ approval.action }}</span>
-                  <Badge :variant="variantFor(approval.status)">{{ approval.status }}</Badge>
+                  <Badge :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
                 </div>
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span>{{ shortId(approval.id) }}</span>
-                  <span>{{ approval.node_id || "global" }}</span>
+                  <span>{{ approval.node_id || $t('common.misc.global') }}</span>
                   <span>{{ formatDateTime(approval.created_at) }}</span>
                 </div>
               </button>
@@ -156,24 +158,24 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Plan Review</CardTitle>
+          <CardTitle>{{ $t('operations.approvals.planReview') }}</CardTitle>
           <CardDescription v-if="selected">
-            {{ selected.plugin }} / {{ selected.action }} on {{ selected.node_id || "global" }}
+            {{ $t('operations.approvals.planReviewOn', { plugin: selected.plugin, action: selected.action, node: selected.node_id || $t('common.misc.global') }) }}
           </CardDescription>
           <CardDescription v-else>
-            Select an approval to inspect its plan.
+            {{ $t('operations.approvals.selectPrompt') }}
           </CardDescription>
         </CardHeader>
         <CardContent v-if="selected" class="space-y-4">
           <div class="flex flex-wrap items-center gap-2">
-            <Badge :variant="variantFor(selected.status)">{{ selected.status }}</Badge>
-            <Badge variant="outline">id {{ shortId(selected.id, 12) }}</Badge>
-            <Badge v-if="selected.approved_by" variant="secondary">by {{ selected.approved_by }}</Badge>
+            <Badge :variant="variantFor(selected.status)">{{ $t('common.status.' + selected.status) }}</Badge>
+            <Badge variant="outline">{{ $t('operations.approvals.idLabel', { id: shortId(selected.id, 12) }) }}</Badge>
+            <Badge v-if="selected.approved_by" variant="secondary">{{ $t('operations.approvals.byLabel', { actor: selected.approved_by }) }}</Badge>
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">Plan</span>
+              <span class="text-sm font-medium">{{ $t('operations.approvals.plan') }}</span>
               <CopyButton :value="selected.plan || ''" />
             </div>
             <pre class="max-h-[520px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
@@ -193,7 +195,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
               @click="digestFor(selected)"
             >
               <GitCompare class="size-4" aria-hidden="true" />
-              Compute hash
+              {{ $t('operations.approvals.computeHash') }}
             </Button>
             <Button
               v-if="selected.status === 'pending'"
@@ -203,7 +205,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
               @click="approve(selected, false)"
             >
               <CheckCircle2 class="size-4" aria-hidden="true" />
-              Approve only
+              {{ $t('operations.approvals.approveOnly') }}
             </Button>
             <Button
               v-if="selected.status === 'pending'"
@@ -213,12 +215,12 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
             >
               <RefreshCw v-if="pendingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
               <Play v-else class="size-4" aria-hidden="true" />
-              Approve and queue
+              {{ $t('operations.approvals.approveAndQueue') }}
             </Button>
           </div>
 
           <p v-if="!canApply" class="text-sm text-muted-foreground">
-            `network:apply` is required to approve plans.
+            {{ $t('operations.approvals.applyRequired') }}
           </p>
         </CardContent>
       </Card>

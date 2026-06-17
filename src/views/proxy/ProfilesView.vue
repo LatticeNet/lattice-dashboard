@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
@@ -59,6 +60,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const auth = useAuthStore();
+const { t } = useI18n();
 
 const profilesQuery = useAsyncData(
   () => api.proxy.profiles().then((r) => unwrap(r, "profiles")),
@@ -193,12 +195,12 @@ async function submitForm() {
       stats_api: form.stats_api.trim() || undefined,
     };
     await api.proxy.upsertProfile(req);
-    toast.success(editingId.value ? "Profile updated" : "Profile created");
+    toast.success(editingId.value ? t("proxy.profiles.toastUpdated") : t("proxy.profiles.toastCreated"));
     formOpen.value = false;
     resetForm();
     profilesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Profile save failed");
+    toast.error(error instanceof Error ? error.message : t("proxy.profiles.toastSaveFailed"));
   } finally {
     saving.value = false;
   }
@@ -213,11 +215,11 @@ async function confirmDelete() {
   deleting.value = true;
   try {
     await api.proxy.deleteProfile(deleteTarget.value.node_id);
-    toast.success("Profile deleted");
+    toast.success(t("proxy.profiles.toastDeleted"));
     deleteTarget.value = undefined;
     profilesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Profile delete failed");
+    toast.error(error instanceof Error ? error.message : t("proxy.profiles.toastDeleteFailed"));
   } finally {
     deleting.value = false;
   }
@@ -237,9 +239,9 @@ async function planNode(profile: ProxyNodeProfileView) {
     planApproval.value = approval;
     planDigest.value = await sha256Hex(approval.plan || "");
     planOpen.value = true;
-    toast.success("Plan created — review in Approvals");
+    toast.success(t("proxy.profiles.toastPlanCreated"));
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : "Plan failed");
+    toast.error(error instanceof Error ? error.message : t("proxy.profiles.toastPlanFailed"));
   } finally {
     planning.value = undefined;
   }
@@ -263,8 +265,8 @@ function refreshAll() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader
-      title="Node Profiles"
-      description="Per-node proxy deployment profiles, drift signals, and plan → approve"
+      :title="$t('proxy.profiles.title')"
+      :description="$t('proxy.profiles.description')"
     >
       <template #actions>
         <Button
@@ -274,11 +276,11 @@ function refreshAll() {
           @click="refreshAll"
         >
           <RefreshCw :class="cn('size-4', profilesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          Refresh
+          {{ $t('common.actions.refresh') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
-          New profile
+          {{ $t('proxy.profiles.newProfile') }}
         </Button>
       </template>
     </PageHeader>
@@ -287,7 +289,7 @@ function refreshAll() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Profiles</p>
+            <p class="text-sm text-muted-foreground">{{ $t('proxy.profiles.kpiProfiles') }}</p>
             <p class="text-2xl font-semibold tabular">{{ profiles.length }}</p>
           </div>
           <ServerCog class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -296,7 +298,7 @@ function refreshAll() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Applied</p>
+            <p class="text-sm text-muted-foreground">{{ $t('proxy.profiles.kpiApplied') }}</p>
             <p class="text-2xl font-semibold tabular text-success">{{ appliedCount }}</p>
           </div>
           <Cpu class="size-5 text-success" aria-hidden="true" />
@@ -305,7 +307,7 @@ function refreshAll() {
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
-            <p class="text-sm text-muted-foreground">Config drift</p>
+            <p class="text-sm text-muted-foreground">{{ $t('proxy.profiles.kpiConfigDrift') }}</p>
             <p :class="cn('text-2xl font-semibold tabular', driftCount > 0 ? 'text-warning' : 'text-foreground')">
               {{ driftCount }}
             </p>
@@ -317,10 +319,9 @@ function refreshAll() {
 
     <Card>
       <CardHeader>
-        <CardTitle>Deployment Profiles</CardTitle>
+        <CardTitle>{{ $t('proxy.profiles.deploymentProfiles') }}</CardTitle>
         <CardDescription>
-          Each profile binds a node to a core and a set of inbounds. Mutations flow through
-          plan → approve → apply.
+          {{ $t('proxy.profiles.deploymentProfilesDescription') }}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -328,23 +329,23 @@ function refreshAll() {
           :loading="profilesQuery.loading.value"
           :error="profilesQuery.error.value"
           :is-empty="profiles.length === 0"
-          empty-title="No node profiles"
-          empty-description="Create a profile to deploy a proxy core to a node."
+          :empty-title="$t('proxy.profiles.emptyTitle')"
+          :empty-description="$t('proxy.profiles.emptyDescription')"
           @retry="profilesQuery.refresh"
         >
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="px-3 py-2 font-medium">Node</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Core</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Inbounds</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Hostname</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Applied config</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Drift</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Collector</th>
-                  <th scope="col" class="px-3 py-2 font-medium">Last apply</th>
-                  <th scope="col" class="px-3 py-2 text-right font-medium">Actions</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colNode') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colCore') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colInbounds') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colHostname') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colAppliedConfig') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colDrift') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colCollector') }}</th>
+                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colLastApply') }}</th>
+                  <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.profiles.colActions') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -383,7 +384,7 @@ function refreshAll() {
                       <code class="font-mono text-xs">{{ shortId(profile.applied_sha256, 12) }}</code>
                       <CopyButton :value="profile.applied_sha256" />
                     </div>
-                    <span v-else class="text-xs text-muted-foreground">not applied</span>
+                    <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.profiles.notApplied') }}</span>
                   </td>
                   <td class="px-3 py-3">
                     <div class="flex flex-col gap-1">
@@ -392,22 +393,22 @@ function refreshAll() {
                           <span class="w-fit cursor-default">
                             <Badge variant="warning">
                               <AlertTriangle class="size-3" aria-hidden="true" />
-                              drift
+                              {{ $t('proxy.profiles.drift') }}
                             </Badge>
                           </span>
                         </TooltipTrigger>
                         <TooltipContent class="max-w-xs">
                           <span class="break-words">
-                            {{ profile.drift_reason || "Rendered config differs from applied config." }}
+                            {{ profile.drift_reason || $t('proxy.profiles.driftReasonFallback') }}
                           </span>
                         </TooltipContent>
                       </Tooltip>
-                      <span v-else class="text-xs text-muted-foreground">in sync</span>
+                      <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.profiles.inSync') }}</span>
                       <span
                         v-if="profile.ineligible_users && profile.ineligible_users > 0"
                         class="text-xs text-warning"
                       >
-                        {{ profile.ineligible_users }} ineligible user{{ profile.ineligible_users === 1 ? "" : "s" }}
+                        {{ $t('proxy.profiles.ineligibleUsers', { count: profile.ineligible_users }, profile.ineligible_users) }}
                       </span>
                     </div>
                   </td>
@@ -415,26 +416,26 @@ function refreshAll() {
                     <Tooltip v-if="profile.usage_collector_status === 'error'">
                       <TooltipTrigger as-child>
                         <span class="w-fit cursor-default">
-                          <Badge variant="destructive">error</Badge>
+                          <Badge variant="destructive">{{ $t('common.status.error') }}</Badge>
                         </span>
                       </TooltipTrigger>
                       <TooltipContent class="max-w-xs">
                         <span class="break-words">
-                          {{ profile.usage_collector_last_error || "Usage collector reported an error." }}
+                          {{ profile.usage_collector_last_error || $t('proxy.profiles.collectorErrorFallback') }}
                         </span>
                       </TooltipContent>
                     </Tooltip>
-                    <Badge v-else-if="profile.usage_collector_status === 'ok'" variant="success">ok</Badge>
+                    <Badge v-else-if="profile.usage_collector_status === 'ok'" variant="success">{{ $t('common.status.ok') }}</Badge>
                     <span v-else class="text-xs text-muted-foreground">—</span>
                   </td>
                   <td class="px-3 py-3">
                     <div class="min-w-0">
                       <p class="text-xs text-muted-foreground">
-                        {{ profile.last_apply_at ? formatRelativeTime(profile.last_apply_at) : "never" }}
+                        {{ profile.last_apply_at ? formatRelativeTime(profile.last_apply_at) : $t('common.misc.never') }}
                       </p>
                       <Tooltip v-if="profile.last_error">
                         <TooltipTrigger as-child>
-                          <span class="cursor-default text-xs text-destructive">last error</span>
+                          <span class="cursor-default text-xs text-destructive">{{ $t('proxy.profiles.lastError') }}</span>
                         </TooltipTrigger>
                         <TooltipContent class="max-w-xs">
                           <span class="break-words">{{ profile.last_error }}</span>
@@ -453,13 +454,13 @@ function refreshAll() {
                       >
                         <RefreshCw v-if="planning === profile.node_id" class="size-4 animate-spin" aria-hidden="true" />
                         <ArrowRight v-else class="size-4" aria-hidden="true" />
-                        Plan
+                        {{ $t('proxy.profiles.plan') }}
                       </Button>
                       <Button
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Edit profile"
+                        :aria-label="$t('proxy.profiles.editProfile')"
                         @click="openEdit(profile)"
                       >
                         <Pencil class="size-4" />
@@ -468,7 +469,7 @@ function refreshAll() {
                         v-if="canAdmin"
                         variant="ghost"
                         size="icon-sm"
-                        aria-label="Delete profile"
+                        :aria-label="$t('proxy.profiles.deleteProfile')"
                         @click="deleteTarget = profile"
                       >
                         <Trash2 class="size-4 text-destructive" />
@@ -487,18 +488,18 @@ function refreshAll() {
     <Dialog v-model:open="formOpen">
       <DialogScrollContent class="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{{ editingId ? "Edit node profile" : "New node profile" }}</DialogTitle>
+          <DialogTitle>{{ editingId ? $t('proxy.profiles.dialogTitleEdit') : $t('proxy.profiles.dialogTitleNew') }}</DialogTitle>
           <DialogDescription>
-            Bind a node to a proxy core and its inbounds. All inbounds must share the selected core.
+            {{ $t('proxy.profiles.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <div class="space-y-4">
           <div class="grid gap-2">
-            <Label>Node</Label>
+            <Label>{{ $t('proxy.profiles.fieldNode') }}</Label>
             <Select v-model="form.node_id" :disabled="!!editingId">
               <SelectTrigger>
-                <SelectValue placeholder="Select a node" />
+                <SelectValue :placeholder="$t('proxy.profiles.selectNode')" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
@@ -507,15 +508,15 @@ function refreshAll() {
               </SelectContent>
             </Select>
             <p v-if="editingId" class="text-xs text-muted-foreground">
-              Node cannot be changed on an existing profile.
+              {{ $t('proxy.profiles.nodeLocked') }}
             </p>
           </div>
 
           <div class="grid gap-2">
-            <Label>Core</Label>
+            <Label>{{ $t('proxy.profiles.fieldCore') }}</Label>
             <Select v-model="form.core">
               <SelectTrigger>
-                <SelectValue placeholder="Select a core" />
+                <SelectValue :placeholder="$t('proxy.profiles.selectCore')" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="sing-box">sing-box</SelectItem>
@@ -525,7 +526,7 @@ function refreshAll() {
           </div>
 
           <div class="grid gap-2">
-            <Label>Inbounds</Label>
+            <Label>{{ $t('proxy.profiles.fieldInbounds') }}</Label>
             <div
               v-if="eligibleInbounds.length"
               class="grid max-h-56 gap-1 overflow-auto rounded-md border border-border p-2"
@@ -544,44 +545,44 @@ function refreshAll() {
                 <span class="min-w-0 flex-1 truncate">{{ inb.name || inb.id }}</span>
                 <Badge variant="outline">:{{ inb.port }}</Badge>
                 <Badge :variant="inb.enabled ? 'success' : 'secondary'">
-                  {{ inb.enabled ? "enabled" : "disabled" }}
+                  {{ inb.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                 </Badge>
               </label>
             </div>
             <p v-else class="rounded-md border border-border p-3 text-xs text-muted-foreground">
-              No inbounds use the "{{ form.core }}" core. Create a matching inbound first.
+              {{ $t('proxy.profiles.noMatchingInbounds', { core: form.core }) }}
             </p>
             <p class="text-xs text-muted-foreground">
-              {{ form.inbound_ids.length }} selected
+              {{ $t('proxy.profiles.selectedCount', { count: form.inbound_ids.length }) }}
             </p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
-              <Label for="profile-hostname">Hostname</Label>
-              <Input id="profile-hostname" v-model="form.hostname" placeholder="optional" />
+              <Label for="profile-hostname">{{ $t('proxy.profiles.fieldHostname') }}</Label>
+              <Input id="profile-hostname" v-model="form.hostname" :placeholder="$t('proxy.profiles.optional')" />
             </div>
             <div class="grid gap-2">
-              <Label for="profile-listen">Listen IP</Label>
-              <Input id="profile-listen" v-model="form.listen_ip" placeholder="optional" />
+              <Label for="profile-listen">{{ $t('proxy.profiles.fieldListenIp') }}</Label>
+              <Input id="profile-listen" v-model="form.listen_ip" :placeholder="$t('proxy.profiles.optional')" />
             </div>
             <div class="grid gap-2">
-              <Label for="profile-config-path">Config path</Label>
-              <Input id="profile-config-path" v-model="form.config_path" placeholder="optional, absolute" />
+              <Label for="profile-config-path">{{ $t('proxy.profiles.fieldConfigPath') }}</Label>
+              <Input id="profile-config-path" v-model="form.config_path" :placeholder="$t('proxy.profiles.fieldConfigPathPlaceholder')" />
             </div>
             <div class="grid gap-2">
-              <Label for="profile-stats-api">Stats API</Label>
-              <Input id="profile-stats-api" v-model="form.stats_api" placeholder="host:port" />
+              <Label for="profile-stats-api">{{ $t('proxy.profiles.fieldStatsApi') }}</Label>
+              <Input id="profile-stats-api" v-model="form.stats_api" :placeholder="$t('proxy.profiles.fieldStatsApiPlaceholder')" />
             </div>
           </div>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" :disabled="saving" @click="formOpen = false">Cancel</Button>
+          <Button variant="outline" :disabled="saving" @click="formOpen = false">{{ $t('common.actions.cancel') }}</Button>
           <Button :disabled="!canSubmit" @click="submitForm">
             <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
             <Plus v-else class="size-4" aria-hidden="true" />
-            {{ editingId ? "Save changes" : "Create profile" }}
+            {{ editingId ? $t('common.actions.saveChanges') : $t('proxy.profiles.createProfile') }}
           </Button>
         </DialogFooter>
       </DialogScrollContent>
@@ -591,19 +592,19 @@ function refreshAll() {
     <Dialog :open="!!deleteTarget" @update:open="(o) => { if (!o) deleteTarget = undefined; }">
       <DialogScrollContent class="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Delete profile?</DialogTitle>
+          <DialogTitle>{{ $t('proxy.profiles.deleteTitle') }}</DialogTitle>
           <DialogDescription>
-            This removes the profile for
+            {{ $t('proxy.profiles.deleteConfirmPrefix') }}
             <span class="font-medium">{{ deleteTarget?.node_name || deleteTarget?.node_id }}</span>.
-            This cannot be undone.
+            {{ $t('proxy.profiles.deleteConfirmSuffix') }}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" :disabled="deleting" @click="deleteTarget = undefined">Cancel</Button>
+          <Button variant="outline" :disabled="deleting" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
           <Button variant="destructive" :disabled="deleting" @click="confirmDelete">
             <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
-            Delete
+            {{ $t('common.actions.delete') }}
           </Button>
         </DialogFooter>
       </DialogScrollContent>
@@ -613,22 +614,22 @@ function refreshAll() {
     <Dialog :open="planOpen" @update:open="closePlan">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Plan created</DialogTitle>
+          <DialogTitle>{{ $t('proxy.profiles.planTitle') }}</DialogTitle>
           <DialogDescription>
-            Review &amp; apply this plan under Operations → Approvals.
+            {{ $t('proxy.profiles.planDescription') }}
           </DialogDescription>
         </DialogHeader>
 
         <div v-if="planApproval" class="space-y-4">
           <div class="flex flex-wrap items-center gap-2">
             <Badge variant="warning">{{ planApproval.status }}</Badge>
-            <Badge variant="outline">id {{ shortId(planApproval.id, 12) }}</Badge>
-            <Badge variant="secondary">{{ planApproval.node_id || "global" }}</Badge>
+            <Badge variant="outline">{{ $t('proxy.profiles.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
+            <Badge variant="secondary">{{ planApproval.node_id || $t('common.misc.global') }}</Badge>
           </div>
 
           <div class="rounded-md border border-border">
             <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">Plan</span>
+              <span class="text-sm font-medium">{{ $t('proxy.profiles.plan') }}</span>
               <CopyButton :value="planApproval.plan || ''" />
             </div>
             <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
@@ -642,10 +643,10 @@ function refreshAll() {
         </div>
 
         <DialogFooter>
-          <Button variant="outline" @click="closePlan(false)">Close</Button>
+          <Button variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
           <RouterLink to="/approvals">
             <Button>
-              Review in Approvals
+              {{ $t('proxy.profiles.reviewInApprovals') }}
               <ArrowRight class="size-4" aria-hidden="true" />
             </Button>
           </RouterLink>

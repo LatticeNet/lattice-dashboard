@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -19,8 +20,11 @@ defineEmits<{ (e: "toggle-mobile"): void }>();
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const { t } = useI18n();
 
-const title = computed(() => (route.meta.title as string) || "Overview");
+const title = computed(() =>
+  route.name ? t("nav.items." + String(route.name)) : t("nav.items.overview"),
+);
 const actorId = computed(() => auth.principal?.actor_id ?? "Account");
 
 async function logout() {
@@ -38,7 +42,7 @@ async function logout() {
       variant="ghost"
       size="icon"
       class="md:hidden"
-      aria-label="Open navigation"
+      :aria-label="$t('shell.sidebar.toggle')"
       @click="$emit('toggle-mobile')"
     >
       <Menu class="size-4" />
@@ -52,7 +56,7 @@ async function logout() {
       <!-- Appearance -->
       <PopoverRoot>
         <PopoverTrigger as-child>
-          <Button variant="ghost" size="icon" aria-label="Appearance">
+          <Button variant="ghost" size="icon" :aria-label="$t('shell.header.appearance')">
             <Palette class="size-4" />
           </Button>
         </PopoverTrigger>
@@ -70,7 +74,7 @@ async function logout() {
       <!-- User menu -->
       <PopoverRoot>
         <PopoverTrigger as-child>
-          <Button variant="ghost" size="icon" aria-label="Account">
+          <Button variant="ghost" size="icon" :aria-label="$t('shell.header.account')">
             <User class="size-4" />
           </Button>
         </PopoverTrigger>
@@ -91,7 +95,7 @@ async function logout() {
               @click="logout"
             >
               <LogOut class="size-4" aria-hidden="true" />
-              Log out
+              {{ $t('shell.header.logout') }}
             </Button>
           </PopoverContent>
         </PopoverPortal>
