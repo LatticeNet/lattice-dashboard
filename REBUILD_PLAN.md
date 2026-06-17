@@ -107,9 +107,14 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   lifecycle), **Workers** (deploy/run), **KV**, **Static**, **Logs** (sources +
   query/tail + stats), **Notifications** (channels + test), **Agent Updates**
   (plan→approve); Settings **Single Sign-On** (OIDC), **Access Tokens** (one-time
-  PAT reveal), **Appearance** are live. Remaining polish: i18n (zh-CN + en),
-  uPlot/echarts charts, a11y + perf budgets, empty/first-run onboarding, and
-  live-server E2E against a deployed control plane.
+  PAT reveal), **Appearance** are live.
+- **Phase 4 polish — DONE.** **Charts** (CSP-safe inline-SVG trend chart on
+  Monitoring latency + Proxy Usage traffic bars), **first-run onboarding**
+  (empty-fleet Getting Started checklist), **a11y** (skip link, landmarks,
+  `aria-current`, icon-button labels, table semantics, live Copied announce),
+  and **i18n** (all 33 views in English + Simplified Chinese with a language
+  switcher) are shipped. Only **live-server E2E** against a deployed control
+  plane remains, which happens during deploy validation.
 
 ## Serving
 
