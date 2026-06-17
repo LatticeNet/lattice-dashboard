@@ -1,7 +1,10 @@
 # Lattice Dashboard — Rebuild Plan
 
-> Status: **in progress.** The modern Vue console is now the canonical
-> `lattice-dashboard` project, replacing the old vanilla-JS app.
+> Status: **feature-complete.** The modern Vue console is now the canonical
+> `lattice-dashboard` project, replacing the old vanilla-JS app. Every one of the
+> 31 sidebar routes is a real, API-backed screen — all 18 server domains are
+> covered. Remaining work is polish (i18n, charts, a11y/perf budgets, onboarding)
+> and live-server E2E. `vue-tsc` + `vite build` clean; strict-CSP verified.
 
 ## Why rebuild
 
@@ -94,12 +97,19 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   assignments, result history, latency trend), **Approvals** inbox (plan review
   + client-side sha bind), **Tasks** runner, and **Audit** viewer are live.
   Remaining Phase 2 work is live-server E2E against a deployed control plane.
-- **Phase 3 — Networking & Proxy (flagship):** Proxy inbounds/users/profiles/
-  subscriptions/usage; Network Guard, Network Policy + graph, DNS, Geo-Routing,
-  DDNS, Tunnels, WireGuard.
-- **Phase 4 — Platform & polish:** Plugins, Workers, KV/Static, Logs,
-  Notifications, Agent Updates; PAT UI, i18n (zh-CN + en), a11y + perf budgets,
-  empty/first-run onboarding, charts.
+- **Phase 3 — Networking & Proxy (flagship): DONE.** Proxy **Inbounds**
+  (VLESS+REALITY), **Users** (quota/expiry, one-time sub-token reveal),
+  **Subscriptions**, **Node Profiles** (plan→approve + drift signals), **Usage**;
+  **Network Guard** (nft), **Network Policy** + inline-SVG topology graph, **Self-host
+  DNS** (plan + direct publish), **Geo-Routing** (render preview), **DDNS**,
+  **Tunnels**, **WireGuard** (mesh planner) are all live.
+- **Phase 4 — Platform & Settings: DONE (polish pending).** **Plugins** (verify +
+  lifecycle), **Workers** (deploy/run), **KV**, **Static**, **Logs** (sources +
+  query/tail + stats), **Notifications** (channels + test), **Agent Updates**
+  (plan→approve); Settings **Single Sign-On** (OIDC), **Access Tokens** (one-time
+  PAT reveal), **Appearance** are live. Remaining polish: i18n (zh-CN + en),
+  uPlot/echarts charts, a11y + perf budgets, empty/first-run onboarding, and
+  live-server E2E against a deployed control plane.
 
 ## Serving
 
