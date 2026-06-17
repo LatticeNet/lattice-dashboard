@@ -2,6 +2,7 @@ import { http } from "./client";
 import type {
   Principal,
   LoginResponse,
+  BuildInfo,
   TOTPEnrollResponse,
   SSOProvider,
   Node,
@@ -50,12 +51,20 @@ import type {
   WorkerRunResponse,
   KVEntry,
   StaticObject,
+  StorageAccess,
+  StorageBinding,
+  StorageBucket,
+  StorageKind,
+  StorageTokenCreateResponse,
+  StorageTokenView,
   LogSource,
   LogSourceUpsertRequest,
   LogQueryResponse,
   LogSourceStatsView,
   NotifyChannelView,
   NotifyChannelUpsertRequest,
+  NotifyRuleUpsertRequest,
+  NotifyRuleView,
   NotifyTestRequest,
   AgentUpdatePolicy,
   AgentUpdatePolicyUpsertRequest,
@@ -270,6 +279,47 @@ export const api = {
       http.post<StaticObject>("/api/static", input),
   },
 
+  storage: {
+    buckets: (kind: StorageKind) =>
+      http.get<{ buckets: StorageBucket[] }>("/api/storage/buckets", { kind }),
+    upsertBucket: (
+      kind: StorageKind,
+      input: {
+        name: string;
+        display_name?: string;
+        description?: string;
+        index_document?: string;
+        not_found_document?: string;
+      },
+    ) => http.post<StorageBucket>(`/api/storage/buckets?kind=${encodeURIComponent(kind)}`, input),
+    bindings: (kind: StorageKind) =>
+      http.get<{ bindings: StorageBinding[] }>("/api/storage/bindings", { kind }),
+    upsertBinding: (
+      kind: StorageKind,
+      input: {
+        id?: string;
+        bucket: string;
+        hostname: string;
+        path_prefix?: string;
+        enabled?: boolean;
+      },
+    ) => http.post<StorageBinding>(`/api/storage/bindings?kind=${encodeURIComponent(kind)}`, input),
+    deleteBinding: (kind: StorageKind, id: string) =>
+      http.post<{ ok: boolean }>("/api/storage/bindings/delete", { kind, id }),
+    tokens: (kind: StorageKind) =>
+      http.get<{ tokens: StorageTokenView[] }>("/api/storage/tokens", { kind }),
+    createToken: (
+      kind: StorageKind,
+      input: { name: string; access: StorageAccess; buckets?: string[] },
+    ) =>
+      http.post<StorageTokenCreateResponse>(
+        `/api/storage/tokens?kind=${encodeURIComponent(kind)}`,
+        input,
+      ),
+    revokeToken: (kind: StorageKind, token_id: string) =>
+      http.post<StorageTokenView>("/api/storage/tokens/revoke", { kind, token_id }),
+  },
+
   logs: {
     sources: () => http.get<{ sources: LogSource[] }>("/api/logs/sources"),
     upsertSource: (input: LogSourceUpsertRequest) =>
@@ -299,6 +349,11 @@ export const api = {
       http.post<{ ok: boolean }>("/api/notify/channels/delete", { id }),
     test: (input: NotifyTestRequest) =>
       http.post<{ ok: boolean; channel: string }>("/api/notify/test", input),
+    rules: () => http.get<{ rules: NotifyRuleView[] }>("/api/notify/rules"),
+    upsertRule: (input: NotifyRuleUpsertRequest) =>
+      http.post<NotifyRuleView>("/api/notify/rules", input),
+    deleteRule: (id: string) =>
+      http.post<{ ok: boolean }>("/api/notify/rules/delete", { id }),
   },
 
   agentUpdates: {
@@ -326,6 +381,7 @@ export const api = {
   },
 
   health: () => http.get<{ status: string }>("/api/health"),
+  version: () => http.get<BuildInfo>("/api/version"),
 };
 
 /** Normalize list endpoints that may return either a bare array or {key:[]}. */

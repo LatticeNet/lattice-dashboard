@@ -49,6 +49,8 @@ const totpError = ref<string | undefined>();
 
 const totpEnabled = computed(() => !!auth.principal?.totp_enabled);
 const recoveryText = computed(() => enrollment.value?.recovery_codes.join("\n") ?? "");
+const isSuperuser = computed(() => (auth.principal?.scopes ?? []).includes("*"));
+const principalScopes = computed(() => auth.principal?.scopes ?? []);
 
 const passwordReady = computed(() => {
   const current = currentPassword.value.trim();
@@ -281,27 +283,33 @@ function cancelEnrollment() {
         </CardHeader>
         <CardContent class="space-y-4 text-sm">
           <div class="grid gap-1">
+            <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.security.session.username") }}</span>
+            <span class="break-all font-mono text-xs">
+              {{ auth.principal?.username || $t("settings.security.session.unknown") }}
+            </span>
+          </div>
+          <div class="grid gap-1">
             <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.security.session.actor") }}</span>
             <span class="break-all font-mono text-xs">
               {{ auth.principal?.actor_id || $t("settings.security.session.unknown") }}
             </span>
           </div>
+          <div class="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+            {{ isSuperuser ? $t("settings.security.session.superuserHelp") : $t("settings.security.session.scopedHelp") }}
+          </div>
           <div class="grid gap-2">
             <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t("settings.security.session.scopes") }}</span>
             <div class="flex flex-wrap gap-1.5">
               <Badge
-                v-for="scope in (auth.principal?.scopes ?? []).slice(0, 10)"
+                v-for="scope in principalScopes"
                 :key="scope"
                 variant="outline"
                 class="font-mono"
               >
                 {{ scope }}
               </Badge>
-              <Badge
-                v-if="(auth.principal?.scopes ?? []).length > 10"
-                variant="secondary"
-              >
-                +{{ (auth.principal?.scopes ?? []).length - 10 }}
+              <Badge v-if="principalScopes.length === 0" variant="secondary">
+                {{ $t("settings.security.session.noScopes") }}
               </Badge>
             </div>
           </div>

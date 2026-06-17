@@ -8,7 +8,7 @@ import {
   PopoverPortal,
   PopoverContent,
 } from "reka-ui";
-import { Menu, Palette, LogOut, User } from "lucide-vue-next";
+import { Menu, Palette, LogOut, User, KeyRound } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAuthStore } from "@/stores/auth";
@@ -25,11 +25,17 @@ const { t } = useI18n();
 const title = computed(() =>
   route.name ? t("nav.items." + String(route.name)) : t("nav.items.overview"),
 );
-const actorId = computed(() => auth.principal?.actor_id ?? t("shell.header.account"));
+const accountLabel = computed(
+  () => auth.principal?.username || auth.principal?.actor_id || t("shell.header.account"),
+);
 
 async function logout() {
   await auth.logout();
   router.push("/login");
+}
+
+function openSecurity() {
+  router.push({ name: "settings-security" });
 }
 </script>
 
@@ -86,9 +92,17 @@ async function logout() {
           >
             <div class="px-2 py-1.5">
               <p class="text-xs text-muted-foreground">{{ $t('shell.header.signedInAs') }}</p>
-              <p class="truncate font-mono text-sm font-medium">{{ actorId }}</p>
+              <p class="truncate font-mono text-sm font-medium">{{ accountLabel }}</p>
             </div>
             <Separator class="my-1" />
+            <Button
+              variant="ghost"
+              class="w-full justify-start gap-2"
+              @click="openSecurity"
+            >
+              <KeyRound class="size-4" aria-hidden="true" />
+              {{ $t('shell.header.permissions') }}
+            </Button>
             <Button
               variant="ghost"
               class="w-full justify-start gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"

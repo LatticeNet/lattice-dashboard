@@ -3,10 +3,19 @@
 
 export interface Principal {
   actor_id: string;
+  username?: string;
   token_id?: string;
   scopes: string[];
   csrf_token: string;
   totp_enabled?: boolean;
+}
+
+export interface BuildInfo {
+  server_version: string;
+  server_commit: string;
+  server_date: string;
+  dashboard_ref?: string;
+  dashboard_built?: string;
 }
 
 export interface LoginResponse {
@@ -805,6 +814,48 @@ export interface StaticObject {
   updated_at: string;
 }
 
+export type StorageKind = "kv" | "static";
+export type StorageAccess = "admin" | "read" | "write";
+
+export interface StorageBucket {
+  id: string;
+  kind: StorageKind | string;
+  name: string;
+  display_name?: string;
+  description?: string;
+  index_document?: string;
+  not_found_document?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorageBinding {
+  id: string;
+  kind: StorageKind | string;
+  bucket: string;
+  hostname: string;
+  path_prefix?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorageTokenView {
+  id: string;
+  name: string;
+  kind: StorageKind | string;
+  access: StorageAccess | string;
+  buckets?: string[];
+  revoked_at?: string;
+  last_used_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorageTokenCreateResponse extends StorageTokenView {
+  token: string;
+}
+
 export interface LogSource {
   id: string;
   name: string;
@@ -871,6 +922,7 @@ export interface NotifyChannelView {
 }
 
 export interface NotifyChannelUpsertRequest {
+  id?: string;
   name: string;
   kind: NotifyKind | string;
   config: Record<string, string>;
@@ -882,6 +934,28 @@ export interface NotifyTestRequest {
   config: Record<string, string>;
   title?: string;
   body?: string;
+}
+
+export interface NotifyRuleView {
+  id: string;
+  name: string;
+  event_types?: string[];
+  channel_ids?: string[];
+  title_template?: string;
+  body_template?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotifyRuleUpsertRequest {
+  id?: string;
+  name: string;
+  event_types?: string[];
+  channel_ids?: string[];
+  title_template?: string;
+  body_template?: string;
+  enabled?: boolean;
 }
 
 export interface AgentUpdatePolicy {

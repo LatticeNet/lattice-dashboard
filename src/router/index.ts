@@ -42,6 +42,7 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "settings-sso": () => import("@/views/settings/SsoView.vue"),
   "settings-tokens": () => import("@/views/settings/TokensView.vue"),
   "settings-appearance": () => import("@/views/settings/AppearanceView.vue"),
+  "settings-about": () => import("@/views/settings/AboutView.vue"),
 };
 
 /**

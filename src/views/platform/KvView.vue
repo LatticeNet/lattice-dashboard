@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import StorageAdminPanel from "@/components/platform/StorageAdminPanel.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -214,6 +215,8 @@ async function submitPut() {
         </p>
       </CardContent>
     </Card>
+
+    <StorageAdminPanel kind="kv" :active-bucket="activeBucket" />
 
     <!-- Put dialog -->
     <Dialog v-model:open="putOpen">

@@ -137,6 +137,7 @@ export default {
       "settings-sso": "Single Sign-On",
       "settings-tokens": "Access Tokens",
       "settings-appearance": "Appearance",
+      "settings-about": "About",
     },
   },
 
@@ -147,6 +148,7 @@ export default {
       appearance: "Appearance",
       account: "Account",
       language: "Language",
+      permissions: "View permissions",
       logout: "Sign out",
       skipToContent: "Skip to content",
       signedInAs: "Signed in as",

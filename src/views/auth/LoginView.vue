@@ -25,7 +25,7 @@ const route = useRoute();
 type Step = "password" | "totp";
 const step = ref<Step>("password");
 
-const username = ref("admin");
+const username = ref("");
 const password = ref("");
 const code = ref("");
 const recovery = ref("");

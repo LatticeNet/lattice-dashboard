@@ -27,9 +27,13 @@ export default {
       session: {
         title: "Session",
         description: "Current authenticated principal",
+        username: "Username",
         actor: "Actor",
         unknown: "unknown",
         scopes: "Scopes",
+        superuserHelp: "* is the bootstrap superuser scope. It includes every dashboard and API scope, including worker:deploy.",
+        scopedHelp: "Only the scopes listed below are active for this principal. Hidden navigation usually means the required scope is missing.",
+        noScopes: "no scopes",
       },
       totp: {
         title: "Authenticator App",
@@ -59,6 +63,23 @@ export default {
         disableFailed: "2FA disable failed",
       },
       requestFailed: "Request failed",
+    },
+    about: {
+      title: "About",
+      description: "Build and version information for this Lattice deployment",
+      version: "Version",
+      commit: "Commit",
+      builtAt: "Built at",
+      server: {
+        title: "Server",
+        description: "Runtime version reported by lattice-server",
+      },
+      dashboard: {
+        title: "Dashboard",
+        description: "Static console bundle currently served by this server",
+        bundledRef: "Bundled dashboard ref",
+        bundledAt: "Bundled at",
+      },
     },
     sso: {
       title: "Single Sign-On",

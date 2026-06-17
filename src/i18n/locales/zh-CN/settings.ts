@@ -26,9 +26,13 @@ export default {
       session: {
         title: "会话",
         description: "当前已认证的主体",
+        username: "用户名",
         actor: "主体",
         unknown: "未知",
         scopes: "权限范围",
+        superuserHelp: "* 是首个管理员的超级用户权限。它包含所有 dashboard 与 API 权限，包括 worker:deploy。",
+        scopedHelp: "该主体当前仅持有下列权限范围。侧边栏隐藏通常代表缺少对应权限。",
+        noScopes: "无权限范围",
       },
       totp: {
         title: "身份验证器应用",
@@ -58,6 +62,23 @@ export default {
         disableFailed: "2FA 停用失败",
       },
       requestFailed: "请求失败",
+    },
+    about: {
+      title: "关于",
+      description: "当前 Lattice 部署的构建与版本信息",
+      version: "版本",
+      commit: "提交",
+      builtAt: "构建时间",
+      server: {
+        title: "Server",
+        description: "lattice-server 报告的运行版本",
+      },
+      dashboard: {
+        title: "Dashboard",
+        description: "当前 server 提供的静态控制台 bundle",
+        bundledRef: "内置 dashboard ref",
+        bundledAt: "内置时间",
+      },
     },
     sso: {
       title: "单点登录",

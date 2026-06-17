@@ -136,6 +136,7 @@ export default {
       "settings-sso": "单点登录",
       "settings-tokens": "访问令牌",
       "settings-appearance": "外观",
+      "settings-about": "关于",
     },
   },
 
@@ -146,6 +147,7 @@ export default {
       appearance: "外观",
       account: "账户",
       language: "语言",
+      permissions: "查看权限",
       logout: "退出登录",
       skipToContent: "跳到主内容",
       signedInAs: "当前登录为",

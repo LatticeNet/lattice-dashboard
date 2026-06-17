@@ -30,6 +30,7 @@ import {
   Fingerprint,
   Ticket,
   Palette,
+  Info,
 } from "lucide-vue-next";
 
 /** A single navigable destination in the sidebar. */
@@ -124,6 +125,7 @@ export const NAV: NavSection[] = [
       { name: "settings-sso", title: "Single Sign-On", path: "/settings/sso", icon: Fingerprint, scopes: ["oidc:admin"] },
       { name: "settings-tokens", title: "Access Tokens", path: "/settings/tokens", icon: Ticket, scopes: ["token:admin"] },
       { name: "settings-appearance", title: "Appearance", path: "/settings/appearance", icon: Palette, scopes: [] },
+      { name: "settings-about", title: "About", path: "/settings/about", icon: Info, scopes: [] },
     ],
   },
 ];
