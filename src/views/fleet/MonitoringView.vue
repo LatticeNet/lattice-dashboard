@@ -22,6 +22,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import StatCard from "@/components/common/StatCard.vue";
+import TrendChart from "@/components/common/TrendChart.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -122,6 +123,19 @@ const sparklinePoints = computed(() => {
     })
     .join(" ");
 });
+
+// Chronological latency series for the TrendChart: successful results only,
+// ordered oldest → newest, with null/undefined latency dropped.
+const latencyTrend = computed<number[]>(() =>
+  sortedResultsAsc.value
+    .filter((result) => result.success)
+    .map((result) => result.latency_ms)
+    .filter((value): value is number => value !== undefined && Number.isFinite(value)),
+);
+
+function formatTrendLatency(n: number): string {
+  return `${Math.round(n)}ms`;
+}
 
 watch(
   monitors,
@@ -473,6 +487,28 @@ async function deleteMonitor() {
           @retry="resultsQuery.refresh"
         >
           <div class="space-y-5">
+            <div class="rounded-lg border border-border bg-muted/20 p-4">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p class="text-sm font-medium">Latency trend</p>
+                  <p class="text-xs text-muted-foreground">
+                    Successful probes, oldest → newest
+                    <template v-if="latencyTrend.length">
+                      ({{ latencyTrend.length }} point{{ latencyTrend.length === 1 ? "" : "s" }})
+                    </template>
+                  </p>
+                </div>
+                <Badge :variant="resultVariant(latestResult)">{{ resultLabel(latestResult) }}</Badge>
+              </div>
+              <TrendChart
+                :values="latencyTrend"
+                tone="info"
+                unit="ms"
+                :height="140"
+                :format-value="formatTrendLatency"
+              />
+            </div>
+
             <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
               <div class="rounded-lg border border-border bg-muted/20 p-4">
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">

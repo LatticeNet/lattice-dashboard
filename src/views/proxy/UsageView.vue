@@ -72,6 +72,19 @@ const sortedUsers = computed(() =>
   [...users.value].sort((a, b) => (b.used_bytes || 0) - (a.used_bytes || 0)),
 );
 
+// Top users by traffic — a compact horizontal bar list. Bar width is the share
+// of the heaviest user's bytes (so the leader fills the track).
+const topUsers = computed(() => sortedUsers.value.slice(0, 8));
+const topUsersMaxBytes = computed(() =>
+  topUsers.value.reduce((max, user) => Math.max(max, user.used_bytes || 0), 0),
+);
+
+function trafficBarPercent(user: ProxyUsageUserView): number {
+  const max = topUsersMaxBytes.value;
+  if (max <= 0) return 0;
+  return Math.min(100, Math.max(0, ((user.used_bytes || 0) / max) * 100));
+}
+
 function statusVariant(status: string): "success" | "warning" | "destructive" | "secondary" {
   switch (status) {
     case "active":
@@ -183,6 +196,31 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
               </table>
             </div>
             <p v-else class="text-sm text-muted-foreground">No node snapshots reported yet.</p>
+          </CardContent>
+        </Card>
+
+        <Card v-if="topUsers.length">
+          <CardHeader>
+            <CardTitle>Top users by traffic</CardTitle>
+            <CardDescription>Highest {{ topUsers.length }} consumers, relative to the heaviest user</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul class="space-y-3">
+              <li v-for="user in topUsers" :key="user.id" class="space-y-1.5">
+                <div class="flex items-baseline justify-between gap-3 text-sm">
+                  <span class="min-w-0 truncate font-medium">{{ user.name || user.id }}</span>
+                  <span class="shrink-0 font-mono tabular text-xs text-muted-foreground">
+                    {{ formatBytes(user.used_bytes) }}
+                  </span>
+                </div>
+                <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    class="h-full rounded-full bg-primary/70"
+                    :style="{ width: trafficBarPercent(user) + '%' }"
+                  />
+                </div>
+              </li>
+            </ul>
           </CardContent>
         </Card>
 
