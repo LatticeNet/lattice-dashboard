@@ -105,3 +105,46 @@ function closeMobile() {
     </div>
   </aside>
 </template>
+
+<style scoped>
+/*
+ * CSS-only active-nav indicator. SidebarItem applies `bg-sidebar-accent` to the
+ * active link via its own (exact-for-root, prefix-otherwise) router logic, so we
+ * key off that authoritative marker rather than vue-router's `.router-link-active`
+ * (which would also match "/" on every route). We animate a left-edge accent bar
+ * that grows in on activation — no JS, no motion library. The bar scales from its
+ * vertical center using the sidebar primary token. Reduced-motion collapses the
+ * transition to none.
+ */
+nav :deep(a) {
+  position: relative;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+nav :deep(a)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 1.25rem;
+  width: 3px;
+  border-radius: 9999px;
+  background-color: var(--color-sidebar-primary);
+  transform: translateY(-50%) scaleY(0);
+  transform-origin: center;
+  opacity: 0;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
+}
+
+nav :deep(a.bg-sidebar-accent)::before {
+  transform: translateY(-50%) scaleY(1);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  nav :deep(a),
+  nav :deep(a)::before {
+    transition: none;
+  }
+}
+</style>

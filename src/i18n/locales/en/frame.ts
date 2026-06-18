@@ -69,6 +69,10 @@ export default {
       somethingWrong: "Something went wrong.",
       request: "request",
       empty: "No results",
+      couldNotRefresh: "Could not refresh — showing last data",
+      gone: "This no longer exists",
+      noAccess: "You don't have access to this",
+      connectionLost: "Connection lost. Check your network.",
     },
     chart: {
       min: "min",
@@ -153,6 +157,17 @@ export default {
       logout: "Sign out",
       skipToContent: "Skip to content",
       signedInAs: "Signed in as",
+      breadcrumb: "Breadcrumb",
+    },
+    command: {
+      open: "Open command palette",
+      search: "Search…",
+      shortcut: "⌘K",
+      title: "Command palette",
+      description: "Search and jump to any page.",
+      placeholder: "Type to search pages…",
+      empty: "No matching pages",
+      recent: "Recent",
     },
   },
 
@@ -221,6 +236,10 @@ export default {
     livePreviewHint: "The current theme applied to common interface elements.",
     language: "Language",
     languageHint: "Display language for the console.",
+    density: "Density",
+    densityHint: "Comfortable spacing, or compact for high-density fleet views.",
+    comfortable: "Comfortable",
+    compact: "Compact",
     paletteVarHint: "Each palette overrides {count} CSS variables in the primary family.",
     customSwitchHint: "Selecting a hex or using the picker switches the brand color to ",
     previewButtons: "Buttons",
@@ -256,5 +275,12 @@ export default {
     enable2fa: "Secure your account with 2FA",
     enable2faHint: "Add a second factor to protect operator access.",
     enable2faCta: "Enable 2FA",
+  },
+
+  freshness: {
+    live: "Live",
+    updatedAgo: "Updated {n}s ago",
+    stale: "Stale",
+    idle: "No data yet",
   },
 } as const;

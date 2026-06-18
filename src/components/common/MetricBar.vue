@@ -21,10 +21,10 @@ const props = withDefaults(
 );
 
 const TONE_COLORS: Record<Tone, string> = {
-  cpu: "oklch(0.62 0.16 195)",
-  memory: "oklch(0.66 0.18 142)",
-  disk: "oklch(0.74 0.17 60)",
-  net: "oklch(0.64 0.22 12)",
+  cpu: "var(--chart-2)",
+  memory: "var(--chart-3)",
+  disk: "var(--chart-4)",
+  net: "var(--chart-5)",
   primary: "var(--primary)",
 };
 

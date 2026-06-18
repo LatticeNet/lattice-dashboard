@@ -68,6 +68,10 @@ export default {
       somethingWrong: "出了点问题。",
       request: "请求",
       empty: "无结果",
+      couldNotRefresh: "刷新失败 — 显示上次数据",
+      gone: "该内容已不存在",
+      noAccess: "你没有访问该内容的权限",
+      connectionLost: "连接已断开，请检查网络。",
     },
     chart: {
       min: "最小",
@@ -152,6 +156,17 @@ export default {
       logout: "退出登录",
       skipToContent: "跳到主内容",
       signedInAs: "当前登录为",
+      breadcrumb: "面包屑导航",
+    },
+    command: {
+      open: "打开命令面板",
+      search: "搜索…",
+      shortcut: "⌘K",
+      title: "命令面板",
+      description: "搜索并跳转到任意页面。",
+      placeholder: "输入以搜索页面…",
+      empty: "没有匹配的页面",
+      recent: "最近",
     },
   },
 
@@ -220,6 +235,10 @@ export default {
     livePreviewHint: "当前主题在常见界面元素上的效果。",
     language: "语言",
     languageHint: "控制台的显示语言。",
+    density: "密度",
+    densityHint: "舒适间距,或选择紧凑以适配高密度机群视图。",
+    comfortable: "舒适",
+    compact: "紧凑",
     paletteVarHint: "每个色板会覆盖主色系中的 {count} 个 CSS 变量。",
     customSwitchHint: "输入十六进制值或使用取色器会把品牌色切换为 ",
     previewButtons: "按钮",
@@ -255,5 +274,12 @@ export default {
     enable2fa: "用 2FA 加固账户",
     enable2faHint: "添加第二因子以保护运维访问。",
     enable2faCta: "启用 2FA",
+  },
+
+  freshness: {
+    live: "实时",
+    updatedAgo: "{n} 秒前更新",
+    stale: "已过期",
+    idle: "暂无数据",
   },
 } as const;
