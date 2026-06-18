@@ -18,7 +18,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { WORLD_LAND_RINGS, type GeoRing } from "@/lib/map/worldLand";
+import { WORLD_RINGS } from "@/lib/map/worldGeo";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -36,8 +36,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 
 const MAP_WIDTH = 1000;
-const MAP_HEIGHT = 520;
-const MAX_MERCATOR_LAT = 85;
+const MAP_HEIGHT = 500;
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -111,7 +110,7 @@ const regions = computed(() => {
   return Array.from(groups.values()).sort((a, b) => b.nodes.length - a.nodes.length || a.label.localeCompare(b.label));
 });
 
-const landPaths = computed(() => WORLD_LAND_RINGS.map(ringToPath).filter(Boolean));
+const landPaths = computed(() => WORLD_RINGS.map(ringToPath).filter(Boolean));
 
 function hasCoordinates(node: NodeGeoView) {
   return typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number";
@@ -119,27 +118,23 @@ function hasCoordinates(node: NodeGeoView) {
 
 function project(lonValue: number, latValue: number) {
   const lonClamped = Math.max(-180, Math.min(180, lonValue));
-  const latClamped = Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, latValue));
-  const max = mercator(MAX_MERCATOR_LAT);
+  const latClamped = Math.max(-90, Math.min(90, latValue));
   const x = ((lonClamped + 180) / 360) * MAP_WIDTH;
-  const y = ((max - mercator(latClamped)) / (2 * max)) * MAP_HEIGHT;
+  const y = ((90 - latClamped) / 180) * MAP_HEIGHT;
   return { x, y };
 }
 
-function mercator(latValue: number) {
-  const rad = (latValue * Math.PI) / 180;
-  return Math.log(Math.tan(Math.PI / 4 + rad / 2));
-}
-
-function ringToPath(ring: GeoRing) {
-  return ring
-    .map(([lonValue, latValue], index) => {
-      const point = project(lonValue, latValue);
-      const command = index === 0 ? "M" : "L";
-      return `${command}${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
-    })
-    .join(" ")
-    .concat(" Z");
+// Rings are flat [lon,lat,lon,lat,...] pairs (compact bundled world geometry).
+function ringToPath(ring: readonly number[]) {
+  let d = "";
+  for (let i = 0; i + 1 < ring.length; i += 2) {
+    const lon = ring[i];
+    const lat = ring[i + 1];
+    if (lon === undefined || lat === undefined) break;
+    const point = project(lon, lat);
+    d += `${i === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)} `;
+  }
+  return d ? `${d}Z` : "";
 }
 
 function lookupIP(node: NodeGeoView) {
@@ -357,7 +352,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             <div class="relative overflow-hidden rounded-lg border border-border bg-[oklch(0.18_0.025_265)] text-slate-100">
               <svg
                 :viewBox="`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`"
-                class="aspect-[1.92] w-full"
+                class="aspect-[2/1] w-full"
                 role="img"
                 :aria-label="$t('fleet.map.mapAria')"
               >
@@ -372,6 +367,13 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   </pattern>
                   <filter id="fleet-marker-shadow" x="-80%" y="-80%" width="260%" height="260%">
                     <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="rgb(0 0 0)" flood-opacity="0.36" />
+                  </filter>
+                  <filter id="fleet-glow" x="-160%" y="-160%" width="420%" height="420%">
+                    <feGaussianBlur stdDeviation="3.4" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
                   </filter>
                 </defs>
 
@@ -388,9 +390,11 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     v-for="(landPath, index) in landPaths"
                     :key="`land-${index}`"
                     :d="landPath"
-                    fill="oklch(0.38 0.045 150 / 0.62)"
-                    stroke="oklch(0.74 0.055 155 / 0.5)"
-                    stroke-width="1.4"
+                    fill="oklch(0.32 0.03 215 / 0.72)"
+                    stroke="oklch(0.64 0.05 210 / 0.55)"
+                    stroke-width="0.5"
+                    stroke-linejoin="round"
+                    vector-effect="non-scaling-stroke"
                   />
                 </g>
 
@@ -399,9 +403,17 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     v-if="point.node.online"
                     :cx="point.x"
                     :cy="point.y"
-                    r="17"
+                    r="8"
+                    fill="oklch(0.82 0.2 150 / 0.5)"
+                    filter="url(#fleet-glow)"
+                  />
+                  <circle
+                    v-if="point.node.online"
+                    :cx="point.x"
+                    :cy="point.y"
+                    r="15"
                     fill="none"
-                    stroke="oklch(0.78 0.18 150 / 0.34)"
+                    stroke="oklch(0.82 0.2 150 / 0.4)"
                     stroke-width="2"
                   />
                   <g
