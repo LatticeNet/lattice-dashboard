@@ -14,6 +14,7 @@ import {
   RefreshCw,
   RotateCw,
   Server,
+  SquareTerminal,
   Wifi,
 } from "lucide-vue-next";
 import { api, unwrap, type EnrollTokenResponse, type Node } from "@/lib/api";
@@ -79,6 +80,7 @@ const nodes = computed(() => nodesQuery.data.value ?? []);
 const onlineCount = computed(() => nodes.value.filter((n) => n.online && !n.disabled).length);
 const disabledCount = computed(() => nodes.value.filter((n) => n.disabled).length);
 const canAdminNodes = computed(() => auth.can("node:admin"));
+const canOpenTerminal = computed(() => auth.can("terminal:open"));
 
 const sortedNodes = computed(() =>
   [...nodes.value].sort((a, b) => {
@@ -169,6 +171,11 @@ async function setNodeDebug(node: Node, enabled: boolean, collect?: boolean) {
   } finally {
     debugPendingNode.value = undefined;
   }
+}
+
+function openTerminal(node: Node) {
+  if (!canOpenTerminal.value || !node.online || node.disabled) return;
+  window.open(`/terminal?node_id=${encodeURIComponent(node.id)}&connect=1`, "_blank", "noopener");
 }
 
 function closeDetail(open: boolean) {
@@ -351,12 +358,23 @@ function closeDetail(open: boolean) {
                 <span>{{ formatBytesPerSec(node.metrics?.net_tx_speed) }} {{ $t('fleet.nodes.list.up') }}</span>
               </div>
 
-              <div v-if="canAdminNodes" class="mt-4 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" :disabled="pendingNode === node.id" @click="rotateToken(node)">
+              <div v-if="canOpenTerminal || canAdminNodes" class="mt-4 flex flex-wrap gap-2">
+                <Button
+                  v-if="canOpenTerminal"
+                  size="sm"
+                  variant="outline"
+                  :disabled="!node.online || node.disabled"
+                  @click="openTerminal(node)"
+                >
+                  <SquareTerminal class="size-4" aria-hidden="true" />
+                  {{ $t('fleet.nodes.list.openTerminal') }}
+                </Button>
+                <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === node.id" @click="rotateToken(node)">
                   <KeyRound class="size-4" aria-hidden="true" />
                   {{ $t('fleet.nodes.list.rotateToken') }}
                 </Button>
                 <Button
+                  v-if="canAdminNodes"
                   size="sm"
                   :variant="node.disabled ? 'outline' : 'destructive'"
                   :disabled="pendingNode === node.id"
@@ -437,6 +455,24 @@ function closeDetail(open: boolean) {
                   <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugCollectHint', { path: `agent-debug://${selectedNode.id}` }) }}</span>
                 </span>
               </label>
+            </div>
+          </div>
+
+          <div v-if="canOpenTerminal" class="rounded-md border border-border p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="space-y-1">
+                <h3 class="text-sm font-medium">{{ $t('fleet.nodes.detail.terminal') }}</h3>
+                <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.terminalDescription') }}</p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                :disabled="!selectedNode.online || selectedNode.disabled"
+                @click="openTerminal(selectedNode)"
+              >
+                <SquareTerminal class="size-4" aria-hidden="true" />
+                {{ $t('fleet.nodes.list.openTerminal') }}
+              </Button>
             </div>
           </div>
 

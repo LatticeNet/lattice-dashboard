@@ -41,6 +41,7 @@ export default {
         lastSeen: "last seen {time}",
         down: "down",
         up: "up",
+        openTerminal: "Open terminal",
         rotateToken: "Rotate token",
       },
       detail: {
@@ -54,6 +55,8 @@ export default {
         debugLocalHint: "The agent writes debug lines to the node machine's normal service logs.",
         debugCollect: "Collect debug lines in server Logs",
         debugCollectHint: "When enabled, Lattice also stores the same debug output under {path}. Disable this to keep debug output local only.",
+        terminal: "Terminal",
+        terminalDescription: "Open this node in a dedicated audited PTY page. Requires the agent terminal flag.",
         hostFacts: "Host facts",
         os: "OS: {value}",
         arch: "Arch: {value}",

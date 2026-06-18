@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import {
   Activity,
+  ArrowUpRight,
   Database,
   RefreshCw,
   Server,
@@ -85,6 +86,14 @@ function trafficBarPercent(user: ProxyUsageUserView): number {
   return Math.min(100, Math.max(0, ((user.used_bytes || 0) / max) * 100));
 }
 
+function trafficSharePercent(user: ProxyUsageUserView): number {
+  const total = totalUsedBytes.value;
+  if (total <= 0) return 0;
+  return Math.min(100, Math.max(0, ((user.used_bytes || 0) / total) * 100));
+}
+
+const topUserShare = computed(() => (topUsers.value[0] ? trafficSharePercent(topUsers.value[0]) : 0));
+
 function statusVariant(status: string): "success" | "warning" | "destructive" | "secondary" {
   switch (status) {
     case "active":
@@ -119,6 +128,13 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
   const pct = usagePercent(user) ?? 0;
   if (pct >= 100) return "bg-destructive";
   if (pct >= 80) return "bg-warning";
+  return "bg-primary";
+}
+
+function topUserBarClass(user: ProxyUsageUserView): string {
+  if (user.status === "over_quota") return "bg-destructive";
+  if (user.status === "expired") return "bg-warning";
+  if (user.status === "disabled") return "bg-muted-foreground";
   return "bg-primary";
 }
 </script>
@@ -199,28 +215,77 @@ function progressIndicatorClass(user: ProxyUsageUserView): string {
           </CardContent>
         </Card>
 
-        <Card v-if="topUsers.length">
+        <Card v-if="topUsers.length" class="overflow-hidden">
           <CardHeader>
-            <CardTitle>{{ $t('proxy.usage.topUsersTitle') }}</CardTitle>
+            <CardTitle class="flex items-center gap-2">
+              <ArrowUpRight class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('proxy.usage.topUsersTitle') }}
+            </CardTitle>
             <CardDescription>{{ $t('proxy.usage.topUsersDescription', { count: topUsers.length }) }}</CardDescription>
           </CardHeader>
           <CardContent>
-            <ul class="space-y-3">
-              <li v-for="user in topUsers" :key="user.id" class="space-y-1.5">
-                <div class="flex items-baseline justify-between gap-3 text-sm">
-                  <span class="min-w-0 truncate font-medium">{{ user.name || user.id }}</span>
-                  <span class="shrink-0 font-mono tabular text-xs text-muted-foreground">
-                    {{ formatBytes(user.used_bytes) }}
-                  </span>
+            <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+              <ol class="space-y-2">
+                <li
+                  v-for="(user, index) in topUsers"
+                  :key="user.id"
+                  class="rounded-md border border-border bg-background/60 p-3"
+                >
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="flex min-w-0 items-start gap-3">
+                      <span class="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-xs text-muted-foreground">
+                        {{ index + 1 }}
+                      </span>
+                      <div class="min-w-0">
+                        <p class="truncate font-medium">{{ user.name || user.id }}</p>
+                        <p class="truncate font-mono text-xs text-muted-foreground">{{ shortId(user.id, 16) }}</p>
+                      </div>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-2">
+                      <Badge :variant="statusVariant(user.status)">
+                        {{ $t('common.status.' + (user.status === 'over_quota' ? 'overQuota' : user.status)) }}
+                      </Badge>
+                      <span class="font-mono text-sm tabular">{{ formatBytes(user.used_bytes) }}</span>
+                    </div>
+                  </div>
+
+                  <div class="mt-3 h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                    <div
+                      :class="cn('h-full rounded-full', topUserBarClass(user))"
+                      :style="{ width: trafficBarPercent(user) + '%' }"
+                    />
+                  </div>
+                  <div class="mt-2 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                    <span>{{ $t('proxy.usage.globalShare', { percent: formatPercent(trafficSharePercent(user), 1) }) }}</span>
+                    <span>{{ formatBytes(user.used_bytes) }} / {{ limitLabel(user.traffic_limit_bytes) }}</span>
+                    <span>{{ user.last_seen_at ? formatRelativeTime(user.last_seen_at) : $t('common.misc.never') }}</span>
+                  </div>
+                </li>
+              </ol>
+
+              <div class="rounded-md border border-border bg-muted/25 p-4">
+                <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('proxy.usage.globalOverview') }}</p>
+                <p class="mt-3 text-3xl font-semibold tabular">{{ formatBytes(totalUsedBytes) }}</p>
+                <p class="mt-1 text-sm text-muted-foreground">{{ $t('proxy.usage.totalAcrossUsers', { count: totalUsers }) }}</p>
+                <div class="mt-5 space-y-3">
+                  <div class="flex items-center justify-between gap-3 text-sm">
+                    <span class="text-muted-foreground">{{ $t('proxy.usage.leaderShare') }}</span>
+                    <span class="font-mono tabular">{{ formatPercent(topUserShare, 1) }}</span>
+                  </div>
+                  <div class="h-2 w-full overflow-hidden rounded-full bg-background">
+                    <div class="h-full rounded-full bg-primary" :style="{ width: topUserShare + '%' }" />
+                  </div>
+                  <div class="flex items-center justify-between gap-3 text-sm">
+                    <span class="text-muted-foreground">{{ $t('proxy.usage.reportingNodes') }}</span>
+                    <span class="font-mono tabular">{{ activeNodes }}</span>
+                  </div>
+                  <div class="flex items-center justify-between gap-3 text-sm">
+                    <span class="text-muted-foreground">{{ $t('proxy.usage.trackedUsers') }}</span>
+                    <span class="font-mono tabular">{{ totalUsers }}</span>
+                  </div>
                 </div>
-                <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    class="h-full rounded-full bg-primary/70"
-                    :style="{ width: trafficBarPercent(user) + '%' }"
-                  />
-                </div>
-              </li>
-            </ul>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

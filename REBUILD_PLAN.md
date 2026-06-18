@@ -12,8 +12,9 @@
 > central Logs collection; SSO New Provider includes a field guide and public
 > docs link. Fleet Map patch 2026-06-17: the map is now a refined CSP-safe world
 > SVG with IP-based auto-location controls backed by the server GeoIP resolver.
-> Terminal patch 2026-06-17: Operations now includes a real browser terminal
-> page backed by the server Terminal API and agent-side opt-in PTY sessions.
+> Terminal patch 2026-06-18: Operations now includes an xterm-backed browser
+> terminal workspace, direct Nodes-page entrypoints, and immediate operator-close
+> state backed by the server Terminal API and agent-side opt-in PTY sessions.
 
 ## Why rebuild
 
@@ -36,8 +37,9 @@ while honoring Lattice's constraints.
 2. **No WebSocket / SSE** anywhere on the server — all data is request/response
    JSON. "Real-time" is a disciplined **polling layer** (`useAsyncData` with
    visibility-aware intervals, per-panel error isolation, last-good-data
-   retention). We do **not** build NodeGet's xterm webshell (no live-shell API;
-   batch tasks are queue+poll).
+   retention). The browser terminal is still polling-backed: xterm handles PTY
+   rendering/input locally, while the server/agent exchange bounded JSON events
+   and inputs.
 3. **Maps under CSP** = bundled world GeoJSON rendered locally (echarts/SVG) —
    **no external tile servers** (no Leaflet/MapLibre tiles).
 4. **Secret-free + one-time reveal** — the API never returns credentials
@@ -139,9 +141,11 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
   `LATTICE_GEOIP_LOOKUP_URL=off` to disable external lookup, or point it at an
   internal HTTPS provider.
 - **Browser Terminal MVP — DONE.** `/terminal` is a real Operations page that
-  creates in-memory server sessions, polls output, sends input/close controls,
-  and requires `terminal:open`. The node agent must opt in with
-  `LATTICE_AGENT_ALLOW_TERMINAL=1`; this is an agent PTY path, not inbound SSH.
+  creates in-memory server sessions, renders output with xterm, sends input,
+  resize, and close controls, and requires `terminal:open`. Nodes expose a direct
+  "Open terminal" entrypoint that opens the terminal route in a new tab. The node
+  agent must opt in with `LATTICE_AGENT_ALLOW_TERMINAL=1`; this is an agent PTY
+  path, not inbound SSH.
 - **Protocol-level future work — NOT dashboard-only.** KV Store v2
   (bucket-bound credentials and domain/IP binding), Static hosting v2
   (domain-bound sites / optional Cloudflare Pages workflow), Terminal v2

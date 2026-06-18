@@ -3,11 +3,14 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
+  Database,
+  Gauge,
   Lock,
   Pencil,
   Plus,
   RefreshCw,
   RotateCw,
+  Search,
   Trash2,
   TriangleAlert,
   UserPlus,
@@ -29,6 +32,7 @@ import { cn } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import StatCard from "@/components/common/StatCard.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -58,6 +62,8 @@ const usersQuery = useAsyncData(
   { pollInterval: 12000 },
 );
 
+const userSearch = ref("");
+const statusFilter = ref<ProxyUserStatus | "all">("all");
 const users = computed(() => usersQuery.data.value ?? []);
 const canAdmin = computed(() => auth.can("proxy:admin"));
 const adminReason = computed(() => t("proxy.users.adminReason"));
@@ -69,6 +75,26 @@ const sortedUsers = computed(() =>
     if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
     return (a.name || a.id).localeCompare(b.name || b.id);
   }),
+);
+
+const visibleUsers = computed(() => {
+  const needle = userSearch.value.trim().toLowerCase();
+  return sortedUsers.value.filter((user) => {
+    if (statusFilter.value !== "all" && user.status !== statusFilter.value) return false;
+    if (!needle) return true;
+    return [user.name, user.id, user.status, ...(user.inbound_ids ?? [])]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(needle));
+  });
+});
+
+const activeUserCount = computed(() => users.value.filter((user) => user.status === "active").length);
+const attentionUserCount = computed(() =>
+  users.value.filter((user) => user.status === "expired" || user.status === "over_quota").length,
+);
+const tokenReadyCount = computed(() => users.value.filter((user) => user.has_sub_token).length);
+const totalUsedBytes = computed(() =>
+  users.value.reduce((sum, user) => sum + (user.used_bytes || 0), 0),
 );
 
 function statusVariant(status: ProxyUserStatus): "success" | "warning" | "secondary" | "destructive" {
@@ -311,6 +337,13 @@ async function confirmDelete() {
       </template>
     </PageHeader>
 
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <StatCard :label="$t('proxy.users.kpiTotal')" :value="users.length" :icon="Users" :hint="$t('proxy.users.kpiTokenReady', { count: tokenReadyCount })" />
+      <StatCard :label="$t('proxy.users.kpiActive')" :value="activeUserCount" :icon="Gauge" tone="success" />
+      <StatCard :label="$t('proxy.users.kpiAttention')" :value="attentionUserCount" :icon="TriangleAlert" :tone="attentionUserCount > 0 ? 'warning' : 'default'" />
+      <StatCard :label="$t('proxy.users.kpiTraffic')" :value="formatBytes(totalUsedBytes)" :icon="Database" />
+    </div>
+
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
@@ -322,12 +355,32 @@ async function confirmDelete() {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div class="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_180px]">
+          <div class="relative">
+            <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+            <Input v-model="userSearch" class="pl-8" :placeholder="$t('proxy.users.searchPlaceholder')" />
+          </div>
+          <select
+            v-model="statusFilter"
+            class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+          >
+            <option value="all">{{ $t('proxy.users.filterAll') }}</option>
+            <option value="active">{{ $t('common.status.active') }}</option>
+            <option value="disabled">{{ $t('common.status.disabled') }}</option>
+            <option value="expired">{{ $t('common.status.expired') }}</option>
+            <option value="over_quota">{{ $t('common.status.overQuota') }}</option>
+          </select>
+          <div class="flex items-center justify-end text-xs text-muted-foreground">
+            {{ $t('proxy.users.visibleCount', { visible: visibleUsers.length, total: users.length }) }}
+          </div>
+        </div>
+
         <DataState
           :loading="usersQuery.loading.value"
           :error="usersQuery.error.value"
-          :is-empty="users.length === 0"
-          :empty-title="$t('proxy.users.emptyTitle')"
-          :empty-description="$t('proxy.users.emptyDescription')"
+          :is-empty="visibleUsers.length === 0"
+          :empty-title="users.length === 0 ? $t('proxy.users.emptyTitle') : $t('proxy.users.noMatchesTitle')"
+          :empty-description="users.length === 0 ? $t('proxy.users.emptyDescription') : $t('proxy.users.noMatchesDescription')"
           @retry="usersQuery.refresh"
         >
           <div class="overflow-x-auto">
@@ -345,9 +398,10 @@ async function confirmDelete() {
               </thead>
               <tbody>
                 <tr
-                  v-for="user in sortedUsers"
+                  v-for="user in visibleUsers"
                   :key="user.id"
                   class="border-b border-border hover:bg-muted/40"
+                  :class="user.status === 'over_quota' && 'bg-destructive/5'"
                 >
                   <td class="px-3 py-3">
                     <div class="font-medium">{{ user.name || shortId(user.id) }}</div>

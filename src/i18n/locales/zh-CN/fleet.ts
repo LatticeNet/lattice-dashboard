@@ -40,6 +40,7 @@ export default {
         lastSeen: "最后在线 {time}",
         down: "下行",
         up: "上行",
+        openTerminal: "打开终端",
         rotateToken: "轮换令牌",
       },
       detail: {
@@ -53,6 +54,8 @@ export default {
         debugLocalHint: "agent 会把 debug 行输出到节点机器上的常规服务日志。",
         debugCollect: "收集 debug 行到 server Logs",
         debugCollectHint: "启用后,Lattice 也会把同样的 debug 输出存入 {path}。关闭此项则只保留节点本机输出。",
+        terminal: "终端",
+        terminalDescription: "在独立的可审计 PTY 页面中打开该节点。需要 agent 启用终端能力。",
         hostFacts: "主机信息",
         os: "OS:{value}",
         arch: "架构:{value}",

@@ -4,6 +4,11 @@ Modern Vue 3 operator console for Lattice: Vue 3.5, Vite, Tailwind v4,
 reka-ui/shadcn-vue primitives, Pinia, vue-router, and polling-based data
 loading under the server's strict CSP.
 
+The Operations -> Terminal page uses `@xterm/xterm` for a real shell surface
+while preserving Lattice's no-WebSocket server contract: the dashboard polls
+bounded Terminal API events, sends input/resize/close JSON requests, and opens
+node-specific sessions from the Nodes page.
+
 ## Develop
 
 ```sh
