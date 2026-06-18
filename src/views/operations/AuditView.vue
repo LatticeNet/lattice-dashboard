@@ -5,11 +5,13 @@ import { toast } from "vue-sonner";
 import { CheckCircle2, RefreshCw, ScrollText, ShieldCheck } from "lucide-vue-next";
 import { api, type AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,10 +24,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const { t } = useI18n();
 const action = ref("");
-const decision = ref("");
+/** "any" is a sentinel for the themed Select (reka-ui forbids empty-string item values). */
+const decision = ref<"any" | "allow" | "deny" | "observe">("any");
 const nodeId = ref("");
 const correlationId = ref("");
 const limit = ref(50);
@@ -36,7 +46,7 @@ const auditQuery = useAsyncData(
   () =>
     api.audit.query({
       action: action.value.trim() || undefined,
-      decision: decision.value || undefined,
+      decision: decision.value === "any" ? undefined : decision.value,
       node_id: nodeId.value.trim() || undefined,
       correlation_id: correlationId.value.trim() || undefined,
       limit: Number(limit.value) || 50,
@@ -48,10 +58,20 @@ const auditQuery = useAsyncData(
 const events = computed<AuditEvent[]>(() => auditQuery.data.value?.events ?? []);
 const total = computed(() => auditQuery.data.value?.total ?? events.value.length);
 
-function decisionVariant(value: string): "success" | "destructive" | "secondary" {
-  if (value === "allow") return "success";
-  if (value === "deny") return "destructive";
-  return "secondary";
+const columns = computed<DataTableColumn<AuditEvent>[]>(() => [
+  { key: "decision", label: t("operations.audit.decision"), sortable: true },
+  { key: "action", label: t("operations.audit.action"), sortable: true },
+  { key: "at", label: t("operations.audit.colTime"), sortable: true, align: "right" },
+  { key: "id", label: t("operations.audit.colId"), align: "right" },
+]);
+
+const DECISION_HEALTH: Record<string, NodeHealth> = {
+  allow: "online",
+  deny: "offline",
+};
+
+function decisionVariant(value: string): BadgeVariant {
+  return statusMeta(DECISION_HEALTH[value] ?? "unknown").badgeVariant;
 }
 
 function metadataText(event: AuditEvent): string {
@@ -75,6 +95,9 @@ async function verifyAudit() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('operations.audit.title')" :description="$t('operations.audit.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="auditQuery.refreshing.value" @click="auditQuery.refresh">
           <RefreshCw :class="cn('size-4', auditQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
@@ -128,12 +151,17 @@ async function verifyAudit() {
           </div>
           <div class="grid gap-2">
             <Label for="audit-decision">{{ $t('operations.audit.decision') }}</Label>
-            <select id="audit-decision" v-model="decision" class="h-9 rounded-md border border-input bg-background px-3 text-sm">
-              <option value="">{{ $t('operations.audit.any') }}</option>
-              <option value="allow">allow</option>
-              <option value="deny">deny</option>
-              <option value="observe">observe</option>
-            </select>
+            <Select v-model="decision">
+              <SelectTrigger id="audit-decision" class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">{{ $t('operations.audit.any') }}</SelectItem>
+                <SelectItem value="allow">allow</SelectItem>
+                <SelectItem value="deny">deny</SelectItem>
+                <SelectItem value="observe">observe</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div class="grid gap-2">
             <Label for="audit-node">{{ $t('operations.audit.node') }}</Label>
@@ -180,42 +208,50 @@ async function verifyAudit() {
         <CardDescription>{{ $t('operations.audit.eventsHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="events"
+          :row-key="(event) => event.id"
           :loading="auditQuery.loading.value"
           :error="auditQuery.error.value"
-          :is-empty="events.length === 0"
+          :page-size="20"
           :empty-title="$t('operations.audit.emptyTitle')"
           :empty-description="$t('operations.audit.emptyDescription')"
+          :no-match-title="$t('operations.audit.noMatchTitle')"
+          :no-match-description="$t('operations.audit.noMatchDescription')"
+          :actions-label="$t('operations.audit.colId')"
           @retry="auditQuery.refresh"
         >
-          <div class="space-y-3">
-            <div v-for="event in events" :key="event.id" class="rounded-lg border border-border p-4">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <Badge :variant="decisionVariant(event.decision)">{{ event.decision }}</Badge>
-                    <span class="font-medium">{{ event.action }}</span>
-                    <Badge v-if="event.scope" variant="outline">{{ event.scope }}</Badge>
-                  </div>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    {{ formatDateTime(event.at) }} · {{ $t('operations.audit.actorPrefix') }} {{ event.actor_id || "system" }} · {{ $t('operations.audit.nodePrefix') }} {{ event.node_id || $t('common.misc.global') }}
-                  </p>
-                </div>
-                <div class="flex items-center gap-2">
-                  <code class="font-mono text-xs text-muted-foreground">{{ shortId(event.id, 12) }}</code>
-                  <CopyButton :value="event.id" />
-                </div>
-              </div>
+          <template #cell-decision="{ row }">
+            <Badge :variant="decisionVariant(row.decision)">{{ row.decision }}</Badge>
+          </template>
 
-              <div v-if="event.reason || event.correlation_id" class="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span v-if="event.reason">{{ event.reason }}</span>
-                <span v-if="event.correlation_id" class="font-mono">{{ $t('operations.audit.corrPrefix') }} {{ event.correlation_id }}</span>
-              </div>
-
-              <pre v-if="metadataText(event)" class="mt-3 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 font-mono text-xs">{{ metadataText(event) }}</pre>
+          <template #cell-action="{ row }">
+            <div class="flex flex-wrap items-center justify-end gap-2 md:justify-start">
+              <span class="font-medium">{{ row.action }}</span>
+              <Badge v-if="row.scope" variant="outline">{{ row.scope }}</Badge>
             </div>
-          </div>
-        </DataState>
+            <p class="mt-1 text-xs text-muted-foreground">
+              {{ $t('operations.audit.actorPrefix') }} {{ row.actor_id || "system" }} · {{ $t('operations.audit.nodePrefix') }} {{ row.node_id || $t('common.misc.global') }}
+            </p>
+            <div v-if="row.reason || row.correlation_id" class="mt-2 flex flex-wrap justify-end gap-2 text-xs text-muted-foreground md:justify-start">
+              <span v-if="row.reason">{{ row.reason }}</span>
+              <span v-if="row.correlation_id" class="font-mono">{{ $t('operations.audit.corrPrefix') }} {{ row.correlation_id }}</span>
+            </div>
+            <pre v-if="metadataText(row)" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-left font-mono text-xs">{{ metadataText(row) }}</pre>
+          </template>
+
+          <template #cell-at="{ row }">
+            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.at) }}</span>
+          </template>
+
+          <template #cell-id="{ row }">
+            <div class="flex items-center justify-end gap-2">
+              <code class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 12) }}</code>
+              <CopyButton :value="row.id" />
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
   </div>

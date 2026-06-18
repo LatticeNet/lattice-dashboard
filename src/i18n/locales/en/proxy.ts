@@ -3,6 +3,17 @@
 // Namespaces here must not collide with frame.ts or other section files.
 export default {
   proxy: {
+    // Shared DataTable toolbar / pagination strings for the proxy section.
+    table: {
+      showing: "Showing",
+      of: "of",
+      prevPage: "Previous page",
+      nextPage: "Next page",
+      clearSearch: "Clear search",
+      noMatchTitle: "No matching results",
+      noMatchDescription: "Adjust your search or filters.",
+    },
+
     inbounds: {
       title: "Proxy Inbounds",
       description: "VLESS + REALITY listener definitions shared by node profiles and users",
@@ -11,6 +22,12 @@ export default {
       kpiInbounds: "Inbounds",
       kpiEnabled: "Enabled",
       kpiRealityKeySet: "REALITY key set",
+      searchPlaceholder: "Search name, core, or REALITY dest",
+      errorNameRequired: "Name is required.",
+      errorPort: "Port must be an integer between 1 and 65535.",
+      errorDestRequired: "REALITY dest is required.",
+      errorShortIds: "At least one short ID is required.",
+      errorPrivateKey: "A REALITY private key is required when creating an inbound.",
       listeners: "Listeners",
       listenersDescription:
         "Global VLESS + REALITY inbounds. The REALITY private key is write-only and never returned.",
@@ -228,6 +245,10 @@ export default {
       unlimited: "unlimited",
       reveal: "Reveal",
       revealTitleAction: "Reveal subscription (rotates token)",
+      searchPlaceholder: "Search subscriber name or id",
+      confirmRevealTitle: "Reveal subscription?",
+      confirmRevealDescription:
+        'Revealing rotates the token for "{name}" and invalidates any previously shared URL. Continue?',
       noTokenCreateInUsers: "no token — create in Users",
       howTitle: "How clients consume subscriptions",
       howDescriptionPrefix: "Operator reference for the public",

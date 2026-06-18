@@ -1,6 +1,14 @@
 // zh-CN 平台分区文案。命名空间与 frame.ts 及其他分区文件互不冲突。
 export default {
   platform: {
+    shared: {
+      noMatchesTitle: "无匹配项",
+      noMatchesDescription: "没有条目匹配你的搜索。请换个关键词或清空搜索。",
+      searchKeys: "搜索键…",
+      searchPaths: "搜索路径…",
+      searchNames: "搜索名称…",
+      searchNodes: "搜索节点…",
+    },
     plugins: {
       title: "插件",
       description: "经校验、按能力授权的扩展包及其生命周期状态机",

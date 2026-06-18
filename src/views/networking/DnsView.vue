@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  ExternalLink,
   Globe2,
   KeyRound,
   Pencil,
@@ -23,15 +21,17 @@ import {
   type DNSRecord,
   type DNSZone,
 } from "@/lib/api";
-import { sha256Hex } from "@/lib/crypto";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
-import CopyButton from "@/components/common/CopyButton.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -96,6 +96,25 @@ function statusVariant(status: string): "success" | "destructive" | "warning" | 
       return "secondary";
   }
 }
+
+const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
+  { key: "name", label: t("networking.dns.colName"), sortable: true, searchable: true },
+  {
+    key: "node",
+    label: t("networking.dns.colNode"),
+    sortable: true,
+    searchable: true,
+    value: (dep) => nodeLabel(dep),
+  },
+  { key: "listen", label: t("networking.dns.colListen") },
+  { key: "exposure", label: t("networking.dns.colExposure"), sortable: true },
+  { key: "zones", label: t("networking.dns.colZones"), align: "right", sortable: true, value: (dep) => dep.zones.length },
+  { key: "hostname", label: t("networking.dns.colHostname"), searchable: true },
+  { key: "status", label: t("networking.dns.colStatus"), sortable: true },
+  { key: "credential", label: t("networking.dns.colCredential") },
+  { key: "published", label: t("networking.dns.colPublished") },
+  { key: "actions", label: t("networking.dns.colActions"), align: "right" },
+]);
 
 // ── Zone / record editor drafts ───────────────────────────────────────────
 type ZoneMode = "forward" | "static" | "block";
@@ -350,6 +369,7 @@ async function publish(dep: DNSDeploymentView) {
 }
 
 // ── Plan dialog ───────────────────────────────────────────────────────────
+const planDigest = usePlanDigest();
 const planning = ref<string | undefined>(undefined);
 const planApproval = ref<ApprovalView | undefined>(undefined);
 const planSha = ref("");
@@ -360,7 +380,7 @@ async function plan(dep: DNSDeploymentView) {
   try {
     const approval = await api.dns.plan(dep.id);
     planApproval.value = approval;
-    planSha.value = await sha256Hex(approval.plan || "");
+    planSha.value = await planDigest.digestFor(approval);
     toast.success(t("networking.shared.toastPlanCreated"));
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
@@ -368,6 +388,16 @@ async function plan(dep: DNSDeploymentView) {
     planning.value = undefined;
   }
 }
+
+const planBadges = computed(() => {
+  const a = planApproval.value;
+  if (!a) return [];
+  return [
+    { label: a.status, variant: "warning" as const },
+    { label: `${a.plugin} · ${a.action}`, variant: "outline" as const },
+    { label: t("networking.shared.idLabel", { id: shortId(a.id, 12) }), variant: "secondary" as const },
+  ];
+});
 
 function closePlan(open: boolean) {
   if (!open) {
@@ -383,6 +413,9 @@ function closePlan(open: boolean) {
       :title="$t('networking.dns.title')"
       :description="$t('networking.dns.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="deploymentsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -411,118 +444,105 @@ function closePlan(open: boolean) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="sortedDeployments"
+          :row-key="(dep) => dep.id"
           :loading="deploymentsQuery.loading.value"
           :error="deploymentsQuery.error.value"
-          :is-empty="deployments.length === 0"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('networking.dns.emptyTitle')"
           :empty-description="$t('networking.dns.emptyDescription')"
+          :no-match-title="$t('networking.shared.noMatchTitle')"
+          :no-match-description="$t('networking.shared.noMatchDescription')"
+          :actions-label="$t('networking.dns.colActions')"
           @retry="deploymentsQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colName') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colNode') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colListen') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colExposure') }}</th>
-                  <th scope="col" class="py-2 pr-3 text-right font-medium">{{ $t('networking.dns.colZones') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colHostname') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colStatus') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colCredential') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.dns.colPublished') }}</th>
-                  <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('networking.dns.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="dep in sortedDeployments"
-                  :key="dep.id"
-                  class="border-b border-border last:border-b-0 align-top hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-3">
-                    <div class="font-medium">{{ dep.name }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ dep.engine }}{{ dep.engine_version ? ` ${dep.engine_version}` : "" }}</div>
-                  </td>
-                  <td class="py-3 pr-3">
-                    <div>{{ nodeLabel(dep) }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(dep.node_id, 12) }}</div>
-                  </td>
-                  <td class="py-3 pr-3 font-mono text-xs">
-                    {{ dep.listen_port }}
-                    <span class="text-muted-foreground">
-                      {{ [dep.enable_udp ? "udp" : null, dep.enable_tcp ? "tcp" : null].filter(Boolean).join("/") }}
-                    </span>
-                  </td>
-                  <td class="py-3 pr-3">
-                    <Badge :variant="dep.exposure === 'public' ? 'warning' : 'secondary'">{{ dep.exposure }}</Badge>
-                  </td>
-                  <td class="py-3 pr-3 text-right tabular">{{ dep.zones.length }}</td>
-                  <td class="py-3 pr-3 font-mono text-xs">{{ dep.hostname || "—" }}</td>
-                  <td class="py-3 pr-3">
-                    <Badge :variant="statusVariant(dep.status)">{{ dep.status }}</Badge>
-                    <div v-if="dep.last_error" class="mt-1 max-w-[180px] text-xs text-destructive">{{ dep.last_error }}</div>
-                  </td>
-                  <td class="py-3 pr-3">
-                    <Badge v-if="dep.has_credential" variant="success">
-                      <KeyRound class="size-3" aria-hidden="true" /> {{ $t('networking.dns.credSet') }}
-                    </Badge>
-                    <Badge v-else variant="outline">{{ $t('networking.dns.credNone') }}</Badge>
-                  </td>
-                  <td class="py-3 pr-3 text-xs text-muted-foreground">
-                    <div>{{ dep.last_published_at ? formatDateTime(dep.last_published_at) : "—" }}</div>
-                    <div v-if="dep.last_publish_error" class="mt-1 max-w-[180px] text-destructive">{{ dep.last_publish_error }}</div>
-                  </td>
-                  <td class="py-3 pl-3">
-                    <div class="flex flex-wrap items-center justify-end gap-1">
-                      <Button
-                        v-if="canPlan"
-                        variant="outline"
-                        size="sm"
-                        :disabled="planning === dep.id"
-                        @click="plan(dep)"
-                      >
-                        <RefreshCw v-if="planning === dep.id" class="size-4 animate-spin" aria-hidden="true" />
-                        <Play v-else class="size-4" aria-hidden="true" />
-                        {{ $t('networking.shared.plan') }}
-                      </Button>
-                      <Button
-                        v-if="canAdmin && dep.hostname"
-                        variant="outline"
-                        size="sm"
-                        :disabled="publishing === dep.id"
-                        @click="publish(dep)"
-                      >
-                        <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" aria-hidden="true" />
-                        <UploadCloud v-else class="size-4" aria-hidden="true" />
-                        {{ $t('common.actions.publish') }}
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.edit')"
-                        @click="openEdit(dep)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.delete')"
-                        @click="deleteTarget = dep"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row: dep }">
+            <div class="font-medium">{{ dep.name }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ dep.engine }}{{ dep.engine_version ? ` ${dep.engine_version}` : "" }}</div>
+          </template>
+          <template #cell-node="{ row: dep }">
+            <div>{{ nodeLabel(dep) }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(dep.node_id, 12) }}</div>
+          </template>
+          <template #cell-listen="{ row: dep }">
+            <span class="font-mono text-xs">
+              {{ dep.listen_port }}
+              <span class="text-muted-foreground">
+                {{ [dep.enable_udp ? "udp" : null, dep.enable_tcp ? "tcp" : null].filter(Boolean).join("/") }}
+              </span>
+            </span>
+          </template>
+          <template #cell-exposure="{ row: dep }">
+            <Badge :variant="dep.exposure === 'public' ? 'warning' : 'secondary'">{{ dep.exposure }}</Badge>
+          </template>
+          <template #cell-zones="{ row: dep }">
+            <span class="tabular-nums">{{ dep.zones.length }}</span>
+          </template>
+          <template #cell-hostname="{ row: dep }">
+            <span class="font-mono text-xs">{{ dep.hostname || "—" }}</span>
+          </template>
+          <template #cell-status="{ row: dep }">
+            <Badge :variant="statusVariant(dep.status)">{{ dep.status }}</Badge>
+            <div v-if="dep.last_error" class="mt-1 max-w-[180px] text-xs text-destructive">{{ dep.last_error }}</div>
+          </template>
+          <template #cell-credential="{ row: dep }">
+            <Badge v-if="dep.has_credential" variant="success">
+              <KeyRound class="size-3" aria-hidden="true" /> {{ $t('networking.dns.credSet') }}
+            </Badge>
+            <Badge v-else variant="outline">{{ $t('networking.dns.credNone') }}</Badge>
+          </template>
+          <template #cell-published="{ row: dep }">
+            <div class="text-xs text-muted-foreground">{{ dep.last_published_at ? formatDateTime(dep.last_published_at) : "—" }}</div>
+            <div v-if="dep.last_publish_error" class="mt-1 max-w-[180px] text-xs text-destructive">{{ dep.last_publish_error }}</div>
+          </template>
+          <template #cell-actions="{ row: dep }">
+            <div class="flex flex-wrap items-center justify-end gap-1">
+              <Button
+                v-if="canPlan"
+                variant="outline"
+                size="sm"
+                :disabled="planning === dep.id"
+                @click="plan(dep)"
+              >
+                <RefreshCw v-if="planning === dep.id" class="size-4 animate-spin" aria-hidden="true" />
+                <Play v-else class="size-4" aria-hidden="true" />
+                {{ $t('networking.shared.plan') }}
+              </Button>
+              <Button
+                v-if="canAdmin && dep.hostname"
+                variant="outline"
+                size="sm"
+                :disabled="publishing === dep.id"
+                @click="publish(dep)"
+              >
+                <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" aria-hidden="true" />
+                <UploadCloud v-else class="size-4" aria-hidden="true" />
+                {{ $t('common.actions.publish') }}
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.edit')"
+                @click="openEdit(dep)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.delete')"
+                @click="deleteTarget = dep"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -708,6 +728,9 @@ function closePlan(open: boolean) {
                   autocomplete="off"
                   :placeholder="editingHasCredential ? $t('common.misc.keepBlank') : $t('networking.dns.cfTokenPlaceholder')"
                 />
+                <p v-if="editingHasCredential" class="text-xs text-muted-foreground">
+                  {{ $t('networking.dns.credKeepHint') }}
+                </p>
               </div>
               <div class="grid gap-1.5">
                 <Label class="text-xs">{{ $t('networking.dns.ddnsProfileId') }}</Label>
@@ -731,66 +754,30 @@ function closePlan(open: boolean) {
     </Dialog>
 
     <!-- Delete confirm dialog -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogScrollContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.dns.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.dns.deleteDescription') }}
-            <span class="font-medium">{{ deleteTarget?.name }}</span>? {{ $t('networking.dns.deleteIrreversible') }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('networking.dns.deleteTitle')"
+      :description="`${$t('networking.dns.deleteDescription')} ${deleteTarget?.name ?? ''}? ${$t('networking.dns.deleteIrreversible')}`"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
 
     <!-- Plan review dialog -->
-    <Dialog :open="!!planApproval" @update:open="closePlan">
-      <DialogScrollContent class="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.shared.planCreated') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.shared.planReviewHint') }}
-          </DialogDescription>
-        </DialogHeader>
-        <div v-if="planApproval" class="space-y-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="warning">{{ planApproval.status }}</Badge>
-            <Badge variant="outline">{{ planApproval.plugin }} · {{ planApproval.action }}</Badge>
-            <Badge variant="secondary">{{ $t('networking.shared.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
-          </div>
-
-          <div class="rounded-md border border-border">
-            <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">{{ $t('networking.shared.planLabel') }}</span>
-              <CopyButton :value="planApproval.plan || ''" />
-            </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-            <span class="font-medium">sha256</span>
-            <code class="break-all font-mono">{{ planSha }}</code>
-            <CopyButton :value="planSha" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
-          <Button as-child>
-            <RouterLink to="/approvals">
-              <ExternalLink class="size-4" aria-hidden="true" />
-              {{ $t('networking.shared.goToApprovals') }}
-            </RouterLink>
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <PlanReviewDialog
+      :open="!!planApproval"
+      :plan-text="planApproval?.plan"
+      :digest="planSha"
+      :badges="planBadges"
+      :title="$t('networking.shared.planCreated')"
+      :description="$t('networking.shared.planReviewHint')"
+      :plan-label="$t('networking.shared.planLabel')"
+      :close-label="$t('common.actions.close')"
+      :approvals-label="$t('networking.shared.goToApprovals')"
+      approvals-to="/approvals"
+      @update:open="closePlan"
+    />
   </div>
 </template>

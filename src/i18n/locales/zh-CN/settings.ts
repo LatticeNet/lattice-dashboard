@@ -52,6 +52,9 @@ export default {
         disableCode: "TOTP 或恢复码",
         disableCodePlaceholder: "123456 或恢复码",
         disable: "停用 2FA",
+        disableConfirmTitle: "停用两步验证？",
+        disableConfirmDescription:
+          "这将从你的账户移除第二因子，并登出当前会话。你需要使用密码重新登录。",
         enterAuthenticatorCode: "请输入身份验证器应用中的验证码。",
         enterDisableCode: "请输入 TOTP 验证码或恢复码。",
         enrollmentStarted: "已开始 2FA 注册",
@@ -62,6 +65,11 @@ export default {
         disableFailed: "2FA 停用失败",
       },
       requestFailed: "请求失败",
+    },
+    appearance: {
+      // settings 命名空间下的外观文案(主要文案在 frame.ts 的 appearance.*)。
+      reducedMotionNote:
+        "动画会遵循系统的“减弱动态效果”设置——开启后会自动减少过渡与动效。",
     },
     about: {
       title: "关于",
@@ -188,6 +196,8 @@ export default {
         serverAllowlistHint: "以逗号分隔的节点 ID。必须是你自身允许列表的子集。留空则适用于所有节点。",
         yourScopes: "你的权限范围:",
         submit: "创建令牌",
+        nameRequired: "请填写令牌名称。",
+        scopesRequired: "请至少选择一个要授予的权限范围。",
       },
       reveal: {
         title: "请立即复制你的令牌",
@@ -200,6 +210,10 @@ export default {
       revokeTitle: "吊销令牌?",
       revokeDescription:
         "吊销“{name}”。任何使用该凭据的调用方将立即失去访问权限。此操作单向且无法撤销。",
+      discardTitle: "放弃此令牌?",
+      discardDescription:
+        "你已选择权限范围并填写了信息，但尚未创建。现在关闭将丢弃这些内容。",
+      discardConfirm: "放弃",
       toast: {
         created: "令牌已创建——请立即复制",
         createFailed: "令牌创建失败",

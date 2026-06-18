@@ -22,9 +22,12 @@ import { formatBytes, formatRelativeTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import StatCard from "@/components/common/StatCard.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import { lifecycleStatusMeta, quotaStatusMeta } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -75,10 +78,8 @@ const kpis = computed(() => ({
   disabled: countBy("disabled"),
 }));
 
-function statusVariant(status: ProxyUserStatus): "success" | "warning" | "secondary" {
-  if (status === "active") return "success";
-  if (status === "expired" || status === "over_quota") return "warning";
-  return "secondary";
+function statusVariant(status: ProxyUserStatus) {
+  return lifecycleStatusMeta(status).badgeVariant;
 }
 
 function isUnlimited(user: ProxyUserView): boolean {
@@ -91,9 +92,35 @@ function usagePercent(user: ProxyUserView): number {
   return Math.min(100, Math.max(0, (user.used_bytes / limit) * 100));
 }
 
+// Quota progress fill color via the shared quota scale (ok/near/over).
+function quotaIndicatorClass(user: ProxyUserView): string | undefined {
+  const limit = user.traffic_limit_bytes ?? 0;
+  if (limit <= 0) return undefined;
+  const meta = quotaStatusMeta((user.used_bytes || 0) / limit);
+  if (meta.textClass === "text-destructive") return "bg-destructive";
+  if (meta.textClass === "text-warning") return "bg-warning";
+  return undefined;
+}
+
+// Expiry text turns destructive once expired/over quota, amber when expiring soon.
+function expiryClass(user: ProxyUserView): string {
+  if (user.status === "expired" || user.status === "over_quota") return "text-warning";
+  return "";
+}
+
 function limitLabel(user: ProxyUserView): string {
   return isUnlimited(user) ? t("proxy.subscriptions.unlimited") : formatBytes(user.traffic_limit_bytes);
 }
+
+// ── DataTable columns ──────────────────────────────────────────────────────────
+const userColumns = computed<DataTableColumn<ProxyUserView>[]>(() => [
+  { key: "user", label: t("proxy.subscriptions.colUser"), sortable: true, searchable: true, value: (u) => u.name || u.id },
+  { key: "status", label: t("proxy.subscriptions.colStatus"), sortable: true, value: (u) => u.status },
+  { key: "quota", label: t("proxy.subscriptions.colQuotaUsage"), sortable: true, value: (u) => (isUnlimited(u) ? -1 : usagePercent(u)) },
+  { key: "expiry", label: t("proxy.subscriptions.colExpiry"), sortable: true, value: (u) => u.expires_at || "" },
+  { key: "subToken", label: t("proxy.subscriptions.colSubToken"), sortable: true, value: (u) => (u.has_sub_token ? 1 : 0) },
+  { key: "delivery", label: t("proxy.subscriptions.colDelivery"), align: "right" },
+]);
 
 // ---- Reveal subscription (rotate) ----
 const revealOpen = ref(false);
@@ -114,12 +141,24 @@ const revealedFormats = computed(() =>
   revealed.value ? subFormats(revealed.value.subscription_url) : [],
 );
 
+// Revealing rotates the token (invalidating any previously shared URL): confirm first.
+const confirmTarget = ref<ProxyUserView | undefined>();
+const confirmOpen = ref(false);
+
+function askReveal(user: ProxyUserView) {
+  if (!canAdmin.value || rotating.value) return;
+  confirmTarget.value = user;
+  confirmOpen.value = true;
+}
+
 async function reveal(user: ProxyUserView) {
   if (!canAdmin.value || rotating.value) return;
   rotating.value = user.id;
   try {
     const result = await api.proxy.rotateSubToken(user.id);
     revealed.value = result;
+    confirmOpen.value = false;
+    confirmTarget.value = undefined;
     revealOpen.value = true;
     usersQuery.refresh();
   } catch (error) {
@@ -127,6 +166,10 @@ async function reveal(user: ProxyUserView) {
   } finally {
     rotating.value = undefined;
   }
+}
+
+function confirmReveal() {
+  if (confirmTarget.value) reveal(confirmTarget.value);
 }
 
 function closeReveal(open: boolean) {
@@ -141,6 +184,9 @@ function closeReveal(open: boolean) {
       :title="$t('proxy.subscriptions.title')"
       :description="$t('proxy.subscriptions.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -173,87 +219,81 @@ function closeReveal(open: boolean) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="userColumns"
+          :rows="sortedUsers"
+          :row-key="(u) => u.id"
           :loading="usersQuery.loading.value"
           :error="usersQuery.error.value"
-          :is-empty="users.length === 0"
+          :page-size="15"
+          searchable
+          :search-placeholder="$t('proxy.subscriptions.searchPlaceholder')"
           :empty-title="$t('proxy.subscriptions.emptyTitle')"
           :empty-description="$t('proxy.subscriptions.emptyDescription')"
+          :no-match-title="$t('proxy.table.noMatchTitle')"
+          :no-match-description="$t('proxy.table.noMatchDescription')"
+          :actions-label="$t('proxy.subscriptions.colDelivery')"
+          :showing-label="$t('proxy.table.showing')"
+          :of-label="$t('proxy.table.of')"
+          :page-of-label="$t('proxy.table.of')"
+          :prev-label="$t('proxy.table.prevPage')"
+          :next-label="$t('proxy.table.nextPage')"
+          :clear-search-label="$t('proxy.table.clearSearch')"
           @retry="usersQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colUser') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colStatus') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colQuotaUsage') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colExpiry') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.subscriptions.colSubToken') }}</th>
-                  <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.subscriptions.colDelivery') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="user in sortedUsers"
-                  :key="user.id"
-                  class="border-b border-border hover:bg-muted/40"
-                >
-                  <td class="px-3 py-3">
-                    <div class="font-medium">{{ user.name || shortId(user.id) }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(user.id, 16) }}</div>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge :variant="statusVariant(user.status)">{{ $t('common.status.' + (user.status === 'over_quota' ? 'overQuota' : user.status)) }}</Badge>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="min-w-[160px] space-y-1">
-                      <div class="flex items-center justify-between gap-2 text-xs">
-                        <span class="font-mono tabular">{{ formatBytes(user.used_bytes) }}</span>
-                        <span class="text-muted-foreground">/ {{ limitLabel(user) }}</span>
-                      </div>
-                      <Progress
-                        v-if="!isUnlimited(user)"
-                        :model-value="usagePercent(user)"
-                        :indicator-class="usagePercent(user) >= 100 ? 'bg-warning' : undefined"
-                      />
-                      <div v-else class="text-xs text-muted-foreground">{{ $t('proxy.subscriptions.noQuotaLimit') }}</div>
-                    </div>
-                  </td>
-                  <td class="px-3 py-3 text-xs">
-                    <span v-if="user.expires_at" :class="cn(user.status === 'expired' && 'text-warning')">
-                      {{ formatRelativeTime(user.expires_at) }}
-                    </span>
-                    <span v-else class="text-muted-foreground">{{ $t('common.misc.never') }}</span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge :variant="user.has_sub_token ? 'success' : 'secondary'" class="gap-1">
-                      <Lock class="size-3" aria-hidden="true" />
-                      {{ user.has_sub_token ? $t('common.status.set') : $t('common.misc.none') }}
-                    </Badge>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="flex justify-end">
-                      <Button
-                        v-if="user.has_sub_token"
-                        size="sm"
-                        variant="outline"
-                        :disabled="!canAdmin || rotating === user.id"
-                        :title="canAdmin ? $t('proxy.subscriptions.revealTitleAction') : adminReason"
-                        @click="reveal(user)"
-                      >
-                        <RefreshCw v-if="rotating === user.id" class="size-4 animate-spin" aria-hidden="true" />
-                        <Rss v-else class="size-4" aria-hidden="true" />
-                        {{ $t('proxy.subscriptions.reveal') }}
-                      </Button>
-                      <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.subscriptions.noTokenCreateInUsers') }}</span>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-user="{ row }">
+            <div class="min-w-0">
+              <div class="font-medium">{{ row.name || shortId(row.id) }}</div>
+              <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+            </div>
+          </template>
+          <template #cell-status="{ row }">
+            <Badge :variant="statusVariant(row.status)">{{ $t('common.status.' + (row.status === 'over_quota' ? 'overQuota' : row.status)) }}</Badge>
+          </template>
+          <template #cell-quota="{ row }">
+            <div class="min-w-[160px] space-y-1">
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span class="font-mono tabular">{{ formatBytes(row.used_bytes) }}</span>
+                <span class="text-muted-foreground">/ {{ limitLabel(row) }}</span>
+              </div>
+              <Progress
+                v-if="!isUnlimited(row)"
+                :model-value="usagePercent(row)"
+                :indicator-class="quotaIndicatorClass(row)"
+              />
+              <div v-else class="text-xs text-muted-foreground">{{ $t('proxy.subscriptions.noQuotaLimit') }}</div>
+            </div>
+          </template>
+          <template #cell-expiry="{ row }">
+            <span v-if="row.expires_at" class="text-xs" :class="cn(expiryClass(row))">
+              {{ formatRelativeTime(row.expires_at) }}
+            </span>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.never') }}</span>
+          </template>
+          <template #cell-subToken="{ row }">
+            <Badge :variant="row.has_sub_token ? 'success' : 'secondary'" class="gap-1">
+              <Lock class="size-3" aria-hidden="true" />
+              {{ row.has_sub_token ? $t('common.status.set') : $t('common.misc.none') }}
+            </Badge>
+          </template>
+          <template #cell-delivery="{ row }">
+            <div class="flex justify-end">
+              <Button
+                v-if="row.has_sub_token"
+                size="sm"
+                variant="outline"
+                :disabled="!canAdmin || rotating === row.id"
+                :title="canAdmin ? $t('proxy.subscriptions.revealTitleAction') : adminReason"
+                @click="askReveal(row)"
+              >
+                <RefreshCw v-if="rotating === row.id" class="size-4 animate-spin" aria-hidden="true" />
+                <Rss v-else class="size-4" aria-hidden="true" />
+                {{ $t('proxy.subscriptions.reveal') }}
+              </Button>
+              <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.subscriptions.noTokenCreateInUsers') }}</span>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -278,6 +318,18 @@ function closeReveal(open: boolean) {
         </p>
       </CardContent>
     </Card>
+
+    <!-- Confirm rotate before revealing (invalidates the previous URL) -->
+    <ConfirmDialog
+      v-model:open="confirmOpen"
+      :title="$t('proxy.subscriptions.confirmRevealTitle')"
+      :description="$t('proxy.subscriptions.confirmRevealDescription', { name: confirmTarget?.name || confirmTarget?.id })"
+      :confirm-label="$t('proxy.subscriptions.reveal')"
+      :cancel-label="$t('common.actions.cancel')"
+      variant="default"
+      :pending="!!rotating"
+      @confirm="confirmReveal"
+    />
 
     <!-- Reveal subscription: one-time reveal -->
     <Dialog :open="revealOpen" @update:open="closeReveal">

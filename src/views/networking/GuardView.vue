@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  ExternalLink,
   Pencil,
   Play,
   Plus,
@@ -19,15 +17,17 @@ import {
   type NFTInputsUpsertBody,
   type NFTInputsView,
 } from "@/lib/api";
-import { sha256Hex } from "@/lib/crypto";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
-import CopyButton from "@/components/common/CopyButton.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -79,6 +79,27 @@ function nodeLabel(row: NFTInputsView): string {
   return row.node_name || row.node_id;
 }
 
+const columns = computed<DataTableColumn<NFTInputsView>[]>(() => [
+  {
+    key: "node",
+    label: t("networking.guard.colNode"),
+    sortable: true,
+    searchable: true,
+    value: (row) => nodeLabel(row),
+  },
+  { key: "interface_name", label: t("networking.guard.colInterface"), sortable: true },
+  { key: "wireguard_cidr", label: t("networking.guard.colWireguardCidr") },
+  { key: "public_ports", label: t("networking.guard.colPublicPorts") },
+  { key: "wireguard_ports", label: t("networking.guard.colWireguardPorts") },
+  {
+    key: "updated_at",
+    label: t("networking.guard.colUpdated"),
+    sortable: true,
+    align: "right",
+  },
+  { key: "actions", label: t("networking.guard.colActions"), align: "right" },
+]);
+
 // ── Create / edit dialog state ────────────────────────────────────────────
 interface GuardForm {
   node_id: string;
@@ -122,6 +143,23 @@ function parsePorts(input: string): number[] {
   }
   return [...set].sort((a, b) => a - b);
 }
+
+/** Collect entries that are non-empty yet not a valid port (for inline feedback). */
+function ignoredPorts(input: string): string[] {
+  const out: string[] = [];
+  for (const piece of input.split(",")) {
+    const trimmed = piece.trim();
+    if (!trimmed) continue;
+    const value = Number(trimmed);
+    if (!(Number.isInteger(value) && value >= 1 && value <= 65535)) out.push(trimmed);
+  }
+  return out;
+}
+
+const ignoredPublicTcp = computed(() => ignoredPorts(form.public_tcp));
+const ignoredPublicUdp = computed(() => ignoredPorts(form.public_udp));
+const ignoredWireguardTcp = computed(() => ignoredPorts(form.wireguard_tcp));
+const ignoredWireguardUdp = computed(() => ignoredPorts(form.wireguard_udp));
 
 function openCreate() {
   editingId.value = undefined;
@@ -196,6 +234,7 @@ async function confirmDelete() {
 }
 
 // ── Plan dialog ───────────────────────────────────────────────────────────
+const planDigest = usePlanDigest();
 const planning = ref<string | undefined>(undefined);
 const planApproval = ref<ApprovalView | undefined>(undefined);
 const planSha = ref("");
@@ -215,7 +254,7 @@ async function plan(row: NFTInputsView) {
     };
     const approval = await api.nft.plan(body);
     planApproval.value = approval;
-    planSha.value = await sha256Hex(approval.plan || "");
+    planSha.value = await planDigest.digestFor(approval);
     toast.success(t("networking.shared.toastPlanCreated"));
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
@@ -223,6 +262,16 @@ async function plan(row: NFTInputsView) {
     planning.value = undefined;
   }
 }
+
+const planBadges = computed(() => {
+  const a = planApproval.value;
+  if (!a) return [];
+  return [
+    { label: a.status, variant: "warning" as const },
+    { label: `${a.plugin} · ${a.action}`, variant: "outline" as const },
+    { label: t("networking.shared.idLabel", { id: shortId(a.id, 12) }), variant: "secondary" as const },
+  ];
+});
 
 function closePlan(open: boolean) {
   if (!open) {
@@ -238,6 +287,9 @@ function closePlan(open: boolean) {
       :title="$t('networking.guard.title')"
       :description="$t('networking.guard.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="inputsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -270,114 +322,110 @@ function closePlan(open: boolean) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="sortedRows"
+          :row-key="(row) => row.node_id"
           :loading="inputsQuery.loading.value"
           :error="inputsQuery.error.value"
-          :is-empty="rows.length === 0"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('networking.guard.emptyTitle')"
           :empty-description="$t('networking.guard.emptyDescription')"
+          :no-match-title="$t('networking.shared.noMatchTitle')"
+          :no-match-description="$t('networking.shared.noMatchDescription')"
+          :actions-label="$t('networking.guard.colActions')"
           @retry="inputsQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.guard.colNode') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.guard.colInterface') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.guard.colWireguardCidr') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.guard.colPublicPorts') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.guard.colWireguardPorts') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.guard.colUpdated') }}</th>
-                  <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('networking.guard.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="row in sortedRows"
-                  :key="row.node_id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-3">
-                    <div class="font-medium">{{ nodeLabel(row) }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.node_id, 16) }}</div>
-                  </td>
-                  <td class="py-3 pr-3 font-mono text-xs">{{ row.interface_name }}</td>
-                  <td class="py-3 pr-3 font-mono text-xs">{{ row.wireguard_cidr }}</td>
-                  <td class="py-3 pr-3">
-                    <div class="flex flex-col gap-1">
-                      <div class="flex flex-wrap items-center gap-1">
-                        <span class="text-xs text-muted-foreground">tcp</span>
-                        <template v-if="row.public_tcp?.length">
-                          <Badge v-for="p in row.public_tcp" :key="`pt-${p}`" variant="outline">{{ p }}</Badge>
-                        </template>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </div>
-                      <div class="flex flex-wrap items-center gap-1">
-                        <span class="text-xs text-muted-foreground">udp</span>
-                        <template v-if="row.public_udp?.length">
-                          <Badge v-for="p in row.public_udp" :key="`pu-${p}`" variant="outline">{{ p }}</Badge>
-                        </template>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-3">
-                    <div class="flex flex-col gap-1">
-                      <div class="flex flex-wrap items-center gap-1">
-                        <span class="text-xs text-muted-foreground">tcp</span>
-                        <template v-if="row.wireguard_tcp?.length">
-                          <Badge v-for="p in row.wireguard_tcp" :key="`wt-${p}`" variant="secondary">{{ p }}</Badge>
-                        </template>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </div>
-                      <div class="flex flex-wrap items-center gap-1">
-                        <span class="text-xs text-muted-foreground">udp</span>
-                        <template v-if="row.wireguard_udp?.length">
-                          <Badge v-for="p in row.wireguard_udp" :key="`wu-${p}`" variant="secondary">{{ p }}</Badge>
-                        </template>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </div>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-3 text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</td>
-                  <td class="py-3 pl-3">
-                    <div class="flex items-center justify-end gap-1">
-                      <Button
-                        v-if="canPlan"
-                        variant="outline"
-                        size="sm"
-                        :disabled="planning === row.node_id"
-                        @click="plan(row)"
-                      >
-                        <RefreshCw v-if="planning === row.node_id" class="size-4 animate-spin" aria-hidden="true" />
-                        <Play v-else class="size-4" aria-hidden="true" />
-                        {{ $t('networking.shared.plan') }}
-                      </Button>
-                      <Button
-                        v-if="canPlan"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.edit')"
-                        @click="openEdit(row)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canPlan"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.delete')"
-                        @click="requestDelete(row)"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-node="{ row }">
+            <div class="font-medium">{{ nodeLabel(row) }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.node_id, 16) }}</div>
+          </template>
+
+          <template #cell-interface_name="{ row }">
+            <span class="font-mono text-xs">{{ row.interface_name }}</span>
+          </template>
+
+          <template #cell-wireguard_cidr="{ row }">
+            <span class="font-mono text-xs">{{ row.wireguard_cidr }}</span>
+          </template>
+
+          <template #cell-public_ports="{ row }">
+            <div class="flex flex-col gap-1">
+              <div class="flex flex-wrap items-center gap-1">
+                <span class="text-xs text-muted-foreground">tcp</span>
+                <template v-if="row.public_tcp?.length">
+                  <Badge v-for="p in row.public_tcp" :key="`pt-${p}`" variant="outline">{{ p }}</Badge>
+                </template>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-1">
+                <span class="text-xs text-muted-foreground">udp</span>
+                <template v-if="row.public_udp?.length">
+                  <Badge v-for="p in row.public_udp" :key="`pu-${p}`" variant="outline">{{ p }}</Badge>
+                </template>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-wireguard_ports="{ row }">
+            <div class="flex flex-col gap-1">
+              <div class="flex flex-wrap items-center gap-1">
+                <span class="text-xs text-muted-foreground">tcp</span>
+                <template v-if="row.wireguard_tcp?.length">
+                  <Badge v-for="p in row.wireguard_tcp" :key="`wt-${p}`" variant="secondary">{{ p }}</Badge>
+                </template>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-1">
+                <span class="text-xs text-muted-foreground">udp</span>
+                <template v-if="row.wireguard_udp?.length">
+                  <Badge v-for="p in row.wireguard_udp" :key="`wu-${p}`" variant="secondary">{{ p }}</Badge>
+                </template>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </div>
+            </div>
+          </template>
+
+          <template #cell-updated_at="{ row }">
+            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
+          </template>
+
+          <template #cell-actions="{ row }">
+            <div class="flex items-center justify-end gap-1">
+              <Button
+                v-if="canPlan"
+                variant="outline"
+                size="sm"
+                :disabled="planning === row.node_id"
+                @click="plan(row)"
+              >
+                <RefreshCw v-if="planning === row.node_id" class="size-4 animate-spin" aria-hidden="true" />
+                <Play v-else class="size-4" aria-hidden="true" />
+                {{ $t('networking.shared.plan') }}
+              </Button>
+              <Button
+                v-if="canPlan"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.edit')"
+                @click="openEdit(row)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canPlan"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.delete')"
+                @click="requestDelete(row)"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -421,18 +469,30 @@ function closePlan(open: boolean) {
             <div class="grid gap-2">
               <Label for="guard-public-tcp">{{ $t('networking.guard.publicTcpPorts') }}</Label>
               <Input id="guard-public-tcp" v-model="form.public_tcp" placeholder="80, 443" />
+              <p v-if="ignoredPublicTcp.length" class="text-xs text-warning">
+                {{ $t('networking.guard.portsIgnored', { ports: ignoredPublicTcp.join(', ') }) }}
+              </p>
             </div>
             <div class="grid gap-2">
               <Label for="guard-public-udp">{{ $t('networking.guard.publicUdpPorts') }}</Label>
               <Input id="guard-public-udp" v-model="form.public_udp" placeholder="51820" />
+              <p v-if="ignoredPublicUdp.length" class="text-xs text-warning">
+                {{ $t('networking.guard.portsIgnored', { ports: ignoredPublicUdp.join(', ') }) }}
+              </p>
             </div>
             <div class="grid gap-2">
               <Label for="guard-wg-tcp">{{ $t('networking.guard.wireguardTcpPorts') }}</Label>
               <Input id="guard-wg-tcp" v-model="form.wireguard_tcp" placeholder="22" />
+              <p v-if="ignoredWireguardTcp.length" class="text-xs text-warning">
+                {{ $t('networking.guard.portsIgnored', { ports: ignoredWireguardTcp.join(', ') }) }}
+              </p>
             </div>
             <div class="grid gap-2">
               <Label for="guard-wg-udp">{{ $t('networking.guard.wireguardUdpPorts') }}</Label>
               <Input id="guard-wg-udp" v-model="form.wireguard_udp" placeholder="53" />
+              <p v-if="ignoredWireguardUdp.length" class="text-xs text-warning">
+                {{ $t('networking.guard.portsIgnored', { ports: ignoredWireguardUdp.join(', ') }) }}
+              </p>
             </div>
           </div>
 
@@ -448,67 +508,30 @@ function closePlan(open: boolean) {
     </Dialog>
 
     <!-- Delete confirm dialog -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogScrollContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.guard.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.guard.deleteDescription') }}
-            <span class="font-medium">{{ deleteTarget ? nodeLabel(deleteTarget) : "" }}</span>?
-            {{ $t('networking.guard.deleteIrreversible') }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('networking.guard.deleteTitle')"
+      :description="`${$t('networking.guard.deleteDescription')} ${deleteTarget ? nodeLabel(deleteTarget) : ''}? ${$t('networking.guard.deleteIrreversible')}`"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
 
     <!-- Plan review dialog -->
-    <Dialog :open="!!planApproval" @update:open="closePlan">
-      <DialogScrollContent class="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.shared.planCreated') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.shared.planReviewHint') }}
-          </DialogDescription>
-        </DialogHeader>
-        <div v-if="planApproval" class="space-y-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="warning">{{ planApproval.status }}</Badge>
-            <Badge variant="outline">{{ planApproval.plugin }} · {{ planApproval.action }}</Badge>
-            <Badge variant="secondary">{{ $t('networking.shared.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
-          </div>
-
-          <div class="rounded-md border border-border">
-            <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">{{ $t('networking.shared.planLabel') }}</span>
-              <CopyButton :value="planApproval.plan || ''" />
-            </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-            <span class="font-medium">sha256</span>
-            <code class="break-all font-mono">{{ planSha }}</code>
-            <CopyButton :value="planSha" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
-          <Button as-child>
-            <RouterLink to="/approvals">
-              <ExternalLink class="size-4" aria-hidden="true" />
-              {{ $t('networking.shared.goToApprovals') }}
-            </RouterLink>
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <PlanReviewDialog
+      :open="!!planApproval"
+      :plan-text="planApproval?.plan"
+      :digest="planSha"
+      :badges="planBadges"
+      :title="$t('networking.shared.planCreated')"
+      :description="$t('networking.shared.planReviewHint')"
+      :plan-label="$t('networking.shared.planLabel')"
+      :close-label="$t('common.actions.close')"
+      :approvals-label="$t('networking.shared.goToApprovals')"
+      approvals-to="/approvals"
+      @update:open="closePlan"
+    />
   </div>
 </template>

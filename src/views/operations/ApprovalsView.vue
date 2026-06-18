@@ -4,14 +4,16 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
 import { api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
-import { sha256Hex } from "@/lib/crypto";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
+import { approvalStatusMeta } from "@/lib/status";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +33,7 @@ const approvalsQuery = useAsyncData(() => api.approvals.list().then((r) => unwra
 
 const selectedId = ref("");
 const pendingApproval = ref<string | undefined>();
-const digestCache = ref<Record<string, string>>({});
+const { digestFor, cache: digestCache } = usePlanDigest();
 
 const approvals = computed(() => approvalsQuery.data.value ?? []);
 const pending = computed(() => approvals.value.filter((a) => a.status === "pending"));
@@ -47,19 +49,8 @@ const sortedApprovals = computed(() =>
   }),
 );
 
-function variantFor(status: ApprovalStatus): "success" | "warning" | "destructive" | "secondary" {
-  if (status === "pending" || status === "approved") return "warning";
-  if (status === "applied") return "success";
-  if (status === "failed" || status === "rejected") return "destructive";
-  return "secondary";
-}
-
-async function digestFor(approval: ApprovalView): Promise<string> {
-  const cached = digestCache.value[approval.id];
-  if (cached) return cached;
-  const digest = await sha256Hex(approval.plan || "");
-  digestCache.value = { ...digestCache.value, [approval.id]: digest };
-  return digest;
+function variantFor(status: ApprovalStatus) {
+  return approvalStatusMeta(status).badgeVariant;
 }
 
 async function approve(approval: ApprovalView, queueApply: boolean) {
@@ -80,6 +71,9 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('operations.approvals.title')" :description="$t('operations.approvals.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="approvalsQuery.refresh">
           <RefreshCw :class="cn('size-4', approvalsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
@@ -128,6 +122,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
           <DataState
             :loading="approvalsQuery.loading.value"
             :error="approvalsQuery.error.value"
+            :has-data="approvalsQuery.data.value !== undefined"
             :is-empty="approvals.length === 0"
             :empty-title="$t('operations.approvals.emptyTitle')"
             :empty-description="$t('operations.approvals.emptyDescription')"
@@ -138,7 +133,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
                 v-for="approval in sortedApprovals"
                 :key="approval.id"
                 type="button"
-                :class="cn('w-full rounded-md border border-border p-3 text-left transition-colors hover:bg-muted/40', selected?.id === approval.id && 'border-primary bg-primary/5')"
+                :class="cn('surface-interactive w-full rounded-md border border-border p-3 text-left', selected?.id === approval.id && 'border-primary bg-primary/5')"
                 @click="selectedId = approval.id"
               >
                 <div class="flex items-center justify-between gap-2">

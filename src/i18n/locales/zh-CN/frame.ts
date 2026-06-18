@@ -212,6 +212,12 @@ export default {
     recentActivityDescription: "最新审计决策",
     noRecentActivity: "暂无近期活动",
     auditWillAppear: "审计事件会显示在这里。",
+    metric: {
+      cpu: "CPU",
+      memory: "内存",
+      disk: "磁盘",
+    },
+    sparklineLabel: "近期 CPU 趋势",
   },
 
   appearance: {

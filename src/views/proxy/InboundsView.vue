@@ -26,7 +26,10 @@ import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import { statusMeta } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -127,6 +130,7 @@ const isEditing = computed(() => !!editingId.value);
 function openCreate() {
   if (!canAdmin.value) return;
   editingId.value = undefined;
+  attempted.value = false;
   assignForm(blankForm());
   dialogOpen.value = true;
 }
@@ -134,6 +138,7 @@ function openCreate() {
 function openEdit(inbound: ProxyInboundView) {
   if (!canAdmin.value) return;
   editingId.value = inbound.id;
+  attempted.value = false;
   assignForm({
     id: inbound.id,
     name: inbound.name,
@@ -159,21 +164,50 @@ function splitList(input: string): string[] {
     .filter(Boolean);
 }
 
-const formValid = computed(() => {
-  const portNum = Number(form.port);
-  const portOk = Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535;
-  const shortIds = splitList(form.reality_short_ids);
-  const keyOk = isEditing.value || form.reality_private_key.trim().length > 0;
-  return (
-    form.name.trim().length > 0 &&
-    portOk &&
-    shortIds.length >= 1 &&
-    form.reality_dest.trim().length > 0 &&
-    keyOk
-  );
-});
+// Surface inline field errors only after a save attempt (avoids nagging on a fresh form).
+const attempted = ref(false);
+
+const portValue = computed(() => Number(form.port));
+const portValid = computed(
+  () => Number.isInteger(portValue.value) && portValue.value >= 1 && portValue.value <= 65535,
+);
+const shortIdsValid = computed(() => splitList(form.reality_short_ids).length >= 1);
+const nameValid = computed(() => form.name.trim().length > 0);
+const destValid = computed(() => form.reality_dest.trim().length > 0);
+const privateKeyValid = computed(
+  () => isEditing.value || form.reality_private_key.trim().length > 0,
+);
+
+const nameError = computed(() => (attempted.value && !nameValid.value ? t("proxy.inbounds.errorNameRequired") : ""));
+const portError = computed(() => (attempted.value && !portValid.value ? t("proxy.inbounds.errorPort") : ""));
+const destError = computed(() => (attempted.value && !destValid.value ? t("proxy.inbounds.errorDestRequired") : ""));
+const shortIdsError = computed(() => (attempted.value && !shortIdsValid.value ? t("proxy.inbounds.errorShortIds") : ""));
+const privateKeyError = computed(() => (attempted.value && !privateKeyValid.value ? t("proxy.inbounds.errorPrivateKey") : ""));
+
+const formValid = computed(
+  () =>
+    nameValid.value &&
+    portValid.value &&
+    shortIdsValid.value &&
+    destValid.value &&
+    privateKeyValid.value,
+);
+
+// ── DataTable columns ──────────────────────────────────────────────────────────
+const inboundColumns = computed<DataTableColumn<ProxyInboundView>[]>(() => [
+  { key: "name", label: t("proxy.inbounds.colName"), sortable: true, searchable: true, value: (i) => i.name || i.id },
+  { key: "core", label: t("proxy.inbounds.colCore"), sortable: true, searchable: true, value: (i) => i.core || "sing-box" },
+  { key: "protocolPort", label: t("proxy.inbounds.colProtocolPort"), sortable: true, value: (i) => i.port ?? 0 },
+  { key: "security", label: t("proxy.inbounds.colSecurity"), value: (i) => i.security || "reality" },
+  { key: "realityDest", label: t("proxy.inbounds.colRealityDest"), sortable: true, searchable: true, value: (i) => i.reality_dest || "" },
+  { key: "privateKey", label: t("proxy.inbounds.colPrivateKey"), sortable: true, value: (i) => (i.has_reality_private_key ? 1 : 0) },
+  { key: "state", label: t("proxy.inbounds.colState"), sortable: true, value: (i) => (i.enabled ? 1 : 0) },
+  { key: "updated", label: t("proxy.inbounds.colUpdated"), sortable: true, value: (i) => i.updated_at || "" },
+  { key: "actions", label: t("proxy.inbounds.colActions"), align: "right" },
+]);
 
 async function submitForm() {
+  attempted.value = true;
   if (!formValid.value || saving.value) return;
   const shortIds = splitList(form.reality_short_ids);
   const alpn = splitList(form.alpn);
@@ -251,6 +285,16 @@ async function confirmDelete(force: boolean) {
     deleting.value = false;
   }
 }
+
+// ConfirmDialog drives a single confirm action; force is implied once the server
+// reports a 409 conflict and the operator confirms again.
+function onDeleteConfirm() {
+  confirmDelete(deleteConflict.value);
+}
+
+const deleteConfirmLabel = computed(() =>
+  deleteConflict.value ? t("common.actions.forceDelete") : t("common.actions.delete"),
+);
 </script>
 
 <template>
@@ -259,6 +303,9 @@ async function confirmDelete(force: boolean) {
       :title="$t('proxy.inbounds.title')"
       :description="$t('proxy.inbounds.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="inboundsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -329,102 +376,93 @@ async function confirmDelete(force: boolean) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="inboundColumns"
+          :rows="sortedInbounds"
+          :row-key="(i) => i.id"
           :loading="inboundsQuery.loading.value"
           :error="inboundsQuery.error.value"
-          :is-empty="inbounds.length === 0"
+          :page-size="15"
+          searchable
+          :search-placeholder="$t('proxy.inbounds.searchPlaceholder')"
           :empty-title="$t('proxy.inbounds.emptyTitle')"
           :empty-description="$t('proxy.inbounds.emptyDescription')"
+          :no-match-title="$t('proxy.table.noMatchTitle')"
+          :no-match-description="$t('proxy.table.noMatchDescription')"
+          :actions-label="$t('proxy.inbounds.colActions')"
+          :showing-label="$t('proxy.table.showing')"
+          :of-label="$t('proxy.table.of')"
+          :page-of-label="$t('proxy.table.of')"
+          :prev-label="$t('proxy.table.prevPage')"
+          :next-label="$t('proxy.table.nextPage')"
+          :clear-search-label="$t('proxy.table.clearSearch')"
           @retry="inboundsQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-xs text-muted-foreground">
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colName') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colCore') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colProtocolPort') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colSecurity') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colRealityDest') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colPrivateKey') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colState') }}</th>
-                  <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('proxy.inbounds.colUpdated') }}</th>
-                  <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.inbounds.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="inbound in sortedInbounds"
-                  :key="inbound.id"
-                  class="border-b border-border hover:bg-muted/40"
-                >
-                  <td class="px-3 py-3">
-                    <div class="font-medium">{{ inbound.name || shortId(inbound.id) }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(inbound.id, 16) }}</div>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge variant="outline">{{ inbound.core || "sing-box" }}</Badge>
-                  </td>
-                  <td class="px-3 py-3">
-                    <span class="font-mono text-xs">
-                      {{ inbound.protocol || "vless" }} ·
-                      {{ inbound.listen || "0.0.0.0" }}:{{ inbound.port }}
-                    </span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge variant="info">{{ inbound.security || "reality" }}</Badge>
-                  </td>
-                  <td class="px-3 py-3 font-mono text-xs text-muted-foreground">
-                    {{ inbound.reality_dest || "—" }}
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge
-                      :variant="inbound.has_reality_private_key ? 'success' : 'destructive'"
-                      class="gap-1"
-                    >
-                      <Lock class="size-3" aria-hidden="true" />
-                      {{ inbound.has_reality_private_key ? $t('common.status.set') : $t('common.status.missing') }}
-                    </Badge>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge :variant="inbound.enabled ? 'success' : 'secondary'">
-                      {{ inbound.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-                    </Badge>
-                  </td>
-                  <td class="px-3 py-3 text-xs text-muted-foreground">
-                    <span :title="formatDateTime(inbound.updated_at)">
-                      {{ formatRelativeTime(inbound.updated_at) }}
-                    </span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        :disabled="!canAdmin"
-                        :title="canAdmin ? $t('proxy.inbounds.editInbound') : adminReason"
-                        :aria-label="$t('common.actions.edit')"
-                        @click="openEdit(inbound)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        :disabled="!canAdmin"
-                        :title="canAdmin ? $t('proxy.inbounds.deleteInbound') : adminReason"
-                        :aria-label="$t('common.actions.delete')"
-                        @click="askDelete(inbound)"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row }">
+            <div class="min-w-0">
+              <div class="font-medium">{{ row.name || shortId(row.id) }}</div>
+              <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+            </div>
+          </template>
+          <template #cell-core="{ row }">
+            <Badge variant="outline">{{ row.core || "sing-box" }}</Badge>
+          </template>
+          <template #cell-protocolPort="{ row }">
+            <span class="font-mono text-xs">
+              {{ row.protocol || "vless" }} ·
+              {{ row.listen || "0.0.0.0" }}:{{ row.port }}
+            </span>
+          </template>
+          <template #cell-security="{ row }">
+            <Badge variant="info">{{ row.security || "reality" }}</Badge>
+          </template>
+          <template #cell-realityDest="{ row }">
+            <span class="font-mono text-xs text-muted-foreground">{{ row.reality_dest || "—" }}</span>
+          </template>
+          <template #cell-privateKey="{ row }">
+            <Badge
+              :variant="row.has_reality_private_key ? statusMeta('online').badgeVariant : statusMeta('offline').badgeVariant"
+              class="gap-1"
+            >
+              <Lock class="size-3" aria-hidden="true" />
+              {{ row.has_reality_private_key ? $t('common.status.set') : $t('common.status.missing') }}
+            </Badge>
+          </template>
+          <template #cell-state="{ row }">
+            <Badge :variant="row.enabled ? statusMeta('online').badgeVariant : 'secondary'">
+              {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+            </Badge>
+          </template>
+          <template #cell-updated="{ row }">
+            <span class="text-xs text-muted-foreground" :title="formatDateTime(row.updated_at)">
+              {{ formatRelativeTime(row.updated_at) }}
+            </span>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                :disabled="!canAdmin"
+                :title="canAdmin ? $t('proxy.inbounds.editInbound') : adminReason"
+                :aria-label="$t('common.actions.edit')"
+                @click="openEdit(row)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                :disabled="!canAdmin"
+                :title="canAdmin ? $t('proxy.inbounds.deleteInbound') : adminReason"
+                :aria-label="$t('common.actions.delete')"
+                @click="askDelete(row)"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -442,7 +480,15 @@ async function confirmDelete(force: boolean) {
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="inbound-name">{{ $t('proxy.inbounds.fieldName') }}</Label>
-              <Input id="inbound-name" v-model="form.name" required :placeholder="$t('proxy.inbounds.fieldNamePlaceholder')" />
+              <Input
+                id="inbound-name"
+                v-model="form.name"
+                required
+                :aria-invalid="!!nameError"
+                :class="cn(nameError && 'border-destructive')"
+                :placeholder="$t('proxy.inbounds.fieldNamePlaceholder')"
+              />
+              <p v-if="nameError" class="text-xs text-destructive">{{ nameError }}</p>
             </div>
             <div class="grid gap-2">
               <Label for="inbound-core">{{ $t('proxy.inbounds.fieldCore') }}</Label>
@@ -468,8 +514,11 @@ async function confirmDelete(force: boolean) {
                 min="1"
                 max="65535"
                 required
+                :aria-invalid="!!portError"
+                :class="cn(portError && 'border-destructive')"
                 :placeholder="$t('proxy.inbounds.fieldPortPlaceholder')"
               />
+              <p v-if="portError" class="text-xs text-destructive">{{ portError }}</p>
             </div>
             <div class="grid gap-2">
               <Label for="inbound-listen">{{ $t('proxy.inbounds.fieldListen') }}</Label>
@@ -495,7 +544,15 @@ async function confirmDelete(force: boolean) {
 
           <div class="grid gap-2">
             <Label for="inbound-dest">{{ $t('proxy.inbounds.fieldRealityDest') }}</Label>
-            <Input id="inbound-dest" v-model="form.reality_dest" required :placeholder="$t('proxy.inbounds.fieldRealityDestPlaceholder')" />
+            <Input
+              id="inbound-dest"
+              v-model="form.reality_dest"
+              required
+              :aria-invalid="!!destError"
+              :class="cn(destError && 'border-destructive')"
+              :placeholder="$t('proxy.inbounds.fieldRealityDestPlaceholder')"
+            />
+            <p v-if="destError" class="text-xs text-destructive">{{ destError }}</p>
           </div>
 
           <div class="grid gap-2">
@@ -504,8 +561,11 @@ async function confirmDelete(force: boolean) {
               id="inbound-shortids"
               v-model="form.reality_short_ids"
               required
+              :aria-invalid="!!shortIdsError"
+              :class="cn(shortIdsError && 'border-destructive')"
               :placeholder="$t('proxy.inbounds.fieldShortIdsPlaceholder')"
             />
+            <p v-if="shortIdsError" class="text-xs text-destructive">{{ shortIdsError }}</p>
             <p class="text-xs text-muted-foreground">{{ $t('proxy.inbounds.shortIdsHint') }}</p>
           </div>
 
@@ -518,8 +578,11 @@ async function confirmDelete(force: boolean) {
                 type="password"
                 autocomplete="off"
                 :required="!isEditing"
+                :aria-invalid="!!privateKeyError"
+                :class="cn(privateKeyError && 'border-destructive')"
                 :placeholder="isEditing ? $t('proxy.inbounds.fieldPrivateKeyPlaceholderKeep') : $t('proxy.inbounds.fieldPrivateKeyPlaceholderNew')"
               />
+              <p v-if="privateKeyError" class="text-xs text-destructive">{{ privateKeyError }}</p>
             </div>
             <div class="grid gap-2">
               <Label for="inbound-public">{{ $t('proxy.inbounds.fieldPublicKey') }}</Label>
@@ -544,52 +607,25 @@ async function confirmDelete(force: boolean) {
       </DialogScrollContent>
     </Dialog>
 
-    <!-- Delete dialog -->
-    <Dialog v-model:open="deleteOpen">
-      <DialogScrollContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('proxy.inbounds.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('proxy.inbounds.deleteConfirm', { name: deleteTarget?.name || deleteTarget?.id }) }}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div
-          v-if="deleteConflict"
-          class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning"
-        >
-          {{ deleteConflictMessage }}
-          <p class="mt-1 text-xs text-muted-foreground">
-            {{ $t('proxy.inbounds.deleteConflictHint') }}
-          </p>
-        </div>
-
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteOpen = false">{{ $t('common.actions.cancel') }}</Button>
-          <Button
-            v-if="!deleteConflict"
-            type="button"
-            variant="destructive"
-            :disabled="deleting"
-            @click="confirmDelete(false)"
-          >
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-          <Button
-            v-else
-            type="button"
-            variant="destructive"
-            :disabled="deleting"
-            @click="confirmDelete(true)"
-          >
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.forceDelete') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <!-- Delete confirm (themed; force-delete after a 409 conflict) -->
+    <ConfirmDialog
+      v-model:open="deleteOpen"
+      :title="$t('proxy.inbounds.deleteTitle')"
+      :description="$t('proxy.inbounds.deleteConfirm', { name: deleteTarget?.name || deleteTarget?.id })"
+      :confirm-label="deleteConfirmLabel"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @confirm="onDeleteConfirm"
+    >
+      <div
+        v-if="deleteConflict"
+        class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning"
+      >
+        {{ deleteConflictMessage }}
+        <p class="mt-1 text-xs text-muted-foreground">
+          {{ $t('proxy.inbounds.deleteConflictHint') }}
+        </p>
+      </div>
+    </ConfirmDialog>
   </div>
 </template>

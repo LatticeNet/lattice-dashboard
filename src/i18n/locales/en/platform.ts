@@ -3,6 +3,14 @@
 // Namespaces here must not collide with frame.ts or other section files.
 export default {
   platform: {
+    shared: {
+      noMatchesTitle: "No matches",
+      noMatchesDescription: "No items match your search. Try a different term or clear it.",
+      searchKeys: "Search keys…",
+      searchPaths: "Search paths…",
+      searchNames: "Search names…",
+      searchNodes: "Search nodes…",
+    },
     plugins: {
       title: "Plugins",
       description:

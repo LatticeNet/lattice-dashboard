@@ -7,6 +7,7 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import DataState from "@/components/common/DataState.vue";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,9 @@ function displayDate(value?: string): string {
       :title="$t('settings.about.title')"
       :description="$t('settings.about.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="versionQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -73,6 +77,7 @@ function displayDate(value?: string): string {
             :loading="versionQuery.loading.value"
             :error="versionQuery.error.value"
             :is-empty="false"
+            :has-data="versionQuery.data.value !== undefined"
             @retry="versionQuery.refresh"
           >
             <dl class="grid gap-4 text-sm">

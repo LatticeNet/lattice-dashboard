@@ -23,7 +23,9 @@ import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -79,6 +81,31 @@ function nodeName(id: string): string {
 function providerVariant(provider: string): "info" | "secondary" {
   return provider === "cloudflare" ? "info" : "secondary";
 }
+
+const columns = computed<DataTableColumn<DDNSView>[]>(() => [
+  {
+    key: "name",
+    label: t("networking.ddns.colName"),
+    sortable: true,
+    searchable: true,
+    value: (p) => p.name || p.id,
+  },
+  {
+    key: "node",
+    label: t("networking.ddns.colNode"),
+    sortable: true,
+    searchable: true,
+    value: (p) => nodeName(p.node_id),
+  },
+  { key: "provider", label: t("networking.ddns.colProvider"), sortable: true },
+  { key: "domains", label: t("networking.ddns.colDomains") },
+  { key: "stack", label: t("networking.ddns.colStack") },
+  { key: "credential", label: t("networking.ddns.colCredential") },
+  { key: "last_run", label: t("networking.ddns.colLastRun"), sortable: true, value: (p) => p.last_run_at ?? "" },
+  { key: "last_ips", label: t("networking.ddns.colLastIps") },
+  { key: "last_error", label: t("networking.ddns.colLastError") },
+  { key: "actions", label: t("networking.ddns.colActions"), align: "right" },
+]);
 
 // ── Create dialog ───────────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -215,6 +242,9 @@ async function runNow(profile: DDNSView) {
       :title="$t('networking.ddns.title')"
       :description="$t('networking.ddns.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="profilesQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -243,107 +273,92 @@ async function runNow(profile: DDNSView) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="sortedProfiles"
+          :row-key="(profile) => profile.id"
           :loading="profilesQuery.loading.value"
           :error="profilesQuery.error.value"
-          :is-empty="profiles.length === 0"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('networking.ddns.emptyTitle')"
           :empty-description="$t('networking.ddns.emptyDescription')"
+          :no-match-title="$t('networking.shared.noMatchTitle')"
+          :no-match-description="$t('networking.shared.noMatchDescription')"
+          :actions-label="$t('networking.ddns.colActions')"
           @retry="profilesQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colName') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colNode') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colProvider') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colDomains') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colStack') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colCredential') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colLastRun') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colLastIps') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.ddns.colLastError') }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.ddns.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="profile in sortedProfiles"
-                  :key="profile.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ profile.name || profile.id }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(profile.id, 16) }}</div>
-                  </td>
-                  <td class="py-3 pr-4">{{ nodeName(profile.node_id) }}</td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="providerVariant(profile.provider)">{{ profile.provider }}</Badge>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[200px]">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge v-for="domain in profile.domains" :key="domain" variant="outline" class="font-mono">
-                        {{ domain }}
-                      </Badge>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge :variant="profile.enable_ipv4 ? 'success' : 'secondary'">v4</Badge>
-                      <Badge :variant="profile.enable_ipv6 ? 'success' : 'secondary'">v6</Badge>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="profile.has_credential ? 'success' : 'secondary'">
-                      <Lock v-if="profile.has_credential" class="size-3" aria-hidden="true" />
-                      <Unlock v-else class="size-3" aria-hidden="true" />
-                      {{ profile.has_credential ? $t('networking.ddns.credSet') : $t('networking.ddns.credNone') }}
-                    </Badge>
-                  </td>
-                  <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    {{ profile.last_run_at ? formatDateTime(profile.last_run_at) : $t('common.misc.never') }}
-                  </td>
-                  <td class="py-3 pr-4 font-mono text-xs text-muted-foreground">
-                    <div v-if="profile.last_ipv4">{{ profile.last_ipv4 }}</div>
-                    <div v-if="profile.last_ipv6">{{ profile.last_ipv6 }}</div>
-                    <span v-if="!profile.last_ipv4 && !profile.last_ipv6">—</span>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[180px]">
-                    <span v-if="profile.last_error" class="break-words text-xs text-destructive">
-                      {{ profile.last_error }}
-                    </span>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
-                  </td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="sm"
-                        :disabled="running === profile.id"
-                        @click="runNow(profile)"
-                      >
-                        <RefreshCw v-if="running === profile.id" class="size-4 animate-spin" aria-hidden="true" />
-                        <Play v-else class="size-4" aria-hidden="true" />
-                        {{ $t('common.actions.runNow') }}
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.delete')"
-                        @click="deleteTarget = profile"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row: profile }">
+            <div class="font-medium">{{ profile.name || profile.id }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(profile.id, 16) }}</div>
+          </template>
+          <template #cell-node="{ row: profile }">
+            {{ nodeName(profile.node_id) }}
+          </template>
+          <template #cell-provider="{ row: profile }">
+            <Badge :variant="providerVariant(profile.provider)">{{ profile.provider }}</Badge>
+          </template>
+          <template #cell-domains="{ row: profile }">
+            <div class="flex flex-wrap gap-1">
+              <Badge v-for="domain in profile.domains" :key="domain" variant="outline" class="font-mono">
+                {{ domain }}
+              </Badge>
+            </div>
+          </template>
+          <template #cell-stack="{ row: profile }">
+            <div class="flex flex-wrap gap-1">
+              <Badge :variant="profile.enable_ipv4 ? 'success' : 'secondary'">v4</Badge>
+              <Badge :variant="profile.enable_ipv6 ? 'success' : 'secondary'">v6</Badge>
+            </div>
+          </template>
+          <template #cell-credential="{ row: profile }">
+            <Badge :variant="profile.has_credential ? 'success' : 'secondary'">
+              <Lock v-if="profile.has_credential" class="size-3" aria-hidden="true" />
+              <Unlock v-else class="size-3" aria-hidden="true" />
+              {{ profile.has_credential ? $t('networking.ddns.credSet') : $t('networking.ddns.credNone') }}
+            </Badge>
+          </template>
+          <template #cell-last_run="{ row: profile }">
+            <span class="text-xs text-muted-foreground">{{ profile.last_run_at ? formatDateTime(profile.last_run_at) : $t('common.misc.never') }}</span>
+          </template>
+          <template #cell-last_ips="{ row: profile }">
+            <div class="font-mono text-xs text-muted-foreground">
+              <div v-if="profile.last_ipv4">{{ profile.last_ipv4 }}</div>
+              <div v-if="profile.last_ipv6">{{ profile.last_ipv6 }}</div>
+              <span v-if="!profile.last_ipv4 && !profile.last_ipv6">—</span>
+            </div>
+          </template>
+          <template #cell-last_error="{ row: profile }">
+            <span v-if="profile.last_error" class="break-words text-xs text-destructive">
+              {{ profile.last_error }}
+            </span>
+            <span v-else class="text-xs text-muted-foreground">—</span>
+          </template>
+          <template #cell-actions="{ row: profile }">
+            <div class="flex justify-end gap-1">
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="sm"
+                :disabled="running === profile.id"
+                @click="runNow(profile)"
+              >
+                <RefreshCw v-if="running === profile.id" class="size-4 animate-spin" aria-hidden="true" />
+                <Play v-else class="size-4" aria-hidden="true" />
+                {{ $t('common.actions.runNow') }}
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.delete')"
+                @click="deleteTarget = profile"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -387,14 +402,13 @@ async function runNow(profile: DDNSView) {
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="ddns-provider">{{ $t('networking.ddns.provider') }}</Label>
-              <select
-                id="ddns-provider"
-                v-model="form.provider"
-                class="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="cloudflare">Cloudflare</option>
-                <option value="webhook">Webhook</option>
-              </select>
+              <Select v-model="form.provider">
+                <SelectTrigger id="ddns-provider" class="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cloudflare">Cloudflare</SelectItem>
+                  <SelectItem value="webhook">Webhook</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div class="flex flex-wrap items-end gap-4 pb-1">
               <label class="flex items-center gap-2 text-sm">
@@ -487,25 +501,15 @@ async function runNow(profile: DDNSView) {
     </Dialog>
 
     <!-- Delete confirmation -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.ddns.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.ddns.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('networking.ddns.deleteTitle')"
+      :description="$t('networking.ddns.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id || '' })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>

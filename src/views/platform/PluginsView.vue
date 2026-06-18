@@ -4,7 +4,6 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Blocks,
-  CheckCircle2,
   CircleDot,
   Play,
   Power,
@@ -16,6 +15,7 @@ import {
   type PluginInstallationView,
   type PluginLifecycleStatus,
   type PluginVerifyResponse,
+  type PluginView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -23,7 +23,9 @@ import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -77,6 +79,27 @@ function refreshAll() {
   if (canAudit.value) registeredQuery.refresh();
   if (canAdmin.value) lifecycleQuery.refresh();
 }
+
+const registeredColumns = computed<DataTableColumn<PluginView>[]>(() => [
+  { key: "id", label: t("platform.plugins.colId"), sortable: true, searchable: true, class: "font-mono text-xs text-muted-foreground" },
+  { key: "name", label: t("platform.plugins.colName"), sortable: true, searchable: true, value: (p) => p.name || p.id },
+  { key: "type", label: t("platform.plugins.colType"), sortable: true },
+  { key: "version", label: t("platform.plugins.colVersion"), sortable: true },
+  { key: "publisher", label: t("platform.plugins.colPublisher"), sortable: true, searchable: true },
+  { key: "capabilities", label: t("platform.plugins.colCapabilities") },
+]);
+
+const lifecycleColumns = computed<DataTableColumn<PluginInstallationView>[]>(() => [
+  { key: "name", label: t("platform.plugins.colName"), sortable: true, searchable: true, value: (p) => p.name || p.id },
+  { key: "type", label: t("platform.plugins.colType"), sortable: true },
+  { key: "version", label: t("platform.plugins.colVersion"), sortable: true },
+  { key: "status", label: t("platform.plugins.colStatus"), sortable: true },
+  { key: "runtime", label: t("platform.plugins.colRuntime"), value: (p) => p.runtime?.state ?? "" },
+  { key: "available", label: t("platform.plugins.colAvailable"), sortable: true },
+  { key: "artifact_sha256", label: t("platform.plugins.colArtifact") },
+  { key: "capabilities", label: t("platform.plugins.colCapabilities") },
+  { key: "actions", label: t("platform.plugins.colActions"), align: "right" },
+]);
 
 // ── Lifecycle status / runtime badges ───────────────────────────────────────
 function statusVariant(status: string): "secondary" | "success" | "warning" | "outline" {
@@ -218,6 +241,11 @@ async function runVerify() {
       :title="$t('platform.plugins.title')"
       :description="$t('platform.plugins.description')"
     >
+      <template #status>
+        <FreshnessLabel
+          :last-updated="tab === 'lifecycle' ? lifecycleQuery.lastUpdated.value : registeredQuery.lastUpdated.value"
+        />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="registeredQuery.refreshing.value || lifecycleQuery.refreshing.value" @click="refreshAll">
           <RefreshCw
@@ -250,49 +278,45 @@ async function runVerify() {
             <CardDescription>{{ $t('platform.plugins.registeredHint') }}</CardDescription>
           </CardHeader>
           <CardContent>
-            <DataState
+            <DataTable
               v-if="canAudit"
+              :columns="registeredColumns"
+              :rows="sortedRegistered"
+              :row-key="(plugin) => plugin.id"
               :loading="registeredQuery.loading.value"
               :error="registeredQuery.error.value"
-              :is-empty="registered.length === 0"
+              :has-data="registeredQuery.data.value !== undefined"
+              :page-size="50"
+              searchable
+              :search-placeholder="$t('platform.shared.searchNames')"
               :empty-title="$t('platform.plugins.registeredEmptyTitle')"
               :empty-description="$t('platform.plugins.registeredEmptyDescription')"
+              :no-match-title="$t('platform.shared.noMatchesTitle')"
+              :no-match-description="$t('platform.shared.noMatchesDescription')"
               @retry="registeredQuery.refresh"
             >
-              <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colId') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colName') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colType') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colVersion') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colPublisher') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colCapabilities') }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="plugin in sortedRegistered"
-                      :key="plugin.id"
-                      class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                    >
-                      <td class="py-3 pr-3 font-mono text-xs text-muted-foreground">{{ shortId(plugin.id, 18) }}</td>
-                      <td class="py-3 pr-3 font-medium">{{ plugin.name || plugin.id }}</td>
-                      <td class="py-3 pr-3"><Badge variant="outline">{{ plugin.type }}</Badge></td>
-                      <td class="py-3 pr-3 font-mono text-xs">{{ plugin.version || "—" }}</td>
-                      <td class="py-3 pr-3 text-xs text-muted-foreground">{{ plugin.publisher || "—" }}</td>
-                      <td class="py-3 pr-3">
-                        <div class="flex flex-wrap gap-1">
-                          <Badge v-for="cap in plugin.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                          <span v-if="!plugin.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </DataState>
+              <template #cell-id="{ row }">
+                <span class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 18) }}</span>
+              </template>
+              <template #cell-name="{ row }">
+                <span class="font-medium">{{ row.name || row.id }}</span>
+              </template>
+              <template #cell-type="{ row }">
+                <Badge variant="outline">{{ row.type }}</Badge>
+              </template>
+              <template #cell-version="{ row }">
+                <span class="font-mono text-xs">{{ row.version || "—" }}</span>
+              </template>
+              <template #cell-publisher="{ row }">
+                <span class="text-xs text-muted-foreground">{{ row.publisher || "—" }}</span>
+              </template>
+              <template #cell-capabilities="{ row }">
+                <div class="flex flex-wrap gap-1">
+                  <Badge v-for="cap in row.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
+                  <span v-if="!row.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
+                </div>
+              </template>
+            </DataTable>
             <p v-else class="text-sm text-muted-foreground">
               <i18n-t keypath="platform.plugins.auditScopeRequired" tag="span" scope="global">
                 <template #scope><code class="font-mono">audit:read</code></template>
@@ -315,84 +339,73 @@ async function runVerify() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <DataState
+            <DataTable
               v-if="canAdmin"
+              :columns="lifecycleColumns"
+              :rows="sortedLifecycle"
+              :row-key="(row) => row.id"
               :loading="lifecycleQuery.loading.value"
               :error="lifecycleQuery.error.value"
-              :is-empty="lifecycle.length === 0"
+              :has-data="lifecycleQuery.data.value !== undefined"
+              :page-size="50"
+              searchable
+              :search-placeholder="$t('platform.shared.searchNames')"
               :empty-title="$t('platform.plugins.lifecycleEmptyTitle')"
               :empty-description="$t('platform.plugins.lifecycleEmptyDescription')"
+              :no-match-title="$t('platform.shared.noMatchesTitle')"
+              :no-match-description="$t('platform.shared.noMatchesDescription')"
               @retry="lifecycleQuery.refresh"
             >
-              <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colName') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colType') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colVersion') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colStatus') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colRuntime') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colAvailable') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colArtifact') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.plugins.colCapabilities') }}</th>
-                      <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.plugins.colActions') }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="row in sortedLifecycle"
-                      :key="row.id"
-                      class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                    >
-                      <td class="py-3 pr-3">
-                        <div class="font-medium">{{ row.name || row.id }}</div>
-                        <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
-                      </td>
-                      <td class="py-3 pr-3"><Badge variant="outline">{{ row.type }}</Badge></td>
-                      <td class="py-3 pr-3 font-mono text-xs">{{ row.version || "—" }}</td>
-                      <td class="py-3 pr-3"><Badge :variant="statusVariant(row.status)">{{ row.status }}</Badge></td>
-                      <td class="py-3 pr-3">
-                        <Badge v-if="row.runtime" :variant="runtimeVariant(row.runtime.state)">{{ row.runtime.state }}</Badge>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </td>
-                      <td class="py-3 pr-3">
-                        <Badge :variant="row.available ? 'success' : 'secondary'">{{ row.available ? $t('common.misc.yes') : $t('common.misc.no') }}</Badge>
-                      </td>
-                      <td class="py-3 pr-3">
-                        <div v-if="row.artifact_sha256" class="flex items-center gap-1">
-                          <code class="font-mono text-xs text-muted-foreground">{{ shortId(row.artifact_sha256, 12) }}</code>
-                          <CopyButton :value="row.artifact_sha256" />
-                        </div>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </td>
-                      <td class="py-3 pr-3">
-                        <div class="flex flex-wrap gap-1">
-                          <Badge v-for="cap in row.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                          <span v-if="!row.capabilities.length" class="text-xs text-muted-foreground">none</span>
-                        </div>
-                      </td>
-                      <td class="py-3 pl-3">
-                        <div class="flex items-center justify-end gap-1">
-                          <Button
-                            v-for="status in nextStates(row)"
-                            :key="status"
-                            size="sm"
-                            :variant="status === 'disabled' ? 'destructive' : 'outline'"
-                            @click="requestTransition(row, status)"
-                          >
-                            <Power v-if="status === 'disabled'" aria-hidden="true" class="size-4" />
-                            <Play v-else aria-hidden="true" class="size-4" />
-                            {{ transitionLabel(status) }}
-                          </Button>
-                          <span v-if="!nextStates(row).length" class="text-xs text-muted-foreground">—</span>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </DataState>
+              <template #cell-name="{ row }">
+                <div class="font-medium">{{ row.name || row.id }}</div>
+                <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+              </template>
+              <template #cell-type="{ row }">
+                <Badge variant="outline">{{ row.type }}</Badge>
+              </template>
+              <template #cell-version="{ row }">
+                <span class="font-mono text-xs">{{ row.version || "—" }}</span>
+              </template>
+              <template #cell-status="{ row }">
+                <Badge :variant="statusVariant(row.status)">{{ row.status }}</Badge>
+              </template>
+              <template #cell-runtime="{ row }">
+                <Badge v-if="row.runtime" :variant="runtimeVariant(row.runtime.state)">{{ row.runtime.state }}</Badge>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </template>
+              <template #cell-available="{ row }">
+                <Badge :variant="row.available ? 'success' : 'secondary'">{{ row.available ? $t('common.misc.yes') : $t('common.misc.no') }}</Badge>
+              </template>
+              <template #cell-artifact_sha256="{ row }">
+                <div v-if="row.artifact_sha256" class="flex items-center gap-1">
+                  <code class="font-mono text-xs text-muted-foreground">{{ shortId(row.artifact_sha256, 12) }}</code>
+                  <CopyButton :value="row.artifact_sha256" />
+                </div>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </template>
+              <template #cell-capabilities="{ row }">
+                <div class="flex flex-wrap gap-1">
+                  <Badge v-for="cap in row.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
+                  <span v-if="!row.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
+                </div>
+              </template>
+              <template #cell-actions="{ row }">
+                <div class="flex items-center justify-end gap-1">
+                  <Button
+                    v-for="status in nextStates(row)"
+                    :key="status"
+                    size="sm"
+                    :variant="status === 'disabled' ? 'destructive' : 'outline'"
+                    @click="requestTransition(row, status)"
+                  >
+                    <Power v-if="status === 'disabled'" aria-hidden="true" class="size-4" />
+                    <Play v-else aria-hidden="true" class="size-4" />
+                    {{ transitionLabel(status) }}
+                  </Button>
+                  <span v-if="!nextStates(row).length" class="text-xs text-muted-foreground">—</span>
+                </div>
+              </template>
+            </DataTable>
             <p v-else class="text-sm text-muted-foreground">
               <i18n-t keypath="platform.plugins.adminScopeRequired" tag="span" scope="global">
                 <template #scope><code class="font-mono">plugin:admin</code></template>
@@ -404,34 +417,25 @@ async function runVerify() {
     </Tabs>
 
     <!-- Transition confirm dialog -->
-    <Dialog :open="!!transitionTarget" @update:open="(v) => { if (!v) transitionTarget = undefined; }">
-      <DialogScrollContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('platform.plugins.confirmTransitionTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('platform.plugins.confirmTransitionMove') }}
-            <span class="font-medium">{{ transitionTarget?.row.name || transitionTarget?.row.id }}</span>
-            {{ $t('platform.plugins.confirmTransitionFrom') }} <Badge :variant="statusVariant(transitionTarget?.row.status ?? '')">{{ transitionTarget?.row.status }}</Badge>
-            {{ $t('platform.plugins.confirmTransitionTo') }} <Badge :variant="statusVariant(transitionTarget?.status ?? '')">{{ transitionTarget?.status }}</Badge>?
-            <template v-if="transitionTarget?.status === 'active'"> {{ $t('platform.plugins.activatingStarts') }}</template>
-            <template v-else-if="transitionTarget?.status === 'disabled'"> {{ $t('platform.plugins.disablingStops') }}</template>
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="transitionTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
-          <Button
-            type="button"
-            :variant="transitionTarget?.status === 'disabled' ? 'destructive' : 'default'"
-            :disabled="transitioning"
-            @click="confirmTransition"
-          >
-            <RefreshCw v-if="transitioning" aria-hidden="true" class="size-4 animate-spin" />
-            <CheckCircle2 v-else aria-hidden="true" class="size-4" />
-            {{ transitionTarget ? transitionLabel(transitionTarget.status) : $t('common.actions.confirm') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!transitionTarget"
+      :title="$t('platform.plugins.confirmTransitionTitle')"
+      :confirm-label="transitionTarget ? transitionLabel(transitionTarget.status) : $t('common.actions.confirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      :variant="transitionTarget?.status === 'disabled' ? 'destructive' : 'default'"
+      :pending="transitioning"
+      @update:open="(v) => { if (!v) transitionTarget = undefined; }"
+      @confirm="confirmTransition"
+    >
+      <p class="text-sm text-muted-foreground">
+        {{ $t('platform.plugins.confirmTransitionMove') }}
+        <span class="font-medium text-foreground">{{ transitionTarget?.row.name || transitionTarget?.row.id }}</span>
+        {{ $t('platform.plugins.confirmTransitionFrom') }} <Badge :variant="statusVariant(transitionTarget?.row.status ?? '')">{{ transitionTarget?.row.status }}</Badge>
+        {{ $t('platform.plugins.confirmTransitionTo') }} <Badge :variant="statusVariant(transitionTarget?.status ?? '')">{{ transitionTarget?.status }}</Badge>?
+        <template v-if="transitionTarget?.status === 'active'"> {{ $t('platform.plugins.activatingStarts') }}</template>
+        <template v-else-if="transitionTarget?.status === 'disabled'"> {{ $t('platform.plugins.disablingStops') }}</template>
+      </p>
+    </ConfirmDialog>
 
     <!-- Verify dialog -->
     <Dialog v-model:open="verifyOpen">

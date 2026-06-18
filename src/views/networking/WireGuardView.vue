@@ -17,9 +17,10 @@ import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -60,6 +61,21 @@ const sortedNodes = computed(() =>
   }),
 );
 const meshReadyCount = computed(() => nodes.value.filter((n) => !!n.wireguard_ip).length);
+
+const columns = computed<DataTableColumn<Node>[]>(() => [
+  {
+    key: "node",
+    label: t("networking.wireguard.colNode"),
+    sortable: true,
+    searchable: true,
+    value: (n) => n.name || n.id,
+  },
+  { key: "wireguard_ip", label: t("networking.wireguard.colWireguardIp"), sortable: true },
+  { key: "endpoint", label: t("networking.wireguard.colEndpoint") },
+  { key: "role", label: t("networking.wireguard.colRole"), sortable: true },
+  { key: "status", label: t("networking.wireguard.colStatus"), sortable: true, value: (n) => (n.online && !n.disabled ? 1 : 0) },
+  { key: "actions", label: t("networking.wireguard.colActions"), align: "right" },
+]);
 
 // ── Plan parameters dialog ──────────────────────────────────────────────────
 const paramsOpen = ref(false);
@@ -113,6 +129,9 @@ function nodeName(id: string): string {
       :title="$t('networking.wireguard.title')"
       :description="$t('networking.wireguard.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -155,71 +174,56 @@ function nodeName(id: string): string {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="sortedNodes"
+          :row-key="(node) => node.id"
           :loading="nodesQuery.loading.value"
           :error="nodesQuery.error.value"
-          :is-empty="nodes.length === 0"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('networking.wireguard.emptyTitle')"
           :empty-description="$t('networking.wireguard.emptyDescription')"
+          :no-match-title="$t('networking.shared.noMatchTitle')"
+          :no-match-description="$t('networking.shared.noMatchDescription')"
+          :actions-label="$t('networking.wireguard.colActions')"
           @retry="nodesQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colNode') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colWireguardIp') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colEndpoint') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colRole') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.wireguard.colStatus') }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.wireguard.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="node in sortedNodes"
-                  :key="node.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ node.name || node.id }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(node.id, 16) }}</div>
-                  </td>
-                  <td class="py-3 pr-4 font-mono text-xs">
-                    <span v-if="node.wireguard_ip">{{ node.wireguard_ip }}</span>
-                    <span v-else class="text-warning">{{ $t('networking.wireguard.notSet') }}</span>
-                  </td>
-                  <td class="py-3 pr-4 font-mono text-xs text-muted-foreground">
-                    {{ node.wireguard_endpoint || "—" }}
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge v-if="node.role" variant="outline">{{ node.role }}</Badge>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <StatusDot :online="node.online && !node.disabled" :label="node.online ? $t('common.status.online') : $t('common.status.offline')" />
-                  </td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end">
-                      <Button
-                        v-if="canPlan"
-                        variant="outline"
-                        size="sm"
-                        :disabled="planning === node.id || !node.wireguard_ip"
-                        :title="!node.wireguard_ip ? $t('networking.wireguard.noWireguardIp') : undefined"
-                        @click="openParams(node)"
-                      >
-                        <RefreshCw v-if="planning === node.id" class="size-4 animate-spin" aria-hidden="true" />
-                        <FileCode2 v-else class="size-4" aria-hidden="true" />
-                        {{ $t('networking.wireguard.planMeshConfig') }}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-node="{ row: node }">
+            <div class="font-medium">{{ node.name || node.id }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(node.id, 16) }}</div>
+          </template>
+          <template #cell-wireguard_ip="{ row: node }">
+            <span v-if="node.wireguard_ip" class="font-mono text-xs">{{ node.wireguard_ip }}</span>
+            <span v-else class="font-mono text-xs text-warning">{{ $t('networking.wireguard.notSet') }}</span>
+          </template>
+          <template #cell-endpoint="{ row: node }">
+            <span class="font-mono text-xs text-muted-foreground">{{ node.wireguard_endpoint || "—" }}</span>
+          </template>
+          <template #cell-role="{ row: node }">
+            <Badge v-if="node.role" variant="outline">{{ node.role }}</Badge>
+            <span v-else class="text-xs text-muted-foreground">—</span>
+          </template>
+          <template #cell-status="{ row: node }">
+            <StatusDot :online="node.online && !node.disabled" :label="node.online ? $t('common.status.online') : $t('common.status.offline')" />
+          </template>
+          <template #cell-actions="{ row: node }">
+            <div class="flex justify-end">
+              <Button
+                v-if="canPlan"
+                variant="outline"
+                size="sm"
+                :disabled="planning === node.id || !node.wireguard_ip"
+                :title="!node.wireguard_ip ? $t('networking.wireguard.noWireguardIp') : undefined"
+                @click="openParams(node)"
+              >
+                <RefreshCw v-if="planning === node.id" class="size-4 animate-spin" aria-hidden="true" />
+                <FileCode2 v-else class="size-4" aria-hidden="true" />
+                {{ $t('networking.wireguard.planMeshConfig') }}
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 

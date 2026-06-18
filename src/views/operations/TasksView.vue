@@ -6,11 +6,13 @@ import { Play, RefreshCw, Terminal, Timer, CheckCircle2, XCircle } from "lucide-
 import { api, unwrap, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
+import { statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -22,6 +24,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -64,12 +73,23 @@ const resultsByTask = computed<Record<string, TaskResult[]>>(() => {
 const queuedCount = computed(() => tasks.value.filter((task) => task.status === "queued").length);
 const finishedCount = computed(() => tasks.value.filter((task) => task.status === "finished").length);
 
-function statusVariant(status: TaskView["status"]): "success" | "warning" | "destructive" | "secondary" {
-  if (status === "finished") return "success";
-  if (status === "failed") return "destructive";
-  if (status === "queued" || status === "leased") return "warning";
-  return "secondary";
+const TASK_HEALTH: Record<TaskView["status"], NodeHealth> = {
+  finished: "online",
+  failed: "offline",
+  queued: "degraded",
+  leased: "degraded",
+};
+
+function statusVariant(status: TaskView["status"]): BadgeVariant {
+  return statusMeta(TASK_HEALTH[status] ?? "unknown").badgeVariant;
 }
+
+const formError = computed<string>(() => {
+  if (selectedTargets.value.length === 0) return t("operations.tasks.errNoTargets");
+  if (!script.value.trim()) return t("operations.tasks.errNoScript");
+  return "";
+});
+const showFormError = ref(false);
 
 function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || id;
@@ -82,7 +102,11 @@ function refreshAll() {
 }
 
 async function createTask() {
-  if (selectedTargets.value.length === 0 || !script.value.trim()) return;
+  if (formError.value) {
+    showFormError.value = true;
+    return;
+  }
+  showFormError.value = false;
   createPending.value = true;
   try {
     await api.tasks.create({
@@ -106,6 +130,9 @@ async function createTask() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('operations.tasks.title')" :description="$t('operations.tasks.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="tasksQuery.refreshing.value || resultsQuery.refreshing.value" @click="refreshAll">
           <RefreshCw :class="cn('size-4', (tasksQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
@@ -160,6 +187,7 @@ async function createTask() {
               <DataState
                 :loading="nodesQuery.loading.value"
                 :error="nodesQuery.error.value"
+                :has-data="nodesQuery.data.value !== undefined"
                 :is-empty="nodes.length === 0"
                 :empty-title="$t('operations.tasks.noNodesTitle')"
                 :empty-description="$t('operations.tasks.noNodesDescription')"
@@ -169,7 +197,7 @@ async function createTask() {
                   <label
                     v-for="node in nodes"
                     :key="node.id"
-                    class="flex items-center gap-2 rounded-md border border-border p-2 text-sm"
+                    class="surface-interactive flex items-center gap-2 rounded-md border border-border p-2 text-sm"
                   >
                     <input v-model="selectedTargets" type="checkbox" :value="node.id" class="size-4 accent-primary" />
                     <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
@@ -190,12 +218,17 @@ async function createTask() {
 
           <div class="grid gap-2">
             <Label for="task-interpreter">{{ $t('operations.tasks.interpreter') }}</Label>
-            <select id="task-interpreter" v-model="interpreter" class="h-9 max-w-xs rounded-md border border-input bg-background px-3 text-sm">
-              <option value="sh">sh</option>
-              <option value="bash">bash</option>
-              <option value="python3">python3</option>
-              <option value="node">node</option>
-            </select>
+            <Select v-model="interpreter">
+              <SelectTrigger id="task-interpreter" class="max-w-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="sh">sh</SelectItem>
+                <SelectItem value="bash">bash</SelectItem>
+                <SelectItem value="python3">python3</SelectItem>
+                <SelectItem value="node">node</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div class="grid gap-2">
@@ -203,12 +236,15 @@ async function createTask() {
             <textarea
               id="task-script"
               v-model="script"
-              class="min-h-36 rounded-md border border-input bg-background p-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+              class="min-h-36 rounded-md border bg-background p-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+              :class="showFormError && !script.trim() ? 'border-destructive' : 'border-input'"
+              :aria-invalid="showFormError && !script.trim()"
               placeholder="echo hello"
             />
+            <p v-if="showFormError && formError" class="text-sm text-destructive">{{ formError }}</p>
           </div>
 
-          <Button type="submit" :disabled="createPending || selectedTargets.length === 0 || !script.trim()">
+          <Button type="submit" :disabled="createPending">
             <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
             <Play v-else class="size-4" aria-hidden="true" />
             {{ $t('operations.tasks.queueTaskCta') }}
@@ -226,6 +262,7 @@ async function createTask() {
         <DataState
           :loading="tasksQuery.loading.value || resultsQuery.loading.value"
           :error="tasksQuery.error.value || resultsQuery.error.value"
+          :has-data="tasksQuery.data.value !== undefined"
           :is-empty="tasks.length === 0"
           :empty-title="$t('operations.tasks.emptyTitle')"
           :empty-description="$t('operations.tasks.emptyDescription')"

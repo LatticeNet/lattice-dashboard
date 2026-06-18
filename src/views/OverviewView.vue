@@ -1,37 +1,28 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   RotateCw,
   Server,
   Wifi,
   ShieldCheck,
   Terminal,
-  ArrowDown,
-  ArrowUp,
-  Clock,
-  Cpu,
-  HardDrive,
-  MemoryStick,
   Activity,
 } from "lucide-vue-next";
 import { api, unwrap, ApiError } from "@/lib/api";
 import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
-import {
-  formatBytesPerSec,
-  formatDuration,
-  formatPercent,
-  formatRelativeTime,
-  ratio,
-} from "@/lib/format";
+import { formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import StatCard from "@/components/common/StatCard.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
-import MetricBar from "@/components/common/MetricBar.vue";
 import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import NodeCard from "@/components/common/NodeCard.vue";
 import GettingStarted from "@/components/common/GettingStarted.vue";
 
 import { Button } from "@/components/ui/button";
@@ -77,6 +68,17 @@ const audit = useAsyncData<AuditEvent[] | undefined>(
 );
 
 const auth = useAuthStore();
+const { t } = useI18n();
+
+// Client-side metric ring: feed each poll so NodeCard sparklines have history.
+const metricBuffer = useMetricBuffer();
+watch(
+  () => fleet.data.value,
+  (list) => {
+    for (const node of list ?? []) metricBuffer.record(node.id, node.metrics);
+  },
+  { immediate: true },
+);
 
 const nodes = computed<Node[]>(() => fleet.data.value ?? []);
 const onlineNodes = computed(() => nodes.value.filter((n) => n.online).length);
@@ -125,16 +127,14 @@ function refreshAll() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('overview.title')" :description="$t('overview.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="fleet.lastUpdated.value" />
+      </template>
       <template #actions>
-        <div class="flex items-center gap-3">
-          <span v-if="fleet.lastUpdated.value" class="text-xs text-muted-foreground">
-            {{ $t('common.misc.updated') }} {{ formatRelativeTime(fleet.lastUpdated.value) }}
-          </span>
-          <Button variant="outline" size="sm" :disabled="fleet.refreshing.value" @click="refreshAll">
-            <RotateCw :class="cn('size-4', fleet.refreshing.value && 'animate-spin')" aria-hidden="true" />
-            {{ $t('common.actions.refresh') }}
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" :disabled="fleet.refreshing.value" @click="refreshAll">
+          <RotateCw :class="cn('size-4', fleet.refreshing.value && 'animate-spin')" aria-hidden="true" />
+          {{ $t('common.actions.refresh') }}
+        </Button>
       </template>
     </PageHeader>
 
@@ -190,101 +190,28 @@ function refreshAll() {
           <DataState
             :loading="fleet.loading.value"
             :error="fleet.error.value"
+            :has-data="fleet.data.value !== undefined"
             :is-empty="nodes.length === 0"
             :empty-title="$t('overview.noNodes')"
             :empty-description="$t('overview.noNodesDescription')"
+            @retry="fleet.refresh"
           >
             <div class="grid gap-3 sm:grid-cols-2">
-              <div
+              <NodeCard
                 v-for="node in sortedNodes"
                 :key="node.id"
-                :class="
-                  cn(
-                    'rounded-lg border border-border bg-background/40 p-4 transition-colors',
-                    node.online ? 'hover:bg-muted/40' : 'opacity-60',
-                  )
-                "
-              >
-                <!-- Header -->
-                <div class="flex items-start justify-between gap-2">
-                  <div class="min-w-0">
-                    <div class="flex items-center gap-2">
-                      <StatusDot :online="node.online" :pulse="node.online" />
-                      <span class="truncate font-medium">{{ node.name || node.id }}</span>
-                    </div>
-                    <p
-                      v-if="node.host_facts"
-                      class="mt-1 truncate font-mono text-xs text-muted-foreground tabular"
-                    >
-                      {{ node.host_facts.hostname || node.id }}
-                      <template v-if="node.host_facts.os">
-                        · {{ node.host_facts.os }}
-                      </template>
-                      <template v-if="node.host_facts.arch">
-                        · {{ node.host_facts.arch }}
-                      </template>
-                    </p>
-                  </div>
-                  <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                    <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
-                    <Badge
-                      v-for="tag in (node.tags ?? []).slice(0, 2)"
-                      :key="tag"
-                      variant="outline"
-                    >
-                      {{ tag }}
-                    </Badge>
-                  </div>
-                </div>
-
-                <!-- Metrics -->
-                <div class="mt-4 space-y-2.5">
-                  <MetricBar
-                    label="CPU"
-                    :icon="Cpu"
-                    :percent="node.metrics?.cpu_percent ?? 0"
-                    :value-text="formatPercent(node.metrics?.cpu_percent)"
-                  />
-                  <MetricBar
-                    label="Memory"
-                    :icon="MemoryStick"
-                    tone="memory"
-                    :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)"
-                    :used="node.metrics?.memory_used"
-                    :total="node.metrics?.memory_total"
-                  />
-                  <MetricBar
-                    label="Disk"
-                    :icon="HardDrive"
-                    tone="disk"
-                    :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)"
-                    :used="node.metrics?.disk_used"
-                    :total="node.metrics?.disk_total"
-                  />
-                </div>
-
-                <!-- Footer stats -->
-                <div
-                  class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground tabular"
-                >
-                  <span class="inline-flex items-center gap-1">
-                    <ArrowDown class="size-3" aria-hidden="true" />
-                    {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
-                  </span>
-                  <span class="inline-flex items-center gap-1">
-                    <ArrowUp class="size-3" aria-hidden="true" />
-                    {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
-                  </span>
-                  <span class="inline-flex items-center gap-1">
-                    <Activity class="size-3" aria-hidden="true" />
-                    {{ formatDuration(node.metrics?.uptime_seconds) }}
-                  </span>
-                  <span class="inline-flex items-center gap-1">
-                    <Clock class="size-3" aria-hidden="true" />
-                    {{ formatRelativeTime(node.last_seen) }}
-                  </span>
-                </div>
-              </div>
+                :node="node"
+                show-sparkline
+                sparkline-metric="cpu"
+                :selectable="false"
+                :cpu-label="t('overview.metric.cpu')"
+                :memory-label="t('overview.metric.memory')"
+                :disk-label="t('overview.metric.disk')"
+                :online-label="t('common.status.online')"
+                :offline-label="t('common.status.offline')"
+                :disabled-label="t('common.status.disabled')"
+                :sparkline-label="t('overview.sparklineLabel')"
+              />
             </div>
           </DataState>
         </CardContent>
@@ -305,10 +232,12 @@ function refreshAll() {
             <DataState
               :loading="approvals.loading.value"
               :error="approvals.error.value"
+              :has-data="approvals.data.value !== undefined"
               :is-empty="pendingApprovals.length === 0"
               :empty-title="$t('overview.noPendingApprovals')"
               :empty-description="$t('overview.everythingUpToDate')"
               :empty-tone="'positive'"
+              @retry="approvals.refresh"
             >
               <ul class="divide-y divide-border">
                 <li
@@ -348,9 +277,11 @@ function refreshAll() {
             <DataState
               :loading="audit.loading.value"
               :error="audit.error.value"
+              :has-data="audit.data.value !== undefined"
               :is-empty="auditEvents.length === 0"
               :empty-title="$t('overview.noRecentActivity')"
               :empty-description="$t('overview.auditWillAppear')"
+              @retry="audit.refresh"
             >
               <ul class="divide-y divide-border">
                 <li

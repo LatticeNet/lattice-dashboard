@@ -213,6 +213,12 @@ export default {
     recentActivityDescription: "Latest audit decisions",
     noRecentActivity: "No recent activity",
     auditWillAppear: "Audit events will appear here.",
+    metric: {
+      cpu: "CPU",
+      memory: "Memory",
+      disk: "Disk",
+    },
+    sparklineLabel: "Recent CPU trend",
   },
 
   appearance: {

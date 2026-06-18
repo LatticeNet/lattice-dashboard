@@ -1,6 +1,17 @@
 // zh-CN「代理」分区文案。命名空间不得与 frame.ts 或其他分区文件冲突。
 export default {
   proxy: {
+    // 代理分区共享的 DataTable 工具栏 / 分页文案。
+    table: {
+      showing: "显示",
+      of: "共",
+      prevPage: "上一页",
+      nextPage: "下一页",
+      clearSearch: "清除搜索",
+      noMatchTitle: "没有匹配结果",
+      noMatchDescription: "请调整搜索或筛选条件。",
+    },
+
     inbounds: {
       title: "代理入站",
       description: "VLESS + REALITY 监听定义,供节点配置和用户共享",
@@ -9,6 +20,12 @@ export default {
       kpiInbounds: "入站",
       kpiEnabled: "已启用",
       kpiRealityKeySet: "REALITY 密钥已设",
+      searchPlaceholder: "搜索名称、内核或 REALITY 目标",
+      errorNameRequired: "名称为必填项。",
+      errorPort: "端口必须是 1 到 65535 之间的整数。",
+      errorDestRequired: "REALITY 目标为必填项。",
+      errorShortIds: "至少需要一个 short ID。",
+      errorPrivateKey: "创建入站时必须提供 REALITY 私钥。",
       listeners: "监听器",
       listenersDescription: "全局 VLESS + REALITY 入站。REALITY 私钥为只写,永不返回。",
       emptyTitle: "尚未配置入站",
@@ -219,6 +236,9 @@ export default {
       unlimited: "无限制",
       reveal: "显示",
       revealTitleAction: "显示订阅(会轮换令牌)",
+      searchPlaceholder: "搜索订阅者名称或 ID",
+      confirmRevealTitle: "显示订阅?",
+      confirmRevealDescription: "显示会轮换「{name}」的令牌,并使此前分享的任何 URL 失效。是否继续?",
       noTokenCreateInUsers: "无令牌——请在「用户」中创建",
       howTitle: "客户端如何使用订阅",
       howDescriptionPrefix: "公共",

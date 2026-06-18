@@ -53,6 +53,9 @@ export default {
         disableCode: "TOTP or recovery code",
         disableCodePlaceholder: "123456 or recovery code",
         disable: "Disable 2FA",
+        disableConfirmTitle: "Disable two-factor authentication?",
+        disableConfirmDescription:
+          "This removes the second factor from your account and signs out the current session. You will need to sign in again with your password.",
         enterAuthenticatorCode: "Enter the code from your authenticator app.",
         enterDisableCode: "Enter a TOTP code or recovery code.",
         enrollmentStarted: "2FA enrollment started",
@@ -63,6 +66,11 @@ export default {
         disableFailed: "2FA disable failed",
       },
       requestFailed: "Request failed",
+    },
+    appearance: {
+      // settings-scoped Appearance strings (the bulk live in frame.ts `appearance.*`).
+      reducedMotionNote:
+        "Animations honor your system's reduced-motion setting — when it is on, transitions and motion are minimized automatically.",
     },
     about: {
       title: "About",
@@ -189,6 +197,8 @@ export default {
         serverAllowlistHint: "Comma-separated node IDs. Must be a subset of your own allowlist. Leave empty for all nodes.",
         yourScopes: "Your scopes:",
         submit: "Create token",
+        nameRequired: "A token name is required.",
+        scopesRequired: "Select at least one scope to grant.",
       },
       reveal: {
         title: "Copy your token now",
@@ -201,6 +211,10 @@ export default {
       revokeTitle: "Revoke token?",
       revokeDescription:
         'Revoke "{name}". Any caller using this credential will immediately lose access. This is one-way and cannot be undone.',
+      discardTitle: "Discard this token?",
+      discardDescription:
+        "You have selected scopes and entered details that have not been created yet. Closing now discards them.",
+      discardConfirm: "Discard",
       toast: {
         created: "Token created — copy it now",
         createFailed: "Token creation failed",

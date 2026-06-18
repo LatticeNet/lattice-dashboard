@@ -10,7 +10,8 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -50,6 +51,15 @@ const workers = computed(() => workersQuery.data.value ?? []);
 const sortedWorkers = computed(() =>
   [...workers.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
 );
+
+const columns = computed<DataTableColumn<WorkerScript>[]>(() => [
+  { key: "name", label: t("platform.workers.colName"), sortable: true, searchable: true, value: (w) => w.name || w.id },
+  { key: "capabilities", label: t("platform.workers.colCapabilities") },
+  { key: "public", label: t("platform.workers.colPublic"), sortable: true },
+  { key: "updated_at", label: t("platform.workers.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
+  { key: "source", label: t("platform.workers.colSource") },
+  { key: "actions", label: t("platform.workers.colActions"), align: "right" },
+]);
 
 function sourcePreview(source: string): string {
   const firstLine = source.split("\n", 1)[0] ?? "";
@@ -154,6 +164,9 @@ async function submitRun() {
       :title="$t('platform.workers.title')"
       :description="$t('platform.workers.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="workersQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="workersQuery.refreshing.value" @click="workersQuery.refresh">
           <RefreshCw aria-hidden="true" :class="cn('size-4', workersQuery.refreshing.value && 'animate-spin')" />
@@ -179,70 +192,58 @@ async function submitRun() {
         <CardDescription>{{ $t('platform.workers.scriptsCount', { count: workers.length }) }}</CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
           v-if="canDeploy"
+          :columns="columns"
+          :rows="sortedWorkers"
+          :row-key="(worker) => worker.id"
           :loading="workersQuery.loading.value"
           :error="workersQuery.error.value"
-          :is-empty="workers.length === 0"
+          :has-data="workersQuery.data.value !== undefined"
+          :page-size="50"
+          searchable
+          :search-placeholder="$t('platform.shared.searchNames')"
           :empty-title="$t('platform.workers.emptyTitle')"
           :empty-description="$t('platform.workers.emptyDescription')"
+          :no-match-title="$t('platform.shared.noMatchesTitle')"
+          :no-match-description="$t('platform.shared.noMatchesDescription')"
           @retry="workersQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colName') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colCapabilities') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colPublic') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colUpdated') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.workers.colSource') }}</th>
-                  <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.workers.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="worker in sortedWorkers"
-                  :key="worker.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-3">
-                    <div class="font-medium">{{ worker.name || worker.id }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ worker.id }}</div>
-                  </td>
-                  <td class="py-3 pr-3">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge v-for="cap in worker.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                      <span v-if="!worker.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-3">
-                    <Badge :variant="worker.public ? 'info' : 'secondary'">{{ worker.public ? $t('platform.workers.public') : $t('platform.workers.private') }}</Badge>
-                  </td>
-                  <td class="py-3 pr-3 text-xs text-muted-foreground">{{ formatDateTime(worker.updated_at) }}</td>
-                  <td class="py-3 pr-3">
-                    <button
-                      type="button"
-                      class="max-w-[280px] truncate text-left font-mono text-xs text-muted-foreground hover:text-primary"
-                      :title="$t('platform.workers.viewSource')"
-                      @click="sourceTarget = worker"
-                    >
-                      {{ sourcePreview(worker.source) || $t('platform.workers.sourceEmpty') }}
-                    </button>
-                  </td>
-                  <td class="py-3 pl-3">
-                    <div class="flex items-center justify-end gap-1">
-                      <Button variant="outline" size="sm" @click="openRun(worker)">
-                        <Play aria-hidden="true" class="size-4" />
-                        {{ $t('common.actions.run') }}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row }">
+            <div class="font-medium">{{ row.name || row.id }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ row.id }}</div>
+          </template>
+          <template #cell-capabilities="{ row }">
+            <div class="flex flex-wrap gap-1">
+              <Badge v-for="cap in row.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
+              <span v-if="!row.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
+            </div>
+          </template>
+          <template #cell-public="{ row }">
+            <Badge :variant="row.public ? 'info' : 'secondary'">{{ row.public ? $t('platform.workers.public') : $t('platform.workers.private') }}</Badge>
+          </template>
+          <template #cell-updated_at="{ row }">
+            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
+          </template>
+          <template #cell-source="{ row }">
+            <button
+              type="button"
+              class="max-w-[280px] truncate text-left font-mono text-xs text-muted-foreground hover:text-primary"
+              :title="$t('platform.workers.viewSource')"
+              @click="sourceTarget = row"
+            >
+              {{ sourcePreview(row.source) || $t('platform.workers.sourceEmpty') }}
+            </button>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex items-center justify-end gap-1">
+              <Button variant="outline" size="sm" @click="openRun(row)">
+                <Play aria-hidden="true" class="size-4" />
+                {{ $t('common.actions.run') }}
+              </Button>
+            </div>
+          </template>
+        </DataTable>
         <p v-else class="text-sm text-muted-foreground">
           <i18n-t keypath="platform.workers.deployScopeRequired" tag="span" scope="global">
             <template #scope><code class="font-mono">worker:deploy</code></template>
