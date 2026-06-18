@@ -399,22 +399,16 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 </g>
 
                 <g v-for="point in plotted" :key="point.node.id">
+                  <!-- subtle expanding pulse for online nodes (the 'live' feel) -->
                   <circle
                     v-if="point.node.online"
                     :cx="point.x"
                     :cy="point.y"
-                    r="8"
-                    fill="oklch(0.82 0.2 150 / 0.5)"
-                    filter="url(#fleet-glow)"
-                  />
-                  <circle
-                    v-if="point.node.online"
-                    :cx="point.x"
-                    :cy="point.y"
-                    r="15"
+                    class="map-ping"
+                    r="2.8"
                     fill="none"
-                    stroke="oklch(0.82 0.2 150 / 0.4)"
-                    stroke-width="2"
+                    stroke="oklch(0.8 0.15 162 / 0.5)"
+                    stroke-width="1.2"
                   />
                   <g
                     role="button"
@@ -426,16 +420,24 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     @keydown.space.prevent="selectNode(point.node)"
                   >
                     <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
+                    <!-- gentle halo (online) -->
+                    <circle
+                      v-if="point.node.online"
+                      :cx="point.x"
+                      :cy="point.y"
+                      :r="point.selected ? 6 : 5"
+                      :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.24)' : 'oklch(0.8 0.15 162 / 0.13)'"
+                    />
+                    <!-- node dot: small + refined -->
                     <circle
                       :cx="point.x"
                       :cy="point.y"
-                      :r="point.selected ? 9 : 7"
-                      :fill="point.node.online ? 'oklch(0.75 0.19 150)' : 'oklch(0.67 0.2 28)'"
-                      stroke="oklch(0.98 0.02 95)"
-                      :stroke-width="point.selected ? 3 : 2"
-                      filter="url(#fleet-marker-shadow)"
+                      :r="point.selected ? 4 : 2.8"
+                      :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
+                      :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
+                      :stroke-width="point.selected ? 1.5 : 1"
+                      :opacity="point.node.online ? 1 : 0.82"
                     />
-                    <circle :cx="point.x" :cy="point.y" r="2.2" fill="oklch(0.16 0.025 260)" opacity="0.72" />
                   </g>
                 </g>
               </svg>
@@ -615,3 +617,29 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
     </Card>
   </div>
 </template>
+
+<style scoped>
+/* Subtle expanding ping on online node markers — refined, not flashy. */
+.map-ping {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-ping 2.6s ease-out infinite;
+}
+@keyframes map-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70%,
+  100% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-ping {
+    animation: none;
+    opacity: 0;
+  }
+}
+</style>

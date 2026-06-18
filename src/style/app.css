@@ -202,19 +202,12 @@
 }
 
 /* ---- Motion: page + list + fade transitions ---- */
-.page-enter-active,
-.page-leave-active {
-  transition:
-    opacity 0.22s ease,
-    transform 0.22s ease;
+/* Enter-only fast fade so navigation feels instant (no leave delay). */
+.page-fade-enter-active {
+  transition: opacity 0.12s ease;
 }
-.page-enter-from {
+.page-fade-enter-from {
   opacity: 0;
-  transform: translateY(8px);
-}
-.page-leave-to {
-  opacity: 0;
-  transform: translateY(-6px);
 }
 
 .list-move,
@@ -267,8 +260,7 @@
     animation: none;
   }
 
-  .page-enter-active,
-  .page-leave-active,
+  .page-fade-enter-active,
   .list-move,
   .list-enter-active,
   .list-leave-active,
@@ -279,8 +271,7 @@
 
   /* Skip the offset start/end frames so reduced-motion users land directly on
      the resting (opaque, untranslated) state instead of flashing. */
-  .page-enter-from,
-  .page-leave-to,
+  .page-fade-enter-from,
   .list-enter-from,
   .list-leave-to,
   .fade-enter-from,

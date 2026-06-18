@@ -7,7 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
 import { api, type TerminalSession } from "@/lib/api";
 
-const POLL_MS = 500;
+const POLL_MS = 200;
 const INPUT_FLUSH_MS = 35;
 const RESIZE_DEBOUNCE_MS = 160;
 
@@ -59,6 +59,7 @@ function initTerminal() {
     fontSize: 13,
     lineHeight: 1.28,
     macOptionIsMeta: true,
+    rightClickSelectsWord: true,
     scrollback: 4000,
     tabStopWidth: 8,
     theme: {
@@ -89,6 +90,31 @@ function initTerminal() {
   terminal.loadAddon(fitAddon);
   terminal.open(container.value);
   terminal.onData((data) => queueInput(data));
+
+  // Copy/paste: Cmd+C/V (macOS) or Ctrl+Shift+C/V. Plain Ctrl+C is left alone
+  // so it still sends SIGINT to the remote shell. Copy only fires when there is
+  // an active selection.
+  terminal.attachCustomKeyEventHandler((e) => {
+    if (e.type !== "keydown") return true;
+    const key = e.key.toLowerCase();
+    const combo = e.metaKey || (e.ctrlKey && e.shiftKey);
+    if (combo && key === "c" && terminal?.hasSelection()) {
+      const selection = terminal.getSelection();
+      if (selection) void navigator.clipboard?.writeText(selection);
+      return false;
+    }
+    if (combo && key === "v") {
+      void navigator.clipboard?.readText().then((text) => {
+        if (text) queueInput(text);
+      });
+      return false;
+    }
+    if (combo && key === "a") {
+      terminal?.selectAll();
+      return false;
+    }
+    return true;
+  });
 
   resizeObserver = new ResizeObserver(() => scheduleResize());
   resizeObserver.observe(container.value);

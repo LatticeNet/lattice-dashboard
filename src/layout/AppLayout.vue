@@ -54,7 +54,10 @@ watchEffect(() => {
 
         <main id="main-content" role="main" tabindex="-1" class="flex-1 overflow-y-auto">
           <RouterView v-slot="{ Component, route }">
-            <Transition name="page" mode="out-in">
+            <!-- Instant nav: enter-only fade, NO mode="out-in" (which forced a
+                 ~0.22s fade-out before the next view mounted, making tab clicks
+                 feel unresponsive). The new view mounts immediately. -->
+            <Transition name="page-fade">
               <component :is="Component" :key="route.path" />
             </Transition>
           </RouterView>
