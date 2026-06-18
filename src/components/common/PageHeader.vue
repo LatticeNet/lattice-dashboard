@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 const props = defineProps<{
   title: string;
   description?: string;
+  /** Optional breadcrumb context shown muted before the title ("Section / Title"). */
+  section?: string;
   class?: HTMLAttributes["class"];
 }>();
 
@@ -22,13 +24,21 @@ const slots = useSlots();
   >
     <div class="space-y-1">
       <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        <span v-if="section" class="font-normal text-muted-foreground">
+          {{ section }}
+          <span class="px-1 text-muted-foreground/60">/</span>
+        </span>
         {{ title }}
       </h1>
       <p v-if="description" class="text-sm text-muted-foreground">
         {{ description }}
       </p>
     </div>
-    <div v-if="slots.actions" class="flex shrink-0 items-center gap-2">
+    <div
+      v-if="slots.status || slots.actions"
+      class="flex shrink-0 items-center gap-2"
+    >
+      <slot name="status" />
       <slot name="actions" />
     </div>
   </div>

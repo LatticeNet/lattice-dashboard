@@ -253,3 +253,148 @@
 .animate-pulse-dot {
   animation: lattice-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* ----------------------------------------------------------------------------
+   Always-on wall-display calm: respect prefers-reduced-motion.
+   Operators leave this console up 24/7 on shared screens; a pulsing dot or a
+   perpetually spinning refresh glyph is fatiguing and can trip motion-
+   sensitivity. Neutralise the recurring/looping motion and the route + list +
+   fade transitions while leaving final (resting) styles intact.
+   ------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-dot,
+  .animate-spin {
+    animation: none;
+  }
+
+  .page-enter-active,
+  .page-leave-active,
+  .list-move,
+  .list-enter-active,
+  .list-leave-active,
+  .fade-enter-active,
+  .fade-leave-active {
+    transition: none;
+  }
+
+  /* Skip the offset start/end frames so reduced-motion users land directly on
+     the resting (opaque, untranslated) state instead of flashing. */
+  .page-enter-from,
+  .page-leave-to,
+  .list-enter-from,
+  .list-leave-to,
+  .fade-enter-from,
+  .fade-leave-to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Coarse-pointer touch targets.
+   The console is also reached from touch panels / tablets on the ops floor.
+   Small icon buttons (e.g. size-8 ghost buttons, ~32px) are below the 44px
+   accessibility minimum. Expand the *hit area* to >=44px via a centered
+   overlay pseudo-element so the rendered glyph size never changes (no reflow
+   on the wall layout). Applies to native buttons/links/role=button and the
+   shadcn icon-size button (data-slot=button, size-icon variant).
+   ------------------------------------------------------------------------- */
+@media (pointer: coarse) {
+  button,
+  a[role="button"],
+  [role="button"],
+  [data-slot="button"] {
+    position: relative;
+  }
+
+  /* Only enlarge genuinely small controls; full-width / text buttons already
+     clear 44px and must not gain a stray overlay. */
+  button.size-8,
+  button.size-7,
+  button.size-9,
+  a[role="button"].size-8,
+  [role="button"].size-8,
+  [data-slot="button"].size-8,
+  [data-slot="button"].size-7,
+  [data-slot="button"].size-9 {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Invisible centered hit-area pad for icon-only buttons that keep their
+     small visual box (e.g. inline size-7 controls inside dense rows). */
+  .touch-target {
+    position: relative;
+  }
+  .touch-target::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    min-width: 44px;
+    min-height: 44px;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Interactive surface utility.
+   For clickable node cards / list rows: a restrained hover (primary-tinted
+   border + small shadow) and a tactile press state (settle back to baseline,
+   muted wash). Pairs with the existing `transition-colors` on those surfaces.
+   Press feedback is suppressed under reduced-motion (handled above for
+   transitions; the active translate is instantaneous so it stays calm).
+   ------------------------------------------------------------------------- */
+@utility surface-interactive {
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease,
+    transform 0.1s ease;
+
+  &:hover {
+    border-color: color-mix(in oklab, var(--primary) 40%, transparent);
+    box-shadow:
+      0 1px 2px 0 color-mix(in oklab, var(--foreground) 6%, transparent);
+  }
+
+  &:active {
+    transform: translateY(0);
+    background-color: color-mix(in oklab, var(--muted) 60%, transparent);
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Density variants.
+   The UI store toggles `data-density` on <html> ("comfortable" | "compact").
+   In compact mode, tighten shared row/card spacing for high-density fleet
+   grids and tables on large displays. These are opt-in utility overrides:
+   add the `density-*` class to a surface and it tightens only when the root is
+   in compact mode, so comfortable mode is completely unaffected.
+   ------------------------------------------------------------------------- */
+html[data-density="compact"] {
+  /* Row padding override — for list rows that opt in via `density-row`. */
+  .density-row {
+    padding-top: 0.375rem; /* py-1.5 */
+    padding-bottom: 0.375rem;
+  }
+
+  /* Card padding override — for cards that opt in via `density-card`. */
+  .density-card {
+    padding: 0.75rem; /* p-3 */
+  }
+
+  /* Vertical stack gap override — for opt-in `density-stack` containers. */
+  .density-stack > * + * {
+    margin-top: 0.5rem; /* space-y-2 */
+  }
+
+  /* Cell padding override for opt-in dense tables (`density-cell`). */
+  .density-cell {
+    padding-top: 0.375rem;
+    padding-bottom: 0.375rem;
+  }
+}

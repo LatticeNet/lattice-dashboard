@@ -25,6 +25,18 @@ export interface Palette {
   dark: Variant;
 }
 
+// Chart series 2..5 are intent-based accents (cyan / green / amber / red) that
+// mirror the static defaults in style/app.css. Emitting them from make() keeps
+// them in PALETTE_KEYS so token-driven viz (MetricBar, etc.) re-theme together
+// on every palette switch instead of stranding the app.css fallbacks. --chart-1
+// stays palette-derived (primary) so the lead series tracks the brand accent.
+const CHART_ACCENTS = {
+  "--chart-2": "oklch(0.62 0.16 195)",
+  "--chart-3": "oklch(0.66 0.18 142)",
+  "--chart-4": "oklch(0.74 0.17 60)",
+  "--chart-5": "oklch(0.64 0.22 12)",
+} as const;
+
 const make = (primary: string, foreground: string, ring: string): Variant => ({
   "--primary": primary,
   "--primary-foreground": foreground,
@@ -33,6 +45,7 @@ const make = (primary: string, foreground: string, ring: string): Variant => ({
   "--sidebar-primary-foreground": foreground,
   "--sidebar-ring": ring,
   "--chart-1": primary,
+  ...CHART_ACCENTS,
 });
 
 export const PALETTES: Record<Exclude<ColorThemeName, "custom">, Palette> = {
