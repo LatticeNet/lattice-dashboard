@@ -501,7 +501,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             >
               <span class="min-w-0">
                 <span class="flex items-center gap-2">
-                  <StatusDot :active="node.online" :pulse="node.online" />
+                  <StatusDot :online="node.online" :pulse="node.online" />
                   <span class="truncate text-sm font-medium">{{ node.name || node.id }}</span>
                 </span>
                 <span class="mt-1 block truncate text-xs text-muted-foreground">{{ lookupIP(node) || $t('fleet.map.unlocated.noIp') }}</span>

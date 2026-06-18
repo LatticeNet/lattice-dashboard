@@ -209,7 +209,7 @@ function refreshAll() {
                 <div class="flex items-start justify-between gap-2">
                   <div class="min-w-0">
                     <div class="flex items-center gap-2">
-                      <StatusDot :active="node.online" :pulse="node.online" />
+                      <StatusDot :online="node.online" :pulse="node.online" />
                       <span class="truncate font-medium">{{ node.name || node.id }}</span>
                     </div>
                     <p
@@ -316,7 +316,7 @@ function refreshAll() {
                   :key="a.id"
                   class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
                 >
-                  <StatusDot tone="warning" pulse />
+                  <StatusDot status="degraded" pulse />
                   <div class="min-w-0 flex-1">
                     <p class="truncate text-sm">
                       <span class="font-medium">{{ a.plugin }}</span>
