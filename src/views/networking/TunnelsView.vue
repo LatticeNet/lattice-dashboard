@@ -249,6 +249,7 @@ async function openPlan(tunnel: TunnelView) {
         <DataState
           :loading="tunnelsQuery.loading.value"
           :error="tunnelsQuery.error.value"
+          :has-data="tunnelsQuery.data.value !== undefined"
           :is-empty="tunnels.length === 0"
           :empty-title="$t('networking.tunnels.emptyTitle')"
           :empty-description="$t('networking.tunnels.emptyDescription')"

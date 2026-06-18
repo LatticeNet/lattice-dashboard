@@ -116,6 +116,10 @@ const loadingLines = ref(false);
 const loadingOlder = ref(false);
 const viewerError = ref<string | undefined>();
 
+// Display newest-first. Reverse ONCE via a cached computed (recomputes only when
+// `lines` changes) instead of copying+reversing the whole array on every render.
+const reversedLines = computed(() => lines.value.slice().reverse());
+
 let tailTimer: ReturnType<typeof setInterval> | undefined;
 
 function clampLimit(): number {
@@ -380,6 +384,7 @@ function refreshAll(): void {
           <DataState
             :loading="sourcesQuery.loading.value"
             :error="sourcesQuery.error.value"
+            :has-data="sourcesQuery.data.value !== undefined"
             :is-empty="sources.length === 0"
             :empty-title="$t('platform.logs.sourcesEmptyTitle')"
             :empty-description="$t('platform.logs.sourcesEmptyDescription')"
@@ -511,6 +516,7 @@ function refreshAll(): void {
             <DataState
               :loading="loadingLines && lines.length === 0"
               :error="viewerError ? new Error(viewerError) : null"
+              :has-data="lines.length > 0"
               :is-empty="!selectedSource || lines.length === 0"
               :empty-title="$t('platform.logs.linesEmptyTitle')"
               :empty-description="$t('platform.logs.linesEmptyDescription')"
@@ -535,7 +541,7 @@ function refreshAll(): void {
                     </thead>
                     <tbody class="font-mono">
                       <tr
-                        v-for="line in [...lines].reverse()"
+                        v-for="line in reversedLines"
                         :key="line.seq"
                         class="border-b border-border last:border-b-0 hover:bg-muted/40"
                       >
