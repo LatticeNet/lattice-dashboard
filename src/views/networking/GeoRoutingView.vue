@@ -40,6 +40,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogClose,
   DialogContent,
@@ -263,6 +270,7 @@ const continentEntries = computed(() =>
         <DataState
           :loading="routesQuery.loading.value"
           :error="routesQuery.error.value"
+          :has-data="routesQuery.data.value !== undefined"
           :is-empty="routes.length === 0"
           :empty-title="$t('networking.geoRouting.emptyTitle')"
           :empty-description="$t('networking.geoRouting.emptyDescription')"
@@ -380,14 +388,15 @@ const continentEntries = computed(() =>
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-strategy">{{ $t('networking.geoRouting.strategy') }}</Label>
-              <select
-                id="geo-strategy"
-                v-model="form.strategy"
-                class="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="geoip">{{ $t('networking.geoRouting.strategyGeoip') }}</option>
-                <option value="all-healthy">{{ $t('networking.geoRouting.strategyAllHealthy') }}</option>
-              </select>
+              <Select v-model="form.strategy">
+                <SelectTrigger id="geo-strategy" class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="geoip">{{ $t('networking.geoRouting.strategyGeoip') }}</SelectItem>
+                  <SelectItem value="all-healthy">{{ $t('networking.geoRouting.strategyAllHealthy') }}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div class="grid gap-2">
               <Label for="geo-ttl">{{ $t('networking.geoRouting.ttlSeconds') }}</Label>
@@ -413,6 +422,7 @@ const continentEntries = computed(() =>
             <DataState
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
+              :has-data="nodesQuery.data.value !== undefined"
               :is-empty="nodes.length === 0"
               :empty-title="$t('networking.geoRouting.noNodesTitle')"
               :empty-description="$t('networking.geoRouting.noNodesDescription')"

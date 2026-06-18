@@ -46,6 +46,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogDescription,
   DialogFooter,
@@ -360,16 +367,18 @@ async function confirmDelete() {
             <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
             <Input v-model="userSearch" class="pl-8" :placeholder="$t('proxy.users.searchPlaceholder')" />
           </div>
-          <select
-            v-model="statusFilter"
-            class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-          >
-            <option value="all">{{ $t('proxy.users.filterAll') }}</option>
-            <option value="active">{{ $t('common.status.active') }}</option>
-            <option value="disabled">{{ $t('common.status.disabled') }}</option>
-            <option value="expired">{{ $t('common.status.expired') }}</option>
-            <option value="over_quota">{{ $t('common.status.overQuota') }}</option>
-          </select>
+          <Select v-model="statusFilter">
+            <SelectTrigger class="w-full">
+              <SelectValue :placeholder="$t('proxy.users.filterAll')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{{ $t('proxy.users.filterAll') }}</SelectItem>
+              <SelectItem value="active">{{ $t('common.status.active') }}</SelectItem>
+              <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+              <SelectItem value="expired">{{ $t('common.status.expired') }}</SelectItem>
+              <SelectItem value="over_quota">{{ $t('common.status.overQuota') }}</SelectItem>
+            </SelectContent>
+          </Select>
           <div class="flex items-center justify-end text-xs text-muted-foreground">
             {{ $t('proxy.users.visibleCount', { visible: visibleUsers.length, total: users.length }) }}
           </div>
@@ -378,6 +387,7 @@ async function confirmDelete() {
         <DataState
           :loading="usersQuery.loading.value"
           :error="usersQuery.error.value"
+          :has-data="usersQuery.data.value !== undefined"
           :is-empty="visibleUsers.length === 0"
           :empty-title="users.length === 0 ? $t('proxy.users.emptyTitle') : $t('proxy.users.noMatchesTitle')"
           :empty-description="users.length === 0 ? $t('proxy.users.emptyDescription') : $t('proxy.users.noMatchesDescription')"
