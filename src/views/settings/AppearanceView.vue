@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Check, Languages, Monitor, Moon, Paintbrush, Palette, Sun } from "lucide-vue-next";
+import { Check, Languages, Monitor, Moon, Paintbrush, Palette, Rows3, Rows4, Sun } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import { cn } from "@/lib/utils";
 import { useThemeStore, type ThemeMode } from "@/stores/theme";
+import { useUiStore, type Density } from "@/stores/ui";
 import {
   PALETTE_KEYS,
   PALETTES,
@@ -24,6 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const theme = useThemeStore();
+const ui = useUiStore();
 
 // Use the i18n composable so the view reacts to locale changes.
 const { locale } = useI18n();
@@ -32,6 +34,11 @@ const MODES: { value: ThemeMode; icon: typeof Sun }[] = [
   { value: "light", icon: Sun },
   { value: "system", icon: Monitor },
   { value: "dark", icon: Moon },
+];
+
+const DENSITIES: { value: Density; icon: typeof Sun }[] = [
+  { value: "comfortable", icon: Rows3 },
+  { value: "compact", icon: Rows4 },
 ];
 
 // Palette swatch keys, sourced from PALETTE_KEYS-backed PALETTES (custom excluded).
@@ -117,6 +124,44 @@ function changeLocale(code: string): void {
                 <component :is="m.icon" class="size-4" aria-hidden="true" />
                 {{ $t('appearance.' + m.value) }}
                 <span class="text-[10px] font-normal text-muted-foreground">{{ $t('appearance.' + m.value + 'Hint') }}</span>
+              </button>
+            </div>
+            <p class="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
+              {{ $t('settings.appearance.reducedMotionNote') }}
+            </p>
+          </CardContent>
+        </Card>
+
+        <!-- Density -->
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <Rows3 class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('appearance.density') }}
+            </CardTitle>
+            <CardDescription>
+              {{ $t('appearance.densityHint') }}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div class="grid grid-cols-2 gap-2 rounded-md bg-muted p-1 sm:max-w-sm">
+              <button
+                v-for="d in DENSITIES"
+                :key="d.value"
+                type="button"
+                :aria-pressed="ui.density === d.value"
+                :class="
+                  cn(
+                    'flex items-center justify-center gap-1.5 rounded-sm px-3 py-2 text-xs font-medium outline-none transition-colors focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+                    ui.density === d.value
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )
+                "
+                @click="ui.setDensity(d.value)"
+              >
+                <component :is="d.icon" class="size-4" aria-hidden="true" />
+                {{ $t('appearance.' + d.value) }}
               </button>
             </div>
           </CardContent>

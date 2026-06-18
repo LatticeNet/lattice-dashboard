@@ -17,11 +17,13 @@ import {
 } from "lucide-vue-next";
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
 import { formatBytes, formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import XtermSession from "@/components/terminal/XtermSession.vue";
 import { Button } from "@/components/ui/button";
@@ -34,6 +36,13 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 34;
@@ -95,6 +104,10 @@ const filteredNodes = computed(() => {
       .some((value) => String(value).toLowerCase().includes(needle)),
   );
 });
+
+const isNodeNoMatch = computed(
+  () => nodes.value.length > 0 && filteredNodes.value.length === 0,
+);
 
 const selectedSessionCount = computed(() =>
   selectedNodeId.value
@@ -163,11 +176,14 @@ function activeCount(nodeId: string): number {
   return activeSessions.value.filter((session) => session.node_id === nodeId).length;
 }
 
-function statusVariant(status: string): "success" | "warning" | "destructive" | "secondary" {
-  if (status === "open") return "success";
-  if (status === "pending") return "warning";
-  if (status === "failed") return "destructive";
-  return "secondary";
+const SESSION_HEALTH: Record<string, NodeHealth> = {
+  open: "online",
+  pending: "pending",
+  failed: "offline",
+};
+
+function statusVariant(status: string): BadgeVariant {
+  return statusMeta(SESSION_HEALTH[status] ?? "unknown").badgeVariant;
 }
 
 function selectNode(node: Node) {
@@ -280,6 +296,9 @@ function openSelectedInNewTab() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('operations.terminal.title')" :description="$t('operations.terminal.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="sessionsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <div class="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value || sessionsQuery.refreshing.value" @click="refreshAll">
@@ -313,9 +332,10 @@ function openSelectedInNewTab() {
             <DataState
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
+              :has-data="nodesQuery.data.value !== undefined"
               :is-empty="filteredNodes.length === 0"
-              :empty-title="$t('operations.terminal.noNodesTitle')"
-              :empty-description="$t('operations.terminal.noNodesDescription')"
+              :empty-title="isNodeNoMatch ? $t('operations.terminal.noMatchTitle') : $t('operations.terminal.noNodesTitle')"
+              :empty-description="isNodeNoMatch ? $t('operations.terminal.noMatchDescription') : $t('operations.terminal.noNodesDescription')"
               @retry="nodesQuery.refresh"
             >
               <div class="max-h-[58vh] space-y-2 overflow-auto pr-1">
@@ -323,7 +343,7 @@ function openSelectedInNewTab() {
                   v-for="node in filteredNodes"
                   :key="node.id"
                   type="button"
-                  class="w-full rounded-md border border-border p-3 text-left text-sm transition-colors hover:bg-muted/35"
+                  class="surface-interactive w-full rounded-md border border-border p-3 text-left text-sm"
                   :class="selectedNodeId === node.id && 'border-primary bg-primary/5'"
                   @click="selectNode(node)"
                 >
@@ -360,16 +380,19 @@ function openSelectedInNewTab() {
           <CardContent class="space-y-4">
             <div class="grid gap-2">
               <label class="text-xs font-medium text-muted-foreground" for="terminal-shell">{{ $t('operations.terminal.shell') }}</label>
-              <select
-                id="terminal-shell"
+              <Select
                 v-model="shell"
-                class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
                 :disabled="!!activeSession && activeSession.status !== 'closed' && activeSession.status !== 'failed'"
               >
-                <option value="sh">/bin/sh</option>
-                <option value="bash">bash</option>
-                <option value="/bin/zsh">zsh</option>
-              </select>
+                <SelectTrigger id="terminal-shell" class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sh">/bin/sh</SelectItem>
+                  <SelectItem value="bash">bash</SelectItem>
+                  <SelectItem value="/bin/zsh">zsh</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
@@ -437,7 +460,7 @@ function openSelectedInNewTab() {
           </CardHeader>
 
           <CardContent class="p-0">
-            <div v-if="activeSession" class="h-[calc(100vh-230px)] min-h-[560px] bg-[#070a12]">
+            <div v-if="activeSession" class="h-[calc(100vh-230px)] min-h-[320px] bg-[#070a12] md:min-h-[560px]">
               <XtermSession
                 :key="activeSession.id"
                 :session="activeSession"
@@ -447,7 +470,7 @@ function openSelectedInNewTab() {
                 @error="onTerminalError"
               />
             </div>
-            <div v-else class="flex min-h-[560px] items-center justify-center bg-muted/20 p-8">
+            <div v-else class="flex min-h-[320px] items-center justify-center bg-muted/20 p-8 md:min-h-[560px]">
               <EmptyState
                 :icon="SquareTerminal"
                 :title="$t('operations.terminal.emptyConsoleTitle')"

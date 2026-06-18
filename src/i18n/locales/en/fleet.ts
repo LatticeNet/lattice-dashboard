@@ -11,6 +11,21 @@ export default {
         online: "Online",
         disabled: "Disabled",
       },
+      filters: {
+        searchPlaceholder: "Search name, ID, or host…",
+        status: "Status",
+        statusAll: "All statuses",
+        showing: "Showing {shown} of {total}",
+        clear: "Clear filters",
+        noMatchTitle: "No matching nodes",
+        noMatchDescription: "No nodes match the current search, status, or tag filters.",
+      },
+      metric: {
+        cpu: "CPU",
+        memory: "Memory",
+        disk: "Disk",
+        sparklineLabel: "Recent CPU trend",
+      },
       enroll: {
         title: "Enroll Node",
         description: "Create a one-time node enrollment token and install command.",

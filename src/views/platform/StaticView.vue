@@ -10,7 +10,7 @@ import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import StorageAdminPanel from "@/components/platform/StorageAdminPanel.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,19 +49,21 @@ const sortedObjects = computed(() =>
   [...objects.value].sort((a, b) => a.path.localeCompare(b.path)),
 );
 
+const columns = computed<DataTableColumn<StaticObject>[]>(() => [
+  { key: "path", label: t("platform.static.colPath"), sortable: true, searchable: true, class: "font-mono text-xs" },
+  { key: "content_type", label: t("platform.static.colContentType"), sortable: true, searchable: true },
+  { key: "size", label: t("platform.static.colSize"), sortable: true, align: "right" },
+  { key: "updated_at", label: t("platform.static.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
+  { key: "actions", label: t("platform.static.colActions"), align: "right" },
+]);
+
 function loadBucket() {
   activeBucket.value = bucket.value.trim() || "default";
   objectsQuery.refresh();
 }
 
-// ── Row expand (content preview) ────────────────────────────────────────────
-const expanded = ref<Set<string>>(new Set());
-function toggleExpand(path: string) {
-  const next = new Set(expanded.value);
-  if (next.has(path)) next.delete(path);
-  else next.add(path);
-  expanded.value = next;
-}
+// ── Content preview dialog ──────────────────────────────────────────────────
+const previewTarget = ref<StaticObject | undefined>(undefined);
 
 // ── Put dialog ──────────────────────────────────────────────────────────────
 const putOpen = ref(false);
@@ -156,52 +158,43 @@ async function submitPut() {
           <Button type="submit" variant="outline">{{ $t('platform.static.load') }}</Button>
         </form>
 
-        <DataState
+        <DataTable
           v-if="canRead"
+          :columns="columns"
+          :rows="sortedObjects"
+          :row-key="(object) => object.path"
           :loading="objectsQuery.loading.value"
           :error="objectsQuery.error.value"
-          :is-empty="objects.length === 0"
+          :page-size="50"
+          searchable
+          :search-placeholder="$t('platform.shared.searchPaths')"
           :empty-title="$t('platform.static.emptyTitle')"
           :empty-description="$t('platform.static.emptyDescription')"
+          :no-match-title="$t('platform.shared.noMatchesTitle')"
+          :no-match-description="$t('platform.shared.noMatchesDescription')"
           @retry="objectsQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.static.colPath') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.static.colContentType') }}</th>
-                  <th scope="col" class="py-2 pr-3 text-right font-medium">{{ $t('platform.static.colSize') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.static.colUpdated') }}</th>
-                  <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.static.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template v-for="object in sortedObjects" :key="object.path">
-                  <tr class="border-b border-border align-top hover:bg-muted/40" :class="expanded.has(object.path) && 'border-b-0'">
-                    <td class="py-3 pr-3 font-mono text-xs">{{ object.path }}</td>
-                    <td class="py-3 pr-3"><Badge variant="outline">{{ object.content_type || "—" }}</Badge></td>
-                    <td class="py-3 pr-3 text-right font-mono text-xs tabular text-muted-foreground">{{ formatBytes(object.size) }}</td>
-                    <td class="py-3 pr-3 text-xs text-muted-foreground">{{ formatDateTime(object.updated_at) }}</td>
-                    <td class="py-3 pl-3">
-                      <div class="flex items-center justify-end gap-1">
-                        <Button variant="ghost" size="sm" @click="toggleExpand(object.path)">
-                          {{ expanded.has(object.path) ? $t('platform.static.hide') : $t('platform.static.preview') }}
-                        </Button>
-                        <Button v-if="canWrite" variant="outline" size="sm" @click="openEdit(object)">{{ $t('common.actions.edit') }}</Button>
-                      </div>
-                    </td>
-                  </tr>
-                  <tr v-if="expanded.has(object.path)" class="border-b border-border last:border-b-0">
-                    <td colspan="5" class="px-3 pb-3">
-                      <pre class="max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed">{{ object.content }}</pre>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-path="{ row }">
+            <span class="font-mono text-xs">{{ row.path }}</span>
+          </template>
+          <template #cell-content_type="{ row }">
+            <Badge variant="outline">{{ row.content_type || "—" }}</Badge>
+          </template>
+          <template #cell-size="{ row }">
+            <span class="font-mono text-xs tabular text-muted-foreground">{{ formatBytes(row.size) }}</span>
+          </template>
+          <template #cell-updated_at="{ row }">
+            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex items-center justify-end gap-1">
+              <Button variant="ghost" size="sm" @click="previewTarget = row">
+                {{ $t('platform.static.preview') }}
+              </Button>
+              <Button v-if="canWrite" variant="outline" size="sm" @click="openEdit(row)">{{ $t('common.actions.edit') }}</Button>
+            </div>
+          </template>
+        </DataTable>
         <p v-else class="text-sm text-muted-foreground">
           <i18n-t keypath="platform.static.readScopeRequired" tag="span" scope="global">
             <template #scope><code class="font-mono">static:read</code></template>
@@ -211,6 +204,20 @@ async function submitPut() {
     </Card>
 
     <StorageAdminPanel kind="static" :active-bucket="activeBucket" />
+
+    <!-- Content preview dialog -->
+    <Dialog :open="!!previewTarget" @update:open="(v) => { if (!v) previewTarget = undefined; }">
+      <DialogScrollContent class="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle class="break-all font-mono text-base">{{ previewTarget?.path }}</DialogTitle>
+          <DialogDescription>{{ previewTarget?.content_type || "—" }}</DialogDescription>
+        </DialogHeader>
+        <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed">{{ previewTarget?.content }}</pre>
+        <DialogFooter>
+          <Button type="button" variant="outline" @click="previewTarget = undefined">{{ $t('common.actions.close') }}</Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
 
     <!-- Put dialog -->
     <Dialog v-model:open="putOpen">

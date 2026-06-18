@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  ExternalLink,
   Network,
   Pencil,
   Play,
@@ -25,15 +23,18 @@ import {
   type NetRuleDirection,
   type NetRuleProtocol,
 } from "@/lib/api";
-import { sha256Hex } from "@/lib/crypto";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import DataState from "@/components/common/DataState.vue";
-import CopyButton from "@/components/common/CopyButton.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -97,6 +98,22 @@ function nodeName(id: string): string {
 function activeRuleCount(p: NetPolicyView): number {
   return p.rules.filter((r) => !r.disabled).length;
 }
+
+const policyColumns = computed<DataTableColumn<NetPolicyView>[]>(() => [
+  {
+    key: "target",
+    label: t("networking.policy.colTargetNode"),
+    sortable: true,
+    searchable: true,
+    value: (p) => policyNodeLabel(p),
+  },
+  { key: "enabled", label: t("networking.policy.colEnabled"), sortable: true, value: (p) => (p.enabled ? 1 : 0) },
+  { key: "rules", label: t("networking.policy.colRules"), align: "right", sortable: true, value: (p) => p.rules.length },
+  { key: "last_plan", label: t("networking.policy.colLastPlan") },
+  { key: "last_applied", label: t("networking.policy.colLastApplied"), sortable: true, value: (p) => p.last_applied_at ?? "" },
+  { key: "last_error", label: t("networking.policy.colLastError") },
+  { key: "actions", label: t("networking.policy.colActions"), align: "right" },
+]);
 
 function loadGraph() {
   if (graphQuery.data.value === undefined && !graphQuery.loading.value) graphQuery.refresh();
@@ -173,11 +190,25 @@ const form = reactive<{ target_node_id: string; enabled: boolean; rules: RuleDra
   rules: [],
 });
 
+// Snapshot of the form at open time — drives the unsaved-changes (dirty) guard.
+const formSnapshot = ref("");
+function snapshotForm(): string {
+  return JSON.stringify({
+    target_node_id: form.target_node_id,
+    enabled: form.enabled,
+    rules: form.rules,
+  });
+}
+const isDirty = computed(() => dialogOpen.value && snapshotForm() !== formSnapshot.value);
+// Confirm dialog shown when the operator tries to discard unsaved edits.
+const discardConfirmOpen = ref(false);
+
 function openCreate() {
   editingId.value = undefined;
   form.target_node_id = "";
   form.enabled = true;
   form.rules = [emptyRule()];
+  formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
 
@@ -186,7 +217,30 @@ function openEdit(p: NetPolicyView) {
   form.target_node_id = p.target_node_id;
   form.enabled = p.enabled;
   form.rules = p.rules.length ? p.rules.map(ruleToDraft) : [emptyRule()];
+  formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
+}
+
+/** Intercept dialog close: when dirty, ask before discarding. */
+function requestCloseDialog() {
+  if (isDirty.value) {
+    discardConfirmOpen.value = true;
+    return;
+  }
+  dialogOpen.value = false;
+}
+
+function onDialogOpenChange(open: boolean) {
+  if (open) {
+    dialogOpen.value = true;
+    return;
+  }
+  requestCloseDialog();
+}
+
+function confirmDiscard() {
+  discardConfirmOpen.value = false;
+  dialogOpen.value = false;
 }
 
 function addRule() {
@@ -275,6 +329,7 @@ async function confirmDelete() {
 }
 
 // ── Plan dialog ───────────────────────────────────────────────────────────
+const planDigest = usePlanDigest();
 const planning = ref<string | undefined>(undefined);
 const planApproval = ref<ApprovalView | undefined>(undefined);
 const planSha = ref("");
@@ -285,7 +340,7 @@ async function plan(p: NetPolicyView) {
   try {
     const approval = await api.netpolicy.plan(p.target_node_id);
     planApproval.value = approval;
-    planSha.value = await sha256Hex(approval.plan || "");
+    planSha.value = await planDigest.digestFor(approval);
     toast.success(t("networking.shared.toastPlanCreated"));
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
@@ -293,6 +348,16 @@ async function plan(p: NetPolicyView) {
     planning.value = undefined;
   }
 }
+
+const planBadges = computed(() => {
+  const a = planApproval.value;
+  if (!a) return [];
+  return [
+    { label: a.status, variant: "warning" as const },
+    { label: `${a.plugin} · ${a.action}`, variant: "outline" as const },
+    { label: t("networking.shared.idLabel", { id: shortId(a.id, 12) }), variant: "secondary" as const },
+  ];
+});
 
 function closePlan(open: boolean) {
   if (!open) {
@@ -395,6 +460,9 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
       :title="$t('networking.policy.title')"
       :description="$t('networking.policy.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -431,91 +499,77 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <DataState
+            <DataTable
+              :columns="policyColumns"
+              :rows="sortedPolicies"
+              :row-key="(p) => p.target_node_id"
               :loading="policiesQuery.loading.value"
               :error="policiesQuery.error.value"
-              :is-empty="policies.length === 0"
+              searchable
+              :search-placeholder="$t('common.actions.search')"
               :empty-title="$t('networking.policy.emptyTitle')"
               :empty-description="canRead ? $t('networking.policy.emptyWithRead') : $t('networking.policy.emptyNeedRead')"
+              :no-match-title="$t('networking.shared.noMatchTitle')"
+              :no-match-description="$t('networking.shared.noMatchDescription')"
+              :actions-label="$t('networking.policy.colActions')"
               @retry="policiesQuery.refresh"
             >
-              <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colTargetNode') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colEnabled') }}</th>
-                      <th scope="col" class="py-2 pr-3 text-right font-medium">{{ $t('networking.policy.colRules') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colLastPlan') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colLastApplied') }}</th>
-                      <th scope="col" class="py-2 pr-3 font-medium">{{ $t('networking.policy.colLastError') }}</th>
-                      <th scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('networking.policy.colActions') }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="p in sortedPolicies"
-                      :key="p.target_node_id"
-                      class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                    >
-                      <td class="py-3 pr-3">
-                        <div class="font-medium">{{ policyNodeLabel(p) }}</div>
-                        <div class="font-mono text-xs text-muted-foreground">{{ shortId(p.target_node_id, 16) }}</div>
-                      </td>
-                      <td class="py-3 pr-3">
-                        <Badge :variant="p.enabled ? 'success' : 'secondary'">
-                          {{ p.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-                        </Badge>
-                      </td>
-                      <td class="py-3 pr-3 text-right tabular">{{ activeRuleCount(p) }} / {{ p.rules.length }}</td>
-                      <td class="py-3 pr-3 font-mono text-xs text-muted-foreground">
-                        {{ p.last_plan_sha ? shortId(p.last_plan_sha, 12) : "—" }}
-                      </td>
-                      <td class="py-3 pr-3 text-xs text-muted-foreground">
-                        {{ p.last_applied_at ? formatDateTime(p.last_applied_at) : "—" }}
-                      </td>
-                      <td class="py-3 pr-3">
-                        <span v-if="p.last_error" class="text-xs text-destructive">{{ p.last_error }}</span>
-                        <span v-else class="text-xs text-muted-foreground">—</span>
-                      </td>
-                      <td class="py-3 pl-3">
-                        <div class="flex items-center justify-end gap-1">
-                          <Button
-                            v-if="canAdmin"
-                            variant="outline"
-                            size="sm"
-                            :disabled="planning === p.target_node_id"
-                            @click="plan(p)"
-                          >
-                            <RefreshCw v-if="planning === p.target_node_id" class="size-4 animate-spin" aria-hidden="true" />
-                            <Play v-else class="size-4" aria-hidden="true" />
-                            {{ $t('networking.shared.plan') }}
-                          </Button>
-                          <Button
-                            v-if="canAdmin"
-                            variant="ghost"
-                            size="icon-sm"
-                            :aria-label="$t('common.actions.edit')"
-                            @click="openEdit(p)"
-                          >
-                            <Pencil class="size-4" />
-                          </Button>
-                          <Button
-                            v-if="canAdmin"
-                            variant="ghost"
-                            size="icon-sm"
-                            :aria-label="$t('common.actions.delete')"
-                            @click="deleteTarget = p"
-                          >
-                            <Trash2 class="size-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </DataState>
+              <template #cell-target="{ row: p }">
+                <div class="font-medium">{{ policyNodeLabel(p) }}</div>
+                <div class="font-mono text-xs text-muted-foreground">{{ shortId(p.target_node_id, 16) }}</div>
+              </template>
+              <template #cell-enabled="{ row: p }">
+                <Badge :variant="p.enabled ? 'success' : 'secondary'">
+                  {{ p.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+                </Badge>
+              </template>
+              <template #cell-rules="{ row: p }">
+                <span class="tabular-nums">{{ activeRuleCount(p) }} / {{ p.rules.length }}</span>
+              </template>
+              <template #cell-last_plan="{ row: p }">
+                <span class="font-mono text-xs text-muted-foreground">{{ p.last_plan_sha ? shortId(p.last_plan_sha, 12) : "—" }}</span>
+              </template>
+              <template #cell-last_applied="{ row: p }">
+                <span class="text-xs text-muted-foreground">{{ p.last_applied_at ? formatDateTime(p.last_applied_at) : "—" }}</span>
+              </template>
+              <template #cell-last_error="{ row: p }">
+                <span v-if="p.last_error" class="text-xs text-destructive">{{ p.last_error }}</span>
+                <span v-else class="text-xs text-muted-foreground">—</span>
+              </template>
+              <template #cell-actions="{ row: p }">
+                <div class="flex items-center justify-end gap-1">
+                  <Button
+                    v-if="canAdmin"
+                    variant="outline"
+                    size="sm"
+                    :disabled="planning === p.target_node_id"
+                    @click="plan(p)"
+                  >
+                    <RefreshCw v-if="planning === p.target_node_id" class="size-4 animate-spin" aria-hidden="true" />
+                    <Play v-else class="size-4" aria-hidden="true" />
+                    {{ $t('networking.shared.plan') }}
+                  </Button>
+                  <Button
+                    v-if="canAdmin"
+                    variant="ghost"
+                    size="icon-sm"
+                    :aria-label="$t('common.actions.edit')"
+                    @click="openEdit(p)"
+                  >
+                    <Pencil class="size-4" />
+                  </Button>
+                  <Button
+                    v-if="canAdmin"
+                    variant="ghost"
+                    size="icon-sm"
+                    :aria-label="$t('common.actions.delete')"
+                    @click="deleteTarget = p"
+                  >
+                    <Trash2 class="size-4 text-destructive" />
+                  </Button>
+                </div>
+              </template>
+            </DataTable>
           </CardContent>
         </Card>
       </TabsContent>
@@ -549,6 +603,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             <DataState
               :loading="graphQuery.loading.value"
               :error="graphQuery.error.value"
+              :has-data="graphQuery.data.value !== undefined"
               :is-empty="(graph?.nodes.length ?? 0) === 0"
               :empty-title="$t('networking.policy.graphEmptyTitle')"
               :empty-description="$t('networking.policy.graphEmptyDescription')"
@@ -697,7 +752,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
     </Tabs>
 
     <!-- Create / edit policy dialog -->
-    <Dialog v-model:open="dialogOpen">
+    <Dialog :open="dialogOpen" @update:open="onDialogOpenChange">
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{{ editingId ? $t('networking.policy.editTitle') : $t('networking.policy.newTitle') }}</DialogTitle>
@@ -848,7 +903,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="dialogOpen = false">{{ $t('common.actions.cancel') }}</Button>
+            <Button type="button" variant="outline" @click="requestCloseDialog">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               {{ editingId ? $t('common.actions.saveChanges') : $t('networking.policy.createPolicy') }}
@@ -858,68 +913,43 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
       </DialogScrollContent>
     </Dialog>
 
+    <!-- Unsaved-changes (dirty) guard -->
+    <ConfirmDialog
+      :open="discardConfirmOpen"
+      variant="destructive"
+      :title="$t('networking.policy.discardTitle')"
+      :description="$t('networking.policy.discardDescription')"
+      :confirm-label="$t('networking.policy.discardConfirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      @update:open="(v) => { if (!v) discardConfirmOpen = false; }"
+      @confirm="confirmDiscard"
+    />
+
     <!-- Delete confirm dialog -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogScrollContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.policy.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.policy.deleteDescription') }}
-            <span class="font-medium">{{ deleteTarget ? policyNodeLabel(deleteTarget) : "" }}</span>?
-            {{ $t('networking.policy.deleteIrreversible') }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('networking.policy.deleteTitle')"
+      :description="`${$t('networking.policy.deleteDescription')} ${deleteTarget ? policyNodeLabel(deleteTarget) : ''}? ${$t('networking.policy.deleteIrreversible')}`"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
 
     <!-- Plan review dialog -->
-    <Dialog :open="!!planApproval" @update:open="closePlan">
-      <DialogScrollContent class="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.shared.planCreated') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.shared.planReviewHint') }}
-          </DialogDescription>
-        </DialogHeader>
-        <div v-if="planApproval" class="space-y-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="warning">{{ planApproval.status }}</Badge>
-            <Badge variant="outline">{{ planApproval.plugin }} · {{ planApproval.action }}</Badge>
-            <Badge variant="secondary">{{ $t('networking.shared.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
-          </div>
-
-          <div class="rounded-md border border-border">
-            <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">{{ $t('networking.shared.planLabel') }}</span>
-              <CopyButton :value="planApproval.plan || ''" />
-            </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-            <span class="font-medium">sha256</span>
-            <code class="break-all font-mono">{{ planSha }}</code>
-            <CopyButton :value="planSha" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
-          <Button as-child>
-            <RouterLink to="/approvals">
-              <ExternalLink class="size-4" aria-hidden="true" />
-              {{ $t('networking.shared.goToApprovals') }}
-            </RouterLink>
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <PlanReviewDialog
+      :open="!!planApproval"
+      :plan-text="planApproval?.plan"
+      :digest="planSha"
+      :badges="planBadges"
+      :title="$t('networking.shared.planCreated')"
+      :description="$t('networking.shared.planReviewHint')"
+      :plan-label="$t('networking.shared.planLabel')"
+      :close-label="$t('common.actions.close')"
+      :approvals-label="$t('networking.shared.goToApprovals')"
+      approvals-to="/approvals"
+      @update:open="closePlan"
+    />
   </div>
 </template>

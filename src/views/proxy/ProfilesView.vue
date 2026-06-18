@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   AlertTriangle,
@@ -29,7 +28,10 @@ import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -103,6 +105,19 @@ function collectorVariant(status?: string): "success" | "destructive" | "seconda
   if (status === "error") return "destructive";
   return "secondary";
 }
+
+// ── DataTable columns ──────────────────────────────────────────────────────────
+const profileColumns = computed<DataTableColumn<ProxyNodeProfileView>[]>(() => [
+  { key: "node", label: t("proxy.profiles.colNode"), sortable: true, searchable: true, value: (p) => p.node_name || p.node_id },
+  { key: "core", label: t("proxy.profiles.colCore"), sortable: true, searchable: true, value: (p) => p.core },
+  { key: "inbounds", label: t("proxy.profiles.colInbounds"), sortable: true, value: (p) => p.inbound_ids.length },
+  { key: "hostname", label: t("proxy.profiles.colHostname"), sortable: true, value: (p) => p.hostname || "" },
+  { key: "appliedConfig", label: t("proxy.profiles.colAppliedConfig"), value: (p) => p.applied_sha256 || "" },
+  { key: "drift", label: t("proxy.profiles.colDrift"), sortable: true, value: (p) => (p.config_stale ? 1 : 0) },
+  { key: "collector", label: t("proxy.profiles.colCollector"), sortable: true, value: (p) => p.usage_collector_status || "" },
+  { key: "lastApply", label: t("proxy.profiles.colLastApply"), sortable: true, value: (p) => p.last_apply_at || "" },
+  { key: "actions", label: t("proxy.profiles.colActions"), align: "right" },
+]);
 
 // ── Create / edit dialog ──────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -255,6 +270,17 @@ function closePlan(open: boolean) {
   }
 }
 
+// Badges for the shared PlanReviewDialog (status / id / scope) — plain text only.
+const planBadges = computed(() => {
+  const approval = planApproval.value;
+  if (!approval) return [];
+  return [
+    { label: approval.status, variant: "warning" as const },
+    { label: t("proxy.profiles.idLabel", { id: shortId(approval.id, 12) }), variant: "outline" as const },
+    { label: approval.node_id || t("common.misc.global"), variant: "secondary" as const },
+  ];
+});
+
 function refreshAll() {
   profilesQuery.refresh();
   nodesQuery.refresh();
@@ -268,6 +294,9 @@ function refreshAll() {
       :title="$t('proxy.profiles.title')"
       :description="$t('proxy.profiles.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="profilesQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -325,162 +354,147 @@ function refreshAll() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="profileColumns"
+          :rows="sortedProfiles"
+          :row-key="(p) => p.id"
           :loading="profilesQuery.loading.value"
           :error="profilesQuery.error.value"
-          :is-empty="profiles.length === 0"
+          :page-size="15"
+          searchable
+          :search-placeholder="$t('proxy.profiles.searchPlaceholder')"
           :empty-title="$t('proxy.profiles.emptyTitle')"
           :empty-description="$t('proxy.profiles.emptyDescription')"
+          :no-match-title="$t('proxy.table.noMatchTitle')"
+          :no-match-description="$t('proxy.table.noMatchDescription')"
+          :actions-label="$t('proxy.profiles.colActions')"
+          :showing-label="$t('proxy.table.showing')"
+          :of-label="$t('proxy.table.of')"
+          :page-of-label="$t('proxy.table.of')"
+          :prev-label="$t('proxy.table.prevPage')"
+          :next-label="$t('proxy.table.nextPage')"
+          :clear-search-label="$t('proxy.table.clearSearch')"
           @retry="profilesQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colNode') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colCore') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colInbounds') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colHostname') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colAppliedConfig') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colDrift') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colCollector') }}</th>
-                  <th scope="col" class="px-3 py-2 font-medium">{{ $t('proxy.profiles.colLastApply') }}</th>
-                  <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('proxy.profiles.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="profile in sortedProfiles"
-                  :key="profile.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="px-3 py-3">
-                    <div class="min-w-0">
-                      <p class="truncate font-medium">{{ profile.node_name || profile.node_id }}</p>
-                      <p class="font-mono text-xs text-muted-foreground">{{ shortId(profile.node_id, 16) }}</p>
-                    </div>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Badge :variant="coreVariant(profile.core)">{{ profile.core }}</Badge>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Tooltip>
-                      <TooltipTrigger as-child>
-                        <span class="tabular cursor-default">{{ profile.inbound_ids.length }}</span>
-                      </TooltipTrigger>
-                      <TooltipContent v-if="profile.inbound_ids.length" class="max-w-xs">
-                        <span class="break-words">
-                          {{ profile.inbound_ids.map(inboundName).join(", ") }}
-                        </span>
-                      </TooltipContent>
-                    </Tooltip>
-                  </td>
-                  <td class="px-3 py-3">
-                    <span v-if="profile.hostname" class="font-mono text-xs">{{ profile.hostname }}</span>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div v-if="profile.applied_sha256" class="flex items-center gap-1">
-                      <code class="font-mono text-xs">{{ shortId(profile.applied_sha256, 12) }}</code>
-                      <CopyButton :value="profile.applied_sha256" />
-                    </div>
-                    <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.profiles.notApplied') }}</span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="flex flex-col gap-1">
-                      <Tooltip v-if="profile.config_stale">
-                        <TooltipTrigger as-child>
-                          <span class="w-fit cursor-default">
-                            <Badge variant="warning">
-                              <AlertTriangle class="size-3" aria-hidden="true" />
-                              {{ $t('proxy.profiles.drift') }}
-                            </Badge>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent class="max-w-xs">
-                          <span class="break-words">
-                            {{ profile.drift_reason || $t('proxy.profiles.driftReasonFallback') }}
-                          </span>
-                        </TooltipContent>
-                      </Tooltip>
-                      <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.profiles.inSync') }}</span>
-                      <span
-                        v-if="profile.ineligible_users && profile.ineligible_users > 0"
-                        class="text-xs text-warning"
-                      >
-                        {{ $t('proxy.profiles.ineligibleUsers', { count: profile.ineligible_users }, profile.ineligible_users) }}
-                      </span>
-                    </div>
-                  </td>
-                  <td class="px-3 py-3">
-                    <Tooltip v-if="profile.usage_collector_status === 'error'">
-                      <TooltipTrigger as-child>
-                        <span class="w-fit cursor-default">
-                          <Badge variant="destructive">{{ $t('common.status.error') }}</Badge>
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent class="max-w-xs">
-                        <span class="break-words">
-                          {{ profile.usage_collector_last_error || $t('proxy.profiles.collectorErrorFallback') }}
-                        </span>
-                      </TooltipContent>
-                    </Tooltip>
-                    <Badge v-else-if="profile.usage_collector_status === 'ok'" variant="success">{{ $t('common.status.ok') }}</Badge>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="min-w-0">
-                      <p class="text-xs text-muted-foreground">
-                        {{ profile.last_apply_at ? formatRelativeTime(profile.last_apply_at) : $t('common.misc.never') }}
-                      </p>
-                      <Tooltip v-if="profile.last_error">
-                        <TooltipTrigger as-child>
-                          <span class="cursor-default text-xs text-destructive">{{ $t('proxy.profiles.lastError') }}</span>
-                        </TooltipTrigger>
-                        <TooltipContent class="max-w-xs">
-                          <span class="break-words">{{ profile.last_error }}</span>
-                        </TooltipContent>
-                      </Tooltip>
-                    </div>
-                  </td>
-                  <td class="px-3 py-3">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canPlan"
-                        variant="outline"
-                        size="sm"
-                        :disabled="planning === profile.node_id"
-                        @click="planNode(profile)"
-                      >
-                        <RefreshCw v-if="planning === profile.node_id" class="size-4 animate-spin" aria-hidden="true" />
-                        <ArrowRight v-else class="size-4" aria-hidden="true" />
-                        {{ $t('proxy.profiles.plan') }}
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('proxy.profiles.editProfile')"
-                        @click="openEdit(profile)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('proxy.profiles.deleteProfile')"
-                        @click="deleteTarget = profile"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-node="{ row }">
+            <div class="min-w-0">
+              <p class="truncate font-medium">{{ row.node_name || row.node_id }}</p>
+              <p class="font-mono text-xs text-muted-foreground">{{ shortId(row.node_id, 16) }}</p>
+            </div>
+          </template>
+          <template #cell-core="{ row }">
+            <Badge :variant="coreVariant(row.core)">{{ row.core }}</Badge>
+          </template>
+          <template #cell-inbounds="{ row }">
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <span class="tabular cursor-default">{{ row.inbound_ids.length }}</span>
+              </TooltipTrigger>
+              <TooltipContent v-if="row.inbound_ids.length" class="max-w-xs">
+                <span class="break-words">{{ row.inbound_ids.map(inboundName).join(", ") }}</span>
+              </TooltipContent>
+            </Tooltip>
+          </template>
+          <template #cell-hostname="{ row }">
+            <span v-if="row.hostname" class="font-mono text-xs">{{ row.hostname }}</span>
+            <span v-else class="text-xs text-muted-foreground">—</span>
+          </template>
+          <template #cell-appliedConfig="{ row }">
+            <div v-if="row.applied_sha256" class="flex items-center gap-1">
+              <code class="font-mono text-xs">{{ shortId(row.applied_sha256, 12) }}</code>
+              <CopyButton :value="row.applied_sha256" />
+            </div>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.profiles.notApplied') }}</span>
+          </template>
+          <template #cell-drift="{ row }">
+            <div class="flex flex-col gap-1">
+              <Tooltip v-if="row.config_stale">
+                <TooltipTrigger as-child>
+                  <span class="w-fit cursor-default">
+                    <Badge variant="warning">
+                      <AlertTriangle class="size-3" aria-hidden="true" />
+                      {{ $t('proxy.profiles.drift') }}
+                    </Badge>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent class="max-w-xs">
+                  <span class="break-words">{{ row.drift_reason || $t('proxy.profiles.driftReasonFallback') }}</span>
+                </TooltipContent>
+              </Tooltip>
+              <span v-else class="text-xs text-muted-foreground">{{ $t('proxy.profiles.inSync') }}</span>
+              <span
+                v-if="row.ineligible_users && row.ineligible_users > 0"
+                class="text-xs text-warning"
+              >
+                {{ $t('proxy.profiles.ineligibleUsers', { count: row.ineligible_users }, row.ineligible_users) }}
+              </span>
+            </div>
+          </template>
+          <template #cell-collector="{ row }">
+            <Tooltip v-if="row.usage_collector_status === 'error'">
+              <TooltipTrigger as-child>
+                <span class="w-fit cursor-default">
+                  <Badge variant="destructive">{{ $t('common.status.error') }}</Badge>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent class="max-w-xs">
+                <span class="break-words">
+                  {{ row.usage_collector_last_error || $t('proxy.profiles.collectorErrorFallback') }}
+                </span>
+              </TooltipContent>
+            </Tooltip>
+            <Badge v-else-if="row.usage_collector_status === 'ok'" variant="success">{{ $t('common.status.ok') }}</Badge>
+            <span v-else class="text-xs text-muted-foreground">—</span>
+          </template>
+          <template #cell-lastApply="{ row }">
+            <div class="min-w-0">
+              <p class="text-xs text-muted-foreground">
+                {{ row.last_apply_at ? formatRelativeTime(row.last_apply_at) : $t('common.misc.never') }}
+              </p>
+              <Tooltip v-if="row.last_error">
+                <TooltipTrigger as-child>
+                  <span class="cursor-default text-xs text-destructive">{{ $t('proxy.profiles.lastError') }}</span>
+                </TooltipTrigger>
+                <TooltipContent class="max-w-xs">
+                  <span class="break-words">{{ row.last_error }}</span>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button
+                v-if="canPlan"
+                variant="outline"
+                size="sm"
+                :disabled="planning === row.node_id"
+                @click="planNode(row)"
+              >
+                <RefreshCw v-if="planning === row.node_id" class="size-4 animate-spin" aria-hidden="true" />
+                <ArrowRight v-else class="size-4" aria-hidden="true" />
+                {{ $t('proxy.profiles.plan') }}
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('proxy.profiles.editProfile')"
+                @click="openEdit(row)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('proxy.profiles.deleteProfile')"
+                @click="deleteTarget = row"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -589,69 +603,30 @@ function refreshAll() {
     </Dialog>
 
     <!-- Delete confirm -->
-    <Dialog :open="!!deleteTarget" @update:open="(o) => { if (!o) deleteTarget = undefined; }">
-      <DialogScrollContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('proxy.profiles.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('proxy.profiles.deleteConfirmPrefix') }}
-            <span class="font-medium">{{ deleteTarget?.node_name || deleteTarget?.node_id }}</span>.
-            {{ $t('proxy.profiles.deleteConfirmSuffix') }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button variant="outline" :disabled="deleting" @click="deleteTarget = undefined">{{ $t('common.actions.cancel') }}</Button>
-          <Button variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('proxy.profiles.deleteTitle')"
+      :description="$t('proxy.profiles.deleteConfirmPrefix') + ' ' + (deleteTarget?.node_name || deleteTarget?.node_id || '') + '. ' + $t('proxy.profiles.deleteConfirmSuffix')"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(o) => { if (!o) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
 
-    <!-- Plan review -->
-    <Dialog :open="planOpen" @update:open="closePlan">
-      <DialogScrollContent class="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{{ $t('proxy.profiles.planTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('proxy.profiles.planDescription') }}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div v-if="planApproval" class="space-y-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <Badge variant="warning">{{ planApproval.status }}</Badge>
-            <Badge variant="outline">{{ $t('proxy.profiles.idLabel', { id: shortId(planApproval.id, 12) }) }}</Badge>
-            <Badge variant="secondary">{{ planApproval.node_id || $t('common.misc.global') }}</Badge>
-          </div>
-
-          <div class="rounded-md border border-border">
-            <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">{{ $t('proxy.profiles.plan') }}</span>
-              <CopyButton :value="planApproval.plan || ''" />
-            </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ planApproval.plan }}</pre>
-          </div>
-
-          <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-            <span class="font-medium">sha256</span>
-            <code class="break-all font-mono">{{ planDigest }}</code>
-            <CopyButton :value="planDigest" />
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" @click="closePlan(false)">{{ $t('common.actions.close') }}</Button>
-          <RouterLink to="/approvals">
-            <Button>
-              {{ $t('proxy.profiles.reviewInApprovals') }}
-              <ArrowRight class="size-4" aria-hidden="true" />
-            </Button>
-          </RouterLink>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
+    <!-- Plan review (shared renderer; digest is the SAME sha256Hex(approval.plan) bytes) -->
+    <PlanReviewDialog
+      :open="planOpen"
+      :plan-text="planApproval?.plan || ''"
+      :digest="planDigest"
+      :badges="planBadges"
+      :title="$t('proxy.profiles.planTitle')"
+      :description="$t('proxy.profiles.planDescription')"
+      :plan-label="$t('proxy.profiles.plan')"
+      :close-label="$t('common.actions.close')"
+      :approvals-label="$t('proxy.profiles.reviewInApprovals')"
+      approvals-to="/approvals"
+      @update:open="closePlan"
+    />
   </div>
 </template>

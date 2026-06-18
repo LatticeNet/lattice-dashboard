@@ -10,7 +10,7 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import StorageAdminPanel from "@/components/platform/StorageAdminPanel.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,6 +47,18 @@ const entries = computed(() => entriesQuery.data.value ?? []);
 const sortedEntries = computed(() =>
   [...entries.value].sort((a, b) => a.key.localeCompare(b.key)),
 );
+
+const columns = computed<DataTableColumn<KVEntry>[]>(() => {
+  const cols: DataTableColumn<KVEntry>[] = [
+    { key: "key", label: t("platform.kv.colKey"), sortable: true, searchable: true, class: "font-mono text-xs" },
+    { key: "value", label: t("platform.kv.colValue"), searchable: true },
+    { key: "updated_at", label: t("platform.kv.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
+  ];
+  if (canWrite.value) {
+    cols.push({ key: "actions", label: t("platform.kv.colActions"), align: "right" });
+  }
+  return cols;
+});
 
 function loadBucket() {
   activeBucket.value = bucket.value.trim() || "default";
@@ -152,62 +164,53 @@ async function submitPut() {
           <Button type="submit" variant="outline">{{ $t('platform.kv.load') }}</Button>
         </form>
 
-        <DataState
+        <DataTable
           v-if="canRead"
+          :columns="columns"
+          :rows="sortedEntries"
+          :row-key="(entry) => entry.key"
           :loading="entriesQuery.loading.value"
           :error="entriesQuery.error.value"
-          :is-empty="entries.length === 0"
+          :page-size="50"
+          searchable
+          :search-placeholder="$t('platform.shared.searchKeys')"
           :empty-title="$t('platform.kv.emptyTitle')"
           :empty-description="$t('platform.kv.emptyDescription')"
+          :no-match-title="$t('platform.shared.noMatchesTitle')"
+          :no-match-description="$t('platform.shared.noMatchesDescription')"
           @retry="entriesQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.kv.colKey') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.kv.colValue') }}</th>
-                  <th scope="col" class="py-2 pr-3 font-medium">{{ $t('platform.kv.colUpdated') }}</th>
-                  <th v-if="canWrite" scope="col" class="py-2 pl-3 text-right font-medium">{{ $t('platform.kv.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="entry in sortedEntries"
-                  :key="entry.key"
-                  class="border-b border-border last:border-b-0 align-top hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-3 font-mono text-xs">{{ entry.key }}</td>
-                  <td class="py-3 pr-3">
-                    <template v-if="isLong(entry.value)">
-                      <pre
-                        v-if="expanded.has(entry.key)"
-                        class="max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 font-mono text-xs"
-                      >{{ entry.value }}</pre>
-                      <span v-else class="block max-w-[420px] truncate font-mono text-xs text-muted-foreground">{{ entry.value }}</span>
-                      <button
-                        type="button"
-                        class="mt-1 text-xs text-primary hover:underline"
-                        @click="toggleExpand(entry.key)"
-                      >
-                        {{ expanded.has(entry.key) ? $t('platform.kv.collapse') : $t('platform.kv.expand') }}
-                      </button>
-                    </template>
-                    <span v-else class="font-mono text-xs">{{ entry.value || "—" }}</span>
-                  </td>
-                  <td class="py-3 pr-3 text-xs text-muted-foreground">{{ formatDateTime(entry.updated_at) }}</td>
-                  <td v-if="canWrite" class="py-3 pl-3">
-                    <div class="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon-sm" :aria-label="$t('common.actions.edit')" @click="openEdit(entry)">
-                        <Pencil class="size-4" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-key="{ row }">
+            <span class="font-mono text-xs">{{ row.key }}</span>
+          </template>
+          <template #cell-value="{ row }">
+            <template v-if="isLong(row.value)">
+              <pre
+                v-if="expanded.has(row.key)"
+                class="max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 font-mono text-xs"
+              >{{ row.value }}</pre>
+              <span v-else class="block max-w-[420px] truncate font-mono text-xs text-muted-foreground">{{ row.value }}</span>
+              <button
+                type="button"
+                class="mt-1 text-xs text-primary hover:underline"
+                @click="toggleExpand(row.key)"
+              >
+                {{ expanded.has(row.key) ? $t('platform.kv.collapse') : $t('platform.kv.expand') }}
+              </button>
+            </template>
+            <span v-else class="font-mono text-xs">{{ row.value || "—" }}</span>
+          </template>
+          <template #cell-updated_at="{ row }">
+            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex items-center justify-end gap-1">
+              <Button variant="ghost" size="icon-sm" :aria-label="$t('common.actions.edit')" @click="openEdit(row)">
+                <Pencil class="size-4" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
         <p v-else class="text-sm text-muted-foreground">
           <i18n-t keypath="platform.kv.readScopeRequired" tag="span" scope="global">
             <template #scope><code class="font-mono">kv:read</code></template>

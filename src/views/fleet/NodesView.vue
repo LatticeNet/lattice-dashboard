@@ -1,40 +1,36 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  Activity,
   AlertTriangle,
-  Cpu,
-  HardDrive,
   KeyRound,
-  MemoryStick,
   Plus,
   Power,
   RefreshCw,
   RotateCw,
+  Search,
   Server,
   SquareTerminal,
   Wifi,
+  X,
 } from "lucide-vue-next";
 import { api, unwrap, type EnrollTokenResponse, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import {
   formatBytes,
-  formatBytesPerSec,
   formatDateTime,
-  formatDuration,
-  formatPercent,
   formatRelativeTime,
-  ratio,
   shortId,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import StatusDot from "@/components/common/StatusDot.vue";
-import MetricBar from "@/components/common/MetricBar.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import NodeCard from "@/components/common/NodeCard.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -50,6 +46,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -59,9 +62,21 @@ import {
 
 const auth = useAuthStore();
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
 });
+
+// Client-side ring buffer: record each poll so NodeCard sparklines have history.
+const metricBuffer = useMetricBuffer();
+watch(
+  () => nodesQuery.data.value,
+  (list) => {
+    for (const node of list ?? []) metricBuffer.record(node.id, node.metrics);
+  },
+  { immediate: true },
+);
 
 const enrollName = ref("");
 const enrollId = ref("");
@@ -71,10 +86,17 @@ const enrollWireGuardIp = ref("");
 const enrollPending = ref(false);
 const enrollResult = ref<EnrollTokenResponse | undefined>();
 
-const selectedNode = ref<Node | undefined>();
 const pendingNode = ref<string | undefined>();
 const debugPendingNode = ref<string | undefined>();
 const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
+
+/* ----------------------------------------------------------------- */
+/* Client-side search / status / tag filtering over the polled list.  */
+/* ----------------------------------------------------------------- */
+type StatusFilter = "all" | "online" | "offline" | "disabled";
+const search = ref("");
+const statusFilter = ref<StatusFilter>("all");
+const activeTags = ref<string[]>([]);
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const onlineCount = computed(() => nodes.value.filter((n) => n.online && !n.disabled).length);
@@ -82,13 +104,93 @@ const disabledCount = computed(() => nodes.value.filter((n) => n.disabled).lengt
 const canAdminNodes = computed(() => auth.can("node:admin"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
 
-const sortedNodes = computed(() =>
+/** Every role + tag present in the fleet, surfaced as clickable filter chips. */
+const allTags = computed(() => {
+  const set = new Set<string>();
+  for (const node of nodes.value) {
+    if (node.role) set.add(node.role);
+    for (const tag of node.tags ?? []) set.add(tag);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
+
+function matchesStatus(node: Node): boolean {
+  switch (statusFilter.value) {
+    case "online":
+      return !!node.online && !node.disabled;
+    case "offline":
+      return !node.online && !node.disabled;
+    case "disabled":
+      return !!node.disabled;
+    default:
+      return true;
+  }
+}
+
+function matchesSearch(node: Node): boolean {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return true;
+  return [node.name, node.id, node.host_facts?.hostname]
+    .filter(Boolean)
+    .some((value) => value!.toLowerCase().includes(q));
+}
+
+function matchesTags(node: Node): boolean {
+  if (activeTags.value.length === 0) return true;
+  const owned = new Set<string>([...(node.role ? [node.role] : []), ...(node.tags ?? [])]);
+  return activeTags.value.every((tag) => owned.has(tag));
+}
+
+const baseSorted = computed(() =>
   [...nodes.value].sort((a, b) => {
     if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
     if (a.online !== b.online) return a.online ? -1 : 1;
     return (a.name || a.id).localeCompare(b.name || b.id);
   }),
 );
+
+const sortedNodes = computed(() =>
+  baseSorted.value.filter((n) => matchesStatus(n) && matchesSearch(n) && matchesTags(n)),
+);
+
+const hasFilters = computed(
+  () => !!search.value.trim() || statusFilter.value !== "all" || activeTags.value.length > 0,
+);
+/** Raw list non-empty but filters hid everything → distinct no-match state. */
+const noMatches = computed(() => nodes.value.length > 0 && sortedNodes.value.length === 0);
+
+function toggleTag(tag: string) {
+  const next = new Set(activeTags.value);
+  if (next.has(tag)) next.delete(tag);
+  else next.add(tag);
+  activeTags.value = [...next];
+}
+
+function clearFilters() {
+  search.value = "";
+  statusFilter.value = "all";
+  activeTags.value = [];
+}
+
+/* ----------------------------------------------------------------- */
+/* Deep-linkable node-detail modal bound to a ?node=<id> query param.  */
+/* ----------------------------------------------------------------- */
+const selectedNode = computed<Node | undefined>(() => {
+  const id = route.query.node;
+  if (typeof id !== "string" || !id) return undefined;
+  return nodes.value.find((n) => n.id === id);
+});
+
+function openNode(node: Node) {
+  router.push({ query: { ...route.query, node: node.id } });
+}
+
+function closeDetail(open: boolean) {
+  if (open) return;
+  const next = { ...route.query };
+  delete next.node;
+  router.replace({ query: next });
+}
 
 function parseTags(): string[] {
   return enrollTags.value
@@ -162,8 +264,7 @@ async function setNodeDebug(node: Node, enabled: boolean, collect?: boolean) {
   if (!canAdminNodes.value) return;
   debugPendingNode.value = node.id;
   try {
-    const updated = await api.nodes.setDebug(node.id, enabled, collect);
-    selectedNode.value = updated;
+    await api.nodes.setDebug(node.id, enabled, collect);
     toast.success(t("fleet.nodes.toast.debugUpdated"));
     nodesQuery.refresh();
   } catch (error) {
@@ -177,15 +278,14 @@ function openTerminal(node: Node) {
   if (!canOpenTerminal.value || !node.online || node.disabled) return;
   window.open(`/terminal?node_id=${encodeURIComponent(node.id)}&connect=1`, "_blank", "noopener");
 }
-
-function closeDetail(open: boolean) {
-  if (!open) selectedNode.value = undefined;
-}
 </script>
 
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('fleet.nodes.title')" :description="$t('fleet.nodes.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value" @click="nodesQuery.refresh">
           <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
@@ -297,9 +397,62 @@ function closeDetail(open: boolean) {
         <CardDescription>{{ $t('fleet.nodes.list.description', { online: onlineCount, total: nodes.length }) }}</CardDescription>
       </CardHeader>
       <CardContent>
+        <!-- Search / status / tag filters over the polled list (client-side). -->
+        <div v-if="nodes.length > 0" class="mb-4 space-y-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div class="relative flex-1">
+              <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                v-model="search"
+                class="pl-9"
+                :placeholder="$t('fleet.nodes.filters.searchPlaceholder')"
+                :aria-label="$t('fleet.nodes.filters.searchPlaceholder')"
+              />
+            </div>
+            <Select v-model="statusFilter">
+              <SelectTrigger class="sm:w-44">
+                <SelectValue :placeholder="$t('fleet.nodes.filters.status')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{{ $t('fleet.nodes.filters.statusAll') }}</SelectItem>
+                <SelectItem value="online">{{ $t('common.status.online') }}</SelectItem>
+                <SelectItem value="offline">{{ $t('common.status.offline') }}</SelectItem>
+                <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div v-if="allTags.length" class="flex flex-wrap items-center gap-1.5">
+            <button
+              v-for="tag in allTags"
+              :key="tag"
+              type="button"
+              :class="cn(
+                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
+                activeTags.includes(tag)
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border text-muted-foreground hover:bg-muted/40',
+              )"
+              :aria-pressed="activeTags.includes(tag)"
+              @click="toggleTag(tag)"
+            >
+              {{ tag }}
+            </button>
+          </div>
+
+          <div class="flex items-center justify-between text-xs text-muted-foreground">
+            <span>{{ $t('fleet.nodes.filters.showing', { shown: sortedNodes.length, total: nodes.length }) }}</span>
+            <Button v-if="hasFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="clearFilters">
+              <X class="size-3.5" aria-hidden="true" />
+              {{ $t('fleet.nodes.filters.clear') }}
+            </Button>
+          </div>
+        </div>
+
         <DataState
           :loading="nodesQuery.loading.value"
           :error="nodesQuery.error.value"
+          :has-data="nodesQuery.data.value !== undefined"
           :is-empty="nodes.length === 0"
           :empty-title="$t('fleet.nodes.list.emptyTitle')"
           :empty-description="$t('fleet.nodes.list.emptyDescription')"
@@ -317,74 +470,68 @@ function closeDetail(open: boolean) {
               </Button>
             </EmptyState>
           </template>
-          <div class="grid gap-3 xl:grid-cols-2">
-            <div
+
+          <!-- Filters hid every node: distinct no-match state, not the first-run CTA. -->
+          <EmptyState
+            v-if="noMatches"
+            :icon="Search"
+            :title="$t('fleet.nodes.filters.noMatchTitle')"
+            :description="$t('fleet.nodes.filters.noMatchDescription')"
+          >
+            <Button variant="outline" size="sm" @click="clearFilters">
+              <X class="size-4" aria-hidden="true" />
+              {{ $t('fleet.nodes.filters.clear') }}
+            </Button>
+          </EmptyState>
+
+          <div v-else class="grid gap-3 xl:grid-cols-2">
+            <NodeCard
               v-for="node in sortedNodes"
               :key="node.id"
-              :class="cn('rounded-lg border border-border p-4 transition-colors hover:bg-muted/30', node.disabled && 'opacity-60')"
+              :node="node"
+              show-sparkline
+              sparkline-metric="cpu"
+              :cpu-label="t('fleet.nodes.metric.cpu')"
+              :memory-label="t('fleet.nodes.metric.memory')"
+              :disk-label="t('fleet.nodes.metric.disk')"
+              :online-label="t('common.status.online')"
+              :offline-label="t('common.status.offline')"
+              :disabled-label="t('common.status.disabled')"
+              :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"
+              @select="openNode(node)"
             >
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <button
-                    type="button"
-                    class="flex min-w-0 items-center gap-2 text-left font-medium hover:text-primary"
-                    @click="selectedNode = node"
+              <template #footer="{ node: cardNode }">
+                <p class="mt-3 font-mono text-xs text-muted-foreground">
+                  {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
+                </p>
+                <div v-if="canOpenTerminal || canAdminNodes" class="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    v-if="canOpenTerminal"
+                    size="sm"
+                    variant="outline"
+                    :disabled="!cardNode.online || cardNode.disabled"
+                    @click="openTerminal(cardNode)"
                   >
-                    <StatusDot :online="node.online && !node.disabled" :pulse="node.online && !node.disabled" />
-                    <span class="truncate">{{ node.name || node.id }}</span>
-                  </button>
-                  <p class="mt-1 font-mono text-xs text-muted-foreground">
-                    {{ shortId(node.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(node.last_seen) }) }}
-                  </p>
+                    <SquareTerminal class="size-4" aria-hidden="true" />
+                    {{ $t('fleet.nodes.list.openTerminal') }}
+                  </Button>
+                  <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === cardNode.id" @click="rotateToken(cardNode)">
+                    <KeyRound class="size-4" aria-hidden="true" />
+                    {{ $t('fleet.nodes.list.rotateToken') }}
+                  </Button>
+                  <Button
+                    v-if="canAdminNodes"
+                    size="sm"
+                    :variant="cardNode.disabled ? 'outline' : 'destructive'"
+                    :disabled="pendingNode === cardNode.id"
+                    @click="setDisabled(cardNode, !cardNode.disabled)"
+                  >
+                    <Power class="size-4" aria-hidden="true" />
+                    {{ cardNode.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
+                  </Button>
                 </div>
-                <div class="flex flex-wrap justify-end gap-1">
-                  <Badge v-if="node.disabled" variant="secondary">{{ $t('common.status.disabled') }}</Badge>
-                  <Badge v-else :variant="node.online ? 'success' : 'destructive'">
-                    {{ node.online ? $t('common.status.online') : $t('common.status.offline') }}
-                  </Badge>
-                  <Badge v-if="node.role" variant="outline">{{ node.role }}</Badge>
-                </div>
-              </div>
-
-              <div class="mt-4 grid gap-2">
-                <MetricBar label="CPU" :icon="Cpu" :percent="node.metrics?.cpu_percent ?? 0" :value-text="formatPercent(node.metrics?.cpu_percent)" />
-                <MetricBar label="Memory" :icon="MemoryStick" tone="memory" :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)" :used="node.metrics?.memory_used" :total="node.metrics?.memory_total" />
-                <MetricBar label="Disk" :icon="HardDrive" tone="disk" :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)" :used="node.metrics?.disk_used" :total="node.metrics?.disk_total" />
-              </div>
-
-              <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                <span class="inline-flex items-center gap-1"><Activity class="size-3" aria-hidden="true" />{{ formatDuration(node.metrics?.uptime_seconds) }}</span>
-                <span>{{ formatBytesPerSec(node.metrics?.net_rx_speed) }} {{ $t('fleet.nodes.list.down') }}</span>
-                <span>{{ formatBytesPerSec(node.metrics?.net_tx_speed) }} {{ $t('fleet.nodes.list.up') }}</span>
-              </div>
-
-              <div v-if="canOpenTerminal || canAdminNodes" class="mt-4 flex flex-wrap gap-2">
-                <Button
-                  v-if="canOpenTerminal"
-                  size="sm"
-                  variant="outline"
-                  :disabled="!node.online || node.disabled"
-                  @click="openTerminal(node)"
-                >
-                  <SquareTerminal class="size-4" aria-hidden="true" />
-                  {{ $t('fleet.nodes.list.openTerminal') }}
-                </Button>
-                <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === node.id" @click="rotateToken(node)">
-                  <KeyRound class="size-4" aria-hidden="true" />
-                  {{ $t('fleet.nodes.list.rotateToken') }}
-                </Button>
-                <Button
-                  v-if="canAdminNodes"
-                  size="sm"
-                  :variant="node.disabled ? 'outline' : 'destructive'"
-                  :disabled="pendingNode === node.id"
-                  @click="setDisabled(node, !node.disabled)"
-                >
-                  <Power class="size-4" aria-hidden="true" />
-                  {{ node.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
-                </Button>
-              </div>
-            </div>
+              </template>
+            </NodeCard>
           </div>
         </DataState>
       </CardContent>

@@ -19,7 +19,11 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatPercent, formatRelativeTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import { latencyClass } from "@/lib/latency";
+
 import PageHeader from "@/components/common/PageHeader.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import StatCard from "@/components/common/StatCard.vue";
@@ -35,6 +39,14 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -49,6 +61,7 @@ const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "no
 const selectedMonitorId = ref("");
 const createPending = ref(false);
 const deletePending = ref(false);
+const deleteOpen = ref(false);
 
 const monitorName = ref("");
 const monitorType = ref<"tcp" | "http">("tcp");
@@ -108,23 +121,6 @@ const canSubmit = computed(
     !!monitorTarget.value.trim() &&
     (assignAll.value || selectedNodeIds.value.length > 0),
 );
-
-const sparklinePoints = computed(() => {
-  const values = recentResults.value
-    .map((result) => result.latency_ms)
-    .filter((value): value is number => value !== undefined && Number.isFinite(value));
-  if (values.length < 2) return "";
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const span = Math.max(1, max - min);
-  return values
-    .map((value, index) => {
-      const x = (index / Math.max(1, values.length - 1)) * 100;
-      const y = 24 - ((value - min) / span) * 20 - 2;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-});
 
 // Chronological latency series for the TrendChart: successful results only,
 // ordered oldest → newest, with null/undefined latency dropped.
@@ -190,9 +186,37 @@ function resultLabel(result?: MonitorResult): string {
   return result.success ? t("fleet.monitoring.result.passing") : t("fleet.monitoring.result.failing");
 }
 
+/**
+ * Map a latency band token to LITERAL Tailwind classes. latency.ts is the SSOT
+ * for the band thresholds; we expand to full static strings here so Tailwind v4's
+ * content scanner can see every candidate (runtime-built `bg-${token}` would not
+ * be generated). Background tile + matching text color for the legend/labels.
+ */
+const LATENCY_BG: Record<string, string> = {
+  success: "bg-success/80",
+  "chart-2": "bg-chart-2/80",
+  warning: "bg-warning/80",
+  destructive: "bg-destructive/80",
+  "muted-foreground": "bg-muted-foreground/80",
+};
+const LATENCY_TEXT: Record<string, string> = {
+  success: "text-success",
+  "chart-2": "text-chart-2",
+  warning: "text-warning",
+  destructive: "text-destructive",
+  "muted-foreground": "text-muted-foreground",
+};
+
+/** Heat-strip tile color: a failed probe is loss (destructive); a passing probe
+ *  is graded by its latency band via the shared latency scale (src/lib/latency.ts). */
 function resultBarClass(result: MonitorResult): string {
-  if (result.success) return "bg-success/80";
-  return "bg-destructive/80";
+  if (!result.success) return "bg-destructive/80";
+  return LATENCY_BG[latencyClass(result.latency_ms)] ?? "bg-muted-foreground/80";
+}
+
+/** Latency text color (graded) for numeric latency labels. */
+function latencyText(ms?: number): string {
+  return LATENCY_TEXT[latencyClass(ms)] ?? "text-muted-foreground";
 }
 
 function refreshAll() {
@@ -233,13 +257,12 @@ async function createMonitor() {
 
 async function deleteMonitor() {
   if (!selectedMonitor.value) return;
-  const ok = window.confirm(t("fleet.monitoring.confirm.delete", { name: selectedMonitor.value.name || selectedMonitor.value.id }));
-  if (!ok) return;
   deletePending.value = true;
   try {
     await api.monitors.delete(selectedMonitor.value.id);
     toast.success(t("fleet.monitoring.toast.deleted"));
     selectedMonitorId.value = "";
+    deleteOpen.value = false;
     refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.monitoring.toast.deleteFailed"));
@@ -252,6 +275,9 @@ async function deleteMonitor() {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('fleet.monitoring.title')" :description="$t('fleet.monitoring.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -288,6 +314,7 @@ async function deleteMonitor() {
           <DataState
             :loading="monitorsQuery.loading.value"
             :error="monitorsQuery.error.value"
+            :has-data="monitorsQuery.data.value !== undefined"
             :is-empty="monitors.length === 0"
             :empty-title="$t('fleet.monitoring.definitions.emptyTitle')"
             :empty-description="$t('fleet.monitoring.definitions.emptyDescription')"
@@ -373,14 +400,15 @@ async function deleteMonitor() {
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="monitor-type">{{ $t('fleet.monitoring.create.type') }}</Label>
-                <select
-                  id="monitor-type"
-                  v-model="monitorType"
-                  class="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="tcp">TCP</option>
-                  <option value="http">HTTP</option>
-                </select>
+                <Select v-model="monitorType">
+                  <SelectTrigger id="monitor-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tcp">TCP</SelectItem>
+                    <SelectItem value="http">HTTP</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div class="grid gap-2">
                 <Label>{{ $t('fleet.monitoring.create.assignment') }}</Label>
@@ -418,6 +446,7 @@ async function deleteMonitor() {
               v-if="!assignAll"
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
+              :has-data="nodesQuery.data.value !== undefined"
               :is-empty="nodes.length === 0"
               :empty-title="$t('fleet.monitoring.create.noNodesTitle')"
               :empty-description="$t('fleet.monitoring.create.noNodesDescription')"
@@ -473,7 +502,7 @@ async function deleteMonitor() {
             variant="destructive"
             size="sm"
             :disabled="deletePending"
-            @click="deleteMonitor"
+            @click="deleteOpen = true"
           >
             <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
             <Trash2 v-else class="size-4" aria-hidden="true" />
@@ -485,6 +514,7 @@ async function deleteMonitor() {
         <DataState
           :loading="resultsQuery.loading.value && !!selectedMonitor"
           :error="resultsQuery.error.value"
+          :has-data="resultsQuery.data.value !== undefined"
           :is-empty="!selectedMonitor || selectedResults.length === 0"
           :empty-title="$t('fleet.monitoring.history.emptyTitle')"
           :empty-description="$t('fleet.monitoring.history.emptyDescription')"
@@ -513,49 +543,39 @@ async function deleteMonitor() {
               />
             </div>
 
-            <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-              <div class="rounded-lg border border-border bg-muted/20 p-4">
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.latencyTrend') }}</p>
-                    <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.history.recentResults', { count: recentResults.length }) }}</p>
-                  </div>
-                  <Badge :variant="resultVariant(latestResult)">{{ resultLabel(latestResult) }}</Badge>
+            <div class="rounded-lg border border-border p-4">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.recentChecks') }}</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.history.recentResults', { count: recentResults.length }) }}</p>
                 </div>
-                <svg viewBox="0 0 100 24" class="h-24 w-full overflow-visible">
-                  <line x1="0" y1="22" x2="100" y2="22" class="stroke-border" stroke-width="0.4" />
-                  <polyline
-                    v-if="sparklinePoints"
-                    :points="sparklinePoints"
-                    class="fill-none stroke-primary"
-                    stroke-width="1.4"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                  <text v-else x="50" y="13" text-anchor="middle" class="fill-muted-foreground text-[4px]">
-                    {{ $t('fleet.monitoring.history.waitingSamples') }}
-                  </text>
-                </svg>
-                <div class="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                <div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                   <span>{{ $t('fleet.monitoring.history.successSuffix', { rate: selectedSuccessRate }) }}</span>
-                  <span class="text-right">{{ $t('fleet.monitoring.history.averageSuffix', { latency: averageLatency }) }}</span>
+                  <span>{{ $t('fleet.monitoring.history.averageSuffix', { latency: averageLatency }) }}</span>
                 </div>
               </div>
-
-              <div class="rounded-lg border border-border p-4">
-                <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.recentChecks') }}</p>
-                <div class="mt-3 grid grid-cols-[repeat(24,minmax(0,1fr))] gap-1">
-                  <span
-                    v-for="result in recentResults.slice(-48)"
-                    :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
-                    :class="cn('h-8 rounded-sm', resultBarClass(result))"
-                    :title="`${nodeName(result.node_id)} ${result.success ? $t('fleet.monitoring.result.ok') : $t('common.status.failed')} ${formatLatency(result.latency_ms)}`"
-                  />
-                </div>
-                <p class="mt-3 text-xs text-muted-foreground">
-                  {{ $t('fleet.monitoring.history.failuresInHistory', { count: failureCount }) }}
-                </p>
+              <div class="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-1">
+                <Tooltip
+                  v-for="result in recentResults.slice(-48)"
+                  :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
+                >
+                  <TooltipTrigger as-child>
+                    <span :class="cn('h-8 rounded-sm', resultBarClass(result))" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p class="font-medium">{{ nodeName(result.node_id) }}</p>
+                    <p class="text-xs">
+                      <span :class="result.success ? latencyText(result.latency_ms) : 'text-destructive'">
+                        {{ result.success ? $t('fleet.monitoring.result.ok') : $t('common.status.failed') }}
+                      </span>
+                      · {{ formatLatency(result.latency_ms) }}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
+              <p class="mt-3 text-xs text-muted-foreground">
+                {{ $t('fleet.monitoring.history.failuresInHistory', { count: failureCount }) }}
+              </p>
             </div>
 
             <div class="overflow-x-auto rounded-lg border border-border">
@@ -591,5 +611,15 @@ async function deleteMonitor() {
         </DataState>
       </CardContent>
     </Card>
+
+    <ConfirmDialog
+      v-model:open="deleteOpen"
+      :title="$t('common.actions.delete')"
+      :description="selectedMonitor ? $t('fleet.monitoring.confirm.delete', { name: selectedMonitor.name || selectedMonitor.id }) : ''"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deletePending"
+      @confirm="deleteMonitor"
+    />
   </div>
 </template>

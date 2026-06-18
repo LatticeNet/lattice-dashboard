@@ -29,6 +29,8 @@ import {
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import StatCard from "@/components/common/StatCard.vue";
@@ -44,6 +46,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type RenewalTone = "default" | "success" | "warning" | "destructive";
 
@@ -60,6 +69,7 @@ const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "no
 const selectedKey = ref("");
 const pending = ref(false);
 const deletePending = ref(false);
+const deleteOpen = ref(false);
 const renewPending = ref(false);
 const remindersPending = ref(false);
 
@@ -323,13 +333,12 @@ async function saveProfile() {
 
 async function deleteProfile() {
   if (!profileId.value) return;
-  const ok = window.confirm(t("fleet.inventory.confirm.delete", { name: displayName(selectedMachine.value as MachineView) }));
-  if (!ok) return;
   deletePending.value = true;
   try {
     await api.machines.delete(profileId.value);
     toast.success(t("fleet.inventory.toast.profileDeleted"));
     profileId.value = "";
+    deleteOpen.value = false;
     refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.deleteFailed"));
@@ -372,6 +381,9 @@ async function runReminders(selectedOnly = false) {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('fleet.inventory.title')" :description="$t('fleet.inventory.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="machinesQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
           <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
@@ -400,6 +412,7 @@ async function runReminders(selectedOnly = false) {
           <DataState
             :loading="machinesQuery.loading.value"
             :error="machinesQuery.error.value"
+            :has-data="machinesQuery.data.value !== undefined"
             :is-empty="machines.length === 0"
             :empty-title="$t('fleet.inventory.list.emptyTitle')"
             :empty-description="$t('fleet.inventory.list.emptyDescription')"
@@ -481,18 +494,22 @@ async function runReminders(selectedOnly = false) {
           <form v-if="selectedMachine && canAdminInventory" class="space-y-4" @submit.prevent="saveProfile">
             <div class="grid gap-2">
               <Label for="machine-node">{{ $t('fleet.inventory.profile.node') }}</Label>
-              <select
-                id="machine-node"
-                v-model="nodeId"
-                class="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option v-for="node in nodes" :key="node.id" :value="node.id">
-                  {{ node.name || node.id }}
-                </option>
-                <option v-if="nodeId && !nodes.some((node) => node.id === nodeId)" :value="nodeId">
-                  {{ nodeId }}
-                </option>
-              </select>
+              <Select v-model="nodeId">
+                <SelectTrigger id="machine-node">
+                  <SelectValue :placeholder="$t('fleet.inventory.profile.node')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
+                    {{ node.name || node.id }}
+                  </SelectItem>
+                  <SelectItem
+                    v-if="nodeId && !nodes.some((node) => node.id === nodeId)"
+                    :value="nodeId"
+                  >
+                    {{ nodeId }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
@@ -531,10 +548,13 @@ async function runReminders(selectedOnly = false) {
             <div class="grid gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="machine-cycle">{{ $t('fleet.inventory.profile.renewalCycle') }}</Label>
+                <!-- Native select retained: reka-ui Select cannot represent the
+                     empty-string "None" reset value without losing the ability
+                     to clear the cycle back to undefined. -->
                 <select
                   id="machine-cycle"
                   v-model="renewalCycle"
-                  class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 >
                   <option value="">{{ $t('fleet.inventory.profile.cycle.none') }}</option>
                   <option value="monthly">{{ $t('fleet.inventory.profile.cycle.monthly') }}</option>

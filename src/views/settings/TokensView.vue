@@ -19,11 +19,14 @@ import {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
+import { statusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -38,7 +41,6 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -124,6 +126,8 @@ const grantableAllowlist = computed(() => callerScopes.value); // shown as refer
 // ── Create dialog ────────────────────────────────────────────────────────────
 const formOpen = ref(false);
 const saving = ref(false);
+// Surfaces inline per-field errors only after a submit attempt.
+const submitAttempted = ref(false);
 
 const form = reactive({
   name: "",
@@ -135,12 +139,44 @@ function resetForm() {
   form.name = "";
   form.scopes = [];
   form.server_allowlist = "";
+  submitAttempted.value = false;
 }
+
+/**
+ * The create dialog hosts a real scope-selection matrix; treat any started
+ * input as unsaved work and gate an accidental dismiss behind a confirm.
+ */
+const isDirty = computed(
+  () =>
+    !!form.name.trim() ||
+    form.scopes.length > 0 ||
+    !!form.server_allowlist.trim(),
+);
+const discardOpen = ref(false);
 
 function openCreate() {
   if (!canAdmin.value) return;
   resetForm();
   formOpen.value = true;
+}
+
+/** Intercept dialog dismiss attempts; confirm before discarding unsaved work. */
+function onFormOpenChange(next: boolean) {
+  if (next) {
+    formOpen.value = true;
+    return;
+  }
+  if (isDirty.value && !saving.value) {
+    discardOpen.value = true;
+    return;
+  }
+  formOpen.value = false;
+}
+
+function confirmDiscard() {
+  discardOpen.value = false;
+  formOpen.value = false;
+  resetForm();
 }
 
 function toggleScope(scope: string) {
@@ -149,12 +185,24 @@ function toggleScope(scope: string) {
   else form.scopes.push(scope);
 }
 
+const nameError = computed(() =>
+  submitAttempted.value && !form.name.trim()
+    ? t("settings.tokens.form.nameRequired")
+    : undefined,
+);
+const scopesError = computed(() =>
+  submitAttempted.value && form.scopes.length === 0
+    ? t("settings.tokens.form.scopesRequired")
+    : undefined,
+);
+
 const canSubmit = computed(() => !!form.name.trim() && form.scopes.length > 0);
 
 // ── One-time reveal ──────────────────────────────────────────────────────────
 const revealed = ref<TokenCreateResponse | undefined>();
 
 async function submitForm() {
+  submitAttempted.value = true;
   if (!canSubmit.value || !canAdmin.value) return;
   saving.value = true;
   try {
@@ -204,6 +252,45 @@ async function confirmRevoke() {
 }
 
 const activeCount = computed(() => tokens.value.filter((token) => !token.revoked_at).length);
+
+// Token status → shared visual treatment (active=online green, revoked=offline red).
+function tokenMeta(token: TokenView) {
+  return statusMeta(token.revoked_at ? "offline" : "online");
+}
+
+// DataTable columns. Cells are rendered via #cell-<key> slots so every existing
+// column (name+id, actor, scope badges, allowlist, created, status, actions) and
+// the revoke action are preserved.
+const columns = computed<DataTableColumn<TokenView>[]>(() => [
+  {
+    key: "name",
+    label: t("settings.tokens.list.name"),
+    sortable: true,
+    searchable: true,
+    value: (row) => row.name || row.id,
+  },
+  {
+    key: "actor",
+    label: t("settings.tokens.list.actor"),
+    searchable: true,
+    value: (row) => row.actor_id,
+  },
+  { key: "scopes", label: t("settings.tokens.list.scopes") },
+  { key: "server_allowlist", label: t("settings.tokens.list.serverAllowlist") },
+  {
+    key: "created_at",
+    label: t("settings.tokens.list.created"),
+    sortable: true,
+    align: "right",
+  },
+  {
+    key: "status",
+    label: t("settings.tokens.list.status"),
+    sortable: true,
+    value: (row) => (row.revoked_at ? 1 : 0),
+  },
+  { key: "actions", label: t("settings.tokens.list.actions"), align: "right" },
+]);
 </script>
 
 <template>
@@ -212,6 +299,9 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
       :title="$t('settings.tokens.title')"
       :description="$t('settings.tokens.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="tokensQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -252,91 +342,81 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="sortedTokens"
+          :row-key="(token) => token.id"
           :loading="tokensQuery.loading.value"
           :error="tokensQuery.error.value"
-          :is-empty="tokens.length === 0"
+          :has-data="tokensQuery.data.value !== undefined"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('settings.tokens.list.emptyTitle')"
           :empty-description="$t('settings.tokens.list.emptyDescription')"
           @retry="tokensQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.name") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.actor") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.scopes") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.serverAllowlist") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.created") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.tokens.list.status") }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t("settings.tokens.list.actions") }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="token in sortedTokens"
-                  :key="token.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ token.name || token.id }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(token.id, 16) }}</div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <span class="break-all font-mono text-xs text-muted-foreground">{{ token.actor_id }}</span>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[260px]">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge v-for="scope in token.scopes" :key="scope" variant="outline" class="font-mono">
-                        {{ scope }}
-                      </Badge>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[200px]">
-                    <div v-if="token.server_allowlist.length" class="flex flex-wrap gap-1">
-                      <Badge
-                        v-for="node in token.server_allowlist"
-                        :key="node"
-                        variant="secondary"
-                        class="font-mono"
-                      >
-                        {{ node }}
-                      </Badge>
-                    </div>
-                    <Badge v-else variant="info">{{ $t("common.misc.all") }}</Badge>
-                  </td>
-                  <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    {{ token.created_at ? formatDateTime(token.created_at) : "—" }}
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="token.revoked_at ? 'destructive' : 'success'">
-                      {{ token.revoked_at ? $t("common.status.revoked") : $t("common.status.active") }}
-                    </Badge>
-                  </td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canAdmin && !token.revoked_at"
-                        variant="ghost"
-                        size="sm"
-                        @click="revokeTarget = token"
-                      >
-                        <ShieldOff class="size-4 text-destructive" aria-hidden="true" />
-                        {{ $t("settings.tokens.list.revoke") }}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row }">
+            <div class="font-medium">{{ row.name || row.id }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+          </template>
+
+          <template #cell-actor="{ row }">
+            <span class="break-all font-mono text-xs text-muted-foreground">{{ row.actor_id }}</span>
+          </template>
+
+          <template #cell-scopes="{ row }">
+            <div class="flex flex-wrap gap-1 md:max-w-[260px]">
+              <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
+                {{ scope }}
+              </Badge>
+            </div>
+          </template>
+
+          <template #cell-server_allowlist="{ row }">
+            <div v-if="row.server_allowlist.length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+              <Badge
+                v-for="node in row.server_allowlist"
+                :key="node"
+                variant="secondary"
+                class="font-mono"
+              >
+                {{ node }}
+              </Badge>
+            </div>
+            <Badge v-else variant="info">{{ $t("common.misc.all") }}</Badge>
+          </template>
+
+          <template #cell-created_at="{ row }">
+            <span class="text-xs text-muted-foreground">
+              {{ row.created_at ? formatDateTime(row.created_at) : "—" }}
+            </span>
+          </template>
+
+          <template #cell-status="{ row }">
+            <Badge :variant="tokenMeta(row).badgeVariant">
+              {{ row.revoked_at ? $t("common.status.revoked") : $t("common.status.active") }}
+            </Badge>
+          </template>
+
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button
+                v-if="canAdmin && !row.revoked_at"
+                variant="ghost"
+                size="sm"
+                @click="revokeTarget = row"
+              >
+                <ShieldOff class="size-4 text-destructive" aria-hidden="true" />
+                {{ $t("settings.tokens.list.revoke") }}
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
     <!-- Create dialog -->
-    <Dialog v-model:open="formOpen">
+    <Dialog :open="formOpen" @update:open="onFormOpenChange">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{ $t("settings.tokens.form.title") }}</DialogTitle>
@@ -348,7 +428,15 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-2">
             <Label for="token-name">{{ $t("settings.tokens.form.name") }}</Label>
-            <Input id="token-name" v-model="form.name" required placeholder="ci-deploy-bot" />
+            <Input
+              id="token-name"
+              v-model="form.name"
+              required
+              placeholder="ci-deploy-bot"
+              :aria-invalid="!!nameError"
+              :class="cn(nameError && 'border-destructive')"
+            />
+            <p v-if="nameError" class="text-xs text-destructive">{{ nameError }}</p>
           </div>
 
           <div class="grid gap-2">
@@ -366,7 +454,14 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
                 {{ $t("settings.tokens.form.scopedHint") }}
               </template>
             </p>
-            <div class="grid max-h-72 grid-cols-1 gap-1.5 overflow-auto rounded-md border border-border p-2 sm:grid-cols-2">
+            <div
+              :class="
+                cn(
+                  'grid max-h-72 grid-cols-1 gap-1.5 overflow-auto rounded-md border border-border p-2 sm:grid-cols-2',
+                  scopesError && 'border-destructive',
+                )
+              "
+            >
               <label
                 v-for="scope in grantableScopes"
                 :key="scope"
@@ -387,6 +482,7 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
                 {{ $t("settings.tokens.form.noGrantableScopes") }}
               </p>
             </div>
+            <p v-if="scopesError" class="text-xs text-destructive">{{ scopesError }}</p>
           </div>
 
           <div class="grid gap-2">
@@ -402,9 +498,9 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
           </div>
 
           <DialogFooter>
-            <DialogClose as-child>
-              <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
-            </DialogClose>
+            <Button type="button" variant="outline" :disabled="saving" @click="onFormOpenChange(false)">
+              {{ $t("common.actions.cancel") }}
+            </Button>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
@@ -414,6 +510,17 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
         </form>
       </DialogScrollContent>
     </Dialog>
+
+    <!-- Discard unsaved-changes guard for the create dialog -->
+    <ConfirmDialog
+      :open="discardOpen"
+      :title="$t('settings.tokens.discardTitle')"
+      :description="$t('settings.tokens.discardDescription')"
+      :confirm-label="$t('settings.tokens.discardConfirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      @update:open="(v) => { if (!v) discardOpen = false; }"
+      @confirm="confirmDiscard"
+    />
 
     <!-- One-time reveal -->
     <Dialog :open="!!revealed" @update:open="(v) => { if (!v) closeReveal(); }">
@@ -472,25 +579,15 @@ const activeCount = computed(() => tokens.value.filter((token) => !token.revoked
     </Dialog>
 
     <!-- Revoke confirmation -->
-    <Dialog :open="!!revokeTarget" @update:open="(v) => { if (!v) revokeTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t("settings.tokens.revokeTitle") }}</DialogTitle>
-          <DialogDescription>
-            {{ $t("settings.tokens.revokeDescription", { name: revokeTarget?.name || revokeTarget?.id }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="revoking" @click="confirmRevoke">
-            <RefreshCw v-if="revoking" class="size-4 animate-spin" aria-hidden="true" />
-            <ShieldOff v-else class="size-4" aria-hidden="true" />
-            {{ $t("settings.tokens.list.revoke") }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!revokeTarget"
+      :title="$t('settings.tokens.revokeTitle')"
+      :description="$t('settings.tokens.revokeDescription', { name: revokeTarget?.name || revokeTarget?.id })"
+      :confirm-label="$t('settings.tokens.list.revoke')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="revoking"
+      @update:open="(v) => { if (!v) revokeTarget = undefined; }"
+      @confirm="confirmRevoke"
+    />
   </div>
 </template>

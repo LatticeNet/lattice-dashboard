@@ -10,6 +10,21 @@ export default {
         online: "在线",
         disabled: "已停用",
       },
+      filters: {
+        searchPlaceholder: "搜索名称、ID 或主机…",
+        status: "状态",
+        statusAll: "全部状态",
+        showing: "显示 {shown} / {total}",
+        clear: "清除筛选",
+        noMatchTitle: "没有匹配的节点",
+        noMatchDescription: "没有节点符合当前的搜索、状态或标签筛选条件。",
+      },
+      metric: {
+        cpu: "CPU",
+        memory: "内存",
+        disk: "磁盘",
+        sparklineLabel: "近期 CPU 趋势",
+      },
       enroll: {
         title: "接入节点",
         description: "生成一次性节点接入令牌与安装命令。",

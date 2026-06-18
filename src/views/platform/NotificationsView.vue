@@ -25,7 +25,9 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -47,7 +49,6 @@ import {
 import {
   Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -107,6 +108,24 @@ const sortedChannels = computed(() =>
 const sortedRules = computed(() =>
   [...rules.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
 );
+
+const channelColumns = computed<DataTableColumn<NotifyChannelView>[]>(() => [
+  { key: "name", label: t("platform.notifications.colName"), sortable: true, searchable: true, value: (c) => c.name || c.id },
+  { key: "kind", label: t("platform.notifications.colKind"), sortable: true, searchable: true },
+  { key: "config_keys", label: t("platform.notifications.colConfiguredKeys") },
+  { key: "enabled", label: t("platform.notifications.colStatus"), sortable: true },
+  { key: "updated_at", label: t("platform.notifications.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
+  { key: "actions", label: t("platform.notifications.colActions"), align: "right" },
+]);
+
+const ruleColumns = computed<DataTableColumn<NotifyRuleView>[]>(() => [
+  { key: "name", label: t("platform.notifications.colRule"), sortable: true, searchable: true, value: (r) => r.name || r.id },
+  { key: "event_types", label: t("platform.notifications.colEvents") },
+  { key: "channel_ids", label: t("platform.notifications.colChannels") },
+  { key: "templates", label: t("platform.notifications.colTemplates") },
+  { key: "enabled", label: t("platform.notifications.colStatus"), sortable: true },
+  { key: "actions", label: t("platform.notifications.colActions"), align: "right" },
+]);
 
 // ── Create / edit dialog ─────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -336,6 +355,9 @@ async function confirmDeleteRule(): Promise<void> {
 <template>
   <div class="p-6 space-y-6">
     <PageHeader :title="$t('platform.notifications.title')" :description="$t('platform.notifications.description')">
+      <template #status>
+        <FreshnessLabel :last-updated="channelsQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button
           variant="outline"
@@ -368,84 +390,72 @@ async function confirmDeleteRule(): Promise<void> {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="channelColumns"
+          :rows="sortedChannels"
+          :row-key="(channel) => channel.id"
           :loading="channelsQuery.loading.value"
           :error="channelsQuery.error.value"
-          :is-empty="channels.length === 0"
+          :has-data="channelsQuery.data.value !== undefined"
+          :page-size="50"
+          searchable
+          :search-placeholder="$t('platform.shared.searchNames')"
           :empty-title="$t('platform.notifications.emptyTitle')"
           :empty-description="$t('platform.notifications.emptyDescription')"
+          :no-match-title="$t('platform.shared.noMatchesTitle')"
+          :no-match-description="$t('platform.shared.noMatchesDescription')"
           @retry="channelsQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colName') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colKind') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colConfiguredKeys') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colStatus') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colUpdated') }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('platform.notifications.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="channel in sortedChannels"
-                  :key="channel.id"
-                  class="border-b border-border hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ channel.name || channel.id }}</div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="kindBadgeVariant(channel.kind)">{{ channel.kind }}</Badge>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge
-                        v-for="key in channel.config_keys"
-                        :key="key"
-                        variant="outline"
-                        class="font-mono text-[10px]"
-                      >
-                        {{ key }}
-                      </Badge>
-                      <span v-if="channel.config_keys.length === 0" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="channel.enabled ? 'success' : 'secondary'">
-                      {{ channel.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-                    </Badge>
-                  </td>
-                  <td class="py-3 pr-4 text-xs text-muted-foreground">{{ formatDateTime(channel.updated_at) }}</td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canSend"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('platform.notifications.editChannelAria')"
-                        @click="openEdit(channel)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canSend"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('platform.notifications.deleteChannelAria')"
-                        @click="deleteTarget = channel"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row }">
+            <div class="font-medium">{{ row.name || row.id }}</div>
+          </template>
+          <template #cell-kind="{ row }">
+            <Badge :variant="kindBadgeVariant(row.kind)">{{ row.kind }}</Badge>
+          </template>
+          <template #cell-config_keys="{ row }">
+            <div class="flex flex-wrap gap-1">
+              <Badge
+                v-for="key in row.config_keys"
+                :key="key"
+                variant="outline"
+                class="font-mono text-[10px]"
+              >
+                {{ key }}
+              </Badge>
+              <span v-if="row.config_keys.length === 0" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
+            </div>
+          </template>
+          <template #cell-enabled="{ row }">
+            <Badge :variant="row.enabled ? 'success' : 'secondary'">
+              {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+            </Badge>
+          </template>
+          <template #cell-updated_at="{ row }">
+            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button
+                v-if="canSend"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('platform.notifications.editChannelAria')"
+                @click="openEdit(row)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canSend"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('platform.notifications.deleteChannelAria')"
+                @click="deleteTarget = row"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -460,78 +470,70 @@ async function confirmDeleteRule(): Promise<void> {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="ruleColumns"
+          :rows="sortedRules"
+          :row-key="(rule) => rule.id"
           :loading="rulesQuery.loading.value"
           :error="rulesQuery.error.value"
-          :is-empty="rules.length === 0"
+          :has-data="rulesQuery.data.value !== undefined"
+          :page-size="50"
+          searchable
+          :search-placeholder="$t('platform.shared.searchNames')"
           :empty-title="$t('platform.notifications.rulesEmptyTitle')"
           :empty-description="$t('platform.notifications.rulesEmptyDescription')"
+          :no-match-title="$t('platform.shared.noMatchesTitle')"
+          :no-match-description="$t('platform.shared.noMatchesDescription')"
           @retry="rulesQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colRule') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colEvents') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colChannels') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colTemplates') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.notifications.colStatus') }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('platform.notifications.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="rule in sortedRules" :key="rule.id" class="border-b border-border hover:bg-muted/40">
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ rule.name || rule.id }}</div>
-                    <div class="mt-1 font-mono text-xs text-muted-foreground">{{ rule.id }}</div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge v-for="event in (rule.event_types ?? [])" :key="event" variant="outline" class="font-mono text-[10px]">{{ event }}</Badge>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <div class="flex flex-wrap gap-1">
-                      <Badge v-for="id in (rule.channel_ids ?? [])" :key="id" variant="secondary">{{ channelName(id) }}</Badge>
-                    </div>
-                  </td>
-                  <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    <div>{{ rule.title_template || $t('platform.notifications.defaultTitleTemplate') }}</div>
-                    <div>{{ rule.body_template || $t('platform.notifications.defaultBodyTemplate') }}</div>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="rule.enabled ? 'success' : 'secondary'">
-                      {{ rule.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-                    </Badge>
-                  </td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canSend"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('platform.notifications.editRuleAria')"
-                        @click="openRuleEdit(rule)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canSend"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('platform.notifications.deleteRuleAria')"
-                        @click="deleteRuleTarget = rule"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row }">
+            <div class="font-medium">{{ row.name || row.id }}</div>
+            <div class="mt-1 font-mono text-xs text-muted-foreground">{{ row.id }}</div>
+          </template>
+          <template #cell-event_types="{ row }">
+            <div class="flex flex-wrap gap-1">
+              <Badge v-for="event in (row.event_types ?? [])" :key="event" variant="outline" class="font-mono text-[10px]">{{ event }}</Badge>
+            </div>
+          </template>
+          <template #cell-channel_ids="{ row }">
+            <div class="flex flex-wrap gap-1">
+              <Badge v-for="id in (row.channel_ids ?? [])" :key="id" variant="secondary">{{ channelName(id) }}</Badge>
+            </div>
+          </template>
+          <template #cell-templates="{ row }">
+            <div class="text-xs text-muted-foreground">
+              <div>{{ row.title_template || $t('platform.notifications.defaultTitleTemplate') }}</div>
+              <div>{{ row.body_template || $t('platform.notifications.defaultBodyTemplate') }}</div>
+            </div>
+          </template>
+          <template #cell-enabled="{ row }">
+            <Badge :variant="row.enabled ? 'success' : 'secondary'">
+              {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+            </Badge>
+          </template>
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button
+                v-if="canSend"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('platform.notifications.editRuleAria')"
+                @click="openRuleEdit(row)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canSend"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('platform.notifications.deleteRuleAria')"
+                @click="deleteRuleTarget = row"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -713,47 +715,27 @@ async function confirmDeleteRule(): Promise<void> {
     </Dialog>
 
     <!-- Delete confirmation -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('platform.notifications.deleteChannelTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('platform.notifications.deleteChannelConfirm', { name: deleteTarget?.name || deleteTarget?.id }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" aria-hidden="true" class="size-4 animate-spin" />
-            <Trash2 v-else aria-hidden="true" class="size-4" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('platform.notifications.deleteChannelTitle')"
+      :description="$t('platform.notifications.deleteChannelConfirm', { name: deleteTarget?.name || deleteTarget?.id })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
 
     <!-- Delete rule confirmation -->
-    <Dialog :open="!!deleteRuleTarget" @update:open="(v) => { if (!v) deleteRuleTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('platform.notifications.deleteRuleTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('platform.notifications.deleteRuleConfirm', { name: deleteRuleTarget?.name || deleteRuleTarget?.id }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="deletingRule" @click="confirmDeleteRule">
-            <RefreshCw v-if="deletingRule" aria-hidden="true" class="size-4 animate-spin" />
-            <Trash2 v-else aria-hidden="true" class="size-4" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteRuleTarget"
+      :title="$t('platform.notifications.deleteRuleTitle')"
+      :description="$t('platform.notifications.deleteRuleConfirm', { name: deleteRuleTarget?.name || deleteRuleTarget?.id })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deletingRule"
+      @update:open="(v) => { if (!v) deleteRuleTarget = undefined; }"
+      @confirm="confirmDeleteRule"
+    />
   </div>
 </template>

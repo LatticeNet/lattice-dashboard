@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -148,13 +149,29 @@ async function activateTotp() {
   }
 }
 
-async function disableTotp() {
+// Disabling 2FA is destructive (weakens account protection + invalidates the
+// session), so it is gated behind a themed confirm after the code is validated.
+const disableConfirmOpen = ref(false);
+
+function requestDisableTotp() {
   const code = disableCode.value.trim();
   if (!code) {
     totpError.value = t("settings.security.totp.enterDisableCode");
     return;
   }
+  totpError.value = undefined;
+  disableConfirmOpen.value = true;
+}
 
+async function disableTotp() {
+  const code = disableCode.value.trim();
+  if (!code) {
+    totpError.value = t("settings.security.totp.enterDisableCode");
+    disableConfirmOpen.value = false;
+    return;
+  }
+
+  disableConfirmOpen.value = false;
   totpPending.value = "disable";
   totpError.value = undefined;
   try {
@@ -462,7 +479,7 @@ function cancelEnrollment() {
         <form
           v-else
           class="flex flex-col gap-3 sm:flex-row sm:items-end"
-          @submit.prevent="disableTotp"
+          @submit.prevent="requestDisableTotp"
         >
           <div class="grid min-w-0 flex-1 gap-2">
             <Label for="totp-disable-code">{{ $t("settings.security.totp.disableCode") }}</Label>
@@ -489,5 +506,17 @@ function cancelEnrollment() {
         </form>
       </CardContent>
     </Card>
+
+    <!-- Disable 2FA confirmation -->
+    <ConfirmDialog
+      :open="disableConfirmOpen"
+      :title="$t('settings.security.totp.disableConfirmTitle')"
+      :description="$t('settings.security.totp.disableConfirmDescription')"
+      :confirm-label="$t('settings.security.totp.disable')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="totpPending === 'disable'"
+      @update:open="(v) => { if (!v) disableConfirmOpen = false; }"
+      @confirm="disableTotp"
+    />
   </div>
 </template>

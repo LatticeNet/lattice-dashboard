@@ -22,10 +22,13 @@ import {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
+import { statusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -40,7 +43,6 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -185,6 +187,46 @@ async function confirmDelete() {
     deleting.value = false;
   }
 }
+
+// Shared status treatment: enabled→online (success), disabled→unknown (secondary);
+// secret set→online (success), missing→degraded (warning).
+const enabledMeta = (provider: OIDCProviderView) =>
+  statusMeta(provider.enabled ? "online" : "unknown");
+const secretMeta = (provider: OIDCProviderView) =>
+  statusMeta(provider.has_secret ? "online" : "degraded");
+
+// DataTable columns — every existing column and the edit/delete row actions are
+// preserved, rendered through #cell-<key> slots.
+const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
+  {
+    key: "display_name",
+    label: t("settings.sso.list.displayName"),
+    sortable: true,
+    searchable: true,
+    value: (row) => row.display_name || row.issuer,
+  },
+  {
+    key: "issuer",
+    label: t("settings.sso.list.issuer"),
+    sortable: true,
+    searchable: true,
+  },
+  {
+    key: "client_id",
+    label: t("settings.sso.list.clientId"),
+    searchable: true,
+  },
+  { key: "secret", label: t("settings.sso.list.secret") },
+  {
+    key: "status",
+    label: t("settings.sso.list.status"),
+    sortable: true,
+    value: (row) => (row.enabled ? 0 : 1),
+  },
+  { key: "scopes", label: t("settings.sso.list.scopes") },
+  { key: "allowed_domains", label: t("settings.sso.list.allowedDomains") },
+  { key: "actions", label: t("settings.sso.list.actions"), align: "right" },
+]);
 </script>
 
 <template>
@@ -193,6 +235,9 @@ async function confirmDelete() {
       :title="$t('settings.sso.title')"
       :description="$t('settings.sso.description')"
     >
+      <template #status>
+        <FreshnessLabel :last-updated="providersQuery.lastUpdated.value" />
+      </template>
       <template #actions>
         <Button variant="outline" size="sm" as-child>
           <a :href="SSO_GUIDE_URL" target="_blank" rel="noreferrer">
@@ -248,104 +293,92 @@ async function confirmDelete() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          :columns="columns"
+          :rows="sortedProviders"
+          :row-key="(provider) => provider.id"
           :loading="providersQuery.loading.value"
           :error="providersQuery.error.value"
-          :is-empty="providers.length === 0"
+          :has-data="providersQuery.data.value !== undefined"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('settings.sso.list.emptyTitle')"
           :empty-description="$t('settings.sso.list.emptyDescription')"
           @retry="providersQuery.refresh"
         >
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.displayName") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.issuer") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.clientId") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.secret") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.status") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.scopes") }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t("settings.sso.list.allowedDomains") }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t("settings.sso.list.actions") }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="provider in sortedProviders"
-                  :key="provider.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
-                >
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ provider.display_name || provider.issuer }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(provider.id, 16) }}</div>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[240px]">
-                    <span class="break-all font-mono text-xs text-muted-foreground">{{ provider.issuer }}</span>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[180px]">
-                    <span class="break-all font-mono text-xs text-muted-foreground">{{ provider.client_id }}</span>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="provider.has_secret ? 'success' : 'warning'">
-                      <Lock v-if="provider.has_secret" class="size-3" aria-hidden="true" />
-                      <Unlock v-else class="size-3" aria-hidden="true" />
-                      {{ provider.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
-                    </Badge>
-                  </td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="provider.enabled ? 'success' : 'secondary'">
-                      {{ provider.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
-                    </Badge>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[200px]">
-                    <div v-if="(provider.scopes ?? []).length" class="flex flex-wrap gap-1">
-                      <Badge v-for="scope in provider.scopes" :key="scope" variant="outline" class="font-mono">
-                        {{ scope }}
-                      </Badge>
-                    </div>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
-                  </td>
-                  <td class="py-3 pr-4 max-w-[200px]">
-                    <div v-if="(provider.allowed_domains ?? []).length" class="flex flex-wrap gap-1">
-                      <Badge
-                        v-for="domain in provider.allowed_domains"
-                        :key="domain"
-                        variant="outline"
-                        class="font-mono"
-                      >
-                        {{ domain }}
-                      </Badge>
-                    </div>
-                    <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
-                  </td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.edit')"
-                        @click="openEdit(provider)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.delete')"
-                        @click="deleteTarget = provider"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-display_name="{ row }">
+            <div class="font-medium">{{ row.display_name || row.issuer }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+          </template>
+
+          <template #cell-issuer="{ row }">
+            <span class="break-all font-mono text-xs text-muted-foreground md:line-clamp-2 md:max-w-[240px]">{{ row.issuer }}</span>
+          </template>
+
+          <template #cell-client_id="{ row }">
+            <span class="break-all font-mono text-xs text-muted-foreground md:max-w-[180px]">{{ row.client_id }}</span>
+          </template>
+
+          <template #cell-secret="{ row }">
+            <Badge :variant="secretMeta(row).badgeVariant">
+              <Lock v-if="row.has_secret" class="size-3" aria-hidden="true" />
+              <Unlock v-else class="size-3" aria-hidden="true" />
+              {{ row.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
+            </Badge>
+          </template>
+
+          <template #cell-status="{ row }">
+            <Badge :variant="enabledMeta(row).badgeVariant">
+              {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
+            </Badge>
+          </template>
+
+          <template #cell-scopes="{ row }">
+            <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+              <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
+                {{ scope }}
+              </Badge>
+            </div>
+            <span v-else class="text-xs text-muted-foreground">—</span>
+          </template>
+
+          <template #cell-allowed_domains="{ row }">
+            <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+              <Badge
+                v-for="domain in row.allowed_domains"
+                :key="domain"
+                variant="outline"
+                class="font-mono"
+              >
+                {{ domain }}
+              </Badge>
+            </div>
+            <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
+          </template>
+
+          <template #cell-actions="{ row }">
+            <div class="flex justify-end gap-1">
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.edit')"
+                @click="openEdit(row)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.delete')"
+                @click="deleteTarget = row"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 
@@ -500,25 +533,15 @@ async function confirmDelete() {
     </Dialog>
 
     <!-- Delete confirmation -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t("settings.sso.deleteTitle") }}</DialogTitle>
-          <DialogDescription>
-            {{ $t("settings.sso.deleteDescription", { name: deleteTarget?.display_name || deleteTarget?.issuer }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t("common.actions.delete") }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('settings.sso.deleteTitle')"
+      :description="$t('settings.sso.deleteDescription', { name: deleteTarget?.display_name || deleteTarget?.issuer })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
