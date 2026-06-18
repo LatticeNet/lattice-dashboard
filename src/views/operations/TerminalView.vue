@@ -207,6 +207,8 @@ function attachLatestForSelected() {
   }
 }
 
+let pendingHintTimer: ReturnType<typeof setTimeout> | undefined;
+
 async function connectSelected(options?: { preferExisting?: boolean }) {
   const node = selectedNode.value;
   if (!node) return;
@@ -239,6 +241,16 @@ async function startSession(node: Node) {
     activeSession.value = session;
     toast.success(t("operations.terminal.toastStarted"));
     sessionsQuery.refresh();
+    // If the agent never attaches (e.g. the node was deployed without
+    // -allow-terminal), the session stays pending forever. Surface a clear
+    // hint instead of a silent hang.
+    if (pendingHintTimer) clearTimeout(pendingHintTimer);
+    pendingHintTimer = setTimeout(() => {
+      const current = activeSession.value;
+      if (current && current.status !== "active" && current.status !== "closed" && current.status !== "failed") {
+        toast.info(t("operations.terminal.pendingHint"));
+      }
+    }, 12000);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.terminal.toastStartFailed"));
   } finally {
@@ -271,6 +283,9 @@ async function closeSession() {
 
 function onSessionUpdate(session: TerminalSession) {
   activeSession.value = session;
+  if (session.status === "active" || session.status === "closed" || session.status === "failed") {
+    if (pendingHintTimer) clearTimeout(pendingHintTimer);
+  }
   if (session.status === "closed" || session.status === "failed") {
     closeRequested.value = false;
   }
