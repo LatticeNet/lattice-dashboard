@@ -330,7 +330,7 @@ function closeDetail(open: boolean) {
                     class="flex min-w-0 items-center gap-2 text-left font-medium hover:text-primary"
                     @click="selectedNode = node"
                   >
-                    <StatusDot :active="node.online && !node.disabled" :pulse="node.online && !node.disabled" />
+                    <StatusDot :online="node.online && !node.disabled" :pulse="node.online && !node.disabled" />
                     <span class="truncate">{{ node.name || node.id }}</span>
                   </button>
                   <p class="mt-1 font-mono text-xs text-muted-foreground">
