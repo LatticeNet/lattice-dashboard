@@ -10,6 +10,17 @@ export default {
         total: "Total",
         online: "Online",
         disabled: "Disabled",
+        bandwidth: "Bandwidth (live)",
+      },
+      groupBy: {
+        label: "Group by",
+        region: "Region",
+        country: "Country",
+        role: "Role",
+        status: "Status",
+        tag: "Tag",
+        none: "No grouping",
+        count: "{online}/{total} online",
       },
       filters: {
         searchPlaceholder: "Search name, ID, or host…",

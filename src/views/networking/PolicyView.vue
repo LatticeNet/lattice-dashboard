@@ -15,6 +15,7 @@ import {
   unwrap,
   type ApprovalView,
   type NetEndpointKind,
+  type NetGraphNode,
   type NetPolicyGraph,
   type NetPolicyUpsertRequest,
   type NetPolicyView,
@@ -23,6 +24,12 @@ import {
   type NetRuleDirection,
   type NetRuleProtocol,
 } from "@/lib/api";
+import {
+  type Continent,
+  continentGlyph,
+  continentLabel,
+  continentOf,
+} from "@/lib/fleet";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -366,36 +373,178 @@ function closePlan(open: boolean) {
   }
 }
 
-// ── Topology graph (CSP-safe inline SVG, circular layout) ─────────────────
-const GRAPH_SIZE = 640;
-const GRAPH_CENTER = GRAPH_SIZE / 2;
-const GRAPH_RADIUS = 220;
-const NODE_RADIUS = 26;
+// ── Topology graph (CSP-safe inline SVG: hub-and-spoke + region clusters) ──
+//
+// The fleet is outbound-only: every node connects to ONE control-plane server.
+// The previous flat circle hid both facts — there was no server, and nodes were
+// scattered with no sense of where they live. This layout fixes both:
+//   • the control-plane SERVER sits at the centre (the hub everything dials);
+//   • fleet nodes are CLUSTERED by region (continent) into contiguous arcs, so
+//     "asia / us-west / europe" read at a glance, each region tinted + labelled;
+//   • faint dashed spokes show the management plane (server → each agent);
+//   • policy allow/deny edges curve between nodes on top;
+//   • group-leaders (role) get an accent ring + ★.
+const GRAPH_W = 860;
+const GRAPH_H = 660;
+const GCX = GRAPH_W / 2;
+const GCY = GRAPH_H / 2;
+const RING = 236; // radius of the node ring
+const NODE_R = 22;
+const LEADER_R = 26;
+const HUB_R = 36;
+const REGION_ARC_R = RING + 30;
+const REGION_LABEL_R = RING + 54;
+
+const serverHost =
+  typeof window !== "undefined" && window.location.hostname
+    ? window.location.hostname
+    : "lattice-server";
+
+const graph = computed<NetPolicyGraph | undefined>(() => graphQuery.data.value);
+
+// The graph API returns a slim node shape (no role/disabled); enrich from the
+// full node list so we can flag group-leaders and dim disabled nodes.
+const nodeMetaById = computed<Record<string, { role?: string; disabled?: boolean }>>(() => {
+  const m: Record<string, { role?: string; disabled?: boolean }> = {};
+  for (const n of nodes.value) m[n.id] = { role: n.role, disabled: n.disabled };
+  return m;
+});
+
+const LEADER_RE = /lead|hub|gateway|relay|master|组长|枢纽/i;
+function isLeaderRole(role?: string): boolean {
+  return !!role && LEADER_RE.test(role);
+}
+
+// Continent → Tailwind colour classes (class-based, no inline styles — CSP-safe).
+interface RegionColor {
+  dot: string; // SVG fill for node-ring accent + legend
+  ring: string; // SVG stroke for leader/sector ring
+  text: string; // SVG fill for the region label text
+  arc: string; // SVG stroke for the sector arc
+  bg: string; // HTML bg for the legend chip dot
+}
+const REGION_COLORS: Record<Continent, RegionColor> = {
+  AS: { dot: "fill-sky-400", ring: "stroke-sky-400", text: "fill-sky-300", arc: "stroke-sky-400/50", bg: "bg-sky-400" },
+  EU: { dot: "fill-violet-400", ring: "stroke-violet-400", text: "fill-violet-300", arc: "stroke-violet-400/50", bg: "bg-violet-400" },
+  NA: { dot: "fill-emerald-400", ring: "stroke-emerald-400", text: "fill-emerald-300", arc: "stroke-emerald-400/50", bg: "bg-emerald-400" },
+  SA: { dot: "fill-amber-400", ring: "stroke-amber-400", text: "fill-amber-300", arc: "stroke-amber-400/50", bg: "bg-amber-400" },
+  AF: { dot: "fill-rose-400", ring: "stroke-rose-400", text: "fill-rose-300", arc: "stroke-rose-400/50", bg: "bg-rose-400" },
+  OC: { dot: "fill-teal-400", ring: "stroke-teal-400", text: "fill-teal-300", arc: "stroke-teal-400/50", bg: "bg-teal-400" },
+  AN: { dot: "fill-cyan-300", ring: "stroke-cyan-300", text: "fill-cyan-200", arc: "stroke-cyan-300/50", bg: "bg-cyan-300" },
+  "??": { dot: "fill-slate-400", ring: "stroke-slate-400", text: "fill-slate-300", arc: "stroke-slate-400/50", bg: "bg-slate-400" },
+};
+
+const CONTINENT_ORDER: Continent[] = ["AS", "EU", "NA", "SA", "AF", "OC", "AN", "??"];
 
 interface PlacedNode {
   id: string;
   name: string;
   online: boolean;
+  disabled: boolean;
+  leader: boolean;
+  continent: Continent;
+  color: RegionColor;
   x: number;
   y: number;
+  r: number;
 }
 
-const graph = computed<NetPolicyGraph | undefined>(() => graphQuery.data.value);
+interface RegionArc {
+  key: string;
+  continent: Continent;
+  glyph: string;
+  color: RegionColor;
+  path: string;
+  lx: number;
+  ly: number;
+  total: number;
+  online: number;
+}
 
-const placedNodes = computed<PlacedNode[]>(() => {
+function polar(r: number, angle: number): { x: number; y: number } {
+  return { x: GCX + r * Math.cos(angle), y: GCY + r * Math.sin(angle) };
+}
+
+function arcPath(r: number, a0: number, a1: number): string {
+  const s = polar(r, a0);
+  const e = polar(r, a1);
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  return `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${e.x.toFixed(1)} ${e.y.toFixed(1)}`;
+}
+
+interface GraphLayout {
+  nodes: PlacedNode[];
+  arcs: RegionArc[];
+}
+
+const layout = computed<GraphLayout>(() => {
   const list = graph.value?.nodes ?? [];
-  const count = Math.max(1, list.length);
-  return list.map((node, index) => {
-    const angle = (index / count) * Math.PI * 2 - Math.PI / 2;
-    return {
-      id: node.id,
-      name: node.name || node.id,
-      online: node.online,
-      x: GRAPH_CENTER + GRAPH_RADIUS * Math.cos(angle),
-      y: GRAPH_CENTER + GRAPH_RADIUS * Math.sin(angle),
-    };
-  });
+  if (list.length === 0) return { nodes: [], arcs: [] };
+
+  // Bucket by continent (preserving a stable continent order).
+  const buckets = new Map<Continent, NetGraphNode[]>();
+  for (const n of list) {
+    const c = continentOf(n.geo?.country);
+    const arr = buckets.get(c);
+    if (arr) arr.push(n);
+    else buckets.set(c, [n]);
+  }
+  const keys = CONTINENT_ORDER.filter((c) => buckets.has(c));
+
+  const total = list.length;
+  const gap = keys.length > 1 ? 0.16 : 0; // angular padding between regions
+  const usable = Math.PI * 2 - gap * keys.length;
+  const per = usable / total;
+
+  const placed: PlacedNode[] = [];
+  const arcs: RegionArc[] = [];
+  let cursor = -Math.PI / 2; // start at the top, sweep clockwise
+
+  for (const c of keys) {
+    const members = buckets.get(c)!;
+    const color = REGION_COLORS[c];
+    const a0 = cursor;
+    for (const gn of members) {
+      const meta = nodeMetaById.value[gn.id];
+      const leader = isLeaderRole(meta?.role);
+      const p = polar(RING, cursor + per / 2);
+      placed.push({
+        id: gn.id,
+        name: gn.name || gn.id,
+        online: gn.online,
+        disabled: !!meta?.disabled,
+        leader,
+        continent: c,
+        color,
+        x: p.x,
+        y: p.y,
+        r: leader ? LEADER_R : NODE_R,
+      });
+      cursor += per;
+    }
+    const a1 = cursor;
+    const mid = (a0 + a1) / 2;
+    const lp = polar(REGION_LABEL_R, mid);
+    arcs.push({
+      key: `arc:${c}`,
+      continent: c,
+      glyph: continentGlyph(c),
+      color,
+      path: arcPath(REGION_ARC_R, a0 + 0.03, a1 - 0.03),
+      lx: lp.x,
+      ly: lp.y,
+      total: members.length,
+      online: members.filter((n) => n.online).length,
+    });
+    cursor += gap;
+  }
+
+  return { nodes: placed, arcs };
 });
+
+const placedNodes = computed(() => layout.value.nodes);
+const regionArcs = computed(() => layout.value.arcs);
+const leaderCount = computed(() => placedNodes.value.filter((n) => n.leader).length);
 
 const nodePosById = computed<Record<string, PlacedNode>>(() => {
   const map: Record<string, PlacedNode> = {};
@@ -403,34 +552,42 @@ const nodePosById = computed<Record<string, PlacedNode>>(() => {
   return map;
 });
 
-interface DrawnEdge {
+// Management spokes: every outbound-only agent dials the control plane.
+interface Spoke {
   key: string;
   x1: number;
   y1: number;
   x2: number;
   y2: number;
+  leader: boolean;
+}
+const spokes = computed<Spoke[]>(() =>
+  placedNodes.value.map((n) => {
+    const dx = n.x - GCX;
+    const dy = n.y - GCY;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    return {
+      key: `spoke:${n.id}`,
+      x1: GCX + ux * HUB_R,
+      y1: GCY + uy * HUB_R,
+      x2: n.x - ux * n.r,
+      y2: n.y - uy * n.r,
+      leader: n.leader,
+    };
+  }),
+);
+
+// Policy edges: node→node allow/deny, bowed outward so they clear the hub.
+interface DrawnEdge {
+  key: string;
+  path: string;
+  mx: number;
+  my: number;
   allow: boolean;
   label: string;
 }
-
-/** Shorten an edge so its endpoint sits on the node ring (so arrows are visible). */
-function trimToRing(
-  from: PlacedNode,
-  to: PlacedNode,
-): { x1: number; y1: number; x2: number; y2: number } {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const ux = dx / dist;
-  const uy = dy / dist;
-  return {
-    x1: from.x + ux * NODE_RADIUS,
-    y1: from.y + uy * NODE_RADIUS,
-    x2: to.x - ux * (NODE_RADIUS + 6),
-    y2: to.y - uy * (NODE_RADIUS + 6),
-  };
-}
-
 const drawnEdges = computed<DrawnEdge[]>(() => {
   const edges = graph.value?.edges ?? [];
   const out: DrawnEdge[] = [];
@@ -438,11 +595,27 @@ const drawnEdges = computed<DrawnEdge[]>(() => {
     const from = nodePosById.value[edge.from];
     const to = nodePosById.value[edge.to];
     if (!from || !to || from.id === to.id) continue;
-    const seg = trimToRing(from, to);
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const x1 = from.x + ux * from.r;
+    const y1 = from.y + uy * from.r;
+    const x2 = to.x - ux * (to.r + 6);
+    const y2 = to.y - uy * (to.r + 6);
+    const mx0 = (x1 + x2) / 2;
+    const my0 = (y1 + y2) / 2;
+    const outward = Math.hypot(mx0 - GCX, my0 - GCY) || 1;
+    const bow = 28;
+    const qx = mx0 + ((mx0 - GCX) / outward) * bow;
+    const qy = my0 + ((my0 - GCY) / outward) * bow;
     const portLabel = edge.ports?.length ? `:${edge.ports.join(",")}` : "";
     out.push({
       key: `${edge.rule_id}:${edge.from}->${edge.to}`,
-      ...seg,
+      path: `M ${x1.toFixed(1)} ${y1.toFixed(1)} Q ${qx.toFixed(1)} ${qy.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}`,
+      mx: qx,
+      my: qy,
       allow: edge.action === "allow",
       label: `${edge.protocol}${portLabel}`,
     });
@@ -609,28 +782,45 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               :empty-description="$t('networking.policy.graphEmptyDescription')"
               @retry="graphQuery.refresh"
             >
-              <div class="space-y-6">
+              <div class="space-y-4">
                 <!-- Legend -->
-                <div class="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+                  <span class="inline-flex items-center gap-1.5">
+                    <svg viewBox="0 0 16 16" class="size-3.5"><circle cx="8" cy="8" r="6" class="fill-card stroke-primary" stroke-width="1.5" /></svg>
+                    {{ $t('networking.policy.legendServer') }}
+                  </span>
+                  <span class="inline-flex items-center gap-1.5">
+                    <span class="inline-block h-0 w-6 border-t border-dashed border-muted-foreground"></span> {{ $t('networking.policy.legendMgmt') }}
+                  </span>
                   <span class="inline-flex items-center gap-1.5">
                     <span class="inline-block h-0.5 w-6 rounded bg-success"></span> {{ $t('networking.policy.legendAllow') }}
                   </span>
                   <span class="inline-flex items-center gap-1.5">
                     <span class="inline-block h-0.5 w-6 rounded bg-destructive"></span> {{ $t('networking.policy.legendDeny') }}
                   </span>
-                  <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block size-2 rounded-full bg-success"></span> {{ $t('networking.policy.legendOnline') }}
-                  </span>
-                  <span class="inline-flex items-center gap-1.5">
-                    <span class="inline-block size-2 rounded-full bg-muted-foreground"></span> {{ $t('networking.policy.legendOffline') }}
+                  <span v-if="leaderCount > 0" class="inline-flex items-center gap-1.5">
+                    <span class="text-amber-400">★</span> {{ $t('networking.policy.legendLeader') }}
                   </span>
                 </div>
 
-                <!-- Circular node-link diagram -->
+                <!-- Region chips: which clusters are present, with online/total. -->
+                <div v-if="regionArcs.length" class="flex flex-wrap gap-2">
+                  <span
+                    v-for="arc in regionArcs"
+                    :key="`chip-${arc.key}`"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-xs"
+                  >
+                    <span :class="cn('inline-block size-2 rounded-full', arc.color.bg)"></span>
+                    {{ arc.glyph }} {{ $t(`common.regions.${arc.continent === '??' ? 'unknown' : arc.continent}`) }}
+                    <span class="font-mono text-muted-foreground">{{ arc.online }}/{{ arc.total }}</span>
+                  </span>
+                </div>
+
+                <!-- Hub-and-spoke node-link diagram, clustered by region -->
                 <div class="overflow-x-auto rounded-lg border border-border bg-muted/10 p-2">
                   <svg
-                    :viewBox="`0 0 ${GRAPH_SIZE} ${GRAPH_SIZE}`"
-                    class="mx-auto block h-[480px] w-full max-w-[640px]"
+                    :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`"
+                    class="mx-auto block h-[540px] w-full max-w-[860px]"
                     role="img"
                     :aria-label="$t('networking.policy.graphAriaLabel')"
                   >
@@ -659,22 +849,46 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                       </marker>
                     </defs>
 
-                    <!-- edges -->
+                    <!-- region sector arcs + labels -->
+                    <g v-for="arc in regionArcs" :key="arc.key">
+                      <path :d="arc.path" fill="none" :class="arc.color.arc" stroke-width="3" stroke-linecap="round" />
+                      <text
+                        :x="arc.lx"
+                        :y="arc.ly"
+                        text-anchor="middle"
+                        :class="cn('text-[11px] font-semibold', arc.color.text)"
+                      >
+                        {{ arc.glyph }} {{ $t(`common.regions.${arc.continent === '??' ? 'unknown' : arc.continent}`) }} · {{ arc.online }}/{{ arc.total }}
+                      </text>
+                    </g>
+
+                    <!-- management spokes (control plane → each agent) -->
+                    <line
+                      v-for="s in spokes"
+                      :key="s.key"
+                      :x1="s.x1"
+                      :y1="s.y1"
+                      :x2="s.x2"
+                      :y2="s.y2"
+                      :class="s.leader ? 'stroke-primary/45' : 'stroke-border'"
+                      :stroke-width="s.leader ? 1.4 : 1"
+                      stroke-dasharray="2 4"
+                    />
+
+                    <!-- policy edges -->
                     <g v-if="hasGraphEdges">
                       <g v-for="edge in drawnEdges" :key="edge.key">
-                        <line
-                          :x1="edge.x1"
-                          :y1="edge.y1"
-                          :x2="edge.x2"
-                          :y2="edge.y2"
+                        <path
+                          :d="edge.path"
+                          fill="none"
                           :class="edge.allow ? 'stroke-success' : 'stroke-destructive'"
-                          stroke-width="1.6"
+                          stroke-width="1.8"
                           :marker-end="edge.allow ? 'url(#arrow-allow)' : 'url(#arrow-deny)'"
                           :stroke-dasharray="edge.allow ? '0' : '5 4'"
                         />
                         <text
-                          :x="(edge.x1 + edge.x2) / 2"
-                          :y="(edge.y1 + edge.y2) / 2 - 3"
+                          :x="edge.mx"
+                          :y="edge.my - 3"
                           text-anchor="middle"
                           class="fill-muted-foreground text-[9px]"
                         >
@@ -683,28 +897,64 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                       </g>
                     </g>
 
+                    <!-- control-plane hub (the server) -->
+                    <g>
+                      <circle :cx="GCX" :cy="GCY" :r="HUB_R + 9" class="fill-primary/5" />
+                      <circle :cx="GCX" :cy="GCY" :r="HUB_R" class="fill-card stroke-primary" stroke-width="2" />
+                      <rect :x="GCX - 9" :y="GCY - 10" width="18" height="7" rx="2" class="fill-primary/80" />
+                      <rect :x="GCX - 9" :y="GCY - 1" width="18" height="7" rx="2" class="fill-primary/55" />
+                      <circle :cx="GCX - 5" :cy="GCY - 6.5" r="1" class="fill-card" />
+                      <circle :cx="GCX - 5" :cy="GCY + 2.5" r="1" class="fill-card" />
+                      <text :x="GCX" :y="GCY + HUB_R + 16" text-anchor="middle" class="fill-foreground text-[11px] font-semibold">
+                        {{ $t('networking.policy.controlPlane') }}
+                      </text>
+                      <text :x="GCX" :y="GCY + HUB_R + 30" text-anchor="middle" class="fill-muted-foreground text-[9px]">
+                        {{ serverHost }}
+                      </text>
+                    </g>
+
                     <!-- nodes -->
                     <g v-for="node in placedNodes" :key="node.id">
                       <circle
+                        v-if="node.leader"
                         :cx="node.x"
                         :cy="node.y"
-                        :r="NODE_RADIUS"
-                        class="fill-card stroke-border"
+                        :r="node.r + 4"
+                        fill="none"
+                        :class="node.color.ring"
+                        stroke-width="1.5"
+                        stroke-dasharray="3 3"
+                      />
+                      <circle
+                        :cx="node.x"
+                        :cy="node.y"
+                        :r="node.r"
+                        :class="cn('fill-card', node.disabled ? 'opacity-50' : '')"
+                        class="stroke-border"
                         stroke-width="1.5"
                       />
                       <circle
                         :cx="node.x"
-                        :cy="node.y - NODE_RADIUS + 6"
+                        :cy="node.y - node.r + 6"
                         r="4"
-                        :class="node.online ? 'fill-success' : 'fill-muted-foreground'"
+                        :class="!node.disabled && node.online ? 'fill-success' : 'fill-muted-foreground'"
                       />
                       <text
                         :x="node.x"
-                        :y="node.y + 4"
+                        :y="node.y + 3"
                         text-anchor="middle"
                         class="fill-foreground text-[10px] font-medium"
                       >
-                        {{ node.name.length > 10 ? node.name.slice(0, 9) + "…" : node.name }}
+                        {{ node.name.length > 9 ? node.name.slice(0, 8) + "…" : node.name }}
+                      </text>
+                      <text
+                        v-if="node.leader"
+                        :x="node.x"
+                        :y="node.y + node.r + 11"
+                        text-anchor="middle"
+                        :class="cn('text-[8px] font-semibold', node.color.text)"
+                      >
+                        ★ {{ $t('networking.policy.leader') }}
                       </text>
                     </g>
                   </svg>

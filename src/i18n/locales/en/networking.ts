@@ -80,11 +80,17 @@ export default {
       colLastError: "Last error",
       colActions: "Actions",
       graphTitle: "Topology graph",
-      graphHint: "Node-to-node edges from policy rules. Green = allow, red = deny.",
+      graphHint:
+        "Hub-and-spoke view: the control-plane server sits at the centre, agents are clustered by region, and policy rules draw the coloured edges.",
       reloadGraph: "Reload graph",
       graphEmptyTitle: "No nodes in graph",
       graphEmptyDescription:
         "Only nodes you can read with active policies appear in the topology.",
+      controlPlane: "Control plane",
+      leader: "leader",
+      legendServer: "control plane",
+      legendMgmt: "management link",
+      legendLeader: "group leader",
       legendAllow: "allow",
       legendDeny: "deny",
       legendOnline: "online",

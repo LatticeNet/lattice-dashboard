@@ -4,6 +4,24 @@
 
 export default {
   common: {
+    regions: {
+      AS: "Asia",
+      EU: "Europe",
+      NA: "North America",
+      SA: "South America",
+      AF: "Africa",
+      OC: "Oceania",
+      AN: "Antarctica",
+      unknown: "Unknown",
+    },
+    groups: {
+      all: "All nodes",
+      online: "Online",
+      offline: "Offline",
+      disabled: "Disabled",
+      noRole: "No role",
+      untagged: "Untagged",
+    },
     actions: {
       refresh: "Refresh",
       save: "Save",
@@ -200,6 +218,14 @@ export default {
       monitors: "Monitors",
     },
     fleet: "Fleet",
+    fleetHealth: "Fleet health",
+    acrossLive: "across {count} live nodes",
+    summary: {
+      download: "Download",
+      upload: "Upload",
+      regions: "Regions",
+      countries: "Countries",
+    },
     approvalsInbox: "Approvals",
     recentActivity: "Recent activity",
     noNodes: "No nodes enrolled yet.",

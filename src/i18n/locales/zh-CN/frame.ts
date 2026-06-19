@@ -3,6 +3,24 @@
 
 export default {
   common: {
+    regions: {
+      AS: "亚洲",
+      EU: "欧洲",
+      NA: "北美洲",
+      SA: "南美洲",
+      AF: "非洲",
+      OC: "大洋洲",
+      AN: "南极洲",
+      unknown: "未知",
+    },
+    groups: {
+      all: "全部节点",
+      online: "在线",
+      offline: "离线",
+      disabled: "已停用",
+      noRole: "无角色",
+      untagged: "无标签",
+    },
     actions: {
       refresh: "刷新",
       save: "保存",
@@ -199,6 +217,14 @@ export default {
       monitors: "监控项",
     },
     fleet: "机群",
+    fleetHealth: "机群健康",
+    acrossLive: "覆盖 {count} 个在线节点",
+    summary: {
+      download: "下载",
+      upload: "上传",
+      regions: "地区",
+      countries: "国家/地区",
+    },
     approvalsInbox: "审批",
     recentActivity: "近期活动",
     noNodes: "尚未接入任何节点。",
