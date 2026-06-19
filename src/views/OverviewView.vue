@@ -2,19 +2,27 @@
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  Cpu,
+  Globe,
+  HardDrive,
+  MapPin,
+  MemoryStick,
   RotateCw,
   Server,
-  Wifi,
   ShieldCheck,
   Terminal,
-  Activity,
+  Wifi,
 } from "lucide-vue-next";
 import { api, unwrap, ApiError } from "@/lib/api";
 import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
-import { formatRelativeTime } from "@/lib/format";
+import { formatBytesPerSec, formatPercent, formatRelativeTime, ratio } from "@/lib/format";
+import { fleetTotals, groupNodes, type NodeGroup } from "@/lib/fleet";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -23,6 +31,7 @@ import StatusDot from "@/components/common/StatusDot.vue";
 import DataState from "@/components/common/DataState.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import NodeCard from "@/components/common/NodeCard.vue";
+import MetricBar from "@/components/common/MetricBar.vue";
 import GettingStarted from "@/components/common/GettingStarted.vue";
 
 import { Button } from "@/components/ui/button";
@@ -68,7 +77,7 @@ const audit = useAsyncData<AuditEvent[] | undefined>(
 );
 
 const auth = useAuthStore();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 // Client-side metric ring: feed each poll so NodeCard sparklines have history.
 const metricBuffer = useMetricBuffer();
@@ -107,6 +116,17 @@ const sortedNodes = computed(() =>
     return (a.name || a.id).localeCompare(b.name || b.id);
   }),
 );
+
+/** Fleet-wide aggregate for the health panel (CPU mean, mem/disk sums, BW). */
+const totals = computed(() => fleetTotals(nodes.value));
+const hasFleet = computed(() => nodes.value.length > 0);
+
+/** Region-clustered fleet for the grouped card grid. */
+const fleetGroups = computed<NodeGroup[]>(() => groupNodes(sortedNodes.value, "region", locale.value));
+
+function groupLabel(g: NodeGroup): string {
+  return g.i18nKey ? t(g.i18nKey) : g.label;
+}
 
 const auditEvents = computed(() => (audit.data.value ?? []).slice(0, 6));
 
@@ -173,6 +193,74 @@ function refreshAll() {
       />
     </div>
 
+    <!-- Fleet health: live aggregate resource + bandwidth roll-up across the
+         fleet, so the operator sees overall pressure without scanning cards. -->
+    <Card v-if="hasFleet">
+      <CardContent class="p-4 sm:p-5">
+        <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 text-sm font-medium">
+              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('overview.fleetHealth') }}
+              <span class="ml-auto text-xs font-normal text-muted-foreground">
+                {{ $t('overview.acrossLive', { count: onlineNodes }) }}
+              </span>
+            </div>
+            <MetricBar
+              :label="$t('overview.metric.cpu')"
+              :icon="Cpu"
+              tone="cpu"
+              :percent="totals.cpuPercent"
+              :value-text="formatPercent(totals.cpuPercent)"
+            />
+            <MetricBar
+              :label="$t('overview.metric.memory')"
+              :icon="MemoryStick"
+              tone="memory"
+              :percent="ratio(totals.memUsed, totals.memTotal)"
+              :used="totals.memUsed"
+              :total="totals.memTotal"
+            />
+            <MetricBar
+              :label="$t('overview.metric.disk')"
+              :icon="HardDrive"
+              tone="disk"
+              :percent="ratio(totals.diskUsed, totals.diskTotal)"
+              :used="totals.diskUsed"
+              :total="totals.diskTotal"
+            />
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div class="rounded-lg border border-border bg-muted/20 p-3">
+              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.download') }}</p>
+              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                <ArrowDown class="size-4 text-success" aria-hidden="true" />{{ formatBytesPerSec(totals.netRxSpeed) }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-border bg-muted/20 p-3">
+              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.upload') }}</p>
+              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                <ArrowUp class="size-4 text-primary" aria-hidden="true" />{{ formatBytesPerSec(totals.netTxSpeed) }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-border bg-muted/20 p-3">
+              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.regions') }}</p>
+              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                <Globe class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.regions }}
+              </p>
+            </div>
+            <div class="rounded-lg border border-border bg-muted/20 p-3">
+              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.countries') }}</p>
+              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                <MapPin class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.countries }}
+              </p>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
     <!-- Main grid -->
     <div class="grid gap-6 lg:grid-cols-3">
       <!-- Fleet -->
@@ -196,22 +284,33 @@ function refreshAll() {
             :empty-description="$t('overview.noNodesDescription')"
             @retry="fleet.refresh"
           >
-            <div class="grid gap-3 sm:grid-cols-2">
-              <NodeCard
-                v-for="node in sortedNodes"
-                :key="node.id"
-                :node="node"
-                show-sparkline
-                sparkline-metric="cpu"
-                :selectable="false"
-                :cpu-label="t('overview.metric.cpu')"
-                :memory-label="t('overview.metric.memory')"
-                :disk-label="t('overview.metric.disk')"
-                :online-label="t('common.status.online')"
-                :offline-label="t('common.status.offline')"
-                :disabled-label="t('common.status.disabled')"
-                :sparkline-label="t('overview.sparklineLabel')"
-              />
+            <div class="space-y-5">
+              <section v-for="group in fleetGroups" :key="group.key">
+                <div class="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                  <span v-if="group.glyph" class="text-sm leading-none">{{ group.glyph }}</span>
+                  <span class="uppercase tracking-wide">{{ groupLabel(group) }}</span>
+                  <span class="tabular">{{ group.online }}/{{ group.total }}</span>
+                  <span class="h-px flex-1 bg-border"></span>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <NodeCard
+                    v-for="node in group.nodes"
+                    :key="node.id"
+                    :node="node"
+                    compact
+                    show-sparkline
+                    sparkline-metric="cpu"
+                    :selectable="false"
+                    :cpu-label="t('overview.metric.cpu')"
+                    :memory-label="t('overview.metric.memory')"
+                    :disk-label="t('overview.metric.disk')"
+                    :online-label="t('common.status.online')"
+                    :offline-label="t('common.status.offline')"
+                    :disabled-label="t('common.status.disabled')"
+                    :sparkline-label="t('overview.sparklineLabel')"
+                  />
+                </div>
+              </section>
             </div>
           </DataState>
         </CardContent>

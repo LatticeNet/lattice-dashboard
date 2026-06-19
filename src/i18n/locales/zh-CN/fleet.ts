@@ -9,6 +9,17 @@ export default {
         total: "总数",
         online: "在线",
         disabled: "已停用",
+        bandwidth: "实时带宽",
+      },
+      groupBy: {
+        label: "分组方式",
+        region: "按地区",
+        country: "按国家/地区",
+        role: "按角色",
+        status: "按状态",
+        tag: "按标签",
+        none: "不分组",
+        count: "{online}/{total} 在线",
       },
       filters: {
         searchPlaceholder: "搜索名称、ID 或主机…",

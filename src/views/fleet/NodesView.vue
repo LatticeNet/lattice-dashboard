@@ -5,7 +5,11 @@ import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
   KeyRound,
+  Layers,
   Plus,
   Power,
   RefreshCw,
@@ -22,10 +26,12 @@ import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import {
   formatBytes,
+  formatBytesPerSec,
   formatDateTime,
   formatRelativeTime,
   shortId,
 } from "@/lib/format";
+import { fleetTotals, groupNodes, type GroupBy, type NodeGroup } from "@/lib/fleet";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -61,7 +67,7 @@ import {
 } from "@/components/ui/dialog";
 
 const auth = useAuthStore();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
@@ -170,6 +176,31 @@ function clearFilters() {
   search.value = "";
   statusFilter.value = "all";
   activeTags.value = [];
+}
+
+/* ----------------------------------------------------------------- */
+/* Grouping: bucket the filtered fleet by region / role / status / …  */
+/* so a 16+ node fleet reads as clusters, not one long wall of cards.  */
+/* ----------------------------------------------------------------- */
+const groupBy = ref<GroupBy>("region");
+const collapsed = ref<Set<string>>(new Set());
+
+const groups = computed<NodeGroup[]>(() =>
+  groupNodes(sortedNodes.value, groupBy.value, locale.value),
+);
+
+/** Aggregate bandwidth across the (unfiltered) fleet for the header stat. */
+const totals = computed(() => fleetTotals(nodes.value));
+
+function groupLabel(g: NodeGroup): string {
+  return g.i18nKey ? t(g.i18nKey) : g.label;
+}
+
+function toggleGroup(key: string) {
+  const next = new Set(collapsed.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsed.value = next;
 }
 
 /* ----------------------------------------------------------------- */
@@ -294,7 +325,7 @@ function openTerminal(node: Node) {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 md:grid-cols-3">
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <Card>
         <CardContent class="flex items-center justify-between p-4">
           <div>
@@ -320,6 +351,19 @@ function openTerminal(node: Node) {
             <p class="text-2xl font-semibold text-muted-foreground">{{ disabledCount }}</p>
           </div>
           <Power class="size-5 text-muted-foreground" aria-hidden="true" />
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent class="p-4">
+          <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.stats.bandwidth') }}</p>
+          <div class="mt-1 flex items-center gap-3 text-lg font-semibold tabular">
+            <span class="inline-flex items-center gap-1 text-foreground">
+              <ArrowDown class="size-4 text-success" aria-hidden="true" />{{ formatBytesPerSec(totals.netRxSpeed) }}
+            </span>
+            <span class="inline-flex items-center gap-1 text-foreground">
+              <ArrowUp class="size-4 text-primary" aria-hidden="true" />{{ formatBytesPerSec(totals.netTxSpeed) }}
+            </span>
+          </div>
         </CardContent>
       </Card>
     </div>
@@ -410,7 +454,7 @@ function openTerminal(node: Node) {
               />
             </div>
             <Select v-model="statusFilter">
-              <SelectTrigger class="sm:w-44">
+              <SelectTrigger class="sm:w-40">
                 <SelectValue :placeholder="$t('fleet.nodes.filters.status')" />
               </SelectTrigger>
               <SelectContent>
@@ -418,6 +462,20 @@ function openTerminal(node: Node) {
                 <SelectItem value="online">{{ $t('common.status.online') }}</SelectItem>
                 <SelectItem value="offline">{{ $t('common.status.offline') }}</SelectItem>
                 <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select v-model="groupBy">
+              <SelectTrigger class="sm:w-44">
+                <Layers class="size-4 text-muted-foreground" aria-hidden="true" />
+                <SelectValue :placeholder="$t('fleet.nodes.groupBy.label')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="region">{{ $t('fleet.nodes.groupBy.region') }}</SelectItem>
+                <SelectItem value="country">{{ $t('fleet.nodes.groupBy.country') }}</SelectItem>
+                <SelectItem value="role">{{ $t('fleet.nodes.groupBy.role') }}</SelectItem>
+                <SelectItem value="status">{{ $t('fleet.nodes.groupBy.status') }}</SelectItem>
+                <SelectItem value="tag">{{ $t('fleet.nodes.groupBy.tag') }}</SelectItem>
+                <SelectItem value="none">{{ $t('fleet.nodes.groupBy.none') }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -484,54 +542,81 @@ function openTerminal(node: Node) {
             </Button>
           </EmptyState>
 
-          <div v-else class="grid gap-3 xl:grid-cols-2">
-            <NodeCard
-              v-for="node in sortedNodes"
-              :key="node.id"
-              :node="node"
-              show-sparkline
-              sparkline-metric="cpu"
-              :cpu-label="t('fleet.nodes.metric.cpu')"
-              :memory-label="t('fleet.nodes.metric.memory')"
-              :disk-label="t('fleet.nodes.metric.disk')"
-              :online-label="t('common.status.online')"
-              :offline-label="t('common.status.offline')"
-              :disabled-label="t('common.status.disabled')"
-              :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"
-              @select="openNode(node)"
-            >
-              <template #footer="{ node: cardNode }">
-                <p class="mt-3 font-mono text-xs text-muted-foreground">
-                  {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
-                </p>
-                <div v-if="canOpenTerminal || canAdminNodes" class="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    v-if="canOpenTerminal"
-                    size="sm"
-                    variant="outline"
-                    :disabled="!cardNode.online || cardNode.disabled"
-                    @click="openTerminal(cardNode)"
-                  >
-                    <SquareTerminal class="size-4" aria-hidden="true" />
-                    {{ $t('fleet.nodes.list.openTerminal') }}
-                  </Button>
-                  <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === cardNode.id" @click="rotateToken(cardNode)">
-                    <KeyRound class="size-4" aria-hidden="true" />
-                    {{ $t('fleet.nodes.list.rotateToken') }}
-                  </Button>
-                  <Button
-                    v-if="canAdminNodes"
-                    size="sm"
-                    :variant="cardNode.disabled ? 'outline' : 'destructive'"
-                    :disabled="pendingNode === cardNode.id"
-                    @click="setDisabled(cardNode, !cardNode.disabled)"
-                  >
-                    <Power class="size-4" aria-hidden="true" />
-                    {{ cardNode.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
-                  </Button>
-                </div>
-              </template>
-            </NodeCard>
+          <div v-else class="space-y-6">
+            <section v-for="group in groups" :key="group.key">
+              <!-- Group header (hidden when grouping is off) -->
+              <button
+                v-if="groupBy !== 'none'"
+                type="button"
+                class="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-muted/40"
+                :aria-expanded="!collapsed.has(group.key)"
+                @click="toggleGroup(group.key)"
+              >
+                <ChevronDown
+                  :class="cn('size-4 shrink-0 text-muted-foreground transition-transform', collapsed.has(group.key) && '-rotate-90')"
+                  aria-hidden="true"
+                />
+                <span v-if="group.glyph" class="text-base leading-none">{{ group.glyph }}</span>
+                <span class="font-semibold">{{ groupLabel(group) }}</span>
+                <Badge variant="secondary" class="ml-1 tabular">
+                  {{ $t('fleet.nodes.groupBy.count', { online: group.online, total: group.total }) }}
+                </Badge>
+                <span class="ml-auto h-px flex-1 bg-border"></span>
+              </button>
+
+              <div
+                v-show="!collapsed.has(group.key)"
+                :class="cn('grid gap-3 xl:grid-cols-2', groupBy !== 'none' && 'mt-3')"
+              >
+                <NodeCard
+                  v-for="node in group.nodes"
+                  :key="node.id"
+                  :node="node"
+                  show-sparkline
+                  sparkline-metric="cpu"
+                  :cpu-label="t('fleet.nodes.metric.cpu')"
+                  :memory-label="t('fleet.nodes.metric.memory')"
+                  :disk-label="t('fleet.nodes.metric.disk')"
+                  :online-label="t('common.status.online')"
+                  :offline-label="t('common.status.offline')"
+                  :disabled-label="t('common.status.disabled')"
+                  :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"
+                  @select="openNode(node)"
+                >
+                  <template #footer="{ node: cardNode }">
+                    <p class="mt-3 font-mono text-xs text-muted-foreground">
+                      {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
+                    </p>
+                    <div v-if="canOpenTerminal || canAdminNodes" class="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        v-if="canOpenTerminal"
+                        size="sm"
+                        variant="outline"
+                        :disabled="!cardNode.online || cardNode.disabled"
+                        @click="openTerminal(cardNode)"
+                      >
+                        <SquareTerminal class="size-4" aria-hidden="true" />
+                        {{ $t('fleet.nodes.list.openTerminal') }}
+                      </Button>
+                      <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === cardNode.id" @click="rotateToken(cardNode)">
+                        <KeyRound class="size-4" aria-hidden="true" />
+                        {{ $t('fleet.nodes.list.rotateToken') }}
+                      </Button>
+                      <Button
+                        v-if="canAdminNodes"
+                        size="sm"
+                        :variant="cardNode.disabled ? 'outline' : 'destructive'"
+                        :disabled="pendingNode === cardNode.id"
+                        @click="setDisabled(cardNode, !cardNode.disabled)"
+                      >
+                        <Power class="size-4" aria-hidden="true" />
+                        {{ cardNode.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
+                      </Button>
+                    </div>
+                  </template>
+                </NodeCard>
+              </div>
+            </section>
           </div>
         </DataState>
       </CardContent>
