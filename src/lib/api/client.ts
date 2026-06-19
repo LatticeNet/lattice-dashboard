@@ -48,6 +48,47 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/* ------------------------------------------------------------------ */
+/* Lightweight request timing — surfaces perceived slowness in the     */
+/* browser console without a build flag. Every call logs at `debug`    */
+/* (filter via the devtools log-level menu); anything slower than      */
+/* SLOW_MS (or a 0/5xx) is promoted to `warn` and kept in a small ring */
+/* on `window.__latticePerf` for ad-hoc inspection.                    */
+/* ------------------------------------------------------------------ */
+const SLOW_MS = 1200;
+const PERF_RING = 50;
+
+interface PerfEntry {
+  method: Method;
+  path: string;
+  status: number;
+  ms: number;
+  requestId?: string;
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+}
+
+function logTiming(e: PerfEntry): void {
+  const line = `[lattice/api] ${e.method} ${e.path} -> ${e.status} ${e.ms.toFixed(0)}ms${
+    e.requestId ? ` (req ${e.requestId})` : ""
+  }`;
+  if (e.ms >= SLOW_MS || e.status === 0 || e.status >= 500) {
+    console.warn(line);
+    try {
+      const g = globalThis as unknown as { __latticePerf?: PerfEntry[] };
+      const ring = (g.__latticePerf ||= []);
+      ring.push(e);
+      if (ring.length > PERF_RING) ring.splice(0, ring.length - PERF_RING);
+    } catch {
+      /* locked-down global — ignore */
+    }
+  } else {
+    console.debug(line);
+  }
+}
+
 async function request<T>(
   method: Method,
   path: string,
@@ -65,6 +106,7 @@ async function request<T>(
     headers["X-Lattice-CSRF"] = csrfToken;
   }
 
+  const t0 = nowMs();
   let res: Response;
   try {
     res = await fetch(path, {
@@ -76,10 +118,13 @@ async function request<T>(
     });
   } catch (err) {
     if ((err as Error)?.name === "AbortError") throw err;
+    logTiming({ method, path, status: 0, ms: nowMs() - t0 });
     throw new ApiError(0, "network_error", "Cannot reach the control plane. Check your connection.");
   }
 
   const raw = await res.text();
+  const ms = nowMs() - t0;
+  const requestId = res.headers.get("X-Lattice-Request-ID") || undefined;
   let data: unknown = undefined;
   if (raw) {
     try {
@@ -89,15 +134,15 @@ async function request<T>(
     }
   }
 
+  logTiming({ method, path, status: res.status, ms, requestId });
+
   if (!res.ok) {
     const errBody = data as ApiErrorBody;
-    const requestId =
-      res.headers.get("X-Lattice-Request-ID") || errBody?.error?.request_id || undefined;
     const code = errBody?.error?.code || String(res.status);
     const message =
       errBody?.error?.message ||
       (typeof data === "string" && data ? data : res.statusText || "Request failed");
-    throw new ApiError(res.status, code, message, requestId);
+    throw new ApiError(res.status, code, message, requestId || errBody?.error?.request_id);
   }
 
   return data as T;
