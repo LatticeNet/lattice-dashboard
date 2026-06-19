@@ -7,7 +7,8 @@ import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
 import { api, type TerminalSession } from "@/lib/api";
 
-const POLL_MS = 200;
+const POLL_MS = 220;
+const POLL_ERROR_MS = 1500; // back off after a failed poll so a bad link isn't hammered
 const INPUT_FLUSH_MS = 35;
 const RESIZE_DEBOUNCE_MS = 160;
 
@@ -31,7 +32,9 @@ const terminalError = ref<string | undefined>();
 let terminal: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
 let resizeObserver: ResizeObserver | undefined;
-let pollTimer: ReturnType<typeof setInterval> | undefined;
+let pollTimer: ReturnType<typeof setTimeout> | undefined;
+let polling = false; // single-flight guard: at most one events request in flight
+let pollGen = 0; // bumped on (re)start so a superseded in-flight poll won't reschedule
 let inputTimer: ReturnType<typeof setTimeout> | undefined;
 let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 let cursor = 0;
@@ -122,7 +125,7 @@ function initTerminal() {
 
 function disposeTerminal() {
   disposed = true;
-  if (pollTimer) clearInterval(pollTimer);
+  stopPolling();
   if (inputTimer) clearTimeout(inputTimer);
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeObserver?.disconnect();
@@ -147,39 +150,88 @@ function clearTerminalForSession() {
   terminal?.clear();
 }
 
-function startPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(() => void pollEvents(), POLL_MS);
+function stopPolling() {
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = undefined;
 }
 
-async function pollEvents() {
-  if (disposed || visibility.value === "hidden") return;
+/** Arm the next poll. Single timer; clearing first prevents a stray double. */
+function scheduleNextPoll(delay: number) {
+  if (disposed) return;
+  if (pollTimer) clearTimeout(pollTimer);
+  pollTimer = setTimeout(() => void pollEvents(), delay);
+}
+
+function startPolling() {
+  pollGen += 1; // invalidate any in-flight poll from a previous (re)start
+  stopPolling();
+  scheduleNextPoll(0); // first poll runs on the next tick, never overlapping a live one
+}
+
+/**
+ * Single-flight, self-scheduling events poll.
+ *
+ * The next request is armed only AFTER the current one settles (success or
+ * failure), so at most one events request is ever in flight. A fixed
+ * `setInterval` used to fire every POLL_MS regardless of whether the previous
+ * request had returned — on a slow/lossy link those requests piled up, each
+ * re-fetched the same events for the same cursor, and the un-deduped
+ * `terminal.write` repainted already-seen output. That is what made a single
+ * keystroke (and the `^C` echo) repeat endlessly. Two guards kill it:
+ *   1) single-flight + self-scheduling (no overlap);
+ *   2) skip any event whose seq we've already applied (`seq <= cursor`).
+ */
+async function pollEvents(): Promise<void> {
+  if (disposed) return;
+  const myGen = pollGen;
+  if (polling) {
+    // A request is still in flight; retry shortly instead of overlapping it.
+    scheduleNextPoll(POLL_MS);
+    return;
+  }
+  if (visibility.value === "hidden") {
+    // Don't poll a backgrounded tab; re-arm so it resumes when visible again.
+    scheduleNextPoll(POLL_MS);
+    return;
+  }
+
+  polling = true;
+  let delay = POLL_MS;
+  let keepPolling = true;
   const session = props.session;
   try {
     const res = await api.terminal.events(session.id, cursor);
-    if (props.session.id !== session.id) return;
+    if (myGen !== pollGen) {
+      // Superseded by a newer (re)start — the new generation owns the loop.
+      keepPolling = false;
+      return;
+    }
     emit("update:session", res.session);
     for (const event of res.events) {
-      if (event.seq > cursor) cursor = event.seq;
+      if (event.seq <= cursor) continue; // already applied — never repaint
+      cursor = event.seq;
       if (event.kind === "output" && event.data) terminal?.write(event.data);
     }
     terminalError.value = undefined;
-    if ((res.session.status === "closed" || res.session.status === "failed") && closedEmittedFor !== res.session.id) {
+
+    const ended = res.session.status === "closed" || res.session.status === "failed";
+    if (ended && closedEmittedFor !== res.session.id) {
       closedEmittedFor = res.session.id;
       emit("closed", res.session);
     }
-    if ((res.session.status === "closed" || res.session.status === "failed") && closedPollsRemaining > 0) {
-      closedPollsRemaining -= 1;
-      if (closedPollsRemaining === 0 && pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = undefined;
-      }
+    if (ended) {
+      if (closedPollsRemaining > 0) closedPollsRemaining -= 1;
+      if (closedPollsRemaining <= 0) keepPolling = false; // session fully drained — stop
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : t("operations.terminal.eventsFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;
     if (changed) emit("error", message);
+    delay = POLL_ERROR_MS;
+  } finally {
+    polling = false;
+    if (keepPolling && !disposed && myGen === pollGen) scheduleNextPoll(delay);
   }
 }
 
@@ -255,8 +307,7 @@ onMounted(async () => {
   initTerminal();
   await nextTick();
   scheduleResize();
-  startPolling();
-  await pollEvents();
+  startPolling(); // schedules the first (and only-ever-single) poll
   terminal?.focus();
 });
 
@@ -266,8 +317,7 @@ watch(
     clearTerminalForSession();
     await nextTick();
     scheduleResize();
-    startPolling();
-    await pollEvents();
+    startPolling(); // bumps generation so the prior session's in-flight poll won't repaint
     terminal?.focus();
   },
 );
@@ -276,17 +326,17 @@ watch(
   () => props.session.status,
   (status) => {
     if (status === "closed" || status === "failed") {
-      closedPollsRemaining = 12;
-      if (!pollTimer) startPolling();
-      void pollEvents();
-    } else if (!pollTimer) {
+      closedPollsRemaining = 12; // drain a few more polls, then the loop self-stops
+      startPolling();
+    } else if (!pollTimer && !polling) {
       startPolling();
     }
   },
 );
 
 watch(visibility, (value) => {
-  if (value === "visible") void pollEvents();
+  // Returning to the tab: nudge an immediate poll (loop otherwise resumes within POLL_MS).
+  if (value === "visible" && !disposed && !polling) scheduleNextPoll(0);
 });
 
 onBeforeUnmount(() => {
