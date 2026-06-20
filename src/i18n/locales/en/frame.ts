@@ -21,6 +21,7 @@ export default {
       disabled: "Disabled",
       noRole: "No role",
       untagged: "Untagged",
+      ungrouped: "Ungrouped",
     },
     actions: {
       refresh: "Refresh",

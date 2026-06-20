@@ -75,6 +75,7 @@ export default {
         region: "Region",
         country: "Country",
         role: "Role",
+        group: "Group",
         status: "Status",
         tag: "Tag",
         none: "No grouping",

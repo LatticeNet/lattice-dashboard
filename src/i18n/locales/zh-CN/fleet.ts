@@ -73,6 +73,7 @@ export default {
         region: "按地区",
         country: "按国家/地区",
         role: "按角色",
+        group: "按分组",
         status: "按状态",
         tag: "按标签",
         none: "不分组",

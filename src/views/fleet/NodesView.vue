@@ -32,6 +32,7 @@ import {
   shortId,
 } from "@/lib/format";
 import { fleetTotals, groupNodes, type GroupBy, type NodeGroup } from "@/lib/fleet";
+import { groupColor } from "@/lib/groupColors";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -185,8 +186,22 @@ function clearFilters() {
 const groupBy = ref<GroupBy>("region");
 const collapsed = ref<Set<string>>(new Set());
 
+// Group metadata (id -> name/color) for the "Group" grouping mode. Fetched
+// lazily the first time the operator picks group grouping; degrades to a single
+// Ungrouped bucket if the request fails (e.g. the token lacks group:read).
+const fleetGroupsQuery = useAsyncData(() => api.groups.list().then((r) => r.groups), {
+  immediate: false,
+});
+watch(
+  groupBy,
+  (by) => {
+    if (by === "group" && !fleetGroupsQuery.data.value) void fleetGroupsQuery.refresh();
+  },
+  { immediate: true },
+);
+
 const groups = computed<NodeGroup[]>(() =>
-  groupNodes(sortedNodes.value, groupBy.value, locale.value),
+  groupNodes(sortedNodes.value, groupBy.value, locale.value, fleetGroupsQuery.data.value ?? []),
 );
 
 /** Aggregate bandwidth across the (unfiltered) fleet for the header stat. */
@@ -473,6 +488,7 @@ function openTerminal(node: Node) {
                 <SelectItem value="region">{{ $t('fleet.nodes.groupBy.region') }}</SelectItem>
                 <SelectItem value="country">{{ $t('fleet.nodes.groupBy.country') }}</SelectItem>
                 <SelectItem value="role">{{ $t('fleet.nodes.groupBy.role') }}</SelectItem>
+                <SelectItem value="group">{{ $t('fleet.nodes.groupBy.group') }}</SelectItem>
                 <SelectItem value="status">{{ $t('fleet.nodes.groupBy.status') }}</SelectItem>
                 <SelectItem value="tag">{{ $t('fleet.nodes.groupBy.tag') }}</SelectItem>
                 <SelectItem value="none">{{ $t('fleet.nodes.groupBy.none') }}</SelectItem>
@@ -556,6 +572,11 @@ function openTerminal(node: Node) {
                   :class="cn('size-4 shrink-0 text-muted-foreground transition-transform', collapsed.has(group.key) && '-rotate-90')"
                   aria-hidden="true"
                 />
+                <span
+                  v-if="group.color"
+                  :class="cn('size-2.5 shrink-0 rounded-full', groupColor(group.color).dot)"
+                  aria-hidden="true"
+                ></span>
                 <span v-if="group.glyph" class="text-base leading-none">{{ group.glyph }}</span>
                 <span class="font-semibold">{{ groupLabel(group) }}</span>
                 <Badge variant="secondary" class="ml-1 tabular">
