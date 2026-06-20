@@ -11,11 +11,21 @@ const POLL_MS = 220;
 const POLL_ERROR_MS = 1500; // back off after a failed poll so a bad link isn't hammered
 const INPUT_FLUSH_MS = 35;
 const RESIZE_DEBOUNCE_MS = 160;
+const WS_BACKOFF_START_MS = 500;
+const WS_BACKOFF_MAX_MS = 8000;
+const WS_CLOSE_NORMAL = 1000;
+const WS_CLOSE_TRY_AGAIN = 1013; // server: agent never dialed (node offline)
 
-const props = defineProps<{
-  session: TerminalSession;
-  disabled?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    session: TerminalSession;
+    disabled?: boolean;
+    // "poll" (default) is the HTTP store-and-forward relay; "stream" attaches a
+    // WebSocket and is only usable when the node's agent runs in stream mode.
+    transport?: "poll" | "stream";
+  }>(),
+  { transport: "poll" },
+);
 
 const emit = defineEmits<{
   "update:session": [session: TerminalSession];
@@ -28,6 +38,7 @@ const visibility = useDocumentVisibility();
 
 const container = ref<HTMLElement | null>(null);
 const terminalError = ref<string | undefined>();
+const streamConnecting = ref(false);
 
 let terminal: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
@@ -46,6 +57,14 @@ let disposed = false;
 let closedPollsRemaining = 0;
 let closedEmittedFor = "";
 
+// --- WebSocket (stream) transport state ---
+let ws: WebSocket | undefined;
+let wsGen = 0; // bumped to invalidate handlers of a superseded socket
+let wsBackoff = WS_BACKOFF_START_MS;
+let wsReconnectTimer: ReturnType<typeof setTimeout> | undefined;
+const encoder = new TextEncoder();
+
+const isStream = computed(() => props.transport === "stream");
 const isClosed = computed(() => props.session.status === "closed" || props.session.status === "failed");
 
 function initTerminal() {
@@ -63,7 +82,7 @@ function initTerminal() {
     lineHeight: 1.28,
     macOptionIsMeta: true,
     rightClickSelectsWord: true,
-    scrollback: 4000,
+    scrollback: 10000,
     tabStopWidth: 8,
     theme: {
       background: "#070a12",
@@ -92,7 +111,7 @@ function initTerminal() {
 
   terminal.loadAddon(fitAddon);
   terminal.open(container.value);
-  terminal.onData((data) => queueInput(data));
+  terminal.onData((data) => sendInput(data));
 
   // Copy/paste: Cmd+C/V (macOS) or Ctrl+Shift+C/V. Plain Ctrl+C is left alone
   // so it still sends SIGINT to the remote shell. Copy only fires when there is
@@ -108,7 +127,7 @@ function initTerminal() {
     }
     if (combo && key === "v") {
       void navigator.clipboard?.readText().then((text) => {
-        if (text) queueInput(text);
+        if (text) sendInput(text);
       });
       return false;
     }
@@ -126,6 +145,7 @@ function initTerminal() {
 function disposeTerminal() {
   disposed = true;
   stopPolling();
+  closeWs();
   if (inputTimer) clearTimeout(inputTimer);
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeObserver?.disconnect();
@@ -150,6 +170,133 @@ function clearTerminalForSession() {
   terminal?.clear();
 }
 
+// startTransport (re)connects whichever transport is active for the current
+// session. Called on mount, on session change, and on status transitions.
+function startTransport() {
+  if (isStream.value) connectWs();
+  else startPolling();
+}
+
+// --- input dispatch ---
+function sendInput(data: string) {
+  if (props.disabled || !data) return;
+  if (isStream.value) wsSendInput(data);
+  else queueInput(data);
+}
+
+// ============================ WebSocket transport ============================
+
+function streamUrl(id: string): string {
+  return api.terminal.streamURL(id);
+}
+
+function connectWs() {
+  if (disposed || !isStream.value) return;
+  closeWs();
+  wsGen += 1;
+  const myGen = wsGen;
+  const sessionId = props.session.id;
+  streamConnecting.value = true;
+  let sock: WebSocket;
+  try {
+    sock = new WebSocket(streamUrl(sessionId));
+  } catch {
+    streamConnecting.value = false;
+    scheduleWsReconnect();
+    return;
+  }
+  sock.binaryType = "arraybuffer";
+  ws = sock;
+
+  sock.onopen = () => {
+    if (myGen !== wsGen) return;
+    wsBackoff = WS_BACKOFF_START_MS;
+    streamConnecting.value = false;
+    terminalError.value = undefined;
+    sendResizeWs(true);
+    terminal?.focus();
+  };
+  sock.onmessage = (ev) => {
+    if (myGen !== wsGen) return;
+    if (typeof ev.data === "string") return; // control echoes (unused) — ignore
+    terminal?.write(new Uint8Array(ev.data as ArrayBuffer));
+  };
+  sock.onerror = () => {
+    // onclose always follows; reconnect/teardown is handled there.
+  };
+  sock.onclose = (ev) => {
+    if (myGen !== wsGen) return;
+    ws = undefined;
+    streamConnecting.value = false;
+    if (disposed) return;
+    if (ev.code === WS_CLOSE_TRY_AGAIN) {
+      const message = t("operations.terminal.nodeOffline");
+      terminalError.value = message;
+      emit("error", message);
+      emit("closed", { ...props.session, status: "failed" });
+      return;
+    }
+    if (ev.code === WS_CLOSE_NORMAL) {
+      emit("closed", { ...props.session, status: "closed" });
+      return;
+    }
+    // Unexpected drop (network blip, nginx reload): reconnect with backoff.
+    scheduleWsReconnect();
+  };
+}
+
+function scheduleWsReconnect() {
+  if (disposed || !isStream.value) return;
+  if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = setTimeout(() => {
+    if (!disposed && isStream.value) connectWs();
+  }, wsBackoff);
+  wsBackoff = Math.min(wsBackoff * 2, WS_BACKOFF_MAX_MS);
+}
+
+function closeWs() {
+  wsGen += 1; // invalidate any in-flight handlers
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = undefined;
+  }
+  if (ws) {
+    try {
+      ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+      ws.close(WS_CLOSE_NORMAL);
+    } catch {
+      /* ignore */
+    }
+    ws = undefined;
+  }
+}
+
+function wsSendInput(data: string) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !data) return;
+  const payload = encoder.encode(data);
+  const frame = new Uint8Array(payload.length + 1);
+  frame[0] = 0x00; // stdin opcode
+  frame.set(payload, 1);
+  ws.send(frame);
+}
+
+function sendResizeWs(force = false) {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !terminal) return;
+  const cols = terminal.cols;
+  const rows = terminal.rows;
+  if (!cols || !rows) return;
+  if (!force && cols === lastCols && rows === lastRows) return;
+  lastCols = cols;
+  lastRows = rows;
+  const json = encoder.encode(JSON.stringify({ cols, rows }));
+  const frame = new Uint8Array(json.length + 1);
+  frame[0] = 0x01; // resize opcode
+  frame.set(json, 1);
+  ws.send(frame);
+}
+
+// ============================== Poll transport ===============================
+
 function stopPolling() {
   if (pollTimer) clearTimeout(pollTimer);
   pollTimer = undefined;
@@ -169,28 +316,18 @@ function startPolling() {
 }
 
 /**
- * Single-flight, self-scheduling events poll.
- *
- * The next request is armed only AFTER the current one settles (success or
- * failure), so at most one events request is ever in flight. A fixed
- * `setInterval` used to fire every POLL_MS regardless of whether the previous
- * request had returned — on a slow/lossy link those requests piled up, each
- * re-fetched the same events for the same cursor, and the un-deduped
- * `terminal.write` repainted already-seen output. That is what made a single
- * keystroke (and the `^C` echo) repeat endlessly. Two guards kill it:
- *   1) single-flight + self-scheduling (no overlap);
- *   2) skip any event whose seq we've already applied (`seq <= cursor`).
+ * Single-flight, self-scheduling events poll. At most one events request is
+ * ever in flight, and an event whose seq is already applied is never repainted
+ * — the two guards that fixed the runaway-repeat bug. (Default transport.)
  */
 async function pollEvents(): Promise<void> {
   if (disposed) return;
   const myGen = pollGen;
   if (polling) {
-    // A request is still in flight; retry shortly instead of overlapping it.
     scheduleNextPoll(POLL_MS);
     return;
   }
   if (visibility.value === "hidden") {
-    // Don't poll a backgrounded tab; re-arm so it resumes when visible again.
     scheduleNextPoll(POLL_MS);
     return;
   }
@@ -202,7 +339,6 @@ async function pollEvents(): Promise<void> {
   try {
     const res = await api.terminal.events(session.id, cursor);
     if (myGen !== pollGen) {
-      // Superseded by a newer (re)start — the new generation owns the loop.
       keepPolling = false;
       return;
     }
@@ -236,7 +372,7 @@ async function pollEvents(): Promise<void> {
 }
 
 function queueInput(data: string) {
-  if (props.disabled || props.session.status !== "open" || !data) return;
+  if (props.session.status !== "open" || !data) return;
   inputBuffer += data;
   if (inputTimer) return;
   inputTimer = setTimeout(() => void flushInput(), INPUT_FLUSH_MS);
@@ -266,6 +402,8 @@ async function flushInput() {
   }
 }
 
+// ============================ Resize (both modes) ============================
+
 function scheduleResize() {
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => void fitAndSendResize(), RESIZE_DEBOUNCE_MS);
@@ -277,6 +415,10 @@ async function fitAndSendResize() {
   try {
     fitAddon.fit();
   } catch {
+    return;
+  }
+  if (isStream.value) {
+    sendResizeWs();
     return;
   }
   const cols = terminal.cols;
@@ -307,7 +449,7 @@ onMounted(async () => {
   initTerminal();
   await nextTick();
   scheduleResize();
-  startPolling(); // schedules the first (and only-ever-single) poll
+  startTransport();
   terminal?.focus();
 });
 
@@ -317,7 +459,7 @@ watch(
     clearTerminalForSession();
     await nextTick();
     scheduleResize();
-    startPolling(); // bumps generation so the prior session's in-flight poll won't repaint
+    startTransport();
     terminal?.focus();
   },
 );
@@ -325,6 +467,7 @@ watch(
 watch(
   () => props.session.status,
   (status) => {
+    if (isStream.value) return; // stream lifecycle is driven by the socket, not poll status
     if (status === "closed" || status === "failed") {
       closedPollsRemaining = 12; // drain a few more polls, then the loop self-stops
       startPolling();
@@ -335,8 +478,11 @@ watch(
 );
 
 watch(visibility, (value) => {
-  // Returning to the tab: nudge an immediate poll (loop otherwise resumes within POLL_MS).
-  if (value === "visible" && !disposed && !polling) scheduleNextPoll(0);
+  // Poll: nudge an immediate poll on return. Stream: keep the socket live on a
+  // backgrounded tab (a real terminal keeps receiving), just refocus.
+  if (value !== "visible" || disposed) return;
+  if (isStream.value) terminal?.focus();
+  else if (!polling) scheduleNextPoll(0);
 });
 
 onBeforeUnmount(() => {
@@ -348,7 +494,13 @@ onBeforeUnmount(() => {
   <div class="relative h-full min-h-[520px] overflow-hidden rounded-lg border border-slate-800 bg-[#070a12] shadow-sm">
     <div ref="container" class="h-full w-full p-3" />
     <div
-      v-if="props.session.status === 'pending'"
+      v-if="isStream && streamConnecting"
+      class="pointer-events-none absolute inset-x-4 top-4 rounded-md border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100"
+    >
+      {{ $t('operations.terminal.connecting') }}
+    </div>
+    <div
+      v-else-if="!isStream && props.session.status === 'pending'"
       class="pointer-events-none absolute inset-x-4 top-4 rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-100"
     >
       {{ $t('operations.terminal.pendingHint') }}

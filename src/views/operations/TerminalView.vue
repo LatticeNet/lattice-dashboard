@@ -14,6 +14,7 @@ import {
   Server,
   SquareTerminal,
   Wifi,
+  Zap,
 } from "lucide-vue-next";
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -65,6 +66,14 @@ const starting = ref(false);
 const closing = ref(false);
 const closeRequested = ref(false);
 const autoConnectAttempted = ref(false);
+// Opt-in WebSocket streaming transport (iter-063 Phase 3). Default off (poll):
+// streaming only works when the node's agent runs in stream mode. Persisted so
+// an operator can dogfood it per browser without changing the default.
+const streamingEnabled = ref(localStorage.getItem("lattice.terminal.streaming") === "1");
+function toggleStreaming() {
+  streamingEnabled.value = !streamingEnabled.value;
+  localStorage.setItem("lattice.terminal.streaming", streamingEnabled.value ? "1" : "0");
+}
 
 const routeNodeId = computed(() => {
   const raw = route.query.node_id;
@@ -324,6 +333,15 @@ function openSelectedInNewTab() {
             <ExternalLink class="size-4" aria-hidden="true" />
             {{ $t('operations.terminal.openNewTab') }}
           </Button>
+          <Button
+            :variant="streamingEnabled ? 'default' : 'outline'"
+            size="sm"
+            :title="$t('operations.terminal.streamingHint')"
+            @click="toggleStreaming"
+          >
+            <Zap class="size-4" aria-hidden="true" />
+            {{ $t('operations.terminal.streaming') }}
+          </Button>
         </div>
       </template>
     </PageHeader>
@@ -477,9 +495,10 @@ function openSelectedInNewTab() {
           <CardContent class="p-0">
             <div v-if="activeSession" class="h-[calc(100vh-230px)] min-h-[320px] bg-[#070a12] md:min-h-[560px]">
               <XtermSession
-                :key="activeSession.id"
+                :key="activeSession.id + (streamingEnabled ? ':stream' : ':poll')"
                 :session="activeSession"
                 :disabled="terminalDisabled"
+                :transport="streamingEnabled ? 'stream' : 'poll'"
                 @update:session="onSessionUpdate"
                 @closed="onSessionClosed"
                 @error="onTerminalError"

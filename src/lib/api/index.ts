@@ -76,6 +76,14 @@ import type {
   TokenView,
   TokenCreateRequest,
   TokenCreateResponse,
+  NetPolicyMatrix,
+  GroupsListResponse,
+  GroupUpsertRequest,
+  GroupView,
+  GroupSelector,
+  GroupPolicyView,
+  GroupPolicyUpsertRequest,
+  GroupPolicyPlanResult,
 } from "./types";
 
 export * from "./types";
@@ -148,6 +156,13 @@ export const api = {
       http.post<TerminalSession>(`/api/terminal/sessions/${encodeURIComponent(session_id)}/resize`, { cols, rows }),
     close: (session_id: string) =>
       http.post<TerminalSession>(`/api/terminal/sessions/${encodeURIComponent(session_id)}/close`, {}),
+    // streamURL builds the same-origin WebSocket attach URL. The session cookie
+    // rides the WS handshake (same origin). Only usable when the node's agent
+    // runs in stream mode; otherwise the server closes with 1013.
+    streamURL: (session_id: string) => {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${window.location.host}/api/terminal/sessions/${encodeURIComponent(session_id)}/attach`;
+    },
   },
 
   approvals: {
@@ -235,6 +250,29 @@ export const api = {
       http.post<{ ok: boolean }>("/api/netpolicy/delete", { target_node_id }),
     plan: (node_id: string) => http.post<ApprovalView>("/api/netpolicy/plan", { node_id }),
     graph: () => http.get<NetPolicyGraph>("/api/netpolicy/graph"),
+    matrix: (direction: "egress" | "ingress" = "egress") =>
+      http.get<NetPolicyMatrix>("/api/netpolicy/matrix", { direction }),
+  },
+
+  groups: {
+    list: () => http.get<GroupsListResponse>("/api/groups"),
+    upsert: (input: GroupUpsertRequest) => http.post<GroupView>("/api/groups", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/groups/delete", { id }),
+    reorder: (items: { id: string; parent_id?: string; order: number }[]) =>
+      http.post<{ ok: boolean }>("/api/groups/reorder", { items }),
+    members: (group_id: string, add: string[], remove: string[]) =>
+      http.post<GroupView>("/api/groups/members", { group_id, add, remove }),
+    preview: (selector: GroupSelector) =>
+      http.post<{ node_ids: string[]; count: number }>("/api/groups/preview", selector),
+    seed: () => http.post<{ created: number; skipped: number }>("/api/groups/seed", {}),
+  },
+
+  groupPolicy: {
+    list: () => http.get<{ policies: GroupPolicyView[] }>("/api/group-policies"),
+    upsert: (input: GroupPolicyUpsertRequest) =>
+      http.post<GroupPolicyView>("/api/group-policies", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/group-policies/delete", { id }),
+    plan: () => http.post<GroupPolicyPlanResult>("/api/group-policies/plan", {}),
   },
 
   dns: {

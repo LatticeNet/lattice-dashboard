@@ -105,6 +105,7 @@ export interface Node {
   host_facts?: HostFacts;
   geo?: NodeGeo;
   agent_debug?: AgentDebugPolicy;
+  group_ids?: string[];
 }
 
 export interface NodeGeoView {
@@ -517,13 +518,14 @@ export interface NFTInputsUpsertBody extends NFTPlanBody {
 export type NetRuleAction = "allow" | "deny";
 export type NetRuleDirection = "egress" | "ingress";
 export type NetRuleProtocol = "tcp" | "udp" | "any";
-export type NetEndpointKind = "node" | "cidr" | "domain" | "any";
+export type NetEndpointKind = "node" | "cidr" | "domain" | "any" | "group";
 
 export interface NetEndpoint {
   kind: NetEndpointKind;
   node_id?: string;
   cidr?: string;
   domain?: string;
+  group_id?: string;
 }
 
 export interface NetRule {
@@ -554,6 +556,125 @@ export interface NetPolicyUpsertRequest {
   target_node_id: string;
   rules: NetRule[];
   enabled: boolean;
+}
+
+// --- Grouping (iter-063) ---
+
+export interface GroupSelector {
+  match_tags_any?: string[];
+  match_roles?: string[];
+  match_country?: string[];
+  match_continent?: string[];
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  color: string;
+  icon?: string;
+  parent_id?: string;
+  order: number;
+  members?: string[];
+  selector?: GroupSelector | null;
+  system?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GroupRollup {
+  total: number;
+  online: number;
+  offline: number;
+  disabled: number;
+}
+
+export interface GroupView extends Group {
+  resolved_members: string[];
+  rollup: GroupRollup;
+}
+
+export interface GroupsListResponse {
+  groups: GroupView[];
+  ungrouped: { resolved_members: string[]; rollup: GroupRollup };
+}
+
+export interface GroupUpsertRequest {
+  id?: string;
+  name: string;
+  slug: string;
+  description?: string;
+  color?: string;
+  icon?: string;
+  parent_id?: string;
+  order?: number;
+  members?: string[];
+  selector?: GroupSelector | null;
+}
+
+export interface GroupNetRule {
+  id: string;
+  comment?: string;
+  action: NetRuleAction;
+  direction: NetRuleDirection;
+  protocol: NetRuleProtocol;
+  ports?: number[];
+  remote: NetEndpoint;
+  disabled?: boolean;
+}
+
+export interface GroupNetPolicy {
+  id: string;
+  scope_group_id: string;
+  rules: GroupNetRule[];
+  enabled: boolean;
+  priority: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GroupPolicyView extends GroupNetPolicy {
+  scope_group_name?: string;
+  group_rule_count: number;
+}
+
+export interface GroupPolicyUpsertRequest {
+  id?: string;
+  scope_group_id: string;
+  rules: GroupNetRule[];
+  enabled: boolean;
+  priority: number;
+}
+
+export interface GroupPolicyPlanResult {
+  affected: { node_id: string; approval_id: string; plan_sha: string }[];
+  conflicts: { node_id: string; reason: string }[];
+  orphaned: string[];
+}
+
+export interface MatrixGroup {
+  id: string;
+  name: string;
+  slug: string;
+  color: string;
+}
+
+export interface MatrixCell {
+  from: string;
+  to: string;
+  action: "allow" | "deny";
+  protocols?: string[];
+  ports?: number[];
+  rule_count: number;
+  mixed: boolean;
+}
+
+export interface NetPolicyMatrix {
+  direction: "egress" | "ingress";
+  groups: MatrixGroup[];
+  cells: MatrixCell[];
+  external: { from: string; rule_count: number }[];
 }
 
 export interface NetGraphNode {
