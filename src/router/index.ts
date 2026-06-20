@@ -9,6 +9,7 @@ import { NAV } from "./nav";
 const concreteRoutes: Record<string, () => Promise<unknown>> = {
   overview: () => import("@/views/OverviewView.vue"),
   nodes: () => import("@/views/fleet/NodesView.vue"),
+  groups: () => import("@/views/fleet/GroupsView.vue"),
   map: () => import("@/views/fleet/MapView.vue"),
   inventory: () => import("@/views/fleet/InventoryView.vue"),
   monitoring: () => import("@/views/fleet/MonitoringView.vue"),

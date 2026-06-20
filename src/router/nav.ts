@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   Server,
+  FolderTree,
   Globe,
   Boxes,
   Activity,
@@ -67,6 +68,7 @@ export const NAV: NavSection[] = [
     title: "Fleet",
     items: [
       { name: "nodes", title: "Nodes", path: "/nodes", icon: Server, scopes: ["node:read"] },
+      { name: "groups", title: "Groups", path: "/groups", icon: FolderTree, scopes: ["group:read"] },
       { name: "map", title: "Map", path: "/map", icon: Globe, scopes: ["node:read"] },
       { name: "inventory", title: "Inventory", path: "/inventory", icon: Boxes, scopes: ["inventory:read"] },
       { name: "monitoring", title: "Monitoring", path: "/monitoring", icon: Activity, scopes: ["monitor:read"] },

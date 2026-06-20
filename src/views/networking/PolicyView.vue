@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
+  FolderTree,
   Network,
   Pencil,
   Play,
@@ -14,9 +16,14 @@ import {
   api,
   unwrap,
   type ApprovalView,
+  type GroupPolicyPlanResult,
+  type GroupPolicyUpsertRequest,
+  type GroupPolicyView,
+  type MatrixGroup,
   type NetEndpointKind,
   type NetGraphNode,
   type NetPolicyGraph,
+  type NetPolicyMatrix,
   type NetPolicyUpsertRequest,
   type NetPolicyView,
   type NetRule,
@@ -39,6 +46,7 @@ import { cn } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import DataState from "@/components/common/DataState.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -69,13 +77,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import PolicyMatrix from "@/components/networking/PolicyMatrix.vue";
+import PolicyCellEditor from "@/components/networking/PolicyCellEditor.vue";
 
 const { t } = useI18n();
+const router = useRouter();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("netpolicy:read"));
 const canAdmin = computed(() => auth.can("netpolicy:admin"));
 
-const tab = ref<"policies" | "graph">("policies");
+const tab = ref<"matrix" | "policies" | "graph">("matrix");
 
 const policiesQuery = useAsyncData(() => api.netpolicy.list().then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
@@ -87,6 +98,94 @@ const graphQuery = useAsyncData(() => api.netpolicy.graph(), { immediate: false 
 
 const policies = computed(() => policiesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
+
+// ── Reachability matrix (default tab) ─────────────────────────────────────
+const matrixDirection = ref<NetRuleDirection>("egress");
+const matrixQuery = useAsyncData(() => api.netpolicy.matrix(matrixDirection.value), {
+  pollInterval: 0,
+});
+const groupPoliciesQuery = useAsyncData(
+  () => api.groupPolicy.list().then((r) => unwrap(r, "policies")),
+  { pollInterval: 0 },
+);
+const matrix = computed<NetPolicyMatrix | undefined>(() => matrixQuery.data.value);
+const groupPolicies = computed<GroupPolicyView[]>(() => groupPoliciesQuery.data.value ?? []);
+const matrixGroups = computed<MatrixGroup[]>(() => matrix.value?.groups ?? []);
+const hasGroups = computed(() => matrixGroups.value.length > 0);
+const hasGroupPolicies = computed(() => groupPolicies.value.length > 0);
+
+function setMatrixDirection(value: NetRuleDirection) {
+  matrixDirection.value = value;
+  matrixQuery.refresh();
+}
+
+function refreshMatrix() {
+  matrixQuery.refresh();
+  groupPoliciesQuery.refresh();
+}
+
+function goToGroups() {
+  router.push("/groups");
+}
+
+// ── Group-policy cell editor (source group → dest group) ──────────────────
+const cellEditorOpen = ref(false);
+const cellSource = ref<MatrixGroup | undefined>(undefined);
+const cellDest = ref<MatrixGroup | undefined>(undefined);
+const savingCell = ref(false);
+
+const cellSourcePolicy = computed<GroupPolicyView | undefined>(() =>
+  cellSource.value
+    ? groupPolicies.value.find((p) => p.scope_group_id === cellSource.value!.id)
+    : undefined,
+);
+
+function openCellEditor(source: MatrixGroup, dest: MatrixGroup) {
+  if (!canAdmin.value) return;
+  cellSource.value = source;
+  cellDest.value = dest;
+  cellEditorOpen.value = true;
+}
+
+function newGroupPolicy() {
+  const first = matrixGroups.value[0];
+  if (!first) return;
+  openCellEditor(first, first);
+}
+
+async function saveCell(payload: GroupPolicyUpsertRequest) {
+  savingCell.value = true;
+  try {
+    await api.groupPolicy.upsert(payload);
+    toast.success(t("networking.matrix.toastSaved"));
+    cellEditorOpen.value = false;
+    refreshMatrix();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.matrix.toastSaveFailed"));
+  } finally {
+    savingCell.value = false;
+  }
+}
+
+// ── Group-policy plan (expand → per-node approvals) ───────────────────────
+const planResult = ref<GroupPolicyPlanResult | undefined>(undefined);
+const planResultOpen = ref(false);
+const planningGroups = ref(false);
+
+async function planGroupPolicies() {
+  if (!canAdmin.value) return;
+  planningGroups.value = true;
+  try {
+    const result = await api.groupPolicy.plan();
+    planResult.value = result;
+    planResultOpen.value = true;
+    toast.success(t("networking.matrix.toastPlanned", { n: result.affected.length }));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
+  } finally {
+    planningGroups.value = false;
+  }
+}
 
 const sortedPolicies = computed(() =>
   [...policies.value].sort((a, b) =>
@@ -127,7 +226,7 @@ function loadGraph() {
 }
 
 function onTabChange(value: string | number) {
-  const next = String(value) as "policies" | "graph";
+  const next = String(value) as "matrix" | "policies" | "graph";
   tab.value = next;
   if (next === "graph") loadGraph();
 }
@@ -646,7 +745,23 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           <RefreshCw :class="cn('size-4', policiesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canAdmin" size="sm" @click="openCreate">
+        <template v-if="tab === 'matrix' && canAdmin">
+          <Button
+            variant="outline"
+            size="sm"
+            :disabled="planningGroups || !hasGroupPolicies"
+            @click="planGroupPolicies"
+          >
+            <RefreshCw v-if="planningGroups" class="size-4 animate-spin" aria-hidden="true" />
+            <Play v-else class="size-4" aria-hidden="true" />
+            {{ $t('networking.matrix.planAll') }}
+          </Button>
+          <Button size="sm" :disabled="!hasGroups" @click="newGroupPolicy">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t('networking.matrix.newGroupPolicy') }}
+          </Button>
+        </template>
+        <Button v-else-if="tab === 'policies' && canAdmin" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('networking.policy.newPolicy') }}
         </Button>
@@ -655,9 +770,68 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
 
     <Tabs :model-value="tab" @update:model-value="onTabChange">
       <TabsList>
+        <TabsTrigger value="matrix">{{ $t('networking.matrix.tab') }}</TabsTrigger>
         <TabsTrigger value="policies">{{ $t('networking.policy.tabPolicies') }}</TabsTrigger>
         <TabsTrigger value="graph">{{ $t('networking.policy.tabGraph') }}</TabsTrigger>
       </TabsList>
+
+      <!-- Matrix tab (default): who-can-reach-whom across groups -->
+      <TabsContent value="matrix" class="mt-4">
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <Network class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('networking.matrix.title') }}
+            </CardTitle>
+            <CardDescription>{{ $t('networking.matrix.description') }}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DataState
+              :loading="matrixQuery.loading.value"
+              :error="matrixQuery.error.value"
+              :has-data="matrix !== undefined"
+              :is-empty="!hasGroups"
+              :empty-title="$t('networking.matrix.emptyGroupsTitle')"
+              :empty-description="$t('networking.matrix.emptyGroupsDescription')"
+              @retry="refreshMatrix"
+            >
+              <template #empty>
+                <EmptyState
+                  :icon="FolderTree"
+                  :title="$t('networking.matrix.emptyGroupsTitle')"
+                  :description="$t('networking.matrix.emptyGroupsDescription')"
+                >
+                  <Button size="sm" @click="goToGroups">
+                    <FolderTree class="size-4" aria-hidden="true" />
+                    {{ $t('networking.matrix.goToGroups') }}
+                  </Button>
+                </EmptyState>
+              </template>
+
+              <div class="space-y-4">
+                <div
+                  v-if="!hasGroupPolicies"
+                  class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-border bg-muted/20 p-3 text-sm text-muted-foreground"
+                >
+                  <span>{{ $t('networking.matrix.noPoliciesHint') }}</span>
+                  <Button v-if="canAdmin" size="sm" variant="outline" @click="newGroupPolicy">
+                    <Plus class="size-4" aria-hidden="true" />
+                    {{ $t('networking.matrix.newGroupPolicy') }}
+                  </Button>
+                </div>
+                <PolicyMatrix
+                  v-if="matrix"
+                  :matrix="matrix"
+                  :direction="matrixDirection"
+                  :can-admin="canAdmin"
+                  @update:direction="setMatrixDirection"
+                  @edit="openCellEditor"
+                />
+              </div>
+            </DataState>
+          </CardContent>
+        </Card>
+      </TabsContent>
 
       <!-- Policies tab -->
       <TabsContent value="policies" class="mt-4">
@@ -1201,5 +1375,70 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
       approvals-to="/approvals"
       @update:open="closePlan"
     />
+
+    <!-- Group-policy cell editor (source group → dest group) -->
+    <PolicyCellEditor
+      v-if="cellSource && cellDest"
+      :open="cellEditorOpen"
+      :source="cellSource"
+      :dest="cellDest"
+      :direction="matrixDirection"
+      :existing="cellSourcePolicy"
+      :saving="savingCell"
+      :can-admin="canAdmin"
+      @update:open="(v) => (cellEditorOpen = v)"
+      @save="saveCell"
+    />
+
+    <!-- Group-policy plan summary -->
+    <Dialog :open="planResultOpen" @update:open="(v) => (planResultOpen = v)">
+      <DialogScrollContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.matrix.planResultTitle') }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.matrix.planResultDescription') }}</DialogDescription>
+        </DialogHeader>
+        <div v-if="planResult" class="space-y-4 text-sm">
+          <div class="flex flex-wrap gap-2">
+            <Badge variant="success">{{ $t('networking.matrix.planAffected', { n: planResult.affected.length }) }}</Badge>
+            <Badge v-if="planResult.conflicts.length" variant="warning">{{ $t('networking.matrix.planConflicts', { n: planResult.conflicts.length }) }}</Badge>
+            <Badge v-if="planResult.orphaned.length" variant="secondary">{{ $t('networking.matrix.planOrphaned', { n: planResult.orphaned.length }) }}</Badge>
+          </div>
+          <div v-if="planResult.affected.length" class="space-y-1">
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('networking.matrix.planAffectedNodes') }}</p>
+            <ul class="space-y-1">
+              <li
+                v-for="a in planResult.affected"
+                :key="a.approval_id"
+                class="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5"
+              >
+                <span class="truncate">{{ nodeName(a.node_id) }}</span>
+                <span class="font-mono text-xs text-muted-foreground">{{ shortId(a.plan_sha, 10) }}</span>
+              </li>
+            </ul>
+          </div>
+          <div v-if="planResult.conflicts.length" class="space-y-1">
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('networking.matrix.planConflictsTitle') }}</p>
+            <ul class="space-y-1">
+              <li
+                v-for="(c, i) in planResult.conflicts"
+                :key="i"
+                class="rounded-md border border-warning/40 bg-warning/5 px-2 py-1.5 text-xs"
+              >
+                <span class="font-medium">{{ nodeName(c.node_id) }}</span> — {{ c.reason }}
+              </li>
+            </ul>
+          </div>
+          <p v-if="!planResult.affected.length && !planResult.conflicts.length" class="text-muted-foreground">
+            {{ $t('networking.matrix.planNoop') }}
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="planResultOpen = false">{{ $t('common.actions.close') }}</Button>
+          <Button @click="() => { planResultOpen = false; router.push('/approvals'); }">
+            {{ $t('networking.shared.goToApprovals') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
   </div>
 </template>
