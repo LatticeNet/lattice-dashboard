@@ -20,6 +20,7 @@ export default {
       disabled: "已停用",
       noRole: "无角色",
       untagged: "无标签",
+      ungrouped: "未分组",
     },
     actions: {
       refresh: "刷新",

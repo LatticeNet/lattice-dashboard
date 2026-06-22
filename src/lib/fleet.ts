@@ -149,7 +149,7 @@ export function continentGlyph(c: Continent): string {
 /* Grouping                                                            */
 /* ------------------------------------------------------------------ */
 
-export type GroupBy = "region" | "country" | "role" | "status" | "tag" | "none";
+export type GroupBy = "region" | "country" | "role" | "group" | "status" | "tag" | "none";
 
 /** i18n key suffixes under `common.regions` / `common.groups` for fixed buckets. */
 export const CONTINENT_I18N: Record<Continent, string> = {
@@ -177,6 +177,8 @@ export interface NodeGroup {
   nodes: Node[];
   online: number;
   total: number;
+  /** Color token (group mode only) for the section dot; undefined otherwise. */
+  color?: string;
 }
 
 const UNGROUPED_KEY = "__ungrouped__";
@@ -199,11 +201,17 @@ function isLive(node: Node): boolean {
  * Groups are returned sorted by `order` then label; within each group the nodes
  * are sorted live-first, then by name. The ungrouped/unknown bucket sorts last.
  */
-export function groupNodes(nodes: Node[], by: GroupBy, locale = "en"): NodeGroup[] {
+export function groupNodes(
+  nodes: Node[],
+  by: GroupBy,
+  locale = "en",
+  groups: { id: string; name: string; color?: string }[] = [],
+): NodeGroup[] {
   if (by === "none") {
     return [finishGroup({ key: "all", label: "", glyph: "", order: 0, nodes: [...nodes], online: 0, total: 0 })];
   }
 
+  const groupMeta = new Map(groups.map((g) => [g.id, g] as const));
   const map = new Map<string, NodeGroup>();
   const push = (
     key: string,
@@ -212,10 +220,21 @@ export function groupNodes(nodes: Node[], by: GroupBy, locale = "en"): NodeGroup
     order: number,
     node: Node,
     i18nKey?: string,
+    color?: string,
   ) => {
     let g = map.get(key);
     if (!g) {
-      g = { key, label, glyph, order, nodes: [], online: 0, total: 0, ...(i18nKey ? { i18nKey } : {}) };
+      g = {
+        key,
+        label,
+        glyph,
+        order,
+        nodes: [],
+        online: 0,
+        total: 0,
+        ...(i18nKey ? { i18nKey } : {}),
+        ...(color ? { color } : {}),
+      };
       map.set(key, g);
     }
     g.nodes.push(node);
@@ -239,6 +258,18 @@ export function groupNodes(nodes: Node[], by: GroupBy, locale = "en"): NodeGroup
         const role = node.role?.trim();
         if (!role) push(UNGROUPED_KEY, "No role", "", 99, node, "common.groups.noRole");
         else push(`role:${role}`, role, "", 10, node);
+        break;
+      }
+      case "group": {
+        // A node carries server-resolved group_ids; it appears once per group it
+        // belongs to (like tags). Color rides along for the section dot.
+        const ids = node.group_ids ?? [];
+        if (ids.length === 0) push(UNGROUPED_KEY, "Ungrouped", "", 99, node, "common.groups.ungrouped");
+        else
+          for (const id of ids) {
+            const meta = groupMeta.get(id);
+            push(`group:${id}`, meta?.name ?? id, "", 10, node, undefined, meta?.color);
+          }
         break;
       }
       case "status": {
