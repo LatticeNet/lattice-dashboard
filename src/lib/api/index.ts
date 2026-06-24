@@ -73,6 +73,7 @@ import type {
   AgentUpdatePolicyUpsertRequest,
   OIDCProviderView,
   OIDCProviderUpsertRequest,
+  OIDCProviderTestResult,
   TokenView,
   TokenCreateRequest,
   TokenCreateResponse,
@@ -103,7 +104,14 @@ export const api = {
     totpActivate: (code: string) => http.post<void>("/api/2fa/totp/activate", { code }),
     totpDisable: (code: string) => http.post<void>("/api/2fa/totp/disable", { code }),
     logout: () => http.post<void>("/api/logout"),
-    ssoProviders: () => http.get<SSOProvider[]>("/api/auth/oidc"),
+    // The server returns {providers:[...]}; unwrap it so the declared
+    // SSOProvider[] is true at runtime (the LoginView guards with
+    // Array.isArray, so the raw envelope object would silently render no SSO
+    // buttons). Tolerates a bare-array fallback too.
+    ssoProviders: () =>
+      http
+        .get<{ providers?: SSOProvider[] } | SSOProvider[]>("/api/auth/oidc")
+        .then((r) => (Array.isArray(r) ? r : (r?.providers ?? []))),
   },
 
   nodes: {
@@ -433,6 +441,8 @@ export const api = {
       http.post<OIDCProviderView>("/api/auth/oidc/providers", input),
     deleteProvider: (id: string) =>
       http.post<{ status: string }>("/api/auth/oidc/providers/delete", { id }),
+    testProvider: (issuer: string) =>
+      http.post<OIDCProviderTestResult>("/api/auth/oidc/providers/test", { issuer }),
   },
 
   tokens: {

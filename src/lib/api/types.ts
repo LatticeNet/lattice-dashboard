@@ -1191,6 +1191,15 @@ export interface OIDCProviderUpsertRequest {
   enabled?: boolean;
 }
 
+// Result of the "test connection" discovery probe for an OIDC issuer.
+export interface OIDCProviderTestResult {
+  ok: boolean;
+  issuer: string;
+  authorization_endpoint?: string;
+  token_endpoint?: string;
+  error?: string;
+}
+
 export interface TokenView {
   id: string;
   name: string;

@@ -6,6 +6,7 @@ import {
   KeyRound,
   Lock,
   Pencil,
+  Plug,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -16,6 +17,7 @@ import {
 import {
   api,
   unwrap,
+  type OIDCProviderTestResult,
   type OIDCProviderUpsertRequest,
   type OIDCProviderView,
 } from "@/lib/api";
@@ -94,6 +96,7 @@ function resetForm() {
   form.scopes = DEFAULT_SCOPES;
   form.allowed_domains = "";
   form.enabled = true;
+  testResult.value = undefined;
 }
 
 function openCreate() {
@@ -113,6 +116,7 @@ function openEdit(provider: OIDCProviderView) {
   form.scopes = (provider.scopes ?? []).join(", ");
   form.allowed_domains = (provider.allowed_domains ?? []).join(", ");
   form.enabled = provider.enabled;
+  testResult.value = undefined;
   formOpen.value = true;
 }
 
@@ -166,6 +170,27 @@ async function submitForm() {
     toast.error(error instanceof Error ? error.message : t("settings.sso.toast.saveFailed"));
   } finally {
     saving.value = false;
+  }
+}
+
+// ── Test connection (read-only OIDC discovery probe) ─────────────────────────
+const testing = ref(false);
+const testResult = ref<OIDCProviderTestResult | undefined>();
+
+async function testConnection() {
+  if (!issuerValid.value || !canAdmin.value) return;
+  testing.value = true;
+  testResult.value = undefined;
+  try {
+    testResult.value = await api.oidc.testProvider(form.issuer.trim().replace(/\/+$/, ""));
+  } catch (error) {
+    testResult.value = {
+      ok: false,
+      issuer: form.issuer,
+      error: error instanceof Error ? error.message : t("settings.sso.form.testFailed"),
+    };
+  } finally {
+    testing.value = false;
   }
 }
 
@@ -475,6 +500,12 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             <p v-else class="text-xs text-muted-foreground">
               {{ $t("settings.sso.form.issuerHint") }}
             </p>
+            <p v-if="testResult?.ok" class="text-xs text-emerald-500">
+              {{ $t("settings.sso.form.testOk") }} · auth: {{ testResult.authorization_endpoint }}
+            </p>
+            <p v-else-if="testResult && !testResult.ok" class="text-xs text-destructive">
+              {{ testResult.error || $t("settings.sso.form.testFailed") }}
+            </p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
@@ -522,6 +553,11 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             <DialogClose as-child>
               <Button type="button" variant="outline">{{ $t("common.actions.cancel") }}</Button>
             </DialogClose>
+            <Button type="button" variant="outline" :disabled="testing || !issuerValid" @click="testConnection">
+              <RefreshCw v-if="testing" class="size-4 animate-spin" aria-hidden="true" />
+              <Plug v-else class="size-4" aria-hidden="true" />
+              {{ $t("settings.sso.form.testConnection") }}
+            </Button>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
