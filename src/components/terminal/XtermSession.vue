@@ -2,6 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useDocumentVisibility } from "@vueuse/core";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
@@ -15,6 +19,13 @@ const WS_BACKOFF_START_MS = 500;
 const WS_BACKOFF_MAX_MS = 8000;
 const WS_CLOSE_NORMAL = 1000;
 const WS_CLOSE_TRY_AGAIN = 1013; // server: agent never dialed (node offline)
+
+// In-band opcode prefix on browser->agent frames (agent->browser is raw bytes).
+const OPCODE_STDIN = 0x00;
+const OPCODE_RESIZE = 0x01;
+const OPCODE_RESUME = 0x04; // payload = decimal ASCII count of output bytes already rendered
+
+type ConnState = "idle" | "connecting" | "open" | "reconnecting" | "closed" | "failed";
 
 const props = withDefaults(
   defineProps<{
@@ -31,6 +42,7 @@ const emit = defineEmits<{
   "update:session": [session: TerminalSession];
   error: [message: string];
   closed: [session: TerminalSession];
+  state: [state: ConnState];
 }>();
 
 const { t } = useI18n();
@@ -38,10 +50,16 @@ const visibility = useDocumentVisibility();
 
 const container = ref<HTMLElement | null>(null);
 const terminalError = ref<string | undefined>();
-const streamConnecting = ref(false);
+const connState = ref<ConnState>("idle");
+const retryIn = ref(0); // seconds until the next reconnect attempt (stream)
+const findOpen = ref(false);
+const findQuery = ref("");
+const findInput = ref<HTMLInputElement | null>(null);
 
 let terminal: Terminal | undefined;
 let fitAddon: FitAddon | undefined;
+let searchAddon: SearchAddon | undefined;
+let webglAddon: WebglAddon | undefined;
 let resizeObserver: ResizeObserver | undefined;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let polling = false; // single-flight guard: at most one events request in flight
@@ -62,17 +80,31 @@ let ws: WebSocket | undefined;
 let wsGen = 0; // bumped to invalidate handlers of a superseded socket
 let wsBackoff = WS_BACKOFF_START_MS;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let retryTicker: ReturnType<typeof setInterval> | undefined;
+let hasConnectedOnce = false;
+// bytesRendered is the absolute count of output bytes this browser has received.
+// It is sent on every (re)connect so the agent replays only the missing tail —
+// no double-render, scrollback preserved. Reset only on a new session.
+let bytesRendered = 0;
 const encoder = new TextEncoder();
 
 const isStream = computed(() => props.transport === "stream");
 const isClosed = computed(() => props.session.status === "closed" || props.session.status === "failed");
+
+function setConnState(next: ConnState) {
+  if (connState.value === next) return;
+  connState.value = next;
+  emit("state", next);
+}
 
 function initTerminal() {
   if (!container.value || terminal) return;
 
   fitAddon = new FitAddon();
   terminal = new Terminal({
-    allowProposedApi: false,
+    // allowProposedApi enables the unicode11 width provider (correct CJK/emoji
+    // cell widths, so full-screen TUIs line up on CJK hosts).
+    allowProposedApi: true,
     convertEol: false,
     cursorBlink: true,
     cursorStyle: "block",
@@ -110,36 +142,144 @@ function initTerminal() {
   });
 
   terminal.loadAddon(fitAddon);
-  terminal.open(container.value);
-  terminal.onData((data) => sendInput(data));
 
-  // Copy/paste: Cmd+C/V (macOS) or Ctrl+Shift+C/V. Plain Ctrl+C is left alone
-  // so it still sends SIGINT to the remote shell. Copy only fires when there is
-  // an active selection.
-  terminal.attachCustomKeyEventHandler((e) => {
-    if (e.type !== "keydown") return true;
-    const key = e.key.toLowerCase();
-    const combo = e.metaKey || (e.ctrlKey && e.shiftKey);
-    if (combo && key === "c" && terminal?.hasSelection()) {
-      const selection = terminal.getSelection();
-      if (selection) void navigator.clipboard?.writeText(selection);
-      return false;
-    }
-    if (combo && key === "v") {
-      void navigator.clipboard?.readText().then((text) => {
-        if (text) sendInput(text);
-      });
-      return false;
-    }
-    if (combo && key === "a") {
-      terminal?.selectAll();
-      return false;
-    }
-    return true;
-  });
+  // Unicode 11 width tables: correct CJK/emoji column widths so TUI layouts and
+  // CJK output align. Must be loaded and activated before open for first paint.
+  const unicode11 = new Unicode11Addon();
+  terminal.loadAddon(unicode11);
+  terminal.unicode.activeVersion = "11";
+
+  searchAddon = new SearchAddon();
+  terminal.loadAddon(searchAddon);
+
+  // Clickable links, opened safely in a new tab; only http(s) is honored.
+  terminal.loadAddon(
+    new WebLinksAddon((_event, uri) => {
+      if (/^https?:\/\//i.test(uri)) window.open(uri, "_blank", "noopener,noreferrer");
+    }),
+  );
+
+  terminal.open(container.value);
+
+  // Renderer chain: WebGL primary (GPU-accelerated, smooth under heavy output
+  // like journalctl -f / build logs), with the built-in DOM renderer as the
+  // universal fallback. (addon-canvas is not xterm-6 compatible, so it is
+  // omitted; DOM is the last resort.) On a GPU context loss we drop WebGL and
+  // let the DOM renderer take over rather than freezing.
+  loadWebglRenderer();
+
+  terminal.onData((data) => sendInput(data));
+  terminal.attachCustomKeyEventHandler(handleKeyEvent);
 
   resizeObserver = new ResizeObserver(() => scheduleResize());
   resizeObserver.observe(container.value);
+}
+
+function loadWebglRenderer() {
+  if (!terminal) return;
+  try {
+    const addon = new WebglAddon();
+    addon.onContextLoss(() => {
+      try {
+        addon.dispose();
+      } catch {
+        /* ignore */
+      }
+      webglAddon = undefined; // DOM renderer resumes automatically
+    });
+    terminal.loadAddon(addon);
+    webglAddon = addon;
+  } catch {
+    // No WebGL2 (headless, blocklisted GPU): the DOM renderer stays active.
+  }
+}
+
+// handleKeyEvent implements copy/paste and find. Plain Ctrl+C is left alone so
+// it still sends SIGINT to the remote shell; copy only fires on an active
+// selection. Returns false to consume the event.
+function handleKeyEvent(e: KeyboardEvent): boolean {
+  if (e.type !== "keydown") return true;
+  const key = e.key.toLowerCase();
+  const combo = e.metaKey || (e.ctrlKey && e.shiftKey);
+  if (combo && key === "f") {
+    openFind();
+    return false;
+  }
+  if (combo && key === "c" && terminal?.hasSelection()) {
+    const selection = terminal.getSelection();
+    if (selection) {
+      void navigator.clipboard?.writeText(selection).catch(() => surfaceClipboardError());
+    }
+    return false;
+  }
+  if (combo && key === "v") {
+    void pasteFromClipboard();
+    return false;
+  }
+  if (combo && key === "a") {
+    terminal?.selectAll();
+    return false;
+  }
+  return true;
+}
+
+async function pasteFromClipboard() {
+  try {
+    const text = await navigator.clipboard?.readText();
+    if (text) doPaste(text);
+  } catch {
+    surfaceClipboardError();
+  }
+}
+
+// doPaste routes through xterm's paste pipeline so bracketed-paste (DECSET 2004)
+// is honored when the remote app supports it: a multiline paste is then
+// delivered atomically and does NOT auto-execute. When the app does NOT enable
+// bracketed paste, a multiline paste is guarded behind a confirm so a stray
+// trailing newline cannot silently run commands.
+function doPaste(text: string) {
+  if (!terminal) return;
+  const multiline = /\n/.test(text.replace(/\n+$/, ""));
+  const bracketed = terminal.modes?.bracketedPasteMode === true;
+  if (multiline && !bracketed) {
+    if (!window.confirm(t("operations.terminal.multilinePasteConfirm"))) return;
+  }
+  terminal.paste(text);
+}
+
+function surfaceClipboardError() {
+  const message = t("operations.terminal.clipboardError");
+  if (terminalError.value !== message) {
+    terminalError.value = message;
+    emit("error", message);
+  }
+}
+
+// --- find bar ---
+function openFind() {
+  findOpen.value = true;
+  void nextTick(() => findInput.value?.focus());
+}
+function closeFind() {
+  findOpen.value = false;
+  searchAddon?.clearDecorations();
+  terminal?.focus();
+}
+function findNext() {
+  if (findQuery.value) searchAddon?.findNext(findQuery.value);
+}
+function findPrevious() {
+  if (findQuery.value) searchAddon?.findPrevious(findQuery.value);
+}
+function onFindKeydown(e: KeyboardEvent) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (e.shiftKey) findPrevious();
+    else findNext();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
 }
 
 function disposeTerminal() {
@@ -149,6 +289,7 @@ function disposeTerminal() {
   if (inputTimer) clearTimeout(inputTimer);
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeObserver?.disconnect();
+  webglAddon?.dispose();
   terminal?.dispose();
   pollTimer = undefined;
   inputTimer = undefined;
@@ -156,6 +297,8 @@ function disposeTerminal() {
   resizeObserver = undefined;
   terminal = undefined;
   fitAddon = undefined;
+  searchAddon = undefined;
+  webglAddon = undefined;
 }
 
 function clearTerminalForSession() {
@@ -163,9 +306,11 @@ function clearTerminalForSession() {
   inputBuffer = "";
   lastCols = 0;
   lastRows = 0;
+  bytesRendered = 0;
   closedPollsRemaining = 0;
   closedEmittedFor = "";
   terminalError.value = undefined;
+  setConnState("idle");
   terminal?.reset();
   terminal?.clear();
 }
@@ -193,15 +338,15 @@ function streamUrl(id: string): string {
 function connectWs() {
   if (disposed || !isStream.value) return;
   closeWs();
+  stopRetryCountdown();
   wsGen += 1;
   const myGen = wsGen;
   const sessionId = props.session.id;
-  streamConnecting.value = true;
+  setConnState(hasConnectedOnce ? "reconnecting" : "connecting");
   let sock: WebSocket;
   try {
     sock = new WebSocket(streamUrl(sessionId));
   } catch {
-    streamConnecting.value = false;
     scheduleWsReconnect();
     return;
   }
@@ -210,16 +355,22 @@ function connectWs() {
 
   sock.onopen = () => {
     if (myGen !== wsGen) return;
+    hasConnectedOnce = true;
     wsBackoff = WS_BACKOFF_START_MS;
-    streamConnecting.value = false;
+    setConnState("open");
     terminalError.value = undefined;
+    // Tell the agent how much output we have already rendered so it replays only
+    // the missing tail (resume), then push our current size so a TUI redraws.
+    wsSendResume();
     sendResizeWs(true);
     terminal?.focus();
   };
   sock.onmessage = (ev) => {
     if (myGen !== wsGen) return;
-    if (typeof ev.data === "string") return; // control echoes (unused) — ignore
-    terminal?.write(new Uint8Array(ev.data as ArrayBuffer));
+    if (typeof ev.data === "string") return; // reserved control frames — ignore
+    const bytes = new Uint8Array(ev.data as ArrayBuffer);
+    bytesRendered += bytes.byteLength;
+    terminal?.write(bytes);
   };
   sock.onerror = () => {
     // onclose always follows; reconnect/teardown is handled there.
@@ -227,31 +378,66 @@ function connectWs() {
   sock.onclose = (ev) => {
     if (myGen !== wsGen) return;
     ws = undefined;
-    streamConnecting.value = false;
     if (disposed) return;
     if (ev.code === WS_CLOSE_TRY_AGAIN) {
       const message = t("operations.terminal.nodeOffline");
       terminalError.value = message;
+      setConnState("failed");
       emit("error", message);
       emit("closed", { ...props.session, status: "failed" });
       return;
     }
     if (ev.code === WS_CLOSE_NORMAL) {
+      setConnState("closed");
       emit("closed", { ...props.session, status: "closed" });
       return;
     }
-    // Unexpected drop (network blip, nginx reload): reconnect with backoff.
+    // Unexpected drop (network blip, nginx reload, agent redial): keep the
+    // terminal intact and reconnect with backoff. The server holds the session
+    // alive within its detach window and the agent keeps the shell running, so
+    // the reconnect resumes seamlessly via the rendered-offset replay.
     scheduleWsReconnect();
   };
 }
 
 function scheduleWsReconnect() {
   if (disposed || !isStream.value) return;
+  setConnState("reconnecting");
   if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+  const delay = wsBackoff;
   wsReconnectTimer = setTimeout(() => {
     if (!disposed && isStream.value) connectWs();
-  }, wsBackoff);
+  }, delay);
   wsBackoff = Math.min(wsBackoff * 2, WS_BACKOFF_MAX_MS);
+  startRetryCountdown(delay);
+}
+
+function reconnectNow() {
+  if (disposed || !isStream.value) return;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = undefined;
+  }
+  wsBackoff = WS_BACKOFF_START_MS;
+  connectWs();
+}
+
+function startRetryCountdown(delay: number) {
+  stopRetryCountdown();
+  const until = Date.now() + delay;
+  const tick = () => {
+    retryIn.value = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  };
+  tick();
+  retryTicker = setInterval(tick, 250);
+}
+
+function stopRetryCountdown() {
+  if (retryTicker) {
+    clearInterval(retryTicker);
+    retryTicker = undefined;
+  }
+  retryIn.value = 0;
 }
 
 function closeWs() {
@@ -260,6 +446,7 @@ function closeWs() {
     clearTimeout(wsReconnectTimer);
     wsReconnectTimer = undefined;
   }
+  stopRetryCountdown();
   if (ws) {
     try {
       ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
@@ -271,11 +458,20 @@ function closeWs() {
   }
 }
 
+function wsSendResume() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const payload = encoder.encode(String(bytesRendered));
+  const frame = new Uint8Array(payload.length + 1);
+  frame[0] = OPCODE_RESUME;
+  frame.set(payload, 1);
+  ws.send(frame);
+}
+
 function wsSendInput(data: string) {
   if (!ws || ws.readyState !== WebSocket.OPEN || !data) return;
   const payload = encoder.encode(data);
   const frame = new Uint8Array(payload.length + 1);
-  frame[0] = 0x00; // stdin opcode
+  frame[0] = OPCODE_STDIN;
   frame.set(payload, 1);
   ws.send(frame);
 }
@@ -290,7 +486,7 @@ function sendResizeWs(force = false) {
   lastRows = rows;
   const json = encoder.encode(JSON.stringify({ cols, rows }));
   const frame = new Uint8Array(json.length + 1);
-  frame[0] = 0x01; // resize opcode
+  frame[0] = OPCODE_RESIZE;
   frame.set(json, 1);
   ws.send(frame);
 }
@@ -456,6 +652,7 @@ onMounted(async () => {
 watch(
   () => props.session.id,
   async () => {
+    hasConnectedOnce = false;
     clearTerminalForSession();
     await nextTick();
     scheduleResize();
@@ -493,18 +690,63 @@ onBeforeUnmount(() => {
 <template>
   <div class="relative h-full min-h-[520px] overflow-hidden rounded-lg border border-slate-800 bg-[#070a12] shadow-sm">
     <div ref="container" class="h-full w-full p-3" />
+
+    <!-- Find bar -->
     <div
-      v-if="isStream && streamConnecting"
+      v-if="findOpen"
+      class="absolute right-4 top-4 flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/95 px-2 py-1 shadow-lg"
+    >
+      <input
+        ref="findInput"
+        v-model="findQuery"
+        class="w-44 bg-transparent px-1 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none"
+        :placeholder="$t('operations.terminal.findPlaceholder')"
+        @keydown="onFindKeydown"
+      />
+      <button class="rounded px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-700" @click="findPrevious">↑</button>
+      <button class="rounded px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-700" @click="findNext">↓</button>
+      <button
+        class="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-700"
+        :aria-label="$t('operations.terminal.findClose')"
+        @click="closeFind"
+      >
+        ✕
+      </button>
+    </div>
+
+    <!-- Stream: first connect -->
+    <div
+      v-if="isStream && connState === 'connecting'"
       class="pointer-events-none absolute inset-x-4 top-4 rounded-md border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100"
     >
       {{ $t('operations.terminal.connecting') }}
     </div>
+
+    <!-- Stream: reconnecting after a drop (session is kept alive server-side) -->
+    <div
+      v-else-if="isStream && connState === 'reconnecting'"
+      class="absolute inset-x-4 top-4 flex items-center justify-between gap-3 rounded-md border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100"
+    >
+      <span>
+        {{ $t('operations.terminal.reconnecting') }}
+        <span v-if="retryIn > 0" class="opacity-70">({{ retryIn }}s)</span>
+      </span>
+      <button
+        class="rounded border border-amber-300/40 px-2 py-0.5 text-amber-50 hover:bg-amber-300/20"
+        @click="reconnectNow"
+      >
+        {{ $t('operations.terminal.reconnectNow') }}
+      </button>
+    </div>
+
+    <!-- Poll: pending agent pickup -->
     <div
       v-else-if="!isStream && props.session.status === 'pending'"
       class="pointer-events-none absolute inset-x-4 top-4 rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs text-amber-100"
     >
       {{ $t('operations.terminal.pendingHint') }}
     </div>
+
     <div
       v-if="terminalError"
       class="absolute inset-x-4 bottom-4 rounded-md border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive-foreground"

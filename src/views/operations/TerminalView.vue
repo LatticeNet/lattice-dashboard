@@ -256,7 +256,7 @@ async function startSession(node: Node) {
     if (pendingHintTimer) clearTimeout(pendingHintTimer);
     pendingHintTimer = setTimeout(() => {
       const current = activeSession.value;
-      if (current && current.status !== "active" && current.status !== "closed" && current.status !== "failed") {
+      if (current && current.status !== "open" && current.status !== "closed" && current.status !== "failed") {
         toast.info(t("operations.terminal.pendingHint"));
       }
     }, 12000);
@@ -292,7 +292,7 @@ async function closeSession() {
 
 function onSessionUpdate(session: TerminalSession) {
   activeSession.value = session;
-  if (session.status === "active" || session.status === "closed" || session.status === "failed") {
+  if (session.status === "open" || session.status === "closed" || session.status === "failed") {
     if (pendingHintTimer) clearTimeout(pendingHintTimer);
   }
   if (session.status === "closed" || session.status === "failed") {
