@@ -688,7 +688,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="relative h-full min-h-[520px] overflow-hidden rounded-lg border border-slate-800 bg-[#070a12] shadow-sm">
+  <div class="relative h-full min-h-0 overflow-hidden rounded-lg border border-slate-800 bg-[#070a12] shadow-sm">
     <div ref="container" class="h-full w-full p-3" />
 
     <!-- Find bar -->

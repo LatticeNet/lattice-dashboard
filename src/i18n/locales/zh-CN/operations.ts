@@ -116,6 +116,8 @@ export default {
       find: "查找",
       findPlaceholder: "搜索输出…",
       findClose: "关闭查找",
+      fullscreen: "全屏",
+      exitFullscreen: "退出全屏",
     },
     audit: {
       title: "审计",

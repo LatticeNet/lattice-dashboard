@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -8,6 +8,8 @@ import {
   CircleStop,
   Clock,
   ExternalLink,
+  Maximize2,
+  Minimize2,
   Power,
   RefreshCw,
   Search,
@@ -74,6 +76,54 @@ function toggleStreaming() {
   streamingEnabled.value = !streamingEnabled.value;
   localStorage.setItem("lattice.terminal.streaming", streamingEnabled.value ? "1" : "0");
 }
+
+// --- Console sizing + fullscreen ---
+// The console fits the viewport without forcing the page to scroll: its height is
+// measured from where the box actually starts (getBoundingClientRect().top, which
+// already includes the app header + page header + card header above it) down to
+// the viewport bottom, minus a small reserve for the status row + page padding.
+// It never shrinks below MIN_CONSOLE_H — below that the page scrolls instead of
+// squashing the terminal into uselessness.
+const MIN_CONSOLE_H = 360;
+const CONSOLE_BOTTOM_RESERVE = 88;
+const consoleEl = ref<HTMLElement | null>(null);
+const consoleHeight = ref(560);
+const fullscreen = ref(false);
+
+function recomputeConsoleHeight() {
+  if (fullscreen.value) return; // fullscreen fills the viewport via flex, not a fixed px height
+  const el = consoleEl.value;
+  if (!el) return;
+  const top = el.getBoundingClientRect().top;
+  const avail = window.innerHeight - top - CONSOLE_BOTTOM_RESERVE;
+  consoleHeight.value = Math.max(MIN_CONSOLE_H, Math.floor(avail));
+}
+
+function toggleFullscreen() {
+  fullscreen.value = !fullscreen.value;
+  // Returning from fullscreen: the box is back in flow, so re-measure next tick.
+  if (!fullscreen.value) void nextTick(recomputeConsoleHeight);
+}
+
+function onWindowKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape" && fullscreen.value) {
+    fullscreen.value = false;
+    void nextTick(recomputeConsoleHeight);
+  }
+}
+
+onMounted(() => {
+  void nextTick(recomputeConsoleHeight);
+  window.addEventListener("resize", recomputeConsoleHeight);
+  window.addEventListener("keydown", onWindowKeydown);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", recomputeConsoleHeight);
+  window.removeEventListener("keydown", onWindowKeydown);
+});
+// A session appearing/disappearing shifts the layout (header description, status
+// row), so re-measure after the DOM settles.
+watch(activeSession, () => void nextTick(recomputeConsoleHeight));
 
 const routeNodeId = computed(() => {
   const raw = route.query.node_id;
@@ -462,8 +512,13 @@ function openSelectedInNewTab() {
       </aside>
 
       <section class="min-w-0 space-y-4">
-        <Card class="overflow-hidden">
-          <CardHeader class="border-b border-border">
+        <Card
+          :class="cn(
+            'overflow-hidden',
+            fullscreen && 'fixed inset-0 z-50 flex flex-col rounded-none border-0 shadow-2xl',
+          )"
+        >
+          <CardHeader class="border-b border-border" :class="fullscreen && 'shrink-0'">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0">
                 <CardTitle class="flex min-w-0 items-center gap-2">
@@ -484,6 +539,16 @@ function openSelectedInNewTab() {
                   {{ closeRequested ? $t('operations.terminal.closing') : (activeSession?.status ?? 'idle') }}
                 </Badge>
                 <Badge v-if="activeSession?.bytes_out" variant="outline">{{ formatBytes(activeSession.bytes_out) }}</Badge>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :title="fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen')"
+                  @click="toggleFullscreen"
+                >
+                  <Minimize2 v-if="fullscreen" class="size-4" aria-hidden="true" />
+                  <Maximize2 v-else class="size-4" aria-hidden="true" />
+                  <span class="sr-only sm:not-sr-only">{{ fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen') }}</span>
+                </Button>
                 <Button v-if="activeSession" variant="outline" size="sm" :disabled="closing || activeSession.status === 'closed' || activeSession.status === 'failed'" @click="closeSession">
                   <CircleStop class="size-4" aria-hidden="true" />
                   {{ $t('operations.terminal.close') }}
@@ -492,9 +557,15 @@ function openSelectedInNewTab() {
             </div>
           </CardHeader>
 
-          <CardContent class="p-0">
-            <div v-if="activeSession" class="h-[calc(100vh-230px)] min-h-[320px] bg-[#070a12] md:min-h-[560px]">
+          <CardContent class="p-0" :class="fullscreen && 'flex-1 min-h-0'">
+            <div
+              ref="consoleEl"
+              class="bg-[#070a12]"
+              :class="fullscreen ? 'h-full' : 'min-h-[360px]'"
+              :style="fullscreen ? undefined : { height: consoleHeight + 'px' }"
+            >
               <XtermSession
+                v-if="activeSession"
                 :key="activeSession.id + (streamingEnabled ? ':stream' : ':poll')"
                 :session="activeSession"
                 :disabled="terminalDisabled"
@@ -503,24 +574,24 @@ function openSelectedInNewTab() {
                 @closed="onSessionClosed"
                 @error="onTerminalError"
               />
-            </div>
-            <div v-else class="flex min-h-[320px] items-center justify-center bg-muted/20 p-8 md:min-h-[560px]">
-              <EmptyState
-                :icon="SquareTerminal"
-                :title="$t('operations.terminal.emptyConsoleTitle')"
-                :description="$t('operations.terminal.emptyConsoleDescription')"
-              >
-                <Button v-if="selectedNode && isTerminalReady(selectedNode)" :disabled="starting" @click="connectSelected({ preferExisting: true })">
-                  <RefreshCw v-if="starting" class="size-4 animate-spin" aria-hidden="true" />
-                  <Power v-else class="size-4" aria-hidden="true" />
-                  {{ $t('operations.terminal.connect') }}
-                </Button>
-              </EmptyState>
+              <div v-else class="flex h-full items-center justify-center bg-muted/20 p-8">
+                <EmptyState
+                  :icon="SquareTerminal"
+                  :title="$t('operations.terminal.emptyConsoleTitle')"
+                  :description="$t('operations.terminal.emptyConsoleDescription')"
+                >
+                  <Button v-if="selectedNode && isTerminalReady(selectedNode)" :disabled="starting" @click="connectSelected({ preferExisting: true })">
+                    <RefreshCw v-if="starting" class="size-4 animate-spin" aria-hidden="true" />
+                    <Power v-else class="size-4" aria-hidden="true" />
+                    {{ $t('operations.terminal.connect') }}
+                  </Button>
+                </EmptyState>
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        <div v-if="activeSession" class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+        <div v-if="activeSession && !fullscreen" class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <span class="inline-flex items-center gap-1">
             <Wifi class="size-3" aria-hidden="true" />
             {{ activeSession.status }}

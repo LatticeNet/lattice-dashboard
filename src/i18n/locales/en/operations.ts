@@ -117,6 +117,8 @@ export default {
       find: "Find",
       findPlaceholder: "Search output…",
       findClose: "Close search",
+      fullscreen: "Fullscreen",
+      exitFullscreen: "Exit fullscreen",
     },
     audit: {
       title: "Audit",
