@@ -74,6 +74,9 @@ import type {
   OIDCProviderView,
   OIDCProviderUpsertRequest,
   OIDCProviderTestResult,
+  UserView,
+  UserCreateRequest,
+  UserUpdateRequest,
   TokenView,
   TokenCreateRequest,
   TokenCreateResponse,
@@ -443,6 +446,13 @@ export const api = {
       http.post<{ status: string }>("/api/auth/oidc/providers/delete", { id }),
     testProvider: (issuer: string) =>
       http.post<OIDCProviderTestResult>("/api/auth/oidc/providers/test", { issuer }),
+  },
+
+  users: {
+    list: () => http.get<{ users: UserView[] }>("/api/users"),
+    create: (input: UserCreateRequest) => http.post<UserView>("/api/users", input),
+    update: (input: UserUpdateRequest) => http.post<UserView>("/api/users/update", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/users/delete", { id }),
   },
 
   tokens: {

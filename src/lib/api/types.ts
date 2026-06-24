@@ -1200,6 +1200,30 @@ export interface OIDCProviderTestResult {
   error?: string;
 }
 
+// Operator user (secret-free projection; the server never returns the password
+// hash). username is the login id and — for SSO — must equal the operator's
+// verified IdP email.
+export interface UserView {
+  id: string;
+  username: string;
+  scopes: string[];
+  totp_enabled: boolean;
+  has_password: boolean;
+  created_at: string;
+}
+
+export interface UserCreateRequest {
+  username: string;
+  scopes: string[];
+  password?: string; // omit for an SSO-only account (no password login)
+}
+
+export interface UserUpdateRequest {
+  id: string;
+  scopes: string[];
+  password?: string; // omit/blank to keep the existing password
+}
+
 export interface TokenView {
   id: string;
   name: string;

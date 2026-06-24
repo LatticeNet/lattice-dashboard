@@ -1,0 +1,47 @@
+// Canonical grantable RBAC scope catalog, kept in sync with the server's
+// rbac.KnownScopes. The server is authoritative — it validates every assigned
+// scope against this same set and rejects anything not within the caller's own
+// grant — so this list is for the UI picker only. The global "*" superuser scope
+// is handled separately (a dedicated "full administrator" toggle), not as a grid
+// entry.
+export const SCOPE_CATALOG = [
+  "audit:read",
+  "ddns:admin",
+  "dns:admin",
+  "geo:admin",
+  "geo:read",
+  "group:admin",
+  "group:read",
+  "inventory:admin",
+  "inventory:read",
+  "kv:admin",
+  "kv:read",
+  "kv:write",
+  "log:admin",
+  "log:read",
+  "log:write",
+  "monitor:admin",
+  "monitor:read",
+  "netpolicy:admin",
+  "netpolicy:read",
+  "network:apply",
+  "network:plan",
+  "node:admin",
+  "node:read",
+  "notify:send",
+  "oidc:admin",
+  "plugin:admin",
+  "plugin:verify",
+  "proxy:admin",
+  "proxy:read",
+  "static:admin",
+  "static:read",
+  "static:write",
+  "task:read",
+  "task:run",
+  "terminal:open",
+  "token:admin",
+  "tunnel:admin",
+  "user:admin",
+  "worker:deploy",
+] as const;
