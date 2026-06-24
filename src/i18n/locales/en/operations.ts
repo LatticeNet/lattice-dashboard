@@ -112,6 +112,7 @@ export default {
       reconnecting: "Connection lost — reconnecting…",
       reconnectNow: "Reconnect now",
       reconnected: "Reconnected",
+      disconnected: "Disconnected — click to reconnect",
       multilinePasteConfirm: "Paste multiple lines? A trailing newline may run them as commands.",
       clipboardError: "Clipboard access was blocked by the browser.",
       find: "Find",

@@ -111,6 +111,7 @@ export default {
       reconnecting: "连接中断,正在重连…",
       reconnectNow: "立即重连",
       reconnected: "已重新连接",
+      disconnected: "已断开 — 点击重新连接",
       multilinePasteConfirm: "粘贴多行内容?末尾换行可能会作为命令执行。",
       clipboardError: "浏览器阻止了剪贴板访问。",
       find: "查找",

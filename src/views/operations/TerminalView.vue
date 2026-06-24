@@ -62,7 +62,7 @@ const sessionsQuery = useAsyncData(() => api.terminal.list().then((r) => r.sessi
 
 const selectedNodeId = ref("");
 const nodeSearch = ref("");
-const shell = ref("sh");
+const shell = ref("bash");
 const activeSession = ref<TerminalSession | undefined>();
 const starting = ref(false);
 const closing = ref(false);
@@ -89,6 +89,18 @@ const CONSOLE_BOTTOM_RESERVE = 88;
 const consoleEl = ref<HTMLElement | null>(null);
 const consoleHeight = ref(560);
 const fullscreen = ref(false);
+const xtermRef = ref<{ refit: () => void } | null>(null);
+
+// settleConsole re-measures (no-op in fullscreen) and forces the terminal to
+// refit after the DOM updates. Used on the discrete layout changes (fullscreen
+// toggle, session appearing) so the terminal never renders against a stale size
+// — that stale fit is what left the bottom row clipped until a manual resize.
+function settleConsole() {
+  void nextTick(() => {
+    recomputeConsoleHeight();
+    xtermRef.value?.refit?.();
+  });
+}
 
 function recomputeConsoleHeight() {
   if (fullscreen.value) return; // fullscreen fills the viewport via flex, not a fixed px height
@@ -101,14 +113,13 @@ function recomputeConsoleHeight() {
 
 function toggleFullscreen() {
   fullscreen.value = !fullscreen.value;
-  // Returning from fullscreen: the box is back in flow, so re-measure next tick.
-  if (!fullscreen.value) void nextTick(recomputeConsoleHeight);
+  settleConsole();
 }
 
 function onWindowKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && fullscreen.value) {
     fullscreen.value = false;
-    void nextTick(recomputeConsoleHeight);
+    settleConsole();
   }
 }
 
@@ -122,8 +133,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onWindowKeydown);
 });
 // A session appearing/disappearing shifts the layout (header description, status
-// row), so re-measure after the DOM settles.
-watch(activeSession, () => void nextTick(recomputeConsoleHeight));
+// row), so re-measure and refit after the DOM settles.
+watch(activeSession, () => settleConsole());
 
 const routeNodeId = computed(() => {
   const raw = route.query.node_id;
@@ -566,6 +577,7 @@ function openSelectedInNewTab() {
             >
               <XtermSession
                 v-if="activeSession"
+                ref="xtermRef"
                 :key="activeSession.id + (streamingEnabled ? ':stream' : ':poll')"
                 :session="activeSession"
                 :disabled="terminalDisabled"

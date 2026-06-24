@@ -19,13 +19,17 @@ const WS_BACKOFF_START_MS = 500;
 const WS_BACKOFF_MAX_MS = 8000;
 const WS_CLOSE_NORMAL = 1000;
 const WS_CLOSE_TRY_AGAIN = 1013; // server: agent never dialed (node offline)
+// Auto-reconnect is for brief blips only: a few quick tries recover a transient
+// drop (the server keeps the session alive within its detach window), then we
+// stop and surface a manual "Reconnect" instead of retrying forever.
+const MAX_RECONNECT_ATTEMPTS = 4;
 
 // In-band opcode prefix on browser->agent frames (agent->browser is raw bytes).
 const OPCODE_STDIN = 0x00;
 const OPCODE_RESIZE = 0x01;
 const OPCODE_RESUME = 0x04; // payload = decimal ASCII count of output bytes already rendered
 
-type ConnState = "idle" | "connecting" | "open" | "reconnecting" | "closed" | "failed";
+type ConnState = "idle" | "connecting" | "open" | "reconnecting" | "disconnected" | "closed" | "failed";
 
 const props = withDefaults(
   defineProps<{
@@ -82,6 +86,7 @@ let wsBackoff = WS_BACKOFF_START_MS;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let retryTicker: ReturnType<typeof setInterval> | undefined;
 let hasConnectedOnce = false;
+let reconnectAttempts = 0;
 // bytesRendered is the absolute count of output bytes this browser has received.
 // It is sent on every (re)connect so the agent replays only the missing tail —
 // no double-render, scrollback preserved. Reset only on a new session.
@@ -309,6 +314,8 @@ function clearTerminalForSession() {
   bytesRendered = 0;
   closedPollsRemaining = 0;
   closedEmittedFor = "";
+  reconnectAttempts = 0;
+  wsBackoff = WS_BACKOFF_START_MS;
   terminalError.value = undefined;
   setConnState("idle");
   terminal?.reset();
@@ -357,6 +364,7 @@ function connectWs() {
     if (myGen !== wsGen) return;
     hasConnectedOnce = true;
     wsBackoff = WS_BACKOFF_START_MS;
+    reconnectAttempts = 0;
     setConnState("open");
     terminalError.value = undefined;
     // Tell the agent how much output we have already rendered so it replays only
@@ -402,6 +410,15 @@ function connectWs() {
 
 function scheduleWsReconnect() {
   if (disposed || !isStream.value) return;
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    // Auto-retry budget spent: a brief blip would have recovered by now, so this
+    // is a real outage. Stop looping and let the user reconnect on demand — the
+    // session stays resumable server-side for its detach window.
+    stopRetryCountdown();
+    setConnState("disconnected");
+    return;
+  }
+  reconnectAttempts += 1;
   setConnState("reconnecting");
   if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
   const delay = wsBackoff;
@@ -419,6 +436,7 @@ function reconnectNow() {
     wsReconnectTimer = undefined;
   }
   wsBackoff = WS_BACKOFF_START_MS;
+  reconnectAttempts = 0; // manual reconnect restarts the auto-retry budget
   connectWs();
 }
 
@@ -639,12 +657,21 @@ function focusTerminal() {
   terminal?.focus();
 }
 
-defineExpose({ focusTerminal, fitAndSendResize });
+// refit fits now and again on the next frame. The second pass is what fixes the
+// "bottom row clipped until I resize the window" symptom: after a container size
+// change (mount, fullscreen toggle, height recompute) the WebGL renderer's canvas
+// can need one frame to settle, so a single fit leaves the last row clipped.
+function refit() {
+  void fitAndSendResize();
+  requestAnimationFrame(() => void fitAndSendResize());
+}
+
+defineExpose({ focusTerminal, fitAndSendResize, refit });
 
 onMounted(async () => {
   initTerminal();
   await nextTick();
-  scheduleResize();
+  refit();
   startTransport();
   terminal?.focus();
 });
@@ -733,6 +760,20 @@ onBeforeUnmount(() => {
       </span>
       <button
         class="rounded border border-amber-300/40 px-2 py-0.5 text-amber-50 hover:bg-amber-300/20"
+        @click="reconnectNow"
+      >
+        {{ $t('operations.terminal.reconnectNow') }}
+      </button>
+    </div>
+
+    <!-- Stream: auto-retry gave up — manual reconnect (session may still be resumable) -->
+    <div
+      v-else-if="isStream && connState === 'disconnected'"
+      class="absolute inset-x-4 top-4 flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive-foreground"
+    >
+      <span>{{ $t('operations.terminal.disconnected') }}</span>
+      <button
+        class="rounded border border-destructive/40 px-2 py-0.5 hover:bg-destructive/20"
         @click="reconnectNow"
       >
         {{ $t('operations.terminal.reconnectNow') }}
