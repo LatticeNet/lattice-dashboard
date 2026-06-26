@@ -6,9 +6,12 @@ import {
   Activity,
   CheckCircle2,
   Gauge,
+  Pause,
+  Play,
   Plus,
   RadioTower,
   RefreshCw,
+  Search,
   Timer,
   Trash2,
   XCircle,
@@ -86,12 +89,18 @@ const selectedMonitor = computed(() =>
 );
 const selectedResults = computed(() => resultsQuery.data.value ?? []);
 
-const sortedMonitors = computed(() =>
-  [...monitors.value].sort((a, b) => {
-    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-    return (a.name || a.id).localeCompare(b.name || b.id);
-  }),
-);
+const monitorSearch = ref("");
+const sortedMonitors = computed(() => {
+  const q = monitorSearch.value.trim().toLowerCase();
+  return [...monitors.value]
+    .filter(
+      (m) => !q || [m.name, m.id, m.target, m.type].some((v) => (v ?? "").toLowerCase().includes(q)),
+    )
+    .sort((a, b) => {
+      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+      return (a.name || a.id).localeCompare(b.name || b.id);
+    });
+});
 
 const sortedResultsAsc = computed(() =>
   [...selectedResults.value].sort((a, b) => timestamp(a.at) - timestamp(b.at)),
@@ -99,6 +108,48 @@ const sortedResultsAsc = computed(() =>
 const sortedResultsDesc = computed(() => [...sortedResultsAsc.value].reverse());
 const recentResults = computed(() => sortedResultsAsc.value.slice(-120));
 const latestResult = computed(() => sortedResultsAsc.value[sortedResultsAsc.value.length - 1]);
+
+/* ---- Results log: node scope + status filter + pause/tail ----
+   Addresses the "log stacks endlessly / many nodes interleaved" problem: filter
+   by node + outcome, cap the rendered window, and freeze it on demand so a dense
+   table stops swapping under the reader. */
+const SLOW_MS = 250;
+const LOG_CAP = 200;
+const logStatus = ref<"all" | "failures" | "slow">("all");
+const logNode = ref("all");
+const paused = ref(false);
+const frozen = ref<MonitorResult[] | null>(null);
+
+const logNodeOptions = computed(() => [
+  ...new Set(selectedResults.value.map((r) => r.node_id).filter(Boolean)),
+]);
+const filteredResults = computed(() =>
+  sortedResultsDesc.value.filter((r) => {
+    if (logNode.value !== "all" && r.node_id !== logNode.value) return false;
+    if (logStatus.value === "failures" && r.success) return false;
+    if (logStatus.value === "slow" && (r.latency_ms ?? 0) < SLOW_MS) return false;
+    return true;
+  }),
+);
+const displayResults = computed(() =>
+  paused.value && frozen.value ? frozen.value : filteredResults.value.slice(0, LOG_CAP),
+);
+const newSincePause = computed(() => {
+  const snap = frozen.value;
+  const first = snap?.[0];
+  if (!paused.value || !first) return 0;
+  const newest = timestamp(first.at);
+  return filteredResults.value.filter((r) => timestamp(r.at) > newest).length;
+});
+function togglePause() {
+  if (paused.value) {
+    paused.value = false;
+    frozen.value = null;
+  } else {
+    frozen.value = filteredResults.value.slice(0, LOG_CAP);
+    paused.value = true;
+  }
+}
 
 const enabledCount = computed(() => monitors.value.filter((monitor) => monitor.enabled).length);
 const failureCount = computed(() => selectedResults.value.filter((result) => !result.success).length);
@@ -311,6 +362,10 @@ async function deleteMonitor() {
           <CardDescription>{{ $t('fleet.monitoring.definitions.description', { enabled: enabledCount, total: monitors.length }) }}</CardDescription>
         </CardHeader>
         <CardContent>
+          <div class="relative mb-3">
+            <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+            <Input v-model="monitorSearch" class="pl-8" :placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')" />
+          </div>
           <DataState
             :loading="monitorsQuery.loading.value"
             :error="monitorsQuery.error.value"
@@ -578,6 +633,36 @@ async function deleteMonitor() {
               </p>
             </div>
 
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="flex rounded-md border border-border p-0.5 text-xs">
+                <button
+                  v-for="opt in (['all', 'failures', 'slow'] as const)"
+                  :key="opt"
+                  type="button"
+                  :class="cn('rounded px-2 py-1 transition-colors', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
+                  @click="logStatus = opt"
+                >
+                  {{ $t(`fleet.monitoring.log.${opt}`) }}
+                </button>
+              </div>
+              <Select v-model="logNode">
+                <SelectTrigger class="h-8 w-[170px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{{ $t('fleet.monitoring.log.allNodes') }}</SelectItem>
+                  <SelectItem v-for="nid in logNodeOptions" :key="nid" :value="nid">{{ nodeName(nid) }}</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button type="button" size="sm" :variant="paused ? 'default' : 'outline'" @click="togglePause">
+                <component :is="paused ? Play : Pause" class="size-4" aria-hidden="true" />
+                {{ paused ? $t('fleet.monitoring.log.resume') : $t('fleet.monitoring.log.pause') }}
+              </Button>
+              <span v-if="paused && newSincePause > 0" class="text-xs text-muted-foreground">
+                {{ $t('fleet.monitoring.log.newSince', { count: newSincePause }) }}
+              </span>
+              <span class="ms-auto text-xs text-muted-foreground">
+                {{ $t('fleet.monitoring.log.showing', { count: displayResults.length }) }}
+              </span>
+            </div>
             <div class="overflow-x-auto rounded-lg border border-border">
               <div class="min-w-[640px]">
                 <div class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
@@ -587,7 +672,7 @@ async function deleteMonitor() {
                   <span>{{ $t('fleet.monitoring.history.colObserved') }}</span>
                 </div>
                 <div
-                  v-for="result in sortedResultsDesc.slice(0, 40)"
+                  v-for="result in displayResults"
                   :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
                   class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border px-3 py-3 text-sm last:border-b-0"
                 >
@@ -604,6 +689,9 @@ async function deleteMonitor() {
                   </div>
                   <span class="font-mono text-xs text-muted-foreground">{{ formatLatency(result.latency_ms) }}</span>
                   <span class="text-xs text-muted-foreground">{{ formatDateTime(result.at) }}</span>
+                </div>
+                <div v-if="displayResults.length === 0" class="px-3 py-6 text-center text-xs text-muted-foreground">
+                  {{ $t('fleet.monitoring.log.empty') }}
                 </div>
               </div>
             </div>
