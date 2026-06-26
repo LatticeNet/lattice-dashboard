@@ -130,6 +130,7 @@ export default {
     items: {
       overview: "概览",
       nodes: "节点",
+      "node-detail": "节点详情",
       map: "地图",
       inventory: "资产",
       monitoring: "监控",

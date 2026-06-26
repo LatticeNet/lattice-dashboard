@@ -73,6 +73,20 @@ const childRoutes: RouteRecordRaw[] = NAV.flatMap((section) =>
   }),
 );
 
+/**
+ * Manual param routes that can't be derived from NAV (NAV has no params). The
+ * meta shape mirrors the NAV-built siblings ({ title, section, scopes }) so the
+ * guard's scope check and the breadcrumb logic keep working unchanged.
+ */
+const manualChildRoutes: RouteRecordRaw[] = [
+  {
+    path: "nodes/:id",
+    name: "node-detail",
+    component: () => import("@/views/fleet/NodeDetailView.vue"),
+    meta: { title: "Node", section: "Fleet", scopes: ["node:read"] },
+  },
+];
+
 const routes: RouteRecordRaw[] = [
   {
     path: "/login",
@@ -83,7 +97,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: "/",
     component: () => import("@/layout/AppLayout.vue"),
-    children: childRoutes,
+    children: [...childRoutes, ...manualChildRoutes],
   },
   { path: "/:pathMatch(.*)*", redirect: "/" },
 ];

@@ -131,6 +131,7 @@ export default {
     items: {
       overview: "Overview",
       nodes: "Nodes",
+      "node-detail": "Node",
       map: "Map",
       inventory: "Inventory",
       monitoring: "Monitoring",

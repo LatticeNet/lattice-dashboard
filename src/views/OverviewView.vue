@@ -81,9 +81,9 @@ const auth = useAuthStore();
 const router = useRouter();
 const { t, locale } = useI18n();
 
-/** Overview is a launchpad: clicking a node opens its detail (deep-linked modal today). */
+/** Overview is a launchpad: clicking a node opens its full detail page. */
 function openNodeDetail(node: Node) {
-  router.push({ name: "nodes", query: { node: node.id } });
+  router.push({ name: "node-detail", params: { id: node.id } });
 }
 
 // Client-side metric ring: feed each poll so NodeCard sparklines have history.

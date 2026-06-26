@@ -237,7 +237,7 @@ const selectedNode = computed<Node | undefined>(() => {
 });
 
 function openNode(node: Node) {
-  router.push({ query: { ...route.query, node: node.id } });
+  router.push({ name: "node-detail", params: { id: node.id } });
 }
 
 function closeDetail(open: boolean) {
@@ -623,12 +623,12 @@ function openTerminal(node: Node) {
                         size="sm"
                         variant="outline"
                         :disabled="!cardNode.online || cardNode.disabled"
-                        @click="openTerminal(cardNode)"
+                        @click.stop="openTerminal(cardNode)"
                       >
                         <SquareTerminal class="size-4" aria-hidden="true" />
                         {{ $t('fleet.nodes.list.openTerminal') }}
                       </Button>
-                      <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === cardNode.id" @click="rotateToken(cardNode)">
+                      <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === cardNode.id" @click.stop="rotateToken(cardNode)">
                         <KeyRound class="size-4" aria-hidden="true" />
                         {{ $t('fleet.nodes.list.rotateToken') }}
                       </Button>
@@ -637,7 +637,7 @@ function openTerminal(node: Node) {
                         size="sm"
                         :variant="cardNode.disabled ? 'outline' : 'destructive'"
                         :disabled="pendingNode === cardNode.id"
-                        @click="setDisabled(cardNode, !cardNode.disabled)"
+                        @click.stop="setDisabled(cardNode, !cardNode.disabled)"
                       >
                         <Power class="size-4" aria-hidden="true" />
                         {{ cardNode.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}

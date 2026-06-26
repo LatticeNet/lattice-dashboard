@@ -208,27 +208,25 @@ function onAction(id: string) {
         'rounded-lg border border-border bg-background/40 transition-colors',
         compact ? 'p-3' : 'p-4',
         isLive ? 'hover:bg-muted/40' : 'opacity-60',
+        selectable &&
+          'cursor-pointer hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         props.class,
       )
     "
+    :role="selectable ? 'button' : undefined"
+    :tabindex="selectable ? 0 : undefined"
+    :aria-label="selectable ? displayName : undefined"
+    @click="selectable && onSelect()"
+    @keydown.enter.prevent="selectable && onSelect()"
+    @keydown.space.prevent="selectable && onSelect()"
   >
     <!-- Header -->
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0">
-        <component
-          :is="selectable ? 'button' : 'div'"
-          :type="selectable ? 'button' : undefined"
-          :class="
-            cn(
-              'flex min-w-0 items-center gap-2 text-left font-medium',
-              selectable && 'hover:text-primary',
-            )
-          "
-          @click="selectable && onSelect()"
-        >
+        <div class="flex min-w-0 items-center gap-2 font-medium">
           <StatusDot :status="meta.dotStatus" :pulse="isLive" />
           <span class="truncate">{{ displayName }}</span>
-        </component>
+        </div>
         <p
           v-if="node.host_facts"
           class="mt-1 truncate font-mono text-xs text-muted-foreground tabular"
@@ -330,7 +328,7 @@ function onAction(id: string) {
               : 'border-border hover:bg-muted/40',
           )
         "
-        @click="onAction(a.id)"
+        @click.stop="onAction(a.id)"
       >
         <component :is="a.icon" v-if="a.icon" class="size-3.5" aria-hidden="true" />
         {{ a.label }}
