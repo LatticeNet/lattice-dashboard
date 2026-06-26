@@ -209,6 +209,7 @@ export default {
         description: "{count} nodes still need coordinates",
         empty: "Every visible node has a location.",
         noIp: "no public IP reported",
+        noPublicIp: "no routable public IP",
       },
       editor: {
         title: "Location Editor",
@@ -243,6 +244,7 @@ export default {
         resolverDisabled: "GeoIP lookup is not configured on the server",
         resolvePartial: "{count} lookups failed",
         resolveNoop: "No node locations changed",
+        resolveNoPublicIp: "{count} nodes have no routable public IP — set the IP mode on the node",
       },
     },
 

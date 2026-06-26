@@ -207,6 +207,7 @@ export default {
         description: "还有 {count} 个节点需要坐标",
         empty: "所有可见节点都已定位。",
         noIp: "未上报公网 IP",
+        noPublicIp: "无可路由公网 IP",
       },
       editor: {
         title: "位置编辑",
@@ -241,6 +242,7 @@ export default {
         resolverDisabled: "服务器未配置 GeoIP 查询",
         resolvePartial: "{count} 个查询失败",
         resolveNoop: "没有节点位置发生变化",
+        resolveNoPublicIp: "{count} 个节点没有可路由的公网 IP —— 请在节点上设置 IP 模式",
       },
     },
 

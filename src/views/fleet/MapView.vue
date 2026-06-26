@@ -257,6 +257,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
   const updated = results.filter((result) => result.status === "updated").length;
   const disabled = results.some((result) => result.status === "resolver_disabled");
   const failed = results.filter((result) => result.status === "lookup_failed" || result.status === "store_failed").length;
+  const noPublicIp = results.filter((result) => result.status === "no_public_ip").length;
   if (disabled) {
     toast.error(t("fleet.map.toast.resolverDisabled"));
     return;
@@ -270,6 +271,10 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
   }
   if (failed > 0) {
     toast.error(t("fleet.map.toast.resolvePartial", { count: failed }));
+    return;
+  }
+  if (noPublicIp > 0) {
+    toast.error(t("fleet.map.toast.resolveNoPublicIp", { count: noPublicIp }));
     return;
   }
   toast.info(t("fleet.map.toast.resolveNoop"));
@@ -518,7 +523,12 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   <StatusDot :online="node.online" :pulse="node.online" />
                   <span class="truncate text-sm font-medium">{{ node.name || node.id }}</span>
                 </span>
-                <span class="mt-1 block truncate text-xs text-muted-foreground">{{ lookupIP(node) || $t('fleet.map.unlocated.noIp') }}</span>
+                <span class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <template v-if="lookupIP(node)">{{ lookupIP(node) }}</template>
+                  <Badge v-else variant="outline" class="border-destructive/40 text-destructive">
+                    {{ $t('fleet.map.unlocated.noPublicIp') }}
+                  </Badge>
+                </span>
               </span>
               <Badge v-if="node.role" variant="outline">{{ node.role }}</Badge>
             </button>
