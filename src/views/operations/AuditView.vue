@@ -2,10 +2,10 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { CheckCircle2, RefreshCw, ScrollText, ShieldCheck } from "lucide-vue-next";
+import { CheckCircle2, RefreshCw, ScrollText, Search, ShieldCheck } from "lucide-vue-next";
 import { api, type AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
+import { type BadgeVariant } from "@/lib/status";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -38,7 +38,21 @@ const action = ref("");
 const decision = ref<"any" | "allow" | "deny" | "observe">("any");
 const nodeId = ref("");
 const correlationId = ref("");
+const q = ref("");
+const timeRange = ref<"all" | "15m" | "1h" | "24h" | "7d">("all");
 const limit = ref(50);
+
+const RANGE_MS: Record<string, number> = {
+  "15m": 15 * 60_000,
+  "1h": 60 * 60_000,
+  "24h": 24 * 60 * 60_000,
+  "7d": 7 * 24 * 60 * 60_000,
+};
+// Computed at query time so the relative window slides on each refresh.
+function rangeFrom(): string | undefined {
+  const ms = RANGE_MS[timeRange.value];
+  return ms ? new Date(Date.now() - ms).toISOString() : undefined;
+}
 const verifyPending = ref(false);
 const verifyResult = ref<{ enabled: boolean; ok: boolean; count: number; head?: string } | undefined>();
 
@@ -49,6 +63,8 @@ const auditQuery = useAsyncData(
       decision: decision.value === "any" ? undefined : decision.value,
       node_id: nodeId.value.trim() || undefined,
       correlation_id: correlationId.value.trim() || undefined,
+      q: q.value.trim() || undefined,
+      at_from: rangeFrom(),
       limit: Number(limit.value) || 50,
       offset: 0,
     }),
@@ -65,13 +81,13 @@ const columns = computed<DataTableColumn<AuditEvent>[]>(() => [
   { key: "id", label: t("operations.audit.colId"), align: "right" },
 ]);
 
-const DECISION_HEALTH: Record<string, NodeHealth> = {
-  allow: "online",
-  deny: "offline",
-};
-
+// Audit-specific colour semantics (not node-health): observe is informational,
+// not "unknown". allow=green, deny=red, observe=blue.
 function decisionVariant(value: string): BadgeVariant {
-  return statusMeta(DECISION_HEALTH[value] ?? "unknown").badgeVariant;
+  if (value === "allow") return "success";
+  if (value === "deny") return "destructive";
+  if (value === "observe") return "info";
+  return "secondary";
 }
 
 function metadataText(event: AuditEvent): string {
@@ -144,10 +160,34 @@ async function verifyAudit() {
         <CardDescription>{{ $t('operations.audit.filtersHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
-        <form class="grid gap-3 lg:grid-cols-[1fr_160px_1fr_1fr_110px_auto_auto]" @submit.prevent="auditQuery.refresh">
+        <div class="relative mb-3">
+          <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+          <Input
+            v-model="q"
+            class="pl-8"
+            :placeholder="$t('operations.audit.searchPlaceholder')"
+            @keyup.enter="auditQuery.refresh"
+          />
+        </div>
+        <form class="grid gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="auditQuery.refresh">
           <div class="grid gap-2">
             <Label for="audit-action">{{ $t('operations.audit.action') }}</Label>
-            <Input id="audit-action" v-model="action" placeholder="task.create" />
+            <Input id="audit-action" v-model="action" placeholder="task.*" />
+          </div>
+          <div class="grid gap-2">
+            <Label for="audit-range">{{ $t('operations.audit.timeRange') }}</Label>
+            <Select v-model="timeRange">
+              <SelectTrigger id="audit-range" class="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{{ $t('operations.audit.rangeAll') }}</SelectItem>
+                <SelectItem value="15m">{{ $t('operations.audit.range15m') }}</SelectItem>
+                <SelectItem value="1h">{{ $t('operations.audit.range1h') }}</SelectItem>
+                <SelectItem value="24h">{{ $t('operations.audit.range24h') }}</SelectItem>
+                <SelectItem value="7d">{{ $t('operations.audit.range7d') }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div class="grid gap-2">
             <Label for="audit-decision">{{ $t('operations.audit.decision') }}</Label>

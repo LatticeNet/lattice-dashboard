@@ -215,7 +215,12 @@ export const api = {
       decision?: string;
       node_id?: string;
       actor_id?: string;
+      token_id?: string;
+      scope?: string;
       correlation_id?: string;
+      q?: string;
+      at_from?: string;
+      at_to?: string;
       limit?: number;
       offset?: number;
     }) => http.get<AuditQueryResponse>("/api/audit", params as Record<string, unknown>),
