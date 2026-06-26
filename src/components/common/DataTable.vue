@@ -1,5 +1,6 @@
 <script setup lang="ts" generic="T">
 import { computed, ref, watch, type HTMLAttributes } from "vue";
+import { useRouter, type RouteLocationRaw } from "vue-router";
 import { useDebounceFn, useMediaQuery } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Search, X } from "lucide-vue-next";
@@ -51,6 +52,8 @@ const props = withDefaults(
     noMatchDescription?: string;
     /** Enables per-row + header selection checkboxes. */
     selectable?: boolean;
+    /** When set, each row becomes a drill-through link to this route (and emits `row-select`). */
+    rowTo?: (row: T) => RouteLocationRaw;
     /** Client-side page size; 0 disables pagination. */
     pageSize?: number;
     /** Shows the built-in debounced search box (requires >=1 searchable column). */
@@ -99,7 +102,26 @@ const props = withDefaults(
   },
 );
 
-const emit = defineEmits<{ retry: [] }>();
+const emit = defineEmits<{ retry: []; "row-select": [row: T] }>();
+const router = useRouter();
+
+/**
+ * Activate a row (click or keyboard). Suppressed when the interaction
+ * originates inside an interactive cell control (checkbox, button, link,
+ * input, or anything marked [data-no-row-nav]) so per-row actions still work.
+ */
+function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button, a, input, label, [role="checkbox"], [data-no-row-nav]')) return;
+  emit("row-select", row);
+  if (props.rowTo) router.push(props.rowTo(row));
+}
+
+function onRowKeydown(row: T, event: KeyboardEvent): void {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  onRowActivate(row, event);
+}
 
 /** Selected row ids. Two-way bindable via `v-model:selected`. */
 const selected = defineModel<Set<string>>("selected", {
@@ -408,14 +430,22 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 </button>
                 <span v-else>{{ column.label }}</span>
               </th>
+              <th v-if="rowTo" scope="col" class="w-8 px-2" aria-hidden="true"></th>
             </tr>
           </thead>
           <tbody>
             <tr
               v-for="row in pagedRows"
               :key="rowKey(row)"
-              class="border-b border-border last:border-0 hover:bg-muted/40"
-              :class="{ 'bg-muted/30': selectable && isRowSelected(row) }"
+              class="group border-b border-border last:border-0 hover:bg-muted/40"
+              :class="{
+                'bg-muted/30': selectable && isRowSelected(row),
+                'cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none': !!rowTo,
+              }"
+              :role="rowTo ? 'button' : undefined"
+              :tabindex="rowTo ? 0 : undefined"
+              @click="rowTo && onRowActivate(row, $event)"
+              @keydown="rowTo && onRowKeydown(row, $event)"
             >
               <td v-if="selectable" class="px-3 py-3 align-top">
                 <Checkbox
@@ -438,6 +468,12 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                   {{ textOf(rawValue(row, column)) }}
                 </slot>
               </td>
+              <td v-if="rowTo" class="w-8 px-2 text-right align-middle">
+                <ChevronRight
+                  class="ms-auto size-4 text-muted-foreground opacity-40 transition-opacity group-hover:opacity-90"
+                  aria-hidden="true"
+                />
+              </td>
             </tr>
           </tbody>
         </table>
@@ -449,7 +485,14 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           v-for="row in pagedRows"
           :key="rowKey(row)"
           class="rounded-lg border border-border p-3"
-          :class="{ 'ring-1 ring-primary/40': selectable && isRowSelected(row) }"
+          :class="{
+            'ring-1 ring-primary/40': selectable && isRowSelected(row),
+            'surface-interactive': !!rowTo,
+          }"
+          :role="rowTo ? 'button' : undefined"
+          :tabindex="rowTo ? 0 : undefined"
+          @click="rowTo && onRowActivate(row, $event)"
+          @keydown="rowTo && onRowKeydown(row, $event)"
         >
           <div v-if="selectable" class="mb-2 flex items-center gap-2">
             <Checkbox

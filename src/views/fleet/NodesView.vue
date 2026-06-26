@@ -105,6 +105,15 @@ const search = ref("");
 const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
 
+// Seed the status filter from a deep-link (e.g. the Overview "online" KPI tile
+// links to /nodes?status=online), so drill-through lands pre-filtered.
+{
+  const seeded = route.query.status;
+  if (seeded === "online" || seeded === "offline" || seeded === "disabled") {
+    statusFilter.value = seeded;
+  }
+}
+
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const onlineCount = computed(() => nodes.value.filter((n) => n.online && !n.disabled).length);
 const disabledCount = computed(() => nodes.value.filter((n) => n.disabled).length);

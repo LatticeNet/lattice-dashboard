@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
+import { RouterLink, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
   Activity,
@@ -77,7 +78,13 @@ const audit = useAsyncData<AuditEvent[] | undefined>(
 );
 
 const auth = useAuthStore();
+const router = useRouter();
 const { t, locale } = useI18n();
+
+/** Overview is a launchpad: clicking a node opens its detail (deep-linked modal today). */
+function openNodeDetail(node: Node) {
+  router.push({ name: "nodes", query: { node: node.id } });
+}
 
 // Client-side metric ring: feed each poll so NodeCard sparklines have history.
 const metricBuffer = useMetricBuffer();
@@ -172,6 +179,7 @@ function refreshAll() {
         :label="$t('overview.kpi.nodes')"
         :value="nodes.length"
         :icon="Server"
+        :to="{ name: 'nodes' }"
       />
       <StatCard
         :label="$t('overview.kpi.online')"
@@ -179,17 +187,20 @@ function refreshAll() {
         tone="success"
         :icon="Wifi"
         :hint="offlineNodes > 0 ? $t('overview.offlineCount', { count: offlineNodes }) : $t('overview.allOnline')"
+        :to="{ name: 'nodes', query: { status: 'online' } }"
       />
       <StatCard
         :label="$t('overview.kpi.approvals')"
         :value="pendingApprovals.length"
         :tone="pendingApprovals.length > 0 ? 'warning' : 'default'"
         :icon="ShieldCheck"
+        :to="{ name: 'approvals' }"
       />
       <StatCard
         :label="$t('nav.items.tasks')"
         :value="queuedTasks"
         :icon="Terminal"
+        :to="{ name: 'tasks', query: { status: 'queued' } }"
       />
     </div>
 
@@ -269,6 +280,12 @@ function refreshAll() {
           <CardTitle class="flex items-center gap-2">
             <Server class="size-4 text-muted-foreground" aria-hidden="true" />
             {{ $t('overview.fleet') }}
+            <RouterLink
+              :to="{ name: 'nodes' }"
+              class="ms-auto text-xs font-normal text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {{ $t('common.actions.viewAll') }}
+            </RouterLink>
           </CardTitle>
           <CardDescription>
             {{ $t('overview.fleetOnline', { online: onlineNodes, total: nodes.length }) }}
@@ -300,7 +317,8 @@ function refreshAll() {
                     compact
                     show-sparkline
                     sparkline-metric="cpu"
-                    :selectable="false"
+                    selectable
+                    @select="openNodeDetail"
                     :cpu-label="t('overview.metric.cpu')"
                     :memory-label="t('overview.metric.memory')"
                     :disk-label="t('overview.metric.disk')"
@@ -324,6 +342,12 @@ function refreshAll() {
             <CardTitle class="flex items-center gap-2">
               <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
               {{ $t('overview.approvalsInbox') }}
+              <RouterLink
+                :to="{ name: 'approvals' }"
+                class="ms-auto text-xs font-normal text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {{ $t('common.actions.viewAll') }}
+              </RouterLink>
             </CardTitle>
             <CardDescription>{{ $t('overview.approvalsDescription') }}</CardDescription>
           </CardHeader>
@@ -339,24 +363,25 @@ function refreshAll() {
               @retry="approvals.refresh"
             >
               <ul class="divide-y divide-border">
-                <li
-                  v-for="a in pendingApprovals.slice(0, 5)"
-                  :key="a.id"
-                  class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
-                >
-                  <StatusDot status="degraded" pulse />
-                  <div class="min-w-0 flex-1">
-                    <p class="truncate text-sm">
-                      <span class="font-medium">{{ a.plugin }}</span>
-                      <span class="text-muted-foreground"> · {{ a.action }}</span>
-                    </p>
-                    <p class="truncate font-mono text-xs text-muted-foreground tabular">
-                      {{ a.node_id }}
-                    </p>
-                  </div>
-                  <span class="shrink-0 text-xs text-muted-foreground tabular">
-                    {{ formatRelativeTime(a.created_at) }}
-                  </span>
+                <li v-for="a in pendingApprovals.slice(0, 5)" :key="a.id">
+                  <RouterLink
+                    :to="{ name: 'approvals' }"
+                    class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
+                  >
+                    <StatusDot status="degraded" pulse />
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate text-sm">
+                        <span class="font-medium">{{ a.plugin }}</span>
+                        <span class="text-muted-foreground"> · {{ a.action }}</span>
+                      </p>
+                      <p class="truncate font-mono text-xs text-muted-foreground tabular">
+                        {{ a.node_id }}
+                      </p>
+                    </div>
+                    <span class="shrink-0 text-xs text-muted-foreground tabular">
+                      {{ formatRelativeTime(a.created_at) }}
+                    </span>
+                  </RouterLink>
                 </li>
               </ul>
             </DataState>
@@ -369,6 +394,12 @@ function refreshAll() {
             <CardTitle class="flex items-center gap-2">
               <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
               {{ $t('overview.recentActivity') }}
+              <RouterLink
+                :to="{ name: 'audit' }"
+                class="ms-auto text-xs font-normal text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {{ $t('common.actions.viewAll') }}
+              </RouterLink>
             </CardTitle>
             <CardDescription>{{ $t('overview.recentActivityDescription') }}</CardDescription>
           </CardHeader>
@@ -383,21 +414,22 @@ function refreshAll() {
               @retry="audit.refresh"
             >
               <ul class="divide-y divide-border">
-                <li
-                  v-for="ev in auditEvents"
-                  :key="ev.id"
-                  class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
-                >
-                  <div class="min-w-0 flex-1">
-                    <p class="truncate font-mono text-xs tabular">{{ ev.action }}</p>
-                    <p v-if="ev.node_id" class="truncate font-mono text-xs text-muted-foreground tabular">
-                      {{ ev.node_id }}
-                    </p>
-                  </div>
-                  <Badge :variant="decisionVariant(ev.decision)">{{ ev.decision }}</Badge>
-                  <span class="shrink-0 text-xs text-muted-foreground tabular">
-                    {{ formatRelativeTime(ev.at) }}
-                  </span>
+                <li v-for="ev in auditEvents" :key="ev.id">
+                  <RouterLink
+                    :to="{ name: 'audit' }"
+                    class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate font-mono text-xs tabular">{{ ev.action }}</p>
+                      <p v-if="ev.node_id" class="truncate font-mono text-xs text-muted-foreground tabular">
+                        {{ ev.node_id }}
+                      </p>
+                    </div>
+                    <Badge :variant="decisionVariant(ev.decision)">{{ ev.decision }}</Badge>
+                    <span class="shrink-0 text-xs text-muted-foreground tabular">
+                      {{ formatRelativeTime(ev.at) }}
+                    </span>
+                  </RouterLink>
                 </li>
               </ul>
             </DataState>
