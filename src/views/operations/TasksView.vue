@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Play, RefreshCw, Terminal, Timer, CheckCircle2, XCircle } from "lucide-vue-next";
@@ -34,6 +35,16 @@ import {
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const route = useRoute();
+
+type TaskFilter = "all" | "queued" | "running" | "finished" | "failed";
+const statusFilter = ref<TaskFilter>("all");
+// Seed from a deep-link (Overview "queued tasks" KPI links to /tasks?status=queued).
+{
+  const s = route.query.status;
+  if (s === "queued" || s === "finished" || s === "failed") statusFilter.value = s;
+  else if (s === "running" || s === "leased") statusFilter.value = "running";
+}
 const tasksQuery = useAsyncData(() => api.tasks.list().then((r) => unwrap(r, "tasks")), {
   pollInterval: 8000,
 });
@@ -60,6 +71,23 @@ const sortedTasks = computed(() =>
   [...tasks.value].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
 );
 
+const filteredTasks = computed(() =>
+  sortedTasks.value.filter((task) => {
+    switch (statusFilter.value) {
+      case "queued":
+        return task.status === "queued";
+      case "running":
+        return task.status === "leased";
+      case "finished":
+        return task.status === "finished";
+      case "failed":
+        return task.status === "failed";
+      default:
+        return true;
+    }
+  }),
+);
+
 const resultsByTask = computed<Record<string, TaskResult[]>>(() => {
   const grouped: Record<string, TaskResult[]> = {};
   for (const result of results.value) {
@@ -72,6 +100,11 @@ const resultsByTask = computed<Record<string, TaskResult[]>>(() => {
 
 const queuedCount = computed(() => tasks.value.filter((task) => task.status === "queued").length);
 const finishedCount = computed(() => tasks.value.filter((task) => task.status === "finished").length);
+const failedCount = computed(() => tasks.value.filter((task) => task.status === "failed").length);
+
+function statusLabel(status: TaskView["status"]): string {
+  return t(`operations.tasks.status.${status}`);
+}
 
 const TASK_HEALTH: Record<TaskView["status"], NodeHealth> = {
   finished: "online",
@@ -141,8 +174,8 @@ async function createTask() {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 md:grid-cols-3">
-      <Card>
+    <div class="grid gap-4 md:grid-cols-4">
+      <Card interactive :class="statusFilter === 'all' ? 'ring-2 ring-primary' : ''" @click="statusFilter = 'all'">
         <CardContent class="flex items-center justify-between p-4">
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.tasks') }}</p>
@@ -151,7 +184,7 @@ async function createTask() {
           <Terminal class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
       </Card>
-      <Card>
+      <Card interactive :class="statusFilter === 'queued' ? 'ring-2 ring-primary' : ''" @click="statusFilter = 'queued'">
         <CardContent class="flex items-center justify-between p-4">
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.queued') }}</p>
@@ -160,13 +193,22 @@ async function createTask() {
           <Timer class="size-5 text-warning" aria-hidden="true" />
         </CardContent>
       </Card>
-      <Card>
+      <Card interactive :class="statusFilter === 'finished' ? 'ring-2 ring-primary' : ''" @click="statusFilter = 'finished'">
         <CardContent class="flex items-center justify-between p-4">
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.finished') }}</p>
             <p class="text-2xl font-semibold text-success">{{ finishedCount }}</p>
           </div>
           <CheckCircle2 class="size-5 text-success" aria-hidden="true" />
+        </CardContent>
+      </Card>
+      <Card interactive :class="statusFilter === 'failed' ? 'ring-2 ring-primary' : ''" @click="statusFilter = 'failed'">
+        <CardContent class="flex items-center justify-between p-4">
+          <div>
+            <p class="text-sm text-muted-foreground">{{ $t('operations.tasks.failed') }}</p>
+            <p class="text-2xl font-semibold text-destructive">{{ failedCount }}</p>
+          </div>
+          <XCircle class="size-5 text-destructive" aria-hidden="true" />
         </CardContent>
       </Card>
     </div>
@@ -269,11 +311,17 @@ async function createTask() {
           @retry="refreshAll"
         >
           <div class="space-y-3">
-            <div v-for="task in sortedTasks" :key="task.id" class="rounded-lg border border-border p-4">
+            <div
+              v-if="filteredTasks.length === 0"
+              class="rounded-md border border-border p-6 text-center text-sm text-muted-foreground"
+            >
+              {{ $t('operations.tasks.noMatch') }}
+            </div>
+            <div v-for="task in filteredTasks" :key="task.id" class="rounded-lg border border-border p-4">
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
-                    <Badge :variant="statusVariant(task.status)">{{ task.status }}</Badge>
+                    <Badge :variant="statusVariant(task.status)">{{ statusLabel(task.status) }}</Badge>
                     <span class="font-mono text-sm">{{ shortId(task.id, 14) }}</span>
                     <span class="text-sm text-muted-foreground">{{ task.interpreter }}</span>
                   </div>
