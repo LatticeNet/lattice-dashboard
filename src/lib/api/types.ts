@@ -97,6 +97,8 @@ export interface Node {
   wireguard_endpoint?: string;
   public_ip?: string;
   public_ipv6?: string;
+  internal_ip?: string;
+  internal_ipv6?: string;
   agent_version?: string;
   online: boolean;
   disabled?: boolean;

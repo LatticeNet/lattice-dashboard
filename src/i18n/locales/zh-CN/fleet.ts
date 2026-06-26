@@ -136,6 +136,8 @@ export default {
         agent: "Agent",
         lastSeen: "最后在线",
         publicIp: "公网 IP",
+        internalIp: "内网 IP",
+        internalIpv6: "内网 IPv6",
         wireguard: "WireGuard",
         diagnostics: "诊断",
         debugDescription: "无需重新部署 agent,即可打开详细的非敏感 node-agent 诊断输出。",

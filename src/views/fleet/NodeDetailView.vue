@@ -563,6 +563,20 @@ async function resolveGeo() {
               </div>
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
+                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIp') }}</p>
+                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ip || $t('fleet.nodes.detail.notSet') }}</p>
+                </div>
+                <CopyButton v-if="node.internal_ip" :value="node.internal_ip" />
+              </div>
+              <div v-if="node.internal_ipv6" class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+                <div class="min-w-0">
+                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIpv6') }}</p>
+                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ipv6 }}</p>
+                </div>
+                <CopyButton :value="node.internal_ipv6" />
+              </div>
+              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+                <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.wireguardIp') }}</p>
                   <p class="mt-1 truncate font-mono text-sm">{{ node.wireguard_ip || $t('fleet.nodes.detail.notSet') }}</p>
                 </div>

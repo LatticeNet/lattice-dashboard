@@ -138,6 +138,8 @@ export default {
         agent: "Agent",
         lastSeen: "Last seen",
         publicIp: "Public IP",
+        internalIp: "Internal IP",
+        internalIpv6: "Internal IPv6",
         wireguard: "WireGuard",
         diagnostics: "Diagnostics",
         debugDescription: "Turn on verbose non-secret node-agent diagnostics without redeploying the agent.",
