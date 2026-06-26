@@ -125,6 +125,7 @@ export const api = {
       tags?: string[];
       role?: string;
       wireguard_ip?: string;
+      group_ids?: string[];
     }) => http.post<EnrollTokenResponse>("/api/nodes/enroll-token", input),
     rotateToken: (node_id: string) =>
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),

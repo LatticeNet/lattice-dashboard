@@ -90,6 +90,7 @@ const enrollId = ref("");
 const enrollRole = ref("");
 const enrollTags = ref("");
 const enrollWireGuardIp = ref("");
+const enrollGroups = ref<string[]>([]);
 const enrollPending = ref(false);
 const enrollResult = ref<EnrollTokenResponse | undefined>();
 
@@ -195,19 +196,45 @@ function clearFilters() {
 const groupBy = ref<GroupBy>("region");
 const collapsed = ref<Set<string>>(new Set());
 
-// Group metadata (id -> name/color) for the "Group" grouping mode. Fetched
-// lazily the first time the operator picks group grouping; degrades to a single
+// Group metadata (id -> name/color/leader) for group chips on every card AND the
+// "Group" grouping mode. Fetched EAGERLY so chips render on first paint (it used
+// to be lazy — only on groupBy==='group'); degrades to no chips / a single
 // Ungrouped bucket if the request fails (e.g. the token lacks group:read).
 const fleetGroupsQuery = useAsyncData(() => api.groups.list().then((r) => r.groups), {
-  immediate: false,
+  immediate: true,
 });
-watch(
-  groupBy,
-  (by) => {
-    if (by === "group" && !fleetGroupsQuery.data.value) void fleetGroupsQuery.refresh();
-  },
-  { immediate: true },
-);
+
+/** id -> chip metadata, so each card can resolve node.group_ids into chips. */
+const groupMetaById = computed(() => {
+  const m: Record<string, { name: string; color?: string; leaderId?: string }> = {};
+  for (const g of fleetGroupsQuery.data.value ?? []) {
+    m[g.id] = { name: g.name, color: g.color, leaderId: g.leader_id };
+  }
+  return m;
+});
+
+/** Resolve a node's resolved group_ids into chip descriptors for NodeCard. */
+function nodeGroups(node: Node) {
+  return (node.group_ids ?? []).map((id) => {
+    const g = groupMetaById.value[id];
+    return { id, name: g?.name ?? id, color: g?.color, leader: g?.leaderId === node.id };
+  });
+}
+
+/** Cross-link a group chip to the Groups page with that group pre-selected. */
+function goToGroup(id: string) {
+  router.push({ name: "groups", query: { selected: id } });
+}
+
+/** Groups offered as assignable at enrollment (same eager fleet group list). */
+const enrollGroupOptions = computed(() => fleetGroupsQuery.data.value ?? []);
+
+function toggleEnrollGroup(id: string) {
+  const next = new Set(enrollGroups.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  enrollGroups.value = [...next];
+}
 
 const groups = computed<NodeGroup[]>(() =>
   groupNodes(sortedNodes.value, groupBy.value, locale.value, fleetGroupsQuery.data.value ?? []),
@@ -274,12 +301,14 @@ async function enrollNode() {
       role: enrollRole.value.trim() || undefined,
       tags: parseTags(),
       wireguard_ip: enrollWireGuardIp.value.trim() || undefined,
+      group_ids: enrollGroups.value.length ? [...enrollGroups.value] : undefined,
     });
     enrollName.value = "";
     enrollId.value = "";
     enrollRole.value = "";
     enrollTags.value = "";
     enrollWireGuardIp.value = "";
+    enrollGroups.value = [];
     toast.success(t("fleet.nodes.toast.tokenCreated"));
     nodesQuery.refresh();
   } catch (error) {
@@ -430,6 +459,30 @@ function openTerminal(node: Node) {
             </Button>
           </div>
         </form>
+
+        <!-- Optional: assign the node into one or more groups at enrollment. -->
+        <div v-if="enrollGroupOptions.length" class="grid gap-2">
+          <Label>{{ $t('fleet.nodes.enroll.groups') }}</Label>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.groupsHint') }}</p>
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              v-for="g in enrollGroupOptions"
+              :key="g.id"
+              type="button"
+              :class="cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
+                enrollGroups.includes(g.id)
+                  ? cn(groupColor(g.color).border, groupColor(g.color).soft, groupColor(g.color).text)
+                  : 'border-border text-muted-foreground hover:bg-muted/40',
+              )"
+              :aria-pressed="enrollGroups.includes(g.id)"
+              @click="toggleEnrollGroup(g.id)"
+            >
+              <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+              {{ g.name }}
+            </button>
+          </div>
+        </div>
 
         <div v-if="enrollResult" class="grid gap-3 rounded-md border border-success/40 bg-success/5 p-4">
           <div class="flex flex-wrap items-center justify-between gap-2">
@@ -602,6 +655,7 @@ function openTerminal(node: Node) {
                   v-for="node in group.nodes"
                   :key="node.id"
                   :node="node"
+                  :groups="nodeGroups(node)"
                   show-sparkline
                   sparkline-metric="cpu"
                   :cpu-label="t('fleet.nodes.metric.cpu')"
@@ -612,6 +666,7 @@ function openTerminal(node: Node) {
                   :disabled-label="t('common.status.disabled')"
                   :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"
                   @select="openNode(node)"
+                  @group-select="goToGroup"
                 >
                   <template #footer="{ node: cardNode }">
                     <p class="mt-3 font-mono text-xs text-muted-foreground">

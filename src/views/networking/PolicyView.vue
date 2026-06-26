@@ -19,6 +19,7 @@ import {
   type GroupPolicyPlanResult,
   type GroupPolicyUpsertRequest,
   type GroupPolicyView,
+  type GroupView,
   type MatrixGroup,
   type NetEndpointKind,
   type NetGraphNode,
@@ -509,9 +510,44 @@ const nodeMetaById = computed<Record<string, { role?: string; disabled?: boolean
   return m;
 });
 
+// Legacy role-name heuristic. Slice 4 introduced a real Group.leader_id, so this
+// regex is now only a FALLBACK for nodes whose groups declare no leader.
 const LEADER_RE = /lead|hub|gateway|relay|master|组长|枢纽/i;
 function isLeaderRole(role?: string): boolean {
   return !!role && LEADER_RE.test(role);
+}
+
+// Real, operator-assigned group leaders: a node is a leader when it is the
+// leader_id of any group. Fetched alongside the graph; degrades to the role
+// heuristic if unavailable (e.g. the token lacks group:read).
+const fleetGroupsQuery = useAsyncData(() => api.groups.list().then((r) => r.groups), {
+  pollInterval: 0,
+});
+const fleetGroups = computed<GroupView[]>(() => fleetGroupsQuery.data.value ?? []);
+
+const realLeaderIds = computed(() => {
+  const s = new Set<string>();
+  for (const g of fleetGroups.value) if (g.leader_id) s.add(g.leader_id);
+  return s;
+});
+const groupHasLeader = computed<Record<string, boolean>>(() => {
+  const m: Record<string, boolean> = {};
+  for (const g of fleetGroups.value) m[g.id] = !!g.leader_id;
+  return m;
+});
+const nodeGroupIds = computed<Record<string, string[]>>(() => {
+  const m: Record<string, string[]> = {};
+  for (const n of nodes.value) m[n.id] = n.group_ids ?? [];
+  return m;
+});
+
+/** A node leads when it is a real group leader; else fall back to the role regex
+ * ONLY when none of its groups names a leader. */
+function isLeaderNode(id: string, role?: string): boolean {
+  if (realLeaderIds.value.has(id)) return true;
+  const gids = nodeGroupIds.value[id] ?? [];
+  if (gids.some((gid) => groupHasLeader.value[gid])) return false;
+  return isLeaderRole(role);
 }
 
 // Continent → Tailwind colour classes (class-based, no inline styles — CSP-safe).
@@ -605,7 +641,7 @@ const layout = computed<GraphLayout>(() => {
     const a0 = cursor;
     for (const gn of members) {
       const meta = nodeMetaById.value[gn.id];
-      const leader = isLeaderRole(meta?.role);
+      const leader = isLeaderNode(gn.id, meta?.role);
       const p = polar(RING, cursor + per / 2);
       placed.push({
         id: gn.id,

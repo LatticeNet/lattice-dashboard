@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
+  Crown,
   FolderTree,
   Plus,
   RotateCw,
@@ -53,11 +55,14 @@ import {
 } from "@/components/ui/select";
 
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("group:read"));
 const canAdmin = computed(() => auth.can("group:admin"));
 
 const ROOT_VALUE = "__root__";
+const LEADER_NONE = "__none__";
 
 const groupsQuery = useAsyncData(() => api.groups.list(), { pollInterval: 0 });
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
@@ -103,6 +108,7 @@ const form = reactive({
   parentId: ROOT_VALUE,
   order: 0,
   members: [] as string[],
+  leaderId: LEADER_NONE,
   selTags: "",
   selRoles: "",
   selCountry: "",
@@ -140,6 +146,7 @@ function loadForm(g?: GroupView) {
   form.parentId = g?.parent_id || ROOT_VALUE;
   form.order = g?.order ?? 0;
   form.members = [...(g?.members ?? [])];
+  form.leaderId = g?.leader_id || LEADER_NONE;
   form.selTags = csv(g?.selector?.match_tags_any);
   form.selRoles = csv(g?.selector?.match_roles);
   form.selCountry = csv(g?.selector?.match_country);
@@ -187,7 +194,21 @@ function isMember(id: string): boolean {
 function setMember(id: string, on: boolean) {
   const has = form.members.includes(id);
   if (on && !has) form.members.push(id);
-  else if (!on && has) form.members = form.members.filter((m) => m !== id);
+  else if (!on && has) {
+    form.members = form.members.filter((m) => m !== id);
+    // A leader must stay an explicit member; drop it when removed.
+    if (form.leaderId === id) form.leaderId = LEADER_NONE;
+  }
+}
+
+/** Leader candidates are exactly the group's explicit members. */
+const leaderOptions = computed(() =>
+  form.members.map((id) => ({ id, label: nodeLabel(id) })),
+);
+
+/** Cross-link a resolved member to its node-detail page. */
+function goToNode(id: string) {
+  router.push({ name: "node-detail", params: { id } });
 }
 
 /* ----------------------------------------------------------------- */
@@ -260,6 +281,7 @@ function buildUpsert(): GroupUpsertRequest {
     parent_id: form.parentId === ROOT_VALUE ? undefined : form.parentId,
     order: Number.isFinite(form.order) ? form.order : 0,
     members: form.members,
+    leader_id: form.leaderId === LEADER_NONE ? undefined : form.leaderId,
     selector: buildSelector(),
   };
 }
@@ -319,6 +341,20 @@ async function seedFromTags() {
     seeding.value = false;
   }
 }
+
+// Deep-link: /groups?selected=<id> pre-selects a group once the list loads (e.g.
+// arriving from a node's group chip). It never clobbers an in-progress edit.
+watch(
+  [groups, () => route.query.selected],
+  ([list, sel]) => {
+    if (editing.value) return;
+    const id = typeof sel === "string" ? sel : undefined;
+    if (!id) return;
+    const g = list.find((x) => x.id === id);
+    if (g && selectedId.value !== id) selectGroup(g);
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -531,6 +567,24 @@ async function seedFromTags() {
                 </div>
               </div>
 
+              <!-- Group leader (must be an explicit member; server-validated) -->
+              <div class="grid gap-1.5">
+                <Label>{{ $t('fleet.groups.fieldLeader') }}</Label>
+                <Select v-model="form.leaderId">
+                  <SelectTrigger class="w-full">
+                    <span class="flex items-center gap-2">
+                      <Crown class="size-3.5 text-amber-500" aria-hidden="true" />
+                      <SelectValue :placeholder="$t('fleet.groups.leaderNone')" />
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="LEADER_NONE">{{ $t('fleet.groups.leaderNone') }}</SelectItem>
+                    <SelectItem v-for="opt in leaderOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.leaderHint') }}</p>
+              </div>
+
               <!-- Display-only smart selector -->
               <div class="space-y-3 rounded-lg border border-border p-3">
                 <div class="flex items-center justify-between">
@@ -569,9 +623,20 @@ async function seedFromTags() {
                   {{ $t('fleet.groups.resolvedHint', { n: selectedGroup.resolved_members.length }) }}
                 </p>
                 <div v-if="selectedGroup.resolved_members.length" class="flex flex-wrap gap-1.5">
-                  <Badge v-for="id in selectedGroup.resolved_members" :key="id" variant="outline">
+                  <button
+                    v-for="id in selectedGroup.resolved_members"
+                    :key="id"
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    @click="goToNode(id)"
+                  >
                     {{ nodeLabel(id) }}
-                  </Badge>
+                    <Crown
+                      v-if="id === selectedGroup.leader_id"
+                      class="size-3 shrink-0 text-amber-500"
+                      aria-hidden="true"
+                    />
+                  </button>
                 </div>
               </div>
             </fieldset>

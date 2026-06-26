@@ -19,7 +19,9 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Check,
   Clock,
+  Crown,
   DownloadCloud,
   FolderTree,
   Gauge,
@@ -190,9 +192,42 @@ const groupBadges = computed(() => {
   const all = groupsQuery.data.value ?? [];
   return ids.map((id) => {
     const g = all.find((x) => x.id === id);
-    return { id, name: g?.name ?? id, color: g?.color };
+    return { id, name: g?.name ?? id, color: g?.color, leader: !!g && g.leader_id === nodeId.value };
   });
 });
+
+/* ----------------------------------------------------------------- */
+/* Group membership management (Slice 4). api.groups.members needs    */
+/* group:admin server-side, so the editor is gated on that scope.     */
+/* ----------------------------------------------------------------- */
+const canAdminGroups = computed(() => auth.can("group:admin"));
+const allGroups = computed<GroupView[]>(() => groupsQuery.data.value ?? []);
+const membershipPending = ref<string | undefined>(undefined);
+
+/** Explicit (canonical) membership — the only thing the members endpoint edits. */
+function isExplicitMember(g: GroupView): boolean {
+  return (g.members ?? []).includes(nodeId.value);
+}
+
+async function toggleGroupMembership(g: GroupView) {
+  if (!canAdminGroups.value || membershipPending.value) return;
+  const adding = !isExplicitMember(g);
+  membershipPending.value = g.id;
+  try {
+    await api.groups.members(g.id, adding ? [nodeId.value] : [], adding ? [] : [nodeId.value]);
+    toast.success(adding ? t("fleet.nodes.detail.groupAdded") : t("fleet.nodes.detail.groupRemoved"));
+    await Promise.all([groupsQuery.refresh(), nodesQuery.refresh()]);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.groupUpdateFailed"));
+  } finally {
+    membershipPending.value = undefined;
+  }
+}
+
+/** Cross-link a group chip to the Groups page with that group pre-selected. */
+function goToGroup(id: string) {
+  router.push({ name: "groups", query: { selected: id } });
+}
 
 const nodeDdns = computed(() =>
   (ddnsQuery.data.value ?? []).filter((d) => d.node_id === nodeId.value),
@@ -367,15 +402,22 @@ async function resolveGeo() {
         <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in node.tags ?? []" :key="tag" variant="outline">{{ tag }}</Badge>
-        <Badge
+        <button
           v-for="g in groupBadges"
           :key="g.id"
-          variant="outline"
-          class="gap-1.5"
+          type="button"
+          :class="cn(
+            'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            groupColor(g.color).border,
+            groupColor(g.color).soft,
+            groupColor(g.color).text,
+          )"
+          @click="goToGroup(g.id)"
         >
           <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
           {{ g.name }}
-        </Badge>
+          <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+        </button>
         <span class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground tabular">
           {{ shortId(node.id, 20) }}
           <CopyButton :value="node.id" />
@@ -667,14 +709,52 @@ async function resolveGeo() {
               {{ $t('fleet.nodes.detail.groups') }}
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent class="space-y-4">
             <div v-if="groupBadges.length" class="flex flex-wrap gap-2">
-              <Badge v-for="g in groupBadges" :key="g.id" variant="outline" class="gap-1.5">
+              <button
+                v-for="g in groupBadges"
+                :key="g.id"
+                type="button"
+                :class="cn(
+                  'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  groupColor(g.color).border,
+                  groupColor(g.color).soft,
+                  groupColor(g.color).text,
+                )"
+                @click="goToGroup(g.id)"
+              >
                 <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
                 {{ g.name }}
-              </Badge>
+                <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+              </button>
             </div>
             <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.ungrouped') }}</p>
+
+            <!-- Membership editor (group:admin): toggle this node in/out of groups. -->
+            <div v-if="canAdminGroups && allGroups.length" class="space-y-2 border-t border-border pt-3">
+              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroups') }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroupsHint') }}</p>
+              <div class="flex flex-wrap gap-1.5">
+                <button
+                  v-for="g in allGroups"
+                  :key="g.id"
+                  type="button"
+                  :disabled="membershipPending === g.id"
+                  :aria-pressed="isExplicitMember(g)"
+                  :class="cn(
+                    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive disabled:opacity-50',
+                    isExplicitMember(g)
+                      ? cn(groupColor(g.color).border, groupColor(g.color).soft, groupColor(g.color).text)
+                      : 'border-border text-muted-foreground hover:bg-muted/40',
+                  )"
+                  @click="toggleGroupMembership(g)"
+                >
+                  <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+                  {{ g.name }}
+                  <Check v-if="isExplicitMember(g)" class="size-3 shrink-0" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

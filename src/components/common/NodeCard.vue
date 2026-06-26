@@ -28,11 +28,13 @@ import {
   ArrowUp,
   Clock,
   Cpu,
+  Crown,
   HardDrive,
   MemoryStick,
 } from "lucide-vue-next";
 import type { Node } from "@/lib/api/types";
 import { nodeStatusMeta } from "@/lib/status";
+import { groupColor } from "@/lib/groupColors";
 import {
   formatBytesPerSec,
   formatDuration,
@@ -46,6 +48,18 @@ import { useMetricBuffer, type MetricKey } from "@/composables/useMetricBuffer";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Badge } from "@/components/ui/badge";
+
+/** A group chip shown near the role/tag badges; clicking emits `group-select`. */
+export interface NodeCardGroup {
+  /** Group id (echoed through the `group-select` event). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** groupColors design-token name (e.g. "sky"); falls back to slate. */
+  color?: string | null;
+  /** True when this node is the group's leader — renders a crown marker. */
+  leader?: boolean;
+}
 
 /** A single declarative footer action surfaced as a button; emitted via `action`. */
 export interface NodeCardAction {
@@ -67,6 +81,8 @@ const props = withDefaults(
     node: Node;
     /** Tighter spacing + smaller sparkline for dense grids. */
     compact?: boolean;
+    /** Group chips (color dot + name) rendered next to the role/tag badges. */
+    groups?: NodeCardGroup[];
     /** Render the footer action row (emits `action`). */
     showActions?: boolean;
     /** Declarative footer actions; only shown when `showActions` is true. */
@@ -91,6 +107,7 @@ const props = withDefaults(
   }>(),
   {
     compact: false,
+    groups: () => [],
     showActions: false,
     actions: () => [],
     showSparkline: false,
@@ -112,6 +129,8 @@ const emit = defineEmits<{
   (e: "select", node: Node): void;
   /** A footer action button was clicked. */
   (e: "action", payload: { id: string; node: Node }): void;
+  /** A group chip was clicked — caller routes to the group (keeps nav ownership). */
+  (e: "group-select", id: string): void;
 }>();
 
 /** Real, derived visual treatment (drives the dot colour + the status badge). */
@@ -199,6 +218,10 @@ function onSelect() {
 function onAction(id: string) {
   emit("action", { id, node: props.node });
 }
+
+function onGroup(id: string) {
+  emit("group-select", id);
+}
 </script>
 
 <template>
@@ -240,6 +263,24 @@ function onAction(id: string) {
         <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
+        <button
+          v-for="g in groups"
+          :key="g.id"
+          type="button"
+          :class="
+            cn(
+              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              groupColor(g.color).border,
+              groupColor(g.color).soft,
+              groupColor(g.color).text,
+            )
+          "
+          @click.stop="onGroup(g.id)"
+        >
+          <span :class="cn('size-1.5 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+          <span class="truncate">{{ g.name }}</span>
+          <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+        </button>
       </div>
     </div>
 

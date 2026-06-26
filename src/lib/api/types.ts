@@ -578,6 +578,8 @@ export interface Group {
   order: number;
   members?: string[];
   selector?: GroupSelector | null;
+  /** Operator-designated leader; must be an explicit member (server-validated). */
+  leader_id?: string;
   system?: boolean;
   created_at?: string;
   updated_at?: string;
@@ -611,6 +613,8 @@ export interface GroupUpsertRequest {
   order?: number;
   members?: string[];
   selector?: GroupSelector | null;
+  /** Group leader node id; must be one of `members` (server rejects otherwise). */
+  leader_id?: string;
 }
 
 export interface GroupNetRule {
