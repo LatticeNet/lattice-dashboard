@@ -107,7 +107,18 @@ export interface Node {
   host_facts?: HostFacts;
   geo?: NodeGeo;
   agent_debug?: AgentDebugPolicy;
+  ip_config?: NodeIPConfig | null;
   group_ids?: string[];
+}
+
+// NodeIPConfig is the operator-owned, per-node override for how the agent
+// determines its public IPs. An empty/absent mode means "no override".
+export interface NodeIPConfig {
+  mode?: "" | "auto" | "static" | "resolver";
+  static_ipv4?: string;
+  static_ipv6?: string;
+  resolvers?: string[];
+  updated_at?: string;
 }
 
 export interface NodeGeoView {

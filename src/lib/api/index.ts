@@ -140,6 +140,15 @@ export const api = {
       http.post<NodeGeoView>("/api/nodes/geo", { node_id, clear: true }),
     resolveGeo: (input: { node_id?: string; all?: boolean; missing_only?: boolean; overwrite?: boolean }) =>
       http.post<NodeGeoResolveResponse>("/api/nodes/geo/resolve", input),
+    // Set or clear the per-node public-IP discovery override. An empty mode
+    // clears it (the node reverts to its agent's startup flags).
+    ipConfig: (input: {
+      node_id: string;
+      mode: "" | "auto" | "static" | "resolver";
+      static_ipv4?: string;
+      static_ipv6?: string;
+      resolvers?: string[];
+    }) => http.post<Node>("/api/nodes/ip-config", input),
   },
 
   tasks: {

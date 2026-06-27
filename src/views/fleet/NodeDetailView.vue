@@ -78,6 +78,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -322,6 +331,55 @@ async function setNodeDebug(enabled: boolean, collect?: boolean) {
   } finally {
     debugPending.value = false;
   }
+}
+
+// Per-node public-IP discovery override editor. "inherit" maps to the empty
+// server mode (clear the override). The form seeds once per node id so a 5s
+// poll never clobbers an in-progress edit.
+const ipMode = ref<"inherit" | "auto" | "static" | "resolver">("inherit");
+const ipStaticV4 = ref("");
+const ipStaticV6 = ref("");
+const ipResolvers = ref("");
+const ipConfigPending = ref(false);
+
+watch(
+  () => node.value?.id,
+  () => {
+    const c = node.value?.ip_config;
+    ipMode.value = c?.mode ? c.mode : "inherit";
+    ipStaticV4.value = c?.static_ipv4 ?? "";
+    ipStaticV6.value = c?.static_ipv6 ?? "";
+    ipResolvers.value = (c?.resolvers ?? []).join("\n");
+  },
+  { immediate: true },
+);
+
+async function saveIPConfig() {
+  if (!node.value || !canAdminNodes.value) return;
+  ipConfigPending.value = true;
+  try {
+    await api.nodes.ipConfig({
+      node_id: node.value.id,
+      mode: ipMode.value === "inherit" ? "" : ipMode.value,
+      static_ipv4: ipStaticV4.value.trim(),
+      static_ipv6: ipStaticV6.value.trim(),
+      resolvers: ipResolvers.value
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+    toast.success(t("fleet.nodes.detail.ipConfig.saved"));
+    await nodesQuery.refresh();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.ipConfig.saveFailed"));
+  } finally {
+    ipConfigPending.value = false;
+  }
+}
+
+async function clearIPConfig() {
+  ipMode.value = "inherit";
+  await saveIPConfig();
 }
 
 async function planUpdate() {
@@ -588,6 +646,61 @@ async function resolveGeo() {
                   <p class="mt-1 truncate font-mono text-sm">{{ node.wireguard_endpoint || $t('fleet.nodes.detail.notSet') }}</p>
                 </div>
                 <CopyButton v-if="node.wireguard_endpoint" :value="node.wireguard_endpoint" />
+              </div>
+            </div>
+
+            <!-- IP discovery override (operator-owned; pushed to the agent) -->
+            <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border p-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <p class="inline-flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
+                  <Globe class="size-3.5" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.ipConfig.title') }}
+                </p>
+                <Badge :variant="node.ip_config?.mode ? 'outline' : 'secondary'">
+                  {{ node.ip_config?.mode ? $t('fleet.nodes.detail.ipConfig.overrideActive') : $t('fleet.nodes.detail.ipConfig.inheriting') }}
+                </Badge>
+              </div>
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.hint') }}</p>
+              <div class="grid gap-1.5 sm:max-w-xs">
+                <Label>{{ $t('fleet.nodes.detail.ipConfig.mode') }}</Label>
+                <Select v-model="ipMode">
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">{{ $t('fleet.nodes.detail.ipConfig.modeInherit') }}</SelectItem>
+                    <SelectItem value="auto">{{ $t('fleet.nodes.detail.ipConfig.modeAuto') }}</SelectItem>
+                    <SelectItem value="static">{{ $t('fleet.nodes.detail.ipConfig.modeStatic') }}</SelectItem>
+                    <SelectItem value="resolver">{{ $t('fleet.nodes.detail.ipConfig.modeResolver') }}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div v-if="ipMode === 'static' || ipMode === 'auto'" class="grid gap-3 sm:grid-cols-2">
+                <div class="grid gap-1.5">
+                  <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV4') }}</Label>
+                  <Input v-model="ipStaticV4" placeholder="203.0.113.10" class="font-mono" />
+                </div>
+                <div class="grid gap-1.5">
+                  <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV6') }}</Label>
+                  <Input v-model="ipStaticV6" placeholder="2001:db8::1" class="font-mono" />
+                </div>
+              </div>
+              <div v-if="ipMode === 'resolver' || ipMode === 'auto'" class="grid gap-1.5">
+                <Label>{{ $t('fleet.nodes.detail.ipConfig.resolvers') }}</Label>
+                <textarea
+                  v-model="ipResolvers"
+                  rows="2"
+                  class="rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                  placeholder="https://api.ipify.org&#10;https://ifconfig.co/ip"
+                />
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.resolversHint') }}</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <Button size="sm" :disabled="ipConfigPending" @click="saveIPConfig">
+                  <RefreshCw v-if="ipConfigPending" class="size-3.5 animate-spin" aria-hidden="true" />
+                  {{ $t('common.actions.save') }}
+                </Button>
+                <Button v-if="node.ip_config?.mode" variant="ghost" size="sm" :disabled="ipConfigPending" @click="clearIPConfig">
+                  {{ $t('fleet.nodes.detail.ipConfig.clear') }}
+                </Button>
               </div>
             </div>
 
