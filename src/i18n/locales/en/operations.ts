@@ -185,6 +185,12 @@ export default {
       exportNdjson: "Export NDJSON",
       exported: "Exported {count} events",
       exportEmpty: "No events to export",
+      search: "Search",
+      activeFilters: "Filters:",
+      clearAll: "Clear all",
+      showingRange: "Showing {from}–{to} of {total}",
+      prev: "Previous",
+      next: "Next",
     },
   },
 } as const;

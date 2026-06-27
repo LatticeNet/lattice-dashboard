@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { CheckCircle2, Download, RefreshCw, ScrollText, Search, ShieldCheck } from "lucide-vue-next";
+import { CheckCircle2, ChevronLeft, ChevronRight, Download, RefreshCw, ScrollText, Search, ShieldCheck, X } from "lucide-vue-next";
 import { api, type AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { type BadgeVariant } from "@/lib/status";
@@ -33,6 +34,8 @@ import {
 } from "@/components/ui/select";
 
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const action = ref("");
 /** "any" is a sentinel for the themed Select (reka-ui forbids empty-string item values). */
 const decision = ref<"any" | "allow" | "deny" | "observe">("any");
@@ -41,6 +44,27 @@ const correlationId = ref("");
 const q = ref("");
 const timeRange = ref<"all" | "15m" | "1h" | "24h" | "7d">("all");
 const limit = ref(50);
+// Server-side paging cursor. Filters reset it to 0; prev/next step by the page
+// size. The whole filter+page state is mirrored in the URL so a query is
+// shareable/bookmarkable.
+const offset = ref(0);
+{
+  const Q = route.query;
+  const s = (k: string) => (typeof Q[k] === "string" ? (Q[k] as string).trim() : "");
+  if (s("q")) q.value = s("q");
+  if (s("action")) action.value = s("action");
+  const d = s("decision");
+  if (d === "allow" || d === "deny" || d === "observe") decision.value = d;
+  if (s("node_id")) nodeId.value = s("node_id");
+  if (s("correlation_id")) correlationId.value = s("correlation_id");
+  const r = s("range");
+  if (r === "15m" || r === "1h" || r === "24h" || r === "7d") timeRange.value = r;
+  const lim = Number(s("limit"));
+  if (lim >= 1 && lim <= 500) limit.value = lim;
+  const off = Number(s("offset"));
+  if (off > 0) offset.value = off;
+}
+const pageSize = computed(() => Math.min(500, Math.max(1, Number(limit.value) || 50)));
 
 const RANGE_MS: Record<string, number> = {
   "15m": 15 * 60_000,
@@ -65,8 +89,8 @@ const auditQuery = useAsyncData(
       correlation_id: correlationId.value.trim() || undefined,
       q: q.value.trim() || undefined,
       at_from: rangeFrom(),
-      limit: Number(limit.value) || 50,
-      offset: 0,
+      limit: pageSize.value,
+      offset: offset.value,
     }),
   { pollInterval: 12000 },
 );
@@ -153,6 +177,92 @@ function exportCsv() {
   downloadFile("lattice-audit.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
   toast.success(t("operations.audit.exported", { count: events.value.length }));
 }
+
+// Mirror the full filter + page state into the URL so a query is shareable.
+function syncUrl() {
+  const query: Record<string, string> = {};
+  if (q.value.trim()) query.q = q.value.trim();
+  if (action.value.trim()) query.action = action.value.trim();
+  if (decision.value !== "any") query.decision = decision.value;
+  if (nodeId.value.trim()) query.node_id = nodeId.value.trim();
+  if (correlationId.value.trim()) query.correlation_id = correlationId.value.trim();
+  if (timeRange.value !== "all") query.range = timeRange.value;
+  if (pageSize.value !== 50) query.limit = String(pageSize.value);
+  if (offset.value > 0) query.offset = String(offset.value);
+  router.replace({ query }).catch(() => {});
+}
+
+// Apply the current filters from page one (form submit / search / chip clear).
+function applyFilters() {
+  offset.value = 0;
+  syncUrl();
+  auditQuery.refresh();
+}
+
+const rangeStart = computed(() => (events.value.length ? offset.value + 1 : 0));
+const rangeEnd = computed(() => offset.value + events.value.length);
+const hasPrev = computed(() => offset.value > 0);
+const hasNext = computed(() => rangeEnd.value < total.value);
+
+function nextPage() {
+  if (!hasNext.value) return;
+  offset.value += pageSize.value;
+  syncUrl();
+  auditQuery.refresh();
+}
+function prevPage() {
+  if (!hasPrev.value) return;
+  offset.value = Math.max(0, offset.value - pageSize.value);
+  syncUrl();
+  auditQuery.refresh();
+}
+
+// Removable active-filter chips: at-a-glance clarity + one-click clearing.
+const activeFilters = computed(() => {
+  const f: { key: string; label: string }[] = [];
+  if (q.value.trim()) f.push({ key: "q", label: `${t("operations.audit.search")}: ${q.value.trim()}` });
+  if (action.value.trim()) f.push({ key: "action", label: `${t("operations.audit.action")}: ${action.value.trim()}` });
+  if (decision.value !== "any") f.push({ key: "decision", label: `${t("operations.audit.decision")}: ${decision.value}` });
+  if (nodeId.value.trim()) f.push({ key: "node_id", label: `${t("operations.audit.node")}: ${nodeId.value.trim()}` });
+  if (correlationId.value.trim())
+    f.push({ key: "correlation_id", label: `${t("operations.audit.correlation")}: ${correlationId.value.trim()}` });
+  if (timeRange.value !== "all") f.push({ key: "range", label: `${t("operations.audit.timeRange")}: ${timeRange.value}` });
+  return f;
+});
+
+function clearFilter(key: string) {
+  switch (key) {
+    case "q":
+      q.value = "";
+      break;
+    case "action":
+      action.value = "";
+      break;
+    case "decision":
+      decision.value = "any";
+      break;
+    case "node_id":
+      nodeId.value = "";
+      break;
+    case "correlation_id":
+      correlationId.value = "";
+      break;
+    case "range":
+      timeRange.value = "all";
+      break;
+  }
+  applyFilters();
+}
+
+function clearAllFilters() {
+  q.value = "";
+  action.value = "";
+  decision.value = "any";
+  nodeId.value = "";
+  correlationId.value = "";
+  timeRange.value = "all";
+  applyFilters();
+}
 </script>
 
 <template>
@@ -221,10 +331,10 @@ function exportCsv() {
             v-model="q"
             class="pl-8"
             :placeholder="$t('operations.audit.searchPlaceholder')"
-            @keyup.enter="auditQuery.refresh"
+            @keyup.enter="applyFilters"
           />
         </div>
-        <form class="grid gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="auditQuery.refresh">
+        <form class="grid gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="applyFilters">
           <div class="grid gap-2">
             <Label for="audit-action">{{ $t('operations.audit.action') }}</Label>
             <Input id="audit-action" v-model="action" placeholder="task.*" />
@@ -285,6 +395,21 @@ function exportCsv() {
           </div>
         </form>
 
+        <div v-if="activeFilters.length" class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="text-xs text-muted-foreground">{{ $t('operations.audit.activeFilters') }}</span>
+          <button
+            v-for="f in activeFilters"
+            :key="f.key"
+            type="button"
+            class="surface-interactive inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs"
+            @click="clearFilter(f.key)"
+          >
+            {{ f.label }}
+            <X class="size-3" aria-hidden="true" />
+          </button>
+          <Button variant="ghost" size="sm" @click="clearAllFilters">{{ $t('operations.audit.clearAll') }}</Button>
+        </div>
+
         <div v-if="verifyResult" class="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2">
             <Badge :variant="verifyResult.ok ? 'success' : 'destructive'">
@@ -309,7 +434,7 @@ function exportCsv() {
           :row-key="(event) => event.id"
           :loading="auditQuery.loading.value"
           :error="auditQuery.error.value"
-          :page-size="20"
+          :page-size="pageSize"
           :empty-title="$t('operations.audit.emptyTitle')"
           :empty-description="$t('operations.audit.emptyDescription')"
           :no-match-title="$t('operations.audit.noMatchTitle')"
@@ -347,6 +472,22 @@ function exportCsv() {
             </div>
           </template>
         </DataTable>
+
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span class="text-muted-foreground">
+            {{ $t('operations.audit.showingRange', { from: rangeStart, to: rangeEnd, total }) }}
+          </span>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" :disabled="!hasPrev || auditQuery.loading.value" @click="prevPage">
+              <ChevronLeft class="size-4" aria-hidden="true" />
+              {{ $t('operations.audit.prev') }}
+            </Button>
+            <Button variant="outline" size="sm" :disabled="!hasNext || auditQuery.loading.value" @click="nextPage">
+              {{ $t('operations.audit.next') }}
+              <ChevronRight class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   </div>

@@ -184,6 +184,12 @@ export default {
       exportNdjson: "导出 NDJSON",
       exported: "已导出 {count} 条事件",
       exportEmpty: "没有可导出的事件",
+      search: "搜索",
+      activeFilters: "筛选:",
+      clearAll: "清除全部",
+      showingRange: "显示第 {from}–{to} 条,共 {total} 条",
+      prev: "上一页",
+      next: "下一页",
     },
   },
 } as const;
