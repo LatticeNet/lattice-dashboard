@@ -259,6 +259,7 @@ export default {
       colLine: "Line",
       lineTruncated: "truncated",
       resultTruncated: "Result truncated to the requested limit. Increase the limit or load older pages.",
+      renderCapped: "Rendering the newest {shown} of {total} loaded lines. Search or load older to reach the rest.",
       editSourceTitle: "Edit log source",
       newSourceTitle: "New log source",
       formHint: "Pin a tailable file on a node. Paths must be absolute and under {path}.",

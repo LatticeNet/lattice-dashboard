@@ -120,6 +120,13 @@ const viewerError = ref<string | undefined>();
 // `lines` changes) instead of copying+reversing the whole array on every render.
 const reversedLines = computed(() => lines.value.slice().reverse());
 
+// Cap the number of DOM rows. A query/tail can hold up to 5000 lines; rendering
+// them all stacks thousands of nodes and janks the page. Render only the newest
+// window — older lines stay reachable via search or "load older".
+const LOG_RENDER_CAP = 1500;
+const renderedLines = computed(() => reversedLines.value.slice(0, LOG_RENDER_CAP));
+const renderCapped = computed(() => reversedLines.value.length > LOG_RENDER_CAP);
+
 let tailTimer: ReturnType<typeof setInterval> | undefined;
 
 function clampLimit(): number {
@@ -541,7 +548,7 @@ function refreshAll(): void {
                     </thead>
                     <tbody class="font-mono">
                       <tr
-                        v-for="line in reversedLines"
+                        v-for="line in renderedLines"
                         :key="line.seq"
                         class="border-b border-border last:border-b-0 hover:bg-muted/40"
                       >
@@ -556,6 +563,9 @@ function refreshAll(): void {
                   </table>
                 </div>
 
+                <p v-if="renderCapped" class="text-xs text-muted-foreground">
+                  {{ $t('platform.logs.renderCapped', { shown: LOG_RENDER_CAP, total: reversedLines.length }) }}
+                </p>
                 <p v-if="truncated" class="text-xs text-warning">
                   {{ $t('platform.logs.resultTruncated') }}
                 </p>

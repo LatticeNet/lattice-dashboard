@@ -255,6 +255,7 @@ export default {
       colLine: "内容",
       lineTruncated: "已截断",
       resultTruncated: "结果已截断至所请求的上限。请提高上限或加载更早的页。",
+      renderCapped: "仅渲染最新 {shown} 行(共加载 {total} 行)。搜索或加载更早可查看其余。",
       editSourceTitle: "编辑日志源",
       newSourceTitle: "新建日志源",
       formHint: "在节点上锁定一个可 tail 的文件。路径必须是绝对路径且位于 {path} 之下。",
