@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -53,6 +54,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 const auth = useAuthStore();
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 
 const monitorsQuery = useAsyncData(() => api.monitors.list().then((r) => unwrap(r, "monitors")), {
   pollInterval: 10000,
@@ -61,7 +64,9 @@ const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "no
   pollInterval: 15000,
 });
 
-const selectedMonitorId = ref("");
+// Seed from a /monitoring/:id deep link; the monitors watch validates it once
+// the list loads (falling back to the first monitor if the id is unknown).
+const selectedMonitorId = ref(typeof route.params.id === "string" ? route.params.id : "");
 const createPending = ref(false);
 const deletePending = ref(false);
 const deleteOpen = ref(false);
@@ -201,9 +206,30 @@ watch(
   { immediate: true },
 );
 
-watch(selectedMonitorId, () => {
+watch(selectedMonitorId, (id) => {
   resultsQuery.refresh();
+  // Keep the URL in sync so the current monitor is shareable/bookmarkable.
+  // replace (not push) avoids polluting history as the operator scans monitors.
+  if (id && route.params.id !== id) {
+    router.replace({ name: "monitor-detail", params: { id } }).catch(() => {});
+  }
 });
+
+// Honor in-session URL changes (back/forward, a pasted link) when the id is a
+// known monitor. Guarded against the id we just wrote, so there is no loop.
+watch(
+  () => route.params.id,
+  (id) => {
+    if (
+      typeof id === "string" &&
+      id &&
+      id !== selectedMonitorId.value &&
+      monitors.value.some((monitor) => monitor.id === id)
+    ) {
+      selectedMonitorId.value = id;
+    }
+  },
+);
 
 function timestamp(input?: string): number {
   if (!input) return 0;

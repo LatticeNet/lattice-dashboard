@@ -85,6 +85,15 @@ const manualChildRoutes: RouteRecordRaw[] = [
     component: () => import("@/views/fleet/NodeDetailView.vue"),
     meta: { title: "Node", section: "Fleet", scopes: ["node:read"] },
   },
+  {
+    // Deep-linkable single monitor. Reuses MonitoringView, which pre-selects the
+    // :id and keeps the URL in sync as the operator switches monitors. The
+    // "/monitoring" prefix keeps the Fleet → Monitoring nav item highlighted.
+    path: "monitoring/:id",
+    name: "monitor-detail",
+    component: () => import("@/views/fleet/MonitoringView.vue"),
+    meta: { title: "Monitoring", section: "Fleet", scopes: ["monitor:read"] },
+  },
 ];
 
 const routes: RouteRecordRaw[] = [
