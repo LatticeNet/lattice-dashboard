@@ -45,9 +45,9 @@ const canApply = computed(() => auth.can("network:apply"));
 
 const planView = ref<"diff" | "full">("diff");
 
-// The most recent earlier plan for the same target (node + plugin + action) that
-// was approved/applied — i.e. what is currently live. Diffing the selection
-// against it shows exactly what this change does. Empty = no prior config.
+// The most recent earlier applied plan for the same target (node + plugin +
+// action) — i.e. what is actually live. Approved-but-not-applied plans are not a
+// live baseline and would make the diff lie about the current state.
 const previousPlan = computed(() => {
   const cur = selected.value;
   if (!cur) return "";
@@ -58,7 +58,7 @@ const previousPlan = computed(() => {
         a.node_id === cur.node_id &&
         a.plugin === cur.plugin &&
         a.action === cur.action &&
-        (a.status === "applied" || a.status === "approved") &&
+        a.status === "applied" &&
         (a.created_at || "") < (cur.created_at || ""),
     )
     .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));

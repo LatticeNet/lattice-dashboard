@@ -4,7 +4,6 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ChevronDown,
@@ -25,9 +24,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import {
-  formatBytes,
   formatBytesPerSec,
-  formatDateTime,
   formatRelativeTime,
   shortId,
 } from "@/lib/format";
@@ -59,13 +56,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 const auth = useAuthStore();
 const { t, locale } = useI18n();
@@ -93,9 +83,9 @@ const enrollWireGuardIp = ref("");
 const enrollGroups = ref<string[]>([]);
 const enrollPending = ref(false);
 const enrollResult = ref<EnrollTokenResponse | undefined>();
+const enrollPlatform = ref<"linux" | "manual">("linux");
 
 const pendingNode = ref<string | undefined>();
-const debugPendingNode = ref<string | undefined>();
 const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
 
 /* ----------------------------------------------------------------- */
@@ -254,24 +244,8 @@ function toggleGroup(key: string) {
   collapsed.value = next;
 }
 
-/* ----------------------------------------------------------------- */
-/* Deep-linkable node-detail modal bound to a ?node=<id> query param.  */
-/* ----------------------------------------------------------------- */
-const selectedNode = computed<Node | undefined>(() => {
-  const id = route.query.node;
-  if (typeof id !== "string" || !id) return undefined;
-  return nodes.value.find((n) => n.id === id);
-});
-
 function openNode(node: Node) {
   router.push({ name: "node-detail", params: { id: node.id } });
-}
-
-function closeDetail(open: boolean) {
-  if (open) return;
-  const next = { ...route.query };
-  delete next.node;
-  router.replace({ query: next });
 }
 
 function parseTags(): string[] {
@@ -318,6 +292,11 @@ async function enrollNode() {
   }
 }
 
+const enrollCommand = computed(() => {
+  if (!enrollResult.value) return "";
+  return enrollResult.value.commands?.[enrollPlatform.value] || enrollResult.value.command || enrollResult.value.token;
+});
+
 async function rotateToken(node: Node) {
   pendingNode.value = node.id;
   rotatedToken.value = undefined;
@@ -341,20 +320,6 @@ async function setDisabled(node: Node, disabled: boolean) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.updateFailed"));
   } finally {
     pendingNode.value = undefined;
-  }
-}
-
-async function setNodeDebug(node: Node, enabled: boolean, collect?: boolean) {
-  if (!canAdminNodes.value) return;
-  debugPendingNode.value = node.id;
-  try {
-    await api.nodes.setDebug(node.id, enabled, collect);
-    toast.success(t("fleet.nodes.toast.debugUpdated"));
-    nodesQuery.refresh();
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.debugFailed"));
-  } finally {
-    debugPendingNode.value = undefined;
   }
 }
 
@@ -490,10 +455,32 @@ function openTerminal(node: Node) {
               <p class="text-sm font-medium">{{ $t('fleet.nodes.enroll.tokenFor', { id: enrollResult.node_id }) }}</p>
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.tokenHint') }}</p>
             </div>
-            <CopyButton :value="enrollResult.command || enrollResult.token" :label="$t('fleet.nodes.enroll.copyCommand')" />
+            <CopyButton :value="enrollCommand" :label="$t('fleet.nodes.enroll.copyCommand')" />
+          </div>
+          <div class="inline-flex w-fit rounded-md border border-border bg-background/70 p-1">
+            <button
+              type="button"
+              :class="cn(
+                'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                enrollPlatform === 'linux' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )"
+              @click="enrollPlatform = 'linux'"
+            >
+              {{ $t('fleet.nodes.enroll.platformLinux') }}
+            </button>
+            <button
+              type="button"
+              :class="cn(
+                'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                enrollPlatform === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )"
+              @click="enrollPlatform = 'manual'"
+            >
+              {{ $t('fleet.nodes.enroll.platformManual') }}
+            </button>
           </div>
           <code class="block overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
-            {{ enrollResult.command || enrollResult.token }}
+            {{ enrollCommand }}
           </code>
         </div>
 
@@ -707,109 +694,5 @@ function openTerminal(node: Node) {
       </CardContent>
     </Card>
 
-    <Dialog :open="!!selectedNode" @update:open="closeDetail">
-      <DialogContent class="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{{ selectedNode?.name || selectedNode?.id }}</DialogTitle>
-          <DialogDescription>
-            {{ selectedNode?.id }} · {{ selectedNode?.online ? $t('common.status.online') : $t('common.status.offline') }}
-          </DialogDescription>
-        </DialogHeader>
-        <div v-if="selectedNode" class="space-y-5">
-          <div class="grid gap-3 sm:grid-cols-2">
-            <div class="rounded-md border border-border p-3">
-              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.agent') }}</p>
-              <p class="mt-1 text-sm">{{ selectedNode.agent_version || $t('fleet.nodes.detail.unknown') }}</p>
-            </div>
-            <div class="rounded-md border border-border p-3">
-              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.lastSeen') }}</p>
-              <p class="mt-1 text-sm">{{ formatDateTime(selectedNode.last_seen) }}</p>
-            </div>
-            <div class="rounded-md border border-border p-3">
-              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.publicIp') }}</p>
-              <p class="mt-1 font-mono text-sm">{{ selectedNode.public_ip || selectedNode.public_ipv6 || $t('fleet.nodes.detail.unknown') }}</p>
-            </div>
-            <div class="rounded-md border border-border p-3">
-              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.wireguard') }}</p>
-              <p class="mt-1 font-mono text-sm">{{ selectedNode.wireguard_ip || $t('fleet.nodes.detail.notSet') }}</p>
-            </div>
-          </div>
-
-          <div v-if="canAdminNodes" class="rounded-md border border-border p-4">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="space-y-1">
-                <h3 class="text-sm font-medium">{{ $t('fleet.nodes.detail.diagnostics') }}</h3>
-                <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.debugDescription') }}</p>
-              </div>
-              <Badge :variant="selectedNode.agent_debug?.enabled ? 'warning' : 'secondary'">
-                {{ selectedNode.agent_debug?.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-              </Badge>
-            </div>
-            <div class="mt-4 grid gap-3">
-              <label class="flex items-start gap-3 text-sm">
-                <input
-                  type="checkbox"
-                  class="mt-0.5 size-4 accent-primary"
-                  :checked="!!selectedNode.agent_debug?.enabled"
-                  :disabled="debugPendingNode === selectedNode.id"
-                  @change="setNodeDebug(selectedNode, ($event.target as HTMLInputElement).checked, selectedNode.agent_debug?.collect ?? true)"
-                />
-                <span class="space-y-1">
-                  <span class="block font-medium">{{ $t('fleet.nodes.detail.debugEnabled') }}</span>
-                  <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugLocalHint') }}</span>
-                </span>
-              </label>
-              <label class="flex items-start gap-3 text-sm" :class="!selectedNode.agent_debug?.enabled && 'opacity-60'">
-                <input
-                  type="checkbox"
-                  class="mt-0.5 size-4 accent-primary"
-                  :checked="!!selectedNode.agent_debug?.collect"
-                  :disabled="!selectedNode.agent_debug?.enabled || debugPendingNode === selectedNode.id"
-                  @change="setNodeDebug(selectedNode, true, ($event.target as HTMLInputElement).checked)"
-                />
-                <span class="space-y-1">
-                  <span class="block font-medium">{{ $t('fleet.nodes.detail.debugCollect') }}</span>
-                  <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugCollectHint', { path: `agent-debug://${selectedNode.id}` }) }}</span>
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <div v-if="canOpenTerminal" class="rounded-md border border-border p-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <div class="space-y-1">
-                <h3 class="text-sm font-medium">{{ $t('fleet.nodes.detail.terminal') }}</h3>
-                <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.terminalDescription') }}</p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                :disabled="!selectedNode.online || selectedNode.disabled"
-                @click="openTerminal(selectedNode)"
-              >
-                <SquareTerminal class="size-4" aria-hidden="true" />
-                {{ $t('fleet.nodes.list.openTerminal') }}
-              </Button>
-            </div>
-          </div>
-
-          <div v-if="selectedNode.host_facts" class="space-y-3">
-            <h3 class="text-sm font-medium">{{ $t('fleet.nodes.detail.hostFacts') }}</h3>
-            <div class="grid gap-2 sm:grid-cols-2">
-              <div class="rounded-md bg-muted/40 p-3 text-sm">{{ $t('fleet.nodes.detail.os', { value: selectedNode.host_facts.os || $t('fleet.nodes.detail.unknown') }) }}</div>
-              <div class="rounded-md bg-muted/40 p-3 text-sm">{{ $t('fleet.nodes.detail.arch', { value: selectedNode.host_facts.arch || $t('fleet.nodes.detail.unknown') }) }}</div>
-              <div class="rounded-md bg-muted/40 p-3 text-sm">{{ $t('fleet.nodes.detail.cpuCores', { value: selectedNode.host_facts.cpu_cores || "?" }) }}</div>
-              <div class="rounded-md bg-muted/40 p-3 text-sm">{{ $t('fleet.nodes.detail.memory', { value: formatBytes(selectedNode.host_facts.memory_total) }) }}</div>
-              <div class="rounded-md bg-muted/40 p-3 text-sm sm:col-span-2">{{ $t('fleet.nodes.detail.kernel', { value: selectedNode.host_facts.kernel || $t('fleet.nodes.detail.unknown') }) }}</div>
-            </div>
-          </div>
-
-          <div v-else class="flex items-center gap-2 rounded-md border border-border p-3 text-sm text-muted-foreground">
-            <AlertTriangle class="size-4" aria-hidden="true" />
-            {{ $t('fleet.nodes.detail.noHostFacts') }}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
   </div>
 </template>

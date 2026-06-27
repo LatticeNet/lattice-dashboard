@@ -5,7 +5,7 @@
 (function () {
   try {
     var KEY = "lattice.theme"; // "light" | "dark" | "system"
-    var mode = localStorage.getItem(KEY) || "system";
+    var mode = localStorage.getItem(KEY) || "dark";
     var prefersDark =
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches;

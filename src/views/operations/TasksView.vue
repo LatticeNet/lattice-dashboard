@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Play, RefreshCw, Terminal, Timer, CheckCircle2, XCircle, RotateCcw, Ban, Trash2 } from "lucide-vue-next";
+import { Ban, CheckCircle2, ChevronDown, Play, RefreshCw, RotateCcw, Search, Terminal, Timer, Trash2, XCircle } from "lucide-vue-next";
 import { api, unwrap, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -62,6 +62,8 @@ const script = ref("");
 const timeoutSec = ref(60);
 const outputLimit = ref(65536);
 const createPending = ref(false);
+const taskSearch = ref(typeof route.query.q === "string" ? route.query.q : "");
+const expandedTasks = ref<Set<string>>(new Set());
 
 const tasks = computed(() => tasksQuery.data.value ?? []);
 const results = computed(() => resultsQuery.data.value ?? []);
@@ -74,6 +76,19 @@ const sortedTasks = computed(() =>
 
 const filteredTasks = computed(() =>
   sortedTasks.value.filter((task) => {
+    const q = taskSearch.value.trim().toLowerCase();
+    if (
+      q &&
+      ![
+        task.id,
+        task.interpreter,
+        task.status,
+        task.targets.join(" "),
+        task.targets.map(nodeName).join(" "),
+      ].some((value) => value.toLowerCase().includes(q))
+    ) {
+      return false;
+    }
     switch (statusFilter.value) {
       case "queued":
         return task.status === "queued";
@@ -133,6 +148,29 @@ const showFormError = ref(false);
 
 function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || id;
+}
+
+function taskResults(task: TaskView): TaskResult[] {
+  return resultsByTask.value[task.id] ?? [];
+}
+
+function resultFailed(result: TaskResult): boolean {
+  return !!result.error || (result.exit_code !== undefined && result.exit_code !== 0);
+}
+
+function failedResultCount(task: TaskView): number {
+  return taskResults(task).filter(resultFailed).length;
+}
+
+function isExpanded(taskID: string): boolean {
+  return expandedTasks.value.has(taskID);
+}
+
+function toggleResults(taskID: string) {
+  const next = new Set(expandedTasks.value);
+  if (next.has(taskID)) next.delete(taskID);
+  else next.add(taskID);
+  expandedTasks.value = next;
 }
 
 function refreshAll() {
@@ -363,6 +401,20 @@ async function confirmDelete() {
         <CardDescription>{{ $t('operations.tasks.historyHint') }}</CardDescription>
       </CardHeader>
       <CardContent>
+        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div class="relative flex-1">
+            <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input
+              v-model="taskSearch"
+              class="pl-9"
+              :placeholder="$t('operations.tasks.searchPlaceholder')"
+              :aria-label="$t('operations.tasks.searchPlaceholder')"
+            />
+          </div>
+          <span class="text-xs text-muted-foreground">
+            {{ $t('operations.tasks.showing', { shown: filteredTasks.length, total: tasks.length }) }}
+          </span>
+        </div>
         <DataState
           :loading="tasksQuery.loading.value || resultsQuery.loading.value"
           :error="tasksQuery.error.value || resultsQuery.error.value"
@@ -431,23 +483,45 @@ async function confirmDelete() {
                 </div>
               </div>
 
-              <div v-if="resultsByTask[task.id]?.length" class="mt-4 space-y-2">
-                <div
-                  v-for="result in resultsByTask[task.id]"
-                  :key="`${result.task_id}:${result.node_id}:${result.started_at}`"
-                  class="rounded-md bg-muted/40 p-3"
+              <div v-if="taskResults(task).length" class="mt-4 rounded-md border border-border bg-muted/20">
+                <button
+                  type="button"
+                  class="flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/40"
+                  :aria-expanded="isExpanded(task.id)"
+                  @click="toggleResults(task.id)"
                 >
-                  <div class="flex flex-wrap items-center gap-2">
-                    <Badge :variant="result.error || result.exit_code ? 'destructive' : 'success'">
-                      <XCircle v-if="result.error || result.exit_code" class="size-3" aria-hidden="true" />
-                      <CheckCircle2 v-else class="size-3" aria-hidden="true" />
-                      {{ nodeName(result.node_id) }}
-                    </Badge>
-                    <span class="text-xs text-muted-foreground">{{ $t('operations.tasks.exit', { code: result.exit_code ?? 0 }) }}</span>
-                    <span class="text-xs text-muted-foreground">{{ formatDateTime(result.finished_at || result.started_at) }}</span>
+                  <ChevronDown
+                    :class="cn('size-4 text-muted-foreground transition-transform', !isExpanded(task.id) && '-rotate-90')"
+                    aria-hidden="true"
+                  />
+                  <span class="font-medium">
+                    {{ $t('operations.tasks.resultsSummary', { count: taskResults(task).length, failed: failedResultCount(task) }) }}
+                  </span>
+                  <Badge :variant="failedResultCount(task) > 0 ? 'destructive' : 'success'">
+                    {{ failedResultCount(task) > 0 ? $t('operations.tasks.failed') : $t('operations.tasks.finished') }}
+                  </Badge>
+                  <span class="ms-auto text-xs text-muted-foreground">
+                    {{ isExpanded(task.id) ? $t('operations.tasks.collapseResults') : $t('operations.tasks.expandResults') }}
+                  </span>
+                </button>
+                <div v-if="isExpanded(task.id)" class="space-y-2 border-t border-border p-3">
+                  <div
+                    v-for="result in taskResults(task)"
+                    :key="`${result.task_id}:${result.node_id}:${result.started_at}`"
+                    class="rounded-md bg-background/60 p-3"
+                  >
+                    <div class="flex flex-wrap items-center gap-2">
+                      <Badge :variant="resultFailed(result) ? 'destructive' : 'success'">
+                        <XCircle v-if="resultFailed(result)" class="size-3" aria-hidden="true" />
+                        <CheckCircle2 v-else class="size-3" aria-hidden="true" />
+                        {{ nodeName(result.node_id) }}
+                      </Badge>
+                      <span class="text-xs text-muted-foreground">{{ $t('operations.tasks.exit', { code: result.exit_code ?? 0 }) }}</span>
+                      <span class="text-xs text-muted-foreground">{{ formatDateTime(result.finished_at || result.started_at) }}</span>
+                    </div>
+                    <pre v-if="result.stdout" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-2 font-mono text-xs">{{ result.stdout }}</pre>
+                    <pre v-if="result.stderr || result.error" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-destructive/10 p-2 font-mono text-xs text-destructive">{{ result.stderr || result.error }}</pre>
                   </div>
-                  <pre v-if="result.stdout" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-2 font-mono text-xs">{{ result.stdout }}</pre>
-                  <pre v-if="result.stderr || result.error" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-destructive/10 p-2 font-mono text-xs text-destructive">{{ result.stderr || result.error }}</pre>
                 </div>
               </div>
             </div>

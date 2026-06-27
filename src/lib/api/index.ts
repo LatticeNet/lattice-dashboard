@@ -144,10 +144,11 @@ export const api = {
     // clears it (the node reverts to its agent's startup flags).
     ipConfig: (input: {
       node_id: string;
-      mode: "" | "auto" | "static" | "resolver";
+      mode: "" | "auto" | "static" | "resolver" | "script";
       static_ipv4?: string;
       static_ipv6?: string;
       resolvers?: string[];
+      script?: string;
     }) => http.post<Node>("/api/nodes/ip-config", input),
   },
 

@@ -336,11 +336,16 @@ async function setNodeDebug(enabled: boolean, collect?: boolean) {
 // Per-node public-IP discovery override editor. "inherit" maps to the empty
 // server mode (clear the override). The form seeds once per node id so a 5s
 // poll never clobbers an in-progress edit.
-const ipMode = ref<"inherit" | "auto" | "static" | "resolver">("inherit");
+const ipMode = ref<"inherit" | "auto" | "static" | "resolver" | "script">("inherit");
 const ipStaticV4 = ref("");
 const ipStaticV6 = ref("");
 const ipResolvers = ref("");
+const ipScript = ref("");
 const ipConfigPending = ref(false);
+const canSaveIPConfig = computed(() => {
+  if (ipMode.value !== "script") return true;
+  return !!ipScript.value.trim() || !!node.value?.ip_config?.script_sha256;
+});
 
 watch(
   () => node.value?.id,
@@ -350,6 +355,7 @@ watch(
     ipStaticV4.value = c?.static_ipv4 ?? "";
     ipStaticV6.value = c?.static_ipv6 ?? "";
     ipResolvers.value = (c?.resolvers ?? []).join("\n");
+    ipScript.value = "";
   },
   { immediate: true },
 );
@@ -367,6 +373,7 @@ async function saveIPConfig() {
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean),
+      script: ipMode.value === "script" ? ipScript.value : undefined,
     });
     toast.success(t("fleet.nodes.detail.ipConfig.saved"));
     await nodesQuery.refresh();
@@ -670,6 +677,7 @@ async function resolveGeo() {
                     <SelectItem value="auto">{{ $t('fleet.nodes.detail.ipConfig.modeAuto') }}</SelectItem>
                     <SelectItem value="static">{{ $t('fleet.nodes.detail.ipConfig.modeStatic') }}</SelectItem>
                     <SelectItem value="resolver">{{ $t('fleet.nodes.detail.ipConfig.modeResolver') }}</SelectItem>
+                    <SelectItem value="script">{{ $t('fleet.nodes.detail.ipConfig.modeScript') }}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -693,8 +701,26 @@ async function resolveGeo() {
                 />
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.resolversHint') }}</p>
               </div>
+              <div v-if="ipMode === 'script'" class="grid gap-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <Label>{{ $t('fleet.nodes.detail.ipConfig.script') }}</Label>
+                  <Badge v-if="node.ip_config?.script_sha256" variant="outline" class="font-mono">
+                    {{ node.ip_config.script_sha256 }}
+                  </Badge>
+                </div>
+                <textarea
+                  v-model="ipScript"
+                  rows="5"
+                  class="rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                  placeholder="curl -fsS https://api.ipify.org&#10;# optional: echo an IPv6 on another line"
+                />
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.scriptHint') }}</p>
+                <p v-if="node.ip_config?.script_sha256 && !ipScript.trim()" class="text-xs text-muted-foreground">
+                  {{ $t('fleet.nodes.detail.ipConfig.scriptPreserveHint') }}
+                </p>
+              </div>
               <div class="flex flex-wrap gap-2">
-                <Button size="sm" :disabled="ipConfigPending" @click="saveIPConfig">
+                <Button size="sm" :disabled="ipConfigPending || !canSaveIPConfig" @click="saveIPConfig">
                   <RefreshCw v-if="ipConfigPending" class="size-3.5 animate-spin" aria-hidden="true" />
                   {{ $t('common.actions.save') }}
                 </Button>
