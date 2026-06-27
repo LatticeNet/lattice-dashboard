@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { CheckCircle2, RefreshCw, ScrollText, Search, ShieldCheck } from "lucide-vue-next";
+import { CheckCircle2, Download, RefreshCw, ScrollText, Search, ShieldCheck } from "lucide-vue-next";
 import { api, type AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { type BadgeVariant } from "@/lib/status";
@@ -106,6 +106,53 @@ async function verifyAudit() {
     verifyPending.value = false;
   }
 }
+
+// Export the currently-filtered events (what the operator is looking at). Honest
+// scope: this exports the loaded page, not the whole store — the count is shown.
+function downloadFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportNdjson() {
+  if (events.value.length === 0) {
+    toast.info(t("operations.audit.exportEmpty"));
+    return;
+  }
+  downloadFile(
+    "lattice-audit.ndjson",
+    events.value.map((e) => JSON.stringify(e)).join("\n"),
+    "application/x-ndjson",
+  );
+  toast.success(t("operations.audit.exported", { count: events.value.length }));
+}
+
+function csvCell(value: unknown): string {
+  const s = value == null ? "" : typeof value === "object" ? JSON.stringify(value) : String(value);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function exportCsv() {
+  if (events.value.length === 0) {
+    toast.info(t("operations.audit.exportEmpty"));
+    return;
+  }
+  const headers = ["at", "decision", "action", "scope", "actor_id", "token_id", "node_id", "correlation_id", "reason", "metadata"];
+  const rows = events.value.map((e) =>
+    [e.at, e.decision, e.action, e.scope, e.actor_id, e.token_id, e.node_id, e.correlation_id, e.reason, e.metadata]
+      .map(csvCell)
+      .join(","),
+  );
+  downloadFile("lattice-audit.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
+  toast.success(t("operations.audit.exported", { count: events.value.length }));
+}
 </script>
 
 <template>
@@ -115,6 +162,14 @@ async function verifyAudit() {
         <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" />
       </template>
       <template #actions>
+        <Button variant="outline" size="sm" :disabled="events.length === 0" @click="exportCsv">
+          <Download class="size-4" aria-hidden="true" />
+          {{ $t('operations.audit.exportCsv') }}
+        </Button>
+        <Button variant="outline" size="sm" :disabled="events.length === 0" @click="exportNdjson">
+          <Download class="size-4" aria-hidden="true" />
+          {{ $t('operations.audit.exportNdjson') }}
+        </Button>
         <Button variant="outline" size="sm" :disabled="auditQuery.refreshing.value" @click="auditQuery.refresh">
           <RefreshCw :class="cn('size-4', auditQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}

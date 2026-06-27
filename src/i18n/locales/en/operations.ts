@@ -181,6 +181,10 @@ export default {
       corrPrefix: "corr",
       toastVerified: "Audit chain verified",
       toastVerifyFailed: "Audit verification failed",
+      exportCsv: "Export CSV",
+      exportNdjson: "Export NDJSON",
+      exported: "Exported {count} events",
+      exportEmpty: "No events to export",
     },
   },
 } as const;

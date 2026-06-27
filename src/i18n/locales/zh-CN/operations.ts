@@ -180,6 +180,10 @@ export default {
       corrPrefix: "关联",
       toastVerified: "审计链已校验",
       toastVerifyFailed: "审计校验失败",
+      exportCsv: "导出 CSV",
+      exportNdjson: "导出 NDJSON",
+      exported: "已导出 {count} 条事件",
+      exportEmpty: "没有可导出的事件",
     },
   },
 } as const;
