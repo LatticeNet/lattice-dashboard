@@ -162,7 +162,7 @@ export interface TaskView {
   script_size_bytes?: number;
   timeout_sec?: number;
   output_limit?: number;
-  status: "queued" | "leased" | "finished" | "failed";
+  status: "queued" | "leased" | "finished" | "failed" | "cancelled";
   leased_by?: string;
   created_at?: string;
   started_at?: string;

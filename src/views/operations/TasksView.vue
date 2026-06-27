@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Play, RefreshCw, Terminal, Timer, CheckCircle2, XCircle } from "lucide-vue-next";
+import { Play, RefreshCw, Terminal, Timer, CheckCircle2, XCircle, RotateCcw, Ban, Trash2 } from "lucide-vue-next";
 import { api, unwrap, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -111,7 +112,13 @@ const TASK_HEALTH: Record<TaskView["status"], NodeHealth> = {
   failed: "offline",
   queued: "degraded",
   leased: "degraded",
+  cancelled: "unknown",
 };
+
+const DELETABLE = new Set<TaskView["status"]>(["finished", "failed", "cancelled"]);
+function canDelete(task: TaskView): boolean {
+  return DELETABLE.has(task.status);
+}
 
 function statusVariant(status: TaskView["status"]): BadgeVariant {
   return statusMeta(TASK_HEALTH[status] ?? "unknown").badgeVariant;
@@ -156,6 +163,61 @@ async function createTask() {
     toast.error(error instanceof Error ? error.message : t("operations.tasks.toastFailed"));
   } finally {
     createPending.value = false;
+  }
+}
+
+// Per-task lifecycle actions. Only one runs at a time (busyTaskId disables the
+// acting card's buttons); delete is gated behind a confirm dialog.
+const busyTaskId = ref<string | null>(null);
+const deleteOpen = ref(false);
+const deleteTarget = ref<TaskView | null>(null);
+const deleting = ref(false);
+
+async function rerunTask(task: TaskView) {
+  busyTaskId.value = task.id;
+  try {
+    await api.tasks.rerun(task.id);
+    toast.success(t("operations.tasks.toastRerun"));
+    refreshAll();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastFailed"));
+  } finally {
+    busyTaskId.value = null;
+  }
+}
+
+async function cancelTask(task: TaskView) {
+  busyTaskId.value = task.id;
+  try {
+    await api.tasks.cancel(task.id);
+    toast.success(t("operations.tasks.toastCancelled"));
+    refreshAll();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastFailed"));
+  } finally {
+    busyTaskId.value = null;
+  }
+}
+
+function askDelete(task: TaskView) {
+  deleteTarget.value = task;
+  deleteOpen.value = true;
+}
+
+async function confirmDelete() {
+  const task = deleteTarget.value;
+  if (!task) return;
+  deleting.value = true;
+  try {
+    await api.tasks.delete(task.id);
+    toast.success(t("operations.tasks.toastDeleted"));
+    deleteOpen.value = false;
+    deleteTarget.value = null;
+    refreshAll();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastFailed"));
+  } finally {
+    deleting.value = false;
   }
 }
 </script>
@@ -329,9 +391,43 @@ async function createTask() {
                     {{ formatDateTime(task.created_at) }} · {{ task.targets.map(nodeName).join(", ") }}
                   </p>
                 </div>
-                <div class="flex flex-wrap gap-1">
-                  <Badge variant="outline">{{ $t('operations.tasks.bytes', { count: task.script_size_bytes || 0 }) }}</Badge>
-                  <Badge v-if="task.timeout_sec" variant="outline">{{ $t('operations.tasks.seconds', { count: task.timeout_sec }) }}</Badge>
+                <div class="flex flex-col items-end gap-2">
+                  <div class="flex flex-wrap justify-end gap-1">
+                    <Badge variant="outline">{{ $t('operations.tasks.bytes', { count: task.script_size_bytes || 0 }) }}</Badge>
+                    <Badge v-if="task.timeout_sec" variant="outline">{{ $t('operations.tasks.seconds', { count: task.timeout_sec }) }}</Badge>
+                  </div>
+                  <div v-if="canRunTasks" class="flex flex-wrap justify-end gap-1">
+                    <Button
+                      v-if="task.status === 'queued'"
+                      variant="outline"
+                      size="sm"
+                      :disabled="busyTaskId === task.id"
+                      @click="cancelTask(task)"
+                    >
+                      <Ban class="size-3.5" aria-hidden="true" />
+                      {{ $t('operations.tasks.actions.cancel') }}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      :disabled="busyTaskId === task.id"
+                      @click="rerunTask(task)"
+                    >
+                      <RotateCcw :class="cn('size-3.5', busyTaskId === task.id && 'animate-spin')" aria-hidden="true" />
+                      {{ $t('operations.tasks.actions.rerun') }}
+                    </Button>
+                    <Button
+                      v-if="canDelete(task)"
+                      variant="ghost"
+                      size="sm"
+                      class="text-destructive hover:text-destructive"
+                      :disabled="busyTaskId === task.id"
+                      @click="askDelete(task)"
+                    >
+                      <Trash2 class="size-3.5" aria-hidden="true" />
+                      {{ $t('operations.tasks.actions.delete') }}
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -359,5 +455,16 @@ async function createTask() {
         </DataState>
       </CardContent>
     </Card>
+
+    <ConfirmDialog
+      :open="deleteOpen"
+      :title="$t('operations.tasks.deleteTitle')"
+      :description="deleteTarget ? $t('operations.tasks.deleteDescription', { id: shortId(deleteTarget.id, 14) }) : ''"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v: boolean) => { if (!v) deleteOpen = false; }"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>

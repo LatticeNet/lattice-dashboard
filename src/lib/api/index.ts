@@ -152,6 +152,11 @@ export const api = {
       timeout_sec?: number;
       output_limit?: number;
     }) => http.post<TaskView>("/api/tasks", input),
+    // Re-queue a stored task by id. The script body stays server-side (task
+    // views only expose its SHA), so rerun is a server re-create, not a resubmit.
+    rerun: (id: string) => http.post<TaskView>("/api/tasks/rerun", { id }),
+    cancel: (id: string) => http.post<TaskView>("/api/tasks/cancel", { id }),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/tasks/delete", { id }),
   },
 
   terminal: {
