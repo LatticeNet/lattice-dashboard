@@ -26,7 +26,9 @@ function systemPrefersDark(): boolean {
 
 export const useThemeStore = defineStore("theme", () => {
   const mode = ref<ThemeMode>(
-    (localStorage.getItem(THEME_KEY) as ThemeMode) || "system",
+    // Default to the refined dark identity (teal on deep slate). Users can still
+    // pick light/system in Appearance; a saved choice always wins.
+    (localStorage.getItem(THEME_KEY) as ThemeMode) || "dark",
   );
   const color = ref<ColorThemeName>(
     (isColorThemeName(localStorage.getItem(COLOR_KEY))

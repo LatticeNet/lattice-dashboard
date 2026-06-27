@@ -4,6 +4,7 @@
 
 export type ColorThemeName =
   | "lattice"
+  | "teal"
   | "blue"
   | "violet"
   | "green"
@@ -14,7 +15,7 @@ export type ColorThemeName =
   | "stone"
   | "custom";
 
-export const DEFAULT_COLOR: ColorThemeName = "lattice";
+export const DEFAULT_COLOR: ColorThemeName = "teal";
 export const DEFAULT_CUSTOM_COLOR = "#6d5cf5";
 
 type Variant = Record<string, string>;
@@ -53,6 +54,13 @@ export const PALETTES: Record<Exclude<ColorThemeName, "custom">, Palette> = {
     swatch: "oklch(0.6 0.2 278)",
     light: make("oklch(0.541 0.205 278.5)", "oklch(0.985 0.005 280)", "oklch(0.541 0.205 278.5)"),
     dark: make("oklch(0.672 0.17 277)", "oklch(0.165 0.014 281)", "oklch(0.55 0.12 278)"),
+  },
+  teal: {
+    swatch: "oklch(0.72 0.13 184)",
+    // Light: teal-600 with white text. Dark: bright teal-400 with a near-black
+    // foreground so on-accent text stays legible against the deep slate surfaces.
+    light: make("oklch(0.63 0.105 185)", "oklch(0.985 0.01 180)", "oklch(0.63 0.105 185)"),
+    dark: make("oklch(0.81 0.13 180)", "oklch(0.17 0.012 240)", "oklch(0.7 0.12 182)"),
   },
   blue: {
     swatch: "oklch(0.546 0.245 262.9)",
