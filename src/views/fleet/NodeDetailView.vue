@@ -34,6 +34,7 @@ import {
   Server,
   ScrollText,
   SquareTerminal,
+  Trash2,
 } from "lucide-vue-next";
 import {
   api,
@@ -44,6 +45,7 @@ import {
   type DDNSView,
   type AgentUpdatePolicy,
   type AuditEvent,
+  type NodeDeletePlanView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
@@ -87,6 +89,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogScrollContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -316,6 +326,104 @@ async function rotateToken() {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.rotationFailed"));
   } finally {
     pending.value = false;
+  }
+}
+
+/* ----------------------------------------------------------------- */
+/* Hard delete (irreversible cascade). The flow previews the impact    */
+/* via deletePlan, then gates the confirm button behind a type-the-    */
+/* name check before calling delete and routing back to the fleet.     */
+/* ----------------------------------------------------------------- */
+const deleteOpen = ref(false);
+const deletePending = ref(false);
+const deletePlanning = ref(false);
+const deletePlan = ref<NodeDeletePlanView | undefined>();
+const deleteNameInput = ref("");
+
+/** Count fields rendered as "label: N" rows, in cascade order. Only nonzero
+ *  rows show, so a node with no dependents reads as a clean delete. */
+const DELETE_COUNT_FIELDS: { key: string; field: keyof NodeDeletePlanView }[] = [
+  { key: "tasksStripped", field: "tasks_stripped" },
+  { key: "tasksDeleted", field: "tasks_deleted" },
+  { key: "taskResults", field: "task_results" },
+  { key: "ddnsProfiles", field: "ddns_profiles" },
+  { key: "machineProfiles", field: "machine_profiles" },
+  { key: "nftInputs", field: "nft_inputs" },
+  { key: "dnsDeployments", field: "dns_deployments" },
+  { key: "netPolicies", field: "net_policies" },
+  { key: "netPeerRulesStripped", field: "net_peer_rules_stripped" },
+  { key: "groupPolicyRulesStripped", field: "group_policy_rules_stripped" },
+  { key: "geoRoutingStripped", field: "geo_routing_stripped" },
+  { key: "geoRoutingDeleted", field: "geo_routing_deleted" },
+  { key: "agentUpdatePolicies", field: "agent_update_policies" },
+  { key: "proxyNodeProfiles", field: "proxy_node_profiles" },
+  { key: "proxyUsageSnapshots", field: "proxy_usage_snapshots" },
+  { key: "monitorsStripped", field: "monitors_stripped" },
+  { key: "monitorResults", field: "monitor_results" },
+  { key: "logSources", field: "log_sources" },
+  { key: "groups", field: "groups" },
+  { key: "approvals", field: "approvals" },
+  { key: "tunnels", field: "tunnels" },
+  { key: "terminalSessions", field: "terminal_sessions" },
+  { key: "proxyDriftCleared", field: "proxy_drift_cleared" },
+];
+
+const deleteImpactRows = computed(() => {
+  const plan = deletePlan.value;
+  if (!plan) return [];
+  return DELETE_COUNT_FIELDS.map((f) => ({
+    key: f.key,
+    label: t(`fleet.nodes.detail.deleteCounts.${f.key}`),
+    count: Number(plan[f.field] ?? 0),
+  })).filter((r) => r.count > 0);
+});
+
+/** Confirm is gated until the typed value exactly matches what the prompt asks
+ *  for — the node name, or its id when the node has no name (matches the prompt
+ *  copy, which falls back to id). */
+const deleteNameMatches = computed(
+  () =>
+    !!node.value &&
+    deleteNameInput.value.trim() === (node.value.name || node.value.id),
+);
+
+async function openDeleteDialog() {
+  if (!node.value || !canAdminNodes.value) return;
+  deleteNameInput.value = "";
+  deletePlan.value = undefined;
+  deleteOpen.value = true;
+  deletePlanning.value = true;
+  try {
+    deletePlan.value = await api.nodes.deletePlan(node.value.id);
+  } catch (error) {
+    // The dialog still opens; the operator can confirm without the preview.
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.deletePlanFailed"));
+  } finally {
+    deletePlanning.value = false;
+  }
+}
+
+async function deleteNode() {
+  if (!node.value || !canAdminNodes.value || !deleteNameMatches.value) return;
+  deletePending.value = true;
+  try {
+    await api.nodes.delete(node.value.id);
+    toast.success(t("fleet.nodes.toast.nodeDeleted"));
+    deleteOpen.value = false;
+    goBack();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.deleteFailed"));
+  } finally {
+    deletePending.value = false;
+  }
+}
+
+function onDeleteOpenChange(value: boolean) {
+  if (deletePending.value) return;
+  deleteOpen.value = value;
+  if (!value) {
+    deleteNameInput.value = "";
+    deletePlan.value = undefined;
   }
 }
 
@@ -1051,6 +1159,16 @@ async function resolveGeo() {
               <KeyRound class="size-4" aria-hidden="true" />
               {{ $t('fleet.nodes.detail.rotateToken') }}
             </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              class="ml-auto"
+              :disabled="pending || deletePending"
+              @click="openDeleteDialog"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.deleteNode') }}
+            </Button>
           </div>
 
           <!-- One-time token reveal (mirrors NodesView). -->
@@ -1108,6 +1226,85 @@ async function resolveGeo() {
         </CardContent>
       </Card>
     </div>
+
+    <!-- Hard-delete confirm: previews the cascade impact, then gates the
+         destructive confirm behind typing the node name. -->
+    <Dialog :open="deleteOpen" @update:open="onDeleteOpenChange">
+      <DialogScrollContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2 text-destructive">
+            <Trash2 class="size-4" aria-hidden="true" />
+            {{ $t('fleet.nodes.detail.deleteTitle') }}
+          </DialogTitle>
+          <DialogDescription>
+            {{ $t('fleet.nodes.detail.deleteConfirm', { name: node.name || node.id }) }}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4">
+          <!-- Cascade impact preview. -->
+          <div class="rounded-md border border-border bg-muted/20 p-3">
+            <p v-if="deletePlanning" class="inline-flex items-center gap-2 text-sm text-muted-foreground">
+              <RefreshCw class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.refresh') }}…
+            </p>
+            <template v-else-if="deleteImpactRows.length">
+              <p class="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                {{ $t('fleet.nodes.detail.deleteImpact') }}
+              </p>
+              <ul class="space-y-1 text-sm">
+                <li
+                  v-for="row in deleteImpactRows"
+                  :key="row.key"
+                  class="flex items-center justify-between gap-3"
+                >
+                  <span class="text-muted-foreground">{{ row.label }}</span>
+                  <span class="font-mono tabular">{{ row.count }}</span>
+                </li>
+              </ul>
+            </template>
+            <p v-else class="text-sm text-muted-foreground">
+              {{ $t('fleet.nodes.detail.deleteNoImpact') }}
+            </p>
+          </div>
+
+          <!-- Type-the-name gate. -->
+          <div class="grid gap-1.5">
+            <Label for="delete-node-name">
+              {{ $t('fleet.nodes.detail.deleteTypeNamePrompt', { name: node.name || node.id }) }}
+            </Label>
+            <Input
+              id="delete-node-name"
+              v-model="deleteNameInput"
+              :disabled="deletePending"
+              autocomplete="off"
+              class="font-mono"
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            :disabled="deletePending"
+            @click="onDeleteOpenChange(false)"
+          >
+            {{ $t('common.actions.cancel') }}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            :disabled="deletePending || !deleteNameMatches"
+            @click="deleteNode"
+          >
+            <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
+            <Trash2 v-else class="size-4" aria-hidden="true" />
+            {{ deletePending ? $t('fleet.nodes.detail.deleteRemoving') : $t('fleet.nodes.detail.deleteNode') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
   </div>
 
   <!-- Loading / error / not-found. -->

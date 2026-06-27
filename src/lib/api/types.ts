@@ -111,6 +111,42 @@ export interface Node {
   group_ids?: string[];
 }
 
+// NodeDeletePlanView mirrors the server's nodeDeleteSummary wire DTO returned by
+// both POST /api/nodes/delete/plan (mutated=false, a dry-run preview) and
+// POST /api/nodes/delete (mutated=true, the applied cascade). Every count is the
+// number of dependent records the hard-delete touched (stripped or removed).
+export interface NodeDeletePlanView {
+  node_id: string;
+  node_name: string;
+  found: boolean;
+  mutated: boolean;
+  tasks_stripped: number;
+  tasks_deleted: number;
+  task_results: number;
+  ddns_profiles: number;
+  machine_profiles: number;
+  nft_inputs: number;
+  dns_deployments: number;
+  net_policies: number;
+  net_peer_rules_stripped: number;
+  group_policy_rules_stripped: number;
+  geo_routing_stripped: number;
+  geo_routing_deleted: number;
+  agent_update_policies: number;
+  proxy_node_profiles: number;
+  proxy_usage_snapshots: number;
+  monitors_stripped: number;
+  monitor_results: number;
+  log_sources: number;
+  groups: number;
+  approvals: number;
+  tunnels: number;
+  terminal_sessions: number;
+  proxy_drift_cleared: number;
+  log_store_purged: number;
+  log_store_purge_errs: number;
+}
+
 // NodeIPConfig is the operator-owned, per-node override for how the agent
 // determines its public IPs. An empty/absent mode means "no override".
 export interface NodeIPConfig {

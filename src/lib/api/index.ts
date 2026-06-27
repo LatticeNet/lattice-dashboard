@@ -6,6 +6,7 @@ import type {
   TOTPEnrollResponse,
   SSOProvider,
   Node,
+  NodeDeletePlanView,
   NodeGeoInput,
   NodeGeoResolveResponse,
   NodeGeoView,
@@ -131,6 +132,14 @@ export const api = {
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),
     disable: (node_id: string, disabled: boolean) =>
       http.post<void>("/api/nodes/disable", { node_id, disabled }),
+    // Dry-run preview of a hard-delete: returns the cascade counts (monitors,
+    // ddns, groups, …) without mutating anything (mutated=false).
+    deletePlan: (node_id: string) =>
+      http.post<NodeDeletePlanView>("/api/nodes/delete/plan", { node_id }),
+    // Hard-delete the node and cascade-clean every dependent record. Irreversible;
+    // returns the applied cleanup counts (mutated=true).
+    delete: (node_id: string) =>
+      http.post<NodeDeletePlanView>("/api/nodes/delete", { node_id }),
     setDebug: (node_id: string, enabled: boolean, collect?: boolean) =>
       http.post<Node>("/api/nodes/debug", { node_id, enabled, collect }),
     geo: () => http.get<{ nodes: NodeGeoView[] } | NodeGeoView[]>("/api/nodes/geo"),
