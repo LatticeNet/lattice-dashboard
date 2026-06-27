@@ -15,6 +15,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import PlanDiff from "@/components/common/PlanDiff.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -41,6 +42,28 @@ const selected = computed<ApprovalView | undefined>(() =>
   approvals.value.find((approval) => approval.id === selectedId.value) ?? approvals.value[0],
 );
 const canApply = computed(() => auth.can("network:apply"));
+
+const planView = ref<"diff" | "full">("diff");
+
+// The most recent earlier plan for the same target (node + plugin + action) that
+// was approved/applied — i.e. what is currently live. Diffing the selection
+// against it shows exactly what this change does. Empty = no prior config.
+const previousPlan = computed(() => {
+  const cur = selected.value;
+  if (!cur) return "";
+  const prior = approvals.value
+    .filter(
+      (a) =>
+        a.id !== cur.id &&
+        a.node_id === cur.node_id &&
+        a.plugin === cur.plugin &&
+        a.action === cur.action &&
+        (a.status === "applied" || a.status === "approved") &&
+        (a.created_at || "") < (cur.created_at || ""),
+    )
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+  return prior[0]?.plan ?? "";
+});
 
 const sortedApprovals = computed(() =>
   [...approvals.value].sort((a, b) => {
@@ -168,12 +191,24 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
             <Badge v-if="selected.approved_by" variant="secondary">{{ $t('operations.approvals.byLabel', { actor: selected.approved_by }) }}</Badge>
           </div>
 
-          <div class="rounded-md border border-border">
-            <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
-              <span class="text-sm font-medium">{{ $t('operations.approvals.plan') }}</span>
+          <div class="space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-1">
+                <Button :variant="planView === 'diff' ? 'secondary' : 'ghost'" size="sm" @click="planView = 'diff'">
+                  <GitCompare class="size-3.5" aria-hidden="true" />
+                  {{ $t('operations.approvals.viewDiff') }}
+                </Button>
+                <Button :variant="planView === 'full' ? 'secondary' : 'ghost'" size="sm" @click="planView = 'full'">
+                  {{ $t('operations.approvals.viewFull') }}
+                </Button>
+              </div>
               <CopyButton :value="selected.plan || ''" />
             </div>
-            <pre class="max-h-[520px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
+            <template v-if="planView === 'diff'">
+              <PlanDiff :before="previousPlan" :after="selected.plan || ''" />
+              <p v-if="!previousPlan" class="text-xs text-muted-foreground">{{ $t('operations.approvals.diffNoPrior') }}</p>
+            </template>
+            <pre v-else class="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
           </div>
 
           <div v-if="digestCache[selected.id]" class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
