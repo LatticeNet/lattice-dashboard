@@ -31,6 +31,9 @@ import type {
   ProxyNodeProfileView,
   ProxyNodeProfileUpsertRequest,
   ProxyUsageResponse,
+  SubStoreImportRequest,
+  SubStoreImportResponse,
+  SubStoreStatusResponse,
   NFTInputsView,
   NFTInputsUpsertBody,
   NetPolicyView,
@@ -272,6 +275,17 @@ export const api = {
     planNode: (node_id: string) =>
       http.post<ApprovalView>(`/api/proxy/nodes/${encodeURIComponent(node_id)}/plan`, {}),
     usage: () => http.get<ProxyUsageResponse>("/api/proxy/usage"),
+  },
+
+  // Sub-Store companion (internal-only). `status` probes the operator's Sub-Store
+  // backend reachability (proxy:read); `import` pushes the live vpn-core node
+  // links into it as a managed local subscription (proxy:admin). No public link
+  // is published — these only trigger an internal import + report reachability.
+  substore: {
+    status: (base_url: string) =>
+      http.get<SubStoreStatusResponse>("/api/substore/status", { base_url }),
+    import: (input: SubStoreImportRequest) =>
+      http.post<SubStoreImportResponse>("/api/substore/import", input),
   },
 
   nft: {

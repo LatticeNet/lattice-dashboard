@@ -21,6 +21,7 @@ import {
   ServerCog,
   Link,
   Gauge,
+  Store,
   Blocks,
   Cpu,
   Database,
@@ -107,6 +108,7 @@ export const NAV: NavSection[] = [
       { name: "proxy-profiles", title: "Node Profiles", path: "/proxy/profiles", icon: ServerCog, scopes: ["proxy:read"] },
       { name: "proxy-subscriptions", title: "Subscriptions", path: "/proxy/subscriptions", icon: Link, scopes: ["proxy:read"] },
       { name: "proxy-usage", title: "Usage", path: "/proxy/usage", icon: Gauge, scopes: ["proxy:read"] },
+      { name: "proxy-substore", title: "Sub-Store", path: "/proxy/substore", icon: Store, scopes: ["proxy:read"] },
     ],
   },
   {

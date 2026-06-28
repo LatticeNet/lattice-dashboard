@@ -152,6 +152,7 @@ export default {
       "proxy-profiles": "Node Profiles",
       "proxy-subscriptions": "Subscriptions",
       "proxy-usage": "Usage",
+      "proxy-substore": "Sub-Store",
       "platform-plugins": "Plugins",
       "platform-workers": "Workers",
       "platform-kv": "KV Store",

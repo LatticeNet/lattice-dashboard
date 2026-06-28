@@ -151,6 +151,7 @@ export default {
       "proxy-profiles": "节点配置",
       "proxy-subscriptions": "订阅",
       "proxy-usage": "用量",
+      "proxy-substore": "Sub-Store",
       "platform-plugins": "插件",
       "platform-workers": "Worker",
       "platform-kv": "KV 存储",

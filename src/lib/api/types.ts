@@ -537,6 +537,36 @@ export interface ProxyUsageResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sub-Store companion (internal-only). Imports the live vpn-core node links into
+// the operator's own Sub-Store backend as a managed local subscription, and
+// reports the backend's reachability. No public link is ever published — the
+// dashboard only triggers the import and surfaces the result.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SubStoreImportRequest {
+  /** Sub-Store backend base URL, including its secret path (e.g. https://host/<secret>). */
+  base_url: string;
+  /** Managed subscription name; the server defaults it when omitted. */
+  sub_name?: string;
+  /** Restrict the export to a single proxy user; empty exports all. */
+  user_id?: string;
+}
+
+export interface SubStoreImportResponse {
+  ok: boolean;
+  /** The managed local subscription the links were pushed into. */
+  sub_name: string;
+  /** Number of node links pushed into the Sub-Store backend. */
+  pushed: number;
+}
+
+export interface SubStoreStatusResponse {
+  reachable: boolean;
+  /** The managed subscription name the companion owns inside Sub-Store. */
+  sub_name: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Networking — Network Guard (nft), Network Policy (+graph), Self-host DNS,
 // Geo-Routing, DDNS, Tunnels, WireGuard. Most mutations go through plan→approve.
 // ─────────────────────────────────────────────────────────────────────────────
