@@ -567,6 +567,42 @@ export interface SubStoreStatusResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// On-box sing-box discovery (adoption bridge). Agents started with
+// -singbox-discover report the sing-box nodes that already exist on the machine
+// but are managed out-of-band, so the operator can see what is there before
+// adopting it. Read-only — `share_url` is credential-bearing and must never be
+// rendered inline; copy it out of band instead.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SingBoxNode {
+  name: string;
+  protocol?: string;
+  network?: string;
+  address?: string;
+  port?: string;
+  sni?: string;
+  host?: string;
+  public_key?: string;
+  /** Credential-bearing share link — copy only, never display in full. */
+  share_url?: string;
+}
+
+export interface SingBoxInventory {
+  node_id: string;
+  /** RFC3339 timestamp of when the agent last reported this inventory. */
+  at: string;
+  core_version?: string;
+  /** "ok" | "error" — error inventories carry a human-readable `error`. */
+  status?: string;
+  error?: string;
+  nodes: SingBoxNode[];
+}
+
+export interface ProxyDiscoveredResponse {
+  inventories: SingBoxInventory[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Networking — Network Guard (nft), Network Policy (+graph), Self-host DNS,
 // Geo-Routing, DDNS, Tunnels, WireGuard. Most mutations go through plan→approve.
 // ─────────────────────────────────────────────────────────────────────────────

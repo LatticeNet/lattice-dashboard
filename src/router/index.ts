@@ -32,6 +32,7 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "proxy-subscriptions": () => import("@/views/proxy/SubscriptionsView.vue"),
   "proxy-usage": () => import("@/views/proxy/UsageView.vue"),
   "proxy-substore": () => import("@/views/proxy/SubStoreView.vue"),
+  "proxy-discovered": () => import("@/views/proxy/DiscoveredView.vue"),
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
   "platform-workers": () => import("@/views/platform/WorkersView.vue"),

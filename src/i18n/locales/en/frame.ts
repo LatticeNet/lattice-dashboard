@@ -153,6 +153,7 @@ export default {
       "proxy-subscriptions": "Subscriptions",
       "proxy-usage": "Usage",
       "proxy-substore": "Sub-Store",
+      "proxy-discovered": "Discovered",
       "platform-plugins": "Plugins",
       "platform-workers": "Workers",
       "platform-kv": "KV Store",

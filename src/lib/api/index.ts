@@ -31,6 +31,7 @@ import type {
   ProxyNodeProfileView,
   ProxyNodeProfileUpsertRequest,
   ProxyUsageResponse,
+  SingBoxInventory,
   SubStoreImportRequest,
   SubStoreImportResponse,
   SubStoreStatusResponse,
@@ -290,6 +291,10 @@ export const api = {
     planNode: (node_id: string) =>
       http.post<ApprovalView>(`/api/proxy/nodes/${encodeURIComponent(node_id)}/plan`, {}),
     usage: () => http.get<ProxyUsageResponse>("/api/proxy/usage"),
+    // Read-only adoption bridge: sing-box nodes discovered on each machine but
+    // managed out-of-band (agents started with -singbox-discover).
+    discovered: () =>
+      http.get<{ inventories: SingBoxInventory[] }>("/api/proxy/discovered"),
   },
 
   // Sub-Store companion (internal-only). `status` probes the operator's Sub-Store

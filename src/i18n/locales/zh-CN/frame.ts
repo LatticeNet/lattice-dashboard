@@ -152,6 +152,7 @@ export default {
       "proxy-subscriptions": "订阅",
       "proxy-usage": "用量",
       "proxy-substore": "Sub-Store",
+      "proxy-discovered": "已发现",
       "platform-plugins": "插件",
       "platform-workers": "Worker",
       "platform-kv": "KV 存储",
