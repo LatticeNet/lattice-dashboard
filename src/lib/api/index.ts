@@ -143,6 +143,13 @@ export const api = {
         "/api/nodes/update",
         input,
       ),
+    // Suspected duplicate nodes (same machine enrolled twice): clustered by
+    // wireguard key / public+internal IP pair / host fingerprint — never public
+    // IP alone (NAT hosts share it). Detection only; the operator decides.
+    duplicates: () =>
+      http.get<{
+        groups: Array<{ reason: string; confidence: string; signal: string; node_ids: string[] }>;
+      }>("/api/nodes/duplicates"),
     // Dry-run preview of a hard-delete: returns the cascade counts (monitors,
     // ddns, groups, …) without mutating anything (mutated=false).
     deletePlan: (node_id: string) =>

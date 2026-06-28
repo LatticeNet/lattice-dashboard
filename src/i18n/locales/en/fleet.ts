@@ -73,6 +73,14 @@ export default {
         disabled: "Disabled",
         bandwidth: "Bandwidth (live)",
       },
+      duplicates: {
+        title: "{count} possible duplicate node group(s) detected",
+        reason: {
+          wireguard_key: "same WireGuard key",
+          public_internal_ip: "same public + internal IP",
+          host_fingerprint: "same host fingerprint",
+        },
+      },
       groupBy: {
         label: "Group by",
         region: "Region",

@@ -71,6 +71,14 @@ export default {
         disabled: "已停用",
         bandwidth: "实时带宽",
       },
+      duplicates: {
+        title: "检测到 {count} 组可能重复的节点",
+        reason: {
+          wireguard_key: "相同 WireGuard 密钥",
+          public_internal_ip: "公网+内网 IP 相同",
+          host_fingerprint: "主机指纹相同",
+        },
+      },
       groupBy: {
         label: "分组方式",
         region: "按地区",

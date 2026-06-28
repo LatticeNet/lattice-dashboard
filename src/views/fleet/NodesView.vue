@@ -143,6 +143,12 @@ watch(viewMode, (mode) => {
 });
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
+// Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
+const duplicatesQuery = useAsyncData(() => api.nodes.duplicates().then((r) => r.groups), {
+  pollInterval: 30000,
+});
+const duplicateGroups = computed(() => duplicatesQuery.data.value ?? []);
+const nodeName = (id: string) => nodes.value.find((n) => n.id === id)?.name || id;
 const onlineCount = computed(() => nodes.value.filter((n) => n.online && !n.disabled).length);
 const disabledCount = computed(() => nodes.value.filter((n) => n.disabled).length);
 const canAdminNodes = computed(() => auth.can("node:admin"));
@@ -482,6 +488,36 @@ function openTerminal(node: Node) {
         </Button>
       </template>
     </PageHeader>
+
+    <div
+      v-if="duplicateGroups.length"
+      class="rounded-lg border border-warning/40 bg-warning/5 p-4 space-y-2"
+    >
+      <p class="text-sm font-medium text-warning">
+        ⚠ {{ $t('fleet.nodes.duplicates.title', { count: duplicateGroups.length }) }}
+      </p>
+      <ul class="space-y-1 text-sm text-muted-foreground">
+        <li
+          v-for="(g, i) in duplicateGroups"
+          :key="i"
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
+          <Badge :variant="g.confidence === 'high' ? 'destructive' : 'secondary'">
+            {{ $t(`fleet.nodes.duplicates.reason.${g.reason}`) }}
+          </Badge>
+          <template v-for="(id, j) in g.node_ids" :key="id">
+            <button
+              type="button"
+              class="underline underline-offset-2 hover:text-foreground"
+              @click="router.push({ name: 'node-detail', params: { id } })"
+            >
+              {{ nodeName(id) }}
+            </button>
+            <span v-if="j < g.node_ids.length - 1" aria-hidden="true">·</span>
+          </template>
+        </li>
+      </ul>
+    </div>
 
     <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <Card>
