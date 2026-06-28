@@ -380,6 +380,37 @@ export default {
       copyLink: "Copy link",
       linkHidden: "credential-bearing — copy only",
       noLink: "no link",
+      // ── Write actions (Model-B adoption bridge) ──────────────────────────────
+      adminReason: "proxy:admin scope is required to manage on-box nodes.",
+      asyncNoteTitle: "Changes apply asynchronously",
+      asyncNoteBody:
+        "Add and delete queue a task on the node agent and only appear here after the next discovery poll (a few seconds). The agent must have exec enabled.",
+      addNode: "Add node",
+      addDialogTitle: "Add node on {node}",
+      addDialogDescription:
+        "Queue a task on the node agent to create a sing-box node on this machine. The new node appears here after the next discovery poll.",
+      fieldProtocol: "Protocol *",
+      selectProtocol: "Select a protocol",
+      fieldPort: "Port",
+      fieldPortPlaceholder: "optional, 1-65535",
+      fieldArg1: "Argument 1",
+      fieldArg1Placeholder: "optional, e.g. uuid",
+      fieldArg2: "Argument 2",
+      fieldArg2Placeholder: "optional, e.g. sni",
+      argsHint:
+        "Optional positional extras passed to the on-box generator (e.g. for reality: uuid, then sni).",
+      errorProtocolRequired: "Select a protocol.",
+      errorPort: "Port must be an integer between 1 and 65535.",
+      addSubmit: "Queue add",
+      colActions: "Actions",
+      deleteNode: "Delete node",
+      deleteTitle: "Delete node",
+      deleteConfirm:
+        'Queue deletion of "{name}" on this machine? The agent removes it asynchronously.',
+      toastAddQueued: "Add queued (task {id})",
+      toastAddFailed: "Failed to queue add",
+      toastDeleteQueued: "Delete queued (task {id})",
+      toastDeleteFailed: "Failed to queue delete",
     },
   },
 } as const;

@@ -602,6 +602,30 @@ export interface ProxyDiscoveredResponse {
   inventories: SingBoxInventory[];
 }
 
+// Model-B adoption bridge (write side). Both endpoints queue an async task on
+// the node agent and return a task_id — the change only surfaces on the next
+// discovery poll, so callers must never block waiting on it.
+export interface ProxyManagedAddRequest {
+  node_id: string;
+  /** A server-allowlisted protocol token, e.g. "reality", "hy2", "ss". */
+  protocol: string;
+  /** Optional listen port (1-65535). */
+  port?: number;
+  /** Optional positional extras forwarded to the on-box generator. */
+  args?: string[];
+}
+
+export interface ProxyManagedDeleteRequest {
+  node_id: string;
+  /** Must match a node name already present in the machine's discovered inventory. */
+  name: string;
+}
+
+export interface ProxyManagedTaskResponse {
+  ok: boolean;
+  task_id: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Networking — Network Guard (nft), Network Policy (+graph), Self-host DNS,
 // Geo-Routing, DDNS, Tunnels, WireGuard. Most mutations go through plan→approve.
