@@ -135,6 +135,14 @@ export const api = {
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),
     disable: (node_id: string, disabled: boolean) =>
       http.post<void>("/api/nodes/disable", { node_id, disabled }),
+    // Edit a node's operator-owned identity (name / role / tags) after enrollment.
+    // Mirrors `disable`: POST + CSRF + typed-error handling via `http`. Omitted
+    // fields are left unchanged server-side; returns the persisted identity.
+    update: (input: { node_id: string; name?: string; role?: string; tags?: string[] }) =>
+      http.post<{ ok: boolean; name: string; role: string; tags: string[] }>(
+        "/api/nodes/update",
+        input,
+      ),
     // Dry-run preview of a hard-delete: returns the cascade counts (monitors,
     // ddns, groups, …) without mutating anything (mutated=false).
     deletePlan: (node_id: string) =>

@@ -9,6 +9,8 @@ import {
   ChevronDown,
   KeyRound,
   Layers,
+  LayoutGrid,
+  List,
   Plus,
   Power,
   RefreshCw,
@@ -35,6 +37,7 @@ import { cn } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import NodeCard from "@/components/common/NodeCard.vue";
+import NodeTable from "@/components/common/NodeTable.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -95,6 +98,8 @@ type StatusFilter = "all" | "online" | "offline" | "disabled";
 const search = ref("");
 const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
+/** arch/os quick-filter tokens currently engaged (every selected must match). */
+const activeArchOs = ref<string[]>([]);
 
 // Seed the status filter from a deep-link (e.g. the Overview "online" KPI tile
 // links to /nodes?status=online), so drill-through lands pre-filtered.
@@ -104,6 +109,38 @@ const activeTags = ref<string[]>([]);
     statusFilter.value = seeded;
   }
 }
+
+/* ----------------------------------------------------------------- */
+/* Card / list view mode. Persisted to localStorage AND reflected in  */
+/* `?view=` (mirrors the `?status=` seeding) so it is shareable and    */
+/* survives reloads. The URL wins over the saved preference on load.   */
+/* ----------------------------------------------------------------- */
+type ViewMode = "card" | "list";
+const VIEW_STORAGE_KEY = "lattice.nodes.viewMode";
+const viewMode = ref<ViewMode>("card");
+{
+  const seeded = route.query.view;
+  if (seeded === "card" || seeded === "list") {
+    viewMode.value = seeded;
+  } else {
+    try {
+      const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+      if (saved === "card" || saved === "list") viewMode.value = saved;
+    } catch {
+      /* ignore storage errors */
+    }
+  }
+}
+watch(viewMode, (mode) => {
+  try {
+    localStorage.setItem(VIEW_STORAGE_KEY, mode);
+  } catch {
+    /* ignore storage errors */
+  }
+  if (route.query.view !== mode) {
+    router.replace({ query: { ...route.query, view: mode } }).catch(() => {});
+  }
+});
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const onlineCount = computed(() => nodes.value.filter((n) => n.online && !n.disabled).length);
@@ -134,18 +171,109 @@ function matchesStatus(node: Node): boolean {
   }
 }
 
+/**
+ * Tiny hand-rolled, CSP-safe subsequence fuzzy matcher (no new dependency):
+ * returns true when every char of `needle` appears in `haystack` in order.
+ * "gmhk" matches "gomami-hkg", "ubu24" matches "ubuntu-24-04", etc.
+ */
+function fuzzyMatch(haystack: string, needle: string): boolean {
+  if (!needle) return true;
+  let i = 0;
+  for (let j = 0; j < haystack.length && i < needle.length; j++) {
+    if (haystack[j] === needle[i]) i++;
+  }
+  return i === needle.length;
+}
+
+/** Every searchable text field for a node, lowercased (name, id, role, every
+ *  IP, hostname, and arch/os/platform). Empty values are dropped. */
+function searchFields(node: Node): string[] {
+  return [
+    node.name,
+    node.id,
+    node.role,
+    node.public_ip,
+    node.public_ipv6,
+    node.internal_ip,
+    node.internal_ipv6,
+    node.wireguard_ip,
+    node.host_facts?.hostname,
+    node.host_facts?.arch,
+    node.host_facts?.os,
+    node.host_facts?.platform,
+    ...(node.tags ?? []),
+  ]
+    .filter((v): v is string => !!v)
+    .map((v) => v.toLowerCase());
+}
+
+/** "mac" is a friendly alias for macOS, whose os/platform reports as "darwin". */
+function matchesMacAlias(node: Node, q: string): boolean {
+  if (!q.includes("mac")) return false;
+  const osp = `${node.host_facts?.os ?? ""} ${node.host_facts?.platform ?? ""}`.toLowerCase();
+  return osp.includes("darwin");
+}
+
 function matchesSearch(node: Node): boolean {
   const q = search.value.trim().toLowerCase();
   if (!q) return true;
-  return [node.name, node.id, node.host_facts?.hostname]
-    .filter(Boolean)
-    .some((value) => value!.toLowerCase().includes(q));
+  const fields = searchFields(node);
+  if (fields.some((f) => f.includes(q))) return true;
+  if (matchesMacAlias(node, q)) return true;
+  return fields.some((f) => fuzzyMatch(f, q));
+}
+
+/** Relevance score for ranking matched nodes: exact > prefix > substring >
+ *  fuzzy; the "mac"→darwin alias scores like a strong substring hit. */
+function searchScore(node: Node, q: string): number {
+  if (!q) return 0;
+  let best = 0;
+  for (const f of searchFields(node)) {
+    if (f === q) best = Math.max(best, 100);
+    else if (f.startsWith(q)) best = Math.max(best, 70);
+    else if (f.includes(q)) best = Math.max(best, 50);
+    else if (fuzzyMatch(f, q)) best = Math.max(best, 20);
+  }
+  if (matchesMacAlias(node, q)) best = Math.max(best, 60);
+  return best;
 }
 
 function matchesTags(node: Node): boolean {
   if (activeTags.value.length === 0) return true;
   const owned = new Set<string>([...(node.role ? [node.role] : []), ...(node.tags ?? [])]);
   return activeTags.value.every((tag) => owned.has(tag));
+}
+
+/* ----------------------------------------------------------------- */
+/* Arch / OS quick filters. The fixed token set is intersected with    */
+/* what the fleet actually reports so empty chips never show.          */
+/* ----------------------------------------------------------------- */
+const ARCH_OS_TOKENS = ["linux", "darwin", "amd64", "arm64"] as const;
+
+function archOsHaystack(node: Node): string {
+  return `${node.host_facts?.os ?? ""} ${node.host_facts?.platform ?? ""} ${node.host_facts?.arch ?? ""}`.toLowerCase();
+}
+
+const availableArchOs = computed(() => {
+  const present = new Set<string>();
+  for (const node of nodes.value) {
+    const hay = archOsHaystack(node);
+    for (const tok of ARCH_OS_TOKENS) if (hay.includes(tok)) present.add(tok);
+  }
+  return ARCH_OS_TOKENS.filter((tok) => present.has(tok));
+});
+
+function matchesArchOs(node: Node): boolean {
+  if (activeArchOs.value.length === 0) return true;
+  const hay = archOsHaystack(node);
+  return activeArchOs.value.every((tok) => hay.includes(tok));
+}
+
+function toggleArchOs(tok: string) {
+  const next = new Set(activeArchOs.value);
+  if (next.has(tok)) next.delete(tok);
+  else next.add(tok);
+  activeArchOs.value = [...next];
 }
 
 const baseSorted = computed(() =>
@@ -156,12 +284,23 @@ const baseSorted = computed(() =>
   }),
 );
 
-const sortedNodes = computed(() =>
-  baseSorted.value.filter((n) => matchesStatus(n) && matchesSearch(n) && matchesTags(n)),
-);
+const sortedNodes = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  const filtered = baseSorted.value.filter(
+    (n) => matchesStatus(n) && matchesSearch(n) && matchesTags(n) && matchesArchOs(n),
+  );
+  // With an active query, float the best matches up (stable sort keeps the
+  // disabled/online/name order from baseSorted for equal scores).
+  if (!q) return filtered;
+  return [...filtered].sort((a, b) => searchScore(b, q) - searchScore(a, q));
+});
 
 const hasFilters = computed(
-  () => !!search.value.trim() || statusFilter.value !== "all" || activeTags.value.length > 0,
+  () =>
+    !!search.value.trim() ||
+    statusFilter.value !== "all" ||
+    activeTags.value.length > 0 ||
+    activeArchOs.value.length > 0,
 );
 /** Raw list non-empty but filters hid everything → distinct no-match state. */
 const noMatches = computed(() => nodes.value.length > 0 && sortedNodes.value.length === 0);
@@ -177,6 +316,7 @@ function clearFilters() {
   search.value = "";
   statusFilter.value = "all";
   activeTags.value = [];
+  activeArchOs.value = [];
 }
 
 /* ----------------------------------------------------------------- */
@@ -543,9 +683,63 @@ function openTerminal(node: Node) {
                 <SelectItem value="none">{{ $t('fleet.nodes.groupBy.none') }}</SelectItem>
               </SelectContent>
             </Select>
+
+            <!-- Card / list view toggle (segmented control, mirrors the enroll
+                 + monitoring toggles). -->
+            <div
+              class="inline-flex shrink-0 rounded-md border border-input bg-background p-0.5"
+              role="group"
+              :aria-label="$t('fleet.nodes.view.label')"
+            >
+              <button
+                type="button"
+                :class="cn(
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-sm font-medium transition-colors',
+                  viewMode === 'card' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                )"
+                :aria-pressed="viewMode === 'card'"
+                @click="viewMode = 'card'"
+              >
+                <LayoutGrid class="size-4" aria-hidden="true" />
+                <span class="hidden sm:inline">{{ $t('fleet.nodes.view.card') }}</span>
+              </button>
+              <button
+                type="button"
+                :class="cn(
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-sm font-medium transition-colors',
+                  viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                )"
+                :aria-pressed="viewMode === 'list'"
+                @click="viewMode = 'list'"
+              >
+                <List class="size-4" aria-hidden="true" />
+                <span class="hidden sm:inline">{{ $t('fleet.nodes.view.list') }}</span>
+              </button>
+            </div>
           </div>
 
-          <div v-if="allTags.length" class="flex flex-wrap items-center gap-1.5">
+          <div v-if="availableArchOs.length || allTags.length" class="flex flex-wrap items-center gap-1.5">
+            <!-- Arch / OS quick filters (computed from the fleet's host facts). -->
+            <button
+              v-for="tok in availableArchOs"
+              :key="`archos:${tok}`"
+              type="button"
+              :class="cn(
+                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
+                activeArchOs.includes(tok)
+                  ? 'border-info bg-info/10 text-info'
+                  : 'border-border text-muted-foreground hover:bg-muted/40',
+              )"
+              :aria-pressed="activeArchOs.includes(tok)"
+              @click="toggleArchOs(tok)"
+            >
+              {{ tok }}
+            </button>
+            <span
+              v-if="availableArchOs.length && allTags.length"
+              class="mx-1 h-4 w-px bg-border"
+              aria-hidden="true"
+            ></span>
             <button
               v-for="tag in allTags"
               :key="tag"
@@ -636,8 +830,9 @@ function openTerminal(node: Node) {
 
               <div
                 v-show="!collapsed.has(group.key)"
-                :class="cn('grid gap-3 xl:grid-cols-2', groupBy !== 'none' && 'mt-3')"
+                :class="cn(groupBy !== 'none' && 'mt-3')"
               >
+                <div v-if="viewMode === 'card'" class="grid gap-3 xl:grid-cols-2">
                 <NodeCard
                   v-for="node in group.nodes"
                   :key="node.id"
@@ -687,6 +882,18 @@ function openTerminal(node: Node) {
                     </div>
                   </template>
                 </NodeCard>
+                </div>
+                <NodeTable
+                  v-else
+                  :nodes="group.nodes"
+                  :can-open-terminal="canOpenTerminal"
+                  :can-admin-nodes="canAdminNodes"
+                  :pending-node-id="pendingNode"
+                  @open="openNode"
+                  @terminal="openTerminal"
+                  @rotate="rotateToken"
+                  @set-disabled="setDisabled"
+                />
               </div>
             </section>
           </div>

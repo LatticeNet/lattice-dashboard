@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -58,6 +59,7 @@ type RenewalTone = "default" | "success" | "warning" | "destructive";
 
 const auth = useAuthStore();
 const { t } = useI18n();
+const route = useRoute();
 
 const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(r, "machines")), {
   pollInterval: 12000,
@@ -161,6 +163,22 @@ watch(
 watch(selectedMachine, (machine) => {
   if (machine) loadForm(machine);
 });
+
+// Deep-link: /inventory?node=<id> selects that node's machine row once the list
+// loads (e.g. arriving from a node's "Inventory" cross-link). Seeds once per id
+// so the 12s machines poll never clobbers a later manual selection.
+const seededNodeQuery = ref<string | undefined>(undefined);
+watch(
+  [machines, () => route.query.node],
+  ([list, nodeQ]) => {
+    const id = typeof nodeQ === "string" ? nodeQ : undefined;
+    if (!id || id === seededNodeQuery.value || list.length === 0) return;
+    const m = list.find((x) => x.node_id === id);
+    seededNodeQuery.value = id;
+    if (m) selectMachine(m);
+  },
+  { immediate: true },
+);
 
 function machineKey(machine: MachineView): string {
   return machine.id || `node:${machine.node_id}`;

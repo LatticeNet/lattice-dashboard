@@ -156,6 +156,24 @@ function togglePause() {
   }
 }
 
+// Deep-link: /monitoring?node=<id> seeds the results-log node filter once that
+// node appears in the loaded results (e.g. from a node's "Monitoring" cross-link).
+// Only seeds while the filter is still on its "all" default so it never clobbers
+// a manual choice, and seeds at most once per id.
+const seededLogNode = ref<string | undefined>(undefined);
+watch(
+  [logNodeOptions, () => route.query.node],
+  ([opts, nodeQ]) => {
+    const id = typeof nodeQ === "string" ? nodeQ : undefined;
+    if (!id || id === seededLogNode.value) return;
+    if (logNode.value === "all" && opts.includes(id)) {
+      logNode.value = id;
+      seededLogNode.value = id;
+    }
+  },
+  { immediate: true },
+);
+
 const enabledCount = computed(() => monitors.value.filter((monitor) => monitor.enabled).length);
 const failureCount = computed(() => selectedResults.value.filter((result) => !result.success).length);
 const selectedSuccessRate = computed(() => {

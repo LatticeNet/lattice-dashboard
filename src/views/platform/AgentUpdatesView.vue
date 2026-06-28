@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   DownloadCloud,
@@ -65,6 +66,7 @@ const DEFAULT_INSTALL_PATH = "/usr/local/bin/lattice-agent";
 const DEFAULT_SERVICE_NAME = "lattice-agent.service";
 
 const { t } = useI18n();
+const route = useRoute();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("node:admin"));
 const canPlan = computed(() => auth.can("node:admin") && auth.can("network:plan"));
@@ -266,6 +268,29 @@ async function runPlan(nodeId: string, force: boolean): Promise<void> {
 function forcePlan(): void {
   if (noopNodeId.value) void runPlan(noopNodeId.value, true);
 }
+
+// Deep-link: /platform/agent-updates?node=<id> opens the policy editor for that
+// node once the data loads (e.g. from a node's "Agent-updates" cross-link). An
+// existing policy opens in edit mode; otherwise a pre-filled create. Seeds at
+// most once per id, admins only (editing requires node:admin).
+const seededPolicyNode = ref<string | undefined>(undefined);
+watch(
+  [policies, nodes, () => route.query.node],
+  ([pols, nds, nodeQ]) => {
+    const id = typeof nodeQ === "string" ? nodeQ : undefined;
+    if (!id || id === seededPolicyNode.value || !canAdmin.value) return;
+    if (nds.length === 0) return; // wait until the node Select has options
+    seededPolicyNode.value = id;
+    const existing = pols.find((p) => p.node_id === id);
+    if (existing) {
+      openEdit(existing);
+    } else {
+      openCreate();
+      form.value.node_id = id;
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>

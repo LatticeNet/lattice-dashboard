@@ -19,6 +19,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowUp,
+  Boxes,
   Check,
   Clock,
   Crown,
@@ -28,13 +29,16 @@ import {
   Globe,
   KeyRound,
   MapPin,
+  Pencil,
   Power,
+  RadioTower,
   RefreshCw,
   RotateCw,
   Server,
   ScrollText,
   SquareTerminal,
   Trash2,
+  X,
 } from "lucide-vue-next";
 import {
   api,
@@ -293,6 +297,92 @@ function refreshAll() {
   groupsQuery.refresh();
   ddnsQuery.refresh();
   agentUpdatesQuery.refresh();
+}
+
+/* ----------------------------------------------------------------- */
+/* Cross-links to the vertical function views, pre-scoped to this     */
+/* node via ?node=<id> (the seed-watchers on those views select it).  */
+/* ----------------------------------------------------------------- */
+function goToInventory() {
+  if (node.value) router.push({ name: "inventory", query: { node: node.value.id } });
+}
+function goToMonitoring() {
+  if (node.value) router.push({ name: "monitoring", query: { node: node.value.id } });
+}
+function goToAgentUpdates() {
+  if (node.value) router.push({ name: "platform-agent-updates", query: { node: node.value.id } });
+}
+
+/* ----------------------------------------------------------------- */
+/* Identity editing (name / role / tags). Operator-owned; gated on    */
+/* node:admin like the other admin controls. The form seeds once per  */
+/* node id so the 5s poll never clobbers an in-progress edit.         */
+/* ----------------------------------------------------------------- */
+const editName = ref("");
+const editRole = ref("");
+const editTags = ref<string[]>([]);
+const tagDraft = ref("");
+const identityPending = ref(false);
+
+watch(
+  () => node.value?.id,
+  () => {
+    editName.value = node.value?.name ?? "";
+    editRole.value = node.value?.role ?? "";
+    editTags.value = [...(node.value?.tags ?? [])];
+    tagDraft.value = "";
+  },
+  { immediate: true },
+);
+
+function addTag() {
+  const v = tagDraft.value.trim();
+  if (v && !editTags.value.includes(v)) editTags.value = [...editTags.value, v];
+  tagDraft.value = "";
+}
+
+function removeTag(tag: string) {
+  editTags.value = editTags.value.filter((t) => t !== tag);
+}
+
+/** True when the form differs from the persisted identity (gates Save). */
+const identityDirty = computed(() => {
+  const n = node.value;
+  if (!n) return false;
+  const tags = n.tags ?? [];
+  const tagsEqual =
+    editTags.value.length === tags.length && editTags.value.every((t, i) => t === tags[i]);
+  return (
+    editName.value.trim() !== (n.name ?? "") ||
+    editRole.value.trim() !== (n.role ?? "") ||
+    !tagsEqual
+  );
+});
+
+async function saveIdentity() {
+  if (!node.value || !canAdminNodes.value) return;
+  identityPending.value = true;
+  try {
+    const res = await api.nodes.update({
+      node_id: node.value.id,
+      name: editName.value.trim(),
+      role: editRole.value.trim(),
+      tags: editTags.value,
+    });
+    editName.value = res.name;
+    editRole.value = res.role;
+    editTags.value = [...(res.tags ?? [])];
+    toast.success(t("fleet.nodes.detail.identitySaved"));
+    await nodesQuery.refresh();
+  } catch (error) {
+    if (error instanceof ApiError && error.isForbidden) {
+      toast.error(t("fleet.nodes.detail.identityForbidden"));
+    } else {
+      toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.identitySaveFailed"));
+    }
+  } finally {
+    identityPending.value = false;
+  }
 }
 
 const pending = ref(false);
@@ -600,11 +690,80 @@ async function resolveGeo() {
           {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(node.last_seen) }) }}
         </span>
       </div>
+
+      <!-- Cross-links to the vertical function views, pre-scoped to this node. -->
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.relatedViews') }}</span>
+        <Button variant="outline" size="sm" @click="goToInventory">
+          <Boxes class="size-4" aria-hidden="true" />
+          {{ $t('fleet.nodes.detail.viewInventory') }}
+        </Button>
+        <Button variant="outline" size="sm" @click="goToMonitoring">
+          <RadioTower class="size-4" aria-hidden="true" />
+          {{ $t('fleet.nodes.detail.viewMonitoring') }}
+        </Button>
+        <Button variant="outline" size="sm" @click="goToAgentUpdates">
+          <DownloadCloud class="size-4" aria-hidden="true" />
+          {{ $t('fleet.nodes.detail.viewAgentUpdates') }}
+        </Button>
+      </div>
     </div>
 
     <div class="grid gap-6 p-6 lg:grid-cols-3">
       <!-- ── Main column ──────────────────────────────────────────── -->
       <div class="space-y-6 lg:col-span-2">
+        <!-- Identity (operator-owned: name / role / tags). node:admin only. -->
+        <Card v-if="canAdminNodes">
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <Pencil class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.identity') }}
+            </CardTitle>
+            <CardDescription>{{ $t('fleet.nodes.detail.identityDesc') }}</CardDescription>
+          </CardHeader>
+          <CardContent class="space-y-4">
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-1.5">
+                <Label for="identity-name">{{ $t('fleet.nodes.detail.identityName') }}</Label>
+                <Input id="identity-name" v-model="editName" :placeholder="node.id" />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="identity-role">{{ $t('fleet.nodes.detail.identityRole') }}</Label>
+                <Input id="identity-role" v-model="editRole" :placeholder="$t('fleet.nodes.enroll.rolePlaceholder')" />
+              </div>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="identity-tags">{{ $t('fleet.nodes.detail.identityTags') }}</Label>
+              <div v-if="editTags.length" class="flex flex-wrap gap-1.5">
+                <Badge v-for="tag in editTags" :key="tag" variant="outline" class="gap-1">
+                  {{ tag }}
+                  <button
+                    type="button"
+                    class="text-muted-foreground hover:text-foreground"
+                    :aria-label="$t('fleet.nodes.detail.identityRemoveTag')"
+                    @click="removeTag(tag)"
+                  >
+                    <X class="size-3" aria-hidden="true" />
+                  </button>
+                </Badge>
+              </div>
+              <Input
+                id="identity-tags"
+                v-model="tagDraft"
+                :placeholder="$t('fleet.nodes.detail.identityTagPlaceholder')"
+                @keydown.enter.prevent="addTag"
+              />
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityTagHint') }}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <Button size="sm" :disabled="identityPending || !identityDirty" @click="saveIdentity">
+                <RefreshCw v-if="identityPending" class="size-3.5 animate-spin" aria-hidden="true" />
+                {{ $t('common.actions.save') }}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         <!-- Live status + metrics -->
         <Card>
           <CardHeader>
@@ -737,16 +896,16 @@ async function resolveGeo() {
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ip || $t('fleet.nodes.detail.notSet') }}</p>
+                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ip || '—' }}</p>
                 </div>
                 <CopyButton v-if="node.internal_ip" :value="node.internal_ip" />
               </div>
-              <div v-if="node.internal_ipv6" class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIpv6') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ipv6 }}</p>
+                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ipv6 || '—' }}</p>
                 </div>
-                <CopyButton :value="node.internal_ipv6" />
+                <CopyButton v-if="node.internal_ipv6" :value="node.internal_ipv6" />
               </div>
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
