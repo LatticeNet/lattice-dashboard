@@ -5,7 +5,11 @@ dist/
 .vite/
 .omc/
 .omx/
+.ace-tool/
 node_modules/.tmp/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Local working notes (not part of the app; kept locally, not committed)
+/POLISH_ROADMAP_2026-06-19.md
