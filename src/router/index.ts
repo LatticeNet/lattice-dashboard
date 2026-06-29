@@ -96,6 +96,16 @@ const manualChildRoutes: RouteRecordRaw[] = [
     component: () => import("@/views/fleet/MonitoringView.vue"),
     meta: { title: "Monitoring", section: "Fleet", scopes: ["monitor:read"] },
   },
+  {
+    // Plugin-contributed view (design-10). The route stays open (scopes: []) so a
+    // wrong/insufficient scope renders a friendly "no access" panel inside the
+    // page rather than a redirect; PluginView enforces the contribution's own
+    // scopes (and the server re-checks them on every gateway call).
+    path: "plugins/:pluginId/:route",
+    name: "plugin-view",
+    component: () => import("@/views/platform/PluginView.vue"),
+    meta: { title: "Plugin", section: "Platform", scopes: [] },
+  },
 ];
 
 const routes: RouteRecordRaw[] = [

@@ -167,6 +167,7 @@ export default {
       "settings-appearance": "外观",
       "settings-about": "关于",
     },
+    pluginContributed: "插件贡献",
   },
 
   shell: {

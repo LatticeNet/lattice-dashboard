@@ -404,6 +404,12 @@ export const api = {
       http.post<PluginInstallationView>("/api/plugins/lifecycle", { id, status }),
     verify: (manifest: unknown, artifact_base64: string) =>
       http.post<PluginVerifyResponse>("/api/plugins/verify", { manifest, artifact_base64 }),
+    // Dashboard→plugin gateway (design-10). Calls a plugin's declared interface
+    // method through the capability/scope-gated server endpoint and returns the
+    // raw JSON the method produced. The server validates that the plugin is
+    // active and declares (service, method) and checks the interface's scopes.
+    call: <T = unknown>(id: string, service: string, method: string, payload?: unknown) =>
+      http.post<T>("/api/plugins/call", { id, service, method, payload }),
   },
 
   workers: {

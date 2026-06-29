@@ -4,7 +4,12 @@ import { Hexagon, PanelLeftClose, PanelLeftOpen } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth";
-import { NAV } from "@/router/nav";
+import { NAV, type NavItem } from "@/router/nav";
+import {
+  NAV_SECTION_TO_NAV_ID,
+  resolvePluginNavIcon,
+  usePluginContributions,
+} from "@/composables/usePluginContributions";
 import SidebarItem from "./SidebarItem.vue";
 
 const props = defineProps<{
@@ -19,13 +24,47 @@ const emit = defineEmits<{
 
 const auth = useAuthStore();
 
-/** Sections with their scope-visible items; empty sections are dropped. */
+// Active plugins' nav contributions, already scope-gated + allow-list-filtered.
+// Reactive: when the registry refreshes, the sidebar updates.
+const { navContributions } = usePluginContributions();
+
+/**
+ * Plugin nav entries grouped by their TARGET static NavSection id ("plugins"
+ * contribution-section → "platform"; "proxy" → "proxy"). Each becomes a synthetic
+ * NavItem so it renders through the exact same SidebarItem markup as static items.
+ */
+const pluginItemsBySection = computed<Record<string, NavItem[]>>(() => {
+  const map: Record<string, NavItem[]> = {};
+  for (const c of navContributions.value) {
+    const targetId = NAV_SECTION_TO_NAV_ID[c.section];
+    if (!targetId) continue;
+    (map[targetId] ??= []).push({
+      name: `plugin:${c.pluginId}:${c.route}`,
+      title: c.title,
+      path: c.to,
+      icon: resolvePluginNavIcon(c.icon),
+      scopes: c.scopes,
+    });
+  }
+  return map;
+});
+
+/**
+ * Sections with their scope-visible static items, plus any plugin-contributed
+ * items appended at the end. Empty sections (no static + no plugin items) drop.
+ */
 const visibleSections = computed(() =>
-  NAV.map((section) => ({
-    ...section,
-    items: section.items.filter((item) => auth.canAny(item.scopes ?? [])),
-  })).filter((section) => section.items.length > 0),
+  NAV.map((section) => {
+    const staticItems = section.items.filter((item) => auth.canAny(item.scopes ?? []));
+    const pluginItems = pluginItemsBySection.value[section.id] ?? [];
+    return { ...section, items: [...staticItems, ...pluginItems] };
+  }).filter((section) => section.items.length > 0),
 );
+
+/** Plugin-contributed items carry a synthetic `plugin:<id>:<route>` name. */
+function isPluginItem(item: NavItem): boolean {
+  return item.name.startsWith("plugin:");
+}
 
 function toggleCollapse() {
   emit("update:collapsed", !props.collapsed);
@@ -85,6 +124,7 @@ function closeMobile() {
           :key="item.name"
           :item="item"
           :collapsed="collapsed"
+          :plugin="isPluginItem(item)"
           @click="closeMobile"
         />
       </div>

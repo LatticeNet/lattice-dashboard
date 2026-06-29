@@ -433,4 +433,36 @@ export default {
       goToApprovals: "Go to Approvals",
     },
   },
+
+  // Plugin-contributed views (design-10). The dashboard renders these primitives;
+  // the active plugin contributes only the data + descriptors.
+  pluginViews: {
+    fallbackTitle: "Plugin view",
+    providedBy: "Provided by {plugin}",
+    unavailableTitle: "View not available",
+    unavailableDescription:
+      "This plugin view is no longer available. The plugin may have been deactivated.",
+    unsupportedTitle: "Unsupported view",
+    unsupportedDescription: "This dashboard build doesn't render this view type.",
+    noAccessTitle: "You don't have access to this view",
+    noAccessDescription: "Your token lacks the scopes the plugin requires for this data.",
+    noSourceTitle: "No data source",
+    noSourceDescription: "This view does not declare a data source to fetch from.",
+    noActionsTitle: "No actions",
+    noActionsDescription: "This form view does not declare any actions.",
+    emptyTitle: "Nothing to show",
+    emptyDescription: "The plugin returned no data for this view.",
+    secretHidden: "Hidden — copy to reveal",
+    copy: "Copy",
+    formHint: "Run a plugin action. Each action collects its inputs before calling the gateway.",
+    formModalHint: "Provide the inputs, then submit to call the plugin through the gateway.",
+    selectPlaceholder: "Select…",
+    submit: "Submit",
+    actionDone: "{label} succeeded",
+    actionFailed: "Action failed",
+    showing: "Showing",
+    of: "of",
+    prevPage: "Previous page",
+    nextPage: "Next page",
+  },
 } as const;

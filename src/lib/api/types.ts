@@ -1047,6 +1047,78 @@ export interface WireGuardPlanRequest {
 // Platform — Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Plugin UI contributions (design-10). When a plugin is ACTIVE and its signed
+// manifest declares `ui`, the dashboard renders that UI declaratively: the
+// dashboard owns a FIXED set of view primitives; the plugin contributes DATA
+// only (nav entries + view descriptors + the interface to fetch from). Plugin
+// code/HTML is NEVER executed — the trust surface is only the signed manifest
+// plus the capability/scope-gated gateway (POST /api/plugins/call).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PluginNavContribution {
+  /** Allow-listed section id ("plugins" | "proxy"); anything else is inert. */
+  section: string;
+  title: string;
+  /** Route slug; matches ^[a-z0-9][a-z0-9/_-]{0,64}$. */
+  route: string;
+  /** Allow-listed lucide icon name; "" / unknown ⇒ default / skipped. */
+  icon?: string;
+  /** Least-privilege scopes; empty/undefined ⇒ always visible. */
+  scopes?: string[];
+}
+
+export interface PluginViewSource {
+  /** Interface service id, e.g. "latticenet.vpn-core/nodes". */
+  interface: string;
+  method: string;
+}
+
+export interface PluginViewColumn {
+  key: string;
+  label: string;
+  /** Allow-listed render hint: "" | "copy-secret" | "bytes" | "relative-time" | "badge" | "code". */
+  render?: string;
+}
+
+export interface PluginViewFormField {
+  key: string;
+  label?: string;
+  /** Allow-listed field kind: "text" | "int" | "select". */
+  kind: string;
+  options?: string[];
+}
+
+export interface PluginViewAction {
+  label: string;
+  interface: string;
+  method: string;
+  form?: PluginViewFormField[];
+  scopes?: string[];
+}
+
+export interface PluginViewContribution {
+  /** Route slug; matches ^[a-z0-9][a-z0-9/_-]{0,64}$. */
+  route: string;
+  title: string;
+  /** Allow-listed view kind: "table" | "detail" | "form" | "kv" | "markdown". */
+  kind: string;
+  source?: PluginViewSource;
+  columns?: PluginViewColumn[];
+  actions?: PluginViewAction[];
+}
+
+export interface PluginManifestUI {
+  nav?: PluginNavContribution[];
+  views?: PluginViewContribution[];
+}
+
+export interface PluginInterfaceContract {
+  service: string;
+  methods: string[];
+  scopes?: string[];
+}
+
 export interface PluginView {
   id: string;
   name: string;
@@ -1054,6 +1126,13 @@ export interface PluginView {
   version?: string;
   publisher?: string;
   capabilities: string[];
+  /** Lifecycle status: "verified"|"installed"|"active"|"disabled"|"". */
+  status?: string;
+  /** Convenience flag mirroring (status === "active"). */
+  active?: boolean;
+  /** UI contributions — present ONLY when the plugin is active (server nils it otherwise). */
+  ui?: PluginManifestUI;
+  interfaces?: PluginInterfaceContract[];
 }
 
 export interface PluginRuntimeStatus {

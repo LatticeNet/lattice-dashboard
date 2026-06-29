@@ -168,6 +168,7 @@ export default {
       "settings-appearance": "Appearance",
       "settings-about": "About",
     },
+    pluginContributed: "Plugin-contributed",
   },
 
   shell: {
