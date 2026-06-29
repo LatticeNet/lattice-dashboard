@@ -65,6 +65,8 @@ const BUILTIN_COMPONENTS: Record<string, Component> = {
   "proxy.discovered": defineAsyncComponent(() => import("@/views/proxy/DiscoveredView.vue")),
   "vpn-core.lines": defineAsyncComponent(() => import("@/views/proxy/LinesView.vue")),
   "vpn-core.users": defineAsyncComponent(() => import("@/views/proxy/VpnUsersView.vue")),
+  "vpn-core.profiles": defineAsyncComponent(() => import("@/views/proxy/VpnCoreProfilesView.vue")),
+  "vpn-core.subscriptions": defineAsyncComponent(() => import("@/views/proxy/VpnCoreSubscriptionsView.vue")),
   "proxy.substore": defineAsyncComponent(() => import("@/views/proxy/SubStoreView.vue")),
 };
 
