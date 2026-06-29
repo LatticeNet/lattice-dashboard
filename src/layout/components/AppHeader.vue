@@ -14,6 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "@/router/nav";
+import {
+  NAV_SECTION_TO_NAV_ID,
+  usePluginContributions,
+} from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
 import AppearanceMenu from "./AppearanceMenu.vue";
 
@@ -27,9 +31,29 @@ const router = useRouter();
 const auth = useAuthStore();
 const { t } = useI18n();
 
-const title = computed(() =>
-  route.name ? t("nav.items." + String(route.name)) : t("nav.items.overview"),
-);
+// Plugin-contributed views (design-10) have a dynamic title/section that no
+// static `nav.items.*` / NAV section owns — resolve them from the live
+// contribution instead, so the breadcrumb matches the page heading.
+const { findPlugin, findView, navContributions } = usePluginContributions();
+const pluginCtx = computed(() => {
+  if (route.name !== "plugin-view") return null;
+  return {
+    pluginId: String(route.params.pluginId ?? ""),
+    viewRoute: String(route.params.route ?? ""),
+  };
+});
+
+const title = computed(() => {
+  const ctx = pluginCtx.value;
+  if (ctx) {
+    return (
+      findView(ctx.pluginId, ctx.viewRoute)?.title ||
+      findPlugin(ctx.pluginId)?.name ||
+      ctx.viewRoute
+    );
+  }
+  return route.name ? t("nav.items." + String(route.name)) : t("nav.items.overview");
+});
 
 /**
  * Breadcrumb section, resolved from the NAV IA by matching the current route's
@@ -38,6 +62,15 @@ const title = computed(() =>
  * `nav.sections.*` label. Falls back to "" when no section owns the route.
  */
 const sectionLabel = computed(() => {
+  const ctx = pluginCtx.value;
+  if (ctx) {
+    // The contribution's nav entry carries the target section ("proxy"/"plugins").
+    const entry = navContributions.value.find(
+      (n) => n.pluginId === ctx.pluginId && n.route === ctx.viewRoute,
+    );
+    const navId = entry ? NAV_SECTION_TO_NAV_ID[entry.section] : undefined;
+    return navId ? t("nav.sections." + navId) : "";
+  }
   const name = route.name ? String(route.name) : "";
   const section = NAV.find((s) => s.items.some((item) => item.name === name));
   return section && section.id !== "overview" ? t("nav.sections." + section.id) : "";
