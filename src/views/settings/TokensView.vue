@@ -382,7 +382,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
           </template>
 
           <template #cell-server_allowlist="{ row }">
-            <div v-if="row.server_allowlist.length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+            <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[200px]">
               <Badge
                 v-for="node in row.server_allowlist"
                 :key="node"
