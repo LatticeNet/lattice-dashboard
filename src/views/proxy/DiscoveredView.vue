@@ -77,7 +77,11 @@ const adminReason = computed(() => t("proxy.discovered.adminReason"));
 const inventories = computed<SingBoxInventory[]>(
   () => discoveredQuery.data.value?.inventories ?? [],
 );
-const focusedNodeId = computed(() => String(route.query.node ?? "").trim());
+const focusedNodeId = computed(() => {
+  const q = route.query.node;
+  const raw = Array.isArray(q) ? (q[0] ?? "") : (q ?? "");
+  return String(raw).trim();
+});
 const visibleInventories = computed(() => {
   const nodeId = focusedNodeId.value;
   if (!nodeId) return inventories.value;

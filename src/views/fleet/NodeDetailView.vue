@@ -31,6 +31,7 @@ import {
   MapPin,
   Pencil,
   Power,
+  Radar,
   RadioTower,
   RefreshCw,
   RotateCw,
@@ -53,6 +54,7 @@ import {
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
+import { usePluginContributions } from "@/composables/usePluginContributions";
 import { useAuthStore } from "@/stores/auth";
 import { nodeStatusMeta } from "@/lib/status";
 import { groupColor } from "@/lib/groupColors";
@@ -107,7 +109,17 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
+const { navContributions } = usePluginContributions();
+
 const nodeId = computed(() => String(route.params.id ?? ""));
+
+/** Guard: only show the VPN Discovery cross-link when the plugin is active and
+ *  has contributed that nav entry — same active-filtered source as the sidebar. */
+const hasVpnDiscovery = computed(() =>
+  navContributions.value.some(
+    (n) => n.pluginId === "latticenet.vpn-core" && n.route === "discovered",
+  ),
+);
 
 const canAdminNodes = computed(() => auth.can("node:admin"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
@@ -725,8 +737,8 @@ async function resolveGeo() {
           <DownloadCloud class="size-4" aria-hidden="true" />
           {{ $t('fleet.nodes.detail.viewAgentUpdates') }}
         </Button>
-        <Button variant="outline" size="sm" @click="goToVpnDiscovery">
-          <RadioTower class="size-4" aria-hidden="true" />
+        <Button v-if="hasVpnDiscovery" variant="outline" size="sm" @click="goToVpnDiscovery">
+          <Radar class="size-4" aria-hidden="true" />
           {{ $t('fleet.nodes.detail.viewVpnDiscovery') }}
         </Button>
         <Button

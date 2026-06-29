@@ -158,7 +158,7 @@ export function usePluginContributions() {
   });
 
   function findPlugin(pluginId: string): PluginView | undefined {
-    return plugins.value.find((p) => p.id === pluginId);
+    return activePlugins.value.find((p) => p.id === pluginId);
   }
 
   function findView(pluginId: string, route: string): PluginViewContribution | undefined {

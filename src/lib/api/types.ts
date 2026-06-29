@@ -631,6 +631,59 @@ export interface ProxyManagedTaskResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lines read-model (design-12). The unified per-node listener view owned by the
+// vpn-core plugin and served through the dashboard→plugin gateway
+// (api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/lines", …)).
+// A "line" is one listener/endpoint on a node; `source` records how it entered
+// the model. `user_known === false` marks a discovered line we have not yet
+// inspected, so its `user_count` (0) must render as "unknown", not "0".
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type LineSource = "managed" | "discovered" | "imported";
+
+export interface Line {
+  id: string;
+  /** Stable content hash identifying the line; mono + copyable in the UI. */
+  line_hash_id: string;
+  node_id: string;
+  core: string;
+  source: LineSource | string;
+  managed: boolean;
+  name: string;
+  tag?: string;
+  type?: string;
+  listen_host?: string;
+  listen_port?: number;
+  public_host?: string;
+  domain?: string;
+  outbound_ref?: string;
+  /** line_hash_ids of relayed/jumped lines, if this line chains to others. */
+  jump_edges?: string[];
+  user_count: number;
+  /** false ⇒ not yet inspected; render user_count as "unknown" rather than 0. */
+  user_known: boolean;
+  status?: string;
+  last_error?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface LineGroup {
+  node_id: string;
+  node_name?: string;
+  lines: Line[];
+}
+
+export interface LinesListResponse {
+  groups: LineGroup[];
+  count: number;
+}
+
+export interface LineGetResponse {
+  line: Line;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Networking — Network Guard (nft), Network Policy (+graph), Self-host DNS,
 // Geo-Routing, DDNS, Tunnels, WireGuard. Most mutations go through plan→approve.
 // ─────────────────────────────────────────────────────────────────────────────
