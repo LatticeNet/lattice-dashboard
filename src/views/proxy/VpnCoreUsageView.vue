@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { Activity, Database, RefreshCw, Server, Users } from "lucide-vue-next";
 import { ApiError, api, type ProxyUsageResponse } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -140,26 +141,28 @@ function statusVariant(status?: string) {
   return "secondary" as const;
 }
 
+const { t } = useI18n();
+
 const userColumns = computed<DataTableColumn<UsageByUser>[]>(() => [
-  { key: "user", label: "User", sortable: true, searchable: true, value: (u) => u.email || u.user_id },
-  { key: "status", label: "Status", sortable: true, value: (u) => u.status || "" },
-  { key: "used", label: "Used", align: "right", sortable: true, value: (u) => u.used_bytes || 0 },
-  { key: "quota", label: "Quota", align: "right", sortable: true, value: (u) => u.quota_bytes || 0 },
-  { key: "lastSeen", label: "Last seen", sortable: true, value: (u) => u.last_seen || "" },
+  { key: "user", label: t("proxy.usage.colUser"), sortable: true, searchable: true, value: (u) => u.email || u.user_id },
+  { key: "status", label: t("proxy.usage.colStatus"), sortable: true, value: (u) => u.status || "" },
+  { key: "used", label: t("proxy.usage.colUsed"), align: "right", sortable: true, value: (u) => u.used_bytes || 0 },
+  { key: "quota", label: t("proxy.usage.colQuota"), align: "right", sortable: true, value: (u) => u.quota_bytes || 0 },
+  { key: "lastSeen", label: t("proxy.usage.colLastSeen"), sortable: true, value: (u) => u.last_seen || "" },
 ]);
 
 const nodeColumns = computed<DataTableColumn<UsageByNode>[]>(() => [
-  { key: "node", label: "Node", sortable: true, searchable: true, value: (n) => n.node_name || n.node_id },
-  { key: "users", label: "Users", align: "right", sortable: true, value: (n) => n.user_count || 0 },
-  { key: "used", label: "Used", align: "right", sortable: true, value: (n) => n.used_bytes || 0 },
-  { key: "reported", label: "Reported", sortable: true, value: (n) => n.at || "" },
+  { key: "node", label: t("proxy.usage.colNode"), sortable: true, searchable: true, value: (n) => n.node_name || n.node_id },
+  { key: "users", label: t("proxy.usage.colUsers"), align: "right", sortable: true, value: (n) => n.user_count || 0 },
+  { key: "used", label: t("proxy.usage.colUsed"), align: "right", sortable: true, value: (n) => n.used_bytes || 0 },
+  { key: "reported", label: t("proxy.usage.colReported"), sortable: true, value: (n) => n.at || "" },
 ]);
 
 const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
-  { key: "node", label: "Node", sortable: true, searchable: true, value: (r) => r.node_name || r.node_id },
-  { key: "user", label: "User", sortable: true, searchable: true, value: (r) => r.email || r.user_id },
-  { key: "line", label: "Line", sortable: true, value: (r) => r.line_hash_id || "" },
-  { key: "bytes", label: "Bytes", align: "right", sortable: true, value: (r) => r.bytes || 0 },
+  { key: "node", label: t("proxy.usage.colNode"), sortable: true, searchable: true, value: (r) => r.node_name || r.node_id },
+  { key: "user", label: t("proxy.usage.colUser"), sortable: true, searchable: true, value: (r) => r.email || r.user_id },
+  { key: "line", label: t("proxy.usage.colLine"), sortable: true, value: (r) => r.line_hash_id || "" },
+  { key: "bytes", label: t("proxy.usage.colBytes"), align: "right", sortable: true, value: (r) => r.bytes || 0 },
 ]);
 </script>
 
@@ -186,10 +189,10 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
     </PageHeader>
 
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="VPN users" :value="totalUsers" :icon="Users" />
-      <StatCard label="Total traffic" :value="formatBytes(totalUsedBytes)" :icon="Database" />
-      <StatCard label="Reporting nodes" :value="reportingNodes" :icon="Server" tone="success" />
-      <StatCard label="Collector errors" :value="collectorErrors" :icon="Activity" :tone="collectorErrors ? 'destructive' : 'default'" />
+      <StatCard :label="$t('proxy.usage.kpiUsers')" :value="totalUsers" :icon="Users" />
+      <StatCard :label="$t('proxy.usage.kpiTraffic')" :value="formatBytes(totalUsedBytes)" :icon="Database" />
+      <StatCard :label="$t('proxy.usage.kpiNodes')" :value="reportingNodes" :icon="Server" tone="success" />
+      <StatCard :label="$t('proxy.usage.kpiErrors')" :value="collectorErrors" :icon="Activity" :tone="collectorErrors ? 'destructive' : 'default'" />
     </div>
 
     <DataState
@@ -204,8 +207,8 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
       <div class="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>Usage by node</CardTitle>
-            <CardDescription>Latest agent-reported accounting grouped by node.</CardDescription>
+            <CardTitle>{{ $t('proxy.usage.byNodeTitle') }}</CardTitle>
+            <CardDescription>{{ $t('proxy.usage.byNodeDesc') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <DataTable
@@ -213,7 +216,7 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
               :rows="sortedNodes"
               :row-key="(n) => n.node_id"
               :page-size="10"
-              empty-title="No node usage reported"
+              :empty-title="$t('proxy.usage.emptyNode')"
               showing-label="Showing"
               of-label="of"
               page-of-label="of"
@@ -238,8 +241,8 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
 
         <Card>
           <CardHeader>
-            <CardTitle>Usage by user</CardTitle>
-            <CardDescription>Identity-level totals mapped from vpn-core users.</CardDescription>
+            <CardTitle>{{ $t('proxy.usage.byUserTitle') }}</CardTitle>
+            <CardDescription>{{ $t('proxy.usage.byUserDesc') }}</CardDescription>
           </CardHeader>
           <CardContent>
             <DataTable
@@ -248,8 +251,8 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
               :row-key="(u) => u.user_id"
               :page-size="10"
               searchable
-              search-placeholder="User"
-              empty-title="No user usage reported"
+              :search-placeholder="$t('proxy.usage.colUser')"
+              :empty-title="$t('proxy.usage.emptyUser')"
               showing-label="Showing"
               of-label="of"
               page-of-label="of"
@@ -263,7 +266,7 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
                 </div>
               </template>
               <template #cell-status="{ row }">
-                <Badge :variant="statusVariant(row.status)">{{ row.status || "unknown" }}</Badge>
+                <Badge :variant="statusVariant(row.status)">{{ row.status || $t('proxy.usage.statusUnknown') }}</Badge>
               </template>
               <template #cell-used="{ row }">
                 <span class="font-mono tabular text-xs">{{ formatBytes(row.used_bytes) }}</span>
@@ -283,8 +286,8 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
 
       <Card>
         <CardHeader>
-          <CardTitle>Node × user rows</CardTitle>
-          <CardDescription>Per-snapshot breakdown. Line attribution remains empty until the per-line collector lands.</CardDescription>
+          <CardTitle>{{ $t('proxy.usage.rowsTitle') }}</CardTitle>
+          <CardDescription>{{ $t('proxy.usage.rowsDesc') }}</CardDescription>
         </CardHeader>
         <CardContent>
           <DataTable
@@ -293,8 +296,8 @@ const rowColumns = computed<DataTableColumn<UsageRow>[]>(() => [
             :row-key="(r) => `${r.node_id}:${r.user_id}:${r.line_hash_id || 'aggregate'}`"
             :page-size="15"
             searchable
-            search-placeholder="Node or user"
-            empty-title="No usage rows reported"
+            :search-placeholder="$t('proxy.usage.searchNodeUser')"
+            :empty-title="$t('proxy.usage.emptyRows')"
             showing-label="Showing"
             of-label="of"
             page-of-label="of"
