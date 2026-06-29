@@ -107,6 +107,7 @@ function load(force = false): Promise<void> {
 /** A single plugin-contributed sidebar destination, fully resolved + gated. */
 export interface PluginNavEntry {
   pluginId: string;
+  pluginName: string;
   section: string;
   sectionTitle?: string;
   title: string;
@@ -142,6 +143,7 @@ export function usePluginContributions() {
         if (!auth.canAll(scopes)) continue;
         out.push({
           pluginId: plugin.id,
+          pluginName: plugin.name || plugin.id,
           section: entry.section,
           sectionTitle: entry.section_title,
           title: entry.title || entry.route,

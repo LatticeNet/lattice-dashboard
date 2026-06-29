@@ -621,6 +621,10 @@ export interface ProxyManagedDeleteRequest {
   name: string;
 }
 
+export interface ProxyManagedProbeRequest {
+  node_id: string;
+}
+
 export interface ProxyManagedTaskResponse {
   ok: boolean;
   task_id: string;

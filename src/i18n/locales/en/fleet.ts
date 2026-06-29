@@ -203,6 +203,12 @@ export default {
         viewInventory: "Inventory",
         viewMonitoring: "Monitoring",
         viewAgentUpdates: "Agent updates",
+        viewVpnDiscovery: "VPN discovery",
+        probeSingBox: "Probe sing-box",
+        probeSingBoxTitle:
+          "Queue a read-only sing-box probe on this node. Requires task execution on the node agent.",
+        probeSingBoxQueued: "sing-box probe queued: {id}",
+        probeSingBoxFailed: "Failed to queue sing-box probe",
         liveStatus: "Live status",
         liveStatusDesc: "Live resource pressure and recent trend",
         sparklineLabel: "Recent CPU trend",

@@ -111,6 +111,7 @@ const nodeId = computed(() => String(route.params.id ?? ""));
 
 const canAdminNodes = computed(() => auth.can("node:admin"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
+const canRunTasks = computed(() => auth.can("task:run"));
 
 /** Treat 403 as "section not visible" rather than a hard error (per OverviewView). */
 function soften<T>(fetcher: () => Promise<T>) {
@@ -311,6 +312,24 @@ function goToMonitoring() {
 }
 function goToAgentUpdates() {
   if (node.value) router.push({ name: "platform-agent-updates", query: { node: node.value.id } });
+}
+function goToVpnDiscovery() {
+  if (node.value) router.push({ path: "/plugins/latticenet.vpn-core/discovered", query: { node: node.value.id } });
+}
+
+const probePending = ref(false);
+
+async function probeSingBox() {
+  if (!node.value || !canRunTasks.value || !isLive.value || probePending.value) return;
+  probePending.value = true;
+  try {
+    const result = await api.proxy.managed.probe({ node_id: node.value.id });
+    toast.success(t("fleet.nodes.detail.probeSingBoxQueued", { id: result.task_id }));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.probeSingBoxFailed"));
+  } finally {
+    probePending.value = false;
+  }
 }
 
 /* ----------------------------------------------------------------- */
@@ -705,6 +724,20 @@ async function resolveGeo() {
         <Button variant="outline" size="sm" @click="goToAgentUpdates">
           <DownloadCloud class="size-4" aria-hidden="true" />
           {{ $t('fleet.nodes.detail.viewAgentUpdates') }}
+        </Button>
+        <Button variant="outline" size="sm" @click="goToVpnDiscovery">
+          <RadioTower class="size-4" aria-hidden="true" />
+          {{ $t('fleet.nodes.detail.viewVpnDiscovery') }}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="!canRunTasks || !isLive || probePending"
+          :title="$t('fleet.nodes.detail.probeSingBoxTitle')"
+          @click="probeSingBox"
+        >
+          <RefreshCw :class="cn('size-4', probePending && 'animate-spin')" aria-hidden="true" />
+          {{ $t('fleet.nodes.detail.probeSingBox') }}
         </Button>
       </div>
     </div>

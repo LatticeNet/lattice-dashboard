@@ -362,6 +362,8 @@ export default {
       emptyTitle: "No on-box discovery reported",
       emptyDescription:
         "No machines are reporting on-box sing-box discovery yet. Enable it per-agent with -singbox-discover.",
+      filteredToNode: "Filtered to node {node}",
+      clearNodeFilter: "Show all",
       statusOk: "OK",
       statusError: "Error",
       statusUnknown: "Unknown",

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { Hexagon, PanelLeftClose, PanelLeftOpen } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { ChevronDown, ChevronRight, Hexagon, PanelLeftClose, PanelLeftOpen } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth";
@@ -29,26 +29,56 @@ const auth = useAuthStore();
 // Reactive: when the registry refreshes, the sidebar updates.
 const { navContributions } = usePluginContributions();
 
+type PluginSidebarItem = NavItem & {
+  pluginId: string;
+  pluginName: string;
+};
+
+type PluginSidebarGroup = {
+  id: string;
+  title: string;
+  items: PluginSidebarItem[];
+};
+
+type VisibleSection = {
+  id: string;
+  title: string;
+  items: NavItem[];
+  pluginGroups: PluginSidebarGroup[];
+};
+
 /**
- * Plugin nav entries grouped by target NavSection id. "plugins" aliases to the
- * built-in Platform section; any other safe section id creates/joins a plugin
- * section. Each contribution becomes a synthetic NavItem so it renders through
- * the exact same SidebarItem markup as static items.
+ * Plugin nav entries grouped first by target NavSection id, then by plugin id.
+ * "plugins" aliases to the built-in Platform section; any other safe section id
+ * creates/joins a plugin section. Keeping plugin groups visible in the sidebar
+ * makes ownership boundaries explicit inside shared areas such as VPN Manage.
  */
-const pluginItemsBySection = computed<Record<string, NavItem[]>>(() => {
-  const map: Record<string, NavItem[]> = {};
+const pluginGroupsBySection = computed<Record<string, PluginSidebarGroup[]>>(() => {
+  const grouped: Record<string, Record<string, PluginSidebarGroup>> = {};
   for (const c of navContributions.value) {
     const targetId = resolvePluginNavSectionId(c.section);
     if (!targetId) continue;
-    (map[targetId] ??= []).push({
+    const section = (grouped[targetId] ??= {});
+    const group = (section[c.pluginId] ??= {
+      id: c.pluginId,
+      title: c.pluginName || c.pluginId,
+      items: [],
+    });
+    group.items.push({
       name: `plugin:${c.pluginId}:${c.route}`,
       title: c.title,
       path: c.to,
       icon: resolvePluginNavIcon(c.icon),
       scopes: c.scopes,
+      pluginId: c.pluginId,
+      pluginName: c.pluginName,
     });
   }
-  return map;
+  const out: Record<string, PluginSidebarGroup[]> = {};
+  for (const [sectionId, groups] of Object.entries(grouped)) {
+    out[sectionId] = Object.values(groups).sort((a, b) => a.title.localeCompare(b.title));
+  }
+  return out;
 });
 
 const pluginSectionTitles = computed<Record<string, string>>(() => {
@@ -61,26 +91,48 @@ const pluginSectionTitles = computed<Record<string, string>>(() => {
 });
 
 const staticSectionIds = new Set(NAV.map((section) => section.id));
+const collapsedPluginGroups = ref<Record<string, boolean>>({});
 
 /**
  * Sections with their scope-visible static items, plus any plugin-contributed
  * items appended at the end. Empty sections (no static + no plugin items) drop.
  */
-const visibleSections = computed(() => {
+const visibleSections = computed<VisibleSection[]>(() => {
   const staticSections = NAV.map((section) => {
     const staticItems = section.items.filter((item) => auth.canAny(item.scopes ?? []));
-    const pluginItems = pluginItemsBySection.value[section.id] ?? [];
-    return { ...section, items: [...staticItems, ...pluginItems] };
-  }).filter((section) => section.items.length > 0);
-  const dynamicSections = Object.entries(pluginItemsBySection.value)
-    .filter(([id, items]) => !staticSectionIds.has(id) && items.length > 0)
-    .map(([id, items]) => ({ id, title: pluginSectionTitles.value[id] ?? pluginSectionLabel(id), items }));
+    const pluginGroups = pluginGroupsBySection.value[section.id] ?? [];
+    return { ...section, items: staticItems, pluginGroups };
+  }).filter((section) => section.items.length > 0 || section.pluginGroups.length > 0);
+  const dynamicSections = Object.entries(pluginGroupsBySection.value)
+    .filter(([id, groups]) => !staticSectionIds.has(id) && groups.length > 0)
+    .map(([id, pluginGroups]) => ({
+      id,
+      title: pluginSectionTitles.value[id] ?? pluginSectionLabel(id),
+      items: [],
+      pluginGroups,
+    }));
   return [...staticSections, ...dynamicSections];
 });
 
 /** Plugin-contributed items carry a synthetic `plugin:<id>:<route>` name. */
 function isPluginItem(item: NavItem): boolean {
   return item.name.startsWith("plugin:");
+}
+
+function groupKey(sectionId: string, groupId: string): string {
+  return `${sectionId}:${groupId}`;
+}
+
+function isPluginGroupOpen(sectionId: string, groupId: string): boolean {
+  return collapsedPluginGroups.value[groupKey(sectionId, groupId)] !== true;
+}
+
+function togglePluginGroup(sectionId: string, groupId: string) {
+  const key = groupKey(sectionId, groupId);
+  collapsedPluginGroups.value = {
+    ...collapsedPluginGroups.value,
+    [key]: collapsedPluginGroups.value[key] !== true,
+  };
 }
 
 function toggleCollapse() {
@@ -144,6 +196,42 @@ function closeMobile() {
           :plugin="isPluginItem(item)"
           @click="closeMobile"
         />
+        <div
+          v-for="group in section.pluginGroups"
+          :key="group.id"
+          class="space-y-1"
+        >
+          <button
+            v-if="!collapsed"
+            type="button"
+            class="flex h-8 w-full items-center gap-2 rounded-md px-3 text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+            @click="togglePluginGroup(section.id, group.id)"
+          >
+            <ChevronDown
+              v-if="isPluginGroupOpen(section.id, group.id)"
+              class="size-3.5 shrink-0"
+              aria-hidden="true"
+            />
+            <ChevronRight v-else class="size-3.5 shrink-0" aria-hidden="true" />
+            <span class="min-w-0 flex-1 truncate text-left">{{ group.title }}</span>
+            <span class="rounded bg-sidebar-accent px-1.5 py-0.5 text-[10px] tabular text-sidebar-foreground/70">
+              {{ group.items.length }}
+            </span>
+          </button>
+          <div
+            v-show="collapsed || isPluginGroupOpen(section.id, group.id)"
+            :class="cn(!collapsed && 'ml-3 border-l border-sidebar-border/70 pl-2')"
+          >
+            <SidebarItem
+              v-for="item in group.items"
+              :key="item.name"
+              :item="item"
+              :collapsed="collapsed"
+              plugin
+              @click="closeMobile"
+            />
+          </div>
+        </div>
       </div>
     </nav>
 

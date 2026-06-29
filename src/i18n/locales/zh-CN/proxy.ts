@@ -345,6 +345,8 @@ export default {
       emptyTitle: "暂无本地发现上报",
       emptyDescription:
         "尚无机器上报本地 sing-box 发现。请在各 agent 上使用 -singbox-discover 启用。",
+      filteredToNode: "已聚焦节点 {node}",
+      clearNodeFilter: "显示全部",
       statusOk: "正常",
       statusError: "错误",
       statusUnknown: "未知",

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
-import { RouterLink } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -62,6 +62,8 @@ import {
 
 const auth = useAuthStore();
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 
 // Read-only adoption bridge: on-box sing-box inventories reported by agents
 // started with -singbox-discover. Poll modestly — this is observational.
@@ -75,24 +77,36 @@ const adminReason = computed(() => t("proxy.discovered.adminReason"));
 const inventories = computed<SingBoxInventory[]>(
   () => discoveredQuery.data.value?.inventories ?? [],
 );
-const isEmpty = computed(() => inventories.value.length === 0);
+const focusedNodeId = computed(() => String(route.query.node ?? "").trim());
+const visibleInventories = computed(() => {
+  const nodeId = focusedNodeId.value;
+  if (!nodeId) return inventories.value;
+  return inventories.value.filter((inv) => inv.node_id === nodeId);
+});
+const isEmpty = computed(() => visibleInventories.value.length === 0);
 
 // Stable, machine-grouped ordering so cards don't reshuffle on every poll.
 const sortedInventories = computed(() =>
-  [...inventories.value].sort((a, b) => a.node_id.localeCompare(b.node_id)),
+  [...visibleInventories.value].sort((a, b) => a.node_id.localeCompare(b.node_id)),
 );
 
 // ── KPI strip ───────────────────────────────────────────────────────────────
-const machineCount = computed(() => inventories.value.length);
+const machineCount = computed(() => visibleInventories.value.length);
 const totalNodes = computed(() =>
-  inventories.value.reduce((sum, inv) => sum + (inv.nodes?.length ?? 0), 0),
+  visibleInventories.value.reduce((sum, inv) => sum + (inv.nodes?.length ?? 0), 0),
 );
 const errorCount = computed(
-  () => inventories.value.filter((inv) => !invOk(inv)).length,
+  () => visibleInventories.value.filter((inv) => !invOk(inv)).length,
 );
 
 function invOk(inv: SingBoxInventory): boolean {
   return (inv.status ?? "ok") === "ok" && !inv.error;
+}
+
+function clearNodeFilter() {
+  const next = { ...route.query };
+  delete next.node;
+  router.replace({ query: next });
 }
 
 // Mask the credential-bearing share link: keep only the protocol scheme so the
@@ -272,6 +286,18 @@ async function confirmDelete() {
       @retry="discoveredQuery.refresh"
     >
       <div class="space-y-6">
+        <div
+          v-if="focusedNodeId"
+          class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm"
+        >
+          <span class="min-w-0 truncate text-muted-foreground">
+            {{ $t('proxy.discovered.filteredToNode', { node: focusedNodeId }) }}
+          </span>
+          <Button variant="ghost" size="sm" @click="clearNodeFilter">
+            {{ $t('proxy.discovered.clearNodeFilter') }}
+          </Button>
+        </div>
+
         <!-- Write actions are asynchronous: queued on the agent, visible on the next poll. -->
         <div
           v-if="canAdmin"

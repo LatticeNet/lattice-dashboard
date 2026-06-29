@@ -34,6 +34,7 @@ import type {
   SingBoxInventory,
   ProxyManagedAddRequest,
   ProxyManagedDeleteRequest,
+  ProxyManagedProbeRequest,
   ProxyManagedTaskResponse,
   SubStoreImportRequest,
   SubStoreImportResponse,
@@ -298,10 +299,13 @@ export const api = {
     // managed out-of-band (agents started with -singbox-discover).
     discovered: () =>
       http.get<{ inventories: SingBoxInventory[] }>("/api/proxy/discovered"),
-    // Model-B adoption bridge (write side). Both queue an async task on the node
-    // agent and return a task_id; the discovered inventory reflects the change on
-    // its next poll — never block waiting on the result. Requires proxy:admin.
+    // Model-B adoption bridge. These endpoints queue async node-agent tasks and
+    // return a task_id; probe is read-only and refreshes the discovered inventory
+    // when its task-result is accepted, while add/delete surface on the next
+    // discovery report. Mutations require proxy:admin/task:run as enforced server-side.
     managed: {
+      probe: (input: ProxyManagedProbeRequest) =>
+        http.post<ProxyManagedTaskResponse>("/api/proxy/managed/probe", input),
       add: (input: ProxyManagedAddRequest) =>
         http.post<ProxyManagedTaskResponse>("/api/proxy/managed/add", input),
       delete: (input: ProxyManagedDeleteRequest) =>
