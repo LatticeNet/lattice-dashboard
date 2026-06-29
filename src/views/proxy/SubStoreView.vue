@@ -11,6 +11,7 @@ import {
   Store,
 } from "lucide-vue-next";
 import {
+  ApiError,
   api,
   type SubStoreImportResponse,
   type SubStoreStatusResponse,
@@ -33,6 +34,9 @@ import { Label } from "@/components/ui/label";
 
 const auth = useAuthStore();
 const { t } = useI18n();
+
+const SUBSTORE_PLUGIN_ID = "latticenet.sub-store";
+const SUBSTORE_SERVICE = "latticenet.sub-store/import";
 
 const canAdmin = computed(() => auth.can("proxy:admin"));
 const adminReason = computed(() => t("proxy.substore.adminReason"));
@@ -76,6 +80,38 @@ watch(baseUrl, (next) => {
 const trimmedBaseUrl = computed(() => baseUrl.value.trim());
 const hasBaseUrl = computed(() => trimmedBaseUrl.value.length > 0);
 
+function isLegacyMissingInterface(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 400 && error.message.includes("plugin does not expose");
+}
+
+async function pluginStatus(base_url: string): Promise<SubStoreStatusResponse> {
+  try {
+    return await api.plugins.call<SubStoreStatusResponse>(
+      SUBSTORE_PLUGIN_ID,
+      SUBSTORE_SERVICE,
+      "status",
+      { base_url },
+    );
+  } catch (error) {
+    if (!isLegacyMissingInterface(error)) throw error;
+    return api.substore.status(base_url);
+  }
+}
+
+async function pluginImport(input: { base_url: string; user_id?: string }): Promise<SubStoreImportResponse> {
+  try {
+    return await api.plugins.call<SubStoreImportResponse>(
+      SUBSTORE_PLUGIN_ID,
+      SUBSTORE_SERVICE,
+      "import",
+      input,
+    );
+  } catch (error) {
+    if (!isLegacyMissingInterface(error)) throw error;
+    return api.substore.import(input);
+  }
+}
+
 async function check() {
   if (!hasBaseUrl.value) {
     toast.error(t("proxy.substore.errorBaseUrlRequired"));
@@ -84,7 +120,7 @@ async function check() {
   if (checking.value) return;
   checking.value = true;
   try {
-    status.value = await api.substore.status(trimmedBaseUrl.value);
+    status.value = await pluginStatus(trimmedBaseUrl.value);
     if (status.value.reachable) toast.success(t("proxy.substore.toastChecked"));
     else toast.error(t("proxy.substore.toastCheckFailed"));
   } catch (error) {
@@ -106,7 +142,7 @@ async function runImport() {
   importError.value = undefined;
   try {
     const trimmedUser = userId.value.trim();
-    result.value = await api.substore.import({
+    result.value = await pluginImport({
       base_url: trimmedBaseUrl.value,
       user_id: trimmedUser || undefined,
     });
