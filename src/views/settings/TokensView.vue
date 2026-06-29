@@ -100,10 +100,19 @@ const canAdmin = computed(() => auth.can("token:admin"));
 const tokensQuery = useAsyncData(() => api.tokens.list(), { pollInterval: 15000 });
 const tokens = computed(() => tokensQuery.data.value ?? []);
 
+// A token is revoked only if revoked_at is a REAL timestamp. Go's `omitempty`
+// does not omit a zero time.Time, so active tokens serialize the zero time
+// ("0001-01-01T00:00:00Z") instead of omitting the field — treating that as
+// truthy would wrongly mark every active token as revoked.
+function isRevoked(token: TokenView): boolean {
+  const r = token.revoked_at;
+  return !!r && !r.startsWith("0001-01-01") && !r.startsWith("0001");
+}
+
 const sortedTokens = computed(() =>
   [...tokens.value].sort((a, b) => {
-    const aRevoked = !!a.revoked_at;
-    const bRevoked = !!b.revoked_at;
+    const aRevoked = isRevoked(a);
+    const bRevoked = isRevoked(b);
     if (aRevoked !== bRevoked) return aRevoked ? 1 : -1;
     return (b.created_at || "").localeCompare(a.created_at || "");
   }),
@@ -251,11 +260,11 @@ async function confirmRevoke() {
   }
 }
 
-const activeCount = computed(() => tokens.value.filter((token) => !token.revoked_at).length);
+const activeCount = computed(() => tokens.value.filter((token) => !isRevoked(token)).length);
 
 // Token status → shared visual treatment (active=online green, revoked=offline red).
 function tokenMeta(token: TokenView) {
-  return statusMeta(token.revoked_at ? "offline" : "online");
+  return statusMeta(isRevoked(token) ? "offline" : "online");
 }
 
 // DataTable columns. Cells are rendered via #cell-<key> slots so every existing
@@ -287,7 +296,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
     key: "status",
     label: t("settings.tokens.list.status"),
     sortable: true,
-    value: (row) => (row.revoked_at ? 1 : 0),
+    value: (row) => (isRevoked(row) ? 1 : 0),
   },
   { key: "actions", label: t("settings.tokens.list.actions"), align: "right" },
 ]);
@@ -394,14 +403,14 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
 
           <template #cell-status="{ row }">
             <Badge :variant="tokenMeta(row).badgeVariant">
-              {{ row.revoked_at ? $t("common.status.revoked") : $t("common.status.active") }}
+              {{ isRevoked(row) ? $t("common.status.revoked") : $t("common.status.active") }}
             </Badge>
           </template>
 
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button
-                v-if="canAdmin && !row.revoked_at"
+                v-if="canAdmin && !isRevoked(row)"
                 variant="ghost"
                 size="sm"
                 @click="revokeTarget = row"
