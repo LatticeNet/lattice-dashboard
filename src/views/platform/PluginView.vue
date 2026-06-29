@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, reactive, ref, watch, type Component } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -55,6 +55,16 @@ import {
 
 type Row = Record<string, unknown>;
 
+const BUILTIN_COMPONENTS: Record<string, Component> = {
+  "proxy.inbounds": defineAsyncComponent(() => import("@/views/proxy/InboundsView.vue")),
+  "proxy.users": defineAsyncComponent(() => import("@/views/proxy/UsersView.vue")),
+  "proxy.profiles": defineAsyncComponent(() => import("@/views/proxy/ProfilesView.vue")),
+  "proxy.subscriptions": defineAsyncComponent(() => import("@/views/proxy/SubscriptionsView.vue")),
+  "proxy.usage": defineAsyncComponent(() => import("@/views/proxy/UsageView.vue")),
+  "proxy.discovered": defineAsyncComponent(() => import("@/views/proxy/DiscoveredView.vue")),
+  "proxy.substore": defineAsyncComponent(() => import("@/views/proxy/SubStoreView.vue")),
+};
+
 const route = useRoute();
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -63,15 +73,26 @@ const { ready, findPlugin, findView } = usePluginContributions();
 // The component remounts per route (AppLayout keys RouterView by route.path), so
 // reading params reactively is enough — but we keep them computed for safety.
 const pluginId = computed(() => String(route.params.pluginId ?? ""));
-const viewRoute = computed(() => String(route.params.route ?? ""));
+const viewRoute = computed(() => {
+  const raw = route.params.route;
+  return Array.isArray(raw) ? raw.join("/") : String(raw ?? "");
+});
 
 const plugin = computed(() => findPlugin(pluginId.value));
 const view = computed(() => findView(pluginId.value, viewRoute.value));
 
 const pageTitle = computed(() => view.value?.title || plugin.value?.name || t("pluginViews.fallbackTitle"));
 const sectionLabel = computed(() => plugin.value?.name || t("nav.sections.platform"));
-const supportedKind = computed(() => !!view.value && isAllowedViewKind(view.value.kind));
-const kind = computed(() => (supportedKind.value ? view.value!.kind : ""));
+const rawKind = computed(() => view.value?.kind ?? "");
+const builtinComponent = computed(() => {
+  const key = view.value?.component_key ?? "";
+  return key ? BUILTIN_COMPONENTS[key] : undefined;
+});
+const supportedKind = computed(() => {
+  if (!view.value || !isAllowedViewKind(rawKind.value)) return false;
+  return rawKind.value !== "builtin" || !!builtinComponent.value;
+});
+const kind = computed(() => (supportedKind.value ? rawKind.value : ""));
 
 // ── Scope gating ──────────────────────────────────────────────────────────────
 // Prefer the source interface contract's declared scopes (the precise gate for
@@ -88,7 +109,7 @@ const requiredScopes = computed<string[]>(() => {
   const navEntry = p.ui?.nav?.find((n) => n.route === v.route);
   return navEntry?.scopes ?? [];
 });
-const hasAccess = computed(() => auth.canAny(requiredScopes.value));
+const hasAccess = computed(() => auth.canAll(requiredScopes.value));
 
 // ── Data source (table / detail / kv / markdown share one fetch) ─────────────
 const hasSource = computed(() => !!view.value?.source?.interface && !!view.value?.source?.method);
@@ -218,7 +239,8 @@ const markdownText = computed<string>(() => {
 // ── Actions (gateway-driven; optional modal form) ────────────────────────────
 const actions = computed<PluginViewAction[]>(() => view.value?.actions ?? []);
 function canRunAction(a: PluginViewAction): boolean {
-  return auth.canAny(a.scopes ?? []);
+  const contract = plugin.value?.interfaces?.find((i) => i.service === a.interface);
+  return auth.canAll([...(contract?.scopes ?? []), ...(a.scopes ?? [])]);
 }
 function hasForm(a: PluginViewAction): boolean {
   return Array.isArray(a.form) && a.form.some((f) => isAllowedFieldKind(f.kind));
@@ -274,7 +296,12 @@ function onActionClick(a: PluginViewAction) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <component
+    v-if="kind === 'builtin' && hasAccess && builtinComponent"
+    :is="builtinComponent"
+  />
+
+  <div v-else class="p-6 space-y-6">
     <PageHeader :title="pageTitle" :section="sectionLabel" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
       <template v-if="hasSource" #status>
         <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" />

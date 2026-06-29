@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth";
 import { NAV, type NavItem } from "@/router/nav";
 import {
-  NAV_SECTION_TO_NAV_ID,
+  pluginSectionLabel,
   resolvePluginNavIcon,
+  resolvePluginNavSectionId,
   usePluginContributions,
 } from "@/composables/usePluginContributions";
 import SidebarItem from "./SidebarItem.vue";
@@ -29,14 +30,15 @@ const auth = useAuthStore();
 const { navContributions } = usePluginContributions();
 
 /**
- * Plugin nav entries grouped by their TARGET static NavSection id ("plugins"
- * contribution-section → "platform"; "proxy" → "proxy"). Each becomes a synthetic
- * NavItem so it renders through the exact same SidebarItem markup as static items.
+ * Plugin nav entries grouped by target NavSection id. "plugins" aliases to the
+ * built-in Platform section; any other safe section id creates/joins a plugin
+ * section. Each contribution becomes a synthetic NavItem so it renders through
+ * the exact same SidebarItem markup as static items.
  */
 const pluginItemsBySection = computed<Record<string, NavItem[]>>(() => {
   const map: Record<string, NavItem[]> = {};
   for (const c of navContributions.value) {
-    const targetId = NAV_SECTION_TO_NAV_ID[c.section];
+    const targetId = resolvePluginNavSectionId(c.section);
     if (!targetId) continue;
     (map[targetId] ??= []).push({
       name: `plugin:${c.pluginId}:${c.route}`,
@@ -49,17 +51,32 @@ const pluginItemsBySection = computed<Record<string, NavItem[]>>(() => {
   return map;
 });
 
+const pluginSectionTitles = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {};
+  for (const c of navContributions.value) {
+    const targetId = resolvePluginNavSectionId(c.section);
+    if (!map[targetId]) map[targetId] = pluginSectionLabel(c.section, c.sectionTitle);
+  }
+  return map;
+});
+
+const staticSectionIds = new Set(NAV.map((section) => section.id));
+
 /**
  * Sections with their scope-visible static items, plus any plugin-contributed
  * items appended at the end. Empty sections (no static + no plugin items) drop.
  */
-const visibleSections = computed(() =>
-  NAV.map((section) => {
+const visibleSections = computed(() => {
+  const staticSections = NAV.map((section) => {
     const staticItems = section.items.filter((item) => auth.canAny(item.scopes ?? []));
     const pluginItems = pluginItemsBySection.value[section.id] ?? [];
     return { ...section, items: [...staticItems, ...pluginItems] };
-  }).filter((section) => section.items.length > 0),
-);
+  }).filter((section) => section.items.length > 0);
+  const dynamicSections = Object.entries(pluginItemsBySection.value)
+    .filter(([id, items]) => !staticSectionIds.has(id) && items.length > 0)
+    .map(([id, items]) => ({ id, title: pluginSectionTitles.value[id] ?? pluginSectionLabel(id), items }));
+  return [...staticSections, ...dynamicSections];
+});
 
 /** Plugin-contributed items carry a synthetic `plugin:<id>:<route>` name. */
 function isPluginItem(item: NavItem): boolean {
@@ -117,7 +134,7 @@ function closeMobile() {
           v-if="!collapsed"
           class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground"
         >
-          {{ $t('nav.sections.' + section.id) }}
+          {{ staticSectionIds.has(section.id) ? $t('nav.sections.' + section.id) : section.title }}
         </p>
         <SidebarItem
           v-for="item in section.items"

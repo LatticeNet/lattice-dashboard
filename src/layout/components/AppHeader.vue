@@ -15,7 +15,8 @@ import { Separator } from "@/components/ui/separator";
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "@/router/nav";
 import {
-  NAV_SECTION_TO_NAV_ID,
+  pluginSectionLabel,
+  resolvePluginNavSectionId,
   usePluginContributions,
 } from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
@@ -37,9 +38,10 @@ const { t } = useI18n();
 const { findPlugin, findView, navContributions } = usePluginContributions();
 const pluginCtx = computed(() => {
   if (route.name !== "plugin-view") return null;
+  const rawRoute = route.params.route;
   return {
     pluginId: String(route.params.pluginId ?? ""),
-    viewRoute: String(route.params.route ?? ""),
+    viewRoute: Array.isArray(rawRoute) ? rawRoute.join("/") : String(rawRoute ?? ""),
   };
 });
 
@@ -64,12 +66,14 @@ const title = computed(() => {
 const sectionLabel = computed(() => {
   const ctx = pluginCtx.value;
   if (ctx) {
-    // The contribution's nav entry carries the target section ("proxy"/"plugins").
+    // The contribution's nav entry carries the target section.
     const entry = navContributions.value.find(
       (n) => n.pluginId === ctx.pluginId && n.route === ctx.viewRoute,
     );
-    const navId = entry ? NAV_SECTION_TO_NAV_ID[entry.section] : undefined;
-    return navId ? t("nav.sections." + navId) : "";
+    const navId = entry ? resolvePluginNavSectionId(entry.section) : undefined;
+    if (!entry || !navId) return "";
+    const section = NAV.find((s) => s.id === navId);
+    return section ? t("nav.sections." + navId) : pluginSectionLabel(entry.section, entry.sectionTitle);
   }
   const name = route.name ? String(route.name) : "";
   const section = NAV.find((s) => s.items.some((item) => item.name === name));

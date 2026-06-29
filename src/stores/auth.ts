@@ -33,6 +33,10 @@ export const useAuthStore = defineStore("auth", () => {
     return required.length === 0 || required.some(can);
   }
 
+  function canAll(required: string[]): boolean {
+    return required.every(can);
+  }
+
   async function bootstrap(): Promise<void> {
     try {
       const me = await api.auth.me();
@@ -78,6 +82,7 @@ export const useAuthStore = defineStore("auth", () => {
     scopes,
     can,
     canAny,
+    canAll,
     bootstrap,
     login,
     completeTotp,

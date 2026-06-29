@@ -21,8 +21,8 @@ import { api, type PluginView, type PluginViewContribution } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 
 // ── Allow-lists (mirror the server; anything else is inert / skipped) ─────────
-/** nav.section ∈ here; mapped to the dashboard's static NavSection ids. */
-const NAV_SECTIONS = new Set(["plugins", "proxy"]);
+/** nav.section shape; "plugins" aliases to Platform, unknown safe ids become plugin sections. */
+const SECTION_RE = /^[a-z0-9][a-z0-9_-]{0,48}$/;
 /** nav.icon ∈ here (lucide-vue-next names). "" is allowed (default icon). */
 const NAV_ICON_COMPONENTS: Record<string, Component> = {
   Radar,
@@ -36,7 +36,7 @@ const NAV_ICON_COMPONENTS: Record<string, Component> = {
   Blocks,
 };
 /** view.kind ∈ here. */
-const VIEW_KINDS = new Set(["table", "detail", "form", "kv", "markdown"]);
+const VIEW_KINDS = new Set(["table", "detail", "form", "kv", "markdown", "builtin"]);
 /** column.render ∈ here. */
 const COLUMN_RENDERS = new Set(["", "copy-secret", "bytes", "relative-time", "badge", "code"]);
 /** form field.kind ∈ here. */
@@ -44,11 +44,23 @@ const FORM_FIELD_KINDS = new Set(["text", "int", "select"]);
 /** nav.route / view.route slug shape. */
 const ROUTE_RE = /^[a-z0-9][a-z0-9/_-]{0,64}$/;
 
-/** "plugins" contribution-section → "platform" NavSection; "proxy" → "proxy". */
+/** "plugins" contribution-section → "platform" NavSection; other safe ids create/merge plugin sections. */
 export const NAV_SECTION_TO_NAV_ID: Record<string, string> = {
   plugins: "platform",
-  proxy: "proxy",
 };
+
+export function resolvePluginNavSectionId(section: string): string {
+  return NAV_SECTION_TO_NAV_ID[section] ?? section;
+}
+
+export function pluginSectionLabel(section: string, title?: string): string {
+  if (title?.trim()) return title.trim();
+  return section
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 /** Resolve an allow-listed icon name to a lucide component (Blocks fallback). */
 export function resolvePluginNavIcon(name?: string): Component {
@@ -76,7 +88,7 @@ function load(force = false): Promise<void> {
   if (inflight) return inflight;
   if (ready.value && !force) return Promise.resolve();
   inflight = api.plugins
-    .list()
+    .contributions()
     .then((list) => {
       plugins.value = Array.isArray(list) ? list : [];
       ready.value = true;
@@ -96,6 +108,7 @@ function load(force = false): Promise<void> {
 export interface PluginNavEntry {
   pluginId: string;
   section: string;
+  sectionTitle?: string;
   title: string;
   route: string;
   icon: string;
@@ -122,14 +135,15 @@ export function usePluginContributions() {
       for (const entry of nav) {
         if (!entry || typeof entry !== "object") continue;
         // Skip anything that fails an allow-list — inert, never throw.
-        if (!NAV_SECTIONS.has(entry.section)) continue;
+        if (typeof entry.section !== "string" || !SECTION_RE.test(entry.section)) continue;
         if (entry.icon && !(entry.icon in NAV_ICON_COMPONENTS)) continue;
         if (typeof entry.route !== "string" || !ROUTE_RE.test(entry.route)) continue;
         const scopes = Array.isArray(entry.scopes) ? entry.scopes : [];
-        if (!auth.canAny(scopes)) continue;
+        if (!auth.canAll(scopes)) continue;
         out.push({
           pluginId: plugin.id,
           section: entry.section,
+          sectionTitle: entry.section_title,
           title: entry.title || entry.route,
           route: entry.route,
           icon: entry.icon ?? "",

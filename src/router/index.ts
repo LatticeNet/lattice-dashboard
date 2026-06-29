@@ -25,14 +25,6 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "network-ddns": () => import("@/views/networking/DdnsView.vue"),
   "network-tunnels": () => import("@/views/networking/TunnelsView.vue"),
   "network-wireguard": () => import("@/views/networking/WireGuardView.vue"),
-  // Proxy (flagship)
-  "proxy-inbounds": () => import("@/views/proxy/InboundsView.vue"),
-  "proxy-users": () => import("@/views/proxy/UsersView.vue"),
-  "proxy-profiles": () => import("@/views/proxy/ProfilesView.vue"),
-  "proxy-subscriptions": () => import("@/views/proxy/SubscriptionsView.vue"),
-  "proxy-usage": () => import("@/views/proxy/UsageView.vue"),
-  "proxy-substore": () => import("@/views/proxy/SubStoreView.vue"),
-  "proxy-discovered": () => import("@/views/proxy/DiscoveredView.vue"),
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
   "platform-workers": () => import("@/views/platform/WorkersView.vue"),
@@ -81,6 +73,13 @@ const childRoutes: RouteRecordRaw[] = NAV.flatMap((section) =>
  * guard's scope check and the breadcrumb logic keep working unchanged.
  */
 const manualChildRoutes: RouteRecordRaw[] = [
+  { path: "proxy/inbounds", redirect: "/plugins/latticenet.vpn-core/inbounds" },
+  { path: "proxy/users", redirect: "/plugins/latticenet.vpn-core/users" },
+  { path: "proxy/profiles", redirect: "/plugins/latticenet.vpn-core/profiles" },
+  { path: "proxy/subscriptions", redirect: "/plugins/latticenet.vpn-core/subscriptions" },
+  { path: "proxy/usage", redirect: "/plugins/latticenet.vpn-core/usage" },
+  { path: "proxy/substore", redirect: "/plugins/latticenet.sub-store/sub-store" },
+  { path: "proxy/discovered", redirect: "/plugins/latticenet.vpn-core/discovered" },
   {
     path: "nodes/:id",
     name: "node-detail",
@@ -101,7 +100,7 @@ const manualChildRoutes: RouteRecordRaw[] = [
     // wrong/insufficient scope renders a friendly "no access" panel inside the
     // page rather than a redirect; PluginView enforces the contribution's own
     // scopes (and the server re-checks them on every gateway call).
-    path: "plugins/:pluginId/:route",
+    path: "plugins/:pluginId/:route(.*)*",
     name: "plugin-view",
     component: () => import("@/views/platform/PluginView.vue"),
     meta: { title: "Plugin", section: "Platform", scopes: [] },

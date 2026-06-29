@@ -1057,14 +1057,16 @@ export interface WireGuardPlanRequest {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PluginNavContribution {
-  /** Allow-listed section id ("plugins" | "proxy"); anything else is inert. */
+  /** Safe section id. "plugins" aliases to the built-in Platform section; unknown ids create plugin sections. */
   section: string;
+  /** Optional display label for custom plugin-created sections. */
+  section_title?: string;
   title: string;
   /** Route slug; matches ^[a-z0-9][a-z0-9/_-]{0,64}$. */
   route: string;
   /** Allow-listed lucide icon name; "" / unknown ⇒ default / skipped. */
   icon?: string;
-  /** Least-privilege scopes; empty/undefined ⇒ always visible. */
+  /** Required scopes; empty/undefined ⇒ visible to any authenticated user. */
   scopes?: string[];
 }
 
@@ -1101,8 +1103,10 @@ export interface PluginViewContribution {
   /** Route slug; matches ^[a-z0-9][a-z0-9/_-]{0,64}$. */
   route: string;
   title: string;
-  /** Allow-listed view kind: "table" | "detail" | "form" | "kv" | "markdown". */
+  /** Allow-listed view kind: "table" | "detail" | "form" | "kv" | "markdown" | "builtin". */
   kind: string;
+  /** First-party dashboard-owned component key; valid only for kind="builtin". */
+  component_key?: string;
   source?: PluginViewSource;
   columns?: PluginViewColumn[];
   actions?: PluginViewAction[];

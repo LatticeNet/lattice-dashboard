@@ -399,6 +399,7 @@ export const api = {
 
   plugins: {
     list: () => http.get<PluginView[]>("/api/plugins"),
+    contributions: () => http.get<PluginView[]>("/api/plugin-contributions"),
     lifecycle: () => http.get<PluginInstallationView[]>("/api/plugins/lifecycle"),
     setLifecycle: (id: string, status: PluginLifecycleStatus) =>
       http.post<PluginInstallationView>("/api/plugins/lifecycle", { id, status }),
