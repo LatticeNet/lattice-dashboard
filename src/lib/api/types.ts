@@ -582,6 +582,11 @@ export interface SingBoxNode {
   port?: string;
   sni?: string;
   host?: string;
+  listen_host?: string;
+  outbound_ref?: string;
+  user_count?: number;
+  user_known?: boolean;
+  metadata?: Record<string, string>;
   public_key?: string;
   /** Credential-bearing share link — copy only, never display in full. */
   share_url?: string;
