@@ -4,10 +4,12 @@ Modern Vue 3 operator console for Lattice: Vue 3.5, Vite, Tailwind v4,
 reka-ui/shadcn-vue primitives, Pinia, vue-router, and polling-based data
 loading under the server's strict CSP.
 
-The Operations -> Terminal page uses `@xterm/xterm` for a real shell surface
-while preserving Lattice's no-WebSocket server contract: the dashboard polls
-bounded Terminal API events, sends input/resize/close JSON requests, and opens
-node-specific sessions from the Nodes page.
+The Operations -> Terminal page uses `@xterm/xterm` for a real shell surface.
+Modern agents should run terminal transport `stream`: the browser attaches to a
+same-origin WebSocket, the server splices it to an agent-dialed WebSocket, and
+the agent binds that stream to an on-node PTY with reconnect/replay handling.
+Legacy `poll` remains as a compatibility fallback for older agents or nodes that
+have not yet reported `terminal_transport=stream`.
 
 ## Develop
 

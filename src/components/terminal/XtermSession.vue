@@ -17,16 +17,15 @@ const INPUT_FLUSH_MS = 20;
 const RESIZE_DEBOUNCE_MS = 160;
 const WS_BACKOFF_START_MS = 500;
 const WS_BACKOFF_MAX_MS = 8000;
+const WS_RECONNECT_CEILING_MS = 90000;
 const WS_CLOSE_NORMAL = 1000;
 const WS_CLOSE_TRY_AGAIN = 1013; // server: agent never dialed (node offline)
-// Auto-reconnect is for brief blips only: a few quick tries recover a transient
-// drop (the server keeps the session alive within its detach window), then we
-// stop and surface a manual "Reconnect" instead of retrying forever.
-const MAX_RECONNECT_ATTEMPTS = 4;
+const STREAM_PENDING_INPUT_LIMIT = 64 * 1024;
 
 // In-band opcode prefix on browser->agent frames (agent->browser is raw bytes).
 const OPCODE_STDIN = 0x00;
 const OPCODE_RESIZE = 0x01;
+const OPCODE_CLOSE = 0x02;
 const OPCODE_RESUME = 0x04; // payload = decimal ASCII count of output bytes already rendered
 
 type ConnState = "idle" | "connecting" | "open" | "reconnecting" | "disconnected" | "closed" | "failed";
@@ -91,7 +90,9 @@ let wsBackoff = WS_BACKOFF_START_MS;
 let wsReconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let retryTicker: ReturnType<typeof setInterval> | undefined;
 let hasConnectedOnce = false;
-let reconnectAttempts = 0;
+let reconnectStartedAt = 0;
+let streamInputBuffer = "";
+let streamCloseRequestedFor = "";
 // bytesRendered is the absolute count of output bytes this browser has received.
 // It is sent on every (re)connect so the agent replays only the missing tail —
 // no double-render, scrollback preserved. Reset only on a new session.
@@ -338,12 +339,14 @@ function disposeTerminal() {
 function clearTerminalForSession() {
   cursor = 0;
   inputBuffer = "";
+  streamInputBuffer = "";
   lastCols = 0;
   lastRows = 0;
   bytesRendered = 0;
   closedPollsRemaining = 0;
   closedEmittedFor = "";
-  reconnectAttempts = 0;
+  reconnectStartedAt = 0;
+  streamCloseRequestedFor = "";
   wsBackoff = WS_BACKOFF_START_MS;
   terminalError.value = undefined;
   setConnState("idle");
@@ -406,13 +409,14 @@ function connectWs() {
     if (myGen !== wsGen) return;
     hasConnectedOnce = true;
     wsBackoff = WS_BACKOFF_START_MS;
-    reconnectAttempts = 0;
+    reconnectStartedAt = 0;
     setConnState("open");
     terminalError.value = undefined;
     // Tell the agent how much output we have already rendered so it replays only
     // the missing tail (resume), then push our current size so a TUI redraws.
     wsSendResume();
     sendResizeWs(true);
+    flushStreamInputBuffer();
     terminal?.focus();
   };
   sock.onmessage = (ev) => {
@@ -452,18 +456,20 @@ function connectWs() {
 
 function scheduleWsReconnect() {
   if (disposed || !isStream.value) return;
-  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-    // Auto-retry budget spent: a brief blip would have recovered by now, so this
-    // is a real outage. Stop looping and let the user reconnect on demand — the
-    // session stays resumable server-side for its detach window.
+  if (!reconnectStartedAt) reconnectStartedAt = Date.now();
+  if (Date.now() - reconnectStartedAt >= WS_RECONNECT_CEILING_MS) {
+    // Retry across the server/agent detach window, then stop and let the user
+    // decide whether to create a fresh session. This matches the agent's
+    // keep-PTY-alive redial ceiling and avoids the old "four tries then give up"
+    // behavior on short laptop sleep or proxy reloads.
     stopRetryCountdown();
     setConnState("disconnected");
     return;
   }
-  reconnectAttempts += 1;
   setConnState("reconnecting");
   if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-  const delay = wsBackoff;
+  const jitter = Math.floor(Math.random() * Math.min(500, wsBackoff * 0.2));
+  const delay = wsBackoff + jitter;
   wsReconnectTimer = setTimeout(() => {
     if (!disposed && isStream.value) connectWs();
   }, delay);
@@ -478,7 +484,7 @@ function reconnectNow() {
     wsReconnectTimer = undefined;
   }
   wsBackoff = WS_BACKOFF_START_MS;
-  reconnectAttempts = 0; // manual reconnect restarts the auto-retry budget
+  reconnectStartedAt = 0; // manual reconnect restarts the auto-retry budget
   connectWs();
 }
 
@@ -528,12 +534,43 @@ function wsSendResume() {
 }
 
 function wsSendInput(data: string) {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !data) return;
+  if (!data) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    if (streamInputBuffer.length + data.length > STREAM_PENDING_INPUT_LIMIT) {
+      const message = t("operations.terminal.pendingInputOverflow");
+      if (terminalError.value !== message) {
+        terminalError.value = message;
+        emit("error", message);
+      }
+      return;
+    }
+    streamInputBuffer += data;
+    return;
+  }
   const payload = encoder.encode(data);
   const frame = new Uint8Array(payload.length + 1);
   frame[0] = OPCODE_STDIN;
   frame.set(payload, 1);
   ws.send(frame);
+}
+
+function flushStreamInputBuffer() {
+  if (!streamInputBuffer || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const buffered = streamInputBuffer;
+  streamInputBuffer = "";
+  wsSendInput(buffered);
+}
+
+function wsSendClose() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(new Uint8Array([OPCODE_CLOSE]));
+}
+
+function requestClose() {
+  if (!isStream.value || streamCloseRequestedFor === props.session.id) return;
+  streamCloseRequestedFor = props.session.id;
+  wsSendClose();
+  setTimeout(() => closeWs(), 120);
 }
 
 function sendResizeWs(force = false) {
@@ -708,7 +745,7 @@ function refit() {
   requestAnimationFrame(() => void fitAndSendResize());
 }
 
-defineExpose({ focusTerminal, fitAndSendResize, refit });
+defineExpose({ focusTerminal, fitAndSendResize, refit, requestClose });
 
 onMounted(async () => {
   initTerminal();
@@ -733,7 +770,10 @@ watch(
 watch(
   () => props.session.status,
   (status) => {
-    if (isStream.value) return; // stream lifecycle is driven by the socket, not poll status
+    if (isStream.value) {
+      if (status === "closed" || status === "failed") requestClose();
+      return; // stream lifecycle is driven by the socket, not poll status
+    }
     if (status === "closed" || status === "failed") {
       closedPollsRemaining = 12; // drain a few more polls, then the loop self-stops
       startPolling();

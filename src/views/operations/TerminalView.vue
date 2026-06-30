@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Activity,
+  BookOpen,
   CircleStop,
   Clock,
   ExternalLink,
@@ -68,14 +69,12 @@ const starting = ref(false);
 const closing = ref(false);
 const closeRequested = ref(false);
 const autoConnectAttempted = ref(false);
-// Opt-in WebSocket streaming transport (iter-063 Phase 3). Default off (poll):
-// streaming only works when the node's agent runs in stream mode. Persisted so
-// an operator can dogfood it per browser without changing the default.
-const streamingEnabled = ref(localStorage.getItem("lattice.terminal.streaming") === "1");
-function toggleStreaming() {
-  streamingEnabled.value = !streamingEnabled.value;
-  localStorage.setItem("lattice.terminal.streaming", streamingEnabled.value ? "1" : "0");
-}
+type TerminalTransportMode = "auto" | "stream" | "poll";
+const storedTransportMode = localStorage.getItem("lattice.terminal.transport");
+const transportMode = ref<TerminalTransportMode>(
+  storedTransportMode === "stream" || storedTransportMode === "poll" ? storedTransportMode : "auto",
+);
+watch(transportMode, (mode) => localStorage.setItem("lattice.terminal.transport", mode));
 
 // --- Console sizing + fullscreen ---
 // The console fits the viewport without forcing the page to scroll: its height is
@@ -89,7 +88,7 @@ const CONSOLE_BOTTOM_RESERVE = 88;
 const consoleEl = ref<HTMLElement | null>(null);
 const consoleHeight = ref(560);
 const fullscreen = ref(false);
-const xtermRef = ref<{ refit: () => void } | null>(null);
+const xtermRef = ref<{ refit: () => void; requestClose?: () => void } | null>(null);
 
 // settleConsole re-measures (no-op in fullscreen) and forces the terminal to
 // refit after the DOM updates. Used on the discrete layout changes (fullscreen
@@ -152,6 +151,25 @@ const activeSessions = computed(() =>
 const selectedNode = computed(() =>
   nodes.value.find((node) => node.id === selectedNodeId.value),
 );
+
+const selectedNodeRuntime = computed(() => selectedNode.value?.agent_runtime ?? undefined);
+const selectedNodeTransport = computed<"stream" | "poll">(() => {
+  if (transportMode.value === "stream" || transportMode.value === "poll") return transportMode.value;
+  const runtime = selectedNodeRuntime.value;
+  return runtime?.allow_terminal && !runtime?.no_exec && runtime?.terminal_transport === "stream" ? "stream" : "poll";
+});
+const selectedNodeTransportLabel = computed(() =>
+  selectedNodeTransport.value === "stream"
+    ? t("operations.terminal.transportStream")
+    : t("operations.terminal.transportPoll"),
+);
+const selectedNodeTransportHint = computed(() => {
+  if (transportMode.value === "stream") return t("operations.terminal.transportForcedStreamHint");
+  if (transportMode.value === "poll") return t("operations.terminal.transportForcedPollHint");
+  return selectedNodeTransport.value === "stream"
+    ? t("operations.terminal.transportAutoStreamHint")
+    : t("operations.terminal.transportAutoPollHint");
+});
 
 const filteredNodes = computed(() => {
   const needle = nodeSearch.value.trim().toLowerCase();
@@ -228,7 +246,10 @@ watch(
 );
 
 function isTerminalReady(node: Node): boolean {
-  return !!node.online && !node.disabled;
+  if (!node.online || node.disabled) return false;
+  const runtime = node.agent_runtime;
+  if (!runtime) return true;
+  return !!runtime.allow_terminal && !runtime.no_exec;
 }
 
 function nodeName(id: string): string {
@@ -334,6 +355,7 @@ async function closeSession() {
   closing.value = true;
   closeRequested.value = true;
   try {
+    xtermRef.value?.requestClose?.();
     const updated = await api.terminal.close(session.id);
     activeSession.value = updated;
     if (updated.status === "closed" || updated.status === "failed") {
@@ -376,6 +398,10 @@ function openSelectedInNewTab() {
   const url = `/terminal?node_id=${encodeURIComponent(selectedNodeId.value)}&connect=1`;
   window.open(url, "_blank", "noopener");
 }
+
+function openTerminalDocs() {
+  window.open("https://latticenet.github.io/guide/node-agent#browser-terminal", "_blank", "noopener,noreferrer");
+}
 </script>
 
 <template>
@@ -394,14 +420,9 @@ function openSelectedInNewTab() {
             <ExternalLink class="size-4" aria-hidden="true" />
             {{ $t('operations.terminal.openNewTab') }}
           </Button>
-          <Button
-            :variant="streamingEnabled ? 'default' : 'outline'"
-            size="sm"
-            :title="$t('operations.terminal.streamingHint')"
-            @click="toggleStreaming"
-          >
-            <Zap class="size-4" aria-hidden="true" />
-            {{ $t('operations.terminal.streaming') }}
+          <Button variant="outline" size="sm" @click="openTerminalDocs">
+            <BookOpen class="size-4" aria-hidden="true" />
+            {{ $t('operations.terminal.docs') }}
           </Button>
         </div>
       </template>
@@ -503,6 +524,26 @@ function openSelectedInNewTab() {
               <p v-else class="text-xs text-muted-foreground">{{ $t('operations.terminal.selectPrompt') }}</p>
             </div>
 
+            <div class="grid gap-2 rounded-md border border-border bg-muted/20 p-3 text-sm">
+              <div class="flex items-center justify-between gap-3">
+                <span class="text-muted-foreground">{{ $t('operations.terminal.transport') }}</span>
+                <Badge :variant="selectedNodeTransport === 'stream' ? 'success' : 'secondary'">
+                  {{ selectedNodeTransportLabel }}
+                </Badge>
+              </div>
+              <Select v-model="transportMode">
+                <SelectTrigger class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{{ $t('operations.terminal.transportAuto') }}</SelectItem>
+                  <SelectItem value="stream">{{ $t('operations.terminal.transportStream') }}</SelectItem>
+                  <SelectItem value="poll">{{ $t('operations.terminal.transportPoll') }}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-xs text-muted-foreground">{{ selectedNodeTransportHint }}</p>
+            </div>
+
             <Button class="w-full" :disabled="starting || !selectedNode || !isTerminalReady(selectedNode)" @click="connectSelected({ preferExisting: false })">
               <RefreshCw v-if="starting" class="size-4 animate-spin" aria-hidden="true" />
               <Power v-else class="size-4" aria-hidden="true" />
@@ -549,6 +590,10 @@ function openSelectedInNewTab() {
                 <Badge :variant="statusVariant(activeSession?.status ?? 'idle')">
                   {{ closeRequested ? $t('operations.terminal.closing') : (activeSession?.status ?? 'idle') }}
                 </Badge>
+                <Badge v-if="activeSession" :variant="selectedNodeTransport === 'stream' ? 'success' : 'secondary'">
+                  <Zap class="size-3" aria-hidden="true" />
+                  {{ selectedNodeTransportLabel }}
+                </Badge>
                 <Badge v-if="activeSession?.bytes_out" variant="outline">{{ formatBytes(activeSession.bytes_out) }}</Badge>
                 <Button
                   variant="outline"
@@ -578,10 +623,10 @@ function openSelectedInNewTab() {
               <XtermSession
                 v-if="activeSession"
                 ref="xtermRef"
-                :key="activeSession.id + (streamingEnabled ? ':stream' : ':poll')"
+                :key="activeSession.id + ':' + selectedNodeTransport"
                 :session="activeSession"
                 :disabled="terminalDisabled"
-                :transport="streamingEnabled ? 'stream' : 'poll'"
+                :transport="selectedNodeTransport"
                 @update:session="onSessionUpdate"
                 @closed="onSessionClosed"
                 @error="onTerminalError"

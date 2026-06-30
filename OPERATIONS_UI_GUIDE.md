@@ -65,6 +65,41 @@ Tags are normalized for stable display. The server trims, deduplicates, and sort
 tags when node metadata is updated; the dashboard also sorts before rendering so
 older records remain stable.
 
+### Expression filters
+
+Nodes and task target pickers support a deliberately small expression language
+for high-signal fleet filtering. It is not a SQL engine and intentionally has no
+comparison operators yet.
+
+Supported operators:
+
+- `AND(a, b, ...)`
+- `OR(a, b, ...)`
+- `NOT(a)`
+- bare tokens such as `linux`, `cd`, `exec`, or `vpn-lines`
+
+Common examples:
+
+- `AND(exec, root, NOT(sing-box))`
+- `AND(sing-box, NOT(vpn-lines))`
+- `OR(linux, darwin, amd64, arm64)`
+- `AND(tag:cd, agent:exec, NOT(vpn:recorded))`
+
+Current limitations are intentional:
+
+- no numeric comparisons such as `cpu>2`
+- no inequality syntax such as `region != US`
+- no quoted strings or regexes
+- token matching is case-insensitive substring/prefix matching depending on the
+  field
+
+Important distinction:
+
+- `sing-box` means the agent runtime or desired launch profile has sing-box
+  discovery enabled.
+- `vpn-lines` means the official vpn-core plugin already has recorded line data
+  for that node.
+
 ## Node detail page
 
 Node detail is the safest place to inspect one host. It separates display-only
@@ -212,6 +247,29 @@ when entering a node detail page, then protected from routine heartbeat updates.
 This prevents `Allow task execution`, `Allow terminal`, `sing-box discovery`,
 usage source fields, and similar reconfigure inputs from snapping back while an
 operator is preparing a command.
+
+## Terminal
+
+The Terminal page has two transports:
+
+- `stream` is the preferred path for modern agents. The browser opens a
+  same-origin WebSocket to the server, the server splices it to an outbound
+  WebSocket dialed by the node-agent, and the agent binds that stream to a PTY.
+  It supports low-latency input, resize control frames, reconnect backoff, and a
+  node-side replay ring for short disconnects.
+- `poll` is the legacy HTTP store-and-forward path. It is slower because input,
+  resize, and output travel as bounded JSON requests, but it remains useful for
+  older agents and emergency fallback.
+
+`Auto by node runtime` should be the normal dashboard setting. It uses `stream`
+only when the selected node reports `agent_runtime.allow_terminal=true` and
+`agent_runtime.terminal_transport=stream`; otherwise it falls back to `poll`.
+Manual `stream` and `poll` overrides are browser-local troubleshooting levers.
+
+Clicking `Close` on a stream session sends an explicit close control frame to the
+agent before the server marks the session closed. This avoids the dangerous
+state where the dashboard thinks a session is closed but the node-side PTY keeps
+running until detach cleanup.
 
 This gives the convenience of tag-based bulk selection without converting every
 fleet tag into a persistent group automatically.
