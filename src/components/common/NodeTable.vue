@@ -76,6 +76,10 @@ function archOs(node: Node): string {
   return node.host_facts?.os || node.host_facts?.platform || "—";
 }
 
+function sortedTags(node: Node): string[] {
+  return [...(node.tags ?? [])].sort((a, b) => a.localeCompare(b));
+}
+
 /** Public IPv4 is the primary column; the rest ride along in the cell tooltip. */
 function ipTooltip(node: Node): string {
   const lines = [
@@ -151,10 +155,10 @@ function onOpen(node: Node): void {
 
         <!-- Tags -->
         <div class="flex min-w-0 flex-wrap gap-1">
-          <Badge v-for="tag in node.tags ?? []" :key="tag" variant="outline" class="max-w-full truncate">
+          <Badge v-for="tag in sortedTags(node)" :key="tag" variant="outline" class="max-w-full truncate">
             {{ tag }}
           </Badge>
-          <span v-if="!(node.tags && node.tags.length)" class="text-muted-foreground">—</span>
+          <span v-if="sortedTags(node).length === 0" class="text-muted-foreground">—</span>
         </div>
 
         <!-- Public IPv4 (other addresses in the tooltip) -->

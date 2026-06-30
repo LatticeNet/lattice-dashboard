@@ -69,10 +69,12 @@ const iconToneClass = computed(() => {
         </div>
         <div class="min-w-0 space-y-1">
           <p class="text-sm text-muted-foreground">{{ label }}</p>
-          <p :class="cn('text-2xl font-semibold tabular leading-none', valueToneClass)">
-            {{ value }}
-          </p>
-          <p v-if="hint" class="text-xs text-muted-foreground">{{ hint }}</p>
+          <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+            <p :class="cn('text-2xl font-semibold tabular leading-none', valueToneClass)">
+              {{ value }}
+            </p>
+            <p v-if="hint" class="text-xs text-muted-foreground">{{ hint }}</p>
+          </div>
         </div>
         <ArrowUpRight
           v-if="to"

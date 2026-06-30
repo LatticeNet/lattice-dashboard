@@ -57,3 +57,7 @@ environment variable and expecting restart-time mutation.
 SSO provider setup notes are maintained at
 `https://latticenet.github.io/guide/sso` and linked from Settings -> Single
 Sign-On.
+
+Operator-facing interaction contracts for Nodes, Groups, Fleet Map, Network
+Guard inputs, Network Policy, Approvals, and official vpn-core plugin pages are
+documented in [OPERATIONS_UI_GUIDE.md](./OPERATIONS_UI_GUIDE.md).

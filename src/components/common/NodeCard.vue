@@ -152,7 +152,9 @@ const statusBadge = computed(() => {
 });
 
 /** First two tags only — keeps the header from wrapping on dense grids. */
-const visibleTags = computed(() => (props.node.tags ?? []).slice(0, 2));
+const visibleTags = computed(() =>
+  [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)).slice(0, 2),
+);
 
 /* ---------------------------------------------------------------- */
 /* Sparkline — tiny inline SVG from the shared client-side ring.     */

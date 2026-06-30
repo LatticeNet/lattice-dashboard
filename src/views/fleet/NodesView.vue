@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
@@ -82,8 +82,11 @@ const enrollName = ref("");
 const enrollId = ref("");
 const enrollRole = ref("");
 const enrollTags = ref("");
+const enrollComment = ref("");
 const enrollWireGuardIp = ref("");
 const enrollGroups = ref<string[]>([]);
+const enrollOpen = ref(false);
+const enrollAdvancedOpen = ref(false);
 const enrollAllowExec = ref(false);
 const enrollAllowRootExec = ref(false);
 const enrollNoExec = ref(false);
@@ -409,7 +412,8 @@ function parseTags(): string[] {
   return enrollTags.value
     .split(",")
     .map((tag) => tag.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 function enrollAgentLaunch(): AgentLaunchConfig {
@@ -429,10 +433,10 @@ function enrollAgentLaunch(): AgentLaunchConfig {
 }
 
 /** Scroll the enroll form into view and focus its first field. */
-function focusEnroll() {
-  document
-    .getElementById("enroll-node-section")
-    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+async function focusEnroll() {
+  enrollOpen.value = true;
+  await nextTick();
+  document.getElementById("enroll-node-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
   const input = document.getElementById("enroll-name");
   if (input instanceof HTMLInputElement) input.focus({ preventScroll: true });
 }
@@ -447,6 +451,7 @@ async function enrollNode() {
       name: enrollName.value.trim(),
       role: enrollRole.value.trim() || undefined,
       tags: parseTags(),
+      comment: enrollComment.value.trim() || undefined,
       wireguard_ip: enrollWireGuardIp.value.trim() || undefined,
       group_ids: enrollGroups.value.length ? [...enrollGroups.value] : undefined,
       agent_launch: enrollAgentLaunch(),
@@ -455,6 +460,7 @@ async function enrollNode() {
     enrollId.value = "";
     enrollRole.value = "";
     enrollTags.value = "";
+    enrollComment.value = "";
     enrollWireGuardIp.value = "";
     enrollGroups.value = [];
     enrollAllowExec.value = false;
@@ -487,6 +493,7 @@ async function rotateToken(node: Node) {
   rotatedToken.value = undefined;
   try {
     rotatedToken.value = await api.nodes.rotateToken(node.id);
+    enrollOpen.value = true;
     toast.success(t("fleet.nodes.toast.tokenRotated"));
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.rotationFailed"));
@@ -521,6 +528,10 @@ function openTerminal(node: Node) {
         <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
       </template>
       <template #actions>
+        <Button v-if="canAdminNodes" size="sm" @click="focusEnroll">
+          <Plus class="size-4" aria-hidden="true" />
+          {{ $t('fleet.nodes.list.enrollCta') }}
+        </Button>
         <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value" @click="nodesQuery.refresh">
           <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
@@ -601,16 +612,23 @@ function openTerminal(node: Node) {
       </Card>
     </div>
 
-    <Card v-if="canAdminNodes" id="enroll-node-section">
+    <Card v-if="canAdminNodes && enrollOpen" id="enroll-node-section" class="border-primary/30 bg-primary/5">
       <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <Plus class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('fleet.nodes.enroll.title') }}
-        </CardTitle>
-        <CardDescription>{{ $t('fleet.nodes.enroll.description') }}</CardDescription>
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle class="flex items-center gap-2">
+              <Plus class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('fleet.nodes.enroll.title') }}
+            </CardTitle>
+            <CardDescription class="mt-1">{{ $t('fleet.nodes.enroll.description') }}</CardDescription>
+          </div>
+          <Button variant="ghost" size="icon-sm" :aria-label="$t('common.actions.close')" @click="enrollOpen = false">
+            <X class="size-4" aria-hidden="true" />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form class="grid gap-3 lg:grid-cols-[1.2fr_1fr_0.7fr_1fr_1fr_auto]" @submit.prevent="enrollNode">
+        <form class="grid gap-3 lg:grid-cols-6" @submit.prevent="enrollNode">
           <div class="grid gap-2">
             <Label for="enroll-name">{{ $t('fleet.nodes.enroll.name') }}</Label>
             <Input id="enroll-name" v-model="enrollName" required />
@@ -626,6 +644,10 @@ function openTerminal(node: Node) {
           <div class="grid gap-2">
             <Label for="enroll-tags">{{ $t('fleet.nodes.enroll.tags') }}</Label>
             <Input id="enroll-tags" v-model="enrollTags" :placeholder="$t('fleet.nodes.enroll.tagsPlaceholder')" />
+          </div>
+          <div class="grid gap-2 lg:col-span-2">
+            <Label for="enroll-comment">{{ $t('fleet.nodes.enroll.comment') }}</Label>
+            <Input id="enroll-comment" v-model="enrollComment" :placeholder="$t('common.misc.optional')" />
           </div>
           <div class="grid gap-2">
             <Label for="enroll-wg">{{ $t('fleet.nodes.enroll.wireguardIp') }}</Label>
@@ -664,12 +686,23 @@ function openTerminal(node: Node) {
           </div>
         </div>
 
-        <div class="grid gap-3 rounded-lg border border-border bg-muted/20 p-3">
-          <div>
-            <Label>{{ $t('fleet.nodes.enroll.agentProfile') }}</Label>
-            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.agentProfileHint') }}</p>
-          </div>
-          <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="rounded-lg border border-border bg-background/70">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
+            :aria-expanded="enrollAdvancedOpen"
+            @click="enrollAdvancedOpen = !enrollAdvancedOpen"
+          >
+            <span>
+              <span class="block text-sm font-medium">{{ $t('fleet.nodes.enroll.agentProfile') }}</span>
+              <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.agentProfileHint') }}</span>
+            </span>
+            <ChevronDown
+              :class="cn('size-4 shrink-0 text-muted-foreground transition-transform', enrollAdvancedOpen && 'rotate-180')"
+              aria-hidden="true"
+            />
+          </button>
+          <div v-if="enrollAdvancedOpen" class="grid gap-2 border-t border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
               <input v-model="enrollAllowExec" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec" />
               <span>
@@ -713,7 +746,7 @@ function openTerminal(node: Node) {
               </span>
             </label>
           </div>
-          <div class="grid gap-3 md:grid-cols-4">
+          <div v-if="enrollAdvancedOpen" class="grid gap-3 px-3 pb-3 md:grid-cols-4">
             <div class="grid gap-1.5">
               <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
               <Select v-model="enrollTerminalTransport" :disabled="!enrollAllowTerminal">

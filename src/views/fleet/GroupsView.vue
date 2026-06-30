@@ -9,7 +9,6 @@ import {
   Plus,
   RotateCw,
   Search,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-vue-next";
@@ -153,6 +152,7 @@ function loadForm(g?: GroupView) {
   form.selContinent = csv(g?.selector?.match_continent);
   form.system = !!g?.system;
   memberSearch.value = "";
+  memberQuickTag.value = "";
   previewCount.value = null;
 }
 
@@ -177,6 +177,7 @@ const parentOptions = computed(() =>
 /* Explicit membership picker                                         */
 /* ----------------------------------------------------------------- */
 const memberSearch = ref("");
+const memberQuickTag = ref("");
 
 const filteredNodes = computed(() => {
   const q = memberSearch.value.trim().toLowerCase();
@@ -185,6 +186,23 @@ const filteredNodes = computed(() => {
   return base.filter((n) =>
     [n.name, n.id, n.role].filter(Boolean).some((v) => v!.toLowerCase().includes(q)),
   );
+});
+
+const tagOptions = computed(() => {
+  const tags = new Set<string>();
+  for (const node of nodes.value) {
+    for (const tag of node.tags ?? []) {
+      const trimmed = tag.trim();
+      if (trimmed) tags.add(trimmed);
+    }
+  }
+  return [...tags].sort((a, b) => a.localeCompare(b));
+});
+
+const quickTagMatches = computed(() => {
+  const tag = memberQuickTag.value;
+  if (!tag) return [];
+  return nodes.value.filter((node) => (node.tags ?? []).includes(tag));
 });
 
 function isMember(id: string): boolean {
@@ -199,6 +217,13 @@ function setMember(id: string, on: boolean) {
     // A leader must stay an explicit member; drop it when removed.
     if (form.leaderId === id) form.leaderId = LEADER_NONE;
   }
+}
+
+function selectMembersByTag() {
+  if (!memberQuickTag.value) return;
+  const next = new Set(form.members);
+  for (const node of quickTagMatches.value) next.add(node.id);
+  form.members = [...next].sort((a, b) => nodeLabel(a).localeCompare(nodeLabel(b)));
 }
 
 /** Leader candidates are exactly the group's explicit members. */
@@ -259,10 +284,9 @@ watch(
 );
 
 /* ----------------------------------------------------------------- */
-/* Save / delete / seed                                              */
+/* Save / delete                                                      */
 /* ----------------------------------------------------------------- */
 const saving = ref(false);
-const seeding = ref(false);
 
 const trimmedName = computed(() => form.name.trim());
 const effectiveSlug = computed(() => form.slug.trim() || slugify(form.name));
@@ -328,20 +352,6 @@ async function confirmDelete() {
   }
 }
 
-async function seedFromTags() {
-  if (!canAdmin.value) return;
-  seeding.value = true;
-  try {
-    const res = await api.groups.seed();
-    toast.success(t("fleet.groups.toast.seeded", { created: res.created, skipped: res.skipped }));
-    await groupsQuery.refresh();
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.groups.toast.seedFailed"));
-  } finally {
-    seeding.value = false;
-  }
-}
-
 // Deep-link: /groups?selected=<id> pre-selects a group once the list loads (e.g.
 // arriving from a node's group chip). It never clobbers an in-progress edit.
 watch(
@@ -372,10 +382,6 @@ watch(
         >
           <RotateCw :class="cn('size-4', groupsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
-        </Button>
-        <Button v-if="canAdmin" variant="outline" size="sm" :disabled="seeding" @click="seedFromTags">
-          <Sparkles class="size-4" aria-hidden="true" />
-          {{ $t('fleet.groups.generateFromTags') }}
         </Button>
         <Button v-if="canAdmin" size="sm" @click="startCreate">
           <Plus class="size-4" aria-hidden="true" />
@@ -525,6 +531,36 @@ watch(
                   <span class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersCount', { n: form.members.length }) }}</span>
                 </div>
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersHint') }}</p>
+                <div
+                  v-if="tagOptions.length"
+                  class="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-2 sm:flex-row sm:items-center"
+                >
+                  <div class="grid flex-1 gap-1.5">
+                    <Label class="text-xs">{{ $t('fleet.groups.quickTag') }}</Label>
+                    <Select v-model="memberQuickTag">
+                      <SelectTrigger class="w-full">
+                        <SelectValue :placeholder="$t('fleet.groups.quickTagPlaceholder')" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="tag in tagOptions" :key="tag" :value="tag">{{ tag }}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div class="flex items-center gap-2 sm:self-end">
+                    <span class="text-xs text-muted-foreground">
+                      {{ $t('fleet.groups.taggedMatches', { n: quickTagMatches.length }) }}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      :disabled="!memberQuickTag || quickTagMatches.length === 0"
+                      @click="selectMembersByTag"
+                    >
+                      {{ $t('fleet.groups.selectTagged') }}
+                    </Button>
+                  </div>
+                </div>
                 <div class="relative">
                   <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                   <Input v-model="memberSearch" class="pl-9" :placeholder="$t('fleet.groups.memberSearch')" />

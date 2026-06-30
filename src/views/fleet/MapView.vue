@@ -56,6 +56,8 @@ const asOrg = ref("");
 const pendingSave = ref(false);
 const resolvingNodeId = ref("");
 const resolvingAll = ref(false);
+const hoveredNodeId = ref("");
+const mapZoom = ref(1);
 
 const nodes = computed(() => geoQuery.data.value ?? []);
 const withGeo = computed(() =>
@@ -91,6 +93,17 @@ const plotted = computed(() => {
     };
   });
 });
+
+const mapZoomTransform = computed(() => {
+  const z = mapZoom.value;
+  const tx = (MAP_WIDTH * (1 - z)) / 2;
+  const ty = (MAP_HEIGHT * (1 - z)) / 2;
+  return `translate(${tx} ${ty}) scale(${z})`;
+});
+
+const hoveredPoint = computed(() =>
+  plotted.value.find((point) => point.node.id === hoveredNodeId.value),
+);
 
 const selectedNode = computed<NodeGeoView | undefined>(() =>
   nodes.value.find((node) => node.id === selectedNodeId.value),
@@ -149,6 +162,18 @@ function sourceLabel(source?: string) {
   if (source === "auto") return t("fleet.map.source.auto");
   if (source === "operator" || !source) return t("fleet.map.source.operator");
   return source;
+}
+
+function setZoom(next: number) {
+  mapZoom.value = Math.max(1, Math.min(3, Math.round(next * 10) / 10));
+}
+
+function zoomedX(x: number) {
+  return MAP_WIDTH / 2 + (x - MAP_WIDTH / 2) * mapZoom.value;
+}
+
+function zoomedY(y: number) {
+  return MAP_HEIGHT / 2 + (y - MAP_HEIGHT / 2) * mapZoom.value;
 }
 
 function selectNode(node: NodeGeoView) {
@@ -302,42 +327,42 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
       </template>
     </PageHeader>
 
-    <div class="grid gap-3 md:grid-cols-4">
-      <div class="rounded-lg border border-border bg-card p-4">
+    <div class="grid gap-2 md:grid-cols-4">
+      <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.coverage') }}</p>
-        <div class="mt-2 flex items-end justify-between gap-3">
-          <p class="text-2xl font-semibold">{{ coveragePercent }}%</p>
+        <div class="mt-1.5 flex items-end justify-between gap-3">
+          <p class="text-xl font-semibold">{{ coveragePercent }}%</p>
           <p class="text-xs text-muted-foreground">{{ withGeo.length }}/{{ nodes.length }}</p>
         </div>
-        <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
           <div class="h-full rounded-full bg-primary" :style="{ width: `${coveragePercent}%` }" />
         </div>
       </div>
-      <div class="rounded-lg border border-border bg-card p-4">
+      <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.online') }}</p>
-        <div class="mt-2 flex items-end justify-between gap-3">
-          <p class="text-2xl font-semibold">{{ onlineCount }}</p>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <p class="text-xl font-semibold">{{ onlineCount }}</p>
           <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.offline', { count: offlineCount }) }}</p>
         </div>
       </div>
-      <div class="rounded-lg border border-border bg-card p-4">
+      <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.regions') }}</p>
-        <div class="mt-2 flex items-end justify-between gap-3">
-          <p class="text-2xl font-semibold">{{ countryCount }}</p>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <p class="text-xl font-semibold">{{ countryCount }}</p>
           <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.countries') }}</p>
         </div>
       </div>
-      <div class="rounded-lg border border-border bg-card p-4">
+      <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.sources') }}</p>
-        <div class="mt-2 flex items-end justify-between gap-3">
-          <p class="text-2xl font-semibold">{{ autoCount }}</p>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <p class="text-xl font-semibold">{{ autoCount }}</p>
           <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.manual', { count: manualCount }) }}</p>
         </div>
       </div>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-      <Card class="overflow-hidden">
+    <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <Card class="self-start overflow-hidden">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -385,64 +410,70 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" fill="url(#fleet-ocean)" />
                 <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" fill="url(#fleet-grid)" />
 
-                <g opacity="0.34">
-                  <path v-for="x in [125, 250, 375, 500, 625, 750, 875]" :key="`meridian-${x}`" :d="`M ${x} 32 V 488`" stroke="oklch(0.84 0.035 250 / 0.28)" stroke-width="1" />
-                  <path v-for="y in [104, 208, 312, 416]" :key="`parallel-${y}`" :d="`M 42 ${y} H 958`" stroke="oklch(0.84 0.035 250 / 0.22)" stroke-width="1" />
-                </g>
+                <g :transform="mapZoomTransform">
+                  <g opacity="0.34">
+                    <path v-for="x in [125, 250, 375, 500, 625, 750, 875]" :key="`meridian-${x}`" :d="`M ${x} 32 V 488`" stroke="oklch(0.84 0.035 250 / 0.28)" stroke-width="1" />
+                    <path v-for="y in [104, 208, 312, 416]" :key="`parallel-${y}`" :d="`M 42 ${y} H 958`" stroke="oklch(0.84 0.035 250 / 0.22)" stroke-width="1" />
+                  </g>
 
-                <g>
-                  <path
-                    v-for="(landPath, index) in landPaths"
-                    :key="`land-${index}`"
-                    :d="landPath"
-                    fill="oklch(0.32 0.03 215 / 0.72)"
-                    stroke="oklch(0.64 0.05 210 / 0.55)"
-                    stroke-width="0.5"
-                    stroke-linejoin="round"
-                    vector-effect="non-scaling-stroke"
-                  />
-                </g>
+                  <g>
+                    <path
+                      v-for="(landPath, index) in landPaths"
+                      :key="`land-${index}`"
+                      :d="landPath"
+                      fill="oklch(0.32 0.03 215 / 0.72)"
+                      stroke="oklch(0.64 0.05 210 / 0.55)"
+                      stroke-width="0.5"
+                      stroke-linejoin="round"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  </g>
 
-                <g v-for="point in plotted" :key="point.node.id">
-                  <!-- subtle expanding pulse for online nodes (the 'live' feel) -->
-                  <circle
-                    v-if="point.node.online"
-                    :cx="point.x"
-                    :cy="point.y"
-                    class="map-ping"
-                    r="2.8"
-                    fill="none"
-                    stroke="oklch(0.8 0.15 162 / 0.5)"
-                    stroke-width="1.2"
-                  />
-                  <g
-                    role="button"
-                    tabindex="0"
-                    class="cursor-pointer outline-none"
-                    :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
-                    @click="selectNode(point.node)"
-                    @keydown.enter.prevent="selectNode(point.node)"
-                    @keydown.space.prevent="selectNode(point.node)"
-                  >
-                    <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
-                    <!-- gentle halo (online) -->
+                  <g v-for="point in plotted" :key="point.node.id">
+                    <!-- subtle expanding pulse for online nodes (the 'live' feel) -->
                     <circle
                       v-if="point.node.online"
                       :cx="point.x"
                       :cy="point.y"
-                      :r="point.selected ? 6 : 5"
-                      :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.24)' : 'oklch(0.8 0.15 162 / 0.13)'"
+                      class="map-ping"
+                      r="2.8"
+                      fill="none"
+                      stroke="oklch(0.8 0.15 162 / 0.5)"
+                      stroke-width="1.2"
                     />
-                    <!-- node dot: small + refined -->
-                    <circle
-                      :cx="point.x"
-                      :cy="point.y"
-                      :r="point.selected ? 4 : 2.8"
-                      :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
-                      :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
-                      :stroke-width="point.selected ? 1.5 : 1"
-                      :opacity="point.node.online ? 1 : 0.82"
-                    />
+                    <g
+                      role="button"
+                      tabindex="0"
+                      class="cursor-pointer outline-none"
+                      :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
+                      @click="selectNode(point.node)"
+                      @mouseenter="hoveredNodeId = point.node.id"
+                      @mouseleave="hoveredNodeId = ''"
+                      @focus="hoveredNodeId = point.node.id"
+                      @blur="hoveredNodeId = ''"
+                      @keydown.enter.prevent="selectNode(point.node)"
+                      @keydown.space.prevent="selectNode(point.node)"
+                    >
+                      <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
+                      <!-- gentle halo (online) -->
+                      <circle
+                        v-if="point.node.online"
+                        :cx="point.x"
+                        :cy="point.y"
+                        :r="point.selected || hoveredNodeId === point.node.id ? 7 : 5"
+                        :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.26)' : 'oklch(0.8 0.15 162 / 0.13)'"
+                      />
+                      <!-- node dot: small + refined -->
+                      <circle
+                        :cx="point.x"
+                        :cy="point.y"
+                        :r="point.selected || hoveredNodeId === point.node.id ? 4.6 : 2.8"
+                        :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
+                        :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
+                        :stroke-width="point.selected ? 1.5 : 1"
+                        :opacity="point.node.online ? 1 : 0.82"
+                      />
+                    </g>
                   </g>
                 </g>
               </svg>
@@ -463,12 +494,64 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   {{ $t('fleet.map.legend.offline') }}
                 </Badge>
               </div>
+
+              <div class="absolute right-4 top-4 flex items-center gap-1 rounded-md border border-white/10 bg-black/35 p-1 backdrop-blur">
+                <button
+                  type="button"
+                  class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
+                  :disabled="mapZoom <= 1"
+                  :aria-label="$t('fleet.map.zoomOut')"
+                  @click="setZoom(mapZoom - 0.2)"
+                >
+                  -
+                </button>
+                <span class="min-w-10 text-center text-xs tabular text-white/70">{{ Math.round(mapZoom * 100) }}%</span>
+                <button
+                  type="button"
+                  class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
+                  :disabled="mapZoom >= 3"
+                  :aria-label="$t('fleet.map.zoomIn')"
+                  @click="setZoom(mapZoom + 0.2)"
+                >
+                  +
+                </button>
+              </div>
+
+              <div
+                v-if="hoveredPoint"
+                class="pointer-events-none absolute z-10 w-64 rounded-lg border border-white/10 bg-black/75 p-3 text-xs text-white shadow-xl backdrop-blur"
+                :style="{
+                  left: `${(zoomedX(hoveredPoint.x) / MAP_WIDTH) * 100}%`,
+                  top: `${(zoomedY(hoveredPoint.y) / MAP_HEIGHT) * 100}%`,
+                  transform: 'translate(-50%, calc(-100% - 12px))',
+                }"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-semibold">{{ hoveredPoint.node.name || hoveredPoint.node.id }}</p>
+                    <p class="mt-1 text-white/65">{{ hoveredPoint.label }}</p>
+                  </div>
+                  <Badge variant="secondary" class="shrink-0 bg-white/10 text-white hover:bg-white/10">
+                    {{ hoveredPoint.node.online ? $t('common.status.online') : $t('common.status.offline') }}
+                  </Badge>
+                </div>
+                <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-white/70">
+                  <span>{{ $t('fleet.map.hover.ip') }}</span>
+                  <span class="truncate text-right font-mono">{{ lookupIP(hoveredPoint.node) || '—' }}</span>
+                  <span>{{ $t('fleet.map.hover.source') }}</span>
+                  <span class="truncate text-right">{{ sourceLabel(hoveredPoint.node.geo?.source) }}</span>
+                  <span>{{ $t('fleet.map.hover.coords') }}</span>
+                  <span class="truncate text-right font-mono">
+                    {{ hoveredPoint.node.geo?.lat?.toFixed(2) }}, {{ hoveredPoint.node.geo?.lon?.toFixed(2) }}
+                  </span>
+                </div>
+              </div>
             </div>
           </DataState>
         </CardContent>
       </Card>
 
-      <div class="space-y-6">
+      <div class="space-y-4">
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">

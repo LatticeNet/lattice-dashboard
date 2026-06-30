@@ -132,6 +132,7 @@ export const api = {
     enrollToken: (input: {
       node_id?: string;
       name: string;
+      comment?: string;
       tags?: string[];
       role?: string;
       wireguard_ip?: string;
@@ -153,8 +154,8 @@ export const api = {
     // Edit a node's operator-owned identity (name / role / tags) after enrollment.
     // Mirrors `disable`: POST + CSRF + typed-error handling via `http`. Omitted
     // fields are left unchanged server-side; returns the persisted identity.
-    update: (input: { node_id: string; name?: string; role?: string; tags?: string[] }) =>
-      http.post<{ ok: boolean; name: string; role: string; tags: string[] }>(
+    update: (input: { node_id: string; name?: string; role?: string; comment?: string; tags?: string[] }) =>
+      http.post<{ ok: boolean; name: string; role: string; comment?: string; tags: string[] }>(
         "/api/nodes/update",
         input,
       ),

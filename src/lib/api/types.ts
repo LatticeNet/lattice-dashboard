@@ -58,6 +58,7 @@ export interface HostFacts {
   os?: string;
   platform?: string;
   platform_version?: string;
+  kernel_version?: string;
   kernel?: string;
   arch?: string;
   cpu_cores?: number;
@@ -108,6 +109,7 @@ export interface AgentLaunchConfig {
 export interface Node {
   id: string;
   name: string;
+  comment?: string;
   tags?: string[];
   role?: string;
   wireguard_ip?: string;

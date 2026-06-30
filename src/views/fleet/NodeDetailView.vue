@@ -20,7 +20,6 @@ import {
   ArrowLeft,
   ArrowUp,
   Boxes,
-  Check,
   Clock,
   Crown,
   DownloadCloud,
@@ -302,44 +301,26 @@ const sparkPoints = computed(() => {
 const groupBadges = computed(() => {
   const ids = node.value?.group_ids ?? [];
   const all = groupsQuery.data.value ?? [];
-  return ids.map((id) => {
-    const g = all.find((x) => x.id === id);
-    return { id, name: g?.name ?? id, color: g?.color, leader: !!g && g.leader_id === nodeId.value };
-  });
+  return ids
+    .map((id) => {
+      const g = all.find((x) => x.id === id);
+      return { id, name: g?.name ?? id, color: g?.color, leader: !!g && g.leader_id === nodeId.value };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 });
-
-/* ----------------------------------------------------------------- */
-/* Group membership management (Slice 4). api.groups.members needs    */
-/* group:admin server-side, so the editor is gated on that scope.     */
-/* ----------------------------------------------------------------- */
-const canAdminGroups = computed(() => auth.can("group:admin"));
-const allGroups = computed<GroupView[]>(() => groupsQuery.data.value ?? []);
-const membershipPending = ref<string | undefined>(undefined);
-
-/** Explicit (canonical) membership — the only thing the members endpoint edits. */
-function isExplicitMember(g: GroupView): boolean {
-  return (g.members ?? []).includes(nodeId.value);
-}
-
-async function toggleGroupMembership(g: GroupView) {
-  if (!canAdminGroups.value || membershipPending.value) return;
-  const adding = !isExplicitMember(g);
-  membershipPending.value = g.id;
-  try {
-    await api.groups.members(g.id, adding ? [nodeId.value] : [], adding ? [] : [nodeId.value]);
-    toast.success(adding ? t("fleet.nodes.detail.groupAdded") : t("fleet.nodes.detail.groupRemoved"));
-    await Promise.all([groupsQuery.refresh(), nodesQuery.refresh()]);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.groupUpdateFailed"));
-  } finally {
-    membershipPending.value = undefined;
-  }
-}
 
 /** Cross-link a group chip to the Groups page with that group pre-selected. */
 function goToGroup(id: string) {
   router.push({ name: "groups", query: { selected: id } });
 }
+
+function goToGroups() {
+  router.push({ name: "groups" });
+}
+
+const displayTags = computed(() =>
+  [...(node.value?.tags ?? [])].sort((a, b) => a.localeCompare(b)),
+);
 
 const nodeDdns = computed(() =>
   (ddnsQuery.data.value ?? []).filter((d) => d.node_id === nodeId.value),
@@ -428,6 +409,7 @@ async function probeSingBox() {
 const editName = ref("");
 const editRole = ref("");
 const editTags = ref<string[]>([]);
+const editComment = ref("");
 const tagDraft = ref("");
 const identityPending = ref(false);
 
@@ -436,7 +418,8 @@ watch(
   () => {
     editName.value = node.value?.name ?? "";
     editRole.value = node.value?.role ?? "";
-    editTags.value = [...(node.value?.tags ?? [])];
+    editTags.value = [...(node.value?.tags ?? [])].sort((a, b) => a.localeCompare(b));
+    editComment.value = node.value?.comment ?? "";
     tagDraft.value = "";
   },
   { immediate: true },
@@ -444,7 +427,9 @@ watch(
 
 function addTag() {
   const v = tagDraft.value.trim();
-  if (v && !editTags.value.includes(v)) editTags.value = [...editTags.value, v];
+  if (v && !editTags.value.includes(v)) {
+    editTags.value = [...editTags.value, v].sort((a, b) => a.localeCompare(b));
+  }
   tagDraft.value = "";
 }
 
@@ -456,12 +441,13 @@ function removeTag(tag: string) {
 const identityDirty = computed(() => {
   const n = node.value;
   if (!n) return false;
-  const tags = n.tags ?? [];
+  const tags = [...(n.tags ?? [])].sort((a, b) => a.localeCompare(b));
   const tagsEqual =
     editTags.value.length === tags.length && editTags.value.every((t, i) => t === tags[i]);
   return (
     editName.value.trim() !== (n.name ?? "") ||
     editRole.value.trim() !== (n.role ?? "") ||
+    editComment.value.trim() !== (n.comment ?? "") ||
     !tagsEqual
   );
 });
@@ -474,11 +460,13 @@ async function saveIdentity() {
       node_id: node.value.id,
       name: editName.value.trim(),
       role: editRole.value.trim(),
+      comment: editComment.value.trim(),
       tags: editTags.value,
     });
     editName.value = res.name;
     editRole.value = res.role;
-    editTags.value = [...(res.tags ?? [])];
+    editComment.value = res.comment ?? "";
+    editTags.value = [...(res.tags ?? [])].sort((a, b) => a.localeCompare(b));
     toast.success(t("fleet.nodes.detail.identitySaved"));
     await nodesQuery.refresh();
   } catch (error) {
@@ -490,6 +478,21 @@ async function saveIdentity() {
   } finally {
     identityPending.value = false;
   }
+}
+
+function displayInternalAddress(value?: string, publicValue?: string): string {
+  if (!value) return "—";
+  if (publicValue && value === publicValue) return t("fleet.nodes.detail.sameAsPublic");
+  return value;
+}
+
+function copyableInternalAddress(value?: string, publicValue?: string): string {
+  if (!value || (publicValue && value === publicValue)) return "";
+  return value;
+}
+
+function hostKernel(facts?: Node["host_facts"]): string {
+  return facts?.kernel_version || facts?.kernel || "";
 }
 
 const pending = ref(false);
@@ -771,7 +774,7 @@ async function resolveGeo() {
         <StatusDot :status="meta.dotStatus" :pulse="isLive" />
         <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
-        <Badge v-for="tag in node.tags ?? []" :key="tag" variant="outline">{{ tag }}</Badge>
+        <Badge v-for="tag in displayTags" :key="tag" variant="outline">{{ tag }}</Badge>
         <button
           v-for="g in groupBadges"
           :key="g.id"
@@ -796,6 +799,13 @@ async function resolveGeo() {
           <Clock class="size-3.5" aria-hidden="true" />
           {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(node.last_seen) }) }}
         </span>
+      </div>
+
+      <div v-if="node.comment" class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+        <p class="flex items-start gap-2">
+          <ScrollText class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span class="whitespace-pre-wrap">{{ node.comment }}</span>
+        </p>
       </div>
 
       <!-- Cross-links to the vertical function views, pre-scoped to this node. -->
@@ -875,6 +885,17 @@ async function resolveGeo() {
                 @keydown.enter.prevent="addTag"
               />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityTagHint') }}</p>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="identity-comment">{{ $t('fleet.nodes.detail.identityComment') }}</Label>
+              <textarea
+                id="identity-comment"
+                v-model="editComment"
+                rows="3"
+                class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                :placeholder="$t('fleet.nodes.detail.identityCommentPlaceholder')"
+              />
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
             </div>
             <div class="flex flex-wrap gap-2">
               <Button size="sm" :disabled="identityPending || !identityDirty" @click="saveIdentity">
@@ -1017,16 +1038,22 @@ async function resolveGeo() {
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ip || '—' }}</p>
+                  <p class="mt-1 truncate font-mono text-sm">{{ displayInternalAddress(node.internal_ip, node.public_ip) }}</p>
                 </div>
-                <CopyButton v-if="node.internal_ip" :value="node.internal_ip" />
+                <CopyButton
+                  v-if="copyableInternalAddress(node.internal_ip, node.public_ip)"
+                  :value="copyableInternalAddress(node.internal_ip, node.public_ip)"
+                />
               </div>
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIpv6') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.internal_ipv6 || '—' }}</p>
+                  <p class="mt-1 truncate font-mono text-sm">{{ displayInternalAddress(node.internal_ipv6, node.public_ipv6) }}</p>
                 </div>
-                <CopyButton v-if="node.internal_ipv6" :value="node.internal_ipv6" />
+                <CopyButton
+                  v-if="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
+                  :value="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
+                />
               </div>
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
@@ -1327,7 +1354,7 @@ async function resolveGeo() {
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factKernel') }}</dt>
-                <dd class="mt-0.5 truncate font-mono text-sm">{{ node.host_facts.kernel || '—' }}</dd>
+                <dd class="mt-0.5 truncate font-mono text-sm">{{ hostKernel(node.host_facts) || '—' }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factArch') }}</dt>
@@ -1396,30 +1423,13 @@ async function resolveGeo() {
             </div>
             <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.ungrouped') }}</p>
 
-            <!-- Membership editor (group:admin): toggle this node in/out of groups. -->
-            <div v-if="canAdminGroups && allGroups.length" class="space-y-2 border-t border-border pt-3">
+            <div class="space-y-2 border-t border-border pt-3">
               <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroups') }}</p>
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroupsHint') }}</p>
-              <div class="flex flex-wrap gap-1.5">
-                <button
-                  v-for="g in allGroups"
-                  :key="g.id"
-                  type="button"
-                  :disabled="membershipPending === g.id"
-                  :aria-pressed="isExplicitMember(g)"
-                  :class="cn(
-                    'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive disabled:opacity-50',
-                    isExplicitMember(g)
-                      ? cn(groupColor(g.color).border, groupColor(g.color).soft, groupColor(g.color).text)
-                      : 'border-border text-muted-foreground hover:bg-muted/40',
-                  )"
-                  @click="toggleGroupMembership(g)"
-                >
-                  <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
-                  {{ g.name }}
-                  <Check v-if="isExplicitMember(g)" class="size-3 shrink-0" aria-hidden="true" />
-                </button>
-              </div>
+              <Button variant="outline" size="sm" @click="goToGroups">
+                <FolderTree class="size-4" aria-hidden="true" />
+                {{ $t('fleet.nodes.detail.editGroupsInGroups') }}
+              </Button>
             </div>
           </CardContent>
         </Card>
