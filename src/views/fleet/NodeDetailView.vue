@@ -332,6 +332,11 @@ const nodeDdns = computed(() =>
 const updatePolicy = computed(() =>
   (agentUpdatesQuery.data.value ?? []).find((p) => p.node_id === nodeId.value),
 );
+const agentAppliedVersionMismatch = computed(() => {
+  const current = node.value?.agent_version?.trim();
+  const applied = updatePolicy.value?.last_applied_version?.trim();
+  return !!current && !!applied && current !== applied;
+});
 const updateTarget = ref("latest");
 const updateAuto = ref(false);
 const updateDraftTouched = ref(false);
@@ -1536,6 +1541,9 @@ async function resolveGeo() {
               </div>
               <p v-if="updatePolicy.last_error" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
                 {{ updatePolicy.last_error }}
+              </p>
+              <p v-else-if="agentAppliedVersionMismatch" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning-foreground">
+                {{ $t('fleet.nodes.detail.agentVersionMismatch', { current: node.agent_version, applied: updatePolicy.last_applied_version }) }}
               </p>
             </template>
             <p v-else class="text-muted-foreground">{{ $t('fleet.nodes.detail.noUpdatePolicy') }}</p>

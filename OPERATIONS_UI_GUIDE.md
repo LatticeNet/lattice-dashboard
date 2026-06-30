@@ -191,6 +191,22 @@ poll and the 15-second update-policy poll continue refreshing read-only display
 data but do not overwrite the unsaved draft. The draft is re-seeded only after a
 node switch or a successful save/plan refresh.
 
+`Last applied task` is task metadata, not the live version proof. The live proof
+is the node's reported `Version`. If the latest successful update task says one
+version but the node still reports another, the dashboard shows a mismatch
+warning. Common causes are legacy services that run the agent from a different
+path, a delayed/rejected restart, or an update task that installed the candidate
+binary somewhere other than the active systemd unit's `ExecStart`.
+
+The server-side update script treats the default install path/service as
+auto-detectable. Before replacing the binary it inspects the running agent parent
+process and its systemd cgroup. If the policy is using the default target, the
+script updates the currently running `lattice-agent` binary path and restarts the
+detected `*.service` unit. This preserves compatibility with both current
+installer layouts (`/opt/lattice/lattice-agent`, `lattice-agent.service`) and
+older custom layouts such as `/opt/lattice/node-agent/lattice-agent` plus
+`lattice-node-agent.service`.
+
 The Agent launch profile behaves the same way: startup flag drafts are seeded
 when entering a node detail page, then protected from routine heartbeat updates.
 This prevents `Allow task execution`, `Allow terminal`, `sing-box discovery`,

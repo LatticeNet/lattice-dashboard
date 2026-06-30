@@ -321,7 +321,7 @@ export default {
         agentVersion: "版本",
         targetVersion: "目标版本",
         targetVersionPlaceholder: "latest 或 0.2.2",
-        lastApplied: "最近应用",
+        lastApplied: "最近应用任务",
         lastPlanned: "最近计划",
         updatesEnabled: "已启用更新",
         autoPlan: "自动更新",
@@ -334,6 +334,8 @@ export default {
         updatePolicySaveFailed: "保存自动更新设置失败",
         updatePlanFailed: "官方更新计划失败",
         updateRequiresExec: "目标 agent 仍需启用 exec + root exec，审批后的更新才能真正应用。",
+        agentVersionMismatch:
+          "最近更新任务报告已应用 {applied}，但该节点当前仍上报 {current}。实际运行的 systemd 服务可能使用了另一个 binary 路径，或服务尚未重启到新版本。",
         ddns: "DDNS 绑定",
         ddnsDesc: "由该节点发布的动态 DNS 记录",
         ddnsLastRun: "最近运行 {time}",

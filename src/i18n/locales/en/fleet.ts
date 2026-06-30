@@ -325,7 +325,7 @@ export default {
         agentVersion: "Version",
         targetVersion: "Target version",
         targetVersionPlaceholder: "latest or 0.2.2",
-        lastApplied: "Last applied",
+        lastApplied: "Last applied task",
         lastPlanned: "Last planned",
         updatesEnabled: "Updates enabled",
         autoPlan: "Auto-update",
@@ -339,6 +339,8 @@ export default {
         updatePolicySaveFailed: "Failed to save auto-update setting",
         updatePlanFailed: "Official update plan failed",
         updateRequiresExec: "The target agent still needs exec + root exec enabled before an approved update can apply.",
+        agentVersionMismatch:
+          "The last update task reported {applied}, but this node is still reporting {current}. The active service may be using a different binary path or has not restarted yet.",
         ddns: "DDNS bindings",
         ddnsDesc: "Dynamic DNS records published from this node",
         ddnsLastRun: "Last run {time}",
