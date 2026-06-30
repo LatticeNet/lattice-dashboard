@@ -130,7 +130,10 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
 
 function isStaleApprovalError(error: unknown): boolean {
   if (error instanceof ApiError) {
-    return error.status === 409 && error.message.toLowerCase().includes("re-plan");
+    return (
+      error.code === "approval_stale" ||
+      (error.status === 409 && error.message.toLowerCase().includes("re-plan"))
+    );
   }
   return error instanceof Error && error.message.toLowerCase().includes("re-plan");
 }
