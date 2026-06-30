@@ -124,7 +124,14 @@ function collectorVariant(status?: string) {
                 <dd class="flex items-center gap-1.5">
                   <Radar class="size-3.5 text-muted-foreground" aria-hidden="true" />
                   <span class="tabular-nums">{{ p.discovered_count }}</span>
-                  <Badge v-if="p.discovery_status && p.discovery_status !== 'ok'" variant="destructive" class="text-[10px]">{{ p.discovery_status }}</Badge>
+                  <Tooltip v-if="p.discovery_status && p.discovery_status !== 'ok'">
+                    <TooltipTrigger as-child>
+                      <Badge variant="destructive" class="cursor-help text-[10px]">{{ p.discovery_status }}</Badge>
+                    </TooltipTrigger>
+                    <TooltipContent class="max-w-xs whitespace-pre-wrap">
+                      {{ p.discovery_error || p.discovery_status }}
+                    </TooltipContent>
+                  </Tooltip>
                 </dd>
               </div>
               <div>
@@ -144,6 +151,7 @@ function collectorVariant(status?: string) {
             <div v-if="p.config_path" class="font-mono text-xs text-muted-foreground">{{ p.config_path }}</div>
 
             <div v-if="p.last_error" class="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">{{ p.last_error }}</div>
+            <div v-if="p.discovery_error" class="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">{{ p.discovery_error }}</div>
 
             <div class="flex flex-wrap gap-1">
               <span class="text-xs text-muted-foreground">{{ $t('vpnProfiles.capabilities') }}:</span>

@@ -45,6 +45,7 @@ import {
   unwrap,
   ApiError,
   type AgentLaunchConfig,
+  type AgentRuntimeConfig,
   type Node,
   type GroupView,
   type DDNSView,
@@ -218,6 +219,81 @@ function launchPayload(): AgentLaunchConfig {
   };
 }
 
+type AgentProfileLike = AgentLaunchConfig | AgentRuntimeConfig | null | undefined;
+type LaunchSnapshot = {
+  allowExec: boolean;
+  allowRootExec: boolean;
+  noExec: boolean;
+  terminal: "off" | "poll" | "stream";
+  sshAlerts: boolean;
+  singBoxDiscover: boolean;
+  singBoxBin: string;
+  usageFile: string;
+  usageUrl: string;
+  xrayStats: string;
+};
+
+function launchSnapshot(profile: AgentProfileLike): LaunchSnapshot {
+  const allowTerminal = !!profile?.allow_terminal && !profile?.no_exec;
+  return {
+    allowExec: !!profile?.allow_exec && !profile?.no_exec,
+    allowRootExec: !!profile?.allow_root_exec && !!profile?.allow_exec && !profile?.no_exec,
+    noExec: !!profile?.no_exec,
+    terminal: allowTerminal ? (profile?.terminal_transport === "stream" ? "stream" : "poll") : "off",
+    sshAlerts: !!profile?.ssh_alerts,
+    singBoxDiscover: !!profile?.singbox_discover,
+    singBoxBin: profile?.singbox_discover ? profile?.singbox_bin || "sb" : "",
+    usageFile: profile?.proxy_usage_file || "",
+    usageUrl: profile?.proxy_usage_url || "",
+    xrayStats: profile?.proxy_usage_xray_api || "",
+  };
+}
+
+const launchSnapshotKeys: Array<keyof LaunchSnapshot> = [
+  "allowExec",
+  "allowRootExec",
+  "noExec",
+  "terminal",
+  "sshAlerts",
+  "singBoxDiscover",
+  "singBoxBin",
+  "usageFile",
+  "usageUrl",
+  "xrayStats",
+];
+
+function launchValueLabel(value: LaunchSnapshot[keyof LaunchSnapshot]): string {
+  if (typeof value === "boolean") return value ? t("fleet.nodes.detail.launch.enabled") : t("fleet.nodes.detail.launch.disabled");
+  return String(value || "—");
+}
+
+function launchSnapshotSummary(snapshot?: LaunchSnapshot): string {
+  if (!snapshot) return t("fleet.nodes.detail.launch.runtimeUnknownHint");
+  const parts = [
+    snapshot.noExec ? "no-exec" : snapshot.allowExec ? "exec" : "no task exec",
+    snapshot.allowRootExec ? "root" : "no root",
+    `terminal:${snapshot.terminal}`,
+    snapshot.singBoxDiscover ? "sing-box:on" : "sing-box:off",
+  ];
+  return parts.join(" · ");
+}
+
+const savedLaunchSnapshot = computed(() => launchSnapshot(node.value?.agent_launch));
+const runtimeLaunchSnapshot = computed(() => (node.value?.agent_runtime ? launchSnapshot(node.value.agent_runtime) : undefined));
+const draftLaunchSnapshot = computed(() => launchSnapshot(launchPayload()));
+const launchDirty = computed(() => JSON.stringify(savedLaunchSnapshot.value) !== JSON.stringify(draftLaunchSnapshot.value));
+const launchRuntimeDrift = computed(
+  () => !!runtimeLaunchSnapshot.value && JSON.stringify(runtimeLaunchSnapshot.value) !== JSON.stringify(savedLaunchSnapshot.value),
+);
+const launchDiffSummary = computed(() => {
+  const before = savedLaunchSnapshot.value;
+  const after = draftLaunchSnapshot.value;
+  const diffs = launchSnapshotKeys
+    .filter((key) => before[key] !== after[key])
+    .map((key) => `${key}: ${launchValueLabel(before[key])} -> ${launchValueLabel(after[key])}`);
+  return diffs.length ? diffs.join("; ") : t("fleet.nodes.detail.launch.noDraftChanges");
+});
+
 const reconfigureCommand = computed(() => {
   const result = reconfigureResult.value;
   if (!result) return "";
@@ -376,6 +452,21 @@ function seedUpdateDraft(policy: AgentUpdatePolicy | undefined, id: string) {
 function touchUpdateDraft() {
   updateDraftTouched.value = true;
 }
+
+const savedUpdateSummary = computed(() => {
+  const policy = updatePolicy.value;
+  if (!policy) return t("fleet.nodes.detail.noUpdatePolicy");
+  return `${policy.target_version || "latest"} · ${policy.enabled && policy.auto_plan ? t("fleet.nodes.detail.autoPlan") : t("common.status.disabled")}`;
+});
+
+const draftUpdateSummary = computed(() => `${updateTarget.value.trim() || "latest"} · ${updateAuto.value ? t("fleet.nodes.detail.autoPlan") : t("common.status.disabled")}`);
+
+const updateDirty = computed(() => {
+  const policy = updatePolicy.value;
+  const savedTarget = policy?.target_version || "latest";
+  const savedAuto = !!policy?.enabled && !!policy?.auto_plan;
+  return (updateTarget.value.trim() || "latest") !== savedTarget || updateAuto.value !== savedAuto;
+});
 
 watch(
   [updatePolicy, () => node.value?.id],
@@ -1237,10 +1328,39 @@ async function resolveGeo() {
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.launch.hint') }}</p>
                 </div>
-                <Badge :variant="node.agent_launch?.updated_at ? 'outline' : 'secondary'">
-                  {{ node.agent_launch?.updated_at ? $t('fleet.nodes.detail.launch.profileSaved') : $t('fleet.nodes.detail.launch.profileUnknown') }}
-                </Badge>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <Badge :variant="node.agent_launch?.updated_at ? 'outline' : 'secondary'">
+                    {{ node.agent_launch?.updated_at ? $t('fleet.nodes.detail.launch.profileSaved') : $t('fleet.nodes.detail.launch.profileUnknown') }}
+                  </Badge>
+                  <Badge :variant="node.agent_runtime?.reported_at ? 'success' : 'secondary'">
+                    {{ node.agent_runtime?.reported_at ? $t('fleet.nodes.detail.launch.runtimeReported') : $t('fleet.nodes.detail.launch.runtimeUnknown') }}
+                  </Badge>
+                  <Badge v-if="launchDirty" variant="outline">
+                    {{ $t('fleet.nodes.detail.launch.unsavedDraft') }}
+                  </Badge>
+                  <Badge v-if="launchRuntimeDrift" variant="secondary">
+                    {{ $t('fleet.nodes.detail.launch.runtimeDrift') }}
+                  </Badge>
+                </div>
               </div>
+
+              <div class="grid gap-2 text-xs md:grid-cols-3">
+                <div class="rounded-md border border-border bg-background/60 p-2">
+                  <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.runtimeNow') }}</p>
+                  <p class="mt-1 text-foreground">{{ launchSnapshotSummary(runtimeLaunchSnapshot) }}</p>
+                </div>
+                <div class="rounded-md border border-border bg-background/60 p-2">
+                  <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.savedDesired') }}</p>
+                  <p class="mt-1 text-foreground">{{ launchSnapshotSummary(savedLaunchSnapshot) }}</p>
+                </div>
+                <div :class="cn('rounded-md border p-2', launchDirty ? 'border-warning/50 bg-warning/5' : 'border-border bg-background/60')">
+                  <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.draft') }}</p>
+                  <p class="mt-1 text-foreground">{{ launchSnapshotSummary(draftLaunchSnapshot) }}</p>
+                </div>
+              </div>
+              <p class="text-xs" :class="launchDirty ? 'text-warning-foreground' : 'text-muted-foreground'">
+                {{ launchDirty ? $t('fleet.nodes.detail.launch.draftChanges', { changes: launchDiffSummary }) : $t('fleet.nodes.detail.launch.noDraftChanges') }}
+              </p>
 
               <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
@@ -1559,6 +1679,14 @@ async function resolveGeo() {
             <p v-else class="text-muted-foreground">{{ $t('fleet.nodes.detail.noUpdatePolicy') }}</p>
 
             <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+              <div class="rounded-md border border-border bg-background/60 p-2 text-xs">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.savedPolicy') }}</span>
+                  <Badge v-if="updateDirty" variant="outline">{{ $t('fleet.nodes.detail.unsavedDraft') }}</Badge>
+                </div>
+                <p class="mt-1 text-foreground">{{ savedUpdateSummary }}</p>
+                <p class="mt-1 text-muted-foreground">{{ $t('fleet.nodes.detail.draftPolicy', { value: draftUpdateSummary }) }}</p>
+              </div>
               <div class="grid gap-2">
                 <Label for="agent-update-target">{{ $t('fleet.nodes.detail.targetVersion') }}</Label>
                 <Input

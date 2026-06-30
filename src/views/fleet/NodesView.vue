@@ -117,6 +117,8 @@ const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
 /** arch/os quick-filter tokens currently engaged (every selected must match). */
 const activeArchOs = ref<string[]>([]);
+type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll" | "singbox";
+const activeAgentCaps = ref<AgentCapabilityFilter[]>([]);
 
 // Seed the status filter from a deep-link (e.g. the Overview "online" KPI tile
 // links to /nodes?status=online), so drill-through lands pre-filtered.
@@ -300,6 +302,49 @@ function toggleArchOs(tok: string) {
   activeArchOs.value = [...next];
 }
 
+const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll", "singbox"];
+
+const availableAgentCaps = computed(() =>
+  AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => nodeMatchesAgentCap(node, cap))),
+);
+
+function nodeAgentProfile(node: Node) {
+  return node.agent_runtime ?? node.agent_launch ?? undefined;
+}
+
+function nodeMatchesAgentCap(node: Node, cap: AgentCapabilityFilter): boolean {
+  const profile = nodeAgentProfile(node);
+  if (!profile) return false;
+  switch (cap) {
+    case "exec":
+      return !!profile.allow_exec && !profile.no_exec;
+    case "root":
+      return !!profile.allow_exec && !!profile.allow_root_exec && !profile.no_exec;
+    case "terminal":
+      return !!profile.allow_terminal && !profile.no_exec;
+    case "stream":
+      return !!profile.allow_terminal && profile.terminal_transport === "stream" && !profile.no_exec;
+    case "poll":
+      return !!profile.allow_terminal && profile.terminal_transport !== "stream" && !profile.no_exec;
+    case "singbox":
+      return !!profile.singbox_discover;
+    default:
+      return false;
+  }
+}
+
+function matchesAgentCaps(node: Node): boolean {
+  if (activeAgentCaps.value.length === 0) return true;
+  return activeAgentCaps.value.every((cap) => nodeMatchesAgentCap(node, cap));
+}
+
+function toggleAgentCap(cap: AgentCapabilityFilter) {
+  const next = new Set(activeAgentCaps.value);
+  if (next.has(cap)) next.delete(cap);
+  else next.add(cap);
+  activeAgentCaps.value = [...next];
+}
+
 const baseSorted = computed(() =>
   [...nodes.value].sort((a, b) => {
     if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
@@ -311,7 +356,7 @@ const baseSorted = computed(() =>
 const sortedNodes = computed(() => {
   const q = search.value.trim().toLowerCase();
   const filtered = baseSorted.value.filter(
-    (n) => matchesStatus(n) && matchesSearch(n) && matchesTags(n) && matchesArchOs(n),
+    (n) => matchesStatus(n) && matchesSearch(n) && matchesTags(n) && matchesArchOs(n) && matchesAgentCaps(n),
   );
   // With an active query, float the best matches up (stable sort keeps the
   // disabled/online/name order from baseSorted for equal scores).
@@ -324,7 +369,8 @@ const hasFilters = computed(
     !!search.value.trim() ||
     statusFilter.value !== "all" ||
     activeTags.value.length > 0 ||
-    activeArchOs.value.length > 0,
+    activeArchOs.value.length > 0 ||
+    activeAgentCaps.value.length > 0,
 );
 /** Raw list non-empty but filters hid everything → distinct no-match state. */
 const noMatches = computed(() => nodes.value.length > 0 && sortedNodes.value.length === 0);
@@ -341,6 +387,7 @@ function clearFilters() {
   statusFilter.value = "all";
   activeTags.value = [];
   activeArchOs.value = [];
+  activeAgentCaps.value = [];
 }
 
 /* ----------------------------------------------------------------- */
@@ -926,6 +973,27 @@ function openTerminal(node: Node) {
                 <span class="hidden sm:inline">{{ $t('fleet.nodes.view.list') }}</span>
               </button>
             </div>
+          </div>
+
+          <div v-if="availableAgentCaps.length" class="flex flex-wrap items-center gap-1.5">
+            <span class="mr-1 text-xs font-medium uppercase text-muted-foreground">
+              {{ $t('fleet.nodes.filters.agentConfig') }}
+            </span>
+            <button
+              v-for="cap in availableAgentCaps"
+              :key="`agent:${cap}`"
+              type="button"
+              :class="cn(
+                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
+                activeAgentCaps.includes(cap)
+                  ? 'border-warning bg-warning/10 text-warning-foreground'
+                  : 'border-border text-muted-foreground hover:bg-muted/40',
+              )"
+              :aria-pressed="activeAgentCaps.includes(cap)"
+              @click="toggleAgentCap(cap)"
+            >
+              {{ $t(`fleet.nodes.filters.agentCaps.${cap}`) }}
+            </button>
           </div>
 
           <div v-if="availableArchOs.length || allTags.length" class="flex flex-wrap items-center gap-1.5">

@@ -65,6 +65,7 @@ let fitAddon: FitAddon | undefined;
 let searchAddon: SearchAddon | undefined;
 let webglAddon: WebglAddon | undefined;
 let resizeObserver: ResizeObserver | undefined;
+let pasteListener: ((event: ClipboardEvent) => void) | undefined;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let polling = false; // single-flight guard: at most one events request in flight
 let pollGen = 0; // bumped on (re)start so a superseded in-flight poll won't reschedule
@@ -78,6 +79,8 @@ let lastRows = 0;
 let disposed = false;
 let closedPollsRemaining = 0;
 let closedEmittedFor = "";
+let lastPastedText = "";
+let lastPastedAt = 0;
 
 // --- WebSocket (stream) transport state ---
 let ws: WebSocket | undefined;
@@ -165,6 +168,8 @@ function initTerminal() {
   );
 
   terminal.open(container.value);
+  pasteListener = handlePasteEvent;
+  container.value.addEventListener("paste", pasteListener, true);
 
   // Renderer chain: WebGL primary (GPU-accelerated, smooth under heavy output
   // like journalctl -f / build logs), with the built-in DOM renderer as the
@@ -218,6 +223,8 @@ function handleKeyEvent(e: KeyboardEvent): boolean {
     return false;
   }
   if (combo && key === "v") {
+    e.preventDefault();
+    e.stopPropagation();
     void pasteFromClipboard();
     return false;
   }
@@ -237,6 +244,15 @@ async function pasteFromClipboard() {
   }
 }
 
+function handlePasteEvent(event: ClipboardEvent) {
+  if (!terminal || props.disabled) return;
+  const text = event.clipboardData?.getData("text/plain") ?? "";
+  if (!text) return;
+  event.preventDefault();
+  event.stopPropagation();
+  doPaste(text);
+}
+
 // doPaste routes through xterm's paste pipeline so bracketed-paste (DECSET 2004)
 // is honored when the remote app supports it: a multiline paste is then
 // delivered atomically and does NOT auto-execute. When the app does NOT enable
@@ -244,11 +260,15 @@ async function pasteFromClipboard() {
 // trailing newline cannot silently run commands.
 function doPaste(text: string) {
   if (!terminal) return;
+  const now = Date.now();
+  if (text === lastPastedText && now - lastPastedAt < 800) return;
   const multiline = /\n/.test(text.replace(/\n+$/, ""));
   const bracketed = terminal.modes?.bracketedPasteMode === true;
   if (multiline && !bracketed) {
     if (!window.confirm(t("operations.terminal.multilinePasteConfirm"))) return;
   }
+  lastPastedText = text;
+  lastPastedAt = now;
   terminal.paste(text);
 }
 
@@ -293,12 +313,16 @@ function disposeTerminal() {
   closeWs();
   if (inputTimer) clearTimeout(inputTimer);
   if (resizeTimer) clearTimeout(resizeTimer);
+  if (pasteListener && container.value) {
+    container.value.removeEventListener("paste", pasteListener, true);
+  }
   resizeObserver?.disconnect();
   webglAddon?.dispose();
   terminal?.dispose();
   pollTimer = undefined;
   inputTimer = undefined;
   resizeTimer = undefined;
+  pasteListener = undefined;
   resizeObserver = undefined;
   terminal = undefined;
   fitAddon = undefined;

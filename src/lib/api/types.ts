@@ -106,6 +106,23 @@ export interface AgentLaunchConfig {
   updated_at?: string;
 }
 
+export interface AgentRuntimeConfig {
+  allow_exec?: boolean;
+  allow_root_exec?: boolean;
+  no_exec?: boolean;
+  allow_terminal?: boolean;
+  terminal_transport?: "poll" | "stream" | string;
+  ssh_alerts?: boolean;
+  singbox_discover?: boolean;
+  singbox_bin?: string;
+  proxy_usage_file?: string;
+  proxy_usage_url?: string;
+  proxy_usage_xray_api?: string;
+  proxy_usage_xray_bin?: string;
+  proxy_usage_xray_pattern?: string;
+  reported_at?: string;
+}
+
 export interface Node {
   id: string;
   name: string;
@@ -127,6 +144,7 @@ export interface Node {
   geo?: NodeGeo;
   agent_debug?: AgentDebugPolicy;
   agent_launch?: AgentLaunchConfig | null;
+  agent_runtime?: AgentRuntimeConfig | null;
   ip_config?: NodeIPConfig | null;
   group_ids?: string[];
 }
