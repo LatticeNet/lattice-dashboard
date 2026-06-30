@@ -61,6 +61,7 @@ const mapViewport = ref({ scale: 1, x: 0, y: 0 });
 const isPanning = ref(false);
 const panStart = ref({ pointerId: -1, clientX: 0, clientY: 0, x: 0, y: 0, moved: false });
 const suppressMarkerClickUntil = ref(0);
+const locationEditorOpen = ref(false);
 
 const nodes = computed(() => geoQuery.data.value ?? []);
 const withGeo = computed(() =>
@@ -112,6 +113,11 @@ const selectedNode = computed<NodeGeoView | undefined>(() =>
   nodes.value.find((node) => node.id === selectedNodeId.value),
 );
 const selectedLookupIP = computed(() => (selectedNode.value ? lookupIP(selectedNode.value) : ""));
+const selectedCoordinates = computed(() => {
+  const node = selectedNode.value;
+  if (!node || !hasCoordinates(node)) return "";
+  return `${node.geo?.lat?.toFixed(4)}, ${node.geo?.lon?.toFixed(4)}`;
+});
 
 const regions = computed(() => {
   const groups = new Map<string, { key: string; label: string; nodes: NodeGeoView[]; online: number }>();
@@ -743,93 +749,131 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
       </div>
     </div>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <LocateFixed class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('fleet.map.editor.title') }}
-        </CardTitle>
-        <CardDescription>{{ $t('fleet.map.editor.description') }}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form v-if="canAdminNodes" class="grid gap-4 lg:grid-cols-[minmax(220px,320px)_1fr_auto]" @submit.prevent="saveGeo">
-          <div class="grid gap-2">
-            <Label for="geo-node">{{ $t('fleet.map.editor.node') }}</Label>
-            <select
-              id="geo-node"
-              v-model="selectedNodeId"
-              class="h-9 rounded-md border border-input bg-background px-3 text-sm"
-              @change="selectedNode && selectNode(selectedNode)"
-            >
-              <option value="">{{ $t('fleet.map.editor.selectNode') }}</option>
-              <option v-for="node in nodes" :key="node.id" :value="node.id">
-                {{ node.name || node.id }}
-              </option>
-            </select>
-            <div v-if="selectedNode" class="space-y-1 text-xs text-muted-foreground">
-              <p>{{ selectedLookupIP || $t('fleet.map.unlocated.noIp') }}</p>
-              <p v-if="selectedNode.geo?.updated_at">
-                {{ $t('fleet.map.editor.lastUpdated', { time: formatDateTime(selectedNode.geo.updated_at) }) }}
-              </p>
-              <Badge v-if="selectedNode.geo" variant="outline">{{ sourceLabel(selectedNode.geo.source) }}</Badge>
-            </div>
+    <Card class="overflow-hidden">
+      <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex min-w-0 items-start gap-3">
+          <div class="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <LocateFixed class="size-4" aria-hidden="true" />
           </div>
-
-          <div class="grid gap-3 md:grid-cols-4">
-            <div class="grid gap-2">
-              <Label for="geo-lat">{{ $t('fleet.map.editor.latitude') }}</Label>
-              <Input id="geo-lat" v-model="lat" inputmode="decimal" placeholder="37.7749" />
+          <div class="min-w-0 space-y-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="font-medium leading-none">{{ $t('fleet.map.editor.title') }}</p>
+              <Badge v-if="selectedNode?.geo" variant="outline">{{ sourceLabel(selectedNode.geo.source) }}</Badge>
+              <Badge v-else variant="outline">{{ $t('fleet.map.noCoordinates') }}</Badge>
             </div>
-            <div class="grid gap-2">
-              <Label for="geo-lon">{{ $t('fleet.map.editor.longitude') }}</Label>
-              <Input id="geo-lon" v-model="lon" inputmode="decimal" placeholder="-122.4194" />
-            </div>
-            <div class="grid gap-2">
-              <Label for="geo-country">{{ $t('fleet.map.editor.country') }}</Label>
-              <Input id="geo-country" v-model="country" maxlength="2" placeholder="US" />
-            </div>
-            <div class="grid gap-2">
-              <Label for="geo-region">{{ $t('fleet.map.editor.region') }}</Label>
-              <Input id="geo-region" v-model="region" :placeholder="$t('fleet.map.editor.regionPlaceholder')" />
-            </div>
-            <div class="grid gap-2">
-              <Label for="geo-city">{{ $t('fleet.map.editor.city') }}</Label>
-              <Input id="geo-city" v-model="city" :placeholder="$t('fleet.map.editor.cityPlaceholder')" />
-            </div>
-            <div class="grid gap-2">
-              <Label for="geo-provider">{{ $t('fleet.map.editor.provider') }}</Label>
-              <Input id="geo-provider" v-model="provider" :placeholder="$t('fleet.map.editor.providerPlaceholder')" />
-            </div>
-            <div class="grid gap-2">
-              <Label for="geo-asn">{{ $t('fleet.map.editor.asn') }}</Label>
-              <Input id="geo-asn" v-model="asn" inputmode="numeric" />
-            </div>
-            <div class="grid gap-2">
-              <Label for="geo-asorg">{{ $t('fleet.map.editor.asOrg') }}</Label>
-              <Input id="geo-asorg" v-model="asOrg" />
-            </div>
+            <p class="truncate text-sm text-muted-foreground">
+              <template v-if="selectedNode">
+                {{ selectedNode.name || selectedNode.id }}
+                <span class="text-muted-foreground/70"> · </span>
+                {{ selectedCoordinates || locationLabel(selectedNode) }}
+                <span v-if="selectedLookupIP" class="text-muted-foreground/70"> · {{ selectedLookupIP }}</span>
+              </template>
+              <template v-else>
+                {{ $t('fleet.map.editor.description') }}
+              </template>
+            </p>
           </div>
-
-          <div class="flex flex-col gap-2 lg:items-end lg:justify-end">
-            <Button type="button" variant="outline" :disabled="!selectedNodeId || !selectedLookupIP || resolvingNodeId === selectedNodeId" @click="resolveSelected">
-              <Crosshair :class="cn('size-4', resolvingNodeId === selectedNodeId && 'animate-spin')" aria-hidden="true" />
-              {{ $t('fleet.map.editor.auto') }}
-            </Button>
-            <Button type="submit" :disabled="pendingSave || !selectedNodeId">
-              <RefreshCw v-if="pendingSave" class="size-4 animate-spin" aria-hidden="true" />
-              <LocateFixed v-else class="size-4" aria-hidden="true" />
-              {{ $t('fleet.map.editor.save') }}
-            </Button>
-            <Button type="button" variant="outline" :disabled="pendingSave || !selectedNodeId" @click="clearGeo">
-              <Trash2 class="size-4" aria-hidden="true" />
-              {{ $t('fleet.map.editor.clear') }}
-            </Button>
-          </div>
-        </form>
-        <div v-else class="rounded-md border border-border p-4 text-sm text-muted-foreground">
-          {{ $t('fleet.map.editor.adminRequired') }}
         </div>
-      </CardContent>
+
+        <div class="flex flex-wrap items-center gap-2 sm:justify-end">
+          <Button
+            v-if="canAdminNodes"
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="!selectedNodeId || !selectedLookupIP || resolvingNodeId === selectedNodeId"
+            @click="resolveSelected"
+          >
+            <Crosshair :class="cn('size-4', resolvingNodeId === selectedNodeId && 'animate-spin')" aria-hidden="true" />
+            {{ $t('fleet.map.editor.auto') }}
+          </Button>
+          <Button type="button" variant="outline" size="sm" @click="locationEditorOpen = !locationEditorOpen">
+            {{ locationEditorOpen ? $t('common.actions.close') : $t('fleet.map.editor.title') }}
+          </Button>
+        </div>
+      </div>
+
+      <div
+        class="grid transition-[grid-template-rows] duration-200 ease-out"
+        :class="locationEditorOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+      >
+        <div class="overflow-hidden">
+          <CardContent class="border-t border-border pt-4">
+            <form v-if="canAdminNodes" class="grid gap-4 lg:grid-cols-[minmax(220px,320px)_1fr_auto]" @submit.prevent="saveGeo">
+              <div class="grid gap-2">
+                <Label for="geo-node">{{ $t('fleet.map.editor.node') }}</Label>
+                <select
+                  id="geo-node"
+                  v-model="selectedNodeId"
+                  class="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  @change="selectedNode && selectNode(selectedNode)"
+                >
+                  <option value="">{{ $t('fleet.map.editor.selectNode') }}</option>
+                  <option v-for="node in nodes" :key="node.id" :value="node.id">
+                    {{ node.name || node.id }}
+                  </option>
+                </select>
+                <div v-if="selectedNode" class="space-y-1 text-xs text-muted-foreground">
+                  <p>{{ selectedLookupIP || $t('fleet.map.unlocated.noIp') }}</p>
+                  <p v-if="selectedNode.geo?.updated_at">
+                    {{ $t('fleet.map.editor.lastUpdated', { time: formatDateTime(selectedNode.geo.updated_at) }) }}
+                  </p>
+                </div>
+              </div>
+
+              <div class="grid gap-3 md:grid-cols-4">
+                <div class="grid gap-2">
+                  <Label for="geo-lat">{{ $t('fleet.map.editor.latitude') }}</Label>
+                  <Input id="geo-lat" v-model="lat" inputmode="decimal" placeholder="37.7749" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-lon">{{ $t('fleet.map.editor.longitude') }}</Label>
+                  <Input id="geo-lon" v-model="lon" inputmode="decimal" placeholder="-122.4194" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-country">{{ $t('fleet.map.editor.country') }}</Label>
+                  <Input id="geo-country" v-model="country" maxlength="2" placeholder="US" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-region">{{ $t('fleet.map.editor.region') }}</Label>
+                  <Input id="geo-region" v-model="region" :placeholder="$t('fleet.map.editor.regionPlaceholder')" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-city">{{ $t('fleet.map.editor.city') }}</Label>
+                  <Input id="geo-city" v-model="city" :placeholder="$t('fleet.map.editor.cityPlaceholder')" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-provider">{{ $t('fleet.map.editor.provider') }}</Label>
+                  <Input id="geo-provider" v-model="provider" :placeholder="$t('fleet.map.editor.providerPlaceholder')" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-asn">{{ $t('fleet.map.editor.asn') }}</Label>
+                  <Input id="geo-asn" v-model="asn" inputmode="numeric" />
+                </div>
+                <div class="grid gap-2">
+                  <Label for="geo-asorg">{{ $t('fleet.map.editor.asOrg') }}</Label>
+                  <Input id="geo-asorg" v-model="asOrg" />
+                </div>
+              </div>
+
+              <div class="flex flex-col gap-2 lg:items-end lg:justify-end">
+                <Button type="submit" :disabled="pendingSave || !selectedNodeId">
+                  <RefreshCw v-if="pendingSave" class="size-4 animate-spin" aria-hidden="true" />
+                  <LocateFixed v-else class="size-4" aria-hidden="true" />
+                  {{ $t('fleet.map.editor.save') }}
+                </Button>
+                <Button type="button" variant="outline" :disabled="pendingSave || !selectedNodeId" @click="clearGeo">
+                  <Trash2 class="size-4" aria-hidden="true" />
+                  {{ $t('fleet.map.editor.clear') }}
+                </Button>
+              </div>
+            </form>
+            <div v-else class="rounded-md border border-border p-4 text-sm text-muted-foreground">
+              {{ $t('fleet.map.editor.adminRequired') }}
+            </div>
+          </CardContent>
+        </div>
+      </div>
     </Card>
   </div>
 </template>

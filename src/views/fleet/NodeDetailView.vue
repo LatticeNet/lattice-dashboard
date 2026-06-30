@@ -180,23 +180,25 @@ const launchPlatform = ref<"linux" | "manual">("linux");
 const reconfigurePending = ref(false);
 const reconfigureResult = ref<{ command: string; commands?: Record<string, string>; agent_launch?: AgentLaunchConfig } | undefined>();
 
+function seedLaunchDraft(n?: Node) {
+  const launch = n?.agent_launch;
+  launchAllowExec.value = !!launch?.allow_exec;
+  launchAllowRootExec.value = !!launch?.allow_root_exec;
+  launchNoExec.value = !!launch?.no_exec;
+  launchAllowTerminal.value = !!launch?.allow_terminal;
+  launchTerminalTransport.value = launch?.terminal_transport === "stream" ? "stream" : "poll";
+  launchSSHAlerts.value = !!launch?.ssh_alerts;
+  launchSingBoxDiscover.value = !!launch?.singbox_discover;
+  launchSingBoxBin.value = launch?.singbox_bin || "sb";
+  launchProxyUsageFile.value = launch?.proxy_usage_file || "";
+  launchProxyUsageURL.value = launch?.proxy_usage_url || "";
+  launchProxyUsageXrayAPI.value = launch?.proxy_usage_xray_api || "";
+  reconfigureResult.value = undefined;
+}
+
 watch(
-  node,
-  (n) => {
-    const launch = n?.agent_launch;
-    launchAllowExec.value = !!launch?.allow_exec;
-    launchAllowRootExec.value = !!launch?.allow_root_exec;
-    launchNoExec.value = !!launch?.no_exec;
-    launchAllowTerminal.value = !!launch?.allow_terminal;
-    launchTerminalTransport.value = launch?.terminal_transport === "stream" ? "stream" : "poll";
-    launchSSHAlerts.value = !!launch?.ssh_alerts;
-    launchSingBoxDiscover.value = !!launch?.singbox_discover;
-    launchSingBoxBin.value = launch?.singbox_bin || "sb";
-    launchProxyUsageFile.value = launch?.proxy_usage_file || "";
-    launchProxyUsageURL.value = launch?.proxy_usage_url || "";
-    launchProxyUsageXrayAPI.value = launch?.proxy_usage_xray_api || "";
-    reconfigureResult.value = undefined;
-  },
+  () => node.value?.id,
+  () => seedLaunchDraft(node.value),
   { immediate: true },
 );
 
@@ -332,12 +334,45 @@ const updatePolicy = computed(() =>
 );
 const updateTarget = ref("latest");
 const updateAuto = ref(false);
+const updateDraftTouched = ref(false);
+const updateDraftNodeId = ref("");
+const updateDraftSeedKey = ref("");
+
+function updatePolicySeedKey(policy: AgentUpdatePolicy | undefined, id: string) {
+  return [
+    id,
+    policy?.target_version ?? "",
+    policy?.enabled ? "1" : "0",
+    policy?.auto_plan ? "1" : "0",
+    policy?.last_planned_at ?? "",
+    policy?.last_applied_version ?? "",
+    policy?.last_error ?? "",
+  ].join("|");
+}
+
+function seedUpdateDraft(policy: AgentUpdatePolicy | undefined, id: string) {
+  updateTarget.value = policy?.target_version || "latest";
+  updateAuto.value = !!policy?.enabled && !!policy?.auto_plan;
+  updateDraftTouched.value = false;
+  updateDraftNodeId.value = id;
+  updateDraftSeedKey.value = updatePolicySeedKey(policy, id);
+}
+
+function touchUpdateDraft() {
+  updateDraftTouched.value = true;
+}
 
 watch(
-  [updatePolicy, node],
-  ([policy]) => {
-    updateTarget.value = policy?.target_version || "latest";
-    updateAuto.value = !!policy?.enabled && !!policy?.auto_plan;
+  [updatePolicy, () => node.value?.id],
+  ([policy, id]) => {
+    if (!id) return;
+    const seedKey = updatePolicySeedKey(policy, id);
+    if (updateDraftNodeId.value !== id) {
+      seedUpdateDraft(policy, id);
+      return;
+    }
+    if (seedKey === updateDraftSeedKey.value) return;
+    if (!updateDraftTouched.value) seedUpdateDraft(policy, id);
   },
   { immediate: true },
 );
@@ -722,6 +757,7 @@ async function saveAutoUpdate() {
   try {
     await api.agentUpdates.upsert(officialUpdateRequest(updateAuto.value));
     toast.success(t("fleet.nodes.detail.updatePolicySaved"));
+    updateDraftTouched.value = false;
     await agentUpdatesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.updatePolicySaveFailed"));
@@ -737,6 +773,7 @@ async function planUpdate() {
     await api.agentUpdates.upsert(officialUpdateRequest(updateAuto.value));
     await api.agentUpdates.plan(node.value.id);
     toast.success(t("fleet.nodes.detail.updatePlanned"));
+    updateDraftTouched.value = false;
     await agentUpdatesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.updatePlanFailed"));
@@ -1511,10 +1548,11 @@ async function resolveGeo() {
                   v-model="updateTarget"
                   class="font-mono"
                   :placeholder="$t('fleet.nodes.detail.targetVersionPlaceholder')"
+                  @input="touchUpdateDraft"
                 />
               </div>
               <label class="flex items-start gap-2 text-sm">
-                <input v-model="updateAuto" type="checkbox" class="mt-0.5 size-4 accent-primary" />
+                <input v-model="updateAuto" type="checkbox" class="mt-0.5 size-4 accent-primary" @change="touchUpdateDraft" />
                 <span>
                   <span class="block font-medium">{{ $t('fleet.nodes.detail.autoPlan') }}</span>
                   <span class="block text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.autoUpdateHint') }}</span>

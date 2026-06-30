@@ -158,6 +158,13 @@ so a long region list does not stretch the main map card and leave a large empty
 column under the map. Marker hover cards use the transformed viewport
 coordinates, so tooltips stay attached to nodes while panning and zooming.
 
+The Location Editor is collapsed by default. The compact strip shows the
+selected node, current coordinate summary, lookup IP, and source badge. `Use IP
+lookup` remains available without expanding the editor; the full latitude,
+longitude, country, region, city, provider, ASN, and AS organization fields are
+revealed only when the operator expands the editor. This keeps the map page
+focused on the canvas while preserving manual authoritative edits.
+
 ## Node agent updates
 
 The old Platform -> Agent Updates table is no longer a primary navigation item.
@@ -177,6 +184,18 @@ it resolves `latest` to the release tag, picks the node's OS/arch artifact, read
 The safety boundary is unchanged: planning creates an Approval, approval binds
 the plan hash, and the node must run an exec/root-exec enabled agent before the
 task can replace the binary and restart the service.
+
+Node detail update controls preserve local drafts across heartbeat refreshes. If
+an operator edits `Target version` or toggles `Auto-update`, the 5-second node
+poll and the 15-second update-policy poll continue refreshing read-only display
+data but do not overwrite the unsaved draft. The draft is re-seeded only after a
+node switch or a successful save/plan refresh.
+
+The Agent launch profile behaves the same way: startup flag drafts are seeded
+when entering a node detail page, then protected from routine heartbeat updates.
+This prevents `Allow task execution`, `Allow terminal`, `sing-box discovery`,
+usage source fields, and similar reconfigure inputs from snapping back while an
+operator is preparing a command.
 
 This gives the convenience of tag-based bulk selection without converting every
 fleet tag into a persistent group automatically.
@@ -210,9 +229,11 @@ Map markers support hover and keyboard focus details:
 - location source
 - coordinates
 
-The built-in zoom control performs center zoom on the local SVG map. The map
-still uses bundled geometry and no external map tiles, so this is a lightweight
-operator zoom rather than a full slippy-map implementation.
+The viewport is stateful (`scale`, `x`, and `y`). Pointer drag and two-finger
+scroll pan the canvas; pinch or `ctrl`/`cmd` wheel zooms around the cursor
+position instead of snapping back to the center. The map still uses bundled
+geometry and no external map tiles, so this remains lightweight and deterministic
+while behaving like an operations canvas.
 
 ### Authoritative data
 
