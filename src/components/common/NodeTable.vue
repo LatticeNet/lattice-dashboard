@@ -12,7 +12,7 @@
  */
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
-import type { Node } from "@/lib/api/types";
+import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
 import { nodeStatusMeta } from "@/lib/status";
 import { formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
 
@@ -31,11 +31,14 @@ const props = withDefaults(
     canAdminNodes?: boolean;
     /** Id of the node with an in-flight mutation (disables its action buttons). */
     pendingNodeId?: string;
+    /** Optional per-node agent update policies for the compact status column. */
+    updatePolicies?: AgentUpdatePolicy[];
   }>(),
   {
     canOpenTerminal: false,
     canAdminNodes: false,
     pendingNodeId: undefined,
+    updatePolicies: () => [],
   },
 );
 
@@ -80,6 +83,22 @@ function sortedTags(node: Node): string[] {
   return [...(node.tags ?? [])].sort((a, b) => a.localeCompare(b));
 }
 
+function updatePolicy(node: Node): AgentUpdatePolicy | undefined {
+  return props.updatePolicies.find((p) => p.node_id === node.id);
+}
+
+function updateLabel(policy?: AgentUpdatePolicy): string {
+  if (!policy) return t("fleet.nodes.list.noUpdatePolicy");
+  if (policy.enabled && policy.auto_plan) return t("fleet.nodes.list.autoUpdate");
+  return t("fleet.nodes.list.manualUpdate");
+}
+
+function updateVariant(policy?: AgentUpdatePolicy): "success" | "secondary" | "outline" {
+  if (!policy) return "outline";
+  if (policy.enabled && policy.auto_plan) return "success";
+  return "secondary";
+}
+
 /** Public IPv4 is the primary column; the rest ride along in the cell tooltip. */
 function ipTooltip(node: Node): string {
   const lines = [
@@ -99,10 +118,10 @@ function onOpen(node: Node): void {
 
 <template>
   <div class="overflow-x-auto rounded-lg border border-border">
-    <div class="min-w-[1440px]">
+    <div class="min-w-[1540px]">
       <!-- Header -->
       <div
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_84px_84px_84px_136px_112px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_84px_84px_84px_136px_112px_116px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
       >
         <span>{{ $t('fleet.nodes.table.colName') }}</span>
         <span>{{ $t('fleet.nodes.table.colStatus') }}</span>
@@ -115,6 +134,7 @@ function onOpen(node: Node): void {
         <span>{{ $t('fleet.nodes.metric.disk') }}</span>
         <span>{{ $t('fleet.nodes.table.colNetwork') }}</span>
         <span>{{ $t('fleet.nodes.table.colLastSeen') }}</span>
+        <span>{{ $t('fleet.nodes.table.colUpdate') }}</span>
         <span class="text-right">{{ $t('fleet.nodes.table.colActions') }}</span>
       </div>
 
@@ -122,7 +142,7 @@ function onOpen(node: Node): void {
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_84px_84px_84px_136px_112px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
+        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_84px_84px_84px_136px_112px_116px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
         :tabindex="0"
@@ -191,6 +211,16 @@ function onOpen(node: Node): void {
 
         <!-- Last seen -->
         <span class="text-xs text-muted-foreground tabular">{{ formatRelativeTime(node.last_seen) }}</span>
+
+        <!-- Agent update mode -->
+        <div class="min-w-0">
+          <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full truncate">
+            {{ updateLabel(updatePolicy(node)) }}
+          </Badge>
+          <p v-if="updatePolicy(node)?.target_version" class="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+            {{ updatePolicy(node)?.target_version }}
+          </p>
+        </div>
 
         <!-- Actions (reuse the same intents NodeCard wires) -->
         <div class="flex items-center justify-end gap-1">

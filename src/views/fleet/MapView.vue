@@ -57,7 +57,10 @@ const pendingSave = ref(false);
 const resolvingNodeId = ref("");
 const resolvingAll = ref(false);
 const hoveredNodeId = ref("");
-const mapZoom = ref(1);
+const mapViewport = ref({ scale: 1, x: 0, y: 0 });
+const isPanning = ref(false);
+const panStart = ref({ pointerId: -1, clientX: 0, clientY: 0, x: 0, y: 0, moved: false });
+const suppressMarkerClickUntil = ref(0);
 
 const nodes = computed(() => geoQuery.data.value ?? []);
 const withGeo = computed(() =>
@@ -94,12 +97,12 @@ const plotted = computed(() => {
   });
 });
 
+const mapZoom = computed(() => mapViewport.value.scale);
 const mapZoomTransform = computed(() => {
-  const z = mapZoom.value;
-  const tx = (MAP_WIDTH * (1 - z)) / 2;
-  const ty = (MAP_HEIGHT * (1 - z)) / 2;
-  return `translate(${tx} ${ty}) scale(${z})`;
+  const v = mapViewport.value;
+  return `translate(${v.x} ${v.y}) scale(${v.scale})`;
 });
+const mapCursorClass = computed(() => (isPanning.value ? "cursor-grabbing" : "cursor-grab"));
 
 const hoveredPoint = computed(() =>
   plotted.value.find((point) => point.node.id === hoveredNodeId.value),
@@ -164,16 +167,118 @@ function sourceLabel(source?: string) {
   return source;
 }
 
-function setZoom(next: number) {
-  mapZoom.value = Math.max(1, Math.min(3, Math.round(next * 10) / 10));
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function zoomedX(x: number) {
-  return MAP_WIDTH / 2 + (x - MAP_WIDTH / 2) * mapZoom.value;
+function clampViewport(next: { scale: number; x: number; y: number }) {
+  const scale = clamp(Math.round(next.scale * 100) / 100, 1, 5);
+  if (scale <= 1) return { scale: 1, x: 0, y: 0 };
+  const slack = 28;
+  return {
+    scale,
+    x: clamp(next.x, MAP_WIDTH * (1 - scale) - slack, slack),
+    y: clamp(next.y, MAP_HEIGHT * (1 - scale) - slack, slack),
+  };
 }
 
-function zoomedY(y: number) {
-  return MAP_HEIGHT / 2 + (y - MAP_HEIGHT / 2) * mapZoom.value;
+function applyViewport(next: { scale: number; x: number; y: number }) {
+  mapViewport.value = clampViewport(next);
+}
+
+function svgPoint(event: WheelEvent | PointerEvent) {
+  const target = event.currentTarget as SVGSVGElement;
+  const rect = target.getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * MAP_WIDTH,
+    y: ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT,
+    rect,
+  };
+}
+
+function setZoom(next: number, anchor = { x: MAP_WIDTH / 2, y: MAP_HEIGHT / 2 }) {
+  const current = mapViewport.value;
+  const scale = clamp(Math.round(next * 100) / 100, 1, 5);
+  const worldX = (anchor.x - current.x) / current.scale;
+  const worldY = (anchor.y - current.y) / current.scale;
+  applyViewport({
+    scale,
+    x: anchor.x - worldX * scale,
+    y: anchor.y - worldY * scale,
+  });
+}
+
+function resetViewport() {
+  applyViewport({ scale: 1, x: 0, y: 0 });
+}
+
+function onMapWheel(event: WheelEvent) {
+  const point = svgPoint(event);
+  if (event.ctrlKey || event.metaKey) {
+    const factor = Math.exp(-event.deltaY * 0.006);
+    setZoom(mapViewport.value.scale * factor, point);
+    return;
+  }
+  const dx = (event.deltaX / point.rect.width) * MAP_WIDTH;
+  const dy = (event.deltaY / point.rect.height) * MAP_HEIGHT;
+  applyViewport({
+    ...mapViewport.value,
+    x: mapViewport.value.x - dx,
+    y: mapViewport.value.y - dy,
+  });
+}
+
+function onMapPointerDown(event: PointerEvent) {
+  if (event.button !== 0) return;
+  const target = event.currentTarget as SVGSVGElement;
+  target.setPointerCapture?.(event.pointerId);
+  isPanning.value = true;
+  panStart.value = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    x: mapViewport.value.x,
+    y: mapViewport.value.y,
+    moved: false,
+  };
+}
+
+function onMapPointerMove(event: PointerEvent) {
+  if (!isPanning.value || panStart.value.pointerId !== event.pointerId) return;
+  const target = event.currentTarget as SVGSVGElement;
+  const rect = target.getBoundingClientRect();
+  const dx = ((event.clientX - panStart.value.clientX) / rect.width) * MAP_WIDTH;
+  const dy = ((event.clientY - panStart.value.clientY) / rect.height) * MAP_HEIGHT;
+  if (Math.abs(dx) + Math.abs(dy) > 2) panStart.value.moved = true;
+  applyViewport({
+    scale: mapViewport.value.scale,
+    x: panStart.value.x + dx,
+    y: panStart.value.y + dy,
+  });
+}
+
+function onMapPointerUp(event: PointerEvent) {
+  if (panStart.value.pointerId !== event.pointerId) return;
+  const target = event.currentTarget as SVGSVGElement;
+  target.releasePointerCapture?.(event.pointerId);
+  if (panStart.value.moved) suppressMarkerClickUntil.value = Date.now() + 180;
+  isPanning.value = false;
+  panStart.value.pointerId = -1;
+}
+
+function markerScreenX(x: number) {
+  const v = mapViewport.value;
+  return v.x + x * v.scale;
+}
+
+function markerScreenY(y: number) {
+  const v = mapViewport.value;
+  return v.y + y * v.scale;
+}
+
+function selectMarkerNode(node: NodeGeoView) {
+  if (Date.now() < suppressMarkerClickUntil.value) return;
+  selectNode(node);
 }
 
 function selectNode(node: NodeGeoView) {
@@ -382,9 +487,14 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             <div class="relative overflow-hidden rounded-lg border border-border bg-[oklch(0.18_0.025_265)] text-slate-100">
               <svg
                 :viewBox="`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`"
-                class="aspect-[2/1] w-full"
+                :class="cn('aspect-[2/1] w-full select-none touch-none', mapCursorClass)"
                 role="img"
                 :aria-label="$t('fleet.map.mapAria')"
+                @wheel.prevent="onMapWheel"
+                @pointerdown="onMapPointerDown"
+                @pointermove="onMapPointerMove"
+                @pointerup="onMapPointerUp"
+                @pointercancel="onMapPointerUp"
               >
                 <defs>
                   <linearGradient id="fleet-ocean" x1="0" x2="1" y1="0" y2="1">
@@ -446,13 +556,13 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                       tabindex="0"
                       class="cursor-pointer outline-none"
                       :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
-                      @click="selectNode(point.node)"
+                      @click.stop="selectMarkerNode(point.node)"
                       @mouseenter="hoveredNodeId = point.node.id"
                       @mouseleave="hoveredNodeId = ''"
                       @focus="hoveredNodeId = point.node.id"
                       @blur="hoveredNodeId = ''"
-                      @keydown.enter.prevent="selectNode(point.node)"
-                      @keydown.space.prevent="selectNode(point.node)"
+                      @keydown.enter.prevent="selectMarkerNode(point.node)"
+                      @keydown.space.prevent="selectMarkerNode(point.node)"
                     >
                       <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
                       <!-- gentle halo (online) -->
@@ -509,20 +619,33 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 <button
                   type="button"
                   class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
-                  :disabled="mapZoom >= 3"
+                  :disabled="mapZoom >= 5"
                   :aria-label="$t('fleet.map.zoomIn')"
                   @click="setZoom(mapZoom + 0.2)"
                 >
                   +
                 </button>
+                <button
+                  type="button"
+                  class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
+                  :disabled="mapZoom <= 1 && mapViewport.x === 0 && mapViewport.y === 0"
+                  :aria-label="$t('fleet.map.resetView')"
+                  @click="resetViewport"
+                >
+                  {{ $t('fleet.map.resetShort') }}
+                </button>
+              </div>
+
+              <div class="absolute bottom-4 left-4 rounded-md border border-white/10 bg-black/35 px-3 py-2 text-xs text-white/70 backdrop-blur">
+                {{ $t('fleet.map.canvasHint') }}
               </div>
 
               <div
                 v-if="hoveredPoint"
                 class="pointer-events-none absolute z-10 w-64 rounded-lg border border-white/10 bg-black/75 p-3 text-xs text-white shadow-xl backdrop-blur"
                 :style="{
-                  left: `${(zoomedX(hoveredPoint.x) / MAP_WIDTH) * 100}%`,
-                  top: `${(zoomedY(hoveredPoint.y) / MAP_HEIGHT) * 100}%`,
+                  left: `${(markerScreenX(hoveredPoint.x) / MAP_WIDTH) * 100}%`,
+                  top: `${(markerScreenY(hoveredPoint.y) / MAP_HEIGHT) * 100}%`,
                   transform: 'translate(-50%, calc(-100% - 12px))',
                 }"
               >
@@ -551,7 +674,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
         </CardContent>
       </Card>
 
-      <div class="space-y-4">
+      <div class="space-y-4 xl:max-h-[min(74vh,720px)] xl:overflow-y-auto xl:pr-1">
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
@@ -560,7 +683,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             </CardTitle>
             <CardDescription>{{ $t('fleet.map.regions.description') }}</CardDescription>
           </CardHeader>
-          <CardContent class="space-y-3">
+          <CardContent class="max-h-[420px] space-y-3 overflow-y-auto pr-1">
             <div v-if="regions.length === 0" class="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
               {{ $t('fleet.map.regions.empty') }}
             </div>

@@ -21,7 +21,7 @@ import {
   Wifi,
   X,
 } from "lucide-vue-next";
-import { api, unwrap, type AgentLaunchConfig, type EnrollTokenResponse, type Node } from "@/lib/api";
+import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type EnrollTokenResponse, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -66,6 +66,9 @@ const route = useRoute();
 const router = useRouter();
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
+});
+const agentUpdatesQuery = useAsyncData(() => api.agentUpdates.list().then((r) => unwrap(r, "policies")), {
+  pollInterval: 15000,
 });
 
 // Client-side ring buffer: record each poll so NodeCard sparklines have history.
@@ -157,6 +160,7 @@ watch(viewMode, (mode) => {
 });
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
+const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
 const duplicatesQuery = useAsyncData(() => api.nodes.duplicates().then((r) => r.groups), {
   pollInterval: 30000,
@@ -371,6 +375,24 @@ function nodeGroups(node: Node) {
   });
 }
 
+function nodeUpdatePolicy(node: Node): AgentUpdatePolicy | undefined {
+  return updatePolicies.value.find((p) => p.node_id === node.id);
+}
+
+function nodeUpdateLabel(node: Node): string {
+  const policy = nodeUpdatePolicy(node);
+  if (!policy) return t("fleet.nodes.list.noUpdatePolicy");
+  if (policy.enabled && policy.auto_plan) return t("fleet.nodes.list.autoUpdate");
+  return t("fleet.nodes.list.manualUpdate");
+}
+
+function nodeUpdateVariant(node: Node): "success" | "secondary" | "outline" {
+  const policy = nodeUpdatePolicy(node);
+  if (!policy) return "outline";
+  if (policy.enabled && policy.auto_plan) return "success";
+  return "secondary";
+}
+
 /** Cross-link a group chip to the Groups page with that group pre-selected. */
 function goToGroup(id: string) {
   router.push({ name: "groups", query: { selected: id } });
@@ -476,6 +498,7 @@ async function enrollNode() {
     enrollProxyUsageXrayAPI.value = "";
     toast.success(t("fleet.nodes.toast.tokenCreated"));
     nodesQuery.refresh();
+    agentUpdatesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.enrollFailed"));
   } finally {
@@ -1042,6 +1065,9 @@ function openTerminal(node: Node) {
                       {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
                     </p>
                     <div v-if="canOpenTerminal || canAdminNodes" class="mt-3 flex flex-wrap gap-2">
+                      <Badge :variant="nodeUpdateVariant(cardNode)">
+                        {{ nodeUpdateLabel(cardNode) }}
+                      </Badge>
                       <Button
                         v-if="canOpenTerminal"
                         size="sm"
@@ -1076,6 +1102,7 @@ function openTerminal(node: Node) {
                   :can-open-terminal="canOpenTerminal"
                   :can-admin-nodes="canAdminNodes"
                   :pending-node-id="pendingNode"
+                  :update-policies="updatePolicies"
                   @open="openNode"
                   @terminal="openTerminal"
                   @rotate="rotateToken"

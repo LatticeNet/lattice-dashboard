@@ -122,6 +122,7 @@ const hasVpnDiscovery = computed(() =>
 );
 
 const canAdminNodes = computed(() => auth.can("node:admin"));
+const canPlanUpdates = computed(() => auth.can("node:admin") && auth.can("network:plan"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
 const canRunTasks = computed(() => auth.can("task:run"));
 
@@ -329,6 +330,17 @@ const nodeDdns = computed(() =>
 const updatePolicy = computed(() =>
   (agentUpdatesQuery.data.value ?? []).find((p) => p.node_id === nodeId.value),
 );
+const updateTarget = ref("latest");
+const updateAuto = ref(false);
+
+watch(
+  [updatePolicy, node],
+  ([policy]) => {
+    updateTarget.value = policy?.target_version || "latest";
+    updateAuto.value = !!policy?.enabled && !!policy?.auto_plan;
+  },
+  { immediate: true },
+);
 
 const auditEvents = computed(() => auditQuery.data.value ?? []);
 
@@ -378,9 +390,6 @@ function goToInventory() {
 }
 function goToMonitoring() {
   if (node.value) router.push({ name: "monitoring", query: { node: node.value.id } });
-}
-function goToAgentUpdates() {
-  if (node.value) router.push({ name: "platform-agent-updates", query: { node: node.value.id } });
 }
 function goToVpnDiscovery() {
   if (node.value) router.push({ path: "/plugins/latticenet.vpn-core/discovered", query: { node: node.value.id } });
@@ -498,6 +507,7 @@ function hostKernel(facts?: Node["host_facts"]): string {
 const pending = ref(false);
 const debugPending = ref(false);
 const planningUpdate = ref(false);
+const savingUpdatePolicy = ref(false);
 const resolvingGeo = ref(false);
 const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
 
@@ -697,10 +707,34 @@ async function clearIPConfig() {
   await saveIPConfig();
 }
 
+function officialUpdateRequest(autoPlan = updateAuto.value) {
+  return {
+    node_id: node.value?.id ?? "",
+    enabled: true,
+    auto_plan: autoPlan,
+    target_version: updateTarget.value.trim() || "latest",
+  };
+}
+
+async function saveAutoUpdate() {
+  if (!node.value || !canAdminNodes.value) return;
+  savingUpdatePolicy.value = true;
+  try {
+    await api.agentUpdates.upsert(officialUpdateRequest(updateAuto.value));
+    toast.success(t("fleet.nodes.detail.updatePolicySaved"));
+    await agentUpdatesQuery.refresh();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.updatePolicySaveFailed"));
+  } finally {
+    savingUpdatePolicy.value = false;
+  }
+}
+
 async function planUpdate() {
-  if (!node.value) return;
+  if (!node.value || !canPlanUpdates.value) return;
   planningUpdate.value = true;
   try {
+    await api.agentUpdates.upsert(officialUpdateRequest(updateAuto.value));
     await api.agentUpdates.plan(node.value.id);
     toast.success(t("fleet.nodes.detail.updatePlanned"));
     await agentUpdatesQuery.refresh();
@@ -818,10 +852,6 @@ async function resolveGeo() {
         <Button variant="outline" size="sm" @click="goToMonitoring">
           <RadioTower class="size-4" aria-hidden="true" />
           {{ $t('fleet.nodes.detail.viewMonitoring') }}
-        </Button>
-        <Button variant="outline" size="sm" @click="goToAgentUpdates">
-          <DownloadCloud class="size-4" aria-hidden="true" />
-          {{ $t('fleet.nodes.detail.viewAgentUpdates') }}
         </Button>
         <Button v-if="hasVpnDiscovery" variant="outline" size="sm" @click="goToVpnDiscovery">
           <Radar class="size-4" aria-hidden="true" />
@@ -1443,7 +1473,7 @@ async function resolveGeo() {
             </CardTitle>
             <CardDescription>{{ $t('fleet.nodes.detail.agentUpdatesDesc') }}</CardDescription>
           </CardHeader>
-          <CardContent class="space-y-3 text-sm">
+          <CardContent class="space-y-4 text-sm">
             <div class="flex items-center justify-between gap-2">
               <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.agentVersion') }}</span>
               <span class="font-mono">{{ node.agent_version || $t('fleet.nodes.detail.unknown') }}</span>
@@ -1470,19 +1500,49 @@ async function resolveGeo() {
               <p v-if="updatePolicy.last_error" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
                 {{ updatePolicy.last_error }}
               </p>
-              <Button
-                v-if="canAdminNodes"
-                variant="outline"
-                size="sm"
-                class="w-full"
-                :disabled="planningUpdate"
-                @click="planUpdate"
-              >
-                <RefreshCw :class="cn('size-4', planningUpdate && 'animate-spin')" aria-hidden="true" />
-                {{ $t('fleet.nodes.detail.planUpdate') }}
-              </Button>
             </template>
             <p v-else class="text-muted-foreground">{{ $t('fleet.nodes.detail.noUpdatePolicy') }}</p>
+
+            <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+              <div class="grid gap-2">
+                <Label for="agent-update-target">{{ $t('fleet.nodes.detail.targetVersion') }}</Label>
+                <Input
+                  id="agent-update-target"
+                  v-model="updateTarget"
+                  class="font-mono"
+                  :placeholder="$t('fleet.nodes.detail.targetVersionPlaceholder')"
+                />
+              </div>
+              <label class="flex items-start gap-2 text-sm">
+                <input v-model="updateAuto" type="checkbox" class="mt-0.5 size-4 accent-primary" />
+                <span>
+                  <span class="block font-medium">{{ $t('fleet.nodes.detail.autoPlan') }}</span>
+                  <span class="block text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.autoUpdateHint') }}</span>
+                </span>
+              </label>
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.updateRequiresExec') }}</p>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  :disabled="savingUpdatePolicy"
+                  @click="saveAutoUpdate"
+                >
+                  <RefreshCw v-if="savingUpdatePolicy" class="size-4 animate-spin" aria-hidden="true" />
+                  <DownloadCloud v-else class="size-4" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.saveAutoUpdate') }}
+                </Button>
+                <Button
+                  v-if="canPlanUpdates"
+                  size="sm"
+                  :disabled="planningUpdate"
+                  @click="planUpdate"
+                >
+                  <RefreshCw :class="cn('size-4', planningUpdate && 'animate-spin')" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.planUpdate') }}
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

@@ -22,7 +22,6 @@ import {
   FolderOpen,
   FileText,
   Bell,
-  DownloadCloud,
   KeyRound,
   Fingerprint,
   Ticket,
@@ -103,7 +102,6 @@ export const NAV: NavSection[] = [
       { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read"] },
       { name: "platform-logs", title: "Logs", path: "/platform/logs", icon: FileText, scopes: ["log:read"] },
       { name: "platform-notifications", title: "Notifications", path: "/platform/notifications", icon: Bell, scopes: ["notify:send"] },
-      { name: "platform-agent-updates", title: "Agent Updates", path: "/platform/agent-updates", icon: DownloadCloud, scopes: ["node:admin"] },
     ],
   },
   {

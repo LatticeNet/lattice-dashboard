@@ -144,6 +144,40 @@ section. Select a tag and click `Select matching nodes`; matching nodes are adde
 to the current form only. The operator still reviews the form and clicks Save
 before the group is persisted.
 
+## Fleet Map
+
+The map behaves like a small operations canvas, not a static image:
+
+- pinch/`ctrl` wheel zooms around the cursor position
+- two-finger scroll pans the current viewport
+- click-drag pans the current viewport
+- `+`, `-`, and `reset` remain available for mouse-only operators
+
+Region Rollup and Unlocated lists are constrained to internal scroll containers
+so a long region list does not stretch the main map card and leave a large empty
+column under the map. Marker hover cards use the transformed viewport
+coordinates, so tooltips stay attached to nodes while panning and zooming.
+
+## Node agent updates
+
+The old Platform -> Agent Updates table is no longer a primary navigation item.
+Agent update state is shown where operators make node decisions:
+
+- Nodes table/card: compact update mode (`auto-update`, `manual update`, or no
+  policy)
+- Node detail: current agent version, target/latest release, last planned and
+  applied versions, last error, auto-update toggle, and `Plan official update`
+
+The simplified UI intentionally does not expose binary URL, SHA-256, install
+path, or service name fields. Leaving `binary_url` and `sha256` empty asks the
+server to resolve the official `LatticeNet/lattice-node-agent` GitHub release:
+it resolves `latest` to the release tag, picks the node's OS/arch artifact, reads
+`SHA256SUMS`, and pins the generated update task to that exact URL and digest.
+
+The safety boundary is unchanged: planning creates an Approval, approval binds
+the plan hash, and the node must run an exec/root-exec enabled agent before the
+task can replace the binary and restart the service.
+
 This gives the convenience of tag-based bulk selection without converting every
 fleet tag into a persistent group automatically.
 
