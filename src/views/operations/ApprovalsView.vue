@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
-import { api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
+import { ApiError, api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -44,6 +44,7 @@ const selected = computed<ApprovalView | undefined>(() =>
 const canApply = computed(() => auth.can("network:apply"));
 
 const planView = ref<"diff" | "full">("diff");
+const lastApprovalError = ref<{ approvalId: string; message: string; stale: boolean } | undefined>();
 
 // The most recent earlier applied plan for the same target (node + plugin +
 // action) — i.e. what is actually live. Approved-but-not-applied plans are not a
@@ -110,16 +111,28 @@ function variantFor(status: ApprovalStatus) {
 
 async function approve(approval: ApprovalView, queueApply: boolean) {
   pendingApproval.value = approval.id;
+  lastApprovalError.value = undefined;
   try {
     const digest = await digestFor(approval);
     await api.approvals.approve(approval.id, queueApply, digest);
     toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
-    approvalsQuery.refresh();
+    await approvalsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("operations.approvals.toastFailed"));
+    const message = error instanceof Error ? error.message : t("operations.approvals.toastFailed");
+    const stale = isStaleApprovalError(error);
+    lastApprovalError.value = { approvalId: approval.id, message, stale };
+    toast.error(stale ? t("operations.approvals.toastStale") : message);
+    await approvalsQuery.refresh();
   } finally {
     pendingApproval.value = undefined;
   }
+}
+
+function isStaleApprovalError(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return error.status === 409 && error.message.toLowerCase().includes("re-plan");
+  }
+  return error instanceof Error && error.message.toLowerCase().includes("re-plan");
 }
 </script>
 
@@ -244,9 +257,26 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
           </div>
 
           <div v-if="digestCache[selected.id]" class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-            <span class="font-medium">sha256</span>
+            <span class="font-medium">{{ $t('operations.approvals.planSha256') }}</span>
             <code class="break-all font-mono">{{ digestCache[selected.id] }}</code>
             <CopyButton :value="digestCache[selected.id] || ''" />
+          </div>
+
+          <div
+            v-if="lastApprovalError?.approvalId === selected.id"
+            :class="cn(
+              'rounded-md border p-3 text-sm',
+              lastApprovalError.stale
+                ? 'border-warning/40 bg-warning/5 text-muted-foreground'
+                : 'border-destructive/40 bg-destructive/5 text-muted-foreground',
+            )"
+          >
+            <p class="font-medium text-foreground">
+              {{ lastApprovalError.stale ? $t('operations.approvals.staleTitle') : $t('operations.approvals.approveErrorTitle') }}
+            </p>
+            <p class="mt-1">
+              {{ lastApprovalError.stale ? $t('operations.approvals.staleDescription') : lastApprovalError.message }}
+            </p>
           </div>
 
           <div class="flex flex-wrap gap-2">
