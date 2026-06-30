@@ -337,6 +337,16 @@ const agentAppliedVersionMismatch = computed(() => {
   const applied = updatePolicy.value?.last_applied_version?.trim();
   return !!current && !!applied && current !== applied;
 });
+const activeAgentUpdateError = computed(() => {
+  const error = updatePolicy.value?.last_error?.trim();
+  if (!error) return "";
+  const current = node.value?.agent_version?.trim();
+  const applied = updatePolicy.value?.last_applied_version?.trim();
+  const target = updatePolicy.value?.target_version?.trim();
+  if (current && applied && current === applied) return "";
+  if (current && target && target !== "latest" && current === target) return "";
+  return error;
+});
 const updateTarget = ref("latest");
 const updateAuto = ref(false);
 const updateDraftTouched = ref(false);
@@ -1539,8 +1549,8 @@ async function resolveGeo() {
                 </Badge>
                 <Badge v-if="updatePolicy.auto_plan" variant="info">{{ $t('fleet.nodes.detail.autoPlan') }}</Badge>
               </div>
-              <p v-if="updatePolicy.last_error" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
-                {{ updatePolicy.last_error }}
+              <p v-if="activeAgentUpdateError" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+                {{ activeAgentUpdateError }}
               </p>
               <p v-else-if="agentAppliedVersionMismatch" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning-foreground">
                 {{ $t('fleet.nodes.detail.agentVersionMismatch', { current: node.agent_version, applied: updatePolicy.last_applied_version }) }}
