@@ -55,6 +55,7 @@ export default {
       back: "返回",
       done: "完成",
       forceDelete: "强制删除",
+      docs: "指南",
     },
     status: {
       active: "活跃",

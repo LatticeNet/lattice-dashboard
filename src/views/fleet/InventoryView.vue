@@ -5,6 +5,7 @@ import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
+  BookOpen,
   Boxes,
   CalendarClock,
   CheckCircle2,
@@ -60,6 +61,7 @@ type RenewalTone = "default" | "success" | "warning" | "destructive";
 const auth = useAuthStore();
 const { t } = useI18n();
 const route = useRoute();
+const INVENTORY_GUIDE_URL = "https://latticenet.github.io/guide/operations#machine-inventory";
 
 const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(r, "machines")), {
   pollInterval: 12000,
@@ -425,10 +427,18 @@ async function runReminders(selectedOnly = false) {
         <FreshnessLabel :last-updated="machinesQuery.lastUpdated.value" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
-          <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          {{ $t('common.actions.refresh') }}
-        </Button>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" as-child>
+            <a :href="INVENTORY_GUIDE_URL" target="_blank" rel="noreferrer">
+              <BookOpen class="size-4" aria-hidden="true" />
+              {{ $t('common.actions.docs') }}
+            </a>
+          </Button>
+          <Button variant="outline" size="sm" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
+            <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+            {{ $t('common.actions.refresh') }}
+          </Button>
+        </div>
       </template>
     </PageHeader>
 

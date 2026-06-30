@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { LayoutGrid, List, RefreshCw, Server, ShieldCheck, Radar, TriangleAlert } from "lucide-vue-next";
+import { BookOpen, LayoutGrid, List, RefreshCw, Server, ShieldCheck, Radar, TriangleAlert } from "lucide-vue-next";
 import { api } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
@@ -44,6 +44,7 @@ interface NodeProfileRuntime {
 }
 
 const { t } = useI18n();
+const VPN_PROFILES_GUIDE_URL = "https://latticenet.github.io/guide/operations#vpn-core-runtime-profiles";
 const query = useAsyncData(
   () => api.plugins.call<{ profiles: NodeProfileRuntime[]; count: number }>("latticenet.vpn-core", "latticenet.vpn-core/profiles", "query"),
   { pollInterval: 20000 },
@@ -74,10 +75,18 @@ function collectorVariant(status?: string) {
         <FreshnessLabel :last-updated="query.lastUpdated.value" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="query.refreshing.value" @click="query.refresh">
-          <RefreshCw :class="cn('size-4', query.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          {{ $t('common.actions.refresh') }}
-        </Button>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" as-child>
+            <a :href="VPN_PROFILES_GUIDE_URL" target="_blank" rel="noreferrer">
+              <BookOpen class="size-4" aria-hidden="true" />
+              {{ $t('common.actions.docs') }}
+            </a>
+          </Button>
+          <Button variant="outline" size="sm" :disabled="query.refreshing.value" @click="query.refresh">
+            <RefreshCw :class="cn('size-4', query.refreshing.value && 'animate-spin')" aria-hidden="true" />
+            {{ $t('common.actions.refresh') }}
+          </Button>
+        </div>
       </template>
     </PageHeader>
 

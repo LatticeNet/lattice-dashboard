@@ -56,6 +56,7 @@ export default {
       back: "Back",
       done: "Done",
       forceDelete: "Force delete",
+      docs: "Guide",
     },
     status: {
       active: "active",

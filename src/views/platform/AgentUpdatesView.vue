@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
+  BookOpen,
   DownloadCloud,
   ExternalLink,
   FileCode2,
@@ -66,6 +67,7 @@ const TARGET_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const DEFAULT_INSTALL_PATH = "/opt/lattice/lattice-agent";
 const DEFAULT_SERVICE_NAME = "lattice-agent.service";
+const AGENT_UPDATES_GUIDE_URL = "https://latticenet.github.io/security/agent-updates";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -343,6 +345,12 @@ watch(
         <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" />
       </template>
       <template #actions>
+        <Button variant="outline" size="sm" as-child>
+          <a :href="AGENT_UPDATES_GUIDE_URL" target="_blank" rel="noreferrer">
+            <BookOpen aria-hidden="true" class="size-4" />
+            {{ $t('common.actions.docs') }}
+          </a>
+        </Button>
         <Button
           variant="outline"
           size="sm"
