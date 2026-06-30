@@ -88,6 +88,23 @@ export interface AgentDebugPolicy {
   updated_at?: string;
 }
 
+export interface AgentLaunchConfig {
+  allow_exec?: boolean;
+  allow_root_exec?: boolean;
+  no_exec?: boolean;
+  allow_terminal?: boolean;
+  terminal_transport?: "poll" | "stream" | string;
+  ssh_alerts?: boolean;
+  singbox_discover?: boolean;
+  singbox_bin?: string;
+  proxy_usage_file?: string;
+  proxy_usage_url?: string;
+  proxy_usage_xray_api?: string;
+  proxy_usage_xray_bin?: string;
+  proxy_usage_xray_pattern?: string;
+  updated_at?: string;
+}
+
 export interface Node {
   id: string;
   name: string;
@@ -107,6 +124,7 @@ export interface Node {
   host_facts?: HostFacts;
   geo?: NodeGeo;
   agent_debug?: AgentDebugPolicy;
+  agent_launch?: AgentLaunchConfig | null;
   ip_config?: NodeIPConfig | null;
   group_ids?: string[];
 }
@@ -199,6 +217,7 @@ export interface EnrollTokenResponse {
   server_url: string;
   command: string;
   commands?: Record<string, string>;
+  agent_launch?: AgentLaunchConfig;
 }
 
 export interface TaskView {
@@ -214,6 +233,8 @@ export interface TaskView {
   output_limit?: number;
   status: "queued" | "leased" | "finished" | "failed" | "cancelled";
   leased_by?: string;
+  rerun_of_task_id?: string;
+  rerun_of_node_id?: string;
   created_at?: string;
   started_at?: string;
   finished_at?: string;

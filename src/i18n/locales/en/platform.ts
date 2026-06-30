@@ -554,6 +554,7 @@ export default {
     uuidPlaceholder: "auto-generate if blank",
     password: "Password",
     addCredential: "Add credential",
+    fullCredentialSet: "Use full set",
     bindingsTitle: "Line bindings",
     bindLine: "Bind a line",
     selectLine: "Select a line…",

@@ -543,6 +543,7 @@ export default {
     uuidPlaceholder: "留空则自动生成",
     password: "密码",
     addCredential: "添加凭据",
+    fullCredentialSet: "使用全套凭据",
     bindingsTitle: "线路绑定",
     bindLine: "绑定线路",
     selectLine: "选择线路…",

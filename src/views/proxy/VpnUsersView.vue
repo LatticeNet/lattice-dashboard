@@ -144,10 +144,13 @@ function resetForm() {
   form.comment = "";
   replaceCreds.value = false;
 }
+function defaultCredentialSet(): CredentialInput[] {
+  return PROTOCOLS.map((protocol) => ({ protocol }));
+}
 function openCreate() {
   editingId.value = null;
   resetForm();
-  form.credentials = [{ protocol: "vless" }];
+  form.credentials = defaultCredentialSet();
   replaceCreds.value = true; // create always sends credentials
   editOpen.value = true;
 }
@@ -169,6 +172,9 @@ function openEdit(u: VpnUserView) {
 }
 function addCred() {
   form.credentials.push({ protocol: "vless" });
+}
+function resetCredsToFullSet() {
+  form.credentials = defaultCredentialSet();
 }
 function removeCred(i: number) {
   form.credentials.splice(i, 1);
@@ -435,6 +441,9 @@ async function confirmDelete() {
               </div>
               <Button variant="outline" size="sm" @click="addCred">
                 <Plus class="size-4" aria-hidden="true" /> {{ $t('vpnUsers.addCredential') }}
+              </Button>
+              <Button variant="ghost" size="sm" @click="resetCredsToFullSet">
+                {{ $t('vpnUsers.fullCredentialSet') }}
               </Button>
             </template>
           </div>

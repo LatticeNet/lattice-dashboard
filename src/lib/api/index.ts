@@ -10,6 +10,7 @@ import type {
   NodeGeoInput,
   NodeGeoResolveResponse,
   NodeGeoView,
+  AgentLaunchConfig,
   EnrollTokenResponse,
   TaskView,
   TaskResult,
@@ -135,7 +136,16 @@ export const api = {
       role?: string;
       wireguard_ip?: string;
       group_ids?: string[];
+      agent_launch?: AgentLaunchConfig;
     }) => http.post<EnrollTokenResponse>("/api/nodes/enroll-token", input),
+    reconfigureCommand: (input: { node_id: string; agent_launch?: AgentLaunchConfig }) =>
+      http.post<{
+        node_id: string;
+        server_url: string;
+        command: string;
+        commands?: Record<string, string>;
+        agent_launch?: AgentLaunchConfig;
+      }>("/api/nodes/reconfigure-command", input),
     rotateToken: (node_id: string) =>
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),
     disable: (node_id: string, disabled: boolean) =>
@@ -197,6 +207,7 @@ export const api = {
     // Re-queue a stored task by id. The script body stays server-side (task
     // views only expose its SHA), so rerun is a server re-create, not a resubmit.
     rerun: (id: string) => http.post<TaskView>("/api/tasks/rerun", { id }),
+    rerunNode: (id: string, node_id: string) => http.post<TaskView>("/api/tasks/rerun-node", { id, node_id }),
     cancel: (id: string) => http.post<TaskView>("/api/tasks/cancel", { id }),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/tasks/delete", { id }),
   },

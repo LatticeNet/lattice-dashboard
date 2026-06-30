@@ -21,7 +21,7 @@ import {
   Wifi,
   X,
 } from "lucide-vue-next";
-import { api, unwrap, type EnrollTokenResponse, type Node } from "@/lib/api";
+import { api, unwrap, type AgentLaunchConfig, type EnrollTokenResponse, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -84,6 +84,17 @@ const enrollRole = ref("");
 const enrollTags = ref("");
 const enrollWireGuardIp = ref("");
 const enrollGroups = ref<string[]>([]);
+const enrollAllowExec = ref(false);
+const enrollAllowRootExec = ref(false);
+const enrollNoExec = ref(false);
+const enrollAllowTerminal = ref(false);
+const enrollTerminalTransport = ref<"poll" | "stream">("poll");
+const enrollSSHAlerts = ref(false);
+const enrollSingBoxDiscover = ref(false);
+const enrollSingBoxBin = ref("sb");
+const enrollProxyUsageFile = ref("");
+const enrollProxyUsageURL = ref("");
+const enrollProxyUsageXrayAPI = ref("");
 const enrollPending = ref(false);
 const enrollResult = ref<EnrollTokenResponse | undefined>();
 const enrollPlatform = ref<"linux" | "manual">("linux");
@@ -401,6 +412,22 @@ function parseTags(): string[] {
     .filter(Boolean);
 }
 
+function enrollAgentLaunch(): AgentLaunchConfig {
+  return {
+    allow_exec: enrollAllowExec.value,
+    allow_root_exec: enrollAllowRootExec.value,
+    no_exec: enrollNoExec.value,
+    allow_terminal: enrollAllowTerminal.value,
+    terminal_transport: enrollAllowTerminal.value ? enrollTerminalTransport.value : undefined,
+    ssh_alerts: enrollSSHAlerts.value,
+    singbox_discover: enrollSingBoxDiscover.value,
+    singbox_bin: enrollSingBoxDiscover.value ? enrollSingBoxBin.value.trim() || "sb" : undefined,
+    proxy_usage_file: enrollProxyUsageFile.value.trim() || undefined,
+    proxy_usage_url: enrollProxyUsageURL.value.trim() || undefined,
+    proxy_usage_xray_api: enrollProxyUsageXrayAPI.value.trim() || undefined,
+  };
+}
+
 /** Scroll the enroll form into view and focus its first field. */
 function focusEnroll() {
   document
@@ -422,6 +449,7 @@ async function enrollNode() {
       tags: parseTags(),
       wireguard_ip: enrollWireGuardIp.value.trim() || undefined,
       group_ids: enrollGroups.value.length ? [...enrollGroups.value] : undefined,
+      agent_launch: enrollAgentLaunch(),
     });
     enrollName.value = "";
     enrollId.value = "";
@@ -429,6 +457,17 @@ async function enrollNode() {
     enrollTags.value = "";
     enrollWireGuardIp.value = "";
     enrollGroups.value = [];
+    enrollAllowExec.value = false;
+    enrollAllowRootExec.value = false;
+    enrollNoExec.value = false;
+    enrollAllowTerminal.value = false;
+    enrollTerminalTransport.value = "poll";
+    enrollSSHAlerts.value = false;
+    enrollSingBoxDiscover.value = false;
+    enrollSingBoxBin.value = "sb";
+    enrollProxyUsageFile.value = "";
+    enrollProxyUsageURL.value = "";
+    enrollProxyUsageXrayAPI.value = "";
     toast.success(t("fleet.nodes.toast.tokenCreated"));
     nodesQuery.refresh();
   } catch (error) {
@@ -622,6 +661,85 @@ function openTerminal(node: Node) {
               <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
               {{ g.name }}
             </button>
+          </div>
+        </div>
+
+        <div class="grid gap-3 rounded-lg border border-border bg-muted/20 p-3">
+          <div>
+            <Label>{{ $t('fleet.nodes.enroll.agentProfile') }}</Label>
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.agentProfileHint') }}</p>
+          </div>
+          <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <input v-model="enrollAllowExec" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowExec') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowExecHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <input v-model="enrollAllowRootExec" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec || !enrollAllowExec" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowRootExec') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowRootExecHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <input v-model="enrollNoExec" type="checkbox" class="mt-0.5 size-4" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.noExec') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.noExecHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <input v-model="enrollAllowTerminal" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowTerminal') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowTerminalHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <input v-model="enrollSSHAlerts" type="checkbox" class="mt-0.5 size-4" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.sshAlerts') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <input v-model="enrollSingBoxDiscover" type="checkbox" class="mt-0.5 size-4" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.singBoxDiscover') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.singBoxDiscoverHint') }}</span>
+              </span>
+            </label>
+          </div>
+          <div class="grid gap-3 md:grid-cols-4">
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
+              <Select v-model="enrollTerminalTransport" :disabled="!enrollAllowTerminal">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="poll">poll</SelectItem>
+                  <SelectItem value="stream">stream</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.enroll.singBoxBin') }}</Label>
+              <Input v-model="enrollSingBoxBin" :disabled="!enrollSingBoxDiscover" placeholder="sb" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.enroll.proxyUsageFile') }}</Label>
+              <Input v-model="enrollProxyUsageFile" placeholder="/run/lattice/proxy-usage.json" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.enroll.proxyUsageUrl') }}</Label>
+              <Input v-model="enrollProxyUsageURL" placeholder="http://127.0.0.1:19090/stats" />
+            </div>
+            <div class="grid gap-1.5 md:col-span-2">
+              <Label>{{ $t('fleet.nodes.enroll.proxyUsageXray') }}</Label>
+              <Input v-model="enrollProxyUsageXrayAPI" placeholder="127.0.0.1:10085" />
+            </div>
           </div>
         </div>
 

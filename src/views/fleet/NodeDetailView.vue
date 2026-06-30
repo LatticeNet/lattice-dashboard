@@ -45,6 +45,7 @@ import {
   api,
   unwrap,
   ApiError,
+  type AgentLaunchConfig,
   type Node,
   type GroupView,
   type DDNSView,
@@ -163,6 +164,81 @@ const auditQuery = useAsyncData<AuditEvent[] | undefined>(
 const node = computed<Node | undefined>(() =>
   (nodesQuery.data.value ?? []).find((n) => n.id === nodeId.value),
 );
+
+const launchAllowExec = ref(false);
+const launchAllowRootExec = ref(false);
+const launchNoExec = ref(false);
+const launchAllowTerminal = ref(false);
+const launchTerminalTransport = ref<"poll" | "stream">("poll");
+const launchSSHAlerts = ref(false);
+const launchSingBoxDiscover = ref(false);
+const launchSingBoxBin = ref("sb");
+const launchProxyUsageFile = ref("");
+const launchProxyUsageURL = ref("");
+const launchProxyUsageXrayAPI = ref("");
+const launchPlatform = ref<"linux" | "manual">("linux");
+const reconfigurePending = ref(false);
+const reconfigureResult = ref<{ command: string; commands?: Record<string, string>; agent_launch?: AgentLaunchConfig } | undefined>();
+
+watch(
+  node,
+  (n) => {
+    const launch = n?.agent_launch;
+    launchAllowExec.value = !!launch?.allow_exec;
+    launchAllowRootExec.value = !!launch?.allow_root_exec;
+    launchNoExec.value = !!launch?.no_exec;
+    launchAllowTerminal.value = !!launch?.allow_terminal;
+    launchTerminalTransport.value = launch?.terminal_transport === "stream" ? "stream" : "poll";
+    launchSSHAlerts.value = !!launch?.ssh_alerts;
+    launchSingBoxDiscover.value = !!launch?.singbox_discover;
+    launchSingBoxBin.value = launch?.singbox_bin || "sb";
+    launchProxyUsageFile.value = launch?.proxy_usage_file || "";
+    launchProxyUsageURL.value = launch?.proxy_usage_url || "";
+    launchProxyUsageXrayAPI.value = launch?.proxy_usage_xray_api || "";
+    reconfigureResult.value = undefined;
+  },
+  { immediate: true },
+);
+
+function launchPayload(): AgentLaunchConfig {
+  return {
+    allow_exec: launchAllowExec.value,
+    allow_root_exec: launchAllowRootExec.value,
+    no_exec: launchNoExec.value,
+    allow_terminal: launchAllowTerminal.value,
+    terminal_transport: launchAllowTerminal.value ? launchTerminalTransport.value : undefined,
+    ssh_alerts: launchSSHAlerts.value,
+    singbox_discover: launchSingBoxDiscover.value,
+    singbox_bin: launchSingBoxDiscover.value ? launchSingBoxBin.value.trim() || "sb" : undefined,
+    proxy_usage_file: launchProxyUsageFile.value.trim() || undefined,
+    proxy_usage_url: launchProxyUsageURL.value.trim() || undefined,
+    proxy_usage_xray_api: launchProxyUsageXrayAPI.value.trim() || undefined,
+  };
+}
+
+const reconfigureCommand = computed(() => {
+  const result = reconfigureResult.value;
+  if (!result) return "";
+  return result.commands?.[launchPlatform.value] || result.command;
+});
+
+async function generateReconfigureCommand() {
+  const id = node.value?.id;
+  if (!id) return;
+  reconfigurePending.value = true;
+  try {
+    reconfigureResult.value = await api.nodes.reconfigureCommand({
+      node_id: id,
+      agent_launch: launchPayload(),
+    });
+    toast.success(t("fleet.nodes.detail.launch.toastGenerated"));
+    await nodesQuery.refresh();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.launch.toastFailed"));
+  } finally {
+    reconfigurePending.value = false;
+  }
+}
 
 /** List has loaded but no node carries this id → render a "not found" state. */
 const notFound = computed(
@@ -1039,6 +1115,131 @@ async function resolveGeo() {
                 <Button v-if="node.ip_config?.mode" variant="ghost" size="sm" :disabled="ipConfigPending" @click="clearIPConfig">
                   {{ $t('fleet.nodes.detail.ipConfig.clear') }}
                 </Button>
+              </div>
+            </div>
+
+            <!-- Agent launch profile (installer/startup flags; requires rerun command) -->
+            <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border p-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p class="inline-flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
+                    <KeyRound class="size-3.5" aria-hidden="true" />
+                    {{ $t('fleet.nodes.detail.launch.title') }}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.launch.hint') }}</p>
+                </div>
+                <Badge :variant="node.agent_launch?.updated_at ? 'outline' : 'secondary'">
+                  {{ node.agent_launch?.updated_at ? $t('fleet.nodes.detail.launch.profileSaved') : $t('fleet.nodes.detail.launch.profileUnknown') }}
+                </Badge>
+              </div>
+
+              <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+                  <input v-model="launchAllowExec" type="checkbox" class="mt-0.5 size-4" :disabled="launchNoExec" />
+                  <span>
+                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowExec') }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowExecHint') }}</span>
+                  </span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+                  <input v-model="launchAllowRootExec" type="checkbox" class="mt-0.5 size-4" :disabled="launchNoExec || !launchAllowExec" />
+                  <span>
+                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowRootExec') }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowRootExecHint') }}</span>
+                  </span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+                  <input v-model="launchNoExec" type="checkbox" class="mt-0.5 size-4" />
+                  <span>
+                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.noExec') }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.noExecHint') }}</span>
+                  </span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+                  <input v-model="launchAllowTerminal" type="checkbox" class="mt-0.5 size-4" :disabled="launchNoExec" />
+                  <span>
+                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowTerminal') }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowTerminalHint') }}</span>
+                  </span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+                  <input v-model="launchSSHAlerts" type="checkbox" class="mt-0.5 size-4" />
+                  <span>
+                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.sshAlerts') }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
+                  </span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+                  <input v-model="launchSingBoxDiscover" type="checkbox" class="mt-0.5 size-4" />
+                  <span>
+                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.singBoxDiscover') }}</span>
+                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.singBoxDiscoverHint') }}</span>
+                  </span>
+                </label>
+              </div>
+
+              <div class="grid gap-3 md:grid-cols-3">
+                <div class="grid gap-1.5">
+                  <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
+                  <Select v-model="launchTerminalTransport" :disabled="!launchAllowTerminal">
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="poll">poll</SelectItem>
+                      <SelectItem value="stream">stream</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div class="grid gap-1.5">
+                  <Label>{{ $t('fleet.nodes.enroll.singBoxBin') }}</Label>
+                  <Input v-model="launchSingBoxBin" :disabled="!launchSingBoxDiscover" placeholder="sb" />
+                </div>
+                <div class="grid gap-1.5">
+                  <Label>{{ $t('fleet.nodes.enroll.proxyUsageFile') }}</Label>
+                  <Input v-model="launchProxyUsageFile" placeholder="/run/lattice/proxy-usage.json" />
+                </div>
+                <div class="grid gap-1.5">
+                  <Label>{{ $t('fleet.nodes.enroll.proxyUsageUrl') }}</Label>
+                  <Input v-model="launchProxyUsageURL" placeholder="http://127.0.0.1:19090/stats" />
+                </div>
+                <div class="grid gap-1.5 md:col-span-2">
+                  <Label>{{ $t('fleet.nodes.enroll.proxyUsageXray') }}</Label>
+                  <Input v-model="launchProxyUsageXrayAPI" placeholder="127.0.0.1:10085" />
+                </div>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <Button size="sm" :disabled="reconfigurePending" @click="generateReconfigureCommand">
+                  <RefreshCw v-if="reconfigurePending" class="size-3.5 animate-spin" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.launch.generate') }}
+                </Button>
+                <CopyButton v-if="reconfigureCommand" :value="reconfigureCommand" :label="$t('fleet.nodes.detail.launch.copy')" />
+              </div>
+              <div v-if="reconfigureCommand" class="space-y-2">
+                <div class="inline-flex w-fit rounded-md border border-border bg-background/70 p-1">
+                  <button
+                    type="button"
+                    :class="cn(
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      launchPlatform === 'linux' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )"
+                    @click="launchPlatform = 'linux'"
+                  >
+                    {{ $t('fleet.nodes.enroll.platformLinux') }}
+                  </button>
+                  <button
+                    type="button"
+                    :class="cn(
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      launchPlatform === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )"
+                    @click="launchPlatform = 'manual'"
+                  >
+                    {{ $t('fleet.nodes.enroll.platformManual') }}
+                  </button>
+                </div>
+                <code class="block overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
+                  {{ reconfigureCommand }}
+                </code>
               </div>
             </div>
 
