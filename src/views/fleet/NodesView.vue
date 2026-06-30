@@ -21,7 +21,7 @@ import {
   Wifi,
   X,
 } from "lucide-vue-next";
-import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type EnrollTokenResponse, type Node } from "@/lib/api";
+import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type EnrollTokenResponse, type LinesListResponse, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -33,6 +33,14 @@ import {
 import { fleetTotals, groupNodes, type GroupBy, type NodeGroup } from "@/lib/fleet";
 import { groupColor } from "@/lib/groupColors";
 import { cn } from "@/lib/utils";
+import {
+  agentConfigBadges,
+  evalFilterExpression,
+  nodeHasAgentCapability,
+  nodeHasArchOsToken,
+  nodeHasTagToken,
+  vpnLineNodeIds,
+} from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -70,6 +78,13 @@ const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "no
 const agentUpdatesQuery = useAsyncData(() => api.agentUpdates.list().then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
 });
+const vpnLinesQuery = useAsyncData(
+  () =>
+    api.plugins
+      .call<LinesListResponse>("latticenet.vpn-core", "latticenet.vpn-core/lines", "list")
+      .catch(() => ({ groups: [], count: 0 })),
+  { pollInterval: 30000 },
+);
 
 // Client-side ring buffer: record each poll so NodeCard sparklines have history.
 const metricBuffer = useMetricBuffer();
@@ -117,8 +132,11 @@ const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
 /** arch/os quick-filter tokens currently engaged (every selected must match). */
 const activeArchOs = ref<string[]>([]);
-type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll" | "singbox";
+type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll" | "singbox" | "vpn-lines";
 const activeAgentCaps = ref<AgentCapabilityFilter[]>([]);
+const agentExpr = ref("");
+const archOsExpr = ref("");
+const tagsExpr = ref("");
 
 // Seed the status filter from a deep-link (e.g. the Overview "online" KPI tile
 // links to /nodes?status=online), so drill-through lands pre-filtered.
@@ -163,6 +181,7 @@ watch(viewMode, (mode) => {
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
+const vpnLineNodes = computed(() => vpnLineNodeIds(vpnLinesQuery.data.value?.groups));
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
 const duplicatesQuery = useAsyncData(() => api.nodes.duplicates().then((r) => r.groups), {
   pollInterval: 30000,
@@ -265,6 +284,7 @@ function searchScore(node: Node, q: string): number {
 }
 
 function matchesTags(node: Node): boolean {
+  if (tagsExpr.value.trim() && !evalFilterExpression(tagsExpr.value, (token) => nodeHasTagToken(node, token)).value) return false;
   if (activeTags.value.length === 0) return true;
   const owned = new Set<string>([...(node.role ? [node.role] : []), ...(node.tags ?? [])]);
   return activeTags.value.every((tag) => owned.has(tag));
@@ -290,6 +310,7 @@ const availableArchOs = computed(() => {
 });
 
 function matchesArchOs(node: Node): boolean {
+  if (archOsExpr.value.trim() && !evalFilterExpression(archOsExpr.value, (token) => nodeHasArchOsToken(node, token)).value) return false;
   if (activeArchOs.value.length === 0) return true;
   const hay = archOsHaystack(node);
   return activeArchOs.value.every((tok) => hay.includes(tok));
@@ -302,40 +323,20 @@ function toggleArchOs(tok: string) {
   activeArchOs.value = [...next];
 }
 
-const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll", "singbox"];
+const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll", "singbox", "vpn-lines"];
 
 const availableAgentCaps = computed(() =>
   AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => nodeMatchesAgentCap(node, cap))),
 );
 
-function nodeAgentProfile(node: Node) {
-  return node.agent_runtime ?? node.agent_launch ?? undefined;
-}
-
 function nodeMatchesAgentCap(node: Node, cap: AgentCapabilityFilter): boolean {
-  const profile = nodeAgentProfile(node);
-  if (!profile) return false;
-  switch (cap) {
-    case "exec":
-      return !!profile.allow_exec && !profile.no_exec;
-    case "root":
-      return !!profile.allow_exec && !!profile.allow_root_exec && !profile.no_exec;
-    case "terminal":
-      return !!profile.allow_terminal && !profile.no_exec;
-    case "stream":
-      return !!profile.allow_terminal && profile.terminal_transport === "stream" && !profile.no_exec;
-    case "poll":
-      return !!profile.allow_terminal && profile.terminal_transport !== "stream" && !profile.no_exec;
-    case "singbox":
-      return !!profile.singbox_discover;
-    default:
-      return false;
-  }
+  return nodeHasAgentCapability(node, cap, vpnLineNodes.value.has(node.id));
 }
 
 function matchesAgentCaps(node: Node): boolean {
-  if (activeAgentCaps.value.length === 0) return true;
-  return activeAgentCaps.value.every((cap) => nodeMatchesAgentCap(node, cap));
+  if (activeAgentCaps.value.length > 0 && !activeAgentCaps.value.every((cap) => nodeMatchesAgentCap(node, cap))) return false;
+  if (!agentExpr.value.trim()) return true;
+  return evalFilterExpression(agentExpr.value, (token) => nodeHasAgentCapability(node, token, vpnLineNodes.value.has(node.id))).value;
 }
 
 function toggleAgentCap(cap: AgentCapabilityFilter) {
@@ -370,7 +371,10 @@ const hasFilters = computed(
     statusFilter.value !== "all" ||
     activeTags.value.length > 0 ||
     activeArchOs.value.length > 0 ||
-    activeAgentCaps.value.length > 0,
+    activeAgentCaps.value.length > 0 ||
+    !!agentExpr.value.trim() ||
+    !!archOsExpr.value.trim() ||
+    !!tagsExpr.value.trim(),
 );
 /** Raw list non-empty but filters hid everything → distinct no-match state. */
 const noMatches = computed(() => nodes.value.length > 0 && sortedNodes.value.length === 0);
@@ -388,6 +392,13 @@ function clearFilters() {
   activeTags.value = [];
   activeArchOs.value = [];
   activeAgentCaps.value = [];
+  agentExpr.value = "";
+  archOsExpr.value = "";
+  tagsExpr.value = "";
+}
+
+function agentBadges(node: Node): string[] {
+  return agentConfigBadges(node, vpnLineNodes.value.has(node.id));
 }
 
 /* ----------------------------------------------------------------- */
@@ -996,6 +1007,36 @@ function openTerminal(node: Node) {
             </button>
           </div>
 
+          <div class="grid gap-2 lg:grid-cols-3">
+            <div class="grid gap-1.5">
+              <Label for="nodes-agent-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.agentExpression') }}</Label>
+              <Input
+                id="nodes-agent-expr"
+                v-model="agentExpr"
+                class="font-mono text-xs"
+                :placeholder="$t('fleet.nodes.filters.agentExpressionPlaceholder')"
+              />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="nodes-os-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.osExpression') }}</Label>
+              <Input
+                id="nodes-os-expr"
+                v-model="archOsExpr"
+                class="font-mono text-xs"
+                :placeholder="$t('fleet.nodes.filters.osExpressionPlaceholder')"
+              />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="nodes-tags-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.tagsExpression') }}</Label>
+              <Input
+                id="nodes-tags-expr"
+                v-model="tagsExpr"
+                class="font-mono text-xs"
+                :placeholder="$t('fleet.nodes.filters.tagsExpressionPlaceholder')"
+              />
+            </div>
+          </div>
+
           <div v-if="availableArchOs.length || allTags.length" class="flex flex-wrap items-center gap-1.5">
             <!-- Arch / OS quick filters (computed from the fleet's host facts). -->
             <button
@@ -1129,6 +1170,17 @@ function openTerminal(node: Node) {
                   @group-select="goToGroup"
                 >
                   <template #footer="{ node: cardNode }">
+                    <div class="mt-3 flex flex-wrap items-center gap-1.5">
+                      <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.filters.agentConfig') }}</span>
+                      <Badge
+                        v-for="badge in agentBadges(cardNode)"
+                        :key="`${cardNode.id}:${badge}`"
+                        :variant="badge === 'vpn-lines' ? 'success' : 'outline'"
+                      >
+                        {{ badge }}
+                      </Badge>
+                      <span v-if="agentBadges(cardNode).length === 0" class="text-xs text-muted-foreground">—</span>
+                    </div>
                     <p class="mt-3 font-mono text-xs text-muted-foreground">
                       {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
                     </p>
@@ -1171,6 +1223,7 @@ function openTerminal(node: Node) {
                   :can-admin-nodes="canAdminNodes"
                   :pending-node-id="pendingNode"
                   :update-policies="updatePolicies"
+                  :vpn-line-node-ids="vpnLineNodes"
                   @open="openNode"
                   @terminal="openTerminal"
                   @rotate="rotateToken"

@@ -509,9 +509,9 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       :empty-description="$t('lines.emptyDescription')"
       @retry="linesQuery.refresh"
     >
-      <div class="space-y-6">
-        <Card v-for="group in sortedGroups" :key="group.node_id">
-          <CardHeader>
+      <div class="grid gap-3 2xl:grid-cols-2">
+        <Card v-for="group in sortedGroups" :key="group.node_id" class="overflow-hidden">
+          <CardHeader class="px-4 py-3">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0 space-y-1">
                 <CardTitle class="flex items-center gap-2">
@@ -542,9 +542,9 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
             </div>
           </CardHeader>
 
-          <CardContent>
+          <CardContent class="px-4 pb-4">
             <div class="overflow-x-auto">
-              <table class="w-full text-sm">
+              <table class="w-full min-w-[980px] text-sm">
                 <thead>
                   <tr class="border-b border-border text-xs text-muted-foreground">
                     <th scope="col" class="px-3 py-2 text-left font-medium">{{ $t('lines.colSource') }}</th>
@@ -572,23 +572,23 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                     @keydown.enter.prevent="openDetail(line)"
                     @keydown.space.prevent="openDetail(line)"
                   >
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <Badge :variant="sourceVariant(line.source)">{{ sourceLabel(line.source) }}</Badge>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <Badge v-if="line.core" variant="outline">{{ line.core }}</Badge>
                       <span v-else class="text-muted-foreground">—</span>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <span class="font-medium">{{ line.name || "—" }}</span>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <span class="font-mono text-xs text-muted-foreground">{{ line.tag || "—" }}</span>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <span class="font-mono text-xs text-muted-foreground">{{ line.type || "—" }}</span>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <span class="font-mono text-xs">
                         {{ line.listen_host || "—" }}<span
                           v-if="line.listen_port"
@@ -596,14 +596,14 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                         >:{{ line.listen_port }}</span>
                       </span>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <div class="font-mono text-xs">{{ line.public_host || "—" }}</div>
                       <div v-if="line.domain" class="font-mono text-xs text-muted-foreground">{{ line.domain }}</div>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <span class="font-mono text-xs">{{ line.outbound_ref || "—" }}</span>
                     </td>
-                    <td class="px-3 py-3 text-right">
+                    <td class="px-3 py-2 text-right">
                       <Tooltip v-if="!line.user_known">
                         <TooltipTrigger as-child>
                           <span class="cursor-help font-mono text-xs text-muted-foreground">
@@ -614,7 +614,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                       </Tooltip>
                       <span v-else class="font-mono text-xs tabular">{{ line.user_count }}</span>
                     </td>
-                    <td class="px-3 py-3">
+                    <td class="px-3 py-2">
                       <Tooltip v-if="line.status === 'error' && line.last_error">
                         <TooltipTrigger as-child>
                           <Badge :variant="statusVariant(line.status)" class="cursor-help">
@@ -625,7 +625,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                       </Tooltip>
                       <Badge v-else :variant="statusVariant(line.status)">{{ statusLabel(line.status) }}</Badge>
                     </td>
-                    <td class="px-3 py-3 text-right">
+                    <td class="px-3 py-2 text-right">
                       <ChevronRight class="ml-auto size-4 text-muted-foreground" aria-hidden="true" />
                     </td>
                   </tr>

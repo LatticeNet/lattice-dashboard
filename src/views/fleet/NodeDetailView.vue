@@ -300,6 +300,16 @@ const reconfigureCommand = computed(() => {
   return result.commands?.[launchPlatform.value] || result.command;
 });
 
+function extractEnvAssignment(command: string, key: string): string {
+  const match = command.match(new RegExp(`${key}=('([^']*)'|"([^"]*)"|([^\\s;]+))`));
+  return match?.[2] || match?.[3] || match?.[4] || "";
+}
+
+const reconfigureCommandNodeId = computed(() => extractEnvAssignment(reconfigureCommand.value, "LATTICE_NODE_ID"));
+const reconfigureCommandMismatch = computed(
+  () => !!reconfigureCommand.value && !!node.value?.id && !!reconfigureCommandNodeId.value && reconfigureCommandNodeId.value !== node.value.id,
+);
+
 async function generateReconfigureCommand() {
   const id = node.value?.id;
   if (!id) return;
@@ -1444,6 +1454,12 @@ async function resolveGeo() {
                 <CopyButton v-if="reconfigureCommand" :value="reconfigureCommand" :label="$t('fleet.nodes.detail.launch.copy')" />
               </div>
               <div v-if="reconfigureCommand" class="space-y-2">
+                <p
+                  v-if="reconfigureCommandMismatch"
+                  class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+                >
+                  {{ $t('fleet.nodes.detail.launch.nodeIdMismatch', { expected: node.id, actual: reconfigureCommandNodeId }) }}
+                </p>
                 <div class="inline-flex w-fit rounded-md border border-border bg-background/70 p-1">
                   <button
                     type="button"

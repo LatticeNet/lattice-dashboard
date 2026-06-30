@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -17,11 +17,17 @@ import {
   Trash2,
   XCircle,
 } from "lucide-vue-next";
-import { api, unwrap, type Node, type TaskResult, type TaskView } from "@/lib/api";
+import { api, unwrap, type LinesListResponse, type Node, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  agentConfigBadges,
+  evalFilterExpression,
+  nodeMatchesTargetToken,
+  vpnLineNodeIds,
+} from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -81,6 +87,13 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
   () => api.nodes.list().then((r) => unwrap(r, "nodes")),
   { pollInterval: 5000 },
 );
+const vpnLinesQuery = useAsyncData(
+  () =>
+    api.plugins
+      .call<LinesListResponse>("latticenet.vpn-core", "latticenet.vpn-core/lines", "list")
+      .catch(() => ({ groups: [], count: 0 })),
+  { pollInterval: 30000 },
+);
 
 const statusFilter = ref<StatusFilter>("all");
 {
@@ -93,6 +106,7 @@ const statusFilter = ref<StatusFilter>("all");
 const targetSearch = ref("");
 const targetTag = ref("all");
 const targetRegion = ref("all");
+const targetExpr = ref("");
 const selectedTargets = ref<string[]>([]);
 const interpreter = ref("sh");
 const script = ref("");
@@ -100,12 +114,16 @@ const timeoutSec = ref(60);
 const outputLimit = ref(16384);
 const taskSearch = ref("");
 const expandedTasks = ref<Set<string>>(new Set());
+const expandedNodeRows = ref<Set<string>>(new Set());
+const historyPage = ref(1);
+const HISTORY_PAGE_SIZE = 8;
 const creating = ref(false);
 const actionPending = ref<string | null>(null);
 
 const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const tasks = computed<TaskView[]>(() => tasksQuery.data.value ?? []);
 const results = computed<TaskResult[]>(() => resultsQuery.data.value ?? []);
+const vpnLineNodes = computed(() => vpnLineNodeIds(vpnLinesQuery.data.value?.groups));
 const nodesById = computed<Record<string, Node>>(() => Object.fromEntries(nodes.value.map((n) => [n.id, n])));
 const tasksById = computed<Record<string, TaskView>>(() => Object.fromEntries(tasks.value.map((task) => [task.id, task])));
 
@@ -127,6 +145,7 @@ const filteredTargetNodes = computed(() => {
     .filter((node) => {
       if (targetTag.value !== "all" && !(node.tags ?? []).includes(targetTag.value)) return false;
       if (targetRegion.value !== "all" && nodeRegion(node) !== targetRegion.value) return false;
+      if (targetExpr.value.trim() && !evalFilterExpression(targetExpr.value, (token) => nodeMatchesTargetToken(node, token, vpnLineNodes.value.has(node.id))).value) return false;
       if (!q) return true;
       return [
         node.id,
@@ -197,6 +216,20 @@ const filteredRootTasks = computed(() => {
 const queuedCount = computed(() => tasks.value.filter((task) => task.status === "queued").length);
 const runningCount = computed(() => tasks.value.filter((task) => task.status === "leased").length);
 const failedCount = computed(() => rootTasks.value.filter((task) => groupStatus(task, nodeRows(task)) === "failed").length);
+const historyTotalPages = computed(() => Math.max(1, Math.ceil(filteredRootTasks.value.length / HISTORY_PAGE_SIZE)));
+const pagedRootTasks = computed(() => {
+  const page = Math.min(historyPage.value, historyTotalPages.value);
+  const start = (page - 1) * HISTORY_PAGE_SIZE;
+  return filteredRootTasks.value.slice(start, start + HISTORY_PAGE_SIZE);
+});
+
+watch(
+  () => [taskSearch.value, statusFilter.value, filteredRootTasks.value.length],
+  () => {
+    if (historyPage.value > historyTotalPages.value) historyPage.value = historyTotalPages.value;
+    else historyPage.value = 1;
+  },
+);
 
 function nodeRegion(node: Node): string {
   return [node.geo?.country, node.geo?.region].filter(Boolean).join(" / ") || t("operations.tasks.unknownRegion");
@@ -314,6 +347,54 @@ function toggleExpanded(id: string) {
   if (next.has(id)) next.delete(id);
   else next.add(id);
   expandedTasks.value = next;
+}
+
+function nodeRowKey(taskId: string, nodeId: string): string {
+  return `${taskId}:${nodeId}`;
+}
+
+function isNodeExpanded(taskId: string, nodeId: string): boolean {
+  return expandedNodeRows.value.has(nodeRowKey(taskId, nodeId));
+}
+
+function toggleNodeExpanded(taskId: string, nodeId: string) {
+  const key = nodeRowKey(taskId, nodeId);
+  const next = new Set(expandedNodeRows.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  expandedNodeRows.value = next;
+}
+
+function hasExpandedNode(task: TaskView): boolean {
+  return nodeRows(task).some((row) => isNodeExpanded(task.id, row.nodeId));
+}
+
+function rowLatestText(row: NodeExecutionRow): string {
+  if (!row.latestResult) return row.status === "queued" ? t("operations.tasks.waitingLease") : t("operations.tasks.running");
+  const exit = t("operations.tasks.exit", { code: row.latestResult.exit_code ?? 0 });
+  const error = row.latestResult.error?.trim();
+  return error ? `${exit} · ${error}` : `${exit} · ${formatDateTime(row.latestResult.finished_at)}`;
+}
+
+function taskLatestSummary(task: TaskView): string {
+  const rows = nodeRows(task);
+  const failed = rows.find((row) => row.failed);
+  if (failed) return `${nodeName(failed.nodeId)} · ${rowLatestText(failed)}`;
+  const active = rows.find((row) => row.status === "leased" || row.status === "queued");
+  if (active) return `${nodeName(active.nodeId)} · ${rowLatestText(active)}`;
+  const latest = [...rows]
+    .filter((row) => row.latestResult)
+    .sort((a, b) => timeValue(b.latestResult?.finished_at) - timeValue(a.latestResult?.finished_at))[0];
+  return latest ? `${nodeName(latest.nodeId)} · ${rowLatestText(latest)}` : statusLabel(task.status);
+}
+
+function taskProgressLabel(task: TaskView): string {
+  const counts = taskCounts(nodeRows(task));
+  return `${counts.done}/${counts.total} · ${counts.failed} failed · ${attemptTasks(task).length} attempts`;
+}
+
+function nodeAgentBadges(node?: Node): string[] {
+  return node ? agentConfigBadges(node, vpnLineNodes.value.has(node.id)) : [];
 }
 
 async function refreshAll() {
@@ -498,6 +579,15 @@ async function deleteTask(task: TaskView) {
                 </SelectContent>
               </Select>
             </div>
+            <div class="grid gap-1.5">
+              <Label for="task-target-expr" class="text-xs text-muted-foreground">{{ $t('operations.tasks.targetExpression') }}</Label>
+              <Input
+                id="task-target-expr"
+                v-model="targetExpr"
+                class="font-mono text-xs"
+                :placeholder="$t('operations.tasks.targetExpressionPlaceholder')"
+              />
+            </div>
 
             <DataState
               :loading="nodesQuery.loading.value"
@@ -507,28 +597,41 @@ async function deleteTask(task: TaskView) {
               :empty-description="$t('operations.tasks.noNodesDescription')"
               @retry="nodesQuery.refresh"
             >
-              <div class="max-h-80 space-y-2 overflow-y-auto pr-1">
+              <div class="max-h-[26rem] space-y-1.5 overflow-y-auto pr-1">
                 <button
                   v-for="node in filteredTargetNodes"
                   :key="node.id"
                   type="button"
                   :class="cn(
-                    'flex w-full items-start justify-between gap-3 rounded-md border p-3 text-left transition-colors',
+                    'grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-2.5 py-2 text-left transition-colors',
                     selectedSet.has(node.id) ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40',
                   )"
                   @click="toggleTarget(node.id)"
                 >
-                  <div class="min-w-0 space-y-1">
-                    <div class="flex flex-wrap items-center gap-2">
+                  <div class="grid min-w-0 gap-1">
+                    <div class="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span class="truncate text-sm font-medium">{{ node.name || node.id }}</span>
                       <Badge :variant="node.online ? 'default' : 'secondary'">
                         {{ node.online ? $t('operations.tasks.on') : $t('operations.tasks.off') }}
                       </Badge>
+                      <Badge
+                        v-for="badge in nodeAgentBadges(node).slice(0, 3)"
+                        :key="`${node.id}:${badge}`"
+                        :variant="badge === 'vpn-lines' ? 'success' : 'outline'"
+                        class="text-[10px]"
+                      >
+                        {{ badge }}
+                      </Badge>
                     </div>
-                    <p class="truncate font-mono text-xs text-muted-foreground">{{ node.id }}</p>
-                    <div class="flex flex-wrap gap-1">
+                    <div class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                      <span class="truncate font-mono">{{ node.id }}</span>
+                      <span aria-hidden="true">·</span>
+                      <span class="truncate">{{ nodeRegion(node) }}</span>
+                    </div>
+                    <div class="flex max-h-6 flex-wrap gap-1 overflow-hidden">
                       <Badge variant="outline" class="text-[10px]">{{ nodeRegion(node) }}</Badge>
-                      <Badge v-for="tag in node.tags ?? []" :key="tag" variant="secondary" class="text-[10px]">{{ tag }}</Badge>
+                      <Badge v-for="tag in (node.tags ?? []).slice(0, 5)" :key="tag" variant="secondary" class="text-[10px]">{{ tag }}</Badge>
+                      <Badge v-if="(node.tags ?? []).length > 5" variant="outline" class="text-[10px]">+{{ (node.tags ?? []).length - 5 }}</Badge>
                     </div>
                   </div>
                   <span
@@ -624,17 +727,20 @@ async function deleteTask(task: TaskView) {
           :empty-description="rootTasks.length ? '' : $t('operations.tasks.emptyDescription')"
           @retry="refreshAll"
         >
-          <div class="mb-3 text-xs text-muted-foreground">
-            {{ $t('operations.tasks.showing', { shown: filteredRootTasks.length, total: rootTasks.length }) }}
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>{{ $t('operations.tasks.showing', { shown: filteredRootTasks.length, total: rootTasks.length }) }}</span>
+            <span v-if="historyTotalPages > 1" class="font-mono">
+              {{ $t('operations.tasks.pageStatus', { page: historyPage, total: historyTotalPages }) }}
+            </span>
           </div>
 
           <div class="space-y-4">
             <div
-              v-for="task in filteredRootTasks"
+              v-for="task in pagedRootTasks"
               :key="task.id"
               class="rounded-xl border border-border bg-card shadow-sm"
             >
-              <div class="space-y-4 p-4">
+              <div class="space-y-3 p-3">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                   <div class="min-w-0 space-y-2">
                     <div class="flex flex-wrap items-center gap-2">
@@ -647,17 +753,20 @@ async function deleteTask(task: TaskView) {
                     </div>
                     <div class="flex flex-wrap items-center gap-1.5">
                       <Badge
-                        v-for="nodeId in task.targets.slice(0, 6)"
+                        v-for="nodeId in task.targets.slice(0, 4)"
                         :key="nodeId"
                         variant="secondary"
                         class="max-w-52 truncate"
                       >
                         {{ nodeName(nodeId) }}
                       </Badge>
-                      <Badge v-if="task.targets.length > 6" variant="outline">
-                        +{{ task.targets.length - 6 }}
+                      <Badge v-if="task.targets.length > 4" variant="outline">
+                        +{{ task.targets.length - 4 }}
                       </Badge>
                     </div>
+                    <p class="line-clamp-1 text-xs text-muted-foreground">
+                      {{ taskLatestSummary(task) }}
+                    </p>
                   </div>
 
                   <div class="flex flex-wrap items-center justify-end gap-2">
@@ -681,24 +790,33 @@ async function deleteTask(task: TaskView) {
                   </div>
                 </div>
 
-                <div class="grid gap-2 text-sm md:grid-cols-3">
-                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                <div class="grid gap-2 text-sm md:grid-cols-4">
+                  <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.targetProgress') }}</p>
                     <p class="mt-1 font-medium">
                       {{ taskCounts(nodeRows(task)).done }} / {{ taskCounts(nodeRows(task)).total }}
                     </p>
                   </div>
-                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                  <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.failedTargets') }}</p>
                     <p class="mt-1 font-medium">{{ taskCounts(nodeRows(task)).failed }}</p>
                   </div>
-                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                  <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.attempts') }}</p>
                     <p class="mt-1 font-medium">{{ attemptTasks(task).length }}</p>
                   </div>
+                  <div class="rounded-md border border-border bg-muted/20 p-2.5">
+                    <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.latest') }}</p>
+                    <p class="mt-1 line-clamp-1 text-xs">{{ taskProgressLabel(task) }}</p>
+                  </div>
                 </div>
 
-                <div class="overflow-x-auto rounded-lg border border-border">
+                <Button variant="ghost" size="sm" @click="toggleExpanded(task.id)">
+                  <ChevronDown :class="cn('size-4 transition-transform', isExpanded(task.id) && 'rotate-180')" aria-hidden="true" />
+                  {{ isExpanded(task.id) ? $t('operations.tasks.collapseResults') : $t('operations.tasks.expandResults') }}
+                </Button>
+
+                <div v-if="isExpanded(task.id)" class="overflow-x-auto rounded-lg border border-border">
                   <table class="w-full min-w-[760px] text-sm">
                     <thead class="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
@@ -740,6 +858,14 @@ async function deleteTask(task: TaskView) {
                         </td>
                         <td class="px-3 py-2 text-right">
                           <Button
+                            variant="ghost"
+                            size="sm"
+                            @click="toggleNodeExpanded(task.id, row.nodeId)"
+                          >
+                            <ChevronDown :class="cn('size-4 transition-transform', isNodeExpanded(task.id, row.nodeId) && 'rotate-180')" aria-hidden="true" />
+                            {{ isNodeExpanded(task.id, row.nodeId) ? $t('operations.tasks.collapseAttempts') : $t('operations.tasks.expandAttempts') }}
+                          </Button>
+                          <Button
                             v-if="row.failed"
                             variant="outline"
                             size="sm"
@@ -754,15 +880,10 @@ async function deleteTask(task: TaskView) {
                     </tbody>
                   </table>
                 </div>
-
-                <Button variant="ghost" size="sm" @click="toggleExpanded(task.id)">
-                  <ChevronDown :class="cn('size-4 transition-transform', isExpanded(task.id) && 'rotate-180')" aria-hidden="true" />
-                  {{ isExpanded(task.id) ? $t('operations.tasks.collapseResults') : $t('operations.tasks.expandResults') }}
-                </Button>
               </div>
 
-              <div v-if="isExpanded(task.id)" class="space-y-3 border-t border-border bg-muted/15 p-4">
-                <div v-for="row in nodeRows(task)" :key="`${task.id}:${row.nodeId}:attempts`" class="space-y-2">
+              <div v-if="isExpanded(task.id) && hasExpandedNode(task)" class="space-y-3 border-t border-border bg-muted/15 p-4">
+                <div v-for="row in nodeRows(task)" v-show="isNodeExpanded(task.id, row.nodeId)" :key="`${task.id}:${row.nodeId}:attempts`" class="space-y-2">
                   <p class="text-sm font-medium">{{ nodeName(row.nodeId) }}</p>
                   <div
                     v-for="attempt in row.attempts"
@@ -785,6 +906,14 @@ async function deleteTask(task: TaskView) {
                 </div>
               </div>
             </div>
+          </div>
+          <div v-if="historyTotalPages > 1" class="mt-4 flex items-center justify-end gap-2">
+            <Button variant="outline" size="sm" :disabled="historyPage <= 1" @click="historyPage -= 1">
+              {{ $t('operations.tasks.prevPage') }}
+            </Button>
+            <Button variant="outline" size="sm" :disabled="historyPage >= historyTotalPages" @click="historyPage += 1">
+              {{ $t('operations.tasks.nextPage') }}
+            </Button>
           </div>
         </DataState>
       </CardContent>

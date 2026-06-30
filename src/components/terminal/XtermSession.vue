@@ -11,9 +11,9 @@ import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
 import { api, type TerminalSession } from "@/lib/api";
 
-const POLL_MS = 220;
-const POLL_ERROR_MS = 1500; // back off after a failed poll so a bad link isn't hammered
-const INPUT_FLUSH_MS = 35;
+const POLL_MS = 120;
+const POLL_ERROR_MS = 1000; // back off after a failed poll so a bad link isn't hammered
+const INPUT_FLUSH_MS = 20;
 const RESIZE_DEBOUNCE_MS = 160;
 const WS_BACKOFF_START_MS = 500;
 const WS_BACKOFF_MAX_MS = 8000;
@@ -81,6 +81,8 @@ let closedPollsRemaining = 0;
 let closedEmittedFor = "";
 let lastPastedText = "";
 let lastPastedAt = 0;
+let outputQueue: Array<string | Uint8Array> = [];
+let outputRaf: number | undefined;
 
 // --- WebSocket (stream) transport state ---
 let ws: WebSocket | undefined;
@@ -313,6 +315,7 @@ function disposeTerminal() {
   closeWs();
   if (inputTimer) clearTimeout(inputTimer);
   if (resizeTimer) clearTimeout(resizeTimer);
+  if (outputRaf !== undefined) cancelAnimationFrame(outputRaf);
   if (pasteListener && container.value) {
     container.value.removeEventListener("paste", pasteListener, true);
   }
@@ -322,6 +325,8 @@ function disposeTerminal() {
   pollTimer = undefined;
   inputTimer = undefined;
   resizeTimer = undefined;
+  outputQueue = [];
+  outputRaf = undefined;
   pasteListener = undefined;
   resizeObserver = undefined;
   terminal = undefined;
@@ -358,6 +363,19 @@ function sendInput(data: string) {
   if (props.disabled || !data) return;
   if (isStream.value) wsSendInput(data);
   else queueInput(data);
+}
+
+function writeTerminalOutput(data: string | Uint8Array) {
+  if (!terminal) return;
+  outputQueue.push(data);
+  if (outputRaf !== undefined) return;
+  outputRaf = requestAnimationFrame(() => {
+    outputRaf = undefined;
+    if (!terminal || outputQueue.length === 0) return;
+    const queue = outputQueue;
+    outputQueue = [];
+    for (const chunk of queue) terminal.write(chunk);
+  });
 }
 
 // ============================ WebSocket transport ============================
@@ -402,7 +420,7 @@ function connectWs() {
     if (typeof ev.data === "string") return; // reserved control frames — ignore
     const bytes = new Uint8Array(ev.data as ArrayBuffer);
     bytesRendered += bytes.byteLength;
-    terminal?.write(bytes);
+    writeTerminalOutput(bytes);
   };
   sock.onerror = () => {
     // onclose always follows; reconnect/teardown is handled there.
@@ -584,7 +602,7 @@ async function pollEvents(): Promise<void> {
     for (const event of res.events) {
       if (event.seq <= cursor) continue; // already applied — never repaint
       cursor = event.seq;
-      if (event.kind === "output" && event.data) terminal?.write(event.data);
+      if (event.kind === "output" && event.data) writeTerminalOutput(event.data);
     }
     terminalError.value = undefined;
 

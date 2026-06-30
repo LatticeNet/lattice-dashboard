@@ -15,6 +15,7 @@ import { ArrowDown, ArrowUp, KeyRound, Power, SquareTerminal } from "lucide-vue-
 import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
 import { nodeStatusMeta } from "@/lib/status";
 import { formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
+import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
@@ -33,12 +34,15 @@ const props = withDefaults(
     pendingNodeId?: string;
     /** Optional per-node agent update policies for the compact status column. */
     updatePolicies?: AgentUpdatePolicy[];
+    /** Node ids that already have actual vpn-core line records. */
+    vpnLineNodeIds?: Set<string>;
   }>(),
   {
     canOpenTerminal: false,
     canAdminNodes: false,
     pendingNodeId: undefined,
     updatePolicies: () => [],
+    vpnLineNodeIds: () => new Set<string>(),
   },
 );
 
@@ -99,6 +103,10 @@ function updateVariant(policy?: AgentUpdatePolicy): "success" | "secondary" | "o
   return "secondary";
 }
 
+function agentBadges(node: Node): string[] {
+  return agentConfigBadges(node, props.vpnLineNodeIds.has(node.id));
+}
+
 /** Public IPv4 is the primary column; the rest ride along in the cell tooltip. */
 function ipTooltip(node: Node): string {
   const lines = [
@@ -118,10 +126,10 @@ function onOpen(node: Node): void {
 
 <template>
   <div class="overflow-x-auto rounded-lg border border-border">
-    <div class="min-w-[1540px]">
+    <div class="min-w-[1660px]">
       <!-- Header -->
       <div
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_84px_84px_84px_136px_112px_116px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_136px_112px_116px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
       >
         <span>{{ $t('fleet.nodes.table.colName') }}</span>
         <span>{{ $t('fleet.nodes.table.colStatus') }}</span>
@@ -129,6 +137,7 @@ function onOpen(node: Node): void {
         <span>{{ $t('fleet.nodes.table.colTags') }}</span>
         <span>{{ $t('fleet.nodes.table.colPublicIp') }}</span>
         <span>{{ $t('fleet.nodes.table.colArchOs') }}</span>
+        <span>{{ $t('fleet.nodes.table.colAgentConfig') }}</span>
         <span>{{ $t('fleet.nodes.metric.cpu') }}</span>
         <span>{{ $t('fleet.nodes.metric.memory') }}</span>
         <span>{{ $t('fleet.nodes.metric.disk') }}</span>
@@ -142,7 +151,7 @@ function onOpen(node: Node): void {
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_84px_84px_84px_136px_112px_116px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
+        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_136px_112px_116px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
         :tabindex="0"
@@ -190,6 +199,20 @@ function onOpen(node: Node): void {
         <div class="min-w-0">
           <p class="truncate">{{ archOs(node) }}</p>
           <p class="truncate text-xs text-muted-foreground">{{ node.host_facts?.arch || '—' }}</p>
+        </div>
+
+        <!-- Agent runtime / vpn-core line records -->
+        <div class="flex min-w-0 flex-wrap gap-1">
+          <Badge
+            v-for="badge in agentBadges(node).slice(0, 3)"
+            :key="`${node.id}:${badge}`"
+            :variant="badge === 'vpn-lines' ? 'success' : 'outline'"
+            class="max-w-full truncate"
+          >
+            {{ badge }}
+          </Badge>
+          <Badge v-if="agentBadges(node).length > 3" variant="secondary">+{{ agentBadges(node).length - 3 }}</Badge>
+          <span v-if="agentBadges(node).length === 0" class="text-muted-foreground">—</span>
         </div>
 
         <!-- CPU / Memory / Disk mini-bars -->
