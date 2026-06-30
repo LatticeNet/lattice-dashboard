@@ -143,6 +143,14 @@ const totalCostLabel = computed(() => {
 const canSave = computed(() => !!nodeId.value && canAdminInventory.value);
 const selectedHasProfile = computed(() => !!profileId.value);
 const selectedRenewalTone = computed<RenewalTone>(() => renewalTone(selectedMachine.value));
+const pricedCount = computed(() => machines.value.filter((machine) => (machine.price_cents ?? 0) > 0).length);
+const trackedRenewalCount = computed(() => machines.value.filter((machine) => !!machine.next_renewal).length);
+const remindersEnabledCount = computed(() => machines.value.filter((machine) => machine.reminders_enabled).length);
+const storedLinkCount = computed(() =>
+  machines.value.filter((machine) => machine.has_console_url || machine.has_detail_url).length,
+);
+const vendorSummary = computed(() => topValueSummary((machine) => machine.vendor));
+const regionSummary = computed(() => topValueSummary((machine) => machine.region));
 
 watch(
   machines,
@@ -253,6 +261,20 @@ function formatCycle(machine: MachineView): string {
   if (machine.renewal_cycle === "custom_days")
     return t("fleet.inventory.cycleLabel.customDays", { days: machine.cycle_days || 0 });
   return machine.renewal_cycle;
+}
+
+function topValueSummary(selector: (machine: MachineView) => string | undefined): string {
+  const counts = new Map<string, number>();
+  for (const machine of machines.value) {
+    const value = selector(machine)?.trim();
+    if (!value) continue;
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([value, count]) => `${value} ${count}`)
+    .join(" · ");
 }
 
 function selectMachine(machine: MachineView) {
@@ -417,6 +439,38 @@ async function runReminders(selectedOnly = false) {
       <StatCard :label="$t('fleet.inventory.stats.renewalRisk')" :value="renewalSoonCount" :icon="CalendarClock" :tone="renewalSoonCount > 0 ? 'warning' : 'success'" :hint="$t('fleet.inventory.stats.listedCost', { cost: totalCostLabel })" />
     </div>
 
+    <Card>
+      <CardHeader class="pb-3">
+        <CardTitle class="flex items-center gap-2 text-base">
+          <Boxes class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('fleet.inventory.summary.title') }}
+        </CardTitle>
+        <CardDescription>{{ $t('fleet.inventory.summary.description') }}</CardDescription>
+      </CardHeader>
+      <CardContent class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-lg border border-border bg-muted/20 p-3">
+          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.summary.coverage') }}</p>
+          <p class="mt-1 text-xl font-semibold tabular">{{ profiledCount }} / {{ machines.length }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ vendorSummary || $t('fleet.inventory.summary.noVendors') }}</p>
+        </div>
+        <div class="rounded-lg border border-border bg-muted/20 p-3">
+          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.summary.billing') }}</p>
+          <p class="mt-1 text-xl font-semibold tabular">{{ totalCostLabel }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ $t('fleet.inventory.summary.pricedMachines', { count: pricedCount }) }}</p>
+        </div>
+        <div class="rounded-lg border border-border bg-muted/20 p-3">
+          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.summary.renewals') }}</p>
+          <p class="mt-1 text-xl font-semibold tabular">{{ trackedRenewalCount }} / {{ profiledCount }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ $t('fleet.inventory.summary.remindersEnabled', { count: remindersEnabledCount }) }}</p>
+        </div>
+        <div class="rounded-lg border border-border bg-muted/20 p-3">
+          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.summary.operations') }}</p>
+          <p class="mt-1 text-xl font-semibold tabular">{{ storedLinkCount }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ regionSummary || $t('fleet.inventory.summary.noRegions') }}</p>
+        </div>
+      </CardContent>
+    </Card>
+
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_440px]">
       <Card>
         <CardHeader>
@@ -491,6 +545,9 @@ async function runReminders(selectedOnly = false) {
                     {{ $t('fleet.inventory.list.reminders') }}
                   </Badge>
                 </div>
+                <p v-if="machine.notes" class="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                  {{ $t('fleet.inventory.list.notes') }}: {{ machine.notes }}
+                </p>
               </button>
             </div>
           </DataState>

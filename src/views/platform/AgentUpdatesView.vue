@@ -5,6 +5,7 @@ import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   DownloadCloud,
+  ExternalLink,
   FileCode2,
   Pencil,
   Plus,
@@ -17,6 +18,7 @@ import {
   ApiError,
   type AgentUpdatePolicy,
   type AgentUpdatePolicyUpsertRequest,
+  type AgentReleaseInfo,
   type ApprovalView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -62,7 +64,7 @@ import {
 
 const TARGET_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
-const DEFAULT_INSTALL_PATH = "/usr/local/bin/lattice-agent";
+const DEFAULT_INSTALL_PATH = "/opt/lattice/lattice-agent";
 const DEFAULT_SERVICE_NAME = "lattice-agent.service";
 
 const { t } = useI18n();
@@ -75,11 +77,13 @@ const policiesQuery = useAsyncData(
   () => api.agentUpdates.list().then((r) => unwrap(r, "policies")),
   { pollInterval: 15000 },
 );
+const releaseQuery = useAsyncData<AgentReleaseInfo>(() => api.agentUpdates.releases());
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
 
 const policies = computed(() => policiesQuery.data.value ?? []);
+const releaseInfo = computed(() => releaseQuery.data.value);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
 const sortedPolicies = computed(() =>
@@ -115,7 +119,7 @@ const form = ref({
   node_id: "",
   enabled: true,
   auto_plan: false,
-  target_version: "",
+  target_version: "latest",
   binary_url: "",
   sha256: "",
   install_path: "",
@@ -127,7 +131,7 @@ function resetForm(): void {
     node_id: "",
     enabled: true,
     auto_plan: false,
-    target_version: "",
+    target_version: "latest",
     binary_url: "",
     sha256: "",
     install_path: "",
@@ -159,11 +163,12 @@ function openEdit(policy: AgentUpdatePolicy): void {
 }
 
 const versionValid = computed(
-  () => !form.value.target_version || TARGET_VERSION_RE.test(form.value.target_version.trim()),
+  () => !!form.value.target_version.trim() && TARGET_VERSION_RE.test(form.value.target_version.trim()),
 );
+const customArtifactMode = computed(() => !!form.value.binary_url.trim() || !!form.value.sha256.trim());
 const urlValid = computed(() => {
   const url = form.value.binary_url.trim();
-  if (!url) return false;
+  if (!url) return !customArtifactMode.value;
   try {
     const parsed = new URL(url);
     return parsed.protocol === "https:";
@@ -171,16 +176,49 @@ const urlValid = computed(() => {
     return false;
   }
 });
-const shaValid = computed(() => SHA256_RE.test(form.value.sha256.trim()));
+const shaValid = computed(() => {
+  const sha = form.value.sha256.trim();
+  if (!sha) return !customArtifactMode.value;
+  return SHA256_RE.test(sha);
+});
+const artifactPinsValid = computed(() => {
+  const hasURL = !!form.value.binary_url.trim();
+  const hasSHA = !!form.value.sha256.trim();
+  if (!hasURL && !hasSHA) return true;
+  if (hasURL !== hasSHA) return false;
+  return urlValid.value && shaValid.value;
+});
 
 const canSubmit = computed(
   () =>
     !!form.value.node_id &&
     !!form.value.target_version.trim() &&
     versionValid.value &&
-    urlValid.value &&
-    shaValid.value,
+    artifactPinsValid.value,
 );
+
+const targetSuggestions = computed(() => {
+  const latest = releaseInfo.value?.latest_version;
+  const values = ["latest"];
+  if (latest) values.push(latest, `v${latest}`);
+  for (const policy of policies.value) {
+    if (policy.target_version && !values.includes(policy.target_version)) values.push(policy.target_version);
+    if (policy.last_applied_version && !values.includes(policy.last_applied_version)) values.push(policy.last_applied_version);
+  }
+  return values.slice(0, 12);
+});
+
+function targetLabel(policy: AgentUpdatePolicy): string {
+  const target = policy.target_version || "latest";
+  if (target.toLowerCase() === "latest" && releaseInfo.value?.latest_version) {
+    return `latest -> ${releaseInfo.value.latest_version}`;
+  }
+  return target;
+}
+
+function releaseFetchedLabel(): string {
+  return releaseInfo.value?.fetched_at ? formatDateTime(releaseInfo.value.fetched_at) : "—";
+}
 
 async function submitForm(): Promise<void> {
   if (!canSubmit.value || !canAdmin.value) return;
@@ -191,9 +229,11 @@ async function submitForm(): Promise<void> {
       enabled: form.value.enabled,
       auto_plan: form.value.auto_plan,
       target_version: form.value.target_version.trim(),
-      binary_url: form.value.binary_url.trim(),
-      sha256: form.value.sha256.trim(),
     };
+    if (form.value.binary_url.trim() || form.value.sha256.trim()) {
+      req.binary_url = form.value.binary_url.trim();
+      req.sha256 = form.value.sha256.trim();
+    }
     if (form.value.install_path.trim()) req.install_path = form.value.install_path.trim();
     if (form.value.service_name.trim()) req.service_name = form.value.service_name.trim();
     await api.agentUpdates.upsert(req);
@@ -320,6 +360,57 @@ watch(
     </PageHeader>
 
     <Card>
+      <CardHeader class="pb-3">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle class="flex items-center gap-2">
+              <DownloadCloud aria-hidden="true" class="size-4 text-muted-foreground" />
+              {{ $t('platform.agentUpdates.releaseTitle') }}
+            </CardTitle>
+            <CardDescription>{{ $t('platform.agentUpdates.releaseHint') }}</CardDescription>
+          </div>
+          <a
+            v-if="releaseInfo?.release_url"
+            :href="releaseInfo.release_url"
+            target="_blank"
+            rel="noreferrer"
+            class="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+          >
+            {{ $t('platform.agentUpdates.openRelease') }}
+            <ExternalLink class="size-3.5" aria-hidden="true" />
+          </a>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div v-if="releaseQuery.error.value" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
+          {{ releaseQuery.error.value.message }}
+        </div>
+        <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.latestVersion') }}</p>
+            <p class="mt-1 font-mono text-xl font-semibold">{{ releaseInfo?.latest_version || "—" }}</p>
+            <p class="text-xs text-muted-foreground">{{ releaseInfo?.latest_tag || "latest" }}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.releaseRepo') }}</p>
+            <p class="mt-1 font-mono text-sm">{{ releaseInfo?.repo || "LatticeNet/lattice-node-agent" }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.fetchedAt', { time: releaseFetchedLabel() }) }}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.releaseArtifacts') }}</p>
+            <p class="mt-1 text-xl font-semibold tabular">{{ releaseInfo?.artifacts?.length ?? 0 }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.releaseArtifactsHint') }}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.integrity') }}</p>
+            <p class="mt-1 text-sm font-medium">{{ $t('platform.agentUpdates.integrityPlanBound') }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.integrityHint') }}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <DownloadCloud aria-hidden="true" class="size-4 text-muted-foreground" />
@@ -364,7 +455,10 @@ watch(
             </p>
           </template>
           <template #cell-target_version="{ row }">
-            <span class="font-mono text-xs">{{ row.target_version || "—" }}</span>
+            <span class="font-mono text-xs">{{ targetLabel(row) }}</span>
+            <p v-if="row.last_planned_version && row.last_planned_version !== row.target_version" class="text-xs text-muted-foreground">
+              {{ $t('platform.agentUpdates.resolvedPlanned', { version: row.last_planned_version }) }}
+            </p>
           </template>
           <template #cell-last_applied_version="{ row }">
             <span class="font-mono text-xs">{{ row.last_applied_version || "—" }}</span>
@@ -373,18 +467,20 @@ watch(
             <span class="text-xs text-muted-foreground">{{ row.last_planned_at ? formatDateTime(row.last_planned_at) : "—" }}</span>
           </template>
           <template #cell-binary_url="{ row }">
-            <div class="flex items-center gap-1">
+            <div v-if="row.binary_url" class="flex items-center gap-1">
               <code class="max-w-[200px] truncate font-mono text-xs" :title="row.binary_url">
                 {{ row.binary_url }}
               </code>
               <CopyButton :value="row.binary_url" />
             </div>
+            <Badge v-else variant="outline">{{ $t('platform.agentUpdates.officialRelease') }}</Badge>
           </template>
           <template #cell-sha256="{ row }">
-            <div class="flex items-center gap-1">
+            <div v-if="row.sha256" class="flex items-center gap-1">
               <code class="font-mono text-xs">{{ shortId(row.sha256, 12) }}</code>
               <CopyButton :value="row.sha256" />
             </div>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.resolvedInPlan') }}</span>
           </template>
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
@@ -454,42 +550,66 @@ watch(
               <Input
                 id="pol-version"
                 v-model="form.target_version"
+                list="agent-update-version-suggestions"
                 required
-                placeholder="1.4.2"
+                :placeholder="$t('platform.agentUpdates.targetVersionPlaceholder')"
                 :class="cn(form.target_version && !versionValid && 'border-destructive')"
               />
+              <datalist id="agent-update-version-suggestions">
+                <option v-for="version in targetSuggestions" :key="version" :value="version" />
+              </datalist>
               <p v-if="form.target_version && !versionValid" class="text-xs text-destructive">
                 {{ $t('platform.agentUpdates.versionInvalid') }}
+              </p>
+              <p v-else class="text-xs text-muted-foreground">
+                {{ $t('platform.agentUpdates.versionHint', { latest: releaseInfo?.latest_version || '—' }) }}
               </p>
             </div>
           </div>
 
-          <div class="grid gap-2">
-            <Label for="pol-url">{{ $t('platform.agentUpdates.binaryUrlLabel') }}</Label>
-            <Input
-              id="pol-url"
-              v-model="form.binary_url"
-              required
-              placeholder="https://releases.example.com/lattice-agent-1.4.2"
-              :class="cn(form.binary_url && !urlValid && 'border-destructive')"
-            />
-            <p v-if="form.binary_url && !urlValid" class="text-xs text-destructive">
-              {{ $t('platform.agentUpdates.urlInvalid') }}
-            </p>
-          </div>
+          <div class="rounded-md border border-border bg-muted/20 p-3">
+            <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-medium">{{ $t('platform.agentUpdates.artifactMode') }}</p>
+                <p class="text-xs text-muted-foreground">
+                  {{ customArtifactMode ? $t('platform.agentUpdates.customArtifactHint') : $t('platform.agentUpdates.officialArtifactHint') }}
+                </p>
+              </div>
+              <Badge :variant="customArtifactMode ? 'warning' : 'success'">
+                {{ customArtifactMode ? $t('platform.agentUpdates.customArtifact') : $t('platform.agentUpdates.officialRelease') }}
+              </Badge>
+            </div>
 
-          <div class="grid gap-2">
-            <Label for="pol-sha">{{ $t('platform.agentUpdates.sha256Label') }}</Label>
-            <Input
-              id="pol-sha"
-              v-model="form.sha256"
-              required
-              :placeholder="$t('platform.agentUpdates.sha256Placeholder')"
-              :class="cn('font-mono', form.sha256 && !shaValid && 'border-destructive')"
-            />
-            <p v-if="form.sha256 && !shaValid" class="text-xs text-destructive">
-              {{ $t('platform.agentUpdates.sha256Invalid') }}
-            </p>
+            <div class="grid gap-3">
+              <div class="grid gap-2">
+                <Label for="pol-url">{{ $t('platform.agentUpdates.binaryUrlLabel') }}</Label>
+                <Input
+                  id="pol-url"
+                  v-model="form.binary_url"
+                  placeholder="https://releases.example.com/lattice-agent-1.4.2"
+                  :class="cn(form.binary_url && !urlValid && 'border-destructive')"
+                />
+                <p v-if="form.binary_url && !urlValid" class="text-xs text-destructive">
+                  {{ $t('platform.agentUpdates.urlInvalid') }}
+                </p>
+              </div>
+
+              <div class="grid gap-2">
+                <Label for="pol-sha">{{ $t('platform.agentUpdates.sha256Label') }}</Label>
+                <Input
+                  id="pol-sha"
+                  v-model="form.sha256"
+                  :placeholder="$t('platform.agentUpdates.sha256Placeholder')"
+                  :class="cn('font-mono', form.sha256 && !shaValid && 'border-destructive')"
+                />
+                <p v-if="form.sha256 && !shaValid" class="text-xs text-destructive">
+                  {{ $t('platform.agentUpdates.sha256Invalid') }}
+                </p>
+                <p v-if="customArtifactMode && !artifactPinsValid" class="text-xs text-destructive">
+                  {{ $t('platform.agentUpdates.artifactPinsInvalid') }}
+                </p>
+              </div>
+            </div>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">

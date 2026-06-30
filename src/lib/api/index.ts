@@ -81,6 +81,7 @@ import type {
   NotifyTestRequest,
   AgentUpdatePolicy,
   AgentUpdatePolicyUpsertRequest,
+  AgentReleaseInfo,
   OIDCProviderView,
   OIDCProviderUpsertRequest,
   OIDCProviderTestResult,
@@ -529,6 +530,7 @@ export const api = {
 
   agentUpdates: {
     list: () => http.get<{ policies: AgentUpdatePolicy[] }>("/api/nodes/agent-updates"),
+    releases: () => http.get<AgentReleaseInfo>("/api/nodes/agent-updates/releases"),
     upsert: (input: AgentUpdatePolicyUpsertRequest) =>
       http.post<AgentUpdatePolicy>("/api/nodes/agent-updates", input),
     delete: (node_id: string) =>

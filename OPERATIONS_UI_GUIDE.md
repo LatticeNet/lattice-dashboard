@@ -119,6 +119,36 @@ Recommended comment content:
 - migration context
 - "do not delete" or rollback hints
 
+## Agent updates
+
+Agent updates are plan-bound host mutations. The dashboard defaults to official
+release mode:
+
+- `target_version=latest` means "resolve the current official release when the
+  plan is created".
+- An explicit target such as `0.2.8` or `v0.2.8` pins that release.
+- Empty `binary_url` and `sha256` mean the server resolves the trusted
+  `LatticeNet/lattice-node-agent` release, selects the target node OS/arch
+  artifact, and reads `SHA256SUMS`.
+- The approval plan records the concrete resolved version, URL, and SHA-256.
+  The policy row records operator intent plus last planned/applied version.
+- Custom artifact mode is available only when both URL and SHA-256 are provided.
+
+The Agent Updates page fetches the current latest release once when the page
+loads so operators can see what `latest` currently means. That display is
+advisory; the approval plan remains authoritative because it is generated and
+hashed server-side.
+
+Compatibility rules for future updates:
+
+- Dashboard must tolerate older node runtime reports and older server fields.
+- Server must tolerate old agents until they heartbeat with new capabilities.
+- Agent protocol additions should be additive whenever possible.
+- Official plugins may add views/interfaces, but existing component keys and
+  signed interface names must keep working until a documented migration.
+- Breaking changes require an explicit version/capability gate and a rollback
+  note.
+
 Do not put secrets in comments.
 
 ### Network & IP

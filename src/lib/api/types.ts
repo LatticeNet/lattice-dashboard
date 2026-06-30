@@ -1498,6 +1498,16 @@ export interface AgentUpdatePolicyUpsertRequest {
   service_name?: string;
 }
 
+export interface AgentReleaseInfo {
+  repo: string;
+  latest_tag: string;
+  latest_version: string;
+  release_url: string;
+  artifacts: string[];
+  sha256: Record<string, string>;
+  fetched_at: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Settings — SSO/OIDC providers, Access Tokens (PATs). Secrets write-only;
 // PAT plaintext is one-time-revealed on create.

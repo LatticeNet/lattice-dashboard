@@ -116,6 +116,20 @@ const sortedGroups = computed<LineGroup[]>(() =>
     (a.node_name || a.node_id).localeCompare(b.node_name || b.node_id),
   ),
 );
+const GROUP_PREVIEW_LIMIT = 8;
+const showAllGroups = ref(false);
+const prioritizedGroups = computed<LineGroup[]>(() =>
+  [...sortedGroups.value].sort((a, b) => {
+    const aError = a.lines.some((line) => line.status === "error" || line.last_error);
+    const bError = b.lines.some((line) => line.status === "error" || line.last_error);
+    if (aError !== bError) return aError ? -1 : 1;
+    return (a.node_name || a.node_id).localeCompare(b.node_name || b.node_id);
+  }),
+);
+const visibleGroups = computed<LineGroup[]>(() =>
+  showAllGroups.value ? prioritizedGroups.value : prioritizedGroups.value.slice(0, GROUP_PREVIEW_LIMIT),
+);
+const hiddenGroupCount = computed(() => Math.max(0, prioritizedGroups.value.length - visibleGroups.value.length));
 const allLines = computed<Line[]>(() => groups.value.flatMap((g) => g.lines ?? []));
 const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const selectableNodes = computed<Node[]>(() =>
@@ -509,8 +523,21 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       :empty-description="$t('lines.emptyDescription')"
       @retry="linesQuery.refresh"
     >
-      <div class="grid gap-3 2xl:grid-cols-2">
-        <Card v-for="group in sortedGroups" :key="group.node_id" class="overflow-hidden">
+      <div class="space-y-3">
+        <div
+          v-if="hiddenGroupCount > 0 || showAllGroups"
+          class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/25 px-4 py-3 text-sm"
+        >
+          <div class="text-muted-foreground">
+            {{ $t('lines.renderSummary', { shown: visibleGroups.length, total: prioritizedGroups.length }) }}
+          </div>
+          <Button type="button" variant="outline" size="sm" @click="showAllGroups = !showAllGroups">
+            {{ showAllGroups ? $t('lines.showLessGroups') : $t('lines.showAllGroups', { count: hiddenGroupCount }) }}
+          </Button>
+        </div>
+
+        <div class="grid gap-3 2xl:grid-cols-2">
+        <Card v-for="group in visibleGroups" :key="group.node_id" class="overflow-hidden">
           <CardHeader class="px-4 py-3">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0 space-y-1">
@@ -634,6 +661,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
             </div>
           </CardContent>
         </Card>
+        </div>
       </div>
     </DataState>
 

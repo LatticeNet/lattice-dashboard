@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
@@ -39,7 +39,7 @@ const { digestFor, cache: digestCache } = usePlanDigest();
 const approvals = computed(() => approvalsQuery.data.value ?? []);
 const pending = computed(() => approvals.value.filter((a) => a.status === "pending"));
 const selected = computed<ApprovalView | undefined>(() =>
-  approvals.value.find((approval) => approval.id === selectedId.value) ?? approvals.value[0],
+  sortedApprovals.value.find((approval) => approval.id === selectedId.value) ?? sortedApprovals.value[0],
 );
 const canApply = computed(() => auth.can("network:apply"));
 
@@ -67,10 +67,42 @@ const previousPlan = computed(() => {
 
 const sortedApprovals = computed(() =>
   [...approvals.value].sort((a, b) => {
-    if (a.status !== b.status) return a.status === "pending" ? -1 : 1;
-    return (b.created_at || "").localeCompare(a.created_at || "");
+    const rank = statusRank(a.status) - statusRank(b.status);
+    if (rank !== 0) return rank;
+    const created = (b.created_at || "").localeCompare(a.created_at || "");
+    if (created !== 0) return created;
+    return a.id.localeCompare(b.id);
   }),
 );
+
+watch(
+  sortedApprovals,
+  (list) => {
+    if (list.length === 0) {
+      selectedId.value = "";
+      return;
+    }
+    if (!selectedId.value || !list.some((approval) => approval.id === selectedId.value)) {
+      selectedId.value = list[0]?.id ?? "";
+    }
+  },
+  { immediate: true },
+);
+
+function statusRank(status: ApprovalStatus): number {
+  switch (status) {
+    case "pending":
+      return 0;
+    case "approved":
+      return 1;
+    case "applied":
+      return 2;
+    case "rejected":
+      return 3;
+    default:
+      return 9;
+  }
+}
 
 function variantFor(status: ApprovalStatus) {
   return approvalStatusMeta(status).badgeVariant;
