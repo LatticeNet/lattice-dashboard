@@ -71,10 +71,29 @@ function adaptLegacyUsage(legacy: ProxyUsageResponse): VpnCoreUsageResponse {
   const rows: UsageRow[] = [];
   const byNode = (legacy.snapshots ?? []).map((snap) => {
     let used = 0;
-    let count = 0;
+    const seenUsers = new Set<string>();
+    const represented = new Set<string>();
+    const markUser = (userID: string) => {
+      if (userID) seenUsers.add(userID);
+    };
+    for (const [lineHashID, byUser] of Object.entries(snap.line_user_bytes ?? {})) {
+      for (const [userID, bytes] of Object.entries(byUser ?? {})) {
+        used += bytes || 0;
+        represented.add(userID);
+        markUser(userID);
+        rows.push({
+          node_id: snap.node_id,
+          node_name: snap.node_name,
+          user_id: userID,
+          line_hash_id: lineHashID,
+          bytes: bytes || 0,
+        });
+      }
+    }
     for (const [userID, bytes] of Object.entries(snap.user_bytes ?? {})) {
+      if (represented.has(userID)) continue;
       used += bytes || 0;
-      count += 1;
+      markUser(userID);
       rows.push({
         node_id: snap.node_id,
         node_name: snap.node_name,
@@ -86,11 +105,11 @@ function adaptLegacyUsage(legacy: ProxyUsageResponse): VpnCoreUsageResponse {
       node_id: snap.node_id,
       node_name: snap.node_name,
       used_bytes: used,
-      user_count: count,
+      user_count: seenUsers.size,
       at: snap.at,
     };
   });
-  return { by_user: byUser, by_node: byNode, rows, collectors: [], per_line: false };
+  return { by_user: byUser, by_node: byNode, rows, collectors: [], per_line: rows.some((row) => !!row.line_hash_id) };
 }
 
 async function loadUsage(): Promise<VpnCoreUsageResponse> {

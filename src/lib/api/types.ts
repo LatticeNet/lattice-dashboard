@@ -519,6 +519,7 @@ export interface ProxyUsageSnapshotView {
   at: string;
   core_uptime_sec: number;
   user_bytes: Record<string, number>;
+  line_user_bytes?: Record<string, Record<string, number>>;
 }
 
 export interface ProxyUsageUserView {
