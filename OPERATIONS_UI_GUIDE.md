@@ -144,6 +144,9 @@ offers **Create fresh plan** for operators with `node:admin` and `network:plan`.
 When the node already reports the target version, the same page asks before
 **Force fresh plan** creates a replacement pending approval. Force planning
 does not approve, queue, or apply the update; it only re-rolls the reviewed plan.
+The UI keys the no-op branch from the stable `agent_update_noop` API code, with
+a narrow compatibility fallback for older servers; do not treat every HTTP 409
+from planning as safe to force.
 
 Compatibility rules for future updates:
 
