@@ -139,6 +139,12 @@ loads so operators can see what `latest` currently means. That display is
 advisory; the approval plan remains authoritative because it is generated and
 hashed server-side.
 
+If an `agentupdate` approval becomes stale, the Approvals page labels it and
+offers **Create fresh plan** for operators with `node:admin` and `network:plan`.
+When the node already reports the target version, the same page asks before
+**Force fresh plan** creates a replacement pending approval. Force planning
+does not approve, queue, or apply the update; it only re-rolls the reviewed plan.
+
 Compatibility rules for future updates:
 
 - Dashboard must tolerate older node runtime reports and older server fields.
