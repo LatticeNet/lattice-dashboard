@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { AlertTriangle, Ban, CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
 import { ApiError, api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
@@ -34,6 +34,7 @@ const approvalsQuery = useAsyncData(() => api.approvals.list().then((r) => unwra
 
 const selectedId = ref("");
 const pendingApproval = ref<string | undefined>();
+const replanningApproval = ref<string | undefined>();
 const { digestFor, cache: digestCache } = usePlanDigest();
 
 const approvals = computed(() => approvalsQuery.data.value ?? []);
@@ -43,6 +44,7 @@ const selected = computed<ApprovalView | undefined>(() =>
 );
 const canApply = computed(() => auth.can("network:apply"));
 const canDecideSelected = computed(() => canDecideApproval(selected.value));
+const canReplanSelectedAgentUpdate = computed(() => canReplanAgentUpdate(selected.value));
 
 const planView = ref<"diff" | "full">("diff");
 const lastApprovalError = ref<{ approvalId: string; message: string; stale: boolean } | undefined>();
@@ -170,6 +172,23 @@ async function rejectApproval(approval: ApprovalView) {
   }
 }
 
+async function replanAgentUpdate(approval: ApprovalView) {
+  if (!canReplanAgentUpdate(approval)) return;
+  replanningApproval.value = approval.id;
+  lastApprovalError.value = undefined;
+  try {
+    const fresh = await api.agentUpdates.plan(approval.node_id);
+    toast.success(t("operations.approvals.replanCreated"));
+    await approvalsQuery.refresh();
+    selectedId.value = fresh.id;
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("operations.approvals.replanFailed"));
+    await approvalsQuery.refresh();
+  } finally {
+    replanningApproval.value = undefined;
+  }
+}
+
 function isStaleApprovalError(error: unknown): boolean {
   if (error instanceof ApiError) {
     return (
@@ -187,6 +206,16 @@ function isStaleRejectedApproval(approval?: ApprovalView): boolean {
     reason.includes("re-plan") ||
     reason.includes("replan") ||
     (reason.includes("policy changed") && reason.includes("approval"))
+  );
+}
+
+function canReplanAgentUpdate(approval?: ApprovalView): boolean {
+  return (
+    !!approval?.node_id &&
+    approval.plugin === "agentupdate" &&
+    isStaleRejectedApproval(approval) &&
+    auth.can("node:admin") &&
+    auth.can("network:plan")
   );
 }
 </script>
@@ -309,6 +338,19 @@ function isStaleRejectedApproval(approval?: ApprovalView): boolean {
             </template>
             <p v-else class="font-medium text-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
             <p class="mt-1 break-words">{{ selected.reason }}</p>
+            <Button
+              v-if="canReplanSelectedAgentUpdate"
+              type="button"
+              variant="outline"
+              size="sm"
+              class="mt-3"
+              :disabled="replanningApproval === selected.id"
+              @click="replanAgentUpdate(selected)"
+            >
+              <RefreshCw v-if="replanningApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+              <FileCode2 v-else class="size-4" aria-hidden="true" />
+              {{ $t('operations.approvals.replanAgentUpdate') }}
+            </Button>
           </div>
 
           <div class="space-y-2">
