@@ -312,6 +312,8 @@ export interface ApprovalView {
   plan: string;
   status: ApprovalStatus;
   reason?: string;
+  stale?: boolean;
+  stale_code?: string;
   actor_id?: string;
   approved_by?: string;
   created_at?: string;

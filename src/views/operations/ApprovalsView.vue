@@ -226,7 +226,11 @@ function forceReplanAgentUpdate() {
 }
 
 function staleAgentUpdateReason(approval?: ApprovalView): string {
-  if (!approval || approval.plugin !== "agentupdate" || !approval.reason) return "";
+  if (!approval || approval.plugin !== "agentupdate") return "";
+  if (approval.stale || approval.stale_code === "agent_update_policy_changed") {
+    return approval.reason || t("operations.approvals.toastStale");
+  }
+  if (!approval.reason) return "";
   const reason = approval.reason.toLowerCase();
   const stale =
     reason.includes("re-plan") ||
