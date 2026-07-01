@@ -24,7 +24,7 @@ export default {
       diffNoPrior: "No prior applied plan for this target — showing the full new config as added.",
       diffNoChange: "No change vs the last applied plan.",
       diffTruncated: "Plan too large to diff — showing new content.",
-      planSha256: "plan sha256",
+      planSha256: "plan text SHA-256",
       computeHash: "Compute plan hash",
       approveOnly: "Approve only",
       approveAndQueue: "Approve and queue",
@@ -40,7 +40,7 @@ export default {
       staleBadge: "Stale",
       staleTitle: "Plan changed since review",
       staleDescription:
-        "This approval was closed as rejected because the policy, target node state, or resolved artifact changed after it was planned. Create a fresh plan and review the new digest before approving.",
+        "This approval was closed as rejected because the policy, target node state, or resolved artifact changed after it was planned. Create a fresh plan and review the new plan-text digest before approving.",
       replanAgentUpdate: "Create fresh plan",
       replanCreated: "Fresh approval plan created",
       replanFailed: "Re-plan failed",

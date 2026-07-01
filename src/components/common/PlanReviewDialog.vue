@@ -103,7 +103,7 @@ const props = withDefaults(
     description:
       "Review the plan and its digest below, then approve or open the approvals inbox to apply it.",
     planLabel: "Plan",
-    digestLabel: "plan sha256",
+    digestLabel: "plan text SHA-256",
     copyDigestLabel: "Copy plan digest",
     closeLabel: "Close",
     approveLabel: "Approve",

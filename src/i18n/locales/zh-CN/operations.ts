@@ -23,7 +23,7 @@ export default {
       diffNoPrior: "该目标暂无已应用的历史计划 —— 整份新配置按新增显示。",
       diffNoChange: "与上次已应用的计划相比无变化。",
       diffTruncated: "计划过大无法逐行比对 —— 显示新内容。",
-      planSha256: "计划 sha256",
+      planSha256: "计划文本 SHA-256",
       computeHash: "计算计划哈希",
       approveOnly: "仅批准",
       approveAndQueue: "批准并排队",
@@ -39,7 +39,7 @@ export default {
       staleBadge: "已过期",
       staleTitle: "计划在审阅后已变化",
       staleDescription:
-        "此审批已被关闭为 rejected，因为规划后策略、目标节点状态或已解析制品发生了变化。请创建新的计划，重新审阅新的摘要后再批准。",
+        "此审批已被关闭为 rejected，因为规划后策略、目标节点状态或已解析制品发生了变化。请创建新的计划，重新审阅新的计划文本摘要后再批准。",
       replanAgentUpdate: "生成新计划",
       replanCreated: "新的审批计划已创建",
       replanFailed: "重新规划失败",

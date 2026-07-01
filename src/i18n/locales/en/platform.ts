@@ -374,7 +374,7 @@ export default {
       newPolicy: "New policy",
       policiesTitle: "Update policies",
       policiesCount:
-        "{count} policies · binary URL + sha256 are integrity pins, applied via approved plans",
+        "{count} policies · binary URL + binary artifact SHA-256 are integrity pins, applied via approved plans",
       releaseTitle: "Official node-agent release",
       releaseHint:
         "The dashboard resolves latest once when this page loads. Plans still bind the concrete version, URL, and SHA-256 server-side.",
@@ -385,8 +385,9 @@ export default {
       openRelease: "Open release",
       fetchedAt: "fetched {time}",
       integrity: "Integrity",
-      integrityPlanBound: "plan-bound SHA-256",
-      integrityHint: "Official mode stores intent; the approval stores the resolved artifact digest.",
+      integrityPlanBound: "two SHA-256 bindings",
+      integrityHint:
+        "The plan body includes the binary artifact SHA-256. Approval uses a separate plan-text SHA-256 so the reviewed text is what gets approved.",
       emptyTitle: "No update policies",
       emptyDescription: "Define a per-node policy to pin and roll out lattice-agent versions.",
       colNode: "Node",
@@ -395,7 +396,7 @@ export default {
       colApplied: "Applied",
       colLastPlanned: "Last planned",
       colBinaryUrl: "Binary URL",
-      colSha256: "sha256",
+      colSha256: "Binary SHA-256",
       colActions: "Actions",
       officialRelease: "official release",
       resolvedInPlan: "resolved in plan",
@@ -424,7 +425,7 @@ export default {
       artifactPinsInvalid: "Binary URL and SHA-256 must be provided together, or both left empty for official release mode.",
       binaryUrlLabel: "Binary URL",
       urlInvalid: "Must be a valid HTTPS URL.",
-      sha256Label: "SHA-256",
+      sha256Label: "Binary artifact SHA-256",
       sha256Placeholder: "64-char lowercase hex",
       sha256Invalid: "Must be 64-character lowercase hex.",
       installPathLabel: "Install path",
@@ -449,7 +450,8 @@ export default {
       forcePlan: "Force plan",
       planTitle: "Agent update plan",
       planReviewOn: "{plugin} / {action} on {node}",
-      planCreatedReview: "Plan created. Review and approve under",
+      planCreatedReview:
+        "Plan created. The plan text digest shown here is different from the binary artifact SHA-256 inside the plan. Review and approve under",
       operationsApprovals: "Operations → Approvals",
       planAppliesAfter: "; the target node-agent applies it after approval.",
       plan: "Plan",
