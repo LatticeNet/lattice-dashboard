@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { AlertTriangle, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
-import { ApiError, api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
+import { ApiError, api, isAgentUpdateNoopError, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -197,7 +197,7 @@ async function replanAgentUpdate(approval: ApprovalView, force = false) {
     await approvalsQuery.refresh();
     selectedId.value = fresh.id;
   } catch (error) {
-    if (error instanceof ApiError && error.status === 409 && !force) {
+    if (isAgentUpdateNoopError(error) && !force) {
       forceReplanApproval.value = approval;
       forceReplanMessage.value = error.message || t("operations.approvals.forceReplanAlreadyTarget");
       forceReplanOpen.value = true;

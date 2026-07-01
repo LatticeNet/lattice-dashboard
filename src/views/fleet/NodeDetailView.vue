@@ -44,6 +44,7 @@ import {
   api,
   unwrap,
   ApiError,
+  isAgentUpdateNoopError,
   type AgentLaunchConfig,
   type AgentRuntimeConfig,
   type Node,
@@ -895,7 +896,7 @@ async function planUpdate(force = false) {
     updateNoopOpen.value = false;
     await agentUpdatesQuery.refresh();
   } catch (error) {
-    if (error instanceof ApiError && error.status === 409 && !force) {
+    if (isAgentUpdateNoopError(error) && !force) {
       updateNoopMessage.value = error.message || t("fleet.nodes.detail.nodeAlreadyTarget");
       updateNoopOpen.value = true;
       await agentUpdatesQuery.refresh();

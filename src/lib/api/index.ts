@@ -1,4 +1,4 @@
-import { http } from "./client";
+import { ApiError, http } from "./client";
 import type {
   Principal,
   LoginResponse,
@@ -103,6 +103,19 @@ import type {
 
 export * from "./types";
 export { ApiError, setCsrfToken, getCsrfToken } from "./client";
+
+export const API_ERROR_AGENT_UPDATE_NOOP = "agent_update_noop";
+
+export function isAgentUpdateNoopError(error: unknown): error is ApiError {
+  if (!(error instanceof ApiError)) return false;
+  if (error.code === API_ERROR_AGENT_UPDATE_NOOP) return true;
+  // Compatibility with servers released before the stable machine code.
+  return (
+    error.status === 409 &&
+    error.code === "bad_request" &&
+    error.message.toLowerCase().includes("target version")
+  );
+}
 
 /** Typed surface over the lattice-server JSON API, grouped by feature domain. */
 export const api = {

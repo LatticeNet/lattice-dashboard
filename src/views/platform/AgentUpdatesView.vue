@@ -16,7 +16,7 @@ import {
 import {
   api,
   unwrap,
-  ApiError,
+  isAgentUpdateNoopError,
   type AgentUpdatePolicy,
   type AgentUpdatePolicyUpsertRequest,
   type AgentReleaseInfo,
@@ -294,8 +294,8 @@ async function runPlan(nodeId: string, force: boolean): Promise<void> {
     toast.success(t("platform.agentUpdates.planCreated"));
     policiesQuery.refresh();
   } catch (error) {
-    // 409 = node already at target / noop. Offer a forced re-plan.
-    if (error instanceof ApiError && error.status === 409 && !force) {
+    // Noop = node already at target. Offer a forced re-plan.
+    if (isAgentUpdateNoopError(error) && !force) {
       noopNodeId.value = nodeId;
       noopMessage.value = error.message || t("platform.agentUpdates.nodeAlreadyTarget");
       noopOpen.value = true;
