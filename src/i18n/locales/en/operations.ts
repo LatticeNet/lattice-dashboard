@@ -37,6 +37,7 @@ export default {
       toastFailed: "Approval failed",
       toastRejectFailed: "Approval rejection failed",
       toastStale: "Approval is stale — re-plan before approving.",
+      staleBadge: "Stale",
       staleTitle: "Plan changed since review",
       staleDescription:
         "This approval was closed as rejected because the policy, target node state, or resolved artifact changed after it was planned. Create a fresh plan and review the new digest before approving.",

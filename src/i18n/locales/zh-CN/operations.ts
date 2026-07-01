@@ -36,6 +36,7 @@ export default {
       toastFailed: "审批失败",
       toastRejectFailed: "审批驳回失败",
       toastStale: "审批已过期 — 请重新规划后再批准。",
+      staleBadge: "已过期",
       staleTitle: "计划在审阅后已变化",
       staleDescription:
         "此审批已被关闭为 rejected，因为规划后策略、目标节点状态或已解析制品发生了变化。请创建新的计划，重新审阅新的摘要后再批准。",

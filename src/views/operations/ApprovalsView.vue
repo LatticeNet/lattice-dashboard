@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Ban, CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, Ban, CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
 import { ApiError, api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
@@ -179,6 +179,16 @@ function isStaleApprovalError(error: unknown): boolean {
   }
   return error instanceof Error && error.message.toLowerCase().includes("re-plan");
 }
+
+function isStaleRejectedApproval(approval?: ApprovalView): boolean {
+  if (!approval || approval.status !== "rejected" || !approval.reason) return false;
+  const reason = approval.reason.toLowerCase();
+  return (
+    reason.includes("re-plan") ||
+    reason.includes("replan") ||
+    (reason.includes("policy changed") && reason.includes("approval"))
+  );
+}
 </script>
 
 <template>
@@ -251,7 +261,10 @@ function isStaleApprovalError(error: unknown): boolean {
               >
                 <div class="flex items-center justify-between gap-2">
                   <span class="truncate text-sm font-medium">{{ approval.plugin }} · {{ approval.action }}</span>
-                  <Badge :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
+                  <div class="flex shrink-0 items-center gap-1">
+                    <Badge v-if="isStaleRejectedApproval(approval)" variant="outline">{{ $t('operations.approvals.staleBadge') }}</Badge>
+                    <Badge :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
+                  </div>
                 </div>
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span>{{ shortId(approval.id) }}</span>
@@ -284,7 +297,17 @@ function isStaleApprovalError(error: unknown): boolean {
             v-if="selected.status === 'rejected' && selected.reason"
             class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
           >
-            <p class="font-medium text-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
+            <template v-if="isStaleRejectedApproval(selected)">
+              <p class="flex items-center gap-2 font-medium text-foreground">
+                <AlertTriangle class="size-4 text-warning" aria-hidden="true" />
+                {{ $t('operations.approvals.staleTitle') }}
+              </p>
+              <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
+              <p class="mt-2 text-xs font-medium uppercase text-muted-foreground">
+                {{ $t('operations.approvals.rejectionReason') }}
+              </p>
+            </template>
+            <p v-else class="font-medium text-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
             <p class="mt-1 break-words">{{ selected.reason }}</p>
           </div>
 
