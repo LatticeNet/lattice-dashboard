@@ -404,8 +404,8 @@ The page is responsible for:
 
 - showing pending plans and their target node/action
 - accepting or rejecting the plan
-- showing server-supplied rejection reasons when a stale or superseded approval
-  is auto-closed
+- showing server-supplied rejection reasons when a stale/superseded approval is
+  auto-closed or an approved task fails on the node
 - preserving audit context
 - preventing "button clicked means host mutated" ambiguity
 
