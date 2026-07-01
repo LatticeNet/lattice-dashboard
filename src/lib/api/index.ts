@@ -106,6 +106,7 @@ export { ApiError, setCsrfToken, getCsrfToken } from "./client";
 
 export const API_ERROR_APPROVAL_STALE = "approval_stale";
 export const API_ERROR_AGENT_UPDATE_NOOP = "agent_update_noop";
+export const APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED = "agent_update_policy_changed";
 
 export function isApprovalStaleError(error: unknown): error is ApiError {
   if (error instanceof ApiError) {

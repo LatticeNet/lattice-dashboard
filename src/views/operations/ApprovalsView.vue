@@ -3,7 +3,15 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { AlertTriangle, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
-import { api, isAgentUpdateNoopError, isApprovalStaleError, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
+import {
+  api,
+  APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
+  isAgentUpdateNoopError,
+  isApprovalStaleError,
+  unwrap,
+  type ApprovalStatus,
+  type ApprovalView,
+} from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -227,7 +235,7 @@ function forceReplanAgentUpdate() {
 
 function staleAgentUpdateReason(approval?: ApprovalView): string {
   if (!approval || approval.plugin !== "agentupdate") return "";
-  if (approval.stale || approval.stale_code === "agent_update_policy_changed") {
+  if (approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED) {
     return approval.reason || t("operations.approvals.toastStale");
   }
   if (!approval.reason) return "";
