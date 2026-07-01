@@ -350,7 +350,7 @@ export default {
         agentUpdatesDesc: "该节点的官方 lattice-node-agent release 更新控制",
         agentVersion: "版本",
         targetVersion: "目标版本",
-        targetVersionPlaceholder: "latest 或 0.2.2",
+        targetVersionPlaceholder: "latest 或 0.2.8",
         lastApplied: "最近应用任务",
         lastPlanned: "最近计划",
         updatesEnabled: "已启用更新",

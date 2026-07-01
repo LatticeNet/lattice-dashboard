@@ -354,7 +354,7 @@ export default {
         agentUpdatesDesc: "Official lattice-node-agent release controls for this node",
         agentVersion: "Version",
         targetVersion: "Target version",
-        targetVersionPlaceholder: "latest or 0.2.2",
+        targetVersionPlaceholder: "latest or 0.2.8",
         lastApplied: "Last applied task",
         lastPlanned: "Last planned",
         updatesEnabled: "Updates enabled",
