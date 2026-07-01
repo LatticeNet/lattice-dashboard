@@ -42,6 +42,7 @@ const selected = computed<ApprovalView | undefined>(() =>
   sortedApprovals.value.find((approval) => approval.id === selectedId.value) ?? sortedApprovals.value[0],
 );
 const canApply = computed(() => auth.can("network:apply"));
+const canDecideSelected = computed(() => canDecideApproval(selected.value));
 
 const planView = ref<"diff" | "full">("diff");
 const lastApprovalError = ref<{ approvalId: string; message: string; stale: boolean } | undefined>();
@@ -107,6 +108,29 @@ function statusRank(status: ApprovalStatus): number {
 
 function variantFor(status: ApprovalStatus) {
   return approvalStatusMeta(status).badgeVariant;
+}
+
+function approvalDecisionExtraScope(approval: ApprovalView): string {
+  switch (approval.plugin) {
+    case "nftpolicy":
+      return "netpolicy:admin";
+    case "agentupdate":
+      return "node:admin";
+    case "selfdns":
+      return "dns:admin";
+    case "proxycore":
+      return "proxy:admin";
+    case "cftunnel":
+      return "tunnel:admin";
+    default:
+      return "";
+  }
+}
+
+function canDecideApproval(approval?: ApprovalView): boolean {
+  if (!approval || !auth.can("network:apply")) return false;
+  const extraScope = approvalDecisionExtraScope(approval);
+  return extraScope === "" || auth.can(extraScope);
 }
 
 async function approve(approval: ApprovalView, queueApply: boolean) {
@@ -321,7 +345,7 @@ function isStaleApprovalError(error: unknown): boolean {
               v-if="selected.status === 'pending'"
               type="button"
               variant="outline"
-              :disabled="!canApply || pendingApproval === selected.id"
+              :disabled="!canDecideSelected || pendingApproval === selected.id"
               @click="approve(selected, false)"
             >
               <CheckCircle2 class="size-4" aria-hidden="true" />
@@ -331,7 +355,7 @@ function isStaleApprovalError(error: unknown): boolean {
               v-if="selected.status === 'pending'"
               type="button"
               variant="destructive"
-              :disabled="!canApply || pendingApproval === selected.id"
+              :disabled="!canDecideSelected || pendingApproval === selected.id"
               @click="rejectApproval(selected)"
             >
               <Ban class="size-4" aria-hidden="true" />
@@ -340,7 +364,7 @@ function isStaleApprovalError(error: unknown): boolean {
             <Button
               v-if="selected.status === 'pending'"
               type="button"
-              :disabled="!canApply || pendingApproval === selected.id"
+              :disabled="!canDecideSelected || pendingApproval === selected.id"
               @click="approve(selected, true)"
             >
               <RefreshCw v-if="pendingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
@@ -349,7 +373,7 @@ function isStaleApprovalError(error: unknown): boolean {
             </Button>
           </div>
 
-          <p v-if="!canApply" class="text-sm text-muted-foreground">
+          <p v-if="!canDecideSelected" class="text-sm text-muted-foreground">
             {{ $t('operations.approvals.applyRequired') }}
           </p>
         </CardContent>

@@ -29,7 +29,7 @@ export default {
       approveAndQueue: "批准并排队",
       reject: "驳回",
       rejectConfirm: "驳回审批 {id}？这会关闭该计划，且不会排队执行任何任务。",
-      applyRequired: "批准计划需要 `network:apply` 权限。",
+      applyRequired: "批准计划需要 `network:apply` 以及插件对应的管理权限。",
       toastQueued: "审批已排队待应用",
       toastRecorded: "审批已记录",
       toastRejected: "审批已驳回",

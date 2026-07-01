@@ -30,7 +30,7 @@ export default {
       approveAndQueue: "Approve and queue",
       reject: "Reject",
       rejectConfirm: "Reject approval {id}? This closes the plan without queuing any task.",
-      applyRequired: "`network:apply` is required to approve plans.",
+      applyRequired: "`network:apply` and any plugin-specific admin scope are required to approve plans.",
       toastQueued: "Approval queued for apply",
       toastRecorded: "Approval recorded",
       toastRejected: "Approval rejected",

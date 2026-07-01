@@ -406,6 +406,8 @@ The page is responsible for:
 - accepting or rejecting the plan
 - showing server-supplied rejection reasons when a stale/superseded approval is
   auto-closed or an approved task fails on the node
+- disabling approval decisions unless the operator has `network:apply` and any
+  plugin-specific admin scope required by the server
 - preserving audit context
 - preventing "button clicked means host mutated" ambiguity
 
