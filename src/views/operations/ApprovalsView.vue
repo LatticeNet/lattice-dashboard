@@ -256,6 +256,13 @@ function isStaleApprovalError(error: unknown): boolean {
             <Badge variant="outline">{{ $t('operations.approvals.idLabel', { id: shortId(selected.id, 12) }) }}</Badge>
             <Badge v-if="selected.approved_by" variant="secondary">{{ $t('operations.approvals.byLabel', { actor: selected.approved_by }) }}</Badge>
           </div>
+          <div
+            v-if="selected.status === 'rejected' && selected.reason"
+            class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
+          >
+            <p class="font-medium text-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
+            <p class="mt-1 break-words">{{ selected.reason }}</p>
+          </div>
 
           <div class="space-y-2">
             <div class="flex flex-wrap items-center justify-between gap-3">

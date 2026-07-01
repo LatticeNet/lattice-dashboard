@@ -40,6 +40,7 @@ export default {
       staleTitle: "Plan changed since review",
       staleDescription:
         "This approval was closed as rejected because the policy, target node state, or resolved artifact changed after it was planned. Create a fresh plan and review the new digest before approving.",
+      rejectionReason: "Rejection reason",
       approveErrorTitle: "Approval failed",
     },
     tasks: {
