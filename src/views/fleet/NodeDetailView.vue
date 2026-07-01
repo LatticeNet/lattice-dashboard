@@ -658,6 +658,8 @@ function hostKernel(facts?: Node["host_facts"]): string {
 const pending = ref(false);
 const debugPending = ref(false);
 const planningUpdate = ref(false);
+const updateNoopOpen = ref(false);
+const updateNoopMessage = ref("");
 const savingUpdatePolicy = ref(false);
 const resolvingGeo = ref(false);
 const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
@@ -882,20 +884,31 @@ async function saveAutoUpdate() {
   }
 }
 
-async function planUpdate() {
+async function planUpdate(force = false) {
   if (!node.value || !canPlanUpdates.value) return;
   planningUpdate.value = true;
   try {
     await api.agentUpdates.upsert(officialUpdateRequest(updateAuto.value));
-    await api.agentUpdates.plan(node.value.id);
-    toast.success(t("fleet.nodes.detail.updatePlanned"));
     updateDraftTouched.value = false;
+    await api.agentUpdates.plan(node.value.id, force || undefined);
+    toast.success(t("fleet.nodes.detail.updatePlanned"));
+    updateNoopOpen.value = false;
     await agentUpdatesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.updatePlanFailed"));
+    if (error instanceof ApiError && error.status === 409 && !force) {
+      updateNoopMessage.value = error.message || t("fleet.nodes.detail.nodeAlreadyTarget");
+      updateNoopOpen.value = true;
+      await agentUpdatesQuery.refresh();
+    } else {
+      toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.updatePlanFailed"));
+    }
   } finally {
     planningUpdate.value = false;
   }
+}
+
+function forcePlanUpdate() {
+  void planUpdate(true);
 }
 
 async function resolveGeo() {
@@ -1736,7 +1749,7 @@ async function resolveGeo() {
                   v-if="canPlanUpdates"
                   size="sm"
                   :disabled="planningUpdate"
-                  @click="planUpdate"
+                  @click="planUpdate()"
                 >
                   <RefreshCw :class="cn('size-4', planningUpdate && 'animate-spin')" aria-hidden="true" />
                   {{ $t('fleet.nodes.detail.planUpdate') }}
@@ -1901,6 +1914,37 @@ async function resolveGeo() {
         </CardContent>
       </Card>
     </div>
+
+    <!-- Agent update no-op: node already reports target version. -->
+    <Dialog v-model:open="updateNoopOpen">
+      <DialogScrollContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ $t('fleet.nodes.detail.updateNoopTitle') }}</DialogTitle>
+          <DialogDescription>{{ updateNoopMessage }}</DialogDescription>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">
+          {{ $t('fleet.nodes.detail.updateNoopHint') }}
+        </p>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            :disabled="planningUpdate"
+            @click="updateNoopOpen = false"
+          >
+            {{ $t('common.actions.cancel') }}
+          </Button>
+          <Button
+            type="button"
+            :disabled="planningUpdate"
+            @click="forcePlanUpdate"
+          >
+            <RefreshCw :class="cn('size-4', planningUpdate && 'animate-spin')" aria-hidden="true" />
+            {{ $t('fleet.nodes.detail.forceUpdatePlan') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
 
     <!-- Hard-delete confirm: previews the cascade impact, then gates the
          destructive confirm behind typing the node name. -->

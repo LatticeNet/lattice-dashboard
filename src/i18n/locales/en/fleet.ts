@@ -368,6 +368,11 @@ export default {
         planUpdate: "Plan official update",
         noUpdatePolicy: "No agent-update policy configured for this node.",
         updatePlanned: "Official update plan queued",
+        nodeAlreadyTarget: "Node already reports the target version.",
+        updateNoopTitle: "Nothing to plan",
+        updateNoopHint:
+          "Force a plan only when you need to re-roll the pinned binary or replace a stale approval. Approval still controls execution.",
+        forceUpdatePlan: "Force plan",
         updatePolicySaved: "Auto-update setting saved",
         updatePolicySaveFailed: "Failed to save auto-update setting",
         updatePlanFailed: "Official update plan failed",
