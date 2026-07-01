@@ -40,7 +40,7 @@ export default {
       staleBadge: "Stale",
       staleTitle: "Plan changed since review",
       staleDescription:
-        "This approval was closed as rejected because the policy, target node state, or resolved artifact changed after it was planned. Create a fresh plan and review the new plan-text digest before approving.",
+        "This approval no longer matches the current update policy, target node state, or resolved artifact. Create a fresh plan and review the new plan-text digest before approving.",
       replanAgentUpdate: "Create fresh plan",
       replanCreated: "Fresh approval plan created",
       replanFailed: "Re-plan failed",

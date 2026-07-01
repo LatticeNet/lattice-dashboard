@@ -56,10 +56,21 @@ const selected = computed<ApprovalView | undefined>(() =>
 );
 const canApply = computed(() => auth.can("network:apply"));
 const canDecideSelected = computed(() => canDecideApproval(selected.value));
-const canReplanSelectedAgentUpdate = computed(() => canReplanAgentUpdate(selected.value));
 
 const planView = ref<"diff" | "full">("diff");
 const lastApprovalError = ref<{ approvalId: string; message: string; stale: boolean } | undefined>();
+const selectedAgentUpdateStale = computed(() => {
+  const approval = selected.value;
+  if (!approval || approval.plugin !== "agentupdate") return false;
+  if (isStaleAgentUpdateApproval(approval)) return true;
+  return lastApprovalError.value?.approvalId === approval.id && lastApprovalError.value.stale;
+});
+const selectedAgentUpdateStaleReason = computed(() => {
+  if (!selectedAgentUpdateStale.value) return "";
+  return staleAgentUpdateReason(selected.value) || lastApprovalError.value?.message || t("operations.approvals.toastStale");
+});
+const canApproveSelected = computed(() => canDecideSelected.value && !selectedAgentUpdateStale.value);
+const canReplanSelectedAgentUpdate = computed(() => canReplanAgentUpdate(selected.value, selectedAgentUpdateStale.value));
 
 // The most recent earlier applied plan for the same target (node + plugin +
 // action) — i.e. what is actually live. Approved-but-not-applied plans are not a
@@ -184,8 +195,8 @@ async function rejectApproval(approval: ApprovalView) {
   }
 }
 
-async function replanAgentUpdate(approval: ApprovalView, force = false) {
-  if (!canReplanAgentUpdate(approval)) return;
+async function replanAgentUpdate(approval: ApprovalView, force = false, staleOverride = false) {
+  if (!canReplanAgentUpdate(approval, staleOverride)) return;
   replanningApproval.value = approval.id;
   lastApprovalError.value = undefined;
   try {
@@ -214,21 +225,25 @@ function forceReplanAgentUpdate() {
   if (forceReplanApproval.value) void replanAgentUpdate(forceReplanApproval.value, true);
 }
 
-function isStaleRejectedApproval(approval?: ApprovalView): boolean {
-  if (!approval || approval.status !== "rejected" || !approval.reason) return false;
+function staleAgentUpdateReason(approval?: ApprovalView): string {
+  if (!approval || approval.plugin !== "agentupdate" || !approval.reason) return "";
   const reason = approval.reason.toLowerCase();
-  return (
+  const stale =
     reason.includes("re-plan") ||
     reason.includes("replan") ||
-    (reason.includes("policy changed") && reason.includes("approval"))
-  );
+    (reason.includes("policy changed") && reason.includes("approval"));
+  return stale ? approval.reason : "";
 }
 
-function canReplanAgentUpdate(approval?: ApprovalView): boolean {
+function isStaleAgentUpdateApproval(approval?: ApprovalView): boolean {
+  return staleAgentUpdateReason(approval) !== "";
+}
+
+function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): boolean {
   return (
     !!approval?.node_id &&
     approval.plugin === "agentupdate" &&
-    isStaleRejectedApproval(approval) &&
+    (isStaleAgentUpdateApproval(approval) || staleOverride) &&
     auth.can("node:admin") &&
     auth.can("network:plan")
   );
@@ -306,7 +321,7 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
                 <div class="flex items-center justify-between gap-2">
                   <span class="truncate text-sm font-medium">{{ approval.plugin }} · {{ approval.action }}</span>
                   <div class="flex shrink-0 items-center gap-1">
-                    <Badge v-if="isStaleRejectedApproval(approval)" variant="outline">{{ $t('operations.approvals.staleBadge') }}</Badge>
+                    <Badge v-if="isStaleAgentUpdateApproval(approval)" variant="outline">{{ $t('operations.approvals.staleBadge') }}</Badge>
                     <Badge :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
                   </div>
                 </div>
@@ -338,21 +353,18 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
             <Badge v-if="selected.approved_by" variant="secondary">{{ $t('operations.approvals.byLabel', { actor: selected.approved_by }) }}</Badge>
           </div>
           <div
-            v-if="selected.status === 'rejected' && selected.reason"
+            v-if="selectedAgentUpdateStale"
             class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
           >
-            <template v-if="isStaleRejectedApproval(selected)">
-              <p class="flex items-center gap-2 font-medium text-foreground">
-                <AlertTriangle class="size-4 text-warning" aria-hidden="true" />
-                {{ $t('operations.approvals.staleTitle') }}
-              </p>
-              <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
-              <p class="mt-2 text-xs font-medium uppercase text-muted-foreground">
-                {{ $t('operations.approvals.rejectionReason') }}
-              </p>
-            </template>
-            <p v-else class="font-medium text-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
-            <p class="mt-1 break-words">{{ selected.reason }}</p>
+            <p class="flex items-center gap-2 font-medium text-foreground">
+              <AlertTriangle class="size-4 text-warning" aria-hidden="true" />
+              {{ $t('operations.approvals.staleTitle') }}
+            </p>
+            <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
+            <p class="mt-2 text-xs font-medium uppercase text-muted-foreground">
+              {{ $t('operations.approvals.rejectionReason') }}
+            </p>
+            <p class="mt-1 break-words">{{ selectedAgentUpdateStaleReason }}</p>
             <Button
               v-if="canReplanSelectedAgentUpdate"
               type="button"
@@ -360,12 +372,19 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
               size="sm"
               class="mt-3"
               :disabled="replanningApproval === selected.id"
-              @click="replanAgentUpdate(selected)"
+              @click="replanAgentUpdate(selected, false, selectedAgentUpdateStale)"
             >
               <RefreshCw v-if="replanningApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
               <FileCode2 v-else class="size-4" aria-hidden="true" />
               {{ $t('operations.approvals.replanAgentUpdate') }}
             </Button>
+          </div>
+          <div
+            v-else-if="selected.status === 'rejected' && selected.reason"
+            class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
+          >
+            <p class="font-medium text-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
+            <p class="mt-1 break-words">{{ selected.reason }}</p>
           </div>
 
           <div class="space-y-2">
@@ -395,19 +414,17 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
           </div>
 
           <div
-            v-if="lastApprovalError?.approvalId === selected.id"
+            v-if="lastApprovalError?.approvalId === selected.id && !lastApprovalError.stale"
             :class="cn(
               'rounded-md border p-3 text-sm',
-              lastApprovalError.stale
-                ? 'border-warning/40 bg-warning/5 text-muted-foreground'
-                : 'border-destructive/40 bg-destructive/5 text-muted-foreground',
+              'border-destructive/40 bg-destructive/5 text-muted-foreground',
             )"
           >
             <p class="font-medium text-foreground">
-              {{ lastApprovalError.stale ? $t('operations.approvals.staleTitle') : $t('operations.approvals.approveErrorTitle') }}
+              {{ $t('operations.approvals.approveErrorTitle') }}
             </p>
             <p class="mt-1">
-              {{ lastApprovalError.stale ? $t('operations.approvals.staleDescription') : lastApprovalError.message }}
+              {{ lastApprovalError.message }}
             </p>
           </div>
 
@@ -425,7 +442,7 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
               v-if="selected.status === 'pending'"
               type="button"
               variant="outline"
-              :disabled="!canDecideSelected || pendingApproval === selected.id"
+              :disabled="!canApproveSelected || pendingApproval === selected.id"
               @click="approve(selected, false)"
             >
               <CheckCircle2 class="size-4" aria-hidden="true" />
@@ -444,7 +461,7 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
             <Button
               v-if="selected.status === 'pending'"
               type="button"
-              :disabled="!canDecideSelected || pendingApproval === selected.id"
+              :disabled="!canApproveSelected || pendingApproval === selected.id"
               @click="approve(selected, true)"
             >
               <RefreshCw v-if="pendingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
