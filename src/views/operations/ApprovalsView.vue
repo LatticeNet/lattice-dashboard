@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { AlertTriangle, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
-import { ApiError, api, isAgentUpdateNoopError, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
+import { api, isAgentUpdateNoopError, isApprovalStaleError, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -157,7 +157,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
     await approvalsQuery.refresh();
   } catch (error) {
     const message = error instanceof Error ? error.message : t("operations.approvals.toastFailed");
-    const stale = isStaleApprovalError(error);
+    const stale = isApprovalStaleError(error);
     lastApprovalError.value = { approvalId: approval.id, message, stale };
     toast.error(stale ? t("operations.approvals.toastStale") : message);
     await approvalsQuery.refresh();
@@ -212,16 +212,6 @@ async function replanAgentUpdate(approval: ApprovalView, force = false) {
 
 function forceReplanAgentUpdate() {
   if (forceReplanApproval.value) void replanAgentUpdate(forceReplanApproval.value, true);
-}
-
-function isStaleApprovalError(error: unknown): boolean {
-  if (error instanceof ApiError) {
-    return (
-      error.code === "approval_stale" ||
-      (error.status === 409 && error.message.toLowerCase().includes("re-plan"))
-    );
-  }
-  return error instanceof Error && error.message.toLowerCase().includes("re-plan");
 }
 
 function isStaleRejectedApproval(approval?: ApprovalView): boolean {

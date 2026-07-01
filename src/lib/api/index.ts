@@ -104,7 +104,18 @@ import type {
 export * from "./types";
 export { ApiError, setCsrfToken, getCsrfToken } from "./client";
 
+export const API_ERROR_APPROVAL_STALE = "approval_stale";
 export const API_ERROR_AGENT_UPDATE_NOOP = "agent_update_noop";
+
+export function isApprovalStaleError(error: unknown): error is ApiError {
+  if (error instanceof ApiError) {
+    return (
+      error.code === API_ERROR_APPROVAL_STALE ||
+      (error.status === 409 && error.message.toLowerCase().includes("re-plan"))
+    );
+  }
+  return error instanceof Error && error.message.toLowerCase().includes("re-plan");
+}
 
 export function isAgentUpdateNoopError(error: unknown): error is ApiError {
   if (!(error instanceof ApiError)) return false;
