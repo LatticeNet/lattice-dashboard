@@ -44,6 +44,11 @@ export default {
       replanAgentUpdate: "Create fresh plan",
       replanCreated: "Fresh approval plan created",
       replanFailed: "Re-plan failed",
+      forceReplanTitle: "Force a fresh plan?",
+      forceReplanAlreadyTarget: "Node already reports the target version.",
+      forceReplanHint:
+        "Use this only to replace a stale approval or re-roll the pinned binary. It creates a new pending approval; it does not approve or apply the update.",
+      forceReplanAgentUpdate: "Force fresh plan",
       rejectionReason: "Rejection reason",
       approveErrorTitle: "Approval failed",
     },

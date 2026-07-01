@@ -43,6 +43,11 @@ export default {
       replanAgentUpdate: "生成新计划",
       replanCreated: "新的审批计划已创建",
       replanFailed: "重新规划失败",
+      forceReplanTitle: "强制生成新计划？",
+      forceReplanAlreadyTarget: "节点已报告为目标版本。",
+      forceReplanHint:
+        "仅在替换过期审批或重新发布锁定二进制时使用。它只会创建新的待审批计划，不会批准或应用更新。",
+      forceReplanAgentUpdate: "强制生成新计划",
       rejectionReason: "驳回原因",
       approveErrorTitle: "审批失败",
     },

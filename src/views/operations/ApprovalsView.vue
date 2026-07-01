@@ -24,6 +24,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 
 const { t } = useI18n();
@@ -35,6 +44,9 @@ const approvalsQuery = useAsyncData(() => api.approvals.list().then((r) => unwra
 const selectedId = ref("");
 const pendingApproval = ref<string | undefined>();
 const replanningApproval = ref<string | undefined>();
+const forceReplanOpen = ref(false);
+const forceReplanApproval = ref<ApprovalView | undefined>();
+const forceReplanMessage = ref("");
 const { digestFor, cache: digestCache } = usePlanDigest();
 
 const approvals = computed(() => approvalsQuery.data.value ?? []);
@@ -172,21 +184,34 @@ async function rejectApproval(approval: ApprovalView) {
   }
 }
 
-async function replanAgentUpdate(approval: ApprovalView) {
+async function replanAgentUpdate(approval: ApprovalView, force = false) {
   if (!canReplanAgentUpdate(approval)) return;
   replanningApproval.value = approval.id;
   lastApprovalError.value = undefined;
   try {
-    const fresh = await api.agentUpdates.plan(approval.node_id);
+    const fresh = await api.agentUpdates.plan(approval.node_id, force || undefined);
     toast.success(t("operations.approvals.replanCreated"));
+    forceReplanOpen.value = false;
+    forceReplanApproval.value = undefined;
+    forceReplanMessage.value = "";
     await approvalsQuery.refresh();
     selectedId.value = fresh.id;
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("operations.approvals.replanFailed"));
+    if (error instanceof ApiError && error.status === 409 && !force) {
+      forceReplanApproval.value = approval;
+      forceReplanMessage.value = error.message || t("operations.approvals.forceReplanAlreadyTarget");
+      forceReplanOpen.value = true;
+    } else {
+      toast.error(error instanceof Error ? error.message : t("operations.approvals.replanFailed"));
+    }
     await approvalsQuery.refresh();
   } finally {
     replanningApproval.value = undefined;
   }
+}
+
+function forceReplanAgentUpdate() {
+  if (forceReplanApproval.value) void replanAgentUpdate(forceReplanApproval.value, true);
 }
 
 function isStaleApprovalError(error: unknown): boolean {
@@ -444,5 +469,35 @@ function canReplanAgentUpdate(approval?: ApprovalView): boolean {
         </CardContent>
       </Card>
     </div>
+
+    <Dialog v-model:open="forceReplanOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{{ $t('operations.approvals.forceReplanTitle') }}</DialogTitle>
+          <DialogDescription>{{ forceReplanMessage }}</DialogDescription>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">
+          {{ $t('operations.approvals.forceReplanHint') }}
+        </p>
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
+          </DialogClose>
+          <Button
+            type="button"
+            :disabled="!!forceReplanApproval && replanningApproval === forceReplanApproval.id"
+            @click="forceReplanAgentUpdate"
+          >
+            <RefreshCw
+              v-if="!!forceReplanApproval && replanningApproval === forceReplanApproval.id"
+              class="size-4 animate-spin"
+              aria-hidden="true"
+            />
+            <FileCode2 v-else class="size-4" aria-hidden="true" />
+            {{ $t('operations.approvals.forceReplanAgentUpdate') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
