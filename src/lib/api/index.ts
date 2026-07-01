@@ -245,6 +245,10 @@ export const api = {
         queue_apply,
         plan_sha256,
       }),
+    reject: (approval_id: string) =>
+      http.post<ApprovalView>("/api/network/approvals/reject", {
+        approval_id,
+      }),
   },
 
   monitors: {

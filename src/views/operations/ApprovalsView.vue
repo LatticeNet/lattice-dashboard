@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
+import { Ban, CheckCircle2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
 import { ApiError, api, unwrap, type ApprovalStatus, type ApprovalView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
@@ -122,6 +122,24 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
     const stale = isStaleApprovalError(error);
     lastApprovalError.value = { approvalId: approval.id, message, stale };
     toast.error(stale ? t("operations.approvals.toastStale") : message);
+    await approvalsQuery.refresh();
+  } finally {
+    pendingApproval.value = undefined;
+  }
+}
+
+async function rejectApproval(approval: ApprovalView) {
+  if (!window.confirm(t("operations.approvals.rejectConfirm", { id: shortId(approval.id, 12) }))) return;
+  pendingApproval.value = approval.id;
+  lastApprovalError.value = undefined;
+  try {
+    await api.approvals.reject(approval.id);
+    toast.success(t("operations.approvals.toastRejected"));
+    await approvalsQuery.refresh();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t("operations.approvals.toastRejectFailed");
+    lastApprovalError.value = { approvalId: approval.id, message, stale: false };
+    toast.error(message);
     await approvalsQuery.refresh();
   } finally {
     pendingApproval.value = undefined;
@@ -301,6 +319,16 @@ function isStaleApprovalError(error: unknown): boolean {
             >
               <CheckCircle2 class="size-4" aria-hidden="true" />
               {{ $t('operations.approvals.approveOnly') }}
+            </Button>
+            <Button
+              v-if="selected.status === 'pending'"
+              type="button"
+              variant="destructive"
+              :disabled="!canApply || pendingApproval === selected.id"
+              @click="rejectApproval(selected)"
+            >
+              <Ban class="size-4" aria-hidden="true" />
+              {{ $t('operations.approvals.reject') }}
             </Button>
             <Button
               v-if="selected.status === 'pending'"
