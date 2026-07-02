@@ -262,6 +262,9 @@ export default {
       nameLabel: "名称",
       nodeLabel: "节点",
       selectNode: "选择一个节点",
+      nodeIdPlaceholder: "node-a",
+      nodeIdManualHint:
+        "你的令牌不能列出节点。可手动输入已授权的节点 ID;服务器仍会校验 log:admin。",
       nodeImmutable: "更新时节点不可变更。",
       pathLabel: "路径",
       pathInvalid: '必须是绝对路径且位于 /var/log 之下(不含 "..")。',

@@ -18,6 +18,7 @@ import {
   type GeoRouting,
   type GeoRoutingPlanView,
   type GeoRoutingUpsertRequest,
+  type Node,
 } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -63,14 +64,25 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("geo:read"));
 const canAdmin = computed(() => auth.can("geo:admin"));
+const canReadNodes = computed(() => auth.can("node:read"));
 
 const routesQuery = useAsyncData(
-  () => api.geoRouting.list().then((r) => unwrap(r, "geo_routings")),
-  { pollInterval: 15000 },
+  () => {
+    if (!canRead.value) return Promise.resolve([] as GeoRouting[]);
+    return api.geoRouting.list().then((r) => unwrap(r, "geo_routings"));
+  },
+  { pollInterval: 15000, immediate: canRead.value },
 );
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
-  pollInterval: 15000,
-});
+const nodesQuery = useAsyncData(
+  () => {
+    if (!canReadNodes.value) return Promise.resolve([] as Node[]);
+    return api.nodes.list().then((r) => unwrap(r, "nodes"));
+  },
+  {
+    pollInterval: 15000,
+    immediate: canReadNodes.value,
+  },
+);
 
 const routes = computed(() => routesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -103,6 +115,22 @@ const form = reactive({
   publish_ns: false,
   ddns_profile_id: "",
 });
+const nodeIdsInput = computed({
+  get: () => form.node_ids.join(", "),
+  set: (value: string) => {
+    form.node_ids = parseNodeIdList(value);
+  },
+});
+const dnsNodeIdsInput = computed({
+  get: () => form.dns_node_ids.join(", "),
+  set: (value: string) => {
+    form.dns_node_ids = parseNodeIdList(value);
+  },
+});
+
+function parseNodeIdList(value: string): string[] {
+  return [...new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
+}
 
 function resetForm() {
   form.name = "";
@@ -176,7 +204,7 @@ async function submitForm() {
     await api.geoRouting.upsert(req);
     toast.success(editingId.value ? t("networking.geoRouting.toastUpdated") : t("networking.geoRouting.toastCreated"));
     formOpen.value = false;
-    routesQuery.refresh();
+    if (canRead.value) routesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.geoRouting.toastSaveFailed"));
   } finally {
@@ -195,7 +223,7 @@ async function confirmDelete() {
     await api.geoRouting.delete(deleteTarget.value.id);
     toast.success(t("networking.geoRouting.toastDeleted"));
     deleteTarget.value = undefined;
-    routesQuery.refresh();
+    if (canRead.value) routesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.geoRouting.toastDeleteFailed"));
   } finally {
@@ -237,6 +265,7 @@ const continentEntries = computed(() =>
     >
       <template #actions>
         <Button
+          v-if="canRead"
           variant="outline"
           size="sm"
           :disabled="routesQuery.refreshing.value"
@@ -420,6 +449,7 @@ const continentEntries = computed(() =>
             <Label>{{ $t('networking.geoRouting.participatingNodes') }}</Label>
             <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.participatingNodesHint') }}</p>
             <DataState
+              v-if="canReadNodes"
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
               :has-data="nodesQuery.data.value !== undefined"
@@ -446,12 +476,20 @@ const continentEntries = computed(() =>
                 </label>
               </div>
             </DataState>
+            <div v-else class="grid gap-2">
+              <Input
+                id="geo-node-ids"
+                v-model="nodeIdsInput"
+                :placeholder="$t('networking.geoRouting.nodeIdsPlaceholder')"
+              />
+              <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.nodeIdsManualHint') }}</p>
+            </div>
           </div>
 
           <div class="grid gap-2">
             <Label>{{ $t('networking.geoRouting.authoritativeNodes') }}</Label>
             <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.authoritativeNodesHint') }}</p>
-            <div class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
+            <div v-if="canReadNodes" class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
               <label
                 v-for="node in nodes"
                 :key="node.id"
@@ -466,6 +504,14 @@ const continentEntries = computed(() =>
                 <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
                 <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('networking.geoRouting.on') : $t('networking.geoRouting.off') }}</Badge>
               </label>
+            </div>
+            <div v-else class="grid gap-2">
+              <Input
+                id="geo-dns-node-ids"
+                v-model="dnsNodeIdsInput"
+                :placeholder="$t('networking.geoRouting.nodeIdsPlaceholder')"
+              />
+              <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.nodeIdsManualHint') }}</p>
             </div>
           </div>
 

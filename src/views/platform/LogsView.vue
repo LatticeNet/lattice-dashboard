@@ -18,6 +18,7 @@ import {
   type LogSource,
   type LogSourceStatsView,
   type LogSourceUpsertRequest,
+  type Node,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -64,14 +65,26 @@ const TAIL_POLL_MS = 10000;
 const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("log:admin"));
+const canRead = computed(() => auth.can("log:read"));
+const canReadNodes = computed(() => auth.can("node:read"));
 
 const sourcesQuery = useAsyncData(
-  () => api.logs.sources().then((r) => unwrap(r, "sources")),
-  { pollInterval: 15000 },
+  () => {
+    if (!canRead.value) return Promise.resolve([] as LogSource[]);
+    return api.logs.sources().then((r) => unwrap(r, "sources"));
+  },
+  { pollInterval: 15000, immediate: canRead.value },
 );
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
-  pollInterval: 15000,
-});
+const nodesQuery = useAsyncData(
+  () => {
+    if (!canReadNodes.value) return Promise.resolve([] as Node[]);
+    return api.nodes.list().then((r) => unwrap(r, "nodes"));
+  },
+  {
+    pollInterval: 15000,
+    immediate: canReadNodes.value,
+  },
+);
 
 const sources = computed(() => sourcesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -136,6 +149,7 @@ function clampLimit(): number {
 }
 
 async function loadNewest(): Promise<void> {
+  if (!canRead.value) return;
   const source = selectedSource.value;
   if (!source) {
     lines.value = [];
@@ -163,6 +177,7 @@ async function loadNewest(): Promise<void> {
 }
 
 async function loadOlder(): Promise<void> {
+  if (!canRead.value) return;
   const source = selectedSource.value;
   if (!source || nextBeforeSeq.value === undefined) return;
   loadingOlder.value = true;
@@ -227,17 +242,17 @@ function applyFilter(): void {
 // ── Stats ────────────────────────────────────────────────────────────────────
 const statsQuery = useAsyncData(
   () => {
-    if (!selectedSourceId.value) return Promise.resolve([] as LogSourceStatsView[]);
+    if (!canRead.value || !selectedSourceId.value) return Promise.resolve([] as LogSourceStatsView[]);
     return api.logs.stats(selectedSourceId.value).then((r) => unwrap(r, "stats"));
   },
-  { pollInterval: 15000 },
+  { pollInterval: 15000, immediate: canRead.value },
 );
 const selectedStats = computed<LogSourceStatsView | undefined>(
   () => (statsQuery.data.value ?? [])[0],
 );
 
 watch(selectedSourceId, () => {
-  statsQuery.refresh();
+  if (canRead.value) statsQuery.refresh();
 });
 
 // ── Source create / edit dialog ──────────────────────────────────────────────
@@ -320,7 +335,7 @@ async function submitForm(): Promise<void> {
     toast.success(editingId.value ? t("platform.logs.sourceUpdated") : t("platform.logs.sourceCreated"));
     formOpen.value = false;
     selectedSourceId.value = saved.id;
-    sourcesQuery.refresh();
+    if (canRead.value) sourcesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.logs.saveFailed"));
   } finally {
@@ -340,7 +355,7 @@ async function confirmDelete(): Promise<void> {
     toast.success(t("platform.logs.sourceDeleted"));
     if (selectedSourceId.value === deleteTarget.value.id) selectedSourceId.value = "";
     deleteTarget.value = undefined;
-    sourcesQuery.refresh();
+    if (canRead.value) sourcesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.logs.deleteFailed"));
   } finally {
@@ -349,6 +364,7 @@ async function confirmDelete(): Promise<void> {
 }
 
 function refreshAll(): void {
+  if (!canRead.value) return;
   sourcesQuery.refresh();
   statsQuery.refresh();
   void loadNewest();
@@ -360,6 +376,7 @@ function refreshAll(): void {
     <PageHeader :title="$t('platform.logs.title')" :description="$t('platform.logs.description')">
       <template #actions>
         <Button
+          v-if="canRead"
           variant="outline"
           size="sm"
           :disabled="sourcesQuery.refreshing.value"
@@ -596,7 +613,7 @@ function refreshAll(): void {
             </div>
             <div class="grid gap-2">
               <Label for="src-node">{{ $t('platform.logs.nodeLabel') }}</Label>
-              <Select v-model="form.node_id" :disabled="!!editingId">
+              <Select v-if="canReadNodes" v-model="form.node_id" :disabled="!!editingId">
                 <SelectTrigger id="src-node">
                   <SelectValue :placeholder="$t('platform.logs.selectNode')" />
                 </SelectTrigger>
@@ -606,7 +623,15 @@ function refreshAll(): void {
                   </SelectItem>
                 </SelectContent>
               </Select>
+              <Input
+                v-else
+                id="src-node"
+                v-model.trim="form.node_id"
+                :disabled="!!editingId"
+                :placeholder="$t('platform.logs.nodeIdPlaceholder')"
+              />
               <p v-if="editingId" class="text-xs text-muted-foreground">{{ $t('platform.logs.nodeImmutable') }}</p>
+              <p v-else-if="!canReadNodes" class="text-xs text-muted-foreground">{{ $t('platform.logs.nodeIdManualHint') }}</p>
             </div>
           </div>
 

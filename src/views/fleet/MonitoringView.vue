@@ -17,7 +17,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-vue-next";
-import { api, unwrap, type MonitorResult, type MonitorView } from "@/lib/api";
+import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatPercent, formatRelativeTime, shortId } from "@/lib/format";
@@ -56,13 +56,30 @@ const auth = useAuthStore();
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const canReadMonitors = computed(() => auth.can("monitor:read"));
+const canReadNodes = computed(() => auth.can("node:read"));
+const canAdminMonitors = computed(() => auth.can("monitor:admin"));
 
-const monitorsQuery = useAsyncData(() => api.monitors.list().then((r) => unwrap(r, "monitors")), {
-  pollInterval: 10000,
-});
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
-  pollInterval: 15000,
-});
+const monitorsQuery = useAsyncData(
+  () => {
+    if (!canReadMonitors.value) return Promise.resolve([] as MonitorView[]);
+    return api.monitors.list().then((r) => unwrap(r, "monitors"));
+  },
+  {
+    pollInterval: 10000,
+    immediate: canReadMonitors.value,
+  },
+);
+const nodesQuery = useAsyncData(
+  () => {
+    if (!canReadNodes.value) return Promise.resolve([] as Node[]);
+    return api.nodes.list().then((r) => unwrap(r, "nodes"));
+  },
+  {
+    pollInterval: 15000,
+    immediate: canReadNodes.value,
+  },
+);
 
 // Seed from a /monitoring/:id deep link; the monitors watch validates it once
 // the list loads (falling back to the first monitor if the id is unknown).
@@ -78,13 +95,23 @@ const intervalSec = ref(30);
 const timeoutSec = ref(5);
 const assignAll = ref(true);
 const selectedNodeIds = ref<string[]>([]);
+const selectedNodeIdsInput = computed({
+  get: () => selectedNodeIds.value.join(", "),
+  set: (value: string) => {
+    selectedNodeIds.value = parseNodeIdList(value);
+  },
+});
+
+function parseNodeIdList(value: string): string[] {
+  return [...new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
+}
 
 const resultsQuery = useAsyncData(
   () => {
-    if (!selectedMonitorId.value) return Promise.resolve([] as MonitorResult[]);
+    if (!canReadMonitors.value || !selectedMonitorId.value) return Promise.resolve([] as MonitorResult[]);
     return api.monitors.results(selectedMonitorId.value).then((r) => unwrap(r, "results"));
   },
-  { pollInterval: 8000 },
+  { pollInterval: 8000, immediate: canReadMonitors.value },
 );
 
 const monitors = computed(() => monitorsQuery.data.value ?? []);
@@ -188,7 +215,6 @@ const averageLatency = computed(() => {
   if (values.length === 0) return "n/a";
   return formatLatency(values.reduce((sum, value) => sum + value, 0) / values.length);
 });
-const canAdminMonitors = computed(() => auth.can("monitor:admin"));
 const canSubmit = computed(
   () =>
     !!monitorName.value.trim() &&
@@ -315,9 +341,11 @@ function latencyText(ms?: number): string {
 }
 
 function refreshAll() {
-  monitorsQuery.refresh();
-  nodesQuery.refresh();
-  resultsQuery.refresh();
+  if (canReadMonitors.value) {
+    monitorsQuery.refresh();
+    resultsQuery.refresh();
+  }
+  if (canReadNodes.value) nodesQuery.refresh();
 }
 
 async function createMonitor() {
@@ -375,6 +403,7 @@ async function deleteMonitor() {
       </template>
       <template #actions>
         <Button
+          v-if="canReadMonitors"
           variant="outline"
           size="sm"
           :disabled="monitorsQuery.refreshing.value || resultsQuery.refreshing.value"
@@ -541,29 +570,40 @@ async function deleteMonitor() {
               </div>
             </div>
 
-            <DataState
-              v-if="!assignAll"
-              :loading="nodesQuery.loading.value"
-              :error="nodesQuery.error.value"
-              :has-data="nodesQuery.data.value !== undefined"
-              :is-empty="nodes.length === 0"
-              :empty-title="$t('fleet.monitoring.create.noNodesTitle')"
-              :empty-description="$t('fleet.monitoring.create.noNodesDescription')"
-              :skeleton-rows="2"
-              @retry="nodesQuery.refresh"
-            >
-              <div class="grid max-h-64 gap-2 overflow-auto rounded-md border border-border p-2">
-                <label
-                  v-for="node in nodes"
-                  :key="node.id"
-                  class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
-                >
-                  <input v-model="selectedNodeIds" type="checkbox" :value="node.id" class="size-4 accent-primary" />
-                  <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
-                  <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</Badge>
-                </label>
+            <div v-if="!assignAll">
+              <DataState
+                v-if="canReadNodes"
+                :loading="nodesQuery.loading.value"
+                :error="nodesQuery.error.value"
+                :has-data="nodesQuery.data.value !== undefined"
+                :is-empty="nodes.length === 0"
+                :empty-title="$t('fleet.monitoring.create.noNodesTitle')"
+                :empty-description="$t('fleet.monitoring.create.noNodesDescription')"
+                :skeleton-rows="2"
+                @retry="nodesQuery.refresh"
+              >
+                <div class="grid max-h-64 gap-2 overflow-auto rounded-md border border-border p-2">
+                  <label
+                    v-for="node in nodes"
+                    :key="node.id"
+                    class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
+                  >
+                    <input v-model="selectedNodeIds" type="checkbox" :value="node.id" class="size-4 accent-primary" />
+                    <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
+                    <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</Badge>
+                  </label>
+                </div>
+              </DataState>
+              <div v-else class="grid gap-2">
+                <Label for="monitor-node-ids">{{ $t('fleet.monitoring.create.nodeIds') }}</Label>
+                <Input
+                  id="monitor-node-ids"
+                  v-model="selectedNodeIdsInput"
+                  :placeholder="$t('fleet.monitoring.create.nodeIdsPlaceholder')"
+                />
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.nodeIdsManualHint') }}</p>
               </div>
-            </DataState>
+            </div>
 
             <Button type="submit" :disabled="createPending || !canSubmit">
               <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />

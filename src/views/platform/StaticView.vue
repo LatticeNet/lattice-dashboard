@@ -59,7 +59,7 @@ const columns = computed<DataTableColumn<StaticObject>[]>(() => [
 
 function loadBucket() {
   activeBucket.value = bucket.value.trim() || "default";
-  objectsQuery.refresh();
+  if (canRead.value) objectsQuery.refresh();
 }
 
 // ── Content preview dialog ──────────────────────────────────────────────────
@@ -105,7 +105,7 @@ async function submitPut() {
     });
     toast.success(editing.value ? t("platform.static.objectUpdated") : t("platform.static.objectCreated"));
     putOpen.value = false;
-    objectsQuery.refresh();
+    if (canRead.value) objectsQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.static.writeFailed"));
   } finally {
@@ -121,7 +121,7 @@ async function submitPut() {
       :description="$t('platform.static.description')"
     >
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="objectsQuery.refreshing.value" @click="objectsQuery.refresh">
+        <Button v-if="canRead" variant="outline" size="sm" :disabled="objectsQuery.refreshing.value" @click="objectsQuery.refresh">
           <RefreshCw aria-hidden="true" :class="cn('size-4', objectsQuery.refreshing.value && 'animate-spin')" />
           {{ $t('common.actions.refresh') }}
         </Button>

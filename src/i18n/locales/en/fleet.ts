@@ -716,6 +716,10 @@ export default {
         timeoutSec: "Timeout sec",
         noNodesTitle: "No nodes available",
         noNodesDescription: "Enroll nodes before assigning a monitor to specific agents.",
+        nodeIds: "Node IDs",
+        nodeIdsPlaceholder: "node-a, node-b",
+        nodeIdsManualHint:
+          "Your token cannot list nodes. Enter authorized node IDs manually; the server still enforces monitor:admin.",
         submit: "Create monitor",
         readOnlyTitle: "Read-only access",
         readOnlyDescription:

@@ -242,6 +242,9 @@ export default {
       participatingNodesHint: "应答目标 — 每个节点都需要地理经纬度、公网 IP 及健康状态。",
       noNodesTitle: "暂无可用节点",
       noNodesDescription: "配置地理路由前请先接入节点。",
+      nodeIdsPlaceholder: "node-a, node-b",
+      nodeIdsManualHint:
+        "你的令牌不能列出节点。可手动输入已授权的节点 ID;服务器仍会校验 geo:admin。",
       authoritativeNodes: "权威 DNS 节点",
       authoritativeNodesHint: "提供已渲染区域服务的自建 DNS 节点。",
       ddnsProfileId: "DDNS 配置 id(NS 委派)",

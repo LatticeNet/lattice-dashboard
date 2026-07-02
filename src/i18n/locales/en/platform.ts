@@ -266,6 +266,9 @@ export default {
       nameLabel: "Name",
       nodeLabel: "Node",
       selectNode: "Select a node",
+      nodeIdPlaceholder: "node-a",
+      nodeIdManualHint:
+        "Your token cannot list nodes. Enter an authorized node ID manually; the server still enforces log:admin.",
       nodeImmutable: "Node is immutable on update.",
       pathLabel: "Path",
       pathInvalid: 'Must be absolute and under /var/log (no "..").',

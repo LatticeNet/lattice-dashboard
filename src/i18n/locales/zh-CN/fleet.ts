@@ -708,6 +708,10 @@ export default {
         timeoutSec: "超时(秒)",
         noNodesTitle: "暂无可用节点",
         noNodesDescription: "将监控指派给特定 agent 前,请先接入节点。",
+        nodeIds: "节点 ID",
+        nodeIdsPlaceholder: "node-a, node-b",
+        nodeIdsManualHint:
+          "你的令牌不能列出节点。可手动输入已授权的节点 ID;服务器仍会校验 monitor:admin。",
         submit: "创建监控",
         readOnlyTitle: "只读访问",
         readOnlyDescription: "你的令牌可查看监控,但创建或删除需要 monitor:admin 权限。",

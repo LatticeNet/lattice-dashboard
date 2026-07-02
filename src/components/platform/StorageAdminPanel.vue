@@ -62,18 +62,36 @@ const scopeRead = computed(() => `${props.kind}:read`);
 const scopeAdmin = computed(() => `${props.kind}:admin`);
 const currentBucket = computed(() => props.activeBucket?.trim() || "default");
 
-const bucketsQuery = useAsyncData(() => api.storage.buckets(props.kind), {
-  pollInterval: 15000,
-  immediate: canRead.value || canAdmin.value,
-});
-const bindingsQuery = useAsyncData(() => api.storage.bindings(props.kind), {
-  pollInterval: 15000,
-  immediate: canAdmin.value,
-});
-const tokensQuery = useAsyncData(() => api.storage.tokens(props.kind), {
-  pollInterval: 15000,
-  immediate: canAdmin.value,
-});
+const bucketsQuery = useAsyncData(
+  () => {
+    if (!canRead.value) return Promise.resolve({ buckets: [] });
+    return api.storage.buckets(props.kind);
+  },
+  {
+    pollInterval: 15000,
+    immediate: canRead.value,
+  },
+);
+const bindingsQuery = useAsyncData(
+  () => {
+    if (!canRead.value || !canAdmin.value) return Promise.resolve({ bindings: [] });
+    return api.storage.bindings(props.kind);
+  },
+  {
+    pollInterval: 15000,
+    immediate: canRead.value && canAdmin.value,
+  },
+);
+const tokensQuery = useAsyncData(
+  () => {
+    if (!canAdmin.value) return Promise.resolve({ tokens: [] });
+    return api.storage.tokens(props.kind);
+  },
+  {
+    pollInterval: 15000,
+    immediate: canAdmin.value,
+  },
+);
 
 const buckets = computed(() =>
   [...(bucketsQuery.data.value?.buckets ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -88,9 +106,9 @@ const tokens = computed(() =>
 );
 
 function refreshAdminData() {
-  bucketsQuery.refresh();
+  if (canRead.value) bucketsQuery.refresh();
   if (canAdmin.value) {
-    bindingsQuery.refresh();
+    if (canRead.value) bindingsQuery.refresh();
     tokensQuery.refresh();
   }
 }
@@ -160,7 +178,7 @@ async function submitBinding() {
     toast.success(t("platform.storage.bindingSaved"));
     bindingHostname.value = "";
     bindingPrefix.value = "";
-    bindingsQuery.refresh();
+    if (canRead.value) bindingsQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.bindingSaveFailed"));
   } finally {
@@ -173,7 +191,7 @@ async function deleteBinding(binding: StorageBinding) {
   try {
     await api.storage.deleteBinding(props.kind, binding.id);
     toast.success(t("platform.storage.bindingDeleted"));
-    bindingsQuery.refresh();
+    if (canRead.value) bindingsQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.bindingDeleteFailed"));
   } finally {
@@ -253,6 +271,7 @@ async function revokeToken(token: StorageTokenView) {
         </p>
       </div>
       <Button
+        v-if="canRead || canAdmin"
         variant="outline"
         size="sm"
         :disabled="bucketsQuery.refreshing.value || bindingsQuery.refreshing.value || tokensQuery.refreshing.value"
@@ -314,7 +333,7 @@ async function revokeToken(token: StorageTokenView) {
         </form>
 
         <DataState
-          v-if="canRead || canAdmin"
+          v-if="canRead"
           :loading="bucketsQuery.loading.value"
           :error="bucketsQuery.error.value"
           :is-empty="buckets.length === 0"
@@ -394,6 +413,7 @@ async function revokeToken(token: StorageTokenView) {
           </form>
 
           <DataState
+            v-if="canRead"
             :loading="bindingsQuery.loading.value"
             :error="bindingsQuery.error.value"
             :is-empty="bindings.length === 0"
@@ -442,6 +462,11 @@ async function revokeToken(token: StorageTokenView) {
               </table>
             </div>
           </DataState>
+          <p v-else class="text-sm text-muted-foreground">
+            <i18n-t keypath="platform.storage.readRequired" tag="span" scope="global">
+              <template #scope><code class="font-mono">{{ scopeRead }}</code></template>
+            </i18n-t>
+          </p>
         </CardContent>
       </Card>
 

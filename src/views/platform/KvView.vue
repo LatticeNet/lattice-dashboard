@@ -62,7 +62,7 @@ const columns = computed<DataTableColumn<KVEntry>[]>(() => {
 
 function loadBucket() {
   activeBucket.value = bucket.value.trim() || "default";
-  entriesQuery.refresh();
+  if (canRead.value) entriesQuery.refresh();
 }
 
 // ── Row expand (long values) ────────────────────────────────────────────────
@@ -111,7 +111,7 @@ async function submitPut() {
     });
     toast.success(editing.value ? t("platform.kv.entryUpdated") : t("platform.kv.entryCreated"));
     putOpen.value = false;
-    entriesQuery.refresh();
+    if (canRead.value) entriesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.kv.writeFailed"));
   } finally {
@@ -127,7 +127,7 @@ async function submitPut() {
       :description="$t('platform.kv.description')"
     >
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="entriesQuery.refreshing.value" @click="entriesQuery.refresh">
+        <Button v-if="canRead" variant="outline" size="sm" :disabled="entriesQuery.refreshing.value" @click="entriesQuery.refresh">
           <RefreshCw aria-hidden="true" :class="cn('size-4', entriesQuery.refreshing.value && 'animate-spin')" />
           {{ $t('common.actions.refresh') }}
         </Button>

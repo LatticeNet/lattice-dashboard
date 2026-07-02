@@ -260,6 +260,9 @@ export default {
       participatingNodesHint: "Answer targets — each needs geo lat/lon, a public IP, and health.",
       noNodesTitle: "No nodes available",
       noNodesDescription: "Enroll nodes before configuring geo-routing.",
+      nodeIdsPlaceholder: "node-a, node-b",
+      nodeIdsManualHint:
+        "Your token cannot list nodes. Enter authorized node IDs manually; the server still enforces geo:admin.",
       authoritativeNodes: "Authoritative DNS nodes",
       authoritativeNodesHint: "Self-host DNS nodes that serve the rendered zone.",
       ddnsProfileId: "DDNS profile id (NS delegation)",
