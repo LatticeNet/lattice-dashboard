@@ -159,6 +159,9 @@ There are two different SHA-256 values in the approval flow:
 
 If an `agentupdate` approval becomes stale, the Approvals page labels it and
 offers **Create fresh plan** for operators with `node:admin` and `network:plan`.
+Stale agent-update approvals are not counted as actionable pending approvals in
+the Overview or Approvals KPIs, even if an older server response still reports
+their raw status as `pending`.
 When the node already reports the target version, the same page asks before
 **Force fresh plan** creates a replacement pending approval. Force planning
 does not approve, queue, or apply the update; it only re-rolls the reviewed plan.

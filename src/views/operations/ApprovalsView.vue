@@ -7,7 +7,9 @@ import {
   api,
   APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
   isAgentUpdateNoopError,
+  isActionablePendingApproval,
   isApprovalStaleError,
+  isStaleAgentUpdateApprovalView,
   unwrap,
   type ApprovalStatus,
   type ApprovalView,
@@ -58,7 +60,7 @@ const forceReplanMessage = ref("");
 const { digestFor, cache: digestCache } = usePlanDigest();
 
 const approvals = computed(() => approvalsQuery.data.value ?? []);
-const pending = computed(() => approvals.value.filter((a) => a.status === "pending"));
+const pending = computed(() => approvals.value.filter(isActionablePendingApproval));
 const selected = computed<ApprovalView | undefined>(() =>
   sortedApprovals.value.find((approval) => approval.id === selectedId.value) ?? sortedApprovals.value[0],
 );
@@ -102,7 +104,7 @@ const previousPlan = computed(() => {
 
 const sortedApprovals = computed(() =>
   [...approvals.value].sort((a, b) => {
-    const rank = statusRank(a.status) - statusRank(b.status);
+    const rank = approvalRank(a) - approvalRank(b);
     if (rank !== 0) return rank;
     const created = (b.created_at || "").localeCompare(a.created_at || "");
     if (created !== 0) return created;
@@ -124,16 +126,23 @@ watch(
   { immediate: true },
 );
 
+function approvalRank(approval: ApprovalView): number {
+  if (isActionablePendingApproval(approval)) return 0;
+  if (approval.status === "approved") return 1;
+  if (isStaleAgentUpdateApproval(approval)) return 2;
+  return statusRank(approval.status);
+}
+
 function statusRank(status: ApprovalStatus): number {
   switch (status) {
     case "pending":
-      return 0;
+      return 5;
     case "approved":
       return 1;
     case "applied":
-      return 2;
-    case "rejected":
       return 3;
+    case "rejected":
+      return 4;
     default:
       return 9;
   }
@@ -248,7 +257,7 @@ function staleAgentUpdateReason(approval?: ApprovalView): string {
 }
 
 function isStaleAgentUpdateApproval(approval?: ApprovalView): boolean {
-  return staleAgentUpdateReason(approval) !== "";
+  return isStaleAgentUpdateApprovalView(approval);
 }
 
 function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): boolean {
@@ -334,7 +343,7 @@ function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): b
                   <span class="truncate text-sm font-medium">{{ approval.plugin }} · {{ approval.action }}</span>
                   <div class="flex shrink-0 items-center gap-1">
                     <Badge v-if="isStaleAgentUpdateApproval(approval)" variant="outline">{{ $t('operations.approvals.staleBadge') }}</Badge>
-                    <Badge :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
+                    <Badge v-else :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
                   </div>
                 </div>
                 <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -360,7 +369,8 @@ function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): b
         </CardHeader>
         <CardContent v-if="selected" class="space-y-4">
           <div class="flex flex-wrap items-center gap-2">
-            <Badge :variant="variantFor(selected.status)">{{ $t('common.status.' + selected.status) }}</Badge>
+            <Badge v-if="selectedAgentUpdateStale" variant="outline">{{ $t('operations.approvals.staleBadge') }}</Badge>
+            <Badge v-else :variant="variantFor(selected.status)">{{ $t('common.status.' + selected.status) }}</Badge>
             <Badge variant="outline">{{ $t('operations.approvals.idLabel', { id: shortId(selected.id, 12) }) }}</Badge>
             <Badge v-if="selected.approved_by" variant="secondary">{{ $t('operations.approvals.byLabel', { actor: selected.approved_by }) }}</Badge>
           </div>

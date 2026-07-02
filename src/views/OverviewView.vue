@@ -17,7 +17,7 @@ import {
   Terminal,
   Wifi,
 } from "lucide-vue-next";
-import { api, unwrap, ApiError } from "@/lib/api";
+import { api, unwrap, ApiError, isActionablePendingApproval } from "@/lib/api";
 import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
@@ -111,7 +111,7 @@ const isEmptyFleet = computed(
 );
 
 const pendingApprovals = computed(
-  () => (approvals.data.value ?? []).filter((a) => a.status === "pending"),
+  () => (approvals.data.value ?? []).filter(isActionablePendingApproval),
 );
 const queuedTasks = computed(
   () => (tasks.data.value ?? []).filter((t) => t.status === "queued").length,
