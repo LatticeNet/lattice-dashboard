@@ -149,6 +149,14 @@ loads so operators can see what `latest` currently means. That display is
 advisory; the approval plan remains authoritative because it is generated and
 hashed server-side.
 
+There are two different SHA-256 values in the approval flow:
+
+- The `sha256:` line inside the plan is the downloaded agent binary digest. The
+  node verifies the binary against this value before replacing `lattice-agent`.
+- The digest shown near the approve controls is the **plan text SHA-256**. It
+  binds the approval click to the exact plan bytes the operator reviewed; it is
+  not the binary artifact digest.
+
 If an `agentupdate` approval becomes stale, the Approvals page labels it and
 offers **Create fresh plan** for operators with `node:admin` and `network:plan`.
 When the node already reports the target version, the same page asks before
