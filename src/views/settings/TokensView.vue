@@ -21,6 +21,7 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { statusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { SCOPE_CATALOG } from "@/lib/scopes";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -48,49 +49,6 @@ import {
   DialogScrollContent,
   DialogTitle,
 } from "@/components/ui/dialog";
-
-/**
- * Full known RBAC scope catalog (server is authoritative; it rejects any scope
- * not ⊆ the caller's own). Used as the option set when the caller is a `*`
- * superuser; otherwise we intersect with the caller's held scopes.
- */
-const SCOPE_CATALOG = [
-  "audit:read",
-  "ddns:admin",
-  "dns:admin",
-  "exec:anything",
-  "geo:admin",
-  "geo:read",
-  "inventory:admin",
-  "inventory:read",
-  "kv:admin",
-  "kv:read",
-  "kv:write",
-  "log:admin",
-  "log:read",
-  "monitor:admin",
-  "monitor:read",
-  "netpolicy:admin",
-  "netpolicy:read",
-  "network:apply",
-  "network:plan",
-  "node:admin",
-  "node:read",
-  "notify:send",
-  "oidc:admin",
-  "plugin:admin",
-  "plugin:verify",
-  "proxy:admin",
-  "proxy:read",
-  "static:admin",
-  "static:read",
-  "static:write",
-  "task:read",
-  "task:run",
-  "token:admin",
-  "tunnel:admin",
-  "worker:deploy",
-] as const;
 
 const { t } = useI18n();
 const auth = useAuthStore();
