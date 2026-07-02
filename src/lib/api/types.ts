@@ -6,6 +6,7 @@ export interface Principal {
   username?: string;
   token_id?: string;
   scopes: string[];
+  server_allowlist: string[];
   csrf_token: string;
   totp_enabled?: boolean;
   mfa_required?: boolean;

@@ -88,7 +88,16 @@ const grantableScopes = computed(() => {
   return SCOPE_CATALOG.filter((scope) => auth.can(scope));
 });
 
-const grantableAllowlist = computed(() => callerScopes.value); // shown as reference only
+const currentServerAllowlist = computed(() => auth.serverAllowlist.filter((nodeId) => nodeId !== "*"));
+const displayedServerAllowlist = computed(() => currentServerAllowlist.value.slice(0, 6));
+const remainingServerAllowlistCount = computed(() =>
+  Math.max(currentServerAllowlist.value.length - displayedServerAllowlist.value.length, 0),
+);
+const serverAllowlistHintKey = computed(() =>
+  currentServerAllowlist.value.length
+    ? "settings.tokens.form.serverAllowlistRestrictedHint"
+    : "settings.tokens.form.serverAllowlistHint",
+);
 
 // ── Create dialog ────────────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -456,11 +465,14 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
             <Label for="token-allowlist">{{ $t("settings.tokens.form.serverAllowlist") }}</Label>
             <Input id="token-allowlist" v-model="form.server_allowlist" placeholder="node_a1b2, node_c3d4" />
             <p class="text-xs text-muted-foreground">
-              {{ $t("settings.tokens.form.serverAllowlistHint") }}
+              {{ $t(serverAllowlistHintKey) }}
             </p>
-            <p v-if="!isSuperuser && grantableAllowlist.length" class="text-xs text-muted-foreground">
-              {{ $t("settings.tokens.form.yourScopes") }}
-              <code class="font-mono">{{ grantableAllowlist.slice(0, 6).join(", ") }}</code>
+            <p v-if="currentServerAllowlist.length" class="text-xs text-muted-foreground">
+              {{ $t("settings.tokens.form.yourServerAllowlist") }}
+              <code class="font-mono">{{ displayedServerAllowlist.join(", ") }}</code>
+              <span v-if="remainingServerAllowlistCount">
+                {{ $t("settings.tokens.form.moreNodes", { count: remainingServerAllowlistCount }) }}
+              </span>
             </p>
           </div>
 

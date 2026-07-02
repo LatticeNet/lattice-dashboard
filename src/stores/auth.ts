@@ -14,6 +14,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   const isAuthenticated = computed(() => !!principal.value);
   const scopes = computed(() => principal.value?.scopes ?? []);
+  const serverAllowlist = computed(() => principal.value?.server_allowlist ?? []);
 
   function applyPrincipal(p: Principal | undefined) {
     principal.value = p;
@@ -80,6 +81,7 @@ export const useAuthStore = defineStore("auth", () => {
     pendingTotpChallenge,
     isAuthenticated,
     scopes,
+    serverAllowlist,
     can,
     canAny,
     canAll,
