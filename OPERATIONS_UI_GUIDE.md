@@ -444,6 +444,20 @@ The page is responsible for:
 Approvals are deliberately separate from Tasks. A Task is execution. An Approval
 is authorization of a reviewed mutation plan before execution is allowed.
 
+## Audit page
+
+The Audit page has two jobs:
+
+- query/export the loaded audit event page for investigations;
+- verify the append-only audit WAL and expose the current WAL/anchor head.
+
+`Verify` checks the server-side WAL chain and local sidecar anchor. When the
+result is `OK` and `anchored`, use **Copy off-box anchor** or **Download anchor**
+after setup and maintenance windows. Store that JSON outside the Lattice server
+host. The local `state.json.audit-anchor` catches local tail truncation; an
+off-host copy is the evidence that survives later host rollback or deletion of
+both the WAL tail and local anchor.
+
 ## Plugins page
 
 The Platform -> Plugins entry is visible to operators with any plugin-surface

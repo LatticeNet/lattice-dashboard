@@ -18,6 +18,7 @@ import type {
   TerminalSession,
   ApprovalView,
   AuditQueryResponse,
+  AuditVerifyResponse,
   MonitorCreateInput,
   MonitorView,
   MonitorResult,
@@ -328,8 +329,7 @@ export const api = {
       limit?: number;
       offset?: number;
     }) => http.get<AuditQueryResponse>("/api/audit", params as Record<string, unknown>),
-    verify: () =>
-      http.get<{ enabled: boolean; ok: boolean; count: number; head?: string }>("/api/audit/verify"),
+    verify: () => http.get<AuditVerifyResponse>("/api/audit/verify"),
   },
 
   proxy: {

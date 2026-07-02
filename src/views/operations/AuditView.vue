@@ -4,7 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { CheckCircle2, ChevronLeft, ChevronRight, Download, RefreshCw, ScrollText, Search, ShieldCheck, X } from "lucide-vue-next";
-import { api, type AuditEvent } from "@/lib/api";
+import { api, type AuditEvent, type AuditVerifyResponse } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { type BadgeVariant } from "@/lib/status";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -78,7 +78,8 @@ function rangeFrom(): string | undefined {
   return ms ? new Date(Date.now() - ms).toISOString() : undefined;
 }
 const verifyPending = ref(false);
-const verifyResult = ref<{ enabled: boolean; ok: boolean; count: number; head?: string } | undefined>();
+const verifyResult = ref<AuditVerifyResponse | undefined>();
+const verifyCheckedAt = ref("");
 
 const auditQuery = useAsyncData(
   () =>
@@ -123,12 +124,46 @@ async function verifyAudit() {
   verifyPending.value = true;
   try {
     verifyResult.value = await api.audit.verify();
-    toast.success(verifyResult.value.ok ? t("operations.audit.toastVerified") : t("operations.audit.toastVerifyFailed"));
+    verifyCheckedAt.value = new Date().toISOString();
+    if (verifyResult.value.ok) {
+      toast.success(t("operations.audit.toastVerified"));
+    } else {
+      toast.error(t("operations.audit.toastVerifyFailed"));
+    }
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.audit.toastVerifyFailed"));
   } finally {
     verifyPending.value = false;
   }
+}
+
+const offBoxAnchorRecord = computed(() => {
+  const result = verifyResult.value;
+  if (!result?.enabled || !result.ok || !result.anchored || !result.head) return "";
+  return JSON.stringify(
+    {
+      type: "lattice.audit_head.v1",
+      verified_at: verifyCheckedAt.value,
+      ok: !!result.ok,
+      count: result.count ?? 0,
+      head: result.head,
+      anchored: !!result.anchored,
+      anchor_count: result.anchor_count ?? null,
+      anchor_head: result.anchor_head ?? null,
+      anchor_pending: result.anchor_pending ?? null,
+    },
+    null,
+    2,
+  );
+});
+
+function exportAuditHead() {
+  if (!offBoxAnchorRecord.value) {
+    toast.info(t("operations.audit.noAnchorToExport"));
+    return;
+  }
+  downloadFile("lattice-audit-head.json", offBoxAnchorRecord.value + "\n", "application/json");
+  toast.success(t("operations.audit.anchorExported"));
 }
 
 // Export the currently-filtered events (what the operator is looking at). Honest
@@ -410,13 +445,55 @@ function clearAllFilters() {
           <Button variant="ghost" size="sm" @click="clearAllFilters">{{ $t('operations.audit.clearAll') }}</Button>
         </div>
 
-        <div v-if="verifyResult" class="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
+        <div v-if="verifyResult" class="mt-4 space-y-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <div class="flex flex-wrap items-center gap-2">
-            <Badge :variant="verifyResult.ok ? 'success' : 'destructive'">
+            <Badge v-if="!verifyResult.enabled" variant="secondary">{{ $t('operations.audit.chainDisabled') }}</Badge>
+            <Badge v-else :variant="verifyResult.ok ? 'success' : 'destructive'">
               {{ verifyResult.ok ? $t('operations.audit.chainOkBadge') : $t('operations.audit.chainFailedBadge') }}
             </Badge>
-            <span>{{ $t('operations.audit.eventsCount', { count: verifyResult.count }) }}</span>
-            <code v-if="verifyResult.head" class="break-all font-mono text-xs text-muted-foreground">{{ verifyResult.head }}</code>
+            <Badge v-if="verifyResult.enabled" :variant="verifyResult.anchored ? 'success' : 'warning'">
+              {{ verifyResult.anchored ? $t('operations.audit.anchoredBadge') : $t('operations.audit.unanchoredBadge') }}
+            </Badge>
+            <span v-if="verifyResult.enabled">{{ $t('operations.audit.eventsCount', { count: verifyResult.count ?? 0 }) }}</span>
+            <span v-if="verifyCheckedAt" class="text-xs text-muted-foreground">
+              {{ $t('operations.audit.verifiedAt', { time: formatDateTime(verifyCheckedAt) }) }}
+            </span>
+          </div>
+          <p v-if="verifyResult.error" class="text-sm text-destructive">{{ verifyResult.error }}</p>
+          <div v-if="verifyResult.enabled" class="grid gap-2 text-xs">
+            <div v-if="verifyResult.head" class="grid gap-1">
+              <span class="font-medium text-muted-foreground">{{ $t('operations.audit.walHead') }}</span>
+              <div class="flex min-w-0 items-center gap-2">
+                <code class="min-w-0 flex-1 break-all font-mono text-muted-foreground">{{ verifyResult.head }}</code>
+                <CopyButton :value="verifyResult.head" />
+              </div>
+            </div>
+            <div v-if="verifyResult.anchor_head" class="grid gap-1">
+              <span class="font-medium text-muted-foreground">{{ $t('operations.audit.anchorHead') }}</span>
+              <div class="flex min-w-0 items-center gap-2">
+                <code class="min-w-0 flex-1 break-all font-mono text-muted-foreground">{{ verifyResult.anchor_head }}</code>
+                <CopyButton :value="verifyResult.anchor_head" />
+              </div>
+            </div>
+            <p v-if="verifyResult.anchor_pending" class="text-warning">
+              {{ $t('operations.audit.anchorPending', { count: verifyResult.anchor_pending.count }) }}
+            </p>
+          </div>
+          <div v-if="offBoxAnchorRecord" class="space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-sm font-medium">{{ $t('operations.audit.offboxAnchor') }}</p>
+                <p class="text-xs text-muted-foreground">{{ $t('operations.audit.offboxAnchorHint') }}</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <CopyButton :value="offBoxAnchorRecord" :label="$t('operations.audit.copyOffboxAnchor')" />
+                <Button type="button" variant="outline" size="sm" @click="exportAuditHead">
+                  <Download class="size-4" aria-hidden="true" />
+                  {{ $t('operations.audit.downloadOffboxAnchor') }}
+                </Button>
+              </div>
+            </div>
+            <pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-background/80 p-3 font-mono text-xs">{{ offBoxAnchorRecord }}</pre>
           </div>
         </div>
       </CardContent>

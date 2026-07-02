@@ -347,6 +347,23 @@ export interface AuditQueryResponse {
   offset: number;
 }
 
+export interface AuditAnchorCheckpoint {
+  count: number;
+  head: string;
+}
+
+export interface AuditVerifyResponse {
+  enabled: boolean;
+  ok?: boolean;
+  count?: number;
+  head?: string;
+  anchored?: boolean;
+  anchor_count?: number;
+  anchor_head?: string;
+  anchor_pending?: AuditAnchorCheckpoint;
+  error?: string;
+}
+
 export interface MonitorView {
   id: string;
   name: string;
