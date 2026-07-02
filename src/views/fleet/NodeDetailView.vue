@@ -279,6 +279,16 @@ function launchSnapshotSummary(snapshot?: LaunchSnapshot): string {
   return parts.join(" · ");
 }
 
+function taskSandboxSummary(runtime?: AgentRuntimeConfig | null): string {
+  if (!runtime?.task_sandbox) return t("fleet.nodes.detail.launch.taskSandboxUnknown");
+  return runtime.task_sandbox;
+}
+
+function taskSandboxFeatures(runtime?: AgentRuntimeConfig | null): string {
+  const features = runtime?.task_sandbox_features?.filter(Boolean) ?? [];
+  return features.length ? features.join(" · ") : t("fleet.nodes.detail.launch.taskSandboxNoFeatures");
+}
+
 const savedLaunchSnapshot = computed(() => launchSnapshot(node.value?.agent_launch));
 const runtimeLaunchSnapshot = computed(() => (node.value?.agent_runtime ? launchSnapshot(node.value.agent_runtime) : undefined));
 const draftLaunchSnapshot = computed(() => launchSnapshot(launchPayload()));
@@ -1400,6 +1410,12 @@ async function resolveGeo() {
                 <div class="rounded-md border border-border bg-background/60 p-2">
                   <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.runtimeNow') }}</p>
                   <p class="mt-1 text-foreground">{{ launchSnapshotSummary(runtimeLaunchSnapshot) }}</p>
+                  <p class="mt-2 font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.taskSandbox') }}</p>
+                  <p class="mt-1 text-foreground">{{ taskSandboxSummary(node.agent_runtime) }}</p>
+                  <p class="mt-1 text-muted-foreground">{{ taskSandboxFeatures(node.agent_runtime) }}</p>
+                  <p v-if="node.agent_runtime?.task_sandbox_warning" class="mt-1 text-warning">
+                    {{ node.agent_runtime.task_sandbox_warning }}
+                  </p>
                 </div>
                 <div class="rounded-md border border-border bg-background/60 p-2">
                   <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.savedDesired') }}</p>

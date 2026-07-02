@@ -116,6 +116,9 @@ export interface AgentRuntimeConfig {
   no_exec?: boolean;
   allow_terminal?: boolean;
   terminal_transport?: "poll" | "stream" | string;
+  task_sandbox?: string;
+  task_sandbox_features?: string[];
+  task_sandbox_warning?: string;
   ssh_alerts?: boolean;
   singbox_discover?: boolean;
   singbox_bin?: string;
