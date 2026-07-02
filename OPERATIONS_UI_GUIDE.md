@@ -6,6 +6,14 @@ practical: if a page can mutate infrastructure state, this guide describes what
 is authoritative, what is display-only, and where the operator should go to make
 the change deliberately.
 
+## API errors and request IDs
+
+The server error envelope is `{error:{code,message,request_id}}`. Dashboard
+`ApiError.message` is display-ready for toast call sites and includes
+`request_id` when present. Full-page and inline error states that render a
+separate request-id row should use `ApiError.serverMessage` for the body text to
+avoid duplicating the identifier.
+
 ## Dashboard home
 
 The Overview KPI cards are drill-through summaries, not miniature reports.

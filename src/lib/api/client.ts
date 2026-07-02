@@ -5,6 +5,8 @@
 // and /api/me which must be echoed as `X-Lattice-CSRF` on every unsafe method.
 // All errors share the shape {error:{code, message, request_id}} with a stable
 // machine code; we surface that as a typed ApiError carrying the request id.
+// ApiError.message is display-ready for toast-style call sites; serverMessage
+// keeps the raw text for views that render request_id separately.
 
 export interface ApiErrorBody {
   error?: { code?: string; message?: string; request_id?: string };
@@ -13,13 +15,15 @@ export interface ApiErrorBody {
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly serverMessage: string;
   readonly requestId?: string;
 
   constructor(status: number, code: string, message: string, requestId?: string) {
-    super(message);
+    super(messageWithRequestId(message, requestId));
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.serverMessage = message;
     this.requestId = requestId;
   }
 
@@ -32,6 +36,15 @@ export class ApiError extends Error {
   get isForbidden(): boolean {
     return this.status === 403 || this.code === "forbidden" || this.code === "capability_denied";
   }
+}
+
+function messageWithRequestId(message: string, requestId?: string): string {
+  const trimmed = message.trim();
+  const req = requestId?.trim();
+  if (!req) return trimmed;
+  if (!trimmed) return `request_id: ${req}`;
+  if (trimmed.includes(req)) return trimmed;
+  return `${trimmed} (request_id: ${req})`;
 }
 
 let csrfToken = "";

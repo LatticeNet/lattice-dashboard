@@ -72,7 +72,7 @@ const resolvedEmptyTitle = computed(
 const goneTitle = computed(() => props.emptyTitle ?? t("common.state.gone"));
 
 const errorMessage = computed(
-  () => props.error?.message || t("common.state.somethingWrong"),
+  () => apiError.value?.serverMessage || props.error?.message || t("common.state.somethingWrong"),
 );
 </script>
 

@@ -46,7 +46,7 @@ const redirect = computed(() => {
 
 function setError(e: unknown) {
   if (e instanceof ApiError) {
-    errorMsg.value = e.message;
+    errorMsg.value = e.serverMessage;
     errorRequestId.value = e.requestId;
   } else if (e instanceof Error) {
     errorMsg.value = e.message;
