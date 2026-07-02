@@ -102,6 +102,7 @@ const enrollRole = ref("");
 const enrollTags = ref("");
 const enrollComment = ref("");
 const enrollWireGuardIp = ref("");
+const enrollAgentSourceAllowlist = ref("");
 const enrollGroups = ref<string[]>([]);
 const enrollOpen = ref(false);
 const enrollAdvancedOpen = ref(false);
@@ -496,6 +497,13 @@ function parseTags(): string[] {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function parseAgentSourceAllowlist(): string[] {
+  return enrollAgentSourceAllowlist.value
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 function enrollAgentLaunch(): AgentLaunchConfig {
   return {
     allow_exec: enrollAllowExec.value,
@@ -533,6 +541,7 @@ async function enrollNode() {
       tags: parseTags(),
       comment: enrollComment.value.trim() || undefined,
       wireguard_ip: enrollWireGuardIp.value.trim() || undefined,
+      agent_source_allowlist: parseAgentSourceAllowlist(),
       group_ids: enrollGroups.value.length ? [...enrollGroups.value] : undefined,
       agent_launch: enrollAgentLaunch(),
     });
@@ -542,6 +551,7 @@ async function enrollNode() {
     enrollTags.value = "";
     enrollComment.value = "";
     enrollWireGuardIp.value = "";
+    enrollAgentSourceAllowlist.value = "";
     enrollGroups.value = [];
     enrollAllowExec.value = false;
     enrollAllowRootExec.value = false;
@@ -733,6 +743,17 @@ function openTerminal(node: Node) {
           <div class="grid gap-2">
             <Label for="enroll-wg">{{ $t('fleet.nodes.enroll.wireguardIp') }}</Label>
             <Input id="enroll-wg" v-model="enrollWireGuardIp" :placeholder="$t('common.misc.optional')" />
+          </div>
+          <div class="grid gap-2 lg:col-span-2">
+            <Label for="enroll-agent-source-allowlist">{{ $t('fleet.nodes.enroll.agentSourceAllowlist') }}</Label>
+            <textarea
+              id="enroll-agent-source-allowlist"
+              v-model="enrollAgentSourceAllowlist"
+              rows="3"
+              class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+              :placeholder="$t('fleet.nodes.enroll.agentSourceAllowlistPlaceholder')"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.agentSourceAllowlistHint') }}</p>
           </div>
           <div class="flex items-end">
             <Button type="submit" :disabled="enrollPending || !enrollName.trim()">

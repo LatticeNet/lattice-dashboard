@@ -138,6 +138,8 @@ export interface Node {
   agent_version?: string;
   online: boolean;
   disabled?: boolean;
+  agent_source_allowlist?: string[];
+  token_last_used_at?: string;
   last_seen?: string;
   metrics?: Metrics;
   host_facts?: HostFacts;

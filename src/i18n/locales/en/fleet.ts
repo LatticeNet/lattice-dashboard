@@ -154,6 +154,10 @@ export default {
         comment: "Comment",
         tags: "Tags",
         wireguardIp: "WireGuard IP",
+        agentSourceAllowlist: "Agent source allowlist",
+        agentSourceAllowlistPlaceholder: "198.51.100.10\n203.0.113.0/24",
+        agentSourceAllowlistHint:
+          "Optional exact IPs or CIDR ranges. Leave empty to accept the token from any source.",
         rolePlaceholder: "edge",
         tagsPlaceholder: "prod, us-east",
         groups: "Groups",
@@ -264,6 +268,10 @@ export default {
         identityComment: "Comment",
         identityCommentPlaceholder: "Renewal notes, provider quirks, rack, owner, or migration context",
         identityCommentHint: "Control-plane note only. It is not sent to the node agent.",
+        identityAgentSourceAllowlist: "Agent source allowlist",
+        identityAgentSourceAllowlistPlaceholder: "198.51.100.10\n203.0.113.0/24",
+        identityAgentSourceAllowlistHint:
+          "Optional exact IPs or CIDR ranges. Proxy headers count only when the server runs with TrustProxy.",
         identityTagPlaceholder: "Add a tag and press Enter",
         identityTagHint: "Press Enter to add. Tags drive grouping and smart selectors.",
         identityRemoveTag: "Remove tag",

@@ -571,6 +571,7 @@ const editName = ref("");
 const editRole = ref("");
 const editTags = ref<string[]>([]);
 const editComment = ref("");
+const editAgentSourceAllowlist = ref("");
 const tagDraft = ref("");
 const identityPending = ref(false);
 
@@ -581,6 +582,7 @@ watch(
     editRole.value = node.value?.role ?? "";
     editTags.value = [...(node.value?.tags ?? [])].sort((a, b) => a.localeCompare(b));
     editComment.value = node.value?.comment ?? "";
+    editAgentSourceAllowlist.value = [...(node.value?.agent_source_allowlist ?? [])].join("\n");
     tagDraft.value = "";
   },
   { immediate: true },
@@ -598,6 +600,13 @@ function removeTag(tag: string) {
   editTags.value = editTags.value.filter((t) => t !== tag);
 }
 
+function parseAgentSourceAllowlistDraft(): string[] {
+  return editAgentSourceAllowlist.value
+    .split(/[\n,]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 /** True when the form differs from the persisted identity (gates Save). */
 const identityDirty = computed(() => {
   const n = node.value;
@@ -605,11 +614,17 @@ const identityDirty = computed(() => {
   const tags = [...(n.tags ?? [])].sort((a, b) => a.localeCompare(b));
   const tagsEqual =
     editTags.value.length === tags.length && editTags.value.every((t, i) => t === tags[i]);
+  const persistedSources = [...(n.agent_source_allowlist ?? [])].sort((a, b) => a.localeCompare(b));
+  const draftSources = parseAgentSourceAllowlistDraft().sort((a, b) => a.localeCompare(b));
+  const sourcesEqual =
+    draftSources.length === persistedSources.length &&
+    draftSources.every((source, i) => source === persistedSources[i]);
   return (
     editName.value.trim() !== (n.name ?? "") ||
     editRole.value.trim() !== (n.role ?? "") ||
     editComment.value.trim() !== (n.comment ?? "") ||
-    !tagsEqual
+    !tagsEqual ||
+    !sourcesEqual
   );
 });
 
@@ -623,11 +638,13 @@ async function saveIdentity() {
       role: editRole.value.trim(),
       comment: editComment.value.trim(),
       tags: editTags.value,
+      agent_source_allowlist: parseAgentSourceAllowlistDraft(),
     });
     editName.value = res.name;
     editRole.value = res.role;
     editComment.value = res.comment ?? "";
     editTags.value = [...(res.tags ?? [])].sort((a, b) => a.localeCompare(b));
+    editAgentSourceAllowlist.value = [...(res.agent_source_allowlist ?? [])].join("\n");
     toast.success(t("fleet.nodes.detail.identitySaved"));
     await nodesQuery.refresh();
   } catch (error) {
@@ -1093,6 +1110,17 @@ async function resolveGeo() {
                 :placeholder="$t('fleet.nodes.detail.identityCommentPlaceholder')"
               />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="identity-agent-source-allowlist">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlist') }}</Label>
+              <textarea
+                id="identity-agent-source-allowlist"
+                v-model="editAgentSourceAllowlist"
+                rows="3"
+                class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                :placeholder="$t('fleet.nodes.detail.identityAgentSourceAllowlistPlaceholder')"
+              />
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlistHint') }}</p>
             </div>
             <div class="flex flex-wrap gap-2">
               <Button size="sm" :disabled="identityPending || !identityDirty" @click="saveIdentity">

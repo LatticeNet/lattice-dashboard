@@ -162,6 +162,7 @@ export const api = {
       tags?: string[];
       role?: string;
       wireguard_ip?: string;
+      agent_source_allowlist?: string[];
       group_ids?: string[];
       agent_launch?: AgentLaunchConfig;
     }) => http.post<EnrollTokenResponse>("/api/nodes/enroll-token", input),
@@ -177,11 +178,25 @@ export const api = {
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),
     disable: (node_id: string, disabled: boolean) =>
       http.post<void>("/api/nodes/disable", { node_id, disabled }),
-    // Edit a node's operator-owned identity (name / role / tags) after enrollment.
-    // Mirrors `disable`: POST + CSRF + typed-error handling via `http`. Omitted
-    // fields are left unchanged server-side; returns the persisted identity.
-    update: (input: { node_id: string; name?: string; role?: string; comment?: string; tags?: string[] }) =>
-      http.post<{ ok: boolean; name: string; role: string; comment?: string; tags: string[] }>(
+    // Edit a node's operator-owned identity and agent source policy after enrollment.
+    // Mirrors `disable`: POST + CSRF + typed-error handling via `http`.
+    // Omitting agent_source_allowlist preserves the existing source policy.
+    update: (input: {
+      node_id: string;
+      name?: string;
+      role?: string;
+      comment?: string;
+      tags?: string[];
+      agent_source_allowlist?: string[];
+    }) =>
+      http.post<{
+        ok: boolean;
+        name: string;
+        role: string;
+        comment?: string;
+        tags: string[];
+        agent_source_allowlist?: string[] | null;
+      }>(
         "/api/nodes/update",
         input,
       ),
