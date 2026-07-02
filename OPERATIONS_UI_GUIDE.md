@@ -457,3 +457,21 @@ Important operational boundary:
   explicitly adopted or managed
 
 For plugin-specific capability details, see `../lattice-plugin-vpn-core/README.md`.
+
+## Sub-Store companion page
+
+The official `latticenet.sub-store` companion imports live vpn-core node links
+into an operator-owned Sub-Store backend. The backend URL includes the
+operator's Sub-Store secret path, so the dashboard must treat it as a local
+secret:
+
+- never send it to server-side configuration storage
+- retain it in `sessionStorage` by default, so it survives view navigation but
+  not a long-lived browser profile
+- only write it to `localStorage` after the operator explicitly enables the
+  remember option on a trusted device
+
+The plugin still validates the URL boundary before brokered HTTP egress: only
+absolute `http(s)` URLs with a non-root secret path are accepted, and credentials,
+query strings, fragments, invalid ports, and path traversal segments are
+rejected before `http.do`.

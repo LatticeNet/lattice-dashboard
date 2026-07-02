@@ -343,10 +343,12 @@ export default {
       // Backend connection card.
       backendTitle: "Sub-Store backend",
       backendDescription:
-        "Point this at your Sub-Store backend, including its secret path. It is stored only in this browser — there is no server-side configuration yet.",
+        "Point this at your Sub-Store backend, including its secret path. It stays out of server-side configuration; remember it only on a trusted browser.",
       fieldBaseUrl: "Backend base URL",
       fieldBaseUrlPlaceholder: "https://host/<secret-path>",
-      baseUrlHint: "Include the secret path. Stored locally in this browser only.",
+      baseUrlHint: "Include the secret path. By default it is retained only for this browser session.",
+      rememberBaseUrl: "Remember this secret URL.",
+      rememberBaseUrlHint: " Persists it in this browser's local storage; use only on a trusted device.",
       check: "Check",
       checking: "Checking…",
       statusReachable: "Reachable",

@@ -29,6 +29,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -41,18 +42,47 @@ const SUBSTORE_SERVICE = "latticenet.sub-store/import";
 const canAdmin = computed(() => auth.can("proxy:admin"));
 const adminReason = computed(() => t("proxy.substore.adminReason"));
 
-// The Sub-Store backend URL lives only in this browser — there is no server-side
-// config for it yet. It includes the operator's secret path, so we deliberately
-// keep it client-local rather than persisting it through the API.
-const STORAGE_KEY = "lattice:substore:base-url";
+// The Sub-Store backend URL includes the operator's secret path. Keep it out of
+// server-side config and only persist it beyond the current browser session when
+// the operator explicitly opts in on a trusted device.
+const LOCAL_STORAGE_KEY = "lattice:substore:base-url";
+const SESSION_STORAGE_KEY = "lattice:substore:session-base-url";
+const REMEMBER_STORAGE_KEY = "lattice:substore:remember-base-url";
+const rememberBaseUrl = ref<boolean>(readRememberPreference());
 const baseUrl = ref<string>(readStored());
 
-function readStored(): string {
+function safeGet(storage: Storage, key: string): string {
   try {
-    return localStorage.getItem(STORAGE_KEY) ?? "";
+    return storage.getItem(key) ?? "";
   } catch {
     return "";
   }
+}
+
+function safeSet(storage: Storage, key: string, value: string): void {
+  try {
+    if (value) storage.setItem(key, value);
+    else storage.removeItem(key);
+  } catch {
+    /* storage unavailable — keep working in-memory */
+  }
+}
+
+function readRememberPreference(): boolean {
+  return safeGet(localStorage, REMEMBER_STORAGE_KEY) === "true";
+}
+
+function readStored(): string {
+  const persistent = safeGet(localStorage, LOCAL_STORAGE_KEY);
+  if (readRememberPreference() && persistent) return persistent;
+  const sessionValue = safeGet(sessionStorage, SESSION_STORAGE_KEY);
+  if (sessionValue) return sessionValue;
+  if (persistent) {
+    safeSet(sessionStorage, SESSION_STORAGE_KEY, persistent);
+    safeSet(localStorage, LOCAL_STORAGE_KEY, "");
+    return persistent;
+  }
+  return "";
 }
 
 const userId = ref<string>("");
@@ -65,16 +95,16 @@ const importError = ref<string | undefined>();
 
 // Persist the base URL as it changes; a changed backend invalidates the previous
 // reachability probe and import result, so clear those too.
-watch(baseUrl, (next) => {
-  try {
-    if (next) localStorage.setItem(STORAGE_KEY, next);
-    else localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* storage unavailable — keep working in-memory */
+watch([baseUrl, rememberBaseUrl], ([next, remember], [previous]) => {
+  const value = next.trim();
+  safeSet(sessionStorage, SESSION_STORAGE_KEY, value);
+  safeSet(localStorage, LOCAL_STORAGE_KEY, remember ? value : "");
+  safeSet(localStorage, REMEMBER_STORAGE_KEY, remember ? "true" : "");
+  if (next !== previous) {
+    status.value = undefined;
+    result.value = undefined;
+    importError.value = undefined;
   }
-  status.value = undefined;
-  result.value = undefined;
-  importError.value = undefined;
 });
 
 const trimmedBaseUrl = computed(() => baseUrl.value.trim());
@@ -224,6 +254,17 @@ async function runImport() {
             </Button>
           </div>
           <p class="text-xs text-muted-foreground">{{ $t('proxy.substore.baseUrlHint') }}</p>
+          <label class="flex items-start gap-2 text-xs text-muted-foreground">
+            <Checkbox
+              :model-value="rememberBaseUrl"
+              class="mt-0.5"
+              @update:model-value="(v) => rememberBaseUrl = v === true"
+            />
+            <span>
+              <span class="font-medium text-foreground">{{ $t('proxy.substore.rememberBaseUrl') }}</span>
+              {{ $t('proxy.substore.rememberBaseUrlHint') }}
+            </span>
+          </label>
         </div>
 
         <div v-if="status" class="flex flex-wrap items-center gap-2 text-sm">
