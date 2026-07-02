@@ -102,7 +102,7 @@ export const NAV: NavSection[] = [
     id: "platform",
     title: "Platform",
     items: [
-      { name: "platform-plugins", title: "Plugins", path: "/platform/plugins", icon: Blocks, scopes: ["audit:read"] },
+      { name: "platform-plugins", title: "Plugins", path: "/platform/plugins", icon: Blocks, scopes: ["audit:read", "plugin:admin", "plugin:verify"] },
       { name: "platform-workers", title: "Workers", path: "/platform/workers", icon: Cpu, scopes: ["worker:deploy"] },
       { name: "platform-kv", title: "KV Store", path: "/platform/kv", icon: Database, scopes: ["kv:read"] },
       { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read"] },

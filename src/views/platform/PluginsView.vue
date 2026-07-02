@@ -53,7 +53,7 @@ const canAudit = computed(() => auth.can("audit:read"));
 const canAdmin = computed(() => auth.can("plugin:admin"));
 const canVerify = computed(() => auth.can("plugin:verify"));
 
-const tab = ref<"registered" | "lifecycle">("registered");
+const tab = ref<"registered" | "lifecycle">(canAudit.value ? "registered" : "lifecycle");
 
 // ── Registered plugins (audit:read) ────────────────────────────────────────
 const registeredQuery = useAsyncData(() => api.plugins.list(), {

@@ -436,6 +436,14 @@ The page is responsible for:
 Approvals are deliberately separate from Tasks. A Task is execution. An Approval
 is authorization of a reviewed mutation plan before execution is allowed.
 
+## Plugins page
+
+The Platform -> Plugins entry is visible to operators with any plugin-surface
+scope. Registered plugin inventory requires `audit:read`, lifecycle transitions
+require `plugin:admin`, and local manifest/artifact verification requires
+`plugin:verify`. The page keeps those surfaces separate so a verify-only or
+lifecycle-only operator can still reach the action they are allowed to perform.
+
 ## vpn-core plugin pages
 
 The official `latticenet.vpn-core` plugin contributes VPN Manage pages:
