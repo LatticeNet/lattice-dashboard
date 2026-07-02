@@ -8,6 +8,11 @@ export default {
       description: "Password rotation and second-factor controls for this admin session",
       badgeEnabled: "2FA enabled",
       badgeOff: "2FA off",
+      policy: {
+        requiredTitle: "Two-factor enrollment required",
+        requiredBody:
+          "This server requires TOTP before other dashboard and API actions. Complete enrollment here to unlock the rest of the console.",
+      },
       password: {
         title: "Password",
         description: "Change the admin password. All existing sessions must sign in again.",

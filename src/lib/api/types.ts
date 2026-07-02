@@ -8,6 +8,8 @@ export interface Principal {
   scopes: string[];
   csrf_token: string;
   totp_enabled?: boolean;
+  mfa_required?: boolean;
+  totp_policy_required?: boolean;
 }
 
 export interface BuildInfo {
@@ -23,6 +25,8 @@ export interface LoginResponse {
   actor_id?: string;
   totp_required?: boolean;
   challenge_id?: string;
+  mfa_required?: boolean;
+  totp_policy_required?: boolean;
 }
 
 export interface TOTPEnrollResponse {

@@ -180,6 +180,9 @@ router.beforeEach(async (to) => {
   if (!to.meta.public && !auth.isAuthenticated) {
     return { name: "login", query: { redirect: to.fullPath } };
   }
+  if (!to.meta.public && auth.principal?.mfa_required && to.name !== "settings-security") {
+    return { name: "settings-security", query: { mfa: "required" } };
+  }
   if (!to.meta.public && auth.isAuthenticated) {
     const required = Array.isArray(to.meta.scopes) ? (to.meta.scopes as string[]) : [];
     if (required.length > 0 && !auth.canAny(required)) {
@@ -187,6 +190,9 @@ router.beforeEach(async (to) => {
     }
   }
   if (to.name === "login" && auth.isAuthenticated) {
+    if (auth.principal?.mfa_required) {
+      return { name: "settings-security", query: { mfa: "required" } };
+    }
     return { path: safeInternalRedirect(to.query.redirect) };
   }
 });

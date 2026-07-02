@@ -49,6 +49,7 @@ const totpPending = ref<"enroll" | "activate" | "disable" | undefined>();
 const totpError = ref<string | undefined>();
 
 const totpEnabled = computed(() => !!auth.principal?.totp_enabled);
+const mfaRequired = computed(() => !!auth.principal?.mfa_required);
 const recoveryText = computed(() => enrollment.value?.recovery_codes.join("\n") ?? "");
 const isSuperuser = computed(() => (auth.principal?.scopes ?? []).includes("*"));
 const principalScopes = computed(() => auth.principal?.scopes ?? []);
@@ -208,6 +209,21 @@ function cancelEnrollment() {
         </Badge>
       </template>
     </PageHeader>
+
+    <div
+      v-if="mfaRequired"
+      class="flex flex-col gap-2 rounded-md border border-warning/40 bg-warning/5 p-4 text-sm sm:flex-row sm:items-start"
+    >
+      <AlertTriangle class="mt-0.5 size-4 shrink-0 text-warning-foreground" aria-hidden="true" />
+      <div class="space-y-1">
+        <p class="font-medium text-warning-foreground">
+          {{ $t("settings.security.policy.requiredTitle") }}
+        </p>
+        <p class="text-muted-foreground">
+          {{ $t("settings.security.policy.requiredBody") }}
+        </p>
+      </div>
+    </div>
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
       <Card>

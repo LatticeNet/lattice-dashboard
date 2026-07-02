@@ -7,6 +7,11 @@ export default {
       description: "本管理会话的密码轮换与第二因子控制",
       badgeEnabled: "2FA 已启用",
       badgeOff: "2FA 已关闭",
+      policy: {
+        requiredTitle: "必须完成两步验证注册",
+        requiredBody:
+          "该 server 要求先启用 TOTP，之后才能执行其它 dashboard 与 API 操作。请在这里完成注册以解锁控制台。",
+      },
       password: {
         title: "密码",
         description: "修改管理员密码。所有现有会话都需要重新登录。",
