@@ -69,6 +69,9 @@ export default {
       },
       queueTask: "排队任务",
       queueTaskHint: "任务仅在所选节点上、并在服务端强制的限制内运行。",
+      taskExecutionDisabled: "服务端 fleet kill switch 已禁用任务执行。",
+      taskExecutionDisabledHint:
+        "任务排队、重跑和 agent 领取任务已暂停；清除服务端 task-exec kill switch 后恢复。",
       targets: "目标节点",
       selectedTargets: "已选择 {count} 个",
       targetSearch: "按名称、ID、标签、角色或区域筛选",

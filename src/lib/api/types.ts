@@ -18,6 +18,7 @@ export interface BuildInfo {
   server_date: string;
   dashboard_ref?: string;
   dashboard_built?: string;
+  task_execution_disabled?: boolean;
 }
 
 export interface LoginResponse {

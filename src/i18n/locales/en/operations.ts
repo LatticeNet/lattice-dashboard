@@ -70,6 +70,9 @@ export default {
       },
       queueTask: "Queue Task",
       queueTaskHint: "Tasks run only on selected nodes and within server-enforced limits.",
+      taskExecutionDisabled: "Task execution is disabled by the server fleet kill switch.",
+      taskExecutionDisabledHint:
+        "Queueing, rerun, and agent leases are paused until the server task-exec kill switch is cleared.",
       targets: "Targets",
       selectedTargets: "{count} selected",
       targetSearch: "Filter by name, id, tag, role, or region",

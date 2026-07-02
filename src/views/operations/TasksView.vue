@@ -75,6 +75,9 @@ const route = useRoute();
 const auth = useAuthStore();
 const canRunTasks = computed(() => auth.can("task:run"));
 
+const versionQuery = useAsyncData(() => api.version(), { pollInterval: 60000 });
+const taskExecutionDisabled = computed(() => !!versionQuery.data.value?.task_execution_disabled);
+
 const tasksQuery = useAsyncData<TaskView[] | undefined>(
   () => api.tasks.list().then((r) => unwrap(r, "tasks")),
   { pollInterval: 5000 },
@@ -398,10 +401,14 @@ function nodeAgentBadges(node?: Node): string[] {
 }
 
 async function refreshAll() {
-  await Promise.all([tasksQuery.refresh(), resultsQuery.refresh(), nodesQuery.refresh()]);
+  await Promise.all([tasksQuery.refresh(), resultsQuery.refresh(), nodesQuery.refresh(), versionQuery.refresh()]);
 }
 
 async function createTask() {
+  if (taskExecutionDisabled.value) {
+    toast.error(t("operations.tasks.taskExecutionDisabled"));
+    return;
+  }
   if (!selectedTargets.value.length) {
     toast.error(t("operations.tasks.errNoTargets"));
     return;
@@ -430,6 +437,10 @@ async function createTask() {
 }
 
 async function rerunTask(task: TaskView) {
+  if (taskExecutionDisabled.value) {
+    toast.error(t("operations.tasks.taskExecutionDisabled"));
+    return;
+  }
   actionPending.value = `task:${task.id}`;
   try {
     await api.tasks.rerun(task.id);
@@ -443,6 +454,10 @@ async function rerunTask(task: TaskView) {
 }
 
 async function rerunNode(task: TaskView, nodeId: string) {
+  if (taskExecutionDisabled.value) {
+    toast.error(t("operations.tasks.taskExecutionDisabled"));
+    return;
+  }
   actionPending.value = `node:${task.id}:${nodeId}`;
   try {
     await api.tasks.rerunNode(task.id, nodeId);
@@ -534,9 +549,15 @@ async function deleteTask(task: TaskView) {
           <Play class="size-4 text-muted-foreground" aria-hidden="true" />
           {{ $t('operations.tasks.queueTask') }}
         </CardTitle>
-        <CardDescription>{{ $t('operations.tasks.queueTaskHint') }}</CardDescription>
+        <CardDescription>
+          {{ taskExecutionDisabled ? $t('operations.tasks.taskExecutionDisabledHint') : $t('operations.tasks.queueTaskHint') }}
+        </CardDescription>
       </CardHeader>
       <CardContent>
+        <div v-if="taskExecutionDisabled" class="mb-4 flex gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
+          <Ban class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <p>{{ $t('operations.tasks.taskExecutionDisabled') }}</p>
+        </div>
         <form class="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_1fr]" @submit.prevent="createTask">
           <div class="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
@@ -681,7 +702,7 @@ async function deleteTask(task: TaskView) {
               <p class="text-xs text-muted-foreground">
                 {{ $t('operations.tasks.fanoutHint') }}
               </p>
-              <Button type="submit" :disabled="creating || !selectedTargets.length || !script.trim()">
+              <Button type="submit" :disabled="creating || taskExecutionDisabled || !selectedTargets.length || !script.trim()">
                 <RefreshCw v-if="creating" class="size-4 animate-spin" aria-hidden="true" />
                 <Play v-else class="size-4" aria-hidden="true" />
                 {{ $t('operations.tasks.queueTaskCta') }}
@@ -776,7 +797,7 @@ async function deleteTask(task: TaskView) {
                     <Badge variant="outline">
                       {{ $t('operations.tasks.seconds', { count: task.timeout_sec ?? 0 }) }}
                     </Badge>
-                    <Button variant="outline" size="sm" :disabled="actionPending === `task:${task.id}`" @click="rerunTask(task)">
+                    <Button variant="outline" size="sm" :disabled="taskExecutionDisabled || actionPending === `task:${task.id}`" @click="rerunTask(task)">
                       <RotateCcw class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.rerun') }}
                     </Button>
@@ -869,7 +890,7 @@ async function deleteTask(task: TaskView) {
                             v-if="row.failed"
                             variant="outline"
                             size="sm"
-                            :disabled="actionPending === `node:${task.id}:${row.nodeId}`"
+                            :disabled="taskExecutionDisabled || actionPending === `node:${task.id}:${row.nodeId}`"
                             @click="rerunNode(task, row.nodeId)"
                           >
                             <RotateCcw class="size-4" aria-hidden="true" />
