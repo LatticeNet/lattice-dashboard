@@ -331,7 +331,8 @@ export default {
         "填入你的 Sub-Store 后端地址(包含其密钥路径)。该地址不会写入服务端配置; 仅应在可信浏览器中选择长期记住。",
       fieldBaseUrl: "后端基础 URL",
       fieldBaseUrlPlaceholder: "https://host/<密钥路径>",
-      baseUrlHint: "需包含密钥路径。默认仅在当前浏览器会话中保留。",
+      baseUrlHint:
+        "需包含密钥路径。远程后端请使用 HTTPS；http:// 仅限 localhost 或回环地址。默认仅在当前浏览器会话中保留。",
       rememberBaseUrl: "记住这个密钥 URL。",
       rememberBaseUrlHint: " 会写入本浏览器 localStorage; 仅在可信设备上启用。",
       check: "检测",

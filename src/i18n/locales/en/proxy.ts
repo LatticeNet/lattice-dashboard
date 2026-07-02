@@ -346,7 +346,8 @@ export default {
         "Point this at your Sub-Store backend, including its secret path. It stays out of server-side configuration; remember it only on a trusted browser.",
       fieldBaseUrl: "Backend base URL",
       fieldBaseUrlPlaceholder: "https://host/<secret-path>",
-      baseUrlHint: "Include the secret path. By default it is retained only for this browser session.",
+      baseUrlHint:
+        "Include the secret path. Use HTTPS for remote backends; http:// is accepted only for localhost or loopback. By default it is retained only for this browser session.",
       rememberBaseUrl: "Remember this secret URL.",
       rememberBaseUrlHint: " Persists it in this browser's local storage; use only on a trusted device.",
       check: "Check",
