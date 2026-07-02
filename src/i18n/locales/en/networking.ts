@@ -9,6 +9,7 @@ export default {
       planCreated: "Plan created",
       planReviewHint: "Review & approve under Operations → Approvals. Nothing is applied until approved.",
       planLabel: "Plan",
+      planTextSha256: "plan text SHA-256",
       goToApprovals: "Go to Approvals",
       idLabel: "id {id}",
       noMatchTitle: "No matching results",

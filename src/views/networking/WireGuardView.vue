@@ -304,7 +304,7 @@ function nodeName(id: string): string {
           </div>
 
           <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
-            <span class="font-medium">sha256</span>
+            <span class="font-medium">{{ $t('networking.shared.planTextSha256') }}</span>
             <code class="break-all font-mono">{{ planDigest }}</code>
             <CopyButton :value="planDigest" />
           </div>

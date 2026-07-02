@@ -8,6 +8,7 @@ export default {
       planCreated: "已生成计划",
       planReviewHint: "前往 运维 → 审批 审阅并批准。批准前不会应用任何变更。",
       planLabel: "计划",
+      planTextSha256: "计划文本 SHA-256",
       goToApprovals: "前往审批",
       idLabel: "id {id}",
       noMatchTitle: "无匹配结果",
