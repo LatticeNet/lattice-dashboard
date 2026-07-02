@@ -410,6 +410,9 @@ operator expects traffic geography, use the policy topology.
 
 Approvals are the review gate for high-impact operations. A pending approval
 captures a reviewed plan before an agent-side or host-risk mutation is queued.
+The sidebar exposes the page to operators with any approval-producing domain
+scope, while the server still filters the actual approval rows by the precise
+per-plugin visibility rules.
 
 Typical approval-backed operations:
 

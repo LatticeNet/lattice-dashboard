@@ -73,7 +73,13 @@ export const NAV: NavSection[] = [
     id: "operations",
     title: "Operations",
     items: [
-      { name: "approvals", title: "Approvals", path: "/approvals", icon: ShieldCheck, scopes: ["network:plan", "netpolicy:admin", "tunnel:admin"] },
+      {
+        name: "approvals",
+        title: "Approvals",
+        path: "/approvals",
+        icon: ShieldCheck,
+        scopes: ["network:plan", "netpolicy:admin", "node:admin", "dns:admin", "proxy:read", "tunnel:admin"],
+      },
       { name: "tasks", title: "Tasks", path: "/tasks", icon: ClipboardList, scopes: ["task:read"] },
       { name: "terminal", title: "Terminal", path: "/terminal", icon: SquareTerminal, scopes: ["terminal:open"] },
       { name: "audit", title: "Audit", path: "/audit", icon: ScrollText, scopes: ["audit:read"] },
