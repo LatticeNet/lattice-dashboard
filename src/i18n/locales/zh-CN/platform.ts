@@ -414,10 +414,10 @@ export default {
         "Binary URL 和 SHA-256 留空时，会按节点 OS/arch 使用官方 LatticeNet/lattice-node-agent 发布产物。",
       customArtifact: "自定义产物",
       customArtifactHint:
-        "自定义模式仅用于紧急或 fork 二进制。URL 与 SHA-256 必须同时提供。",
+        "自定义模式仅用于紧急或 fork 二进制。URL 与 SHA-256 必须同时提供；不要使用带签名或令牌的 URL。",
       artifactPinsInvalid: "Binary URL 与 SHA-256 必须同时提供，或同时留空以使用官方发布模式。",
       binaryUrlLabel: "二进制 URL",
-      urlInvalid: "必须是有效的 HTTPS URL。",
+      urlInvalid: "必须是 HTTPS URL，且不能包含查询字符串、userinfo 或 fragment。",
       sha256Label: "二进制制品 SHA-256",
       sha256Placeholder: "64 位小写十六进制",
       sha256Invalid: "必须是 64 位小写十六进制。",

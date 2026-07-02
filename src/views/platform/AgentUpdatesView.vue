@@ -168,15 +168,28 @@ const versionValid = computed(
   () => !!form.value.target_version.trim() && TARGET_VERSION_RE.test(form.value.target_version.trim()),
 );
 const customArtifactMode = computed(() => !!form.value.binary_url.trim() || !!form.value.sha256.trim());
-const urlValid = computed(() => {
-  const url = form.value.binary_url.trim();
-  if (!url) return !customArtifactMode.value;
+
+function isSecretFreeAgentBinaryURL(raw: string): boolean {
+  const url = raw.trim();
+  if (!url) return true;
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:";
+    return (
+      parsed.protocol === "https:" &&
+      !parsed.username &&
+      !parsed.password &&
+      !url.includes("?") &&
+      !parsed.hash
+    );
   } catch {
     return false;
   }
+}
+
+const urlValid = computed(() => {
+  const url = form.value.binary_url.trim();
+  if (!url) return !customArtifactMode.value;
+  return isSecretFreeAgentBinaryURL(url);
 });
 const shaValid = computed(() => {
   const sha = form.value.sha256.trim();

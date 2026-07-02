@@ -1494,7 +1494,10 @@ export interface AgentUpdatePolicyUpsertRequest {
   enabled: boolean;
   auto_plan: boolean;
   target_version: string;
-  /** Empty binary_url + sha256 asks the server to resolve the official GitHub release. */
+  /** Empty binary_url + sha256 asks the server to resolve the official GitHub release.
+   * Explicit binary_url must be HTTPS with no query string, userinfo, or fragment
+   * because it is rendered into the reviewed approval plan.
+   */
   binary_url?: string;
   sha256?: string;
   install_path?: string;

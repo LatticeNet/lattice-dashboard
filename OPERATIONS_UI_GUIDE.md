@@ -141,6 +141,8 @@ release mode:
 - The approval plan records the concrete resolved version, URL, and SHA-256.
   The policy row records operator intent plus last planned/applied version.
 - Custom artifact mode is available only when both URL and SHA-256 are provided.
+  The binary URL must be HTTPS and must not contain userinfo, query strings, or
+  fragments because the reviewed approval plan displays it.
 
 The Agent Updates page fetches the current latest release once when the page
 loads so operators can see what `latest` currently means. That display is

@@ -421,10 +421,10 @@ export default {
         "Leave Binary URL and SHA-256 empty to use the official LatticeNet/lattice-node-agent release for the node OS/arch.",
       customArtifact: "custom artifact",
       customArtifactHint:
-        "Custom mode is for emergency or forked binaries. URL and SHA-256 must be provided together.",
+        "Custom mode is for emergency or forked binaries. URL and SHA-256 must be provided together; do not use signed or token URLs.",
       artifactPinsInvalid: "Binary URL and SHA-256 must be provided together, or both left empty for official release mode.",
       binaryUrlLabel: "Binary URL",
-      urlInvalid: "Must be a valid HTTPS URL.",
+      urlInvalid: "Must be an HTTPS URL with no query string, userinfo, or fragment.",
       sha256Label: "Binary artifact SHA-256",
       sha256Placeholder: "64-char lowercase hex",
       sha256Invalid: "Must be 64-character lowercase hex.",
