@@ -171,7 +171,7 @@ const launchAllowExec = ref(false);
 const launchAllowRootExec = ref(false);
 const launchNoExec = ref(false);
 const launchAllowTerminal = ref(false);
-const launchTerminalTransport = ref<"poll" | "stream">("poll");
+const launchTerminalTransport = ref<"poll" | "stream">("stream");
 const launchSSHAlerts = ref(false);
 const launchSingBoxDiscover = ref(false);
 const launchSingBoxBin = ref("sb");
@@ -188,7 +188,7 @@ function seedLaunchDraft(n?: Node) {
   launchAllowRootExec.value = !!launch?.allow_root_exec;
   launchNoExec.value = !!launch?.no_exec;
   launchAllowTerminal.value = !!launch?.allow_terminal;
-  launchTerminalTransport.value = launch?.terminal_transport === "stream" ? "stream" : "poll";
+  launchTerminalTransport.value = launch?.terminal_transport === "poll" ? "poll" : "stream";
   launchSSHAlerts.value = !!launch?.ssh_alerts;
   launchSingBoxDiscover.value = !!launch?.singbox_discover;
   launchSingBoxBin.value = launch?.singbox_bin || "sb";

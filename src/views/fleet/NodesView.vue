@@ -26,6 +26,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import {
+  formatBytes,
   formatBytesPerSec,
   formatRelativeTime,
   shortId,
@@ -110,7 +111,7 @@ const enrollAllowExec = ref(false);
 const enrollAllowRootExec = ref(false);
 const enrollNoExec = ref(false);
 const enrollAllowTerminal = ref(false);
-const enrollTerminalTransport = ref<"poll" | "stream">("poll");
+const enrollTerminalTransport = ref<"poll" | "stream">("stream");
 const enrollSSHAlerts = ref(false);
 const enrollSingBoxDiscover = ref(false);
 const enrollSingBoxBin = ref("sb");
@@ -557,7 +558,7 @@ async function enrollNode() {
     enrollAllowRootExec.value = false;
     enrollNoExec.value = false;
     enrollAllowTerminal.value = false;
-    enrollTerminalTransport.value = "poll";
+    enrollTerminalTransport.value = "stream";
     enrollSSHAlerts.value = false;
     enrollSingBoxDiscover.value = false;
     enrollSingBoxBin.value = "sb";
@@ -697,6 +698,14 @@ function openTerminal(node: Node) {
             </span>
             <span class="inline-flex items-center gap-1 text-foreground">
               <ArrowUp class="size-4 text-primary" aria-hidden="true" />{{ formatBytesPerSec(totals.netTxSpeed) }}
+            </span>
+          </div>
+          <div class="mt-1 flex items-center gap-3 text-xs text-muted-foreground tabular">
+            <span class="inline-flex items-center gap-1">
+              <ArrowDown class="size-3 text-success" aria-hidden="true" />{{ formatBytes(totals.netRxBytes) }}
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <ArrowUp class="size-3 text-primary" aria-hidden="true" />{{ formatBytes(totals.netTxBytes) }}
             </span>
           </div>
         </CardContent>

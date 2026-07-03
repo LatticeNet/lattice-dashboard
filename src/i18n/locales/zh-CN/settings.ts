@@ -270,6 +270,9 @@ export default {
       revokeTitle: "吊销令牌?",
       revokeDescription:
         "吊销“{name}”。任何使用该凭据的调用方将立即失去访问权限。此操作单向且无法撤销。",
+      deleteTitle: "删除已吊销令牌?",
+      deleteDescription:
+        "从令牌列表中删除“{name}”。只能删除已经吊销的令牌；审计历史仍会保留。",
       discardTitle: "放弃此令牌?",
       discardDescription:
         "你已选择权限范围并填写了信息，但尚未创建。现在关闭将丢弃这些内容。",
@@ -279,6 +282,8 @@ export default {
         createFailed: "令牌创建失败",
         revoked: "令牌已吊销",
         revokeFailed: "吊销失败",
+        deleted: "令牌已删除",
+        deleteFailed: "删除失败",
       },
     },
   },

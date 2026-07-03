@@ -13,7 +13,7 @@ import { api, type TerminalSession } from "@/lib/api";
 
 const POLL_MS = 120;
 const POLL_ERROR_MS = 1000; // back off after a failed poll so a bad link isn't hammered
-const INPUT_FLUSH_MS = 20;
+const INPUT_FLUSH_MS = 8;
 const RESIZE_DEBOUNCE_MS = 160;
 const WS_BACKOFF_START_MS = 500;
 const WS_BACKOFF_MAX_MS = 8000;

@@ -8,6 +8,7 @@ import {
   RefreshCw,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   TriangleAlert,
 } from "lucide-vue-next";
 import {
@@ -211,6 +212,8 @@ function closeReveal() {
 // ── Revoke confirmation ──────────────────────────────────────────────────────
 const revokeTarget = ref<TokenView | undefined>();
 const revoking = ref(false);
+const deleteTarget = ref<TokenView | undefined>();
+const deleting = ref(false);
 
 async function confirmRevoke() {
   if (!revokeTarget.value) return;
@@ -224,6 +227,21 @@ async function confirmRevoke() {
     toast.error(error instanceof Error ? error.message : t("settings.tokens.toast.revokeFailed"));
   } finally {
     revoking.value = false;
+  }
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value) return;
+  deleting.value = true;
+  try {
+    await api.tokens.delete(deleteTarget.value.id);
+    toast.success(t("settings.tokens.toast.deleted"));
+    deleteTarget.value = undefined;
+    tokensQuery.refresh();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("settings.tokens.toast.deleteFailed"));
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -384,6 +402,16 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
               >
                 <ShieldOff class="size-4 text-destructive" aria-hidden="true" />
                 {{ $t("settings.tokens.list.revoke") }}
+              </Button>
+              <Button
+                v-if="canAdmin && isRevoked(row)"
+                variant="ghost"
+                size="sm"
+                class="text-destructive"
+                @click="deleteTarget = row"
+              >
+                <Trash2 class="size-4" aria-hidden="true" />
+                {{ $t("common.actions.delete") }}
               </Button>
             </div>
           </template>
@@ -567,6 +595,18 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
       :pending="revoking"
       @update:open="(v) => { if (!v) revokeTarget = undefined; }"
       @confirm="confirmRevoke"
+    />
+
+    <!-- Delete revoked token confirmation -->
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('settings.tokens.deleteTitle')"
+      :description="$t('settings.tokens.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
     />
   </div>
 </template>

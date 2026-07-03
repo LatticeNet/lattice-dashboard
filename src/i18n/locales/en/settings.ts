@@ -275,6 +275,9 @@ export default {
       revokeTitle: "Revoke token?",
       revokeDescription:
         'Revoke "{name}". Any caller using this credential will immediately lose access. This is one-way and cannot be undone.',
+      deleteTitle: "Delete revoked token?",
+      deleteDescription:
+        'Delete "{name}" from the token list. Only already-revoked tokens can be deleted; audit history is retained.',
       discardTitle: "Discard this token?",
       discardDescription:
         "You have selected scopes and entered details that have not been created yet. Closing now discards them.",
@@ -284,6 +287,8 @@ export default {
         createFailed: "Token creation failed",
         revoked: "Token revoked",
         revokeFailed: "Revoke failed",
+        deleted: "Token deleted",
+        deleteFailed: "Delete failed",
       },
     },
   },

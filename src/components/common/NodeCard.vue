@@ -36,6 +36,7 @@ import type { Node } from "@/lib/api/types";
 import { nodeStatusMeta } from "@/lib/status";
 import { groupColor } from "@/lib/groupColors";
 import {
+  formatBytes,
   formatBytesPerSec,
   formatDuration,
   formatPercent,
@@ -249,7 +250,7 @@ function onGroup(id: string) {
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0">
         <div class="flex min-w-0 items-center gap-2 font-medium">
-          <StatusDot :status="meta.dotStatus" :pulse="isLive" />
+          <StatusDot :online="isLive" :pulse="isLive" />
           <span class="truncate">{{ displayName }}</span>
         </div>
         <p
@@ -341,10 +342,12 @@ function onGroup(id: string) {
       <span class="inline-flex items-center gap-1">
         <ArrowDown class="size-3" aria-hidden="true" />
         {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
+        <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <ArrowUp class="size-3" aria-hidden="true" />
         {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
+        <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
       </span>
       <span class="inline-flex items-center gap-1">
         <Activity class="size-3" aria-hidden="true" />

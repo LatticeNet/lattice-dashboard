@@ -329,6 +329,9 @@ export interface FleetTotals {
   /** Summed instantaneous network speed across live nodes (bytes/sec). */
   netRxSpeed: number;
   netTxSpeed: number;
+  /** Summed cumulative interface counters across live nodes (bytes). */
+  netRxBytes: number;
+  netTxBytes: number;
 }
 
 function num(value?: number): number {
@@ -355,6 +358,8 @@ export function fleetTotals(nodes: Node[]): FleetTotals {
     diskTotal: 0,
     netRxSpeed: 0,
     netTxSpeed: 0,
+    netRxBytes: 0,
+    netTxBytes: 0,
   };
 
   const continents = new Set<string>();
@@ -387,6 +392,8 @@ export function fleetTotals(nodes: Node[]): FleetTotals {
     t.diskTotal += num(m.disk_total);
     t.netRxSpeed += num(m.net_rx_speed);
     t.netTxSpeed += num(m.net_tx_speed);
+    t.netRxBytes += num(m.net_rx_bytes);
+    t.netTxBytes += num(m.net_tx_bytes);
   }
 
   t.regions = continents.size;

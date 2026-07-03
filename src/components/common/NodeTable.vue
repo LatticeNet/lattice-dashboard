@@ -14,7 +14,7 @@ import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
 import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
 import { nodeStatusMeta } from "@/lib/status";
-import { formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
+import { formatBytes, formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 
 import StatusDot from "@/components/common/StatusDot.vue";
@@ -126,10 +126,10 @@ function onOpen(node: Node): void {
 
 <template>
   <div class="overflow-x-auto rounded-lg border border-border">
-    <div class="min-w-[1660px]">
+    <div class="min-w-[1700px]">
       <!-- Header -->
       <div
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_136px_112px_116px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_170px_112px_116px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
       >
         <span>{{ $t('fleet.nodes.table.colName') }}</span>
         <span>{{ $t('fleet.nodes.table.colStatus') }}</span>
@@ -151,7 +151,7 @@ function onOpen(node: Node): void {
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_136px_112px_116px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
+        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_170px_112px_116px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
         :tabindex="0"
@@ -162,7 +162,7 @@ function onOpen(node: Node): void {
       >
         <!-- Name + status dot -->
         <div class="flex min-w-0 items-center gap-2">
-          <StatusDot :status="meta(node).dotStatus" :pulse="isLive(node)" />
+          <StatusDot :online="isLive(node)" :pulse="isLive(node)" />
           <div class="min-w-0">
             <p class="truncate font-medium">{{ node.name || node.id }}</p>
             <p class="truncate font-mono text-xs text-muted-foreground tabular">
@@ -221,14 +221,19 @@ function onOpen(node: Node): void {
         <MetricBar tone="disk" :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)" />
 
         <!-- Net rx / tx -->
-        <div class="space-y-0.5 text-xs text-muted-foreground tabular">
+        <div
+          class="space-y-0.5 text-xs text-muted-foreground tabular"
+          :title="`RX total: ${formatBytes(node.metrics?.net_rx_bytes)}\nTX total: ${formatBytes(node.metrics?.net_tx_bytes)}`"
+        >
           <p class="inline-flex items-center gap-1">
             <ArrowDown class="size-3 text-success" aria-hidden="true" />
-            {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
+            <span>{{ formatBytesPerSec(node.metrics?.net_rx_speed) }}</span>
+            <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
           </p>
           <p class="inline-flex items-center gap-1">
             <ArrowUp class="size-3 text-primary" aria-hidden="true" />
-            {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
+            <span>{{ formatBytesPerSec(node.metrics?.net_tx_speed) }}</span>
+            <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
           </p>
         </div>
 

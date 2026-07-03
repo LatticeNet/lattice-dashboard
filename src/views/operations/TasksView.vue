@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -72,6 +72,7 @@ interface NodeExecutionRow {
 
 const { t } = useI18n();
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 const canRunTasks = computed(() => auth.can("task:run"));
 
@@ -118,7 +119,8 @@ const outputLimit = ref(16384);
 const taskSearch = ref("");
 const expandedTasks = ref<Set<string>>(new Set());
 const expandedNodeRows = ref<Set<string>>(new Set());
-const historyPage = ref(1);
+const seededPage = Number(route.query.page);
+const historyPage = ref(Number.isFinite(seededPage) && seededPage > 0 ? Math.floor(seededPage) : 1);
 const HISTORY_PAGE_SIZE = 8;
 const creating = ref(false);
 const actionPending = ref<string | null>(null);
@@ -226,12 +228,26 @@ const pagedRootTasks = computed(() => {
   return filteredRootTasks.value.slice(start, start + HISTORY_PAGE_SIZE);
 });
 
+watch([taskSearch, statusFilter], () => {
+  historyPage.value = 1;
+});
+
+watch([() => filteredRootTasks.value.length, historyTotalPages], () => {
+  if (historyPage.value > historyTotalPages.value) historyPage.value = historyTotalPages.value;
+  if (historyPage.value < 1) historyPage.value = 1;
+});
+
 watch(
-  () => [taskSearch.value, statusFilter.value, filteredRootTasks.value.length],
-  () => {
-    if (historyPage.value > historyTotalPages.value) historyPage.value = historyTotalPages.value;
-    else historyPage.value = 1;
+  [historyPage, statusFilter],
+  ([page, status]) => {
+    const query = { ...route.query };
+    if (page > 1) query.page = String(page);
+    else delete query.page;
+    if (status !== "all") query.status = status;
+    else delete query.status;
+    router.replace({ query }).catch(() => {});
   },
+  { immediate: true },
 );
 
 function nodeRegion(node: Node): string {

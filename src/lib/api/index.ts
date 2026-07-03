@@ -626,6 +626,7 @@ export const api = {
     list: () => http.get<TokenView[]>("/api/tokens"),
     create: (input: TokenCreateRequest) => http.post<TokenCreateResponse>("/api/tokens", input),
     revoke: (token_id: string) => http.post<TokenView>("/api/tokens/revoke", { token_id }),
+    delete: (token_id: string) => http.post<{ ok: boolean }>("/api/tokens/delete", { token_id }),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { AlertTriangle, ArchiveX, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, ArchiveX, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
 import {
   api,
   APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
@@ -27,6 +27,7 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import PlanDiff from "@/components/common/PlanDiff.vue";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -47,11 +48,15 @@ import { Badge } from "@/components/ui/badge";
 
 const { t } = useI18n();
 const auth = useAuthStore();
-const approvalsQuery = useAsyncData(() => api.approvals.list().then((r) => unwrap(r, "approvals")), {
+const includeDismissed = ref(false);
+const approvalsQuery = useAsyncData(() => api.approvals.list({ include_dismissed: includeDismissed.value }).then((r) => unwrap(r, "approvals")), {
   pollInterval: 8000,
 });
 
 const selectedId = ref("");
+type ApprovalBucket = "active" | "pending" | "stale" | "approved" | "applied" | "rejected" | "dismissed" | "all";
+const approvalBucket = ref<ApprovalBucket>("active");
+const approvalSearch = ref("");
 const pendingApproval = ref<string | undefined>();
 const dismissingApproval = ref<string | undefined>();
 const replanningApproval = ref<string | undefined>();
@@ -63,7 +68,7 @@ const { digestFor, cache: digestCache } = usePlanDigest();
 const approvals = computed(() => approvalsQuery.data.value ?? []);
 const pending = computed(() => approvals.value.filter(isActionablePendingApproval));
 const selected = computed<ApprovalView | undefined>(() =>
-  sortedApprovals.value.find((approval) => approval.id === selectedId.value) ?? sortedApprovals.value[0],
+  filteredApprovals.value.find((approval) => approval.id === selectedId.value) ?? filteredApprovals.value[0],
 );
 const canApply = computed(() => auth.can("network:apply"));
 const canDecideSelected = computed(() => canDecideApproval(selected.value));
@@ -114,8 +119,70 @@ const sortedApprovals = computed(() =>
   }),
 );
 
+const APPROVAL_BUCKETS: ApprovalBucket[] = ["active", "pending", "stale", "approved", "applied", "rejected", "dismissed", "all"];
+
+function matchesBucket(approval: ApprovalView, bucket: ApprovalBucket): boolean {
+  switch (bucket) {
+    case "active":
+      return isActionablePendingApproval(approval) || isStaleAgentUpdateApproval(approval) || approval.status === "approved";
+    case "pending":
+      return isActionablePendingApproval(approval);
+    case "stale":
+      return isStaleAgentUpdateApproval(approval);
+    case "approved":
+      return approval.status === "approved";
+    case "applied":
+      return approval.status === "applied";
+    case "rejected":
+      return approval.status === "rejected";
+    case "dismissed":
+      return approval.status === "dismissed";
+    default:
+      return true;
+  }
+}
+
+function approvalHaystack(approval: ApprovalView): string {
+  return [
+    approval.id,
+    approval.plugin,
+    approval.action,
+    approval.node_id,
+    approval.status,
+    approval.reason,
+    approval.actor_id,
+    approval.approved_by,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+const bucketCounts = computed<Record<ApprovalBucket, number>>(() => {
+  const counts = Object.fromEntries(APPROVAL_BUCKETS.map((bucket) => [bucket, 0])) as Record<ApprovalBucket, number>;
+  for (const approval of approvals.value) {
+    for (const bucket of APPROVAL_BUCKETS) {
+      if (matchesBucket(approval, bucket)) counts[bucket] += 1;
+    }
+  }
+  return counts;
+});
+
+const filteredApprovals = computed(() => {
+  const q = approvalSearch.value.trim().toLowerCase();
+  return sortedApprovals.value.filter((approval) => {
+    if (!matchesBucket(approval, approvalBucket.value)) return false;
+    if (!q) return true;
+    return approvalHaystack(approval).includes(q);
+  });
+});
+
+watch(includeDismissed, () => {
+  approvalsQuery.refresh();
+});
+
 watch(
-  sortedApprovals,
+  filteredApprovals,
   (list) => {
     if (list.length === 0) {
       selectedId.value = "";
@@ -353,19 +420,50 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
           <CardTitle>{{ $t('operations.approvals.inbox') }}</CardTitle>
           <CardDescription>{{ $t('operations.approvals.inboxHint') }}</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent class="space-y-3">
+          <div class="relative">
+            <Search
+              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              v-model="approvalSearch"
+              class="pl-8"
+              :placeholder="$t('operations.approvals.searchPlaceholder')"
+            />
+          </div>
+
+          <div class="flex flex-wrap gap-1.5">
+            <Button
+              v-for="bucket in APPROVAL_BUCKETS"
+              :key="bucket"
+              type="button"
+              :variant="approvalBucket === bucket ? 'secondary' : 'outline'"
+              size="sm"
+              @click="approvalBucket = bucket"
+            >
+              {{ $t(`operations.approvals.filters.${bucket}`) }}
+              <Badge variant="outline" class="ml-1">{{ bucketCounts[bucket] }}</Badge>
+            </Button>
+          </div>
+
+          <label class="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <input v-model="includeDismissed" type="checkbox" class="size-4 accent-primary" />
+            <span>{{ $t('operations.approvals.includeDismissed') }}</span>
+          </label>
+
           <DataState
             :loading="approvalsQuery.loading.value"
             :error="approvalsQuery.error.value"
             :has-data="approvalsQuery.data.value !== undefined"
-            :is-empty="approvals.length === 0"
-            :empty-title="$t('operations.approvals.emptyTitle')"
-            :empty-description="$t('operations.approvals.emptyDescription')"
+            :is-empty="filteredApprovals.length === 0"
+            :empty-title="approvals.length ? $t('operations.approvals.noMatchTitle') : $t('operations.approvals.emptyTitle')"
+            :empty-description="approvals.length ? $t('operations.approvals.noMatchDescription') : $t('operations.approvals.emptyDescription')"
             @retry="approvalsQuery.refresh"
           >
             <div class="space-y-2">
               <button
-                v-for="approval in sortedApprovals"
+                v-for="approval in filteredApprovals"
                 :key="approval.id"
                 type="button"
                 :class="cn('surface-interactive w-full rounded-md border border-border p-3 text-left', selected?.id === approval.id && 'border-primary bg-primary/5')"
