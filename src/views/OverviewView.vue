@@ -129,10 +129,16 @@ const sortedNodes = computed(() =>
 const totals = computed(() => fleetTotals(nodes.value));
 const hasFleet = computed(() => nodes.value.length > 0);
 const nodesWithRootExec = computed(() =>
-  nodes.value.filter((node) => node.agent_runtime?.allow_root_exec || node.agent_launch?.allow_root_exec),
+  nodes.value.filter((node) => {
+    const runtime = node.agent_runtime;
+    return !!runtime?.allow_exec && !!runtime.allow_root_exec && !runtime.no_exec;
+  }),
 );
 const nodesWithTerminal = computed(() =>
-  nodes.value.filter((node) => node.agent_runtime?.allow_terminal || node.agent_launch?.allow_terminal),
+  nodes.value.filter((node) => {
+    const runtime = node.agent_runtime;
+    return !!runtime?.allow_terminal && !runtime.no_exec;
+  }),
 );
 const nodesWithoutSourceAllowlist = computed(() =>
   nodes.value.filter((node) => (node.agent_source_allowlist ?? []).length === 0),
@@ -140,9 +146,7 @@ const nodesWithoutSourceAllowlist = computed(() =>
 const nodesWithExec = computed(() =>
   nodes.value.filter((node) => {
     const runtime = node.agent_runtime;
-    const launch = node.agent_launch;
-    if (runtime?.no_exec || launch?.no_exec) return false;
-    return !!(runtime?.allow_exec || launch?.allow_exec);
+    return !!runtime?.allow_exec && !runtime.no_exec;
   }),
 );
 const trustPostureRiskCount = computed(

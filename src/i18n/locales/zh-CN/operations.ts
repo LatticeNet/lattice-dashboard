@@ -208,7 +208,7 @@ export default {
       transportAuto: "按节点运行时自动选择",
       transportStream: "stream",
       transportPoll: "poll",
-      transportAutoStreamHint: "节点配置或运行时已是 terminal_transport=stream，因此自动使用实时流。",
+      transportAutoStreamHint: "agent 运行态已上报 terminal_transport=stream，因此自动使用实时流。",
       transportAutoPollHint: "该节点尚未上报 stream terminal 运行时，因此自动使用兼容 poll。",
       transportForcedStreamHint: "为当前浏览器强制使用 WebSocket stream；适合刚把 agent 改成 stream 后验证。",
       transportForcedPollHint: "为当前浏览器强制使用旧 HTTP poll；适合兼容或排障。",

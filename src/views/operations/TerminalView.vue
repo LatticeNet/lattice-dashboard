@@ -22,7 +22,6 @@ import {
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
-import { nodeHasAgentCapability } from "@/lib/nodeFilterExpressions";
 import { formatBytes, formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -157,9 +156,7 @@ const selectedNodeRuntime = computed(() => selectedNode.value?.agent_runtime ?? 
 const selectedNodeTransport = computed<"stream" | "poll">(() => {
   if (transportMode.value === "stream" || transportMode.value === "poll") return transportMode.value;
   const runtime = selectedNodeRuntime.value;
-  const node = selectedNode.value;
   if (runtime?.allow_terminal && !runtime?.no_exec && runtime?.terminal_transport === "stream") return "stream";
-  if (node && nodeHasAgentCapability(node, "stream")) return "stream";
   return "poll";
 });
 const selectedNodeTransportLabel = computed(() =>
@@ -252,8 +249,7 @@ watch(
 function isTerminalReady(node: Node): boolean {
   if (!node.online || node.disabled) return false;
   const runtime = node.agent_runtime;
-  if (!runtime) return true;
-  return !!runtime.allow_terminal && !runtime.no_exec;
+  return !!runtime?.allow_terminal && !runtime.no_exec;
 }
 
 function nodeName(id: string): string {

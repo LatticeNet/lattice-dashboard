@@ -209,7 +209,7 @@ export default {
       transportAuto: "Auto by node runtime",
       transportStream: "stream",
       transportPoll: "poll",
-      transportAutoStreamHint: "Auto selected stream because the node is configured or reporting terminal_transport=stream.",
+      transportAutoStreamHint: "Auto selected stream because the agent runtime reported terminal_transport=stream.",
       transportAutoPollHint: "Auto selected poll because this node has not reported stream terminal runtime yet.",
       transportForcedStreamHint: "Forces WebSocket stream for this browser. Use when you have just reconfigured the agent to stream.",
       transportForcedPollHint: "Forces legacy HTTP poll for compatibility or troubleshooting.",

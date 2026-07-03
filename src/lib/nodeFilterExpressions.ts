@@ -83,7 +83,7 @@ export function vpnLineNodeIds(groups: LineGroup[] | undefined): Set<string> {
 }
 
 export function nodeAgentProfile(node: Node) {
-  return node.agent_runtime ?? node.agent_launch ?? undefined;
+  return node.agent_runtime ?? undefined;
 }
 
 export function nodeHasAgentCapability(node: Node, token: string, vpnRecorded = false): boolean {
