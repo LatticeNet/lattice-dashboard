@@ -346,6 +346,13 @@ export default {
       rulesTitle: "Routing rules",
       rulesDescription:
         "When no rules exist, every enabled channel receives every notification. Once rules exist, matching rules choose the channels and templates.",
+      presetsTitle: "Rule presets",
+      presetsDescription: "Start from the common fleet alerts, then adjust channels or templates before saving.",
+      presets: {
+        quota: "Quota pressure",
+        monitor: "Monitor state",
+        ssh: "SSH login",
+      },
       rulesEmptyTitle: "No routing rules",
       rulesEmptyDescription: "All enabled channels currently receive every notification.",
       defaultTitleTemplate: "original title",

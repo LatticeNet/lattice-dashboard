@@ -13,6 +13,7 @@ import {
   MemoryStick,
   RotateCw,
   Server,
+  ShieldAlert,
   ShieldCheck,
   Terminal,
   Wifi,
@@ -127,6 +128,30 @@ const sortedNodes = computed(() =>
 /** Fleet-wide aggregate for the health panel (CPU mean, mem/disk sums, BW). */
 const totals = computed(() => fleetTotals(nodes.value));
 const hasFleet = computed(() => nodes.value.length > 0);
+const nodesWithRootExec = computed(() =>
+  nodes.value.filter((node) => node.agent_runtime?.allow_root_exec || node.agent_launch?.allow_root_exec),
+);
+const nodesWithTerminal = computed(() =>
+  nodes.value.filter((node) => node.agent_runtime?.allow_terminal || node.agent_launch?.allow_terminal),
+);
+const nodesWithoutSourceAllowlist = computed(() =>
+  nodes.value.filter((node) => (node.agent_source_allowlist ?? []).length === 0),
+);
+const nodesWithExec = computed(() =>
+  nodes.value.filter((node) => {
+    const runtime = node.agent_runtime;
+    const launch = node.agent_launch;
+    if (runtime?.no_exec || launch?.no_exec) return false;
+    return !!(runtime?.allow_exec || launch?.allow_exec);
+  }),
+);
+const trustPostureRiskCount = computed(
+  () =>
+    nodesWithRootExec.value.length +
+    nodesWithTerminal.value.length +
+    nodesWithoutSourceAllowlist.value.length +
+    (auth.principal?.totp_enabled ? 0 : 1),
+);
 
 /** Region-clustered fleet for the grouped card grid. */
 const fleetGroups = computed<NodeGroup[]>(() => groupNodes(sortedNodes.value, "region", locale.value));
@@ -268,6 +293,63 @@ function refreshAll() {
               </p>
             </div>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card v-if="hasFleet">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <ShieldAlert class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('overview.trustPosture.title') }}
+          <Badge :variant="trustPostureRiskCount > 0 ? 'warning' : 'success'" class="ms-auto">
+            {{ trustPostureRiskCount > 0 ? $t('overview.trustPosture.review') : $t('overview.trustPosture.clean') }}
+          </Badge>
+        </CardTitle>
+        <CardDescription>{{ $t('overview.trustPosture.description') }}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <RouterLink
+            :to="{ name: 'nodes' }"
+            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+          >
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.rootExec') }}</p>
+            <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithRootExec.length > 0 ? 'text-destructive' : 'text-foreground')">
+              {{ nodesWithRootExec.length }}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.execEnabled', { count: nodesWithExec.length }) }}</p>
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'nodes' }"
+            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+          >
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.terminal') }}</p>
+            <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithTerminal.length > 0 ? 'text-warning' : 'text-foreground')">
+              {{ nodesWithTerminal.length }}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.terminalHint') }}</p>
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'nodes' }"
+            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+          >
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.sourcePolicy') }}</p>
+            <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithoutSourceAllowlist.length > 0 ? 'text-warning' : 'text-foreground')">
+              {{ nodesWithoutSourceAllowlist.length }}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.sourcePolicyHint') }}</p>
+          </RouterLink>
+          <RouterLink
+            :to="{ name: 'settings-security' }"
+            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+          >
+            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.accountMfa') }}</p>
+            <p :class="cn('mt-2 text-2xl font-semibold tabular', auth.principal?.totp_enabled ? 'text-success' : 'text-warning')">
+              {{ auth.principal?.totp_enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.accountMfaHint') }}</p>
+          </RouterLink>
         </div>
       </CardContent>
     </Card>

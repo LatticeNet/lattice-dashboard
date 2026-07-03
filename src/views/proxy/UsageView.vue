@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   Activity,
+  AlertTriangle,
   ArrowUpRight,
   Database,
+  DollarSign,
   RefreshCw,
   Server,
   Users,
@@ -31,6 +33,8 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import StatCard from "@/components/common/StatCard.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -42,7 +46,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { lifecycleStatusMeta, quotaStatusMeta } from "@/lib/status";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 // Usage data is read-only accounting; poll modestly.
 const usageQuery = useAsyncData(() => api.proxy.usage(), { pollInterval: 15000 });
@@ -61,6 +65,21 @@ const totalUsedBytes = computed(() =>
 const activeNodes = computed(() => snapshots.value.length);
 const aggregateUptimeSec = computed(() =>
   snapshots.value.reduce((sum, snap) => sum + (snap.core_uptime_sec || 0), 0),
+);
+const costPerTiB = ref(6);
+const bytesPerTiB = 1024 ** 4;
+const estimatedTransferCost = computed(() =>
+  Math.max(0, totalUsedBytes.value / bytesPerTiB) * Math.max(0, Number(costPerTiB.value) || 0),
+);
+const overQuotaUsers = computed(() => users.value.filter((user) => user.status === "over_quota").length);
+const quotaRiskUsers = computed(() =>
+  users.value.filter((user) => {
+    const pct = usagePercent(user);
+    return pct !== undefined && pct >= 80 && user.status !== "over_quota";
+  }).length,
+);
+const averageBytesPerNode = computed(() =>
+  activeNodes.value > 0 ? totalUsedBytes.value / activeNodes.value : 0,
 );
 
 // ── Snapshots ────────────────────────────────────────────────────────────────
@@ -109,6 +128,14 @@ function statusVariant(status: string) {
 function limitLabel(limit?: number): string {
   if (!limit || limit <= 0) return "∞";
   return formatBytes(limit);
+}
+
+function moneyLabel(value: number): string {
+  return new Intl.NumberFormat(locale.value, {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: value >= 100 ? 0 : 2,
+  }).format(value);
 }
 
 function usagePercent(user: ProxyUsageUserView): number | undefined {
@@ -184,6 +211,57 @@ const userColumns = computed<DataTableColumn<ProxyUsageUserView>[]>(() => [
       <StatCard :label="$t('proxy.usage.kpiActiveNodes')" :value="activeNodes" :icon="Server" tone="success" />
       <StatCard :label="$t('proxy.usage.kpiAggregateUptime')" :value="formatDuration(aggregateUptimeSec)" :icon="Activity" />
     </div>
+
+    <Card>
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <DollarSign class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('proxy.usage.costTitle') }}
+        </CardTitle>
+        <CardDescription>{{ $t('proxy.usage.costDescription') }}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="grid gap-4 md:grid-cols-[220px_repeat(3,minmax(0,1fr))]">
+          <div class="grid gap-2">
+            <Label for="cost-per-tib">{{ $t('proxy.usage.costPerTiB') }}</Label>
+            <Input
+              id="cost-per-tib"
+              v-model.number="costPerTiB"
+              type="number"
+              min="0"
+              step="0.1"
+              class="font-mono tabular"
+            />
+          </div>
+          <div class="rounded-md border border-border p-3">
+            <div class="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+              <DollarSign class="size-3.5" aria-hidden="true" />
+              {{ $t('proxy.usage.estimatedCost') }}
+            </div>
+            <p class="mt-2 text-2xl font-semibold tabular">{{ moneyLabel(estimatedTransferCost) }}</p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ formatBytes(totalUsedBytes) }}</p>
+          </div>
+          <div class="rounded-md border border-border p-3">
+            <div class="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+              <AlertTriangle class="size-3.5" aria-hidden="true" />
+              {{ $t('proxy.usage.quotaRisk') }}
+            </div>
+            <p :class="cn('mt-2 text-2xl font-semibold tabular', overQuotaUsers > 0 ? 'text-destructive' : quotaRiskUsers > 0 ? 'text-warning' : 'text-foreground')">
+              {{ overQuotaUsers }} / {{ quotaRiskUsers }}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ $t('proxy.usage.quotaRiskHint') }}</p>
+          </div>
+          <div class="rounded-md border border-border p-3">
+            <div class="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+              <Server class="size-3.5" aria-hidden="true" />
+              {{ $t('proxy.usage.averageNodeLoad') }}
+            </div>
+            <p class="mt-2 text-2xl font-semibold tabular">{{ formatBytes(averageBytesPerNode) }}</p>
+            <p class="mt-1 text-xs text-muted-foreground">{{ $t('proxy.usage.averageNodeLoadHint', { count: activeNodes }) }}</p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
 
     <DataState
       :loading="usageQuery.loading.value"

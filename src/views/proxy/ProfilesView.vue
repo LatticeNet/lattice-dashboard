@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Rocket,
   ServerCog,
   Trash2,
 } from "lucide-vue-next";
@@ -16,6 +17,7 @@ import {
   api,
   unwrap,
   type ApprovalView,
+  type Node,
   type ProxyCore,
   type ProxyInboundView,
   type ProxyNodeProfileView,
@@ -91,6 +93,22 @@ const sortedProfiles = computed(() =>
 
 const driftCount = computed(() => profiles.value.filter((p) => p.config_stale).length);
 const appliedCount = computed(() => profiles.value.filter((p) => !!p.applied_sha256).length);
+const profiledNodeIDs = computed(() => new Set(profiles.value.map((p) => p.node_id)));
+const quickEnableNodes = computed<Node[]>(() =>
+  nodes.value
+    .filter((node) => !node.disabled && !profiledNodeIDs.value.has(node.id))
+    .sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return (a.name || a.id).localeCompare(b.name || b.id);
+    })
+    .slice(0, 6),
+);
+const defaultQuickInbound = computed(() =>
+  inbounds.value.find((inb) => inb.enabled && inb.core === "sing-box") ??
+  inbounds.value.find((inb) => inb.enabled) ??
+  inbounds.value[0],
+);
+const quickEnableBlocked = computed(() => !defaultQuickInbound.value);
 
 function inboundName(id: string): string {
   return inbounds.value.find((inb) => inb.id === id)?.name || shortId(id, 12);
@@ -281,6 +299,36 @@ const planBadges = computed(() => {
   ];
 });
 
+// ── One-click node enablement ─────────────────────────────────────────────────
+const quickEnabling = ref<string | undefined>();
+
+async function quickEnableNode(node: Node) {
+  if (!canAdmin.value || quickEnabling.value) return;
+  const inbound = defaultQuickInbound.value;
+  if (!inbound) {
+    toast.error(t("proxy.profiles.quickEnableNoInbound"));
+    return;
+  }
+  quickEnabling.value = node.id;
+  try {
+    const profile = await api.proxy.upsertProfile({
+      node_id: node.id,
+      core: (inbound.core === "xray" ? "xray" : "sing-box") as ProxyCore,
+      inbound_ids: [inbound.id],
+      hostname: node.public_ip || node.public_ipv6 || undefined,
+    });
+    toast.success(t("proxy.profiles.quickEnableCreated", { node: node.name || node.id }));
+    profilesQuery.refresh();
+    if (canPlan.value) {
+      await planNode(profile);
+    }
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("proxy.profiles.quickEnableFailed"));
+  } finally {
+    quickEnabling.value = undefined;
+  }
+}
+
 function refreshAll() {
   profilesQuery.refresh();
   nodesQuery.refresh();
@@ -345,6 +393,48 @@ function refreshAll() {
         </CardContent>
       </Card>
     </div>
+
+    <Card v-if="canAdmin && quickEnableNodes.length">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <Rocket class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('proxy.profiles.quickEnableTitle') }}
+        </CardTitle>
+        <CardDescription>
+          {{ $t('proxy.profiles.quickEnableDescription') }}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div
+            v-for="node in quickEnableNodes"
+            :key="node.id"
+            class="flex min-w-0 items-center justify-between gap-3 rounded-md border border-border p-3"
+          >
+            <div class="min-w-0">
+              <div class="flex min-w-0 items-center gap-2">
+                <span :class="cn('size-2 rounded-full', node.online ? 'bg-success' : 'bg-muted-foreground')" />
+                <p class="truncate font-medium">{{ node.name || node.id }}</p>
+              </div>
+              <p class="truncate font-mono text-xs text-muted-foreground">{{ node.public_ip || node.wireguard_ip || shortId(node.id, 16) }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                {{ defaultQuickInbound ? $t('proxy.profiles.quickEnableInbound', { inbound: defaultQuickInbound.name || defaultQuickInbound.id }) : $t('proxy.profiles.quickEnableNoInbound') }}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              class="shrink-0"
+              :disabled="quickEnableBlocked || quickEnabling === node.id"
+              @click="quickEnableNode(node)"
+            >
+              <RefreshCw v-if="quickEnabling === node.id" class="size-4 animate-spin" aria-hidden="true" />
+              <Rocket v-else class="size-4" aria-hidden="true" />
+              {{ $t('proxy.profiles.quickEnableAction') }}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>

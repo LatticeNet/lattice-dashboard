@@ -57,6 +57,12 @@ import {
 } from "@/components/ui/dialog";
 
 type FieldDef = { key: string; label: string; required: boolean; placeholder: string };
+type RulePreset = {
+  key: "quota" | "monitor" | "ssh";
+  events: string;
+  title: string;
+  body: string;
+};
 
 const KIND_FIELDS: Record<NotifyKind, FieldDef[]> = {
   telegram: [
@@ -78,6 +84,26 @@ const KIND_FIELDS: Record<NotifyKind, FieldDef[]> = {
 
 const KIND_OPTIONS: NotifyKind[] = ["telegram", "bark", "discord", "webhook"];
 const EVENT_OPTIONS = ["*", "monitor.down", "monitor.recovered", "ssh.login", "proxy.quota", "proxy.expiry"];
+const RULE_PRESETS: RulePreset[] = [
+  {
+    key: "quota",
+    events: "proxy.quota, proxy.expiry",
+    title: "{{event}} {{subject}}",
+    body: "{{message}}",
+  },
+  {
+    key: "monitor",
+    events: "monitor.down, monitor.recovered",
+    title: "{{event}} {{node}}",
+    body: "{{message}}",
+  },
+  {
+    key: "ssh",
+    events: "ssh.login",
+    title: "SSH login {{node}}",
+    body: "{{message}}",
+  },
+];
 
 function kindBadgeVariant(kind: string): "info" | "secondary" | "default" | "warning" {
   switch (kind) {
@@ -285,6 +311,18 @@ function openRuleCreate(): void {
   ruleOpen.value = true;
 }
 
+function openRulePreset(preset: RulePreset): void {
+  if (!canSend.value) return;
+  ruleEditingId.value = undefined;
+  ruleName.value = t(`platform.notifications.presets.${preset.key}`);
+  ruleEvents.value = preset.events;
+  ruleChannelIds.value = sortedChannels.value[0]?.id ? [sortedChannels.value[0].id] : [];
+  ruleTitleTemplate.value = preset.title;
+  ruleBodyTemplate.value = preset.body;
+  ruleEnabled.value = true;
+  ruleOpen.value = true;
+}
+
 function openRuleEdit(rule: NotifyRuleView): void {
   if (!canSend.value) return;
   ruleEditingId.value = rule.id;
@@ -390,6 +428,27 @@ async function confirmDeleteRule(): Promise<void> {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div v-if="canSend" class="mb-4 rounded-md border border-border p-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm font-medium">{{ $t('platform.notifications.presetsTitle') }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.presetsDescription') }}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <Button
+                v-for="preset in RULE_PRESETS"
+                :key="preset.key"
+                variant="outline"
+                size="sm"
+                :disabled="sortedChannels.length === 0"
+                @click="openRulePreset(preset)"
+              >
+                <Plus class="size-4" aria-hidden="true" />
+                {{ $t(`platform.notifications.presets.${preset.key}`) }}
+              </Button>
+            </div>
+          </div>
+        </div>
         <DataTable
           :columns="channelColumns"
           :rows="sortedChannels"

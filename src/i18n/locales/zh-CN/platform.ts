@@ -340,6 +340,13 @@ export default {
       rulesTitle: "路由规则",
       rulesDescription:
         "没有规则时,每个已启用渠道都会收到所有通知。一旦创建规则,只有匹配规则会决定投递渠道和模板。",
+      presetsTitle: "规则预设",
+      presetsDescription: "从常用 fleet 告警开始,保存前可继续调整渠道或模板。",
+      presets: {
+        quota: "配额压力",
+        monitor: "监控状态",
+        ssh: "SSH 登录",
+      },
       rulesEmptyTitle: "暂无路由规则",
       rulesEmptyDescription: "当前所有已启用渠道会收到每条通知。",
       defaultTitleTemplate: "原始标题",
