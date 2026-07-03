@@ -391,6 +391,11 @@ export default {
       integrityPlanBound: "two SHA-256 bindings",
       integrityHint:
         "The plan body includes the binary artifact SHA-256. Approval uses a separate plan-text SHA-256 so the reviewed text is what gets approved.",
+      staleApprovalSummary: "{count} stale agent-update approvals need fresh plans.",
+      staleApprovalSummaryHint:
+        "The policy, target node state, or resolved artifact changed after those plans were reviewed. Open Approvals and create fresh plans before approving.",
+      staleApprovalBadge: "stale approvals: {count}",
+      openApprovals: "Open Approvals",
       emptyTitle: "No update policies",
       emptyDescription: "Define a per-node policy to pin and roll out lattice-agent versions.",
       colNode: "Node",

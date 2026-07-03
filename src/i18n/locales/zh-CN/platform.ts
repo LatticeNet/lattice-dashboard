@@ -384,6 +384,11 @@ export default {
       integrityPlanBound: "两个 SHA-256 绑定",
       integrityHint:
         "计划正文包含二进制制品 SHA-256。审批另用计划文本 SHA-256，确保批准的是已审阅的计划文本。",
+      staleApprovalSummary: "{count} 个 Agent 更新审批已过期，需要重新生成计划。",
+      staleApprovalSummaryHint:
+        "这些计划在审阅后，策略、目标节点状态或已解析制品发生了变化。打开审批页，先生成并审阅新计划后再批准。",
+      staleApprovalBadge: "过期审批: {count}",
+      openApprovals: "打开审批",
       emptyTitle: "暂无更新策略",
       emptyDescription: "定义按节点的策略以锁定并滚动发布 lattice-agent 版本。",
       colNode: "节点",

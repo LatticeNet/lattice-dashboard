@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
+  AlertTriangle,
   BookOpen,
   DownloadCloud,
   ExternalLink,
@@ -17,6 +18,7 @@ import {
   api,
   unwrap,
   isAgentUpdateNoopError,
+  isStaleAgentUpdateApprovalView,
   type AgentUpdatePolicy,
   type AgentUpdatePolicyUpsertRequest,
   type AgentReleaseInfo,
@@ -83,10 +85,27 @@ const releaseQuery = useAsyncData<AgentReleaseInfo>(() => api.agentUpdates.relea
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
+const approvalsQuery = useAsyncData(
+  () => (canPlan.value ? api.approvals.list().then((r) => unwrap(r, "approvals")) : Promise.resolve([] as ApprovalView[])),
+  { pollInterval: 15000 },
+);
 
 const policies = computed(() => policiesQuery.data.value ?? []);
 const releaseInfo = computed(() => releaseQuery.data.value);
 const nodes = computed(() => nodesQuery.data.value ?? []);
+const approvals = computed(() => approvalsQuery.data.value ?? []);
+const staleAgentUpdateApprovals = computed(() =>
+  approvals.value.filter(isStaleAgentUpdateApprovalView).sort((a, b) => (b.updated_at || b.created_at || "").localeCompare(a.updated_at || a.created_at || "")),
+);
+const staleApprovalsByNode = computed(() => {
+  const byNode = new Map<string, ApprovalView[]>();
+  for (const approval of staleAgentUpdateApprovals.value) {
+    const list = byNode.get(approval.node_id) ?? [];
+    list.push(approval);
+    byNode.set(approval.node_id, list);
+  }
+  return byNode;
+});
 
 const sortedPolicies = computed(() =>
   [...policies.value].sort((a, b) => a.node_id.localeCompare(b.node_id)),
@@ -94,6 +113,10 @@ const sortedPolicies = computed(() =>
 
 function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
+}
+
+function staleApprovalCount(nodeId: string): number {
+  return staleApprovalsByNode.value.get(nodeId)?.length ?? 0;
 }
 
 const columns = computed<DataTableColumn<AgentUpdatePolicy>[]>(() => {
@@ -442,6 +465,29 @@ watch(
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div
+          v-if="staleAgentUpdateApprovals.length"
+          class="mb-4 flex flex-col gap-3 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground md:flex-row md:items-start md:justify-between"
+        >
+          <div class="flex min-w-0 items-start gap-2">
+            <AlertTriangle class="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+            <div class="min-w-0">
+              <p class="font-medium text-foreground">
+                {{ $t('platform.agentUpdates.staleApprovalSummary', { count: staleAgentUpdateApprovals.length }) }}
+              </p>
+              <p class="mt-1">
+                {{ $t('platform.agentUpdates.staleApprovalSummaryHint') }}
+              </p>
+            </div>
+          </div>
+          <Button as-child variant="outline" size="sm" class="shrink-0">
+            <RouterLink to="/approvals">
+              <ExternalLink class="size-4" aria-hidden="true" />
+              {{ $t('platform.agentUpdates.openApprovals') }}
+            </RouterLink>
+          </Button>
+        </div>
+
         <DataTable
           :columns="columns"
           :rows="sortedPolicies"
@@ -474,6 +520,9 @@ watch(
             <p v-if="row.last_error" class="mt-1 max-w-[220px] break-words text-xs text-destructive">
               {{ row.last_error }}
             </p>
+            <Badge v-if="staleApprovalCount(row.node_id)" variant="warning" class="mt-1">
+              {{ $t('platform.agentUpdates.staleApprovalBadge', { count: staleApprovalCount(row.node_id) }) }}
+            </Badge>
           </template>
           <template #cell-target_version="{ row }">
             <span class="font-mono text-xs">{{ targetLabel(row) }}</span>
