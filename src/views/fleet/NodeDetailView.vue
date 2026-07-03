@@ -77,7 +77,6 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
-import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -997,9 +996,8 @@ async function resolveGeo() {
         </template>
       </PageHeader>
 
-      <!-- Identity row: live dot, status / role / tags / groups, last-seen. -->
+      <!-- Identity row: status / role / tags / groups, last-seen. -->
       <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-        <StatusDot :status="meta.dotStatus" :pulse="isLive" />
         <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in displayTags" :key="tag" variant="outline">{{ tag }}</Badge>
