@@ -65,6 +65,7 @@ export default {
       approved: "已批准",
       applied: "已应用",
       rejected: "已驳回",
+      dismissed: "已归档",
       failed: "失败",
       online: "在线",
       offline: "离线",

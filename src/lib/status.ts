@@ -230,6 +230,7 @@ export type ApprovalStatus =
   | "applied"
   | "pending"
   | "rejected"
+  | "dismissed"
   | "failed"
   | "expired"
   | string;
@@ -239,6 +240,7 @@ const APPROVAL_HEALTH: Record<string, NodeHealth> = {
   applied: "online",
   pending: "pending",
   rejected: "offline",
+  dismissed: "unknown",
   failed: "offline",
   expired: "degraded",
 };

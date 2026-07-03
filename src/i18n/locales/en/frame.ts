@@ -66,6 +66,7 @@ export default {
       approved: "approved",
       applied: "applied",
       rejected: "rejected",
+      dismissed: "dismissed",
       failed: "failed",
       online: "online",
       offline: "offline",

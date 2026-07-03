@@ -313,7 +313,7 @@ export interface TerminalEventsResponse {
   events: TerminalEvent[];
 }
 
-export type ApprovalStatus = "pending" | "approved" | "applied" | "rejected" | "failed";
+export type ApprovalStatus = "pending" | "approved" | "applied" | "rejected" | "dismissed" | "failed";
 
 export interface ApprovalView {
   id: string;

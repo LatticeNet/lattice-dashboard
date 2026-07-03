@@ -296,7 +296,8 @@ export const api = {
   },
 
   approvals: {
-    list: () => http.get<{ approvals: ApprovalView[] } | ApprovalView[]>("/api/network/approvals"),
+    list: (options?: { include_dismissed?: boolean }) =>
+      http.get<{ approvals: ApprovalView[] } | ApprovalView[]>("/api/network/approvals", options),
     approve: (approval_id: string, queue_apply: boolean, plan_sha256?: string) =>
       http.post<void>("/api/network/approvals/approve", {
         approval_id,
@@ -305,6 +306,10 @@ export const api = {
       }),
     reject: (approval_id: string) =>
       http.post<ApprovalView>("/api/network/approvals/reject", {
+        approval_id,
+      }),
+    dismiss: (approval_id: string) =>
+      http.post<ApprovalView>("/api/network/approvals/dismiss", {
         approval_id,
       }),
   },

@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { AlertTriangle, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, ArchiveX, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, ShieldCheck } from "lucide-vue-next";
 import {
   api,
   APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
@@ -53,6 +53,7 @@ const approvalsQuery = useAsyncData(() => api.approvals.list().then((r) => unwra
 
 const selectedId = ref("");
 const pendingApproval = ref<string | undefined>();
+const dismissingApproval = ref<string | undefined>();
 const replanningApproval = ref<string | undefined>();
 const forceReplanOpen = ref(false);
 const forceReplanApproval = ref<ApprovalView | undefined>();
@@ -81,6 +82,7 @@ const selectedAgentUpdateStaleReason = computed(() => {
 });
 const canApproveSelected = computed(() => canDecideSelected.value && !selectedAgentUpdateStale.value);
 const canReplanSelectedAgentUpdate = computed(() => canReplanAgentUpdate(selected.value, selectedAgentUpdateStale.value));
+const canDismissSelectedApproval = computed(() => canDismissApproval(selected.value, selectedAgentUpdateStale.value));
 
 // The most recent earlier applied plan for the same target (node + plugin +
 // action) — i.e. what is actually live. Approved-but-not-applied plans are not a
@@ -143,6 +145,8 @@ function statusRank(status: ApprovalStatus): number {
       return 3;
     case "rejected":
       return 4;
+    case "dismissed":
+      return 6;
     default:
       return 9;
   }
@@ -212,6 +216,24 @@ async function rejectApproval(approval: ApprovalView) {
   }
 }
 
+async function dismissApproval(approval: ApprovalView, staleOverride = false) {
+  if (!canDismissApproval(approval, staleOverride)) return;
+  dismissingApproval.value = approval.id;
+  lastApprovalError.value = undefined;
+  try {
+    await api.approvals.dismiss(approval.id);
+    toast.success(t("operations.approvals.toastDismissed"));
+    await approvalsQuery.refresh();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : t("operations.approvals.toastDismissFailed");
+    lastApprovalError.value = { approvalId: approval.id, message, stale: false };
+    toast.error(message);
+    await approvalsQuery.refresh();
+  } finally {
+    dismissingApproval.value = undefined;
+  }
+}
+
 async function replanAgentUpdate(approval: ApprovalView, force = false, staleOverride = false) {
   if (!canReplanAgentUpdate(approval, staleOverride)) return;
   replanningApproval.value = approval.id;
@@ -267,6 +289,16 @@ function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): b
     (isStaleAgentUpdateApproval(approval) || staleOverride) &&
     auth.can("node:admin") &&
     auth.can("network:plan")
+  );
+}
+
+function canDismissApproval(approval?: ApprovalView, staleOverride = false): boolean {
+  return (
+    !!approval &&
+    approval.plugin === "agentupdate" &&
+    approval.status !== "dismissed" &&
+    (isStaleAgentUpdateApproval(approval) || staleOverride) &&
+    canDecideApproval(approval)
   );
 }
 </script>
@@ -387,19 +419,32 @@ function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): b
               {{ $t('operations.approvals.rejectionReason') }}
             </p>
             <p class="mt-1 break-words">{{ selectedAgentUpdateStaleReason }}</p>
-            <Button
-              v-if="canReplanSelectedAgentUpdate"
-              type="button"
-              variant="outline"
-              size="sm"
-              class="mt-3"
-              :disabled="replanningApproval === selected.id"
-              @click="replanAgentUpdate(selected, false, selectedAgentUpdateStale)"
-            >
-              <RefreshCw v-if="replanningApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
-              <FileCode2 v-else class="size-4" aria-hidden="true" />
-              {{ $t('operations.approvals.replanAgentUpdate') }}
-            </Button>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <Button
+                v-if="canReplanSelectedAgentUpdate"
+                type="button"
+                variant="outline"
+                size="sm"
+                :disabled="replanningApproval === selected.id"
+                @click="replanAgentUpdate(selected, false, selectedAgentUpdateStale)"
+              >
+                <RefreshCw v-if="replanningApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+                <FileCode2 v-else class="size-4" aria-hidden="true" />
+                {{ $t('operations.approvals.replanAgentUpdate') }}
+              </Button>
+              <Button
+                v-if="canDismissSelectedApproval"
+                type="button"
+                variant="ghost"
+                size="sm"
+                :disabled="dismissingApproval === selected.id"
+                @click="dismissApproval(selected, selectedAgentUpdateStale)"
+              >
+                <RefreshCw v-if="dismissingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+                <ArchiveX v-else class="size-4" aria-hidden="true" />
+                {{ $t('operations.approvals.dismissStale') }}
+              </Button>
+            </div>
           </div>
           <div
             v-else-if="selected.status === 'rejected' && selected.reason"
