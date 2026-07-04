@@ -36,12 +36,25 @@ const boundedMainScroll = computed(
     pluginViewRoute.value === "lines",
 );
 
+function resetShellScroll() {
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  window.scrollTo(0, 0);
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+  document.getElementById("main-content")?.scrollTo({ top: 0, left: 0 });
+}
+
+function resetShellScrollAfterChromeRestore() {
+  resetShellScroll();
+  window.requestAnimationFrame(resetShellScroll);
+  window.setTimeout(resetShellScroll, 50);
+}
+
 watch(
-  boundedMainScroll,
-  async (bounded) => {
-    if (!bounded || typeof document === "undefined") return;
-    await nextTick();
-    document.getElementById("main-content")?.scrollTo({ top: 0, left: 0 });
+  () => [boundedMainScroll.value, route.fullPath] as const,
+  ([bounded]) => {
+    if (!bounded) return;
+    void nextTick(resetShellScrollAfterChromeRestore);
   },
   { immediate: true },
 );
