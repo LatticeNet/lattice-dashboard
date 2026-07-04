@@ -46,13 +46,13 @@ watchEffect(() => {
         v-model:mobile-open="mobileOpen"
       />
 
-      <div class="flex min-w-0 flex-1 flex-col">
+      <div class="flex min-h-0 min-w-0 flex-1 flex-col">
         <AppHeader
           @toggle-mobile="mobileOpen = !mobileOpen"
           @open-command="commandOpen = true"
         />
 
-        <main id="main-content" role="main" tabindex="-1" class="flex-1 overflow-y-auto">
+        <main id="main-content" role="main" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto">
           <RouterView v-slot="{ Component, route }">
             <!-- Instant nav: enter-only fade, NO mode="out-in" (which forced a
                  ~0.22s fade-out before the next view mounted, making tab clicks

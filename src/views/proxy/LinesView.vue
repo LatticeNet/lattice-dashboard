@@ -1263,7 +1263,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
         <!-- One full-width row per node: identity rail on the left, line table on
              the right. Plain flow layout — no CSS columns/masonry, so a tall node
              can never stretch row-mates or blow up the page height again. -->
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pb-3 pr-1">
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pb-3 pr-1">
         <div
           v-for="group in visibleGroups"
           :id="`line-group-${group.node_id}`"
@@ -1433,7 +1433,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       </div>
         </TabsContent>
 
-        <TabsContent value="graph" class="min-h-0 overflow-y-auto pr-1">
+        <TabsContent value="graph" class="min-h-0 overflow-y-auto overscroll-contain pr-1">
           <div class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,.65fr)]">
             <section class="min-w-0 overflow-hidden rounded-md border border-border">
               <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/25 px-4 py-3">
