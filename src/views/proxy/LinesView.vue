@@ -799,14 +799,23 @@ function onRosterToggle(userID: string, event: Event) {
   setRosterChecked(userID, (event.target as HTMLInputElement | null)?.checked ?? false);
 }
 
-async function saveRoster() {
+function lineRuntimeUserSyncSupported(line = selected.value): boolean {
+  return !!line && line.source === "discovered" && line.core === "sing-box";
+}
+
+async function saveRoster(forceRuntimeSync = false) {
   const line = selected.value;
   if (!line?.line_hash_id || rosterSaving.value || !canAdmin.value) return;
 
   const current = new Set(currentRosterIDs(line.line_hash_id));
   const desired = new Set(rosterSelection.value);
-  const bindIDs = [...desired].filter((id) => !current.has(id));
-  const unbindIDs = [...current].filter((id) => !desired.has(id));
+  const runtimeSync = lineRuntimeUserSyncSupported(line);
+  const bindIDs = forceRuntimeSync && runtimeSync
+    ? [...desired]
+    : [...desired].filter((id) => !current.has(id));
+  const unbindIDs = forceRuntimeSync && runtimeSync
+    ? []
+    : [...current].filter((id) => !desired.has(id));
   if (!bindIDs.length && !unbindIDs.length) {
     rosterTouched.value = false;
     return;
@@ -816,7 +825,7 @@ async function saveRoster() {
   rosterError.value = "";
   const failures: string[] = [];
   try {
-    if (line.source === "discovered" && line.core === "sing-box") {
+    if (runtimeSync) {
       const res = await api.proxy.managed.users({
         node_id: line.node_id,
         line_hash_id: line.line_hash_id,
@@ -866,6 +875,10 @@ async function saveRoster() {
   } finally {
     rosterSaving.value = false;
   }
+}
+
+function syncRosterRuntime() {
+  void saveRoster(true);
 }
 
 const detailRows = computed<{ label: string; value: string }[]>(() => {
@@ -1383,6 +1396,19 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                 </p>
               </div>
               <div v-if="canAdmin" class="flex items-center gap-2">
+                <Button
+                  v-if="lineRuntimeUserSyncSupported(selected)"
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  :disabled="rosterSaving || rosterSelection.length === 0"
+                  :title="$t('lines.rosterSyncRuntimeHint')"
+                  @click="syncRosterRuntime"
+                >
+                  <RefreshCw v-if="rosterSaving" class="size-4 animate-spin" aria-hidden="true" />
+                  <ArrowUpRight v-else class="size-4" aria-hidden="true" />
+                  {{ $t('lines.rosterSyncRuntime') }}
+                </Button>
                 <Button
                   type="button"
                   size="sm"

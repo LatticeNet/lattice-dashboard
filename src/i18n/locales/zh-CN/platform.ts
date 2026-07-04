@@ -615,6 +615,8 @@ export default {
     rosterTitle: "线路用户",
     rosterCount: "已绑定 {count} 个",
     rosterSaved: "线路用户已更新",
+    rosterSyncRuntime: "同步到节点",
+    rosterSyncRuntimeHint: "即使 Dashboard 已有绑定，也把当前勾选用户重新下发到目标 sing-box 配置。",
     rosterSyncQueued: "运行时用户同步任务已排队：{id}",
     rosterRuntimeSyncFailed: "排队运行时用户同步失败",
     rosterBindFailed: "绑定失败",

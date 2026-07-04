@@ -627,6 +627,8 @@ export default {
     rosterTitle: "Line users",
     rosterCount: "{count} bound",
     rosterSaved: "Line users updated",
+    rosterSyncRuntime: "Sync runtime",
+    rosterSyncRuntimeHint: "Re-apply the currently checked users to the target sing-box config even when the dashboard binding already exists.",
     rosterSyncQueued: "Runtime user sync queued as {id}",
     rosterRuntimeSyncFailed: "Failed to queue runtime user sync",
     rosterBindFailed: "bind failed",
