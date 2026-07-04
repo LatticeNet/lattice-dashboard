@@ -1126,8 +1126,8 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
 </script>
 
 <template>
-  <div class="flex h-[calc(100vh-3.5rem)] max-h-[calc(100vh-3.5rem)] min-h-0 flex-col gap-6 overflow-hidden p-6">
-    <PageHeader class="shrink-0" :title="$t('lines.title')" :description="$t('lines.description')">
+  <div class="space-y-6 p-6">
+    <PageHeader :title="$t('lines.title')" :description="$t('lines.description')">
       <template #status>
         <FreshnessLabel :last-updated="linesQuery.lastUpdated.value" />
       </template>
@@ -1155,7 +1155,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       </template>
     </PageHeader>
 
-    <div class="grid shrink-0 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard :label="$t('lines.kpiLines')" :value="totalLines" :icon="Waypoints" />
       <StatCard :label="$t('lines.kpiNodes')" :value="nodeCount" :icon="Server" />
       <StatCard :label="$t('lines.kpiManaged')" :value="managedCount" :icon="ShieldCheck" tone="success" />
@@ -1169,7 +1169,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
 
     <div
       v-if="canAdmin"
-      class="flex shrink-0 items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground"
+      class="flex items-start gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground"
     >
       <Info class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <div class="space-y-0.5">
@@ -1178,7 +1178,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       </div>
     </div>
 
-    <Card v-if="pendingBinds.length" class="shrink-0">
+    <Card v-if="pendingBinds.length">
       <CardHeader>
         <CardTitle class="text-sm">{{ $t('lines.pendingBindingsTitle') }}</CardTitle>
       </CardHeader>
@@ -1214,76 +1214,75 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       :is-empty="isEmpty"
       :empty-title="$t('lines.emptyTitle')"
       :empty-description="$t('lines.emptyDescription')"
-      class="flex min-h-0 flex-1 flex-col overflow-hidden"
       @retry="linesQuery.refresh"
     >
-      <Tabs v-model="activeTab" class="h-full min-h-0 overflow-hidden gap-4">
-        <TabsList class="w-full shrink-0 sm:w-auto">
+      <Tabs v-model="activeTab">
+        <TabsList class="w-full sm:w-auto">
           <TabsTrigger value="lines">{{ $t('lines.tabLines') }}</TabsTrigger>
           <TabsTrigger value="graph">{{ $t('lines.tabGraph') }}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="lines" class="min-h-0 overflow-hidden">
-      <div class="flex h-full min-h-0 flex-col gap-3">
-        <!-- Fleet overview strip: protocol mix + relay reach. Relocated from the
-             graph-tab aside so the numbers stay visible where the lines live. -->
-        <div class="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-muted/25 px-4 py-2.5 text-xs">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span class="font-medium text-muted-foreground">{{ $t('lines.overviewProtocols') }}</span>
-            <Badge
-              v-for="stat in protocolStats"
-              :key="stat.protocol"
-              variant="outline"
-              class="gap-1.5"
+        <TabsContent value="lines" class="mt-4">
+          <div class="space-y-3">
+            <!-- Fleet overview strip: protocol mix + relay reach. Relocated from the
+                 graph-tab aside so the numbers stay visible where the lines live. -->
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-muted/25 px-4 py-2.5 text-xs">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="font-medium text-muted-foreground">{{ $t('lines.overviewProtocols') }}</span>
+                <Badge
+                  v-for="stat in protocolStats"
+                  :key="stat.protocol"
+                  variant="outline"
+                  class="gap-1.5"
+                >
+                  <span class="font-mono">{{ stat.protocol }}</span>
+                  <span class="tabular-nums text-muted-foreground">{{ stat.count }}</span>
+                </Badge>
+              </div>
+              <span class="hidden h-4 w-px bg-border sm:inline-block" aria-hidden="true"></span>
+              <div class="flex items-center gap-1.5">
+                <span class="font-medium text-muted-foreground">{{ $t('lines.graphRelayEdges') }}</span>
+                <Badge :variant="topologyEdges.length ? 'info' : 'secondary'">{{ topologyEdges.length }}</Badge>
+                <span class="text-muted-foreground">{{ $t('lines.overviewRelayed', { count: relayedLineCount }) }}</span>
+              </div>
+            </div>
+
+            <div
+              v-if="hiddenGroupCount > 0 || showAllGroups"
+              class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/25 px-4 py-3 text-sm"
             >
-              <span class="font-mono">{{ stat.protocol }}</span>
-              <span class="tabular-nums text-muted-foreground">{{ stat.count }}</span>
-            </Badge>
-          </div>
-          <span class="hidden h-4 w-px bg-border sm:inline-block" aria-hidden="true"></span>
-          <div class="flex items-center gap-1.5">
-            <span class="font-medium text-muted-foreground">{{ $t('lines.graphRelayEdges') }}</span>
-            <Badge :variant="topologyEdges.length ? 'info' : 'secondary'">{{ topologyEdges.length }}</Badge>
-            <span class="text-muted-foreground">{{ $t('lines.overviewRelayed', { count: relayedLineCount }) }}</span>
-          </div>
-        </div>
+              <div class="text-muted-foreground">
+                {{ $t('lines.renderSummary', { shown: visibleGroups.length, total: prioritizedGroups.length }) }}
+              </div>
+              <Button type="button" variant="outline" size="sm" @click="showAllGroups = !showAllGroups">
+                {{ showAllGroups ? $t('lines.showLessGroups') : $t('lines.showAllGroups', { count: hiddenGroupCount }) }}
+              </Button>
+            </div>
 
-        <div
-          v-if="hiddenGroupCount > 0 || showAllGroups"
-          class="flex shrink-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/25 px-4 py-3 text-sm"
-        >
-          <div class="text-muted-foreground">
-            {{ $t('lines.renderSummary', { shown: visibleGroups.length, total: prioritizedGroups.length }) }}
-          </div>
-          <Button type="button" variant="outline" size="sm" @click="showAllGroups = !showAllGroups">
-            {{ showAllGroups ? $t('lines.showLessGroups') : $t('lines.showAllGroups', { count: hiddenGroupCount }) }}
-          </Button>
-        </div>
-
-        <!-- One full-width row per node: identity rail on the left, line table on
-             the right. Plain flow layout — no CSS columns/masonry, so a tall node
-             can never stretch row-mates or blow up the page height again. -->
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pb-3 pr-1">
-        <div
-          v-for="group in visibleGroups"
-          :id="`line-group-${group.node_id}`"
-          :key="group.node_id"
-          class="overflow-hidden rounded-lg border bg-card transition-colors"
-          :class="cn(highlightGroupId === group.node_id ? 'border-primary/70 ring-2 ring-primary/25' : 'border-border')"
-        >
-          <div class="grid lg:grid-cols-[280px_minmax(0,1fr)]">
-            <div class="min-w-0 space-y-3 border-b border-border bg-muted/20 p-4 lg:border-b-0 lg:border-r">
-              <div class="min-w-0 space-y-1">
-                <div class="flex items-center gap-2">
-                  <Server class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  <RouterLink
-                    :to="{ name: 'node-detail', params: { id: group.node_id } }"
-                    class="inline-flex min-w-0 items-center gap-1 truncate text-sm font-medium hover:text-primary hover:underline"
-                    :title="$t('lines.viewNode')"
-                  >
-                    <span class="truncate">{{ group.node_name || group.node_id }}</span>
-                    <ArrowUpRight class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
-                  </RouterLink>
+            <!-- One full-width row per node: identity rail on the left, line table on
+                 the right. Plain flow layout — no CSS columns/masonry, so a tall node
+                 can never stretch row-mates or blow up the page height again. -->
+            <div class="space-y-3 pb-3">
+              <div
+                v-for="group in visibleGroups"
+                :id="`line-group-${group.node_id}`"
+                :key="group.node_id"
+                class="overflow-hidden rounded-lg border bg-card transition-colors"
+                :class="cn(highlightGroupId === group.node_id ? 'border-primary/70 ring-2 ring-primary/25' : 'border-border')"
+              >
+                <div class="grid lg:grid-cols-[280px_minmax(0,1fr)]">
+                  <div class="min-w-0 space-y-3 border-b border-border bg-muted/20 p-4 lg:border-b-0 lg:border-r">
+                    <div class="min-w-0 space-y-1">
+                      <div class="flex items-center gap-2">
+                        <Server class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <RouterLink
+                          :to="{ name: 'node-detail', params: { id: group.node_id } }"
+                          class="inline-flex min-w-0 items-center gap-1 truncate text-sm font-medium hover:text-primary hover:underline"
+                          :title="$t('lines.viewNode')"
+                        >
+                          <span class="truncate">{{ group.node_name || group.node_id }}</span>
+                          <ArrowUpRight class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
+                        </RouterLink>
                 </div>
                 <div class="truncate font-mono text-xs text-muted-foreground">{{ group.node_id }}</div>
               </div>
@@ -1433,7 +1432,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       </div>
         </TabsContent>
 
-        <TabsContent value="graph" class="min-h-0 overflow-y-auto overscroll-contain pr-1">
+        <TabsContent value="graph" class="mt-4">
           <div class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,.65fr)]">
             <section class="min-w-0 overflow-hidden rounded-md border border-border">
               <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/25 px-4 py-3">

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, computed, watch, watchEffect } from "vue";
-import { useRoute } from "vue-router";
+import { ref, computed, watchEffect } from "vue";
 import { storeToRefs } from "pinia";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -10,7 +9,6 @@ import AppHeader from "./components/AppHeader.vue";
 import CommandPalette from "@/components/common/CommandPalette.vue";
 
 const ui = useUiStore();
-const route = useRoute();
 const { density } = storeToRefs(ui);
 
 // Sidebar collapse persists via the ui store (localStorage-backed) so the rail
@@ -23,41 +21,6 @@ const collapsed = computed({
 
 const mobileOpen = ref(false);
 const commandOpen = ref(false);
-
-const pluginViewRoute = computed(() => {
-  const raw = route.params.route;
-  return Array.isArray(raw) ? raw.join("/") : String(raw ?? "");
-});
-
-const boundedMainScroll = computed(
-  () =>
-    route.name === "plugin-view" &&
-    route.params.pluginId === "latticenet.vpn-core" &&
-    pluginViewRoute.value === "lines",
-);
-
-function resetShellScroll() {
-  if (typeof document === "undefined" || typeof window === "undefined") return;
-  window.scrollTo(0, 0);
-  document.documentElement.scrollTop = 0;
-  document.body.scrollTop = 0;
-  document.getElementById("main-content")?.scrollTo({ top: 0, left: 0 });
-}
-
-function resetShellScrollAfterChromeRestore() {
-  resetShellScroll();
-  window.requestAnimationFrame(resetShellScroll);
-  window.setTimeout(resetShellScroll, 50);
-}
-
-watch(
-  () => [boundedMainScroll.value, route.fullPath] as const,
-  ([bounded]) => {
-    if (!bounded) return;
-    void nextTick(resetShellScrollAfterChromeRestore);
-  },
-  { immediate: true },
-);
 
 // Reflect the persisted density preference onto <html data-density> so the
 // opt-in `density-*` utilities in app.css take effect. Runs on mount and on
@@ -93,8 +56,7 @@ watchEffect(() => {
           id="main-content"
           role="main"
           tabindex="-1"
-          class="min-h-0 flex-1"
-          :class="boundedMainScroll ? 'overflow-hidden' : 'overflow-y-auto'"
+          class="min-h-0 flex-1 overflow-y-auto"
         >
           <RouterView v-slot="{ Component, route }">
             <!-- Instant nav: enter-only fade, NO mode="out-in" (which forced a

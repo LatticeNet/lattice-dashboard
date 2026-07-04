@@ -67,7 +67,7 @@ import {
 
 const TARGET_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$/;
 const SHA256_RE = /^[a-f0-9]{64}$/;
-const DEFAULT_INSTALL_PATH = "/opt/lattice/lattice-agent";
+const DEFAULT_INSTALL_PATH = "/opt/lattice/node-agent/lattice-agent";
 const DEFAULT_SERVICE_NAME = "lattice-agent.service";
 const AGENT_UPDATES_GUIDE_URL = "https://latticenet.github.io/security/agent-updates";
 
