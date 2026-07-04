@@ -3,7 +3,7 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { RefreshCw, Plus, Trash2, Pencil, Link2, ShieldCheck, Users, KeyRound, Lock } from "lucide-vue-next";
-import { api } from "@/lib/api";
+import { api, type VPNCredentialRevealResponse } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
 import StatCard from "@/components/common/StatCard.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -84,6 +85,64 @@ interface LineOpt {
 const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("proxy:admin"));
+
+// ── 2FA step-up for sensitive credential reveal ─────────────────────────────
+const stepUpOpen = ref(false);
+const stepUpCode = ref("");
+const stepUpError = ref("");
+const stepUpPending = ref(false);
+const stepUpGrant = ref("");
+const stepUpGrantExpiresAt = ref(0);
+let stepUpResolve: ((grant: string) => void) | undefined;
+let stepUpReject: ((error: Error) => void) | undefined;
+
+function cachedStepUpGrant(): string {
+  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
+  return "";
+}
+
+function requestStepUp(): Promise<string> {
+  const cached = cachedStepUpGrant();
+  if (cached) return Promise.resolve(cached);
+  stepUpCode.value = "";
+  stepUpError.value = "";
+  stepUpOpen.value = true;
+  return new Promise((resolve, reject) => {
+    stepUpResolve = resolve;
+    stepUpReject = reject;
+  });
+}
+
+async function submitStepUp() {
+  const code = stepUpCode.value.trim();
+  if (!code || stepUpPending.value) return;
+  stepUpPending.value = true;
+  stepUpError.value = "";
+  let ok = false;
+  try {
+    const result = await api.security.stepUp(code);
+    stepUpGrant.value = result.grant;
+    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
+    stepUpOpen.value = false;
+    stepUpResolve?.(result.grant);
+    ok = true;
+  } catch (error) {
+    stepUpError.value = error instanceof Error ? error.message : t("vpnUsers.stepUpFailed");
+  } finally {
+    stepUpPending.value = false;
+    if (ok) {
+      stepUpResolve = undefined;
+      stepUpReject = undefined;
+    }
+  }
+}
+
+function cancelStepUp() {
+  stepUpOpen.value = false;
+  stepUpReject?.(new Error(t("vpnUsers.stepUpRequired")));
+  stepUpResolve = undefined;
+  stepUpReject = undefined;
+}
 
 const usersQuery = useAsyncData(
   () => api.plugins.call<{ users: VpnUserView[]; count: number }>(VPN_CORE, USERS_SVC, "list"),
@@ -290,6 +349,45 @@ async function confirmDelete() {
     toast.error(e instanceof Error ? e.message : t("vpnUsers.toastDeleteFailed"));
   }
 }
+
+// ── credential reveal ────────────────────────────────────────────────────────
+const revealOpen = ref(false);
+const revealUser = ref<VpnUserView | null>(null);
+const revealedCredentials = ref<VPNCredentialRevealResponse | null>(null);
+const revealingCredentialsID = ref("");
+
+function credentialRevealText(): string {
+  const revealed = revealedCredentials.value;
+  if (!revealed) return "";
+  return JSON.stringify({
+    user: revealed.user,
+    credentials: revealed.credentials,
+    sub_id: revealed.sub_id || "",
+  }, null, 2);
+}
+
+async function revealCredentials(u: VpnUserView) {
+  if (!canAdmin.value || revealingCredentialsID.value) return;
+  revealingCredentialsID.value = u.id;
+  try {
+    const grant = await requestStepUp();
+    revealedCredentials.value = await api.proxy.revealUserCredentials(u.id, grant);
+    revealUser.value = u;
+    revealOpen.value = true;
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("vpnUsers.toastRevealFailed"));
+  } finally {
+    revealingCredentialsID.value = "";
+  }
+}
+
+function closeReveal(open: boolean) {
+  revealOpen.value = open;
+  if (!open) {
+    revealUser.value = null;
+    revealedCredentials.value = null;
+  }
+}
 </script>
 
 <template>
@@ -362,6 +460,17 @@ async function confirmDelete() {
                   <td class="px-3 py-3 text-right tabular-nums">{{ u.bindings?.length ?? 0 }}</td>
                   <td class="px-3 py-3">
                     <div class="flex items-center justify-end gap-1">
+                      <Button
+                        v-if="canAdmin"
+                        variant="ghost"
+                        size="icon"
+                        :title="$t('vpnUsers.revealCredentials')"
+                        :disabled="revealingCredentialsID === u.id"
+                        @click="revealCredentials(u)"
+                      >
+                        <RefreshCw v-if="revealingCredentialsID === u.id" class="size-4 animate-spin" aria-hidden="true" />
+                        <KeyRound v-else class="size-4" aria-hidden="true" />
+                      </Button>
                       <Button v-if="canAdmin" variant="ghost" size="icon" :title="$t('vpnUsers.manageBindings')" @click="openBindings(u)">
                         <Link2 class="size-4" aria-hidden="true" />
                       </Button>
@@ -497,6 +606,64 @@ async function confirmDelete() {
         <DialogFooter>
           <Button variant="outline" @click="bindOpen = false">{{ $t('common.actions.close') }}</Button>
         </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Credential reveal -->
+    <Dialog :open="revealOpen" @update:open="closeReveal">
+      <DialogScrollContent class="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{{ $t('vpnUsers.revealTitle') }}</DialogTitle>
+          <DialogDescription>
+            {{ $t('vpnUsers.revealDescription', { email: revealUser?.email || "" }) }}
+          </DialogDescription>
+        </DialogHeader>
+        <div v-if="revealedCredentials" class="space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/20 px-3 py-2">
+            <div>
+              <p class="text-sm font-medium">{{ revealUser?.email }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('vpnUsers.revealExpiresHint') }}</p>
+            </div>
+            <CopyButton :value="credentialRevealText()" :label="$t('common.actions.copy')" />
+          </div>
+          <pre class="max-h-[420px] overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs">{{ credentialRevealText() }}</pre>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" @click="closeReveal(false)">{{ $t('common.actions.close') }}</Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
+
+    <Dialog v-model:open="stepUpOpen">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="cancelStepUp">
+        <DialogHeader>
+          <DialogTitle>{{ $t('vpnUsers.stepUpTitle') }}</DialogTitle>
+          <DialogDescription>{{ $t('vpnUsers.stepUpDescription') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitStepUp">
+          <div class="grid gap-2">
+            <Label for="vpn-user-step-up-code">{{ $t('vpnUsers.stepUpCode') }}</Label>
+            <Input
+              id="vpn-user-step-up-code"
+              v-model="stepUpCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="123456"
+            />
+            <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="cancelStepUp">
+              {{ $t('common.actions.cancel') }}
+            </Button>
+            <Button type="submit" :disabled="stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+              <Lock v-else class="size-4" aria-hidden="true" />
+              {{ $t('vpnUsers.stepUpSubmit') }}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogScrollContent>
     </Dialog>
 

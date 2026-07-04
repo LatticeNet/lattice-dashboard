@@ -29,7 +29,6 @@ import {
   type ProxyManagedAddRequest,
   type ProxyManagedLineRevealResponse,
   type TaskResult,
-  type VPNCredentialRevealResponse,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -67,6 +66,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -163,18 +163,6 @@ type TopologyNode = {
   errors: number;
 };
 
-type TopologyGraphNode = TopologyNode & {
-  x: number;
-  y: number;
-};
-
-type TopologyGraphEdge = {
-  id: string;
-  source: TopologyGraphNode;
-  target: TopologyGraphNode;
-  label: string;
-};
-
 const topologyNodes = computed<TopologyNode[]>(() =>
   prioritizedGroups.value.slice(0, 16).map((group) => ({
     id: group.node_id,
@@ -195,40 +183,33 @@ const topologyEdges = computed(() => {
   ).slice(0, 24);
 });
 
-const topologyGraphNodes = computed<TopologyGraphNode[]>(() => {
-  const items = topologyNodes.value.slice(0, 12);
-  if (!items.length) return [];
-  const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(items.length))));
-  const rows = Math.ceil(items.length / cols);
-  const left = 86;
-  const top = 56;
-  const width = 788;
-  const height = 150;
-  return items.map((node, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    return {
-      ...node,
-      x: cols === 1 ? 480 : left + (width * col) / Math.max(1, cols - 1),
-      y: rows === 1 ? 130 : top + (height * row) / Math.max(1, rows - 1),
-    };
-  });
+const protocolStats = computed(() => {
+  const counts = new Map<string, number>();
+  for (const line of allLines.value) {
+    const key = (line.type || "unknown").toLowerCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([protocol, count]) => ({ protocol, count }))
+    .sort((a, b) => b.count - a.count || a.protocol.localeCompare(b.protocol));
 });
 
-const topologyGraphEdges = computed<TopologyGraphEdge[]>(() => {
-  const nodesByID = new Map(topologyGraphNodes.value.map((node) => [node.id, node]));
-  return topologyEdges.value.flatMap((edge) => {
-    const source = nodesByID.get(edge.source.node_id);
-    const target = edge.target?.node_id ? nodesByID.get(edge.target.node_id) : undefined;
-    if (!source || !target) return [];
-    return [{
-      id: `${edge.source.line_hash_id}:${edge.targetHash}`,
-      source,
-      target,
-      label: `${shortLineID(edge.source.line_hash_id)} -> ${shortLineID(edge.targetHash)}`,
-    }];
-  });
-});
+const relayedLineCount = computed(() =>
+  allLines.value.filter((line) => outboundPresentation(line.outbound_ref).relayed || (line.jump_edges?.length ?? 0) > 0).length,
+);
+
+const graphGroups = computed(() =>
+  prioritizedGroups.value
+    .filter((group) => group.lines.length > 0)
+    .map((group) => ({
+      ...group,
+      lines: [...group.lines].sort((a, b) =>
+        (a.listen_port || 0) - (b.listen_port || 0) ||
+        (a.type || "").localeCompare(b.type || "") ||
+        (a.name || "").localeCompare(b.name || ""),
+      ),
+    })),
+);
 
 function shortLineID(id?: string): string {
   if (!id) return "—";
@@ -439,9 +420,11 @@ const PROTOCOLS: { value: string; label: string }[] = [
 ];
 
 // ── Add / delete management bridge ───────────────────────────────────────────
+const activeTab = ref("lines");
 const addOpen = ref(false);
 const addSaving = ref(false);
 const addAttempted = ref(false);
+const addAdvancedOpen = ref(false);
 const addForm = reactive({
   node_id: "",
   protocol: "",
@@ -453,11 +436,12 @@ const addForm = reactive({
 
 type PendingBindPlan = {
   task_id: string;
+  runtime_task_id?: string;
   node_id: string;
   protocol: string;
   port: number;
   user_ids: string[];
-  status: "pending" | "binding" | "bound" | "failed";
+  status: "pending" | "binding" | "queued" | "failed";
   error?: string;
 };
 
@@ -467,11 +451,12 @@ function openAdd(nodeId = "") {
   if (!canAdmin.value) return;
   addAttempted.value = false;
   addForm.node_id = nodeId;
-  addForm.protocol = "";
+  addForm.protocol = "reality";
   addForm.port = "";
   addForm.arg1 = "";
   addForm.arg2 = "";
   addForm.user_ids = [];
+  addAdvancedOpen.value = false;
   addOpen.value = true;
 }
 
@@ -505,8 +490,8 @@ function pendingStatusLabel(status: PendingBindPlan["status"]): string {
   switch (status) {
     case "binding":
       return t("lines.pendingStatusBinding");
-    case "bound":
-      return t("lines.pendingStatusBound");
+    case "queued":
+      return t("lines.pendingStatusQueued");
     case "failed":
       return t("lines.pendingStatusFailed");
     default:
@@ -568,14 +553,15 @@ async function resolvePendingBinds() {
     if (!line?.line_hash_id) continue;
     plan.status = "binding";
     try {
-      for (const userID of plan.user_ids) {
-        await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "bind", {
-          user_id: userID,
-          line_hash_id: line.line_hash_id,
-        });
-      }
-      plan.status = "bound";
-      toast.success(t("lines.toastBindComplete", { count: plan.user_ids.length }));
+      const res = await api.proxy.managed.users({
+        node_id: line.node_id,
+        line_hash_id: line.line_hash_id,
+        bind_user_ids: plan.user_ids,
+        unbind_user_ids: [],
+      });
+      plan.runtime_task_id = res.task_id;
+      plan.status = "queued";
+      toast.success(t("lines.rosterSyncQueued", { id: res.task_id }));
       void usersQuery.refresh();
     } catch (error) {
       plan.status = "failed";
@@ -597,8 +583,6 @@ const connchecking = ref(false);
 const conncheckTaskID = ref("");
 const revealedLine = ref<ProxyManagedLineRevealResponse | null>(null);
 const revealingLine = ref(false);
-const revealedUsers = ref<Record<string, VPNCredentialRevealResponse>>({});
-const revealingUserID = ref("");
 
 function canDeleteLine(line: Line | null): boolean {
   return !!line && line.source === "discovered" && !!(line.name || line.tag);
@@ -697,28 +681,6 @@ async function revealLineConnection() {
   }
 }
 
-async function revealUserCredentials(userID: string) {
-  if (!userID || revealingUserID.value || !canAdmin.value) return;
-  revealingUserID.value = userID;
-  try {
-    const grant = await requestStepUp();
-    revealedUsers.value = {
-      ...revealedUsers.value,
-      [userID]: await api.proxy.revealUserCredentials(userID, grant),
-    };
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("lines.revealFailed"));
-  } finally {
-    revealingUserID.value = "";
-  }
-}
-
-function revealedCredentialText(userID: string): string {
-  const revealed = revealedUsers.value[userID];
-  if (!revealed) return "";
-  return JSON.stringify({ credentials: revealed.credentials, sub_id: revealed.sub_id || "" }, null, 2);
-}
-
 // ── Detail drawer (the app's modal primitive; no separate Sheet exists) ───────
 const selected = ref<Line | null>(null);
 const detailOpen = ref(false);
@@ -726,7 +688,6 @@ function openDetail(line: Line) {
   selected.value = line;
   resetRosterSelection(line);
   revealedLine.value = null;
-  revealedUsers.value = {};
   conncheckTaskID.value = "";
   detailOpen.value = true;
 }
@@ -963,124 +924,6 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       </div>
     </div>
 
-    <Card v-if="topologyNodes.length">
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2 text-sm">
-          <Waypoints class="size-4 text-primary" aria-hidden="true" />
-          {{ $t('lines.topologyTitle') }}
-        </CardTitle>
-      </CardHeader>
-      <CardContent class="space-y-4">
-        <div class="overflow-x-auto rounded-md border border-border bg-background/60">
-          <svg
-            viewBox="0 0 960 260"
-            role="img"
-            :aria-label="$t('lines.topologyTitle')"
-            class="block aspect-[48/13] w-full min-w-[720px]"
-          >
-            <defs>
-              <marker id="line-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                <path d="M0,0 L8,4 L0,8 Z" fill="var(--primary)" opacity="0.85" />
-              </marker>
-            </defs>
-            <rect width="960" height="260" fill="transparent" />
-            <g v-if="topologyGraphEdges.length">
-              <line
-                v-for="edge in topologyGraphEdges"
-                :key="edge.id"
-                :x1="edge.source.x"
-                :y1="edge.source.y"
-                :x2="edge.target.x"
-                :y2="edge.target.y"
-                stroke="var(--primary)"
-                stroke-width="2"
-                stroke-opacity="0.65"
-                marker-end="url(#line-arrow)"
-              />
-            </g>
-            <g v-else>
-              <line
-                x1="74"
-                y1="226"
-                x2="886"
-                y2="226"
-                stroke="var(--border)"
-                stroke-width="1"
-                stroke-dasharray="4 6"
-              />
-              <text x="480" y="232" text-anchor="middle" class="fill-muted-foreground text-[11px]">
-                {{ $t('lines.topologyNoEdges') }}
-              </text>
-            </g>
-            <g
-              v-for="node in topologyGraphNodes"
-              :key="node.id"
-              :transform="`translate(${node.x} ${node.y})`"
-            >
-              <circle
-                r="26"
-                :fill="node.errors ? 'var(--destructive)' : 'var(--secondary)'"
-                :opacity="node.errors ? 0.22 : 0.9"
-              />
-              <circle
-                r="22"
-                :stroke="node.errors ? 'var(--destructive)' : 'var(--primary)'"
-                stroke-width="1.5"
-                fill="var(--card)"
-              />
-              <text y="-3" text-anchor="middle" class="fill-foreground text-[12px] font-medium">
-                {{ node.lines }}
-              </text>
-              <text y="12" text-anchor="middle" class="fill-muted-foreground text-[9px]">
-                {{ $t('lines.topologyNodeLines') }}
-              </text>
-              <text y="44" text-anchor="middle" class="fill-foreground text-[11px] font-medium">
-                {{ shortNodeLabel(node.id) }}
-              </text>
-              <text y="59" text-anchor="middle" class="fill-muted-foreground text-[9px]">
-                {{ shortLineID(node.id) }}
-              </text>
-            </g>
-          </svg>
-        </div>
-        <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          <div
-            v-for="node in topologyNodes"
-            :key="node.id"
-            class="min-w-0 rounded-md border border-border bg-muted/20 px-3 py-2"
-          >
-            <div class="flex items-center justify-between gap-2">
-              <p class="truncate text-sm font-medium" :title="node.name">{{ node.name }}</p>
-              <Badge :variant="node.errors ? 'destructive' : 'secondary'">{{ node.lines }}</Badge>
-            </div>
-            <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ node.id }}</p>
-          </div>
-        </div>
-        <div class="rounded-md border border-border bg-background/50 p-3">
-          <div v-if="topologyEdges.length" class="space-y-2">
-            <div
-              v-for="edge in topologyEdges"
-              :key="`${edge.source.line_hash_id}:${edge.targetHash}`"
-              class="grid gap-2 rounded-md bg-muted/20 px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
-            >
-              <div class="min-w-0">
-                <p class="truncate font-medium">{{ shortNodeLabel(edge.source.node_id) }}</p>
-                <p class="truncate font-mono text-muted-foreground">{{ shortLineID(edge.source.line_hash_id) }}</p>
-              </div>
-              <div class="flex items-center justify-center text-muted-foreground">
-                <ExternalLink class="size-4" aria-hidden="true" />
-              </div>
-              <div class="min-w-0 text-left md:text-right">
-                <p class="truncate font-medium">{{ shortNodeLabel(edge.target?.node_id) }}</p>
-                <p class="truncate font-mono text-muted-foreground">{{ shortLineID(edge.targetHash) }}</p>
-              </div>
-            </div>
-          </div>
-          <p v-else class="text-xs text-muted-foreground">{{ $t('lines.topologyNoEdges') }}</p>
-        </div>
-      </CardContent>
-    </Card>
-
     <Card v-if="pendingBinds.length">
       <CardHeader>
         <CardTitle class="text-sm">{{ $t('lines.pendingBindingsTitle') }}</CardTitle>
@@ -1097,9 +940,12 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               <div class="truncate text-muted-foreground">
                 {{ $t('lines.pendingBinding', { count: plan.user_ids.length, task: plan.task_id }) }}
               </div>
+              <div v-if="plan.runtime_task_id" class="truncate text-muted-foreground">
+                {{ $t('lines.pendingRuntimeTask', { task: plan.runtime_task_id }) }}
+              </div>
               <div v-if="plan.error" class="mt-1 break-words text-destructive">{{ plan.error }}</div>
             </div>
-            <Badge :variant="plan.status === 'failed' ? 'destructive' : plan.status === 'bound' ? 'success' : 'warning'">
+            <Badge :variant="plan.status === 'failed' ? 'destructive' : plan.status === 'queued' ? 'info' : 'warning'">
               {{ pendingStatusLabel(plan.status) }}
             </Badge>
           </div>
@@ -1116,6 +962,13 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       :empty-description="$t('lines.emptyDescription')"
       @retry="linesQuery.refresh"
     >
+      <Tabs v-model="activeTab" class="space-y-4">
+        <TabsList class="w-full sm:w-auto">
+          <TabsTrigger value="lines">{{ $t('lines.tabLines') }}</TabsTrigger>
+          <TabsTrigger value="graph">{{ $t('lines.tabGraph') }}</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="lines" class="space-y-3">
       <div class="space-y-3">
         <div
           v-if="hiddenGroupCount > 0 || showAllGroups"
@@ -1267,6 +1120,139 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
         </Card>
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="graph" class="space-y-4">
+          <div class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,.65fr)]">
+            <section class="min-w-0 overflow-hidden rounded-md border border-border">
+              <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/25 px-4 py-3">
+                <div>
+                  <h2 class="text-sm font-semibold">{{ $t('lines.graphNodeLanes') }}</h2>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t('lines.graphSummary', { nodes: graphGroups.length, lines: totalLines, relays: relayedLineCount }) }}
+                  </p>
+                </div>
+                <Badge :variant="relayedLineCount ? 'info' : 'secondary'">
+                  {{ relayedLineCount ? $t('lines.graphRelayMode') : $t('lines.graphDirectMode') }}
+                </Badge>
+              </div>
+
+              <div class="divide-y divide-border">
+                <div
+                  v-for="group in graphGroups"
+                  :key="group.node_id"
+                  class="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(180px,.38fr)_minmax(0,1fr)]"
+                >
+                  <div class="min-w-0">
+                    <RouterLink
+                      :to="{ name: 'node-detail', params: { id: group.node_id } }"
+                      class="inline-flex max-w-full items-center gap-1 truncate text-sm font-medium hover:text-primary hover:underline"
+                    >
+                      <span class="truncate">{{ group.node_name || group.node_id }}</span>
+                      <ArrowUpRight class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
+                    </RouterLink>
+                    <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ group.node_id }}</p>
+                    <div class="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant="secondary">{{ $t('lines.groupLineCount', { count: group.lines.length }, group.lines.length) }}</Badge>
+                      <Badge
+                        v-if="group.lines.some((line) => line.status === 'error' || line.last_error)"
+                        variant="destructive"
+                      >
+                        {{ $t('lines.statusError') }}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div class="grid gap-2 md:grid-cols-2">
+                    <button
+                      v-for="line in group.lines"
+                      :key="line.id || line.line_hash_id"
+                      type="button"
+                      class="min-w-0 rounded-md border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      :class="cn(outboundPresentation(line.outbound_ref).relayed && 'border-info/50 bg-info/5')"
+                      @click="openDetail(line)"
+                    >
+                      <div class="flex min-w-0 items-center justify-between gap-2">
+                        <span class="truncate text-sm font-medium">{{ line.name || line.tag || line.line_hash_id }}</span>
+                        <Badge :variant="statusVariant(line.status)" class="shrink-0 text-[10px]">
+                          {{ statusLabel(line.status) }}
+                        </Badge>
+                      </div>
+                      <div class="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-[auto_minmax(0,1fr)]">
+                        <span class="font-mono text-foreground">{{ line.type || '—' }}</span>
+                        <span class="truncate font-mono">{{ listenPresentation(line).label }}</span>
+                        <span>{{ outboundPresentation(line.outbound_ref).relayed ? $t('lines.outboundRelay') : $t('lines.outboundDirect') }}</span>
+                        <span class="truncate font-mono">{{ outboundPresentation(line.outbound_ref).detail }}</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <aside class="space-y-4">
+              <section class="rounded-md border border-border p-4">
+                <div class="flex items-center justify-between gap-3">
+                  <h2 class="text-sm font-semibold">{{ $t('lines.graphRelayEdges') }}</h2>
+                  <Badge :variant="topologyEdges.length ? 'info' : 'secondary'">{{ topologyEdges.length }}</Badge>
+                </div>
+                <div v-if="topologyEdges.length" class="mt-3 space-y-2">
+                  <button
+                    v-for="edge in topologyEdges"
+                    :key="`${edge.source.line_hash_id}:${edge.targetHash}`"
+                    type="button"
+                    class="w-full rounded-md border border-border bg-muted/20 px-3 py-2 text-left text-xs hover:bg-muted/40"
+                    @click="openDetail(edge.source)"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="min-w-0 flex-1 truncate font-medium">{{ shortNodeLabel(edge.source.node_id) }}</span>
+                      <ExternalLink class="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                      <span class="min-w-0 flex-1 truncate text-right font-medium">{{ shortNodeLabel(edge.target?.node_id) }}</span>
+                    </div>
+                    <div class="mt-1 flex items-center gap-2 font-mono text-muted-foreground">
+                      <span class="min-w-0 flex-1 truncate">{{ shortLineID(edge.source.line_hash_id) }}</span>
+                      <span>&rarr;</span>
+                      <span class="min-w-0 flex-1 truncate text-right">{{ shortLineID(edge.targetHash) }}</span>
+                    </div>
+                  </button>
+                </div>
+                <p v-else class="mt-3 text-xs text-muted-foreground">
+                  {{ $t('lines.graphDirectDescription') }}
+                </p>
+              </section>
+
+              <section class="rounded-md border border-border p-4">
+                <h2 class="text-sm font-semibold">{{ $t('lines.graphProtocolMix') }}</h2>
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <Badge
+                    v-for="stat in protocolStats"
+                    :key="stat.protocol"
+                    variant="outline"
+                    class="gap-1.5"
+                  >
+                    <span class="font-mono">{{ stat.protocol }}</span>
+                    <span class="tabular-nums text-muted-foreground">{{ stat.count }}</span>
+                  </Badge>
+                </div>
+              </section>
+
+              <section class="rounded-md border border-border p-4">
+                <h2 class="text-sm font-semibold">{{ $t('lines.graphTopNodes') }}</h2>
+                <div class="mt-3 space-y-2">
+                  <div
+                    v-for="node in topologyNodes"
+                    :key="node.id"
+                    class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-xs"
+                  >
+                    <span class="truncate" :title="node.name">{{ node.name }}</span>
+                    <Badge :variant="node.errors ? 'destructive' : 'secondary'">{{ node.lines }}</Badge>
+                  </div>
+                </div>
+              </section>
+            </aside>
+          </div>
+        </TabsContent>
+      </Tabs>
     </DataState>
 
     <!-- Line detail drawer -->
@@ -1457,26 +1443,6 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                     </span>
                   </span>
                 </label>
-                <div v-if="canAdmin && rosterChecked(user.id)" class="mt-2 space-y-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    :disabled="revealingUserID === user.id"
-                    @click="revealUserCredentials(user.id)"
-                  >
-                    <RefreshCw v-if="revealingUserID === user.id" class="size-4 animate-spin" aria-hidden="true" />
-                    <KeyRound v-else class="size-4" aria-hidden="true" />
-                    {{ $t('lines.revealUserCredential') }}
-                  </Button>
-                  <div v-if="revealedUsers[user.id]" class="rounded-md border border-border bg-background/60">
-                    <div class="flex items-center justify-between gap-2 border-b border-border px-2 py-1">
-                      <span class="text-[11px] text-muted-foreground">{{ $t('lines.userCredential') }}</span>
-                      <CopyButton :value="revealedCredentialText(user.id)" />
-                    </div>
-                    <pre class="max-h-36 overflow-auto p-2 font-mono text-[11px]">{{ revealedCredentialText(user.id) }}</pre>
-                  </div>
-                </div>
               </div>
             </div>
             <p v-if="rosterError" class="whitespace-pre-wrap rounded-md bg-destructive/10 p-2 text-xs text-destructive">
@@ -1541,8 +1507,8 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
         </DialogHeader>
 
         <form class="space-y-5" @submit.prevent="submitAdd">
-          <div class="grid gap-3 sm:grid-cols-3">
-            <div class="grid gap-2 sm:col-span-3">
+          <div class="grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(150px,.7fr)_minmax(120px,.45fr)]">
+            <div class="grid gap-2">
               <Label for="line-node">{{ $t('lines.fieldNode') }}</Label>
               <Select v-model="addForm.node_id">
                 <SelectTrigger
@@ -1569,7 +1535,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                   :aria-invalid="!!addProtocolError"
                   :class="cn(addProtocolError && 'border-destructive')"
                 >
-                  <SelectValue :placeholder="$t('lines.selectProtocol')" />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="p in PROTOCOLS" :key="p.value" :value="p.value">
@@ -1595,26 +1561,38 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               <p v-if="addPortError" class="text-xs text-destructive">{{ addPortError }}</p>
             </div>
 
-            <div class="grid gap-2">
-              <Label for="line-arg1">{{ $t('lines.fieldArg1') }}</Label>
-              <Input
-                id="line-arg1"
-                v-model="addForm.arg1"
-                autocomplete="off"
-                :placeholder="$t('lines.fieldArg1Placeholder')"
-              />
-            </div>
           </div>
 
-          <div class="grid gap-2">
-            <Label for="line-arg2">{{ $t('lines.fieldArg2') }}</Label>
-            <Input
-              id="line-arg2"
-              v-model="addForm.arg2"
-              autocomplete="off"
-              :placeholder="$t('lines.fieldArg2Placeholder')"
-            />
-            <p class="text-xs text-muted-foreground">{{ $t('lines.argsHint') }}</p>
+          <div class="rounded-md border border-border">
+            <button
+              type="button"
+              class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm"
+              @click="addAdvancedOpen = !addAdvancedOpen"
+            >
+              <span class="font-medium">{{ $t('lines.advancedOptions') }}</span>
+              <Badge variant="secondary">{{ addAdvancedOpen ? $t('lines.advancedHide') : $t('lines.advancedShow') }}</Badge>
+            </button>
+            <div v-if="addAdvancedOpen" class="grid gap-3 border-t border-border p-3 sm:grid-cols-2">
+              <div class="grid gap-2">
+                <Label for="line-arg1">{{ $t('lines.fieldArg1') }}</Label>
+                <Input
+                  id="line-arg1"
+                  v-model="addForm.arg1"
+                  autocomplete="off"
+                  :placeholder="$t('lines.fieldArg1Placeholder')"
+                />
+              </div>
+              <div class="grid gap-2">
+                <Label for="line-arg2">{{ $t('lines.fieldArg2') }}</Label>
+                <Input
+                  id="line-arg2"
+                  v-model="addForm.arg2"
+                  autocomplete="off"
+                  :placeholder="$t('lines.fieldArg2Placeholder')"
+                />
+              </div>
+              <p class="text-xs text-muted-foreground sm:col-span-2">{{ $t('lines.argsHint') }}</p>
+            </div>
           </div>
 
           <div class="space-y-2 rounded-md border border-border p-3">
