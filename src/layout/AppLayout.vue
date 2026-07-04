@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watchEffect } from "vue";
+import { nextTick, ref, computed, watch, watchEffect } from "vue";
 import { useRoute } from "vue-router";
 import { storeToRefs } from "pinia";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -34,6 +34,16 @@ const boundedMainScroll = computed(
     route.name === "plugin-view" &&
     route.params.pluginId === "latticenet.vpn-core" &&
     pluginViewRoute.value === "lines",
+);
+
+watch(
+  boundedMainScroll,
+  async (bounded) => {
+    if (!bounded || typeof document === "undefined") return;
+    await nextTick();
+    document.getElementById("main-content")?.scrollTo({ top: 0, left: 0 });
+  },
+  { immediate: true },
 );
 
 // Reflect the persisted density preference onto <html data-density> so the
