@@ -581,6 +581,9 @@ const editRole = ref("");
 const editTags = ref<string[]>([]);
 const editComment = ref("");
 const editAgentSourceAllowlist = ref("");
+const editPurity = ref("");
+const editQuality = ref("");
+const editInventoryNotes = ref("");
 const tagDraft = ref("");
 const identityPending = ref(false);
 
@@ -592,10 +595,23 @@ watch(
     editTags.value = [...(node.value?.tags ?? [])].sort((a, b) => a.localeCompare(b));
     editComment.value = node.value?.comment ?? "";
     editAgentSourceAllowlist.value = [...(node.value?.agent_source_allowlist ?? [])].join("\n");
+    editPurity.value = node.value?.inventory?.purity_percent?.toString() ?? "";
+    editQuality.value = node.value?.inventory?.quality ?? "";
+    editInventoryNotes.value = node.value?.inventory?.notes ?? "";
     tagDraft.value = "";
   },
   { immediate: true },
 );
+
+/** Parsed purity draft: undefined when empty, NaN when invalid (blocks Save). */
+const purityDraft = computed<number | undefined>(() => {
+  const raw = editPurity.value.trim();
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 100) return Number.NaN;
+  return parsed;
+});
+const purityInvalid = computed(() => Number.isNaN(purityDraft.value));
 
 function addTag() {
   const v = tagDraft.value.trim();
@@ -628,17 +644,24 @@ const identityDirty = computed(() => {
   const sourcesEqual =
     draftSources.length === persistedSources.length &&
     draftSources.every((source, i) => source === persistedSources[i]);
+  const inv = n.inventory ?? undefined;
+  const purityEqual =
+    (purityDraft.value === undefined && inv?.purity_percent === undefined) ||
+    purityDraft.value === inv?.purity_percent;
   return (
     editName.value.trim() !== (n.name ?? "") ||
     editRole.value.trim() !== (n.role ?? "") ||
     editComment.value.trim() !== (n.comment ?? "") ||
     !tagsEqual ||
-    !sourcesEqual
+    !sourcesEqual ||
+    !purityEqual ||
+    editQuality.value.trim() !== (inv?.quality ?? "") ||
+    editInventoryNotes.value.trim() !== (inv?.notes ?? "")
   );
 });
 
 async function saveIdentity() {
-  if (!node.value || !canAdminNodes.value) return;
+  if (!node.value || !canAdminNodes.value || purityInvalid.value) return;
   identityPending.value = true;
   try {
     const res = await api.nodes.update({
@@ -648,12 +671,22 @@ async function saveIdentity() {
       comment: editComment.value.trim(),
       tags: editTags.value,
       agent_source_allowlist: parseAgentSourceAllowlistDraft(),
+      // Always sent: the form is seeded from the persisted value, so this is
+      // replace-semantics; an all-empty object clears the inventory record.
+      inventory: {
+        purity_percent: purityDraft.value,
+        quality: editQuality.value.trim() || undefined,
+        notes: editInventoryNotes.value.trim() || undefined,
+      },
     });
     editName.value = res.name;
     editRole.value = res.role;
     editComment.value = res.comment ?? "";
     editTags.value = [...(res.tags ?? [])].sort((a, b) => a.localeCompare(b));
     editAgentSourceAllowlist.value = [...(res.agent_source_allowlist ?? [])].join("\n");
+    editPurity.value = res.inventory?.purity_percent?.toString() ?? "";
+    editQuality.value = res.inventory?.quality ?? "";
+    editInventoryNotes.value = res.inventory?.notes ?? "";
     toast.success(t("fleet.nodes.detail.identitySaved"));
     await nodesQuery.refresh();
   } catch (error) {
@@ -1119,6 +1152,42 @@ async function resolveGeo() {
               />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
             </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-1.5">
+                <Label for="identity-purity">{{ $t('fleet.nodes.detail.identityPurity') }}</Label>
+                <Input
+                  id="identity-purity"
+                  v-model="editPurity"
+                  inputmode="numeric"
+                  placeholder="98"
+                  :aria-invalid="purityInvalid"
+                  :class="cn(purityInvalid && 'border-destructive')"
+                />
+                <p v-if="purityInvalid" class="text-xs text-destructive">
+                  {{ $t('fleet.nodes.detail.identityPurityInvalid') }}
+                </p>
+                <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityPurityHint') }}</p>
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="identity-quality">{{ $t('fleet.nodes.detail.identityQuality') }}</Label>
+                <Input
+                  id="identity-quality"
+                  v-model="editQuality"
+                  :placeholder="$t('fleet.nodes.detail.identityQualityPlaceholder')"
+                />
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityQualityHint') }}</p>
+              </div>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="identity-inventory-notes">{{ $t('fleet.nodes.detail.identityInventoryNotes') }}</Label>
+              <textarea
+                id="identity-inventory-notes"
+                v-model="editInventoryNotes"
+                rows="2"
+                class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                :placeholder="$t('fleet.nodes.detail.identityInventoryNotesPlaceholder')"
+              />
+            </div>
             <div class="grid gap-1.5">
               <Label for="identity-agent-source-allowlist">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlist') }}</Label>
               <textarea
@@ -1131,7 +1200,7 @@ async function resolveGeo() {
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlistHint') }}</p>
             </div>
             <div class="flex flex-wrap gap-2">
-              <Button size="sm" :disabled="identityPending || !identityDirty" @click="saveIdentity">
+              <Button size="sm" :disabled="identityPending || !identityDirty || purityInvalid" @click="saveIdentity">
                 <RefreshCw v-if="identityPending" class="size-3.5 animate-spin" aria-hidden="true" />
                 {{ $t('common.actions.save') }}
               </Button>

@@ -89,6 +89,15 @@ export interface NodeGeo {
   updated_at?: string;
 }
 
+// NodeInventory mirrors the operator-registered provenance/quality metadata on
+// the node model — e.g. "98% pure, high quality" IP purity notes kept in the
+// fleet inventory. Purely informational; nothing branches on it.
+export interface NodeInventory {
+  purity_percent?: number;
+  quality?: string;
+  notes?: string;
+}
+
 export interface AgentDebugPolicy {
   enabled: boolean;
   collect: boolean;
@@ -139,6 +148,7 @@ export interface Node {
   comment?: string;
   tags?: string[];
   role?: string;
+  inventory?: NodeInventory | null;
   wireguard_ip?: string;
   wireguard_endpoint?: string;
   public_ip?: string;

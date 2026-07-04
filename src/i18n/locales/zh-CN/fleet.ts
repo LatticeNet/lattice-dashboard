@@ -267,6 +267,14 @@ export default {
         identityComment: "备注",
         identityCommentPlaceholder: "续费、服务商特殊说明、机柜、负责人或迁移背景",
         identityCommentHint: "仅存储在控制面,不会下发给节点 agent。",
+        identityPurity: "IP 纯净度 (%)",
+        identityPurityHint: "运营者评估的纯净度分值(0-100),会展示在 Lines 与库存相关页面。",
+        identityPurityInvalid: "纯净度必须是 0-100 之间的整数。",
+        identityQuality: "质量等级",
+        identityQualityPlaceholder: "high quality",
+        identityQualityHint: "自由填写的等级,如 high / medium / low。",
+        identityInventoryNotes: "库存备注",
+        identityInventoryNotesPlaceholder: "来源、卖家、IP 历史……",
         identityAgentSourceAllowlist: "Agent 来源白名单",
         identityAgentSourceAllowlistPlaceholder: "198.51.100.10\n203.0.113.0/24",
         identityAgentSourceAllowlistHint:
@@ -467,6 +475,13 @@ export default {
       legend: {
         online: "绿色:在线",
         offline: "红色:离线",
+      },
+      vpn: {
+        toggle: "VPN 线路",
+        summary: "{lines} 条线路 · {nodes} 个已定位节点 · {edges} 条中继链路",
+        unavailable: "VPN 线路数据不可用",
+        edgeTitle: "{from} → {to} · {count} 条中继线路",
+        markerTitle: "{node}:{count} 条线路({errors} 个错误)",
       },
       stats: {
         coverage: "覆盖率",

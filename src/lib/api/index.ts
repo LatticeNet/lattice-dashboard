@@ -8,6 +8,7 @@ import type {
   Node,
   NodeDeletePlanView,
   NodeGeoInput,
+  NodeInventory,
   NodeGeoResolveResponse,
   NodeGeoView,
   AgentLaunchConfig,
@@ -209,7 +210,8 @@ export const api = {
       http.post<void>("/api/nodes/disable", { node_id, disabled }),
     // Edit a node's operator-owned identity and agent source policy after enrollment.
     // Mirrors `disable`: POST + CSRF + typed-error handling via `http`.
-    // Omitting agent_source_allowlist preserves the existing source policy.
+    // Omitting agent_source_allowlist preserves the existing source policy;
+    // omitting inventory preserves the stored inventory metadata.
     update: (input: {
       node_id: string;
       name?: string;
@@ -217,6 +219,7 @@ export const api = {
       comment?: string;
       tags?: string[];
       agent_source_allowlist?: string[];
+      inventory?: NodeInventory;
     }) =>
       http.post<{
         ok: boolean;
@@ -225,6 +228,7 @@ export const api = {
         comment?: string;
         tags: string[];
         agent_source_allowlist?: string[] | null;
+        inventory?: NodeInventory | null;
       }>(
         "/api/nodes/update",
         input,

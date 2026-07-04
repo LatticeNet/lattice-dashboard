@@ -198,6 +198,13 @@ function displayName(machine: MachineView): string {
   return machine.label || machine.node_name || machine.node_id;
 }
 
+// Operator-registered quality metadata lives on the linked Node (edited from
+// the node detail identity card); the inventory row just surfaces it.
+function nodeInventoryFor(nodeID?: string) {
+  if (!nodeID) return undefined;
+  return nodes.value.find((node) => node.id === nodeID)?.inventory ?? undefined;
+}
+
 function profileLabel(machine: MachineView): string {
   if (machine.id) return t("fleet.inventory.badge.profiled");
   return t("fleet.inventory.badge.needsProfile");
@@ -525,6 +532,15 @@ async function runReminders(selectedOnly = false) {
                   <div class="flex flex-wrap justify-end gap-1.5">
                     <Badge :variant="profileVariant(machine)">{{ profileLabel(machine) }}</Badge>
                     <Badge v-if="machine.vendor" variant="outline">{{ machine.vendor }}</Badge>
+                    <Badge
+                      v-if="nodeInventoryFor(machine.node_id)?.purity_percent != null"
+                      variant="success"
+                    >
+                      {{ $t('lines.purityBadge', { percent: nodeInventoryFor(machine.node_id)?.purity_percent }) }}
+                    </Badge>
+                    <Badge v-if="nodeInventoryFor(machine.node_id)?.quality" variant="outline">
+                      {{ nodeInventoryFor(machine.node_id)?.quality }}
+                    </Badge>
                     <Badge :variant="renewalTone(machine) === 'destructive' ? 'destructive' : renewalTone(machine) === 'warning' ? 'warning' : 'secondary'">
                       {{ renewalLabel(machine) }}
                     </Badge>

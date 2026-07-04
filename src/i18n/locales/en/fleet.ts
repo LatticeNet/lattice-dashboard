@@ -271,6 +271,14 @@ export default {
         identityComment: "Comment",
         identityCommentPlaceholder: "Renewal notes, provider quirks, rack, owner, or migration context",
         identityCommentHint: "Control-plane note only. It is not sent to the node agent.",
+        identityPurity: "IP purity (%)",
+        identityPurityHint: "Operator-assessed purity score, 0-100. Shows on Lines and inventory surfaces.",
+        identityPurityInvalid: "Purity must be an integer between 0 and 100.",
+        identityQuality: "Quality grade",
+        identityQualityPlaceholder: "high quality",
+        identityQualityHint: "Free-form grade such as high / medium / low.",
+        identityInventoryNotes: "Inventory notes",
+        identityInventoryNotesPlaceholder: "Provenance, seller, IP history…",
         identityAgentSourceAllowlist: "Agent source allowlist",
         identityAgentSourceAllowlistPlaceholder: "198.51.100.10\n203.0.113.0/24",
         identityAgentSourceAllowlistHint:
@@ -475,6 +483,13 @@ export default {
       legend: {
         online: "green: online",
         offline: "red: offline",
+      },
+      vpn: {
+        toggle: "VPN lines",
+        summary: "{lines} lines · {nodes} located nodes · {edges} relay links",
+        unavailable: "VPN line data unavailable",
+        edgeTitle: "{from} → {to} · {count} relayed lines",
+        markerTitle: "{node}: {count} lines ({errors} errors)",
       },
       stats: {
         coverage: "Coverage",
