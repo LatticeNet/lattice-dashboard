@@ -384,10 +384,6 @@ function toggleNodeExpanded(taskId: string, nodeId: string) {
   expandedNodeRows.value = next;
 }
 
-function hasExpandedNode(task: TaskView): boolean {
-  return nodeRows(task).some((row) => isNodeExpanded(task.id, row.nodeId));
-}
-
 function rowLatestText(row: NodeExecutionRow): string {
   if (!row.latestResult) return row.status === "queued" ? t("operations.tasks.waitingLease") : t("operations.tasks.running");
   const exit = t("operations.tasks.exit", { code: row.latestResult.exit_code ?? 0 });
@@ -865,81 +861,84 @@ async function deleteTask(task: TaskView) {
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="row in nodeRows(task)" :key="row.nodeId" class="border-t border-border">
-                        <td class="px-3 py-2">
-                          <div class="min-w-0">
-                            <p class="truncate font-medium">{{ nodeName(row.nodeId) }}</p>
-                            <p class="truncate font-mono text-xs text-muted-foreground">{{ row.nodeId }}</p>
-                          </div>
-                        </td>
-                        <td class="px-3 py-2">
-                          <Badge :variant="statusVariant(row.status)">{{ statusLabel(row.status) }}</Badge>
-                        </td>
-                        <td class="px-3 py-2">
-                          <p v-if="row.latestResult" class="font-mono text-xs">
-                            {{ $t('operations.tasks.exit', { code: row.latestResult.exit_code ?? 0 }) }}
-                            · {{ formatDateTime(row.latestResult.finished_at) }}
-                          </p>
-                          <p v-else class="text-xs text-muted-foreground">
-                            {{ row.status === 'queued' ? $t('operations.tasks.waitingLease') : $t('operations.tasks.running') }}
-                          </p>
-                          <p v-if="row.latestResult?.error" class="mt-1 line-clamp-1 text-xs text-destructive">
-                            {{ row.latestResult.error }}
-                          </p>
-                        </td>
-                        <td class="px-3 py-2">
-                          <Badge variant="outline">
-                            <ListChecks class="size-3.5" aria-hidden="true" />
-                            {{ row.attempts.length }}
-                          </Badge>
-                        </td>
-                        <td class="px-3 py-2 text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            @click="toggleNodeExpanded(task.id, row.nodeId)"
-                          >
-                            <ChevronDown :class="cn('size-4 transition-transform', isNodeExpanded(task.id, row.nodeId) && 'rotate-180')" aria-hidden="true" />
-                            {{ isNodeExpanded(task.id, row.nodeId) ? $t('operations.tasks.collapseAttempts') : $t('operations.tasks.expandAttempts') }}
-                          </Button>
-                          <Button
-                            v-if="row.failed"
-                            variant="outline"
-                            size="sm"
-                            :disabled="taskExecutionDisabled || actionPending === `node:${task.id}:${row.nodeId}`"
-                            @click="rerunNode(task, row.nodeId)"
-                          >
-                            <RotateCcw class="size-4" aria-hidden="true" />
-                            {{ $t('operations.tasks.actions.rerunNode') }}
-                          </Button>
-                        </td>
-                      </tr>
+                      <template v-for="row in nodeRows(task)" :key="row.nodeId">
+                        <tr class="border-t border-border">
+                          <td class="px-3 py-2">
+                            <div class="min-w-0">
+                              <p class="truncate font-medium">{{ nodeName(row.nodeId) }}</p>
+                              <p class="truncate font-mono text-xs text-muted-foreground">{{ row.nodeId }}</p>
+                            </div>
+                          </td>
+                          <td class="px-3 py-2">
+                            <Badge :variant="statusVariant(row.status)">{{ statusLabel(row.status) }}</Badge>
+                          </td>
+                          <td class="px-3 py-2">
+                            <p v-if="row.latestResult" class="font-mono text-xs">
+                              {{ $t('operations.tasks.exit', { code: row.latestResult.exit_code ?? 0 }) }}
+                              · {{ formatDateTime(row.latestResult.finished_at) }}
+                            </p>
+                            <p v-else class="text-xs text-muted-foreground">
+                              {{ row.status === 'queued' ? $t('operations.tasks.waitingLease') : $t('operations.tasks.running') }}
+                            </p>
+                            <p v-if="row.latestResult?.error" class="mt-1 line-clamp-1 text-xs text-destructive">
+                              {{ row.latestResult.error }}
+                            </p>
+                          </td>
+                          <td class="px-3 py-2">
+                            <Badge variant="outline">
+                              <ListChecks class="size-3.5" aria-hidden="true" />
+                              {{ row.attempts.length }}
+                            </Badge>
+                          </td>
+                          <td class="px-3 py-2 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              @click="toggleNodeExpanded(task.id, row.nodeId)"
+                            >
+                              <ChevronDown :class="cn('size-4 transition-transform', isNodeExpanded(task.id, row.nodeId) && 'rotate-180')" aria-hidden="true" />
+                              {{ isNodeExpanded(task.id, row.nodeId) ? $t('operations.tasks.collapseAttempts') : $t('operations.tasks.expandAttempts') }}
+                            </Button>
+                            <Button
+                              v-if="row.failed"
+                              variant="outline"
+                              size="sm"
+                              :disabled="taskExecutionDisabled || actionPending === `node:${task.id}:${row.nodeId}`"
+                              @click="rerunNode(task, row.nodeId)"
+                            >
+                              <RotateCcw class="size-4" aria-hidden="true" />
+                              {{ $t('operations.tasks.actions.rerunNode') }}
+                            </Button>
+                          </td>
+                        </tr>
+                        <tr v-if="isNodeExpanded(task.id, row.nodeId)" class="border-t border-border bg-muted/15">
+                          <td colspan="5" class="px-3 py-3">
+                            <div class="space-y-2">
+                              <p class="text-sm font-medium">{{ nodeName(row.nodeId) }}</p>
+                              <div
+                                v-for="attempt in row.attempts"
+                                :key="`${attempt.task.id}:${row.nodeId}`"
+                                class="rounded-md border border-border bg-background p-3"
+                              >
+                                <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                  <Badge :variant="attempt.result ? statusVariant(resultFailed(attempt.result) ? 'failed' : 'finished') : statusVariant(attempt.task.status)">
+                                    {{ attempt.result ? statusLabel(resultFailed(attempt.result) ? 'failed' : 'finished') : statusLabel(attempt.task.status) }}
+                                  </Badge>
+                                  <span class="font-mono">{{ shortId(attempt.task.id) }}</span>
+                                  <span v-if="attempt.task.rerun_of_node_id">{{ $t('operations.tasks.nodeRerunBadge') }}</span>
+                                  <span>{{ formatDateTime(attempt.result?.finished_at || attempt.task.created_at) }}</span>
+                                </div>
+                                <pre v-if="attempt.result?.stdout" class="max-h-56 overflow-auto rounded bg-muted p-3 text-xs">{{ attempt.result.stdout }}</pre>
+                                <pre v-if="attempt.result?.stderr" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.stderr }}</pre>
+                                <pre v-if="attempt.result?.error" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.error }}</pre>
+                                <p v-if="!attempt.result" class="text-xs text-muted-foreground">{{ $t('operations.tasks.noResultYet') }}</p>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      </template>
                     </tbody>
                   </table>
-                </div>
-              </div>
-
-              <div v-if="isExpanded(task.id) && hasExpandedNode(task)" class="space-y-3 border-t border-border bg-muted/15 p-4">
-                <div v-for="row in nodeRows(task)" v-show="isNodeExpanded(task.id, row.nodeId)" :key="`${task.id}:${row.nodeId}:attempts`" class="space-y-2">
-                  <p class="text-sm font-medium">{{ nodeName(row.nodeId) }}</p>
-                  <div
-                    v-for="attempt in row.attempts"
-                    :key="`${attempt.task.id}:${row.nodeId}`"
-                    class="rounded-md border border-border bg-background p-3"
-                  >
-                    <div class="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <Badge :variant="attempt.result ? statusVariant(resultFailed(attempt.result) ? 'failed' : 'finished') : statusVariant(attempt.task.status)">
-                        {{ attempt.result ? statusLabel(resultFailed(attempt.result) ? 'failed' : 'finished') : statusLabel(attempt.task.status) }}
-                      </Badge>
-                      <span class="font-mono">{{ shortId(attempt.task.id) }}</span>
-                      <span v-if="attempt.task.rerun_of_node_id">{{ $t('operations.tasks.nodeRerunBadge') }}</span>
-                      <span>{{ formatDateTime(attempt.result?.finished_at || attempt.task.created_at) }}</span>
-                    </div>
-                    <pre v-if="attempt.result?.stdout" class="max-h-56 overflow-auto rounded bg-muted p-3 text-xs">{{ attempt.result.stdout }}</pre>
-                    <pre v-if="attempt.result?.stderr" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.stderr }}</pre>
-                    <pre v-if="attempt.result?.error" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.error }}</pre>
-                    <p v-if="!attempt.result" class="text-xs text-muted-foreground">{{ $t('operations.tasks.noResultYet') }}</p>
-                  </div>
                 </div>
               </div>
             </div>
