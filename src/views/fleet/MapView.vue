@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -11,10 +12,18 @@ import {
   Radar,
   Route,
   Trash2,
+  Waypoints,
   WifiOff,
 } from "lucide-vue-next";
-import { api, unwrap, type NodeGeoResolveResult, type NodeGeoView } from "@/lib/api";
+import {
+  api,
+  unwrap,
+  type LinesListResponse,
+  type NodeGeoResolveResult,
+  type NodeGeoView,
+} from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePluginContributions } from "@/composables/usePluginContributions";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -43,6 +52,101 @@ const { t } = useI18n();
 const geoQuery = useAsyncData(() => api.nodes.geo().then((r) => unwrap(r, "nodes")), {
   pollInterval: 10000,
 });
+
+// ── VPN lines overlay (vpn-core plugin layer) ─────────────────────────────────
+// The dashboard owns the map; the plugin contributes DATA only, through the
+// scoped gateway. The toggle appears only while the vpn-core plugin is active,
+// and a gateway failure just marks the layer unavailable — the base map never
+// breaks. Deep-linkable via /map?layer=vpn (the Lines graph tab points here).
+const VPN_PLUGIN_ID = "latticenet.vpn-core";
+const route = useRoute();
+const { findPlugin } = usePluginContributions();
+const vpnLayerAvailable = computed(() => !!findPlugin(VPN_PLUGIN_ID));
+const vpnLayerOn = ref(route.query.layer === "vpn");
+const vpnLinesQuery = useAsyncData(
+  () => api.plugins.call<LinesListResponse>(VPN_PLUGIN_ID, `${VPN_PLUGIN_ID}/lines`, "list"),
+  { immediate: false },
+);
+
+watch(
+  vpnLayerOn,
+  (on) => {
+    if (on && vpnLinesQuery.data.value === undefined && !vpnLinesQuery.loading.value) {
+      void vpnLinesQuery.refresh();
+    }
+  },
+  { immediate: true },
+);
+
+type VpnMapEdge = { key: string; path: string; count: number; title: string };
+
+const vpnGroups = computed(() => vpnLinesQuery.data.value?.groups ?? []);
+const vpnLineTotal = computed(() =>
+  vpnGroups.value.reduce((sum, group) => sum + (group.lines?.length ?? 0), 0),
+);
+
+const vpnMarkers = computed(() => {
+  if (!vpnLayerOn.value || !vpnLayerAvailable.value) return [];
+  const byID = new Map(plotted.value.map((point) => [point.node.id, point]));
+  const out: { point: (typeof plotted.value)[number]; count: number; errors: number }[] = [];
+  for (const group of vpnGroups.value) {
+    const point = byID.get(group.node_id);
+    if (!point || !(group.lines?.length ?? 0)) continue;
+    out.push({
+      point,
+      count: group.lines.length,
+      errors: group.lines.filter((line) => line.status === "error" || line.last_error).length,
+    });
+  }
+  return out;
+});
+
+const vpnEdges = computed<VpnMapEdge[]>(() => {
+  if (!vpnLayerOn.value || !vpnLayerAvailable.value) return [];
+  const byID = new Map(plotted.value.map((point) => [point.node.id, point]));
+  const allLines = vpnGroups.value.flatMap((group) => group.lines ?? []);
+  const byHash = new Map(allLines.map((line) => [line.line_hash_id, line]));
+  const pairs = new Map<string, { from: string; to: string; count: number }>();
+  for (const line of allLines) {
+    for (const targetHash of line.jump_edges ?? []) {
+      const target = byHash.get(targetHash);
+      if (!target || target.node_id === line.node_id) continue;
+      const key = `${line.node_id}→${target.node_id}`;
+      const pair = pairs.get(key) ?? { from: line.node_id, to: target.node_id, count: 0 };
+      pair.count += 1;
+      pairs.set(key, pair);
+    }
+  }
+  const out: VpnMapEdge[] = [];
+  for (const pair of pairs.values()) {
+    const a = byID.get(pair.from);
+    const b = byID.get(pair.to);
+    if (!a || !b) continue;
+    // Quadratic arc lifted perpendicular to the chord — reads as a route,
+    // not a straight wire, and coincident nodes keep a visible loop.
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const lift = Math.min(60, 14 + len * 0.18);
+    out.push({
+      key: `${pair.from}:${pair.to}`,
+      path: `M ${a.x} ${a.y} Q ${mx - (dy / len) * lift} ${my + (dx / len) * lift} ${b.x} ${b.y}`,
+      count: pair.count,
+      title: t("fleet.map.vpn.edgeTitle", {
+        from: a.node.name || a.node.id,
+        to: b.node.name || b.node.id,
+        count: pair.count,
+      }),
+    });
+  }
+  return out;
+});
+
+function vpnRingRadius(count: number): number {
+  return 6 + Math.min(6, Math.log2(count + 1) * 2);
+}
 
 const selectedNodeId = ref("");
 const country = ref("");
@@ -591,6 +695,47 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                       />
                     </g>
                   </g>
+
+                  <!-- VPN lines overlay (vpn-core plugin layer): per-node line-count
+                       rings + resolvable relay arcs, in the same projected space so
+                       pan/zoom applies for free. Data-only via the plugin gateway. -->
+                  <g v-if="vpnLayerOn && vpnLayerAvailable">
+                    <path
+                      v-for="edge in vpnEdges"
+                      :key="edge.key"
+                      :d="edge.path"
+                      fill="none"
+                      stroke="oklch(0.72 0.13 230)"
+                      :stroke-width="Math.min(1 + Math.log2(edge.count + 1), 3.5)"
+                      stroke-linecap="round"
+                      opacity="0.85"
+                      vector-effect="non-scaling-stroke"
+                    >
+                      <title>{{ edge.title }}</title>
+                    </path>
+                    <g v-for="marker in vpnMarkers" :key="`vpn-${marker.point.node.id}`">
+                      <circle
+                        :cx="marker.point.x"
+                        :cy="marker.point.y"
+                        :r="vpnRingRadius(marker.count)"
+                        fill="none"
+                        :stroke="marker.errors ? 'oklch(0.62 0.19 25)' : 'oklch(0.72 0.13 230)'"
+                        stroke-width="1.3"
+                        opacity="0.9"
+                      >
+                        <title>
+                          {{ $t('fleet.map.vpn.markerTitle', { node: marker.point.node.name || marker.point.node.id, count: marker.count, errors: marker.errors }) }}
+                        </title>
+                      </circle>
+                      <text
+                        :x="marker.point.x + vpnRingRadius(marker.count) + 3"
+                        :y="marker.point.y + 3"
+                        class="pointer-events-none"
+                        font-size="8.5"
+                        fill="oklch(0.85 0.05 230)"
+                      >{{ marker.count }}</text>
+                    </g>
+                  </g>
                 </g>
               </svg>
 
@@ -602,12 +747,34 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 </div>
               </div>
 
-              <div class="absolute left-4 top-4 flex flex-wrap gap-2">
+              <div class="absolute left-4 top-4 flex flex-wrap items-center gap-2">
                 <Badge variant="secondary" class="bg-black/35 text-white hover:bg-black/35">
                   {{ $t('fleet.map.legend.online') }}
                 </Badge>
                 <Badge variant="secondary" class="bg-black/35 text-white hover:bg-black/35">
                   {{ $t('fleet.map.legend.offline') }}
+                </Badge>
+                <button
+                  v-if="vpnLayerAvailable"
+                  type="button"
+                  class="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-0.5 text-xs font-medium backdrop-blur transition-colors"
+                  :class="vpnLayerOn ? 'bg-[oklch(0.5_0.12_230/0.85)] text-white' : 'bg-black/35 text-white/80 hover:bg-black/50'"
+                  :aria-pressed="vpnLayerOn"
+                  @click="vpnLayerOn = !vpnLayerOn"
+                >
+                  <Waypoints class="size-3.5" aria-hidden="true" />
+                  {{ $t('fleet.map.vpn.toggle') }}
+                </button>
+                <Badge
+                  v-if="vpnLayerOn && vpnLayerAvailable"
+                  variant="secondary"
+                  class="bg-black/35 text-white/85 hover:bg-black/35"
+                >
+                  <template v-if="vpnLinesQuery.loading.value">{{ $t('common.state.loading') }}</template>
+                  <template v-else-if="vpnLinesQuery.error.value">{{ $t('fleet.map.vpn.unavailable') }}</template>
+                  <template v-else>
+                    {{ $t('fleet.map.vpn.summary', { lines: vpnLineTotal, nodes: vpnMarkers.length, edges: vpnEdges.length }) }}
+                  </template>
                 </Badge>
               </div>
 
