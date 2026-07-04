@@ -1126,7 +1126,7 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-6 overflow-hidden p-6">
+  <div class="flex h-[calc(100vh-3.5rem)] max-h-[calc(100vh-3.5rem)] min-h-0 flex-col gap-6 overflow-hidden p-6">
     <PageHeader class="shrink-0" :title="$t('lines.title')" :description="$t('lines.description')">
       <template #status>
         <FreshnessLabel :last-updated="linesQuery.lastUpdated.value" />
@@ -1214,10 +1214,10 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
       :is-empty="isEmpty"
       :empty-title="$t('lines.emptyTitle')"
       :empty-description="$t('lines.emptyDescription')"
-      class="min-h-0 flex-1"
+      class="flex min-h-0 flex-1 flex-col overflow-hidden"
       @retry="linesQuery.refresh"
     >
-      <Tabs v-model="activeTab" class="h-full min-h-0 gap-4">
+      <Tabs v-model="activeTab" class="h-full min-h-0 overflow-hidden gap-4">
         <TabsList class="w-full shrink-0 sm:w-auto">
           <TabsTrigger value="lines">{{ $t('lines.tabLines') }}</TabsTrigger>
           <TabsTrigger value="graph">{{ $t('lines.tabGraph') }}</TabsTrigger>

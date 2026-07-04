@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watchEffect } from "vue";
+import { useRoute } from "vue-router";
 import { storeToRefs } from "pinia";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -9,6 +10,7 @@ import AppHeader from "./components/AppHeader.vue";
 import CommandPalette from "@/components/common/CommandPalette.vue";
 
 const ui = useUiStore();
+const route = useRoute();
 const { density } = storeToRefs(ui);
 
 // Sidebar collapse persists via the ui store (localStorage-backed) so the rail
@@ -21,6 +23,18 @@ const collapsed = computed({
 
 const mobileOpen = ref(false);
 const commandOpen = ref(false);
+
+const pluginViewRoute = computed(() => {
+  const raw = route.params.route;
+  return Array.isArray(raw) ? raw.join("/") : String(raw ?? "");
+});
+
+const boundedMainScroll = computed(
+  () =>
+    route.name === "plugin-view" &&
+    route.params.pluginId === "latticenet.vpn-core" &&
+    pluginViewRoute.value === "lines",
+);
 
 // Reflect the persisted density preference onto <html data-density> so the
 // opt-in `density-*` utilities in app.css take effect. Runs on mount and on
@@ -52,7 +66,13 @@ watchEffect(() => {
           @open-command="commandOpen = true"
         />
 
-        <main id="main-content" role="main" tabindex="-1" class="min-h-0 flex-1 overflow-y-auto">
+        <main
+          id="main-content"
+          role="main"
+          tabindex="-1"
+          class="min-h-0 flex-1"
+          :class="boundedMainScroll ? 'overflow-hidden' : 'overflow-y-auto'"
+        >
           <RouterView v-slot="{ Component, route }">
             <!-- Instant nav: enter-only fade, NO mode="out-in" (which forced a
                  ~0.22s fade-out before the next view mounted, making tab clicks
