@@ -39,6 +39,7 @@ export default {
       copyFailed: "Copy failed",
       search: "Search",
       retry: "Retry",
+      reset: "Reset",
       confirm: "Confirm",
       rotate: "Rotate",
       run: "Run",

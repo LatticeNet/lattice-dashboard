@@ -134,6 +134,7 @@ export interface AgentRuntimeConfig {
 
 export interface Node {
   id: string;
+  lattice_identity_uuid?: string;
   name: string;
   comment?: string;
   tags?: string[];
@@ -723,7 +724,11 @@ export interface Line {
   id: string;
   /** Stable content hash identifying the line; mono + copyable in the UI. */
   line_hash_id: string;
+  /** Stable identity persisted in sing-box `_lattice.line_id`, when available. */
+  line_id?: string;
   node_id: string;
+  /** Stable node identity persisted in sing-box `_lattice.node_uuid`, when available. */
+  node_identity_uuid?: string;
   core: string;
   source: LineSource | string;
   managed: boolean;

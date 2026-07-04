@@ -71,6 +71,11 @@ type VpnUserOption = {
   email: string;
   name?: string;
   enabled: boolean;
+  bindings?: {
+    line_hash_id: string;
+    enabled: boolean;
+    flow_override?: string;
+  }[];
 };
 
 // Real Badge variant tokens (mirrors src/components/ui/badge/badgeVariants.ts).
@@ -135,9 +140,8 @@ const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const selectableNodes = computed<Node[]>(() =>
   [...nodes.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
 );
-const vpnUsers = computed<VpnUserOption[]>(() =>
-  (usersQuery.data.value?.users ?? []).filter((u) => u.enabled),
-);
+const allVpnUsers = computed<VpnUserOption[]>(() => usersQuery.data.value?.users ?? []);
+const vpnUsers = computed<VpnUserOption[]>(() => allVpnUsers.value.filter((u) => u.enabled));
 
 // ── KPI strip ────────────────────────────────────────────────────────────────
 const totalLines = computed(() => linesQuery.data.value?.count ?? allLines.value.length);
@@ -189,6 +193,81 @@ function statusLabel(status?: string): string {
     default:
       return status || t("lines.statusUnknown");
   }
+}
+
+type ListenExposure = "public" | "loopback" | "bound" | "unknown";
+
+type ListenPresentation = {
+  label: string;
+  exposure: ListenExposure;
+  exposureLabel: string;
+  badgeVariant: BadgeVariant;
+};
+
+function endpointLabel(host: string, port?: number): string {
+  if (!port) return host;
+  const wrapped = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${wrapped}:${port}`;
+}
+
+function listenPresentation(line: Pick<Line, "listen_host" | "listen_port">): ListenPresentation {
+  const rawHost = (line.listen_host ?? "").trim();
+  const port = line.listen_port || undefined;
+  if (!rawHost && !port) {
+    return {
+      label: "—",
+      exposure: "unknown",
+      exposureLabel: t("lines.listenUnknown"),
+      badgeVariant: "secondary",
+    };
+  }
+
+  const lowerHost = rawHost.toLowerCase();
+  if (!rawHost || rawHost === "::" || rawHost === "0.0.0.0" || rawHost === "*") {
+    return {
+      label: endpointLabel("0.0.0.0", port),
+      exposure: "public",
+      exposureLabel: t("lines.listenAllInterfaces"),
+      badgeVariant: "info",
+    };
+  }
+  if (lowerHost === "127.0.0.1" || lowerHost === "::1" || lowerHost === "localhost") {
+    return {
+      label: endpointLabel(lowerHost === "::1" ? "::1" : "127.0.0.1", port),
+      exposure: "loopback",
+      exposureLabel: t("lines.listenLoopback"),
+      badgeVariant: "secondary",
+    };
+  }
+  return {
+    label: endpointLabel(rawHost, port),
+    exposure: "bound",
+    exposureLabel: t("lines.listenBound"),
+    badgeVariant: "outline",
+  };
+}
+
+type OutboundPresentation = {
+  label: string;
+  detail: string;
+  relayed: boolean;
+};
+
+function outboundPresentation(ref?: string): OutboundPresentation {
+  const raw = (ref ?? "").trim();
+  const lower = raw.toLowerCase();
+  if (!raw || lower === "direct" || lower.startsWith("public_key_")) {
+    return {
+      label: t("lines.outboundDirect"),
+      detail: raw || "direct",
+      relayed: false,
+    };
+  }
+  return {
+    label: raw,
+    detail: raw,
+    relayed: true,
+  };
 }
 
 const PROTOCOLS: { value: string; label: string }[] = [
@@ -261,7 +340,7 @@ const addPortError = computed(() =>
 );
 
 function userLabel(id: string): string {
-  const u = vpnUsers.value.find((x) => x.id === id);
+  const u = allVpnUsers.value.find((x) => x.id === id);
   if (!u) return id;
   return u.name ? `${u.email} · ${u.name}` : u.email;
 }
@@ -396,6 +475,7 @@ const selected = ref<Line | null>(null);
 const detailOpen = ref(false);
 function openDetail(line: Line) {
   selected.value = line;
+  resetRosterSelection(line);
   detailOpen.value = true;
 }
 
@@ -403,27 +483,138 @@ const metadataEntries = computed<[string, string][]>(() =>
   selected.value?.metadata ? Object.entries(selected.value.metadata) : [],
 );
 
+const rosterSelection = ref<string[]>([]);
+const rosterTouched = ref(false);
+const rosterSaving = ref(false);
+const rosterError = ref("");
+
+function userBoundToLine(user: VpnUserOption, lineHashID: string): boolean {
+  return (user.bindings ?? []).some((binding) =>
+    binding.line_hash_id === lineHashID && binding.enabled !== false,
+  );
+}
+
+function currentRosterIDs(lineHashID = selected.value?.line_hash_id ?? ""): string[] {
+  if (!lineHashID) return [];
+  return allVpnUsers.value
+    .filter((user) => userBoundToLine(user, lineHashID))
+    .map((user) => user.id)
+    .sort();
+}
+
+function resetRosterSelection(line = selected.value) {
+  rosterSelection.value = currentRosterIDs(line?.line_hash_id ?? "");
+  rosterTouched.value = false;
+  rosterError.value = "";
+}
+
+watch(
+  () => [selected.value?.line_hash_id, usersQuery.data.value] as const,
+  () => {
+    if (!rosterTouched.value) resetRosterSelection();
+  },
+);
+
+const rosterUsers = computed<VpnUserOption[]>(() => {
+  const lineHashID = selected.value?.line_hash_id ?? "";
+  const current = new Set(currentRosterIDs(lineHashID));
+  return allVpnUsers.value
+    .filter((user) => user.enabled || current.has(user.id))
+    .sort((a, b) => (a.email || a.id).localeCompare(b.email || b.id));
+});
+
+const rosterDirty = computed(() => {
+  const current = currentRosterIDs();
+  if (current.length !== rosterSelection.value.length) return true;
+  const desired = [...rosterSelection.value].sort();
+  return current.some((id, idx) => id !== desired[idx]);
+});
+
+function rosterChecked(userID: string): boolean {
+  return rosterSelection.value.includes(userID);
+}
+
+function setRosterChecked(userID: string, checked: boolean) {
+  const next = new Set(rosterSelection.value);
+  if (checked) next.add(userID);
+  else next.delete(userID);
+  rosterSelection.value = [...next].sort();
+  rosterTouched.value = true;
+  rosterError.value = "";
+}
+
+function onRosterToggle(userID: string, event: Event) {
+  setRosterChecked(userID, (event.target as HTMLInputElement | null)?.checked ?? false);
+}
+
+async function saveRoster() {
+  const line = selected.value;
+  if (!line?.line_hash_id || rosterSaving.value || !canAdmin.value) return;
+
+  const current = new Set(currentRosterIDs(line.line_hash_id));
+  const desired = new Set(rosterSelection.value);
+  const bindIDs = [...desired].filter((id) => !current.has(id));
+  const unbindIDs = [...current].filter((id) => !desired.has(id));
+  if (!bindIDs.length && !unbindIDs.length) {
+    rosterTouched.value = false;
+    return;
+  }
+
+  rosterSaving.value = true;
+  rosterError.value = "";
+  const failures: string[] = [];
+  try {
+    for (const userID of bindIDs) {
+      try {
+        await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "bind", {
+          user_id: userID,
+          line_hash_id: line.line_hash_id,
+        });
+      } catch (error) {
+        failures.push(`${userLabel(userID)}: ${error instanceof Error ? error.message : t("lines.rosterBindFailed")}`);
+      }
+    }
+    for (const userID of unbindIDs) {
+      try {
+        await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "unbind", {
+          user_id: userID,
+          line_hash_id: line.line_hash_id,
+        });
+      } catch (error) {
+        failures.push(`${userLabel(userID)}: ${error instanceof Error ? error.message : t("lines.rosterUnbindFailed")}`);
+      }
+    }
+    await usersQuery.refresh();
+    resetRosterSelection(line);
+    if (failures.length) {
+      rosterError.value = failures.join("\n");
+      toast.error(t("lines.rosterPartialFailure", { count: failures.length }));
+    } else {
+      toast.success(t("lines.rosterSaved"));
+    }
+  } finally {
+    rosterSaving.value = false;
+  }
+}
+
 const detailRows = computed<{ label: string; value: string }[]>(() => {
   const l = selected.value;
   if (!l) return [];
-  const listen = l.listen_host
-    ? l.listen_port
-      ? `${l.listen_host}:${l.listen_port}`
-      : l.listen_host
-    : l.listen_port
-      ? `:${l.listen_port}`
-      : "—";
+  const listen = listenPresentation(l);
+  const outbound = outboundPresentation(l.outbound_ref);
   const rows: { label: string; value: string }[] = [
     { label: t("lines.fieldNode"), value: l.node_id },
+    { label: t("lines.fieldNodeIdentityUuid"), value: l.node_identity_uuid || "—" },
+    { label: t("lines.fieldLineId"), value: l.line_id || "—" },
     { label: t("lines.fieldSource"), value: sourceLabel(l.source) },
     { label: t("lines.fieldCore"), value: l.core || "—" },
     { label: t("lines.fieldName"), value: l.name || "—" },
     { label: t("lines.fieldTag"), value: l.tag || "—" },
     { label: t("lines.fieldType"), value: l.type || "—" },
-    { label: t("lines.fieldListen"), value: listen },
+    { label: t("lines.fieldListen"), value: `${listen.label} · ${listen.exposureLabel}` },
     { label: t("lines.fieldPublic"), value: l.public_host || "—" },
     { label: t("lines.fieldDomain"), value: l.domain || "—" },
-    { label: t("lines.fieldOutbound"), value: l.outbound_ref || "—" },
+    { label: t("lines.fieldOutbound"), value: outbound.relayed ? outbound.label : outbound.detail },
     {
       label: t("lines.fieldUsers"),
       value: l.user_known ? String(l.user_count) : t("lines.usersUnknown"),
@@ -536,8 +727,8 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
           </Button>
         </div>
 
-        <div class="grid gap-3 2xl:grid-cols-2">
-        <Card v-for="group in visibleGroups" :key="group.node_id" class="overflow-hidden">
+        <div class="columns-1 gap-3 [column-fill:balance] 2xl:columns-2">
+        <Card v-for="group in visibleGroups" :key="group.node_id" class="mb-3 break-inside-avoid overflow-hidden">
           <CardHeader class="px-4 py-3">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div class="min-w-0 space-y-1">
@@ -616,19 +807,30 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                       <span class="font-mono text-xs text-muted-foreground">{{ line.type || "—" }}</span>
                     </td>
                     <td class="px-3 py-2">
-                      <span class="font-mono text-xs">
-                        {{ line.listen_host || "—" }}<span
-                          v-if="line.listen_port"
-                          class="text-muted-foreground"
-                        >:{{ line.listen_port }}</span>
-                      </span>
+                      <div class="space-y-1">
+                        <span class="block font-mono text-xs">{{ listenPresentation(line).label }}</span>
+                        <Badge :variant="listenPresentation(line).badgeVariant" class="text-[10px]">
+                          {{ listenPresentation(line).exposureLabel }}
+                        </Badge>
+                      </div>
                     </td>
                     <td class="px-3 py-2">
                       <div class="font-mono text-xs">{{ line.public_host || "—" }}</div>
                       <div v-if="line.domain" class="font-mono text-xs text-muted-foreground">{{ line.domain }}</div>
                     </td>
                     <td class="px-3 py-2">
-                      <span class="font-mono text-xs">{{ line.outbound_ref || "—" }}</span>
+                      <div class="max-w-[180px] space-y-1">
+                        <Badge :variant="outboundPresentation(line.outbound_ref).relayed ? 'info' : 'secondary'" class="text-[10px]">
+                          {{ outboundPresentation(line.outbound_ref).relayed ? $t('lines.outboundRelay') : $t('lines.outboundDirect') }}
+                        </Badge>
+                        <span
+                          v-if="outboundPresentation(line.outbound_ref).relayed"
+                          class="block truncate font-mono text-xs text-muted-foreground"
+                          :title="outboundPresentation(line.outbound_ref).detail"
+                        >
+                          {{ outboundPresentation(line.outbound_ref).detail }}
+                        </span>
+                      </div>
                     </td>
                     <td class="px-3 py-2 text-right">
                       <Tooltip v-if="!line.user_known">
@@ -695,6 +897,68 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               <dd class="min-w-0 break-words text-right font-mono text-xs">{{ row.value }}</dd>
             </div>
           </dl>
+
+          <div class="space-y-3 rounded-md border border-border p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-sm font-medium">{{ $t('lines.rosterTitle') }}</p>
+                <p class="text-xs text-muted-foreground">
+                  {{ $t('lines.rosterCount', { count: currentRosterIDs().length }) }}
+                </p>
+              </div>
+              <div v-if="canAdmin" class="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  :disabled="rosterSaving || !rosterDirty"
+                  @click="resetRosterSelection()"
+                >
+                  {{ $t('common.actions.reset') }}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  :disabled="rosterSaving || !rosterDirty"
+                  @click="saveRoster"
+                >
+                  <RefreshCw v-if="rosterSaving" class="size-4 animate-spin" aria-hidden="true" />
+                  {{ $t('common.actions.save') }}
+                </Button>
+              </div>
+            </div>
+            <div v-if="usersQuery.loading.value" class="text-xs text-muted-foreground">
+              {{ $t('common.state.loading') }}
+            </div>
+            <div v-else-if="!rosterUsers.length" class="text-xs text-muted-foreground">
+              {{ $t('lines.noUsers') }}
+            </div>
+            <div v-else class="grid gap-2 sm:grid-cols-2">
+              <label
+                v-for="user in rosterUsers"
+                :key="user.id"
+                class="flex min-w-0 items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm"
+                :class="cn(!canAdmin && 'opacity-80')"
+              >
+                <input
+                  type="checkbox"
+                  class="mt-0.5 size-4 accent-primary"
+                  :checked="rosterChecked(user.id)"
+                  :disabled="!canAdmin || rosterSaving"
+                  @change="onRosterToggle(user.id, $event)"
+                />
+                <span class="min-w-0">
+                  <span class="block truncate font-medium">{{ user.email || user.id }}</span>
+                  <span class="block truncate text-xs text-muted-foreground">
+                    {{ user.name || user.id }}
+                  </span>
+                </span>
+              </label>
+            </div>
+            <p v-if="rosterError" class="whitespace-pre-wrap rounded-md bg-destructive/10 p-2 text-xs text-destructive">
+              {{ rosterError }}
+            </p>
+          </div>
 
           <div class="space-y-2">
             <p class="text-xs font-medium text-muted-foreground">{{ $t('lines.jumpEdgesTitle') }}</p>

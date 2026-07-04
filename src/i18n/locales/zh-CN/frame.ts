@@ -38,6 +38,7 @@ export default {
       copyFailed: "复制失败",
       search: "搜索",
       retry: "重试",
+      reset: "重置",
       confirm: "确认",
       rotate: "轮换",
       run: "运行",

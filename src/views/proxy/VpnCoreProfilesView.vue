@@ -153,7 +153,7 @@ function collectorVariant(status?: string) {
           </div>
         </div>
 
-      <div v-if="viewMode === 'cards'" class="grid gap-4 lg:grid-cols-2">
+      <div v-if="viewMode === 'cards'" class="grid items-start gap-4 lg:grid-cols-2">
         <Card v-for="p in profiles" :key="p.node_id">
           <CardHeader>
             <div class="flex items-start justify-between gap-3">
