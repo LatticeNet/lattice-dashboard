@@ -7,7 +7,9 @@ import {
   Ban,
   CheckCircle2,
   ChevronDown,
+  KeyRound,
   ListChecks,
+  Lock,
   Play,
   RefreshCw,
   RotateCcw,
@@ -43,6 +45,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogScrollContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -124,6 +134,64 @@ const historyPage = ref(Number.isFinite(seededPage) && seededPage > 0 ? Math.flo
 const HISTORY_PAGE_SIZE = 8;
 const creating = ref(false);
 const actionPending = ref<string | null>(null);
+const revealedScripts = ref<Record<string, string>>({});
+const revealingScriptID = ref("");
+
+const stepUpOpen = ref(false);
+const stepUpCode = ref("");
+const stepUpError = ref("");
+const stepUpPending = ref(false);
+const stepUpGrant = ref("");
+const stepUpGrantExpiresAt = ref(0);
+let stepUpResolve: ((grant: string) => void) | undefined;
+let stepUpReject: ((error: Error) => void) | undefined;
+
+function cachedStepUpGrant(): string {
+  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
+  return "";
+}
+
+function requestStepUp(): Promise<string> {
+  const cached = cachedStepUpGrant();
+  if (cached) return Promise.resolve(cached);
+  stepUpCode.value = "";
+  stepUpError.value = "";
+  stepUpOpen.value = true;
+  return new Promise((resolve, reject) => {
+    stepUpResolve = resolve;
+    stepUpReject = reject;
+  });
+}
+
+async function submitStepUp() {
+  const code = stepUpCode.value.trim();
+  if (!code || stepUpPending.value) return;
+  stepUpPending.value = true;
+  let ok = false;
+  try {
+    const result = await api.security.stepUp(code);
+    stepUpGrant.value = result.grant;
+    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
+    stepUpOpen.value = false;
+    stepUpResolve?.(result.grant);
+    ok = true;
+  } catch (error) {
+    stepUpError.value = error instanceof Error ? error.message : t("operations.tasks.stepUpFailed");
+  } finally {
+    stepUpPending.value = false;
+    if (ok) {
+      stepUpResolve = undefined;
+      stepUpReject = undefined;
+    }
+  }
+}
+
+function cancelStepUp() {
+  stepUpOpen.value = false;
+  stepUpReject?.(new Error(t("operations.tasks.stepUpRequired")));
+  stepUpResolve = undefined;
+  stepUpReject = undefined;
+}
 
 const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const tasks = computed<TaskView[]>(() => tasksQuery.data.value ?? []);
@@ -462,6 +530,26 @@ async function rerunTask(task: TaskView) {
     toast.error(error instanceof Error ? error.message : t("operations.tasks.toastRerunFailed"));
   } finally {
     actionPending.value = null;
+  }
+}
+
+async function revealScript(task: TaskView) {
+  if (revealedScripts.value[task.id]) {
+    const next = { ...revealedScripts.value };
+    delete next[task.id];
+    revealedScripts.value = next;
+    return;
+  }
+  if (revealingScriptID.value) return;
+  revealingScriptID.value = task.id;
+  try {
+    const grant = await requestStepUp();
+    const result = await api.tasks.revealScript(task.id, grant);
+    revealedScripts.value = { ...revealedScripts.value, [task.id]: result.script };
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastRevealScriptFailed"));
+  } finally {
+    revealingScriptID.value = "";
   }
 }
 
@@ -809,6 +897,11 @@ async function deleteTask(task: TaskView) {
                     <Badge variant="outline">
                       {{ $t('operations.tasks.seconds', { count: task.timeout_sec ?? 0 }) }}
                     </Badge>
+                    <Button variant="outline" size="sm" :disabled="revealingScriptID === task.id" @click="revealScript(task)">
+                      <RefreshCw v-if="revealingScriptID === task.id" class="size-4 animate-spin" aria-hidden="true" />
+                      <KeyRound v-else class="size-4" aria-hidden="true" />
+                      {{ revealedScripts[task.id] ? $t('operations.tasks.hideScript') : $t('operations.tasks.revealScript') }}
+                    </Button>
                     <Button variant="outline" size="sm" :disabled="taskExecutionDisabled || actionPending === `task:${task.id}`" @click="rerunTask(task)">
                       <RotateCcw class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.rerun') }}
@@ -842,6 +935,17 @@ async function deleteTask(task: TaskView) {
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.latest') }}</p>
                     <p class="mt-1 line-clamp-1 text-xs">{{ taskProgressLabel(task) }}</p>
                   </div>
+                </div>
+
+                <div v-if="revealedScripts[task.id]" class="rounded-md border border-border bg-muted/20 p-3">
+                  <div class="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span class="inline-flex items-center gap-1">
+                      <Lock class="size-3.5" aria-hidden="true" />
+                      {{ $t('operations.tasks.scriptRevealed') }}
+                    </span>
+                    <span class="font-mono">{{ task.script_sha256 }}</span>
+                  </div>
+                  <pre class="max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[task.id] }}</pre>
                 </div>
 
                 <Button variant="ghost" size="sm" @click="toggleExpanded(task.id)">
@@ -954,5 +1058,38 @@ async function deleteTask(task: TaskView) {
         </DataState>
       </CardContent>
     </Card>
+
+    <Dialog v-model:open="stepUpOpen">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="cancelStepUp">
+        <DialogHeader>
+          <DialogTitle>{{ $t('operations.tasks.stepUpTitle') }}</DialogTitle>
+          <DialogDescription>{{ $t('operations.tasks.stepUpDescription') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitStepUp">
+          <div class="grid gap-2">
+            <Label for="task-step-up-code">{{ $t('operations.tasks.stepUpCode') }}</Label>
+            <Input
+              id="task-step-up-code"
+              v-model="stepUpCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="123456"
+            />
+            <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="cancelStepUp">
+              {{ $t('common.actions.cancel') }}
+            </Button>
+            <Button type="submit" :disabled="stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+              <Lock v-else class="size-4" aria-hidden="true" />
+              {{ $t('operations.tasks.stepUpSubmit') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
   </div>
 </template>

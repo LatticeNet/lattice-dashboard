@@ -272,6 +272,15 @@ export interface TaskView {
   finished_at?: string;
 }
 
+export interface TaskScriptRevealResponse {
+  ok: boolean;
+  id: string;
+  interpreter: string;
+  script: string;
+  script_sha256?: string;
+  script_size_bytes?: number;
+}
+
 export interface TaskResult {
   task_id: string;
   lease_id?: string;
@@ -698,6 +707,8 @@ export interface ProxyManagedDeleteRequest {
   node_id: string;
   /** Must match a node name already present in the machine's discovered inventory. */
   name: string;
+  /** 1-minute interactive 2FA step-up grant required by the server. */
+  step_up_grant?: string;
 }
 
 export interface ProxyManagedProbeRequest {
@@ -714,9 +725,49 @@ export interface ProxyManagedConncheckRequest {
   timeout_sec?: number;
 }
 
+export interface ProxyManagedUsersRequest {
+  node_id: string;
+  line_hash_id: string;
+  bind_user_ids?: string[];
+  unbind_user_ids?: string[];
+}
+
 export interface ProxyManagedTaskResponse {
   ok: boolean;
   task_id: string;
+}
+
+export interface ProxyManagedLineRevealRequest {
+  node_id: string;
+  line_hash_id: string;
+  step_up_grant: string;
+}
+
+export interface ProxyManagedLineRevealResponse {
+  ok: boolean;
+  line_hash_id: string;
+  share_url?: string;
+  node?: SingBoxNode;
+}
+
+export interface VPNCredentialRevealResponse {
+  ok: boolean;
+  user: unknown;
+  credentials: Array<{
+    protocol: string;
+    uuid?: string;
+    password?: string;
+    flow?: string;
+    method?: string;
+    security?: string;
+  }>;
+  sub_id?: string;
+}
+
+export interface StepUpResponse {
+  ok: boolean;
+  grant: string;
+  expires_at: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

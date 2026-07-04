@@ -14,6 +14,7 @@ import type {
   EnrollTokenResponse,
   TaskView,
   TaskResult,
+  TaskScriptRevealResponse,
   TerminalEventsResponse,
   TerminalSession,
   ApprovalView,
@@ -38,7 +39,12 @@ import type {
   ProxyManagedConncheckRequest,
   ProxyManagedDeleteRequest,
   ProxyManagedProbeRequest,
+  ProxyManagedUsersRequest,
+  ProxyManagedLineRevealRequest,
+  ProxyManagedLineRevealResponse,
   ProxyManagedTaskResponse,
+  VPNCredentialRevealResponse,
+  StepUpResponse,
   SubStoreImportRequest,
   SubStoreImportResponse,
   SubStoreStatusResponse,
@@ -172,6 +178,10 @@ export const api = {
         .then((r) => (Array.isArray(r) ? r : (r?.providers ?? []))),
   },
 
+  security: {
+    stepUp: (code: string) => http.post<StepUpResponse>("/api/security/step-up", { code }),
+  },
+
   nodes: {
     list: () => http.get<{ nodes: Node[] } | Node[]>("/api/nodes"),
     enrollToken: (input: {
@@ -258,6 +268,8 @@ export const api = {
   tasks: {
     list: () => http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks"),
     results: () => http.get<{ results: TaskResult[] } | TaskResult[]>("/api/task-results"),
+    revealScript: (id: string, step_up_grant: string) =>
+      http.post<TaskScriptRevealResponse>("/api/tasks/reveal-script", { id, step_up_grant }),
     create: (input: {
       targets: string[];
       interpreter: string;
@@ -365,6 +377,8 @@ export const api = {
     upsertUser: (input: ProxyUserUpsertRequest) =>
       http.post<ProxyUserView>("/api/proxy/users", input),
     deleteUser: (id: string) => http.post<{ ok: boolean }>("/api/proxy/users/delete", { id }),
+    revealUserCredentials: (id: string, step_up_grant: string) =>
+      http.post<VPNCredentialRevealResponse>("/api/proxy/users/reveal-credentials", { id, step_up_grant }),
     rotateSubToken: (id: string) =>
       http.post<RotateSubTokenResponse>("/api/proxy/users/rotate-sub-token", { id }),
     profiles: () => http.get<{ profiles: ProxyNodeProfileView[] }>("/api/proxy/profiles"),
@@ -392,6 +406,10 @@ export const api = {
         http.post<ProxyManagedTaskResponse>("/api/proxy/managed/delete", input),
       conncheck: (input: ProxyManagedConncheckRequest) =>
         http.post<ProxyManagedTaskResponse>("/api/proxy/managed/conncheck", input),
+      users: (input: ProxyManagedUsersRequest) =>
+        http.post<ProxyManagedTaskResponse & { bind_user_ids?: string[]; unbind_user_ids?: string[] }>("/api/proxy/managed/users", input),
+      revealLine: (input: ProxyManagedLineRevealRequest) =>
+        http.post<ProxyManagedLineRevealResponse>("/api/proxy/managed/reveal-line", input),
     },
   },
 

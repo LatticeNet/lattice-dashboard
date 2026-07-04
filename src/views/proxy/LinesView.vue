@@ -7,7 +7,10 @@ import {
   Activity,
   ArrowUpRight,
   ChevronRight,
+  ExternalLink,
   Info,
+  KeyRound,
+  Lock,
   Plus,
   RefreshCw,
   Server,
@@ -24,6 +27,9 @@ import {
   type LinesListResponse,
   type Node,
   type ProxyManagedAddRequest,
+  type ProxyManagedLineRevealResponse,
+  type TaskResult,
+  type VPNCredentialRevealResponse,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -116,6 +122,10 @@ const usersQuery = useAsyncData(
     ),
   { pollInterval: 30000 },
 );
+const taskResultsQuery = useAsyncData<TaskResult[] | undefined>(
+  () => api.tasks.results().then((r) => unwrap(r, "results")),
+  { pollInterval: 3000 },
+);
 
 const groups = computed<LineGroup[]>(() => linesQuery.data.value?.groups ?? []);
 const sortedGroups = computed<LineGroup[]>(() =>
@@ -144,6 +154,150 @@ const selectableNodes = computed<Node[]>(() =>
 );
 const allVpnUsers = computed<VpnUserOption[]>(() => usersQuery.data.value?.users ?? []);
 const vpnUsers = computed<VpnUserOption[]>(() => allVpnUsers.value.filter((u) => u.enabled));
+const taskResults = computed<TaskResult[]>(() => taskResultsQuery.data.value ?? []);
+
+type TopologyNode = {
+  id: string;
+  name: string;
+  lines: number;
+  errors: number;
+};
+
+type TopologyGraphNode = TopologyNode & {
+  x: number;
+  y: number;
+};
+
+type TopologyGraphEdge = {
+  id: string;
+  source: TopologyGraphNode;
+  target: TopologyGraphNode;
+  label: string;
+};
+
+const topologyNodes = computed<TopologyNode[]>(() =>
+  prioritizedGroups.value.slice(0, 16).map((group) => ({
+    id: group.node_id,
+    name: group.node_name || group.node_id,
+    lines: group.lines.length,
+    errors: group.lines.filter((line) => line.status === "error" || line.last_error).length,
+  })),
+);
+
+const topologyEdges = computed(() => {
+  const linesByHash = new Map(allLines.value.map((line) => [line.line_hash_id, line]));
+  return allLines.value.flatMap((line) =>
+    (line.jump_edges ?? []).map((targetHash) => ({
+      source: line,
+      targetHash,
+      target: linesByHash.get(targetHash),
+    })),
+  ).slice(0, 24);
+});
+
+const topologyGraphNodes = computed<TopologyGraphNode[]>(() => {
+  const items = topologyNodes.value.slice(0, 12);
+  if (!items.length) return [];
+  const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(items.length))));
+  const rows = Math.ceil(items.length / cols);
+  const left = 86;
+  const top = 56;
+  const width = 788;
+  const height = 150;
+  return items.map((node, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    return {
+      ...node,
+      x: cols === 1 ? 480 : left + (width * col) / Math.max(1, cols - 1),
+      y: rows === 1 ? 130 : top + (height * row) / Math.max(1, rows - 1),
+    };
+  });
+});
+
+const topologyGraphEdges = computed<TopologyGraphEdge[]>(() => {
+  const nodesByID = new Map(topologyGraphNodes.value.map((node) => [node.id, node]));
+  return topologyEdges.value.flatMap((edge) => {
+    const source = nodesByID.get(edge.source.node_id);
+    const target = edge.target?.node_id ? nodesByID.get(edge.target.node_id) : undefined;
+    if (!source || !target) return [];
+    return [{
+      id: `${edge.source.line_hash_id}:${edge.targetHash}`,
+      source,
+      target,
+      label: `${shortLineID(edge.source.line_hash_id)} -> ${shortLineID(edge.targetHash)}`,
+    }];
+  });
+});
+
+function shortLineID(id?: string): string {
+  if (!id) return "—";
+  return id.length > 18 ? `${id.slice(0, 10)}…${id.slice(-6)}` : id;
+}
+
+function shortNodeLabel(id?: string): string {
+  if (!id) return "—";
+  const node = nodes.value.find((n) => n.id === id);
+  return node?.name || id;
+}
+
+// ── Interactive 2FA step-up ─────────────────────────────────────────────────
+const stepUpOpen = ref(false);
+const stepUpCode = ref("");
+const stepUpError = ref("");
+const stepUpPending = ref(false);
+const stepUpGrant = ref("");
+const stepUpGrantExpiresAt = ref(0);
+let stepUpResolve: ((grant: string) => void) | undefined;
+let stepUpReject: ((error: Error) => void) | undefined;
+
+function cachedStepUpGrant(): string {
+  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
+  return "";
+}
+
+function requestStepUp(): Promise<string> {
+  const cached = cachedStepUpGrant();
+  if (cached) return Promise.resolve(cached);
+  stepUpCode.value = "";
+  stepUpError.value = "";
+  stepUpOpen.value = true;
+  return new Promise((resolve, reject) => {
+    stepUpResolve = resolve;
+    stepUpReject = reject;
+  });
+}
+
+async function submitStepUp() {
+  const code = stepUpCode.value.trim();
+  if (!code || stepUpPending.value) return;
+  stepUpPending.value = true;
+  stepUpError.value = "";
+  let ok = false;
+  try {
+    const result = await api.security.stepUp(code);
+    stepUpGrant.value = result.grant;
+    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
+    stepUpOpen.value = false;
+    stepUpResolve?.(result.grant);
+    ok = true;
+  } catch (error) {
+    stepUpError.value = error instanceof Error ? error.message : t("lines.stepUpFailed");
+  } finally {
+    stepUpPending.value = false;
+    if (ok) {
+      stepUpResolve = undefined;
+      stepUpReject = undefined;
+    }
+  }
+}
+
+function cancelStepUp() {
+  stepUpOpen.value = false;
+  stepUpReject?.(new Error(t("lines.stepUpRequired")));
+  stepUpResolve = undefined;
+  stepUpReject = undefined;
+}
 
 // ── KPI strip ────────────────────────────────────────────────────────────────
 const totalLines = computed(() => linesQuery.data.value?.count ?? allLines.value.length);
@@ -440,6 +594,11 @@ const deleteTarget = ref<Line | null>(null);
 const deleting = ref(false);
 const conncheckURL = ref("https://www.cloudflare.com/cdn-cgi/trace");
 const connchecking = ref(false);
+const conncheckTaskID = ref("");
+const revealedLine = ref<ProxyManagedLineRevealResponse | null>(null);
+const revealingLine = ref(false);
+const revealedUsers = ref<Record<string, VPNCredentialRevealResponse>>({});
+const revealingUserID = ref("");
 
 function canDeleteLine(line: Line | null): boolean {
   return !!line && line.source === "discovered" && !!(line.name || line.tag);
@@ -461,7 +620,8 @@ async function confirmDeleteLine() {
   if (!line || !name || deleting.value) return;
   deleting.value = true;
   try {
-    const res = await api.proxy.managed.delete({ node_id: line.node_id, name });
+    const grant = await requestStepUp();
+    const res = await api.proxy.managed.delete({ node_id: line.node_id, name, step_up_grant: grant });
     toast.success(t("lines.toastDeleteQueued", { id: res.task_id }));
     deleteOpen.value = false;
     detailOpen.value = false;
@@ -490,12 +650,73 @@ async function runConncheck(line: Line | null) {
       timeout_sec: 10,
     };
     const res = await api.proxy.managed.conncheck(input);
+    conncheckTaskID.value = res.task_id;
     toast.success(t("lines.conncheckQueued", { id: res.task_id }));
+    void taskResultsQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("lines.conncheckFailed"));
   } finally {
     connchecking.value = false;
   }
+}
+
+const conncheckResult = computed(() =>
+  conncheckTaskID.value
+    ? taskResults.value.find((result) => result.task_id === conncheckTaskID.value && result.node_id === selected.value?.node_id)
+    : undefined,
+);
+
+const conncheckPayload = computed<Record<string, unknown> | undefined>(() => {
+  const stdout = conncheckResult.value?.stdout?.trim();
+  if (!stdout) return undefined;
+  const start = stdout.indexOf("{");
+  const end = stdout.lastIndexOf("}");
+  if (start < 0 || end <= start) return undefined;
+  try {
+    return JSON.parse(stdout.slice(start, end + 1)) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+});
+
+async function revealLineConnection() {
+  const line = selected.value;
+  if (!line?.line_hash_id || revealingLine.value || !canAdmin.value) return;
+  revealingLine.value = true;
+  try {
+    const grant = await requestStepUp();
+    revealedLine.value = await api.proxy.managed.revealLine({
+      node_id: line.node_id,
+      line_hash_id: line.line_hash_id,
+      step_up_grant: grant,
+    });
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("lines.revealFailed"));
+  } finally {
+    revealingLine.value = false;
+  }
+}
+
+async function revealUserCredentials(userID: string) {
+  if (!userID || revealingUserID.value || !canAdmin.value) return;
+  revealingUserID.value = userID;
+  try {
+    const grant = await requestStepUp();
+    revealedUsers.value = {
+      ...revealedUsers.value,
+      [userID]: await api.proxy.revealUserCredentials(userID, grant),
+    };
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("lines.revealFailed"));
+  } finally {
+    revealingUserID.value = "";
+  }
+}
+
+function revealedCredentialText(userID: string): string {
+  const revealed = revealedUsers.value[userID];
+  if (!revealed) return "";
+  return JSON.stringify({ credentials: revealed.credentials, sub_id: revealed.sub_id || "" }, null, 2);
 }
 
 // ── Detail drawer (the app's modal primitive; no separate Sheet exists) ───────
@@ -504,6 +725,9 @@ const detailOpen = ref(false);
 function openDetail(line: Line) {
   selected.value = line;
   resetRosterSelection(line);
+  revealedLine.value = null;
+  revealedUsers.value = {};
+  conncheckTaskID.value = "";
   detailOpen.value = true;
 }
 
@@ -592,27 +816,43 @@ async function saveRoster() {
   rosterError.value = "";
   const failures: string[] = [];
   try {
-    for (const userID of bindIDs) {
+    if (line.source === "discovered" && line.core === "sing-box") {
+      const res = await api.proxy.managed.users({
+        node_id: line.node_id,
+        line_hash_id: line.line_hash_id,
+        bind_user_ids: bindIDs,
+        unbind_user_ids: unbindIDs,
+      });
+      toast.success(t("lines.rosterSyncQueued", { id: res.task_id }));
       try {
-        await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "bind", {
-          user_id: userID,
-          line_hash_id: line.line_hash_id,
-        });
-      } catch (error) {
-        failures.push(`${userLabel(userID)}: ${error instanceof Error ? error.message : t("lines.rosterBindFailed")}`);
+        await api.proxy.managed.probe({ node_id: line.node_id });
+      } catch {
+        // Non-blocking; periodic discovery can still refresh the runtime user count.
       }
-    }
-    for (const userID of unbindIDs) {
-      try {
-        await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "unbind", {
-          user_id: userID,
-          line_hash_id: line.line_hash_id,
-        });
-      } catch (error) {
-        failures.push(`${userLabel(userID)}: ${error instanceof Error ? error.message : t("lines.rosterUnbindFailed")}`);
+    } else {
+      for (const userID of bindIDs) {
+        try {
+          await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "bind", {
+            user_id: userID,
+            line_hash_id: line.line_hash_id,
+          });
+        } catch (error) {
+          failures.push(`${userLabel(userID)}: ${error instanceof Error ? error.message : t("lines.rosterBindFailed")}`);
+        }
+      }
+      for (const userID of unbindIDs) {
+        try {
+          await api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/users-admin", "unbind", {
+            user_id: userID,
+            line_hash_id: line.line_hash_id,
+          });
+        } catch (error) {
+          failures.push(`${userLabel(userID)}: ${error instanceof Error ? error.message : t("lines.rosterUnbindFailed")}`);
+        }
       }
     }
     await usersQuery.refresh();
+    await linesQuery.refresh();
     resetRosterSelection(line);
     if (failures.length) {
       rosterError.value = failures.join("\n");
@@ -620,6 +860,9 @@ async function saveRoster() {
     } else {
       toast.success(t("lines.rosterSaved"));
     }
+  } catch (error) {
+    rosterError.value = error instanceof Error ? error.message : t("lines.rosterRuntimeSyncFailed");
+    toast.error(rosterError.value);
   } finally {
     rosterSaving.value = false;
   }
@@ -706,6 +949,124 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
         <p>{{ $t('lines.manageNoteBody') }}</p>
       </div>
     </div>
+
+    <Card v-if="topologyNodes.length">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2 text-sm">
+          <Waypoints class="size-4 text-primary" aria-hidden="true" />
+          {{ $t('lines.topologyTitle') }}
+        </CardTitle>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div class="overflow-x-auto rounded-md border border-border bg-background/60">
+          <svg
+            viewBox="0 0 960 260"
+            role="img"
+            :aria-label="$t('lines.topologyTitle')"
+            class="block aspect-[48/13] w-full min-w-[720px]"
+          >
+            <defs>
+              <marker id="line-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="var(--primary)" opacity="0.85" />
+              </marker>
+            </defs>
+            <rect width="960" height="260" fill="transparent" />
+            <g v-if="topologyGraphEdges.length">
+              <line
+                v-for="edge in topologyGraphEdges"
+                :key="edge.id"
+                :x1="edge.source.x"
+                :y1="edge.source.y"
+                :x2="edge.target.x"
+                :y2="edge.target.y"
+                stroke="var(--primary)"
+                stroke-width="2"
+                stroke-opacity="0.65"
+                marker-end="url(#line-arrow)"
+              />
+            </g>
+            <g v-else>
+              <line
+                x1="74"
+                y1="226"
+                x2="886"
+                y2="226"
+                stroke="var(--border)"
+                stroke-width="1"
+                stroke-dasharray="4 6"
+              />
+              <text x="480" y="232" text-anchor="middle" class="fill-muted-foreground text-[11px]">
+                {{ $t('lines.topologyNoEdges') }}
+              </text>
+            </g>
+            <g
+              v-for="node in topologyGraphNodes"
+              :key="node.id"
+              :transform="`translate(${node.x} ${node.y})`"
+            >
+              <circle
+                r="26"
+                :fill="node.errors ? 'var(--destructive)' : 'var(--secondary)'"
+                :opacity="node.errors ? 0.22 : 0.9"
+              />
+              <circle
+                r="22"
+                :stroke="node.errors ? 'var(--destructive)' : 'var(--primary)'"
+                stroke-width="1.5"
+                fill="var(--card)"
+              />
+              <text y="-3" text-anchor="middle" class="fill-foreground text-[12px] font-medium">
+                {{ node.lines }}
+              </text>
+              <text y="12" text-anchor="middle" class="fill-muted-foreground text-[9px]">
+                {{ $t('lines.topologyNodeLines') }}
+              </text>
+              <text y="44" text-anchor="middle" class="fill-foreground text-[11px] font-medium">
+                {{ shortNodeLabel(node.id) }}
+              </text>
+              <text y="59" text-anchor="middle" class="fill-muted-foreground text-[9px]">
+                {{ shortLineID(node.id) }}
+              </text>
+            </g>
+          </svg>
+        </div>
+        <div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div
+            v-for="node in topologyNodes"
+            :key="node.id"
+            class="min-w-0 rounded-md border border-border bg-muted/20 px-3 py-2"
+          >
+            <div class="flex items-center justify-between gap-2">
+              <p class="truncate text-sm font-medium" :title="node.name">{{ node.name }}</p>
+              <Badge :variant="node.errors ? 'destructive' : 'secondary'">{{ node.lines }}</Badge>
+            </div>
+            <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ node.id }}</p>
+          </div>
+        </div>
+        <div class="rounded-md border border-border bg-background/50 p-3">
+          <div v-if="topologyEdges.length" class="space-y-2">
+            <div
+              v-for="edge in topologyEdges"
+              :key="`${edge.source.line_hash_id}:${edge.targetHash}`"
+              class="grid gap-2 rounded-md bg-muted/20 px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"
+            >
+              <div class="min-w-0">
+                <p class="truncate font-medium">{{ shortNodeLabel(edge.source.node_id) }}</p>
+                <p class="truncate font-mono text-muted-foreground">{{ shortLineID(edge.source.line_hash_id) }}</p>
+              </div>
+              <div class="flex items-center justify-center text-muted-foreground">
+                <ExternalLink class="size-4" aria-hidden="true" />
+              </div>
+              <div class="min-w-0 text-left md:text-right">
+                <p class="truncate font-medium">{{ shortNodeLabel(edge.target?.node_id) }}</p>
+                <p class="truncate font-mono text-muted-foreground">{{ shortLineID(edge.targetHash) }}</p>
+              </div>
+            </div>
+          </div>
+          <p v-else class="text-xs text-muted-foreground">{{ $t('lines.topologyNoEdges') }}</p>
+        </div>
+      </CardContent>
+    </Card>
 
     <Card v-if="pendingBinds.length">
       <CardHeader>
@@ -926,6 +1287,35 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
             </div>
           </dl>
 
+          <div v-if="canAdmin && selected.source === 'discovered'" class="space-y-3 rounded-md border border-border p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <Lock class="size-4 text-primary" aria-hidden="true" />
+                <p class="text-sm font-medium">{{ $t('lines.secretRevealTitle') }}</p>
+              </div>
+              <Badge variant="warning">{{ $t('lines.stepUpBadge') }}</Badge>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              :disabled="revealingLine"
+              @click="revealLineConnection"
+            >
+              <RefreshCw v-if="revealingLine" class="size-4 animate-spin" aria-hidden="true" />
+              <KeyRound v-else class="size-4" aria-hidden="true" />
+              {{ $t('lines.revealConnection') }}
+            </Button>
+            <div v-if="revealedLine?.share_url" class="rounded-md border border-border bg-muted/20">
+              <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+                <span class="text-xs font-medium text-muted-foreground">{{ $t('lines.connectionLink') }}</span>
+                <CopyButton :value="revealedLine.share_url" />
+              </div>
+              <code class="block max-h-32 overflow-auto break-all p-3 font-mono text-xs">{{ revealedLine.share_url }}</code>
+            </div>
+            <p v-else-if="revealedLine" class="text-xs text-muted-foreground">{{ $t('lines.noConnectionLink') }}</p>
+          </div>
+
           <div v-if="canConncheckLine(selected)" class="space-y-3 rounded-md border border-border p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div class="flex items-center gap-2">
@@ -956,6 +1346,31 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                 <Activity v-else class="size-4" aria-hidden="true" />
                 {{ $t('lines.conncheckRun') }}
               </Button>
+            </div>
+            <div v-if="conncheckTaskID" class="rounded-md border border-border bg-muted/20 p-3 text-xs">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-mono">{{ conncheckTaskID }}</span>
+                <Badge :variant="conncheckResult ? (conncheckResult.exit_code === 0 ? 'success' : 'destructive') : 'warning'">
+                  {{ conncheckResult ? (conncheckResult.exit_code === 0 ? $t('lines.conncheckOk') : $t('lines.conncheckError')) : $t('lines.conncheckPending') }}
+                </Badge>
+              </div>
+              <div v-if="conncheckPayload" class="mt-2 grid gap-2 sm:grid-cols-3">
+                <div class="rounded bg-background/60 p-2">
+                  <p class="text-muted-foreground">{{ $t('lines.conncheckHTTP') }}</p>
+                  <p class="font-mono">{{ conncheckPayload.http_code || '—' }}</p>
+                </div>
+                <div class="rounded bg-background/60 p-2">
+                  <p class="text-muted-foreground">{{ $t('lines.conncheckLatency') }}</p>
+                  <p class="font-mono">{{ conncheckPayload.latency_ms || '—' }}ms</p>
+                </div>
+                <div class="rounded bg-background/60 p-2">
+                  <p class="text-muted-foreground">{{ $t('lines.conncheckLocalPort') }}</p>
+                  <p class="font-mono">{{ conncheckPayload.local_proxy_port || '—' }}</p>
+                </div>
+              </div>
+              <pre v-if="conncheckResult?.stdout" class="mt-2 max-h-40 overflow-auto rounded bg-background/60 p-2 font-mono">{{ conncheckResult.stdout }}</pre>
+              <pre v-if="conncheckResult?.stderr" class="mt-2 max-h-40 overflow-auto rounded bg-destructive/10 p-2 font-mono text-destructive">{{ conncheckResult.stderr }}</pre>
+              <pre v-if="conncheckResult?.error" class="mt-2 max-h-40 overflow-auto rounded bg-destructive/10 p-2 font-mono text-destructive">{{ conncheckResult.error }}</pre>
             </div>
           </div>
 
@@ -995,26 +1410,48 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               {{ $t('lines.noUsers') }}
             </div>
             <div v-else class="grid gap-2 sm:grid-cols-2">
-              <label
+              <div
                 v-for="user in rosterUsers"
                 :key="user.id"
-                class="flex min-w-0 items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm"
+                class="min-w-0 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm"
                 :class="cn(!canAdmin && 'opacity-80')"
               >
-                <input
-                  type="checkbox"
-                  class="mt-0.5 size-4 accent-primary"
-                  :checked="rosterChecked(user.id)"
-                  :disabled="!canAdmin || rosterSaving"
-                  @change="onRosterToggle(user.id, $event)"
-                />
-                <span class="min-w-0">
-                  <span class="block truncate font-medium">{{ user.email || user.id }}</span>
-                  <span class="block truncate text-xs text-muted-foreground">
-                    {{ user.name || user.id }}
+                <label class="flex min-w-0 items-start gap-2">
+                  <input
+                    type="checkbox"
+                    class="mt-0.5 size-4 accent-primary"
+                    :checked="rosterChecked(user.id)"
+                    :disabled="!canAdmin || rosterSaving"
+                    @change="onRosterToggle(user.id, $event)"
+                  />
+                  <span class="min-w-0">
+                    <span class="block truncate font-medium">{{ user.email || user.id }}</span>
+                    <span class="block truncate text-xs text-muted-foreground">
+                      {{ user.name || user.id }}
+                    </span>
                   </span>
-                </span>
-              </label>
+                </label>
+                <div v-if="canAdmin && rosterChecked(user.id)" class="mt-2 space-y-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    :disabled="revealingUserID === user.id"
+                    @click="revealUserCredentials(user.id)"
+                  >
+                    <RefreshCw v-if="revealingUserID === user.id" class="size-4 animate-spin" aria-hidden="true" />
+                    <KeyRound v-else class="size-4" aria-hidden="true" />
+                    {{ $t('lines.revealUserCredential') }}
+                  </Button>
+                  <div v-if="revealedUsers[user.id]" class="rounded-md border border-border bg-background/60">
+                    <div class="flex items-center justify-between gap-2 border-b border-border px-2 py-1">
+                      <span class="text-[11px] text-muted-foreground">{{ $t('lines.userCredential') }}</span>
+                      <CopyButton :value="revealedCredentialText(user.id)" />
+                    </div>
+                    <pre class="max-h-36 overflow-auto p-2 font-mono text-[11px]">{{ revealedCredentialText(user.id) }}</pre>
+                  </div>
+                </div>
+              </div>
             </div>
             <p v-if="rosterError" class="whitespace-pre-wrap rounded-md bg-destructive/10 p-2 text-xs text-destructive">
               {{ rosterError }}
@@ -1183,6 +1620,39 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               <RefreshCw v-if="addSaving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
               {{ $t('lines.addSubmit') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
+
+    <Dialog v-model:open="stepUpOpen">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="cancelStepUp">
+        <DialogHeader>
+          <DialogTitle>{{ $t('lines.stepUpTitle') }}</DialogTitle>
+          <DialogDescription>{{ $t('lines.stepUpDescription') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitStepUp">
+          <div class="grid gap-2">
+            <Label for="line-step-up-code">{{ $t('lines.stepUpCode') }}</Label>
+            <Input
+              id="line-step-up-code"
+              v-model="stepUpCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="123456"
+            />
+            <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="cancelStepUp">
+              {{ $t('common.actions.cancel') }}
+            </Button>
+            <Button type="submit" :disabled="stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+              <Lock v-else class="size-4" aria-hidden="true" />
+              {{ $t('lines.stepUpSubmit') }}
             </Button>
           </DialogFooter>
         </form>
