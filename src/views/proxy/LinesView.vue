@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -11,6 +11,8 @@ import {
   Info,
   KeyRound,
   Lock,
+  Map as MapIcon,
+  MapPin,
   Plus,
   RefreshCw,
   Server,
@@ -26,6 +28,7 @@ import {
   type LineGroup,
   type LinesListResponse,
   type Node,
+  type NodeInventory,
   type ProxyManagedAddRequest,
   type ProxyManagedLineRevealResponse,
   type TaskResult,
@@ -210,6 +213,257 @@ const graphGroups = computed(() =>
       ),
     })),
 );
+
+// ── Node join helpers (geo / inventory come from the fleet nodes list) ───────
+const nodesByID = computed(() => new Map(nodes.value.map((node) => [node.id, node])));
+
+function nodeFor(nodeID: string): Node | undefined {
+  return nodesByID.value.get(nodeID);
+}
+
+function nodeGeoLabel(nodeID: string): string {
+  const geo = nodeFor(nodeID)?.geo;
+  if (!geo) return "";
+  return [geo.city, geo.region, geo.country].filter(Boolean).join(", ");
+}
+
+function nodeProviderLabel(nodeID: string): string {
+  const geo = nodeFor(nodeID)?.geo;
+  return geo?.provider || geo?.as_org || "";
+}
+
+function nodeInventory(nodeID: string): NodeInventory | undefined {
+  return nodeFor(nodeID)?.inventory ?? undefined;
+}
+
+function purityVariant(percent: number): BadgeVariant {
+  if (percent >= 95) return "success";
+  if (percent >= 80) return "info";
+  return "warning";
+}
+
+function groupErrorCount(group: LineGroup): number {
+  return group.lines.filter((line) => line.status === "error" || line.last_error).length;
+}
+
+// ── Topology layout (graph tab) ───────────────────────────────────────────────
+// Deterministic, dependency-free SVG layout: node boxes in 1-2 left columns, a
+// single Internet sink on the right, and ghost boxes for relay tags whose
+// target is not resolvable yet. Only edges the data actually supports are
+// drawn — aggregated direct fans, resolvable jump_edges, and dashed stubs —
+// so the graph never invents links that don't exist in the runtime.
+const TOPO_W = 1000;
+const TOPO_NODE_W = 200;
+const TOPO_NODE_H = 56;
+const TOPO_ROW_GAP = 14;
+const TOPO_COL_GAP = 40;
+
+type TopoBox = {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  lines: number;
+  errors: number;
+  directCount: number;
+  relayedCount: number;
+  purity?: number;
+  quality?: string;
+  geo: string;
+};
+
+type TopoGhost = { tag: string; x: number; y: number; count: number };
+
+type TopoEdgeShape = {
+  key: string;
+  path: string;
+  kind: "direct" | "relay" | "stub";
+  count: number;
+  sourceId: string;
+  targetId: string;
+  title: string;
+};
+
+const directLineTotal = computed(
+  () => allLines.value.filter((line) => !outboundPresentation(line.outbound_ref).relayed).length,
+);
+
+const topo = computed(() => {
+  const groupsList = graphGroups.value;
+  const cols = groupsList.length > 12 ? 2 : 1;
+  const rows = Math.max(1, Math.ceil(groupsList.length / cols));
+  const height = Math.max(360, rows * (TOPO_NODE_H + TOPO_ROW_GAP) + 96);
+
+  const boxes: TopoBox[] = groupsList.map((group, i) => {
+    const col = Math.floor(i / rows);
+    const row = i % rows;
+    const inv = nodeInventory(group.node_id);
+    const directCount = group.lines.filter(
+      (line) => !outboundPresentation(line.outbound_ref).relayed,
+    ).length;
+    return {
+      id: group.node_id,
+      name: group.node_name || group.node_id,
+      x: 24 + col * (TOPO_NODE_W + TOPO_COL_GAP),
+      y: 44 + row * (TOPO_NODE_H + TOPO_ROW_GAP),
+      lines: group.lines.length,
+      errors: groupErrorCount(group),
+      directCount,
+      relayedCount: group.lines.length - directCount,
+      purity: inv?.purity_percent,
+      quality: inv?.quality,
+      geo: nodeGeoLabel(group.node_id),
+    };
+  });
+  const boxByID = new Map(boxes.map((box) => [box.id, box]));
+
+  const internet = { x: TOPO_W - 96, y: height / 2, r: 40 };
+
+  // Resolvable relay edges: line → line via jump_edges, lifted to node → node.
+  const nodePairs = new Map<string, { from: string; to: string; count: number }>();
+  for (const edge of topologyEdges.value) {
+    const targetNode = edge.target?.node_id;
+    if (!targetNode || !boxByID.has(edge.source.node_id) || !boxByID.has(targetNode)) continue;
+    const key = `${edge.source.node_id}→${targetNode}`;
+    const pair = nodePairs.get(key) ?? { from: edge.source.node_id, to: targetNode, count: 0 };
+    pair.count += 1;
+    nodePairs.set(key, pair);
+  }
+
+  // Unresolved relays: relayed lines with no resolvable jump target, grouped by
+  // outbound tag so each tag becomes one ghost box instead of a fake node link.
+  const resolvedSources = new Set(
+    topologyEdges.value.filter((edge) => edge.target).map((edge) => edge.source.line_hash_id),
+  );
+  const stubTags = new Map<string, Map<string, number>>();
+  for (const line of allLines.value) {
+    if (!outboundPresentation(line.outbound_ref).relayed) continue;
+    if (resolvedSources.has(line.line_hash_id)) continue;
+    const tag = (line.outbound_ref ?? "").trim();
+    if (!tag || !boxByID.has(line.node_id)) continue;
+    const perNode = stubTags.get(tag) ?? new Map<string, number>();
+    perNode.set(line.node_id, (perNode.get(line.node_id) ?? 0) + 1);
+    stubTags.set(tag, perNode);
+  }
+  const ghostTags = [...stubTags.keys()].sort();
+  const ghosts: TopoGhost[] = ghostTags.map((tag, i) => ({
+    tag,
+    x: TOPO_W - 330,
+    y: internet.y + (i - (ghostTags.length - 1) / 2) * 72,
+    count: [...(stubTags.get(tag)?.values() ?? [])].reduce((a, b) => a + b, 0),
+  }));
+
+  const edges: TopoEdgeShape[] = [];
+  for (const box of boxes) {
+    if (!box.directCount) continue;
+    const x1 = box.x + TOPO_NODE_W;
+    const y1 = box.y + TOPO_NODE_H / 2;
+    const x2 = internet.x - internet.r;
+    const y2 = internet.y;
+    const mx = (x1 + x2) / 2;
+    edges.push({
+      key: `direct:${box.id}`,
+      path: `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`,
+      kind: "direct",
+      count: box.directCount,
+      sourceId: box.id,
+      targetId: "internet",
+      title: t("lines.topoDirectEdgeTitle", { node: box.name, count: box.directCount }),
+    });
+  }
+  for (const pair of nodePairs.values()) {
+    const a = boxByID.get(pair.from);
+    const b = boxByID.get(pair.to);
+    if (!a || !b) continue;
+    const x1 = a.x + TOPO_NODE_W;
+    const y1 = a.y + TOPO_NODE_H / 2;
+    const x2 = b.x + TOPO_NODE_W;
+    const y2 = b.y + TOPO_NODE_H / 2;
+    const cx = Math.max(x1, x2) + 56 + Math.abs(y2 - y1) * 0.08;
+    edges.push({
+      key: `relay:${pair.from}:${pair.to}`,
+      path: `M ${x1} ${y1} C ${cx} ${y1}, ${cx} ${y2}, ${x2} ${y2}`,
+      kind: "relay",
+      count: pair.count,
+      sourceId: pair.from,
+      targetId: pair.to,
+      title: t("lines.topoRelayEdgeTitle", {
+        from: a.name,
+        to: b.name,
+        count: pair.count,
+      }),
+    });
+  }
+  for (const [tag, perNode] of stubTags) {
+    const ghost = ghosts.find((g) => g.tag === tag);
+    if (!ghost) continue;
+    for (const [nodeID, count] of perNode) {
+      const box = boxByID.get(nodeID);
+      if (!box) continue;
+      const x1 = box.x + TOPO_NODE_W;
+      const y1 = box.y + TOPO_NODE_H / 2;
+      const x2 = ghost.x - 76;
+      const y2 = ghost.y;
+      const mx = (x1 + x2) / 2;
+      edges.push({
+        key: `stub:${nodeID}:${tag}`,
+        path: `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`,
+        kind: "stub",
+        count,
+        sourceId: nodeID,
+        targetId: `tag:${tag}`,
+        title: t("lines.topoStubEdgeTitle", { node: box.name, tag, count }),
+      });
+    }
+  }
+
+  return { boxes, ghosts, edges, internet, height };
+});
+
+const topoHoverId = ref("");
+
+const topoActiveIds = computed<Set<string> | null>(() => {
+  if (!topoHoverId.value) return null;
+  const ids = new Set([topoHoverId.value]);
+  for (const edge of topo.value.edges) {
+    if (edge.sourceId === topoHoverId.value) ids.add(edge.targetId);
+    if (edge.targetId === topoHoverId.value) ids.add(edge.sourceId);
+  }
+  return ids;
+});
+
+function topoEdgeActive(edge: TopoEdgeShape): boolean {
+  const active = topoActiveIds.value;
+  if (!active) return true;
+  return active.has(edge.sourceId) && active.has(edge.targetId);
+}
+
+function topoEdgeWidth(count: number): number {
+  return Math.min(1 + Math.log2(count + 1), 4);
+}
+
+function topoTrim(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+// Clicking a topology node jumps back to its full-width row on the Lines tab.
+const highlightGroupId = ref("");
+
+function focusNodeGroup(nodeID: string) {
+  activeTab.value = "lines";
+  if (!visibleGroups.value.some((group) => group.node_id === nodeID)) {
+    showAllGroups.value = true;
+  }
+  highlightGroupId.value = nodeID;
+  void nextTick(() => {
+    document
+      .getElementById(`line-group-${nodeID}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => {
+      if (highlightGroupId.value === nodeID) highlightGroupId.value = "";
+    }, 2400);
+  });
+}
 
 function shortLineID(id?: string): string {
   if (!id) return "—";
@@ -970,6 +1224,29 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
 
         <TabsContent value="lines" class="space-y-3">
       <div class="space-y-3">
+        <!-- Fleet overview strip: protocol mix + relay reach. Relocated from the
+             graph-tab aside so the numbers stay visible where the lines live. -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-muted/25 px-4 py-2.5 text-xs">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="font-medium text-muted-foreground">{{ $t('lines.overviewProtocols') }}</span>
+            <Badge
+              v-for="stat in protocolStats"
+              :key="stat.protocol"
+              variant="outline"
+              class="gap-1.5"
+            >
+              <span class="font-mono">{{ stat.protocol }}</span>
+              <span class="tabular-nums text-muted-foreground">{{ stat.count }}</span>
+            </Badge>
+          </div>
+          <span class="hidden h-4 w-px bg-border sm:inline-block" aria-hidden="true"></span>
+          <div class="flex items-center gap-1.5">
+            <span class="font-medium text-muted-foreground">{{ $t('lines.graphRelayEdges') }}</span>
+            <Badge :variant="topologyEdges.length ? 'info' : 'secondary'">{{ topologyEdges.length }}</Badge>
+            <span class="text-muted-foreground">{{ $t('lines.overviewRelayed', { count: relayedLineCount }) }}</span>
+          </div>
+        </div>
+
         <div
           v-if="hiddenGroupCount > 0 || showAllGroups"
           class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted/25 px-4 py-3 text-sm"
@@ -982,27 +1259,62 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
           </Button>
         </div>
 
-        <div class="columns-1 gap-3 [column-fill:balance] 2xl:columns-2">
-        <Card v-for="group in visibleGroups" :key="group.node_id" class="mb-3 break-inside-avoid overflow-hidden">
-          <CardHeader class="px-4 py-3">
-            <div class="flex flex-wrap items-start justify-between gap-3">
+        <!-- One full-width row per node: identity rail on the left, line table on
+             the right. Plain flow layout — no CSS columns/masonry, so a tall node
+             can never stretch row-mates or blow up the page height again. -->
+        <div class="space-y-3">
+        <div
+          v-for="group in visibleGroups"
+          :id="`line-group-${group.node_id}`"
+          :key="group.node_id"
+          class="overflow-hidden rounded-lg border bg-card transition-colors"
+          :class="cn(highlightGroupId === group.node_id ? 'border-primary/70 ring-2 ring-primary/25' : 'border-border')"
+        >
+          <div class="grid lg:grid-cols-[280px_minmax(0,1fr)]">
+            <div class="min-w-0 space-y-3 border-b border-border bg-muted/20 p-4 lg:border-b-0 lg:border-r">
               <div class="min-w-0 space-y-1">
-                <CardTitle class="flex items-center gap-2">
+                <div class="flex items-center gap-2">
                   <Server class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                   <RouterLink
                     :to="{ name: 'node-detail', params: { id: group.node_id } }"
-                    class="inline-flex min-w-0 items-center gap-1 truncate text-sm hover:text-primary hover:underline"
+                    class="inline-flex min-w-0 items-center gap-1 truncate text-sm font-medium hover:text-primary hover:underline"
                     :title="$t('lines.viewNode')"
                   >
-                    <span class="truncate font-medium">{{ group.node_name || group.node_id }}</span>
+                    <span class="truncate">{{ group.node_name || group.node_id }}</span>
                     <ArrowUpRight class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
                   </RouterLink>
-                </CardTitle>
-                <div class="font-mono text-xs text-muted-foreground">{{ group.node_id }}</div>
+                </div>
+                <div class="truncate font-mono text-xs text-muted-foreground">{{ group.node_id }}</div>
               </div>
-              <Badge variant="secondary" class="shrink-0">
-                {{ $t('lines.groupLineCount', { count: group.lines.length }, group.lines.length) }}
-              </Badge>
+
+              <div class="space-y-1 text-xs text-muted-foreground">
+                <div class="flex items-center gap-1.5">
+                  <MapPin class="size-3.5 shrink-0" aria-hidden="true" />
+                  <span class="truncate">{{ nodeGeoLabel(group.node_id) || $t('lines.nodeGeoUnknown') }}</span>
+                </div>
+                <div v-if="nodeProviderLabel(group.node_id)" class="truncate pl-5">
+                  {{ nodeProviderLabel(group.node_id) }}
+                </div>
+              </div>
+
+              <div class="flex flex-wrap gap-1.5">
+                <Badge variant="secondary">
+                  {{ $t('lines.groupLineCount', { count: group.lines.length }, group.lines.length) }}
+                </Badge>
+                <Badge v-if="groupErrorCount(group)" variant="destructive">
+                  {{ $t('lines.groupErrorCount', { count: groupErrorCount(group) }) }}
+                </Badge>
+                <Badge
+                  v-if="nodeInventory(group.node_id)?.purity_percent != null"
+                  :variant="purityVariant(nodeInventory(group.node_id)?.purity_percent ?? 0)"
+                >
+                  {{ $t('lines.purityBadge', { percent: nodeInventory(group.node_id)?.purity_percent }) }}
+                </Badge>
+                <Badge v-if="nodeInventory(group.node_id)?.quality" variant="outline">
+                  {{ nodeInventory(group.node_id)?.quality }}
+                </Badge>
+              </div>
+
               <Button
                 v-if="canAdmin"
                 size="sm"
@@ -1013,10 +1325,8 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                 {{ $t('lines.addHere') }}
               </Button>
             </div>
-          </CardHeader>
 
-          <CardContent class="px-4 pb-4">
-            <div class="overflow-x-auto">
+            <div class="min-w-0 overflow-x-auto">
               <table class="w-full min-w-[980px] text-sm">
                 <thead>
                   <tr class="border-b border-border text-xs text-muted-foreground">
@@ -1116,8 +1426,8 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
         </div>
       </div>
         </TabsContent>
@@ -1127,66 +1437,193 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
             <section class="min-w-0 overflow-hidden rounded-md border border-border">
               <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-muted/25 px-4 py-3">
                 <div>
-                  <h2 class="text-sm font-semibold">{{ $t('lines.graphNodeLanes') }}</h2>
+                  <h2 class="text-sm font-semibold">{{ $t('lines.topoTitle') }}</h2>
                   <p class="text-xs text-muted-foreground">
                     {{ $t('lines.graphSummary', { nodes: graphGroups.length, lines: totalLines, relays: relayedLineCount }) }}
                   </p>
                 </div>
-                <Badge :variant="relayedLineCount ? 'info' : 'secondary'">
-                  {{ relayedLineCount ? $t('lines.graphRelayMode') : $t('lines.graphDirectMode') }}
-                </Badge>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Badge :variant="relayedLineCount ? 'info' : 'secondary'">
+                    {{ relayedLineCount ? $t('lines.graphRelayMode') : $t('lines.graphDirectMode') }}
+                  </Badge>
+                  <Button as-child size="sm" variant="outline">
+                    <RouterLink :to="{ name: 'map', query: { layer: 'vpn' } }">
+                      <MapIcon class="size-4" aria-hidden="true" />
+                      {{ $t('lines.openMapLayer') }}
+                    </RouterLink>
+                  </Button>
+                </div>
               </div>
 
-              <div class="divide-y divide-border">
-                <div
-                  v-for="group in graphGroups"
-                  :key="group.node_id"
-                  class="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(180px,.38fr)_minmax(0,1fr)]"
+              <!-- Honest topology: aggregated direct fans into one Internet sink,
+                   resolvable jump_edges as node→node links, unresolved relay tags
+                   as dashed ghost boxes. No invented links. -->
+              <div class="overflow-x-auto">
+                <svg
+                  :viewBox="`0 0 ${TOPO_W} ${topo.height}`"
+                  class="w-full min-w-[760px] select-none"
+                  role="img"
+                  :aria-label="$t('lines.topoAria')"
                 >
-                  <div class="min-w-0">
-                    <RouterLink
-                      :to="{ name: 'node-detail', params: { id: group.node_id } }"
-                      class="inline-flex max-w-full items-center gap-1 truncate text-sm font-medium hover:text-primary hover:underline"
+                  <g fill="none">
+                    <path
+                      v-for="edge in topo.edges"
+                      :key="edge.key"
+                      :d="edge.path"
+                      class="stroke-current transition-opacity"
+                      :class="cn(
+                        edge.kind === 'direct' && 'text-border',
+                        edge.kind === 'relay' && 'text-info',
+                        edge.kind === 'stub' && 'text-warning/70',
+                        topoActiveIds && !topoEdgeActive(edge) && 'opacity-15',
+                      )"
+                      :stroke-width="topoEdgeWidth(edge.count)"
+                      :stroke-dasharray="edge.kind === 'stub' ? '6 4' : undefined"
+                      stroke-linecap="round"
                     >
-                      <span class="truncate">{{ group.node_name || group.node_id }}</span>
-                      <ArrowUpRight class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
-                    </RouterLink>
-                    <p class="mt-1 truncate font-mono text-xs text-muted-foreground">{{ group.node_id }}</p>
-                    <div class="mt-2 flex flex-wrap gap-1.5">
-                      <Badge variant="secondary">{{ $t('lines.groupLineCount', { count: group.lines.length }, group.lines.length) }}</Badge>
-                      <Badge
-                        v-if="group.lines.some((line) => line.status === 'error' || line.last_error)"
-                        variant="destructive"
-                      >
-                        {{ $t('lines.statusError') }}
-                      </Badge>
-                    </div>
-                  </div>
+                      <title>{{ edge.title }}</title>
+                    </path>
+                  </g>
 
-                  <div class="grid gap-2 md:grid-cols-2">
-                    <button
-                      v-for="line in group.lines"
-                      :key="line.id || line.line_hash_id"
-                      type="button"
-                      class="min-w-0 rounded-md border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      :class="cn(outboundPresentation(line.outbound_ref).relayed && 'border-info/50 bg-info/5')"
-                      @click="openDetail(line)"
+                  <g
+                    class="transition-opacity"
+                    :class="cn(topoActiveIds && !topoActiveIds.has('internet') && 'opacity-25')"
+                  >
+                    <circle
+                      :cx="topo.internet.x"
+                      :cy="topo.internet.y"
+                      :r="topo.internet.r"
+                      class="fill-info/10 stroke-current text-info/60"
+                      stroke-width="1.5"
+                    />
+                    <text
+                      :x="topo.internet.x"
+                      :y="topo.internet.y - 2"
+                      text-anchor="middle"
+                      class="fill-current text-[13px] font-medium text-foreground"
                     >
-                      <div class="flex min-w-0 items-center justify-between gap-2">
-                        <span class="truncate text-sm font-medium">{{ line.name || line.tag || line.line_hash_id }}</span>
-                        <Badge :variant="statusVariant(line.status)" class="shrink-0 text-[10px]">
-                          {{ statusLabel(line.status) }}
-                        </Badge>
-                      </div>
-                      <div class="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-[auto_minmax(0,1fr)]">
-                        <span class="font-mono text-foreground">{{ line.type || '—' }}</span>
-                        <span class="truncate font-mono">{{ listenPresentation(line).label }}</span>
-                        <span>{{ outboundPresentation(line.outbound_ref).relayed ? $t('lines.outboundRelay') : $t('lines.outboundDirect') }}</span>
-                        <span class="truncate font-mono">{{ outboundPresentation(line.outbound_ref).detail }}</span>
-                      </div>
-                    </button>
-                  </div>
-                </div>
+                      {{ $t('lines.topoInternet') }}
+                    </text>
+                    <text
+                      :x="topo.internet.x"
+                      :y="topo.internet.y + 14"
+                      text-anchor="middle"
+                      class="fill-current text-[10px] text-muted-foreground"
+                    >
+                      {{ $t('lines.topoDirectLines', { count: directLineTotal }) }}
+                    </text>
+                  </g>
+
+                  <g
+                    v-for="ghost in topo.ghosts"
+                    :key="ghost.tag"
+                    class="transition-opacity"
+                    :class="cn(topoActiveIds && !topoActiveIds.has(`tag:${ghost.tag}`) && 'opacity-25')"
+                  >
+                    <rect
+                      :x="ghost.x - 76"
+                      :y="ghost.y - 22"
+                      width="152"
+                      height="44"
+                      rx="8"
+                      class="fill-muted/40 stroke-current text-warning/70"
+                      stroke-dasharray="5 4"
+                      stroke-width="1.2"
+                    />
+                    <text
+                      :x="ghost.x"
+                      :y="ghost.y - 3"
+                      text-anchor="middle"
+                      class="fill-current font-mono text-[11px] text-foreground"
+                    >
+                      {{ topoTrim(ghost.tag, 20) }}
+                    </text>
+                    <text
+                      :x="ghost.x"
+                      :y="ghost.y + 13"
+                      text-anchor="middle"
+                      class="fill-current text-[9.5px] text-muted-foreground"
+                    >
+                      {{ $t('lines.topoUnresolved', { count: ghost.count }) }}
+                    </text>
+                    <title>{{ $t('lines.topoUnresolvedTitle', { tag: ghost.tag, count: ghost.count }) }}</title>
+                  </g>
+
+                  <g
+                    v-for="box in topo.boxes"
+                    :key="box.id"
+                    role="button"
+                    tabindex="0"
+                    class="cursor-pointer outline-none transition-opacity"
+                    :class="cn(topoActiveIds && !topoActiveIds.has(box.id) && 'opacity-25')"
+                    :aria-label="$t('lines.topoNodeAria', { node: box.name })"
+                    @click="focusNodeGroup(box.id)"
+                    @keydown.enter.prevent="focusNodeGroup(box.id)"
+                    @keydown.space.prevent="focusNodeGroup(box.id)"
+                    @mouseenter="topoHoverId = box.id"
+                    @mouseleave="topoHoverId = ''"
+                    @focus="topoHoverId = box.id"
+                    @blur="topoHoverId = ''"
+                  >
+                    <title>{{ box.name }} · {{ box.geo || $t('lines.nodeGeoUnknown') }}</title>
+                    <rect
+                      :x="box.x"
+                      :y="box.y"
+                      :width="TOPO_NODE_W"
+                      :height="TOPO_NODE_H"
+                      rx="10"
+                      class="fill-card stroke-current"
+                      :class="box.errors ? 'text-destructive/70' : 'text-border'"
+                      stroke-width="1.2"
+                    />
+                    <circle
+                      :cx="box.x + 14"
+                      :cy="box.y + 16"
+                      r="4"
+                      class="fill-current"
+                      :class="box.errors ? 'text-destructive' : 'text-success'"
+                    />
+                    <text
+                      :x="box.x + 26"
+                      :y="box.y + 20"
+                      class="fill-current text-[12px] font-medium text-foreground"
+                    >
+                      {{ topoTrim(box.name, box.purity != null ? 18 : 23) }}
+                    </text>
+                    <text
+                      v-if="box.purity != null"
+                      :x="box.x + TOPO_NODE_W - 10"
+                      :y="box.y + 20"
+                      text-anchor="end"
+                      class="fill-current text-[10px] font-medium text-success"
+                    >
+                      {{ box.purity }}%
+                    </text>
+                    <text
+                      :x="box.x + 26"
+                      :y="box.y + 38"
+                      class="fill-current text-[10px] text-muted-foreground"
+                    >
+                      {{ topoTrim(`${$t('lines.groupLineCount', { count: box.lines }, box.lines)}${box.geo ? ` · ${box.geo}` : ''}`, 30) }}
+                    </text>
+                  </g>
+                </svg>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border bg-muted/20 px-4 py-2 text-[11px] text-muted-foreground">
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="inline-block h-0.5 w-5 rounded bg-border" aria-hidden="true"></span>
+                  {{ $t('lines.topoLegendDirect') }}
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="inline-block h-0.5 w-5 rounded bg-info" aria-hidden="true"></span>
+                  {{ $t('lines.topoLegendRelay') }}
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                  <span class="inline-block w-5 border-t-2 border-dashed border-warning/70" aria-hidden="true"></span>
+                  {{ $t('lines.topoLegendStub') }}
+                </span>
+                <span class="ml-auto">{{ $t('lines.topoHint') }}</span>
               </div>
             </section>
 
