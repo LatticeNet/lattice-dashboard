@@ -222,10 +222,17 @@ export interface NodeIPConfig {
 export interface NodeGeoView {
   id: string;
   name: string;
+  tags?: string[];
   role?: string;
   online: boolean;
+  disabled?: boolean;
   public_ip?: string;
   public_ipv6?: string;
+  internal_ip?: string;
+  internal_ipv6?: string;
+  wireguard_ip?: string;
+  host_facts?: HostFacts;
+  agent_runtime?: AgentRuntimeConfig | null;
   geo?: NodeGeo;
 }
 

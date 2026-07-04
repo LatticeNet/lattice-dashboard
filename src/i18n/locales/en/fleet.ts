@@ -480,6 +480,20 @@ export default {
       actions: {
         resolveMissing: "Locate missing",
       },
+      filters: {
+        searchPlaceholder: "Search node, host, IP, or region...",
+        status: "Status",
+        statusAll: "All statuses",
+        expression: "Node expression",
+        expressionPlaceholder: "AND(agent:exec, tag:cd, region:HK)",
+        quick: "Quick",
+        moreTags: "+{count}",
+        showing: "Showing {mapped} mapped / {shown} matching / {total} total",
+        clear: "Clear",
+        invalidExpression: "Invalid expression",
+        noLocatedTitle: "No matching located nodes",
+        noLocatedDescription: "Adjust filters or locate matching nodes.",
+      },
       legend: {
         online: "green: online",
         offline: "red: offline",

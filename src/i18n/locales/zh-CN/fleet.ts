@@ -472,6 +472,20 @@ export default {
       actions: {
         resolveMissing: "定位缺失节点",
       },
+      filters: {
+        searchPlaceholder: "搜索节点、主机、IP 或区域...",
+        status: "状态",
+        statusAll: "全部状态",
+        expression: "节点表达式",
+        expressionPlaceholder: "AND(agent:exec, tag:cd, region:HK)",
+        quick: "快捷",
+        moreTags: "+{count}",
+        showing: "显示 {mapped} 个已定位 / {shown} 个匹配 / 共 {total} 个",
+        clear: "清除",
+        invalidExpression: "表达式无效",
+        noLocatedTitle: "没有匹配的已定位节点",
+        noLocatedDescription: "调整筛选条件,或先为匹配节点设置位置。",
+      },
       legend: {
         online: "绿色:在线",
         offline: "红色:离线",

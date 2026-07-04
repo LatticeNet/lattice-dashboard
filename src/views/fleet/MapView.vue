@@ -5,20 +5,24 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Crosshair,
+  Filter,
   Globe2,
   LocateFixed,
   MapPinned,
   RefreshCw,
   Radar,
   Route,
+  Search,
   Trash2,
   Waypoints,
   WifiOff,
+  X,
 } from "lucide-vue-next";
 import {
   api,
   unwrap,
   type LinesListResponse,
+  type Node,
   type NodeGeoResolveResult,
   type NodeGeoView,
 } from "@/lib/api";
@@ -28,6 +32,14 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { WORLD_RINGS } from "@/lib/map/worldGeo";
+import {
+  evalFilterExpression,
+  nodeHasAgentCapability,
+  nodeHasArchOsToken,
+  nodeHasTagToken,
+  nodeMatchesTargetToken,
+  vpnLineNodeIds,
+} from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -43,6 +55,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const MAP_WIDTH = 1000;
 const MAP_HEIGHT = 500;
@@ -69,9 +88,9 @@ const vpnLinesQuery = useAsyncData(
 );
 
 watch(
-  vpnLayerOn,
-  (on) => {
-    if (on && vpnLinesQuery.data.value === undefined && !vpnLinesQuery.loading.value) {
+  vpnLayerAvailable,
+  (available) => {
+    if (available && vpnLinesQuery.data.value === undefined && !vpnLinesQuery.loading.value) {
       void vpnLinesQuery.refresh();
     }
   },
@@ -81,9 +100,7 @@ watch(
 type VpnMapEdge = { key: string; path: string; count: number; title: string };
 
 const vpnGroups = computed(() => vpnLinesQuery.data.value?.groups ?? []);
-const vpnLineTotal = computed(() =>
-  vpnGroups.value.reduce((sum, group) => sum + (group.lines?.length ?? 0), 0),
-);
+const vpnLineNodes = computed(() => vpnLineNodeIds(vpnGroups.value));
 
 const vpnMarkers = computed(() => {
   if (!vpnLayerOn.value || !vpnLayerAvailable.value) return [];
@@ -100,6 +117,7 @@ const vpnMarkers = computed(() => {
   }
   return out;
 });
+const vpnVisibleLineTotal = computed(() => vpnMarkers.value.reduce((sum, marker) => sum + marker.count, 0));
 
 const vpnEdges = computed<VpnMapEdge[]>(() => {
   if (!vpnLayerOn.value || !vpnLayerAvailable.value) return [];
@@ -167,11 +185,57 @@ const panStart = ref({ pointerId: -1, clientX: 0, clientY: 0, x: 0, y: 0, moved:
 const suppressMarkerClickUntil = ref(0);
 const locationEditorOpen = ref(false);
 
-const nodes = computed(() => geoQuery.data.value ?? []);
-const withGeo = computed(() =>
-  nodes.value.filter(hasCoordinates),
+type MapStatusFilter = "all" | "online" | "offline" | "disabled";
+type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll" | "singbox" | "vpn-lines";
+
+const ARCH_OS_TOKENS = ["linux", "darwin", "amd64", "arm64"] as const;
+const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll", "singbox", "vpn-lines"];
+const mapSearch = ref("");
+const mapStatusFilter = ref<MapStatusFilter>("all");
+const mapExpr = ref("");
+const activeMapTags = ref<string[]>([]);
+const activeMapArchOs = ref<string[]>([]);
+const activeMapAgentCaps = ref<AgentCapabilityFilter[]>([]);
+const vpnFilterNeedsLines = computed(
+  () =>
+    activeMapAgentCaps.value.includes("vpn-lines") ||
+    /\b(vpn|vpn-core|vpncore|vpn-lines|line-recorded|line_recorded|lines)\b/i.test(mapExpr.value),
 );
-const withoutGeo = computed(() => nodes.value.filter((n) => !hasCoordinates(n)));
+
+watch(
+  vpnFilterNeedsLines,
+  (needed) => {
+    if (needed && vpnLinesQuery.data.value === undefined && !vpnLinesQuery.loading.value) {
+      void vpnLinesQuery.refresh();
+    }
+  },
+  { immediate: true },
+);
+
+const nodes = computed(() => geoQuery.data.value ?? []);
+const filteredNodes = computed(() => {
+  const q = mapSearch.value.trim().toLowerCase();
+  const filtered = [...nodes.value]
+    .sort((a, b) => {
+      const aNode = nodeForFilter(a);
+      const bNode = nodeForFilter(b);
+      if (!!aNode.disabled !== !!bNode.disabled) return aNode.disabled ? 1 : -1;
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return (a.name || a.id).localeCompare(b.name || b.id);
+    })
+    .filter(
+      (node) =>
+        matchesMapStatus(node) &&
+        matchesMapSearch(node) &&
+        matchesMapExpression(node) &&
+        matchesMapQuickFilters(node),
+    );
+  if (!q) return filtered;
+  return filtered.sort((a, b) => mapSearchScore(b, q) - mapSearchScore(a, q));
+});
+const withGeo = computed(() => nodes.value.filter(hasCoordinates));
+const filteredWithGeo = computed(() => filteredNodes.value.filter(hasCoordinates));
+const withoutGeo = computed(() => filteredNodes.value.filter((n) => !hasCoordinates(n)));
 const withLookupIP = computed(() => nodes.value.filter((n) => lookupIP(n) && !hasCoordinates(n)));
 const onlineCount = computed(() => nodes.value.filter((n) => n.online).length);
 const offlineCount = computed(() => Math.max(0, nodes.value.length - onlineCount.value));
@@ -180,10 +244,48 @@ const autoCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "
 const manualCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "operator" || !n.geo?.source).length);
 const coveragePercent = computed(() => (nodes.value.length ? Math.round((withGeo.value.length / nodes.value.length) * 100) : 0));
 const canAdminNodes = computed(() => auth.can("node:admin"));
+const allMapTags = computed(() => {
+  const set = new Set<string>();
+  for (const node of nodes.value) {
+    const n = nodeForFilter(node);
+    if (n.role) set.add(n.role);
+    for (const tag of n.tags ?? []) set.add(tag);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
+const visibleMapTags = computed(() => {
+  const selected = new Set(activeMapTags.value);
+  const ordered = [
+    ...activeMapTags.value.filter((tag) => allMapTags.value.includes(tag)),
+    ...allMapTags.value.filter((tag) => !selected.has(tag)),
+  ];
+  return ordered.slice(0, 14);
+});
+const hiddenMapTagCount = computed(() => Math.max(0, allMapTags.value.length - visibleMapTags.value.length));
+const availableMapArchOs = computed(() =>
+  ARCH_OS_TOKENS.filter((token) => nodes.value.some((node) => nodeHasArchOsToken(nodeForFilter(node), token))),
+);
+const availableMapAgentCaps = computed(() =>
+  AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => mapNodeHasAgentCapability(node, cap))),
+);
+const hasMapFilters = computed(
+  () =>
+    !!mapSearch.value.trim() ||
+    mapStatusFilter.value !== "all" ||
+    !!mapExpr.value.trim() ||
+    activeMapTags.value.length > 0 ||
+    activeMapArchOs.value.length > 0 ||
+    activeMapAgentCaps.value.length > 0,
+);
+const mapExpressionError = computed(() => {
+  if (!mapExpr.value.trim()) return "";
+  const result = evalFilterExpression(mapExpr.value, () => true);
+  return result.ok ? "" : result.error || t("fleet.map.filters.invalidExpression");
+});
 
 const plotted = computed(() => {
   const keyCounts = new Map<string, number>();
-  return withGeo.value.map((node) => {
+  return filteredWithGeo.value.map((node) => {
     const latitude = node.geo?.lat ?? 0;
     const longitude = node.geo?.lon ?? 0;
     const key = `${latitude.toFixed(1)}:${longitude.toFixed(1)}`;
@@ -225,7 +327,7 @@ const selectedCoordinates = computed(() => {
 
 const regions = computed(() => {
   const groups = new Map<string, { key: string; label: string; nodes: NodeGeoView[]; online: number }>();
-  for (const node of withGeo.value) {
+  for (const node of filteredWithGeo.value) {
     const key = `${node.geo?.country || "??"}:${node.geo?.region || ""}`;
     const label = [node.geo?.country, node.geo?.region].filter(Boolean).join(" · ") || t("fleet.map.unknownRegion");
     const group = groups.get(key) ?? { key, label, nodes: [], online: 0 };
@@ -237,6 +339,143 @@ const regions = computed(() => {
 });
 
 const landPaths = computed(() => WORLD_RINGS.map(ringToPath).filter(Boolean));
+
+function nodeForFilter(node: NodeGeoView): Node {
+  return node as unknown as Node;
+}
+
+function mapNodeHasAgentCapability(node: NodeGeoView, cap: AgentCapabilityFilter): boolean {
+  return nodeHasAgentCapability(nodeForFilter(node), cap, vpnLineNodes.value.has(node.id));
+}
+
+function matchesMapStatus(node: NodeGeoView): boolean {
+  const n = nodeForFilter(node);
+  switch (mapStatusFilter.value) {
+    case "online":
+      return !!node.online && !n.disabled;
+    case "offline":
+      return !node.online && !n.disabled;
+    case "disabled":
+      return !!n.disabled;
+    default:
+      return true;
+  }
+}
+
+function mapSearchFields(node: NodeGeoView): string[] {
+  const n = nodeForFilter(node);
+  return [
+    n.name,
+    n.id,
+    n.role,
+    n.public_ip,
+    n.public_ipv6,
+    n.internal_ip,
+    n.internal_ipv6,
+    n.wireguard_ip,
+    n.host_facts?.hostname,
+    n.host_facts?.arch,
+    n.host_facts?.os,
+    n.host_facts?.platform,
+    n.geo?.country,
+    n.geo?.region,
+    n.geo?.city,
+    n.geo?.provider,
+    n.geo?.as_org,
+    ...(n.tags ?? []),
+  ]
+    .filter((v): v is string => !!v)
+    .map((v) => v.toLowerCase());
+}
+
+function fuzzyMatch(haystack: string, needle: string): boolean {
+  if (!needle) return true;
+  let i = 0;
+  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
+    if (haystack[j] === needle[i]) i += 1;
+  }
+  return i === needle.length;
+}
+
+function matchesMacAlias(node: NodeGeoView, q: string): boolean {
+  if (!q.includes("mac")) return false;
+  const n = nodeForFilter(node);
+  const osp = `${n.host_facts?.os ?? ""} ${n.host_facts?.platform ?? ""}`.toLowerCase();
+  return osp.includes("darwin");
+}
+
+function matchesMapSearch(node: NodeGeoView): boolean {
+  const q = mapSearch.value.trim().toLowerCase();
+  if (!q) return true;
+  const fields = mapSearchFields(node);
+  if (fields.some((field) => field.includes(q))) return true;
+  if (matchesMacAlias(node, q)) return true;
+  return fields.some((field) => fuzzyMatch(field, q));
+}
+
+function mapSearchScore(node: NodeGeoView, q: string): number {
+  if (!q) return 0;
+  let best = 0;
+  for (const field of mapSearchFields(node)) {
+    if (field === q) best = Math.max(best, 100);
+    else if (field.startsWith(q)) best = Math.max(best, 70);
+    else if (field.includes(q)) best = Math.max(best, 50);
+    else if (fuzzyMatch(field, q)) best = Math.max(best, 20);
+  }
+  if (matchesMacAlias(node, q)) best = Math.max(best, 60);
+  return best;
+}
+
+function matchesMapExpression(node: NodeGeoView): boolean {
+  if (!mapExpr.value.trim()) return true;
+  const result = evalFilterExpression(mapExpr.value, (token) =>
+    nodeMatchesTargetToken(nodeForFilter(node), token, vpnLineNodes.value.has(node.id)),
+  );
+  return result.ok && result.value;
+}
+
+function matchesMapQuickFilters(node: NodeGeoView): boolean {
+  if (activeMapTags.value.length > 0 && !activeMapTags.value.every((tag) => nodeHasTagToken(nodeForFilter(node), tag))) {
+    return false;
+  }
+  if (activeMapArchOs.value.length > 0 && !activeMapArchOs.value.every((token) => nodeHasArchOsToken(nodeForFilter(node), token))) {
+    return false;
+  }
+  if (activeMapAgentCaps.value.length > 0 && !activeMapAgentCaps.value.every((cap) => mapNodeHasAgentCapability(node, cap))) {
+    return false;
+  }
+  return true;
+}
+
+function toggleMapAgentCap(cap: AgentCapabilityFilter) {
+  const next = new Set(activeMapAgentCaps.value);
+  if (next.has(cap)) next.delete(cap);
+  else next.add(cap);
+  activeMapAgentCaps.value = [...next];
+}
+
+function toggleMapArchOs(token: string) {
+  const next = new Set(activeMapArchOs.value);
+  if (next.has(token)) next.delete(token);
+  else next.add(token);
+  activeMapArchOs.value = [...next];
+}
+
+function toggleMapTag(tag: string) {
+  const next = new Set(activeMapTags.value);
+  if (next.has(tag)) next.delete(tag);
+  else next.add(tag);
+  activeMapTags.value = [...next];
+}
+
+function clearMapFilters() {
+  mapSearch.value = "";
+  mapStatusFilter.value = "all";
+  mapExpr.value = "";
+  activeMapTags.value = [];
+  activeMapArchOs.value = [];
+  activeMapAgentCaps.value = [];
+}
 
 function hasCoordinates(node: NodeGeoView) {
   return typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number";
@@ -576,6 +815,120 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
       </div>
     </div>
 
+    <div v-if="nodes.length > 0" class="rounded-lg border border-border bg-card/80 p-3">
+      <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div class="relative min-w-[220px] flex-1">
+          <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            v-model="mapSearch"
+            class="h-8 pl-8 text-sm"
+            :placeholder="$t('fleet.map.filters.searchPlaceholder')"
+            :aria-label="$t('fleet.map.filters.searchPlaceholder')"
+          />
+        </div>
+
+        <Select v-model="mapStatusFilter">
+          <SelectTrigger class="h-8 lg:w-36">
+            <SelectValue :placeholder="$t('fleet.map.filters.status')" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{{ $t('fleet.map.filters.statusAll') }}</SelectItem>
+            <SelectItem value="online">{{ $t('common.status.online') }}</SelectItem>
+            <SelectItem value="offline">{{ $t('common.status.offline') }}</SelectItem>
+            <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <div class="relative min-w-[260px] flex-[1.15]">
+          <Filter class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            id="map-node-expression"
+            v-model="mapExpr"
+            class="h-8 pl-8 font-mono text-xs"
+            :placeholder="$t('fleet.map.filters.expressionPlaceholder')"
+            :aria-label="$t('fleet.map.filters.expression')"
+          />
+        </div>
+
+        <Button v-if="hasMapFilters" variant="ghost" size="sm" class="h-8 px-2 text-xs" @click="clearMapFilters">
+          <X class="size-3.5" aria-hidden="true" />
+          {{ $t('fleet.map.filters.clear') }}
+        </Button>
+      </div>
+
+      <div
+        v-if="availableMapAgentCaps.length || availableMapArchOs.length || visibleMapTags.length"
+        class="mt-2 flex flex-wrap items-center gap-1.5"
+      >
+        <span class="mr-1 text-[11px] font-medium uppercase text-muted-foreground">
+          {{ $t('fleet.map.filters.quick') }}
+        </span>
+        <button
+          v-for="cap in availableMapAgentCaps"
+          :key="`map-agent:${cap}`"
+          type="button"
+          :class="cn(
+            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
+            activeMapAgentCaps.includes(cap)
+              ? 'border-warning bg-warning/10 text-warning-foreground'
+              : 'border-border text-muted-foreground hover:bg-muted/40',
+          )"
+          :aria-pressed="activeMapAgentCaps.includes(cap)"
+          @click="toggleMapAgentCap(cap)"
+        >
+          {{ $t(`fleet.nodes.filters.agentCaps.${cap}`) }}
+        </button>
+        <span
+          v-if="availableMapAgentCaps.length && (availableMapArchOs.length || visibleMapTags.length)"
+          class="mx-1 h-3.5 w-px bg-border"
+          aria-hidden="true"
+        ></span>
+        <button
+          v-for="token in availableMapArchOs"
+          :key="`map-arch:${token}`"
+          type="button"
+          :class="cn(
+            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
+            activeMapArchOs.includes(token)
+              ? 'border-info bg-info/10 text-info'
+              : 'border-border text-muted-foreground hover:bg-muted/40',
+          )"
+          :aria-pressed="activeMapArchOs.includes(token)"
+          @click="toggleMapArchOs(token)"
+        >
+          {{ token }}
+        </button>
+        <span
+          v-if="availableMapArchOs.length && visibleMapTags.length"
+          class="mx-1 h-3.5 w-px bg-border"
+          aria-hidden="true"
+        ></span>
+        <button
+          v-for="tag in visibleMapTags"
+          :key="`map-tag:${tag}`"
+          type="button"
+          :class="cn(
+            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
+            activeMapTags.includes(tag)
+              ? 'border-primary bg-primary/10 text-primary'
+              : 'border-border text-muted-foreground hover:bg-muted/40',
+          )"
+          :aria-pressed="activeMapTags.includes(tag)"
+          @click="toggleMapTag(tag)"
+        >
+          {{ tag }}
+        </button>
+        <span v-if="hiddenMapTagCount > 0" class="text-[11px] text-muted-foreground">
+          {{ $t('fleet.map.filters.moreTags', { count: hiddenMapTagCount }) }}
+        </span>
+      </div>
+
+      <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{{ $t('fleet.map.filters.showing', { shown: filteredNodes.length, mapped: filteredWithGeo.length, total: nodes.length }) }}</span>
+        <span v-if="mapExpressionError" class="text-destructive">{{ mapExpressionError }}</span>
+      </div>
+    </div>
+
     <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
       <Card class="self-start overflow-hidden">
         <CardHeader>
@@ -583,7 +936,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
             {{ $t('fleet.map.byLocation') }}
           </CardTitle>
-          <CardDescription>{{ $t('fleet.map.coordinatesSummary', { withGeo: withGeo.length, total: nodes.length }) }}</CardDescription>
+          <CardDescription>{{ $t('fleet.map.coordinatesSummary', { withGeo: filteredWithGeo.length, total: filteredNodes.length }) }}</CardDescription>
         </CardHeader>
         <CardContent>
           <DataState
@@ -649,56 +1002,9 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     />
                   </g>
 
-                  <g v-for="point in plotted" :key="point.node.id">
-                    <!-- subtle expanding pulse for online nodes (the 'live' feel) -->
-                    <circle
-                      v-if="point.node.online"
-                      :cx="point.x"
-                      :cy="point.y"
-                      class="map-ping"
-                      r="2.8"
-                      fill="none"
-                      stroke="oklch(0.8 0.15 162 / 0.5)"
-                      stroke-width="1.2"
-                    />
-                    <g
-                      role="button"
-                      tabindex="0"
-                      class="cursor-pointer outline-none"
-                      :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
-                      @click.stop="selectMarkerNode(point.node)"
-                      @mouseenter="hoveredNodeId = point.node.id"
-                      @mouseleave="hoveredNodeId = ''"
-                      @focus="hoveredNodeId = point.node.id"
-                      @blur="hoveredNodeId = ''"
-                      @keydown.enter.prevent="selectMarkerNode(point.node)"
-                      @keydown.space.prevent="selectMarkerNode(point.node)"
-                    >
-                      <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
-                      <!-- gentle halo (online) -->
-                      <circle
-                        v-if="point.node.online"
-                        :cx="point.x"
-                        :cy="point.y"
-                        :r="point.selected || hoveredNodeId === point.node.id ? 7 : 5"
-                        :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.26)' : 'oklch(0.8 0.15 162 / 0.13)'"
-                      />
-                      <!-- node dot: small + refined -->
-                      <circle
-                        :cx="point.x"
-                        :cy="point.y"
-                        :r="point.selected || hoveredNodeId === point.node.id ? 4.6 : 2.8"
-                        :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
-                        :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
-                        :stroke-width="point.selected ? 1.5 : 1"
-                        :opacity="point.node.online ? 1 : 0.82"
-                      />
-                    </g>
-                  </g>
-
                   <!-- VPN lines overlay (vpn-core plugin layer): per-node line-count
-                       rings + resolvable relay arcs, in the same projected space so
-                       pan/zoom applies for free. Data-only via the plugin gateway. -->
+                       relay arcs in projected space. Node rings render in the
+                       fixed-size marker layer below so zoom stays useful. -->
                   <g v-if="vpnLayerOn && vpnLayerAvailable">
                     <path
                       v-for="edge in vpnEdges"
@@ -713,37 +1019,90 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     >
                       <title>{{ edge.title }}</title>
                     </path>
-                    <g v-for="marker in vpnMarkers" :key="`vpn-${marker.point.node.id}`">
-                      <circle
-                        :cx="marker.point.x"
-                        :cy="marker.point.y"
-                        :r="vpnRingRadius(marker.count)"
-                        fill="none"
-                        :stroke="marker.errors ? 'oklch(0.62 0.19 25)' : 'oklch(0.72 0.13 230)'"
-                        stroke-width="1.3"
-                        opacity="0.9"
-                      >
-                        <title>
-                          {{ $t('fleet.map.vpn.markerTitle', { node: marker.point.node.name || marker.point.node.id, count: marker.count, errors: marker.errors }) }}
-                        </title>
-                      </circle>
-                      <text
-                        :x="marker.point.x + vpnRingRadius(marker.count) + 3"
-                        :y="marker.point.y + 3"
-                        class="pointer-events-none"
-                        font-size="8.5"
-                        fill="oklch(0.85 0.05 230)"
-                      >{{ marker.count }}</text>
-                    </g>
+                  </g>
+                </g>
+
+                <g v-for="point in plotted" :key="point.node.id">
+                  <circle
+                    v-if="point.node.online"
+                    :cx="markerScreenX(point.x)"
+                    :cy="markerScreenY(point.y)"
+                    class="map-ping"
+                    r="2.2"
+                    fill="none"
+                    stroke="oklch(0.8 0.15 162 / 0.5)"
+                    stroke-width="1"
+                  />
+                  <g
+                    role="button"
+                    tabindex="0"
+                    class="cursor-pointer outline-none"
+                    :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
+                    @click.stop="selectMarkerNode(point.node)"
+                    @mouseenter="hoveredNodeId = point.node.id"
+                    @mouseleave="hoveredNodeId = ''"
+                    @focus="hoveredNodeId = point.node.id"
+                    @blur="hoveredNodeId = ''"
+                    @keydown.enter.prevent="selectMarkerNode(point.node)"
+                    @keydown.space.prevent="selectMarkerNode(point.node)"
+                  >
+                    <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
+                    <circle
+                      :cx="markerScreenX(point.x)"
+                      :cy="markerScreenY(point.y)"
+                      r="8"
+                      fill="transparent"
+                    />
+                    <circle
+                      v-if="point.node.online"
+                      :cx="markerScreenX(point.x)"
+                      :cy="markerScreenY(point.y)"
+                      :r="point.selected || hoveredNodeId === point.node.id ? 5.8 : 4"
+                      :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.24)' : 'oklch(0.8 0.15 162 / 0.12)'"
+                    />
+                    <circle
+                      :cx="markerScreenX(point.x)"
+                      :cy="markerScreenY(point.y)"
+                      :r="point.selected || hoveredNodeId === point.node.id ? 3.5 : 2.2"
+                      :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
+                      :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
+                      :stroke-width="point.selected ? 1.35 : 0.9"
+                      :opacity="point.node.online ? 1 : 0.82"
+                    />
+                  </g>
+                </g>
+
+                <g v-if="vpnLayerOn && vpnLayerAvailable">
+                  <g v-for="marker in vpnMarkers" :key="`vpn-${marker.point.node.id}`">
+                    <circle
+                      :cx="markerScreenX(marker.point.x)"
+                      :cy="markerScreenY(marker.point.y)"
+                      :r="vpnRingRadius(marker.count)"
+                      fill="none"
+                      :stroke="marker.errors ? 'oklch(0.62 0.19 25)' : 'oklch(0.72 0.13 230)'"
+                      stroke-width="1.15"
+                      opacity="0.9"
+                    >
+                      <title>
+                        {{ $t('fleet.map.vpn.markerTitle', { node: marker.point.node.name || marker.point.node.id, count: marker.count, errors: marker.errors }) }}
+                      </title>
+                    </circle>
+                    <text
+                      :x="markerScreenX(marker.point.x) + vpnRingRadius(marker.count) + 2.5"
+                      :y="markerScreenY(marker.point.y) + 3"
+                      class="pointer-events-none"
+                      font-size="8"
+                      fill="oklch(0.85 0.05 230)"
+                    >{{ marker.count }}</text>
                   </g>
                 </g>
               </svg>
 
-              <div v-if="withGeo.length === 0" class="absolute inset-0 grid place-items-center p-6 text-center">
+              <div v-if="filteredWithGeo.length === 0" class="absolute inset-0 grid place-items-center p-6 text-center">
                 <div class="max-w-sm rounded-lg border border-white/10 bg-black/30 p-4 backdrop-blur">
                   <MapPinned class="mx-auto size-5 text-white/80" aria-hidden="true" />
-                  <p class="mt-2 text-sm font-medium">{{ $t('fleet.map.mapEmptyTitle') }}</p>
-                  <p class="mt-1 text-xs text-white/65">{{ $t('fleet.map.mapEmptyDescription') }}</p>
+                  <p class="mt-2 text-sm font-medium">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedTitle') : $t('fleet.map.mapEmptyTitle') }}</p>
+                  <p class="mt-1 text-xs text-white/65">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedDescription') : $t('fleet.map.mapEmptyDescription') }}</p>
                 </div>
               </div>
 
@@ -773,7 +1132,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   <template v-if="vpnLinesQuery.loading.value">{{ $t('common.state.loading') }}</template>
                   <template v-else-if="vpnLinesQuery.error.value">{{ $t('fleet.map.vpn.unavailable') }}</template>
                   <template v-else>
-                    {{ $t('fleet.map.vpn.summary', { lines: vpnLineTotal, nodes: vpnMarkers.length, edges: vpnEdges.length }) }}
+                    {{ $t('fleet.map.vpn.summary', { lines: vpnVisibleLineTotal, nodes: vpnMarkers.length, edges: vpnEdges.length }) }}
                   </template>
                 </Badge>
               </div>
