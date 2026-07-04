@@ -35,6 +35,7 @@ import type {
   ProxyUsageResponse,
   SingBoxInventory,
   ProxyManagedAddRequest,
+  ProxyManagedConncheckRequest,
   ProxyManagedDeleteRequest,
   ProxyManagedProbeRequest,
   ProxyManagedTaskResponse,
@@ -389,6 +390,8 @@ export const api = {
         http.post<ProxyManagedTaskResponse>("/api/proxy/managed/add", input),
       delete: (input: ProxyManagedDeleteRequest) =>
         http.post<ProxyManagedTaskResponse>("/api/proxy/managed/delete", input),
+      conncheck: (input: ProxyManagedConncheckRequest) =>
+        http.post<ProxyManagedTaskResponse>("/api/proxy/managed/conncheck", input),
     },
   },
 

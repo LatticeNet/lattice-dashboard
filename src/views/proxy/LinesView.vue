@@ -4,6 +4,7 @@ import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
+  Activity,
   ArrowUpRight,
   ChevronRight,
   Info,
@@ -64,6 +65,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 const auth = useAuthStore();
 const { t } = useI18n();
 const canAdmin = computed(() => auth.can("proxy:admin"));
+const canRunTask = computed(() => auth.can("task:run"));
 const adminReason = computed(() => t("lines.adminReason"));
 
 type VpnUserOption = {
@@ -436,8 +438,14 @@ watch(allLines, () => {
 const deleteOpen = ref(false);
 const deleteTarget = ref<Line | null>(null);
 const deleting = ref(false);
+const conncheckURL = ref("https://www.cloudflare.com/cdn-cgi/trace");
+const connchecking = ref(false);
 
 function canDeleteLine(line: Line | null): boolean {
+  return !!line && line.source === "discovered" && !!(line.name || line.tag);
+}
+
+function canConncheckLine(line: Line | null): boolean {
   return !!line && line.source === "discovered" && !!(line.name || line.tag);
 }
 
@@ -467,6 +475,26 @@ async function confirmDeleteLine() {
     toast.error(error instanceof Error ? error.message : t("lines.toastDeleteFailed"));
   } finally {
     deleting.value = false;
+  }
+}
+
+async function runConncheck(line: Line | null) {
+  const name = line?.name || line?.tag || "";
+  if (!line || !name || connchecking.value || !canRunTask.value) return;
+  connchecking.value = true;
+  try {
+    const input = {
+      node_id: line.node_id,
+      name,
+      url: conncheckURL.value.trim() || undefined,
+      timeout_sec: 10,
+    };
+    const res = await api.proxy.managed.conncheck(input);
+    toast.success(t("lines.conncheckQueued", { id: res.task_id }));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("lines.conncheckFailed"));
+  } finally {
+    connchecking.value = false;
   }
 }
 
@@ -897,6 +925,39 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               <dd class="min-w-0 break-words text-right font-mono text-xs">{{ row.value }}</dd>
             </div>
           </dl>
+
+          <div v-if="canConncheckLine(selected)" class="space-y-3 rounded-md border border-border p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <Activity class="size-4 text-primary" aria-hidden="true" />
+                <p class="text-sm font-medium">{{ $t('lines.conncheckTitle') }}</p>
+              </div>
+              <Badge variant="secondary">{{ $t('lines.conncheckBadge') }}</Badge>
+            </div>
+            <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div class="grid min-w-0 gap-2">
+                <Label for="line-conncheck-url">{{ $t('lines.conncheckURL') }}</Label>
+                <Input
+                  id="line-conncheck-url"
+                  v-model="conncheckURL"
+                  type="url"
+                  autocomplete="off"
+                  placeholder="https://www.cloudflare.com/cdn-cgi/trace"
+                />
+              </div>
+              <Button
+                type="button"
+                class="self-end"
+                :disabled="connchecking || !canRunTask"
+                :title="!canRunTask ? $t('lines.taskRunRequired') : $t('lines.conncheckRun')"
+                @click="runConncheck(selected)"
+              >
+                <RefreshCw v-if="connchecking" class="size-4 animate-spin" aria-hidden="true" />
+                <Activity v-else class="size-4" aria-hidden="true" />
+                {{ $t('lines.conncheckRun') }}
+              </Button>
+            </div>
+          </div>
 
           <div class="space-y-3 rounded-md border border-border p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">

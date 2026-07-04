@@ -704,6 +704,16 @@ export interface ProxyManagedProbeRequest {
   node_id: string;
 }
 
+export interface ProxyManagedConncheckRequest {
+  node_id: string;
+  /** Must match a node name already present in the machine's discovered inventory. */
+  name: string;
+  /** Optional HTTP(S) URL tested through a temporary local sing-box client. */
+  url?: string;
+  /** Optional timeout in seconds; server accepts 2-60. */
+  timeout_sec?: number;
+}
+
 export interface ProxyManagedTaskResponse {
   ok: boolean;
   task_id: string;
