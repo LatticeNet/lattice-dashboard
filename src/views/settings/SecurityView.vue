@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
+  Cloud,
+  Fingerprint,
   KeyRound,
   LockKeyhole,
   LogOut,
+  Pencil,
+  Plus,
   RefreshCw,
   ShieldCheck,
   Smartphone,
+  Trash2,
+  X,
 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import { api, ApiError, type TOTPEnrollResponse } from "@/lib/api";
+import { api, ApiError, type TOTPEnrollResponse, type WebAuthnCredentialView } from "@/lib/api";
+import {
+  isPasskeyCancellation,
+  isWebAuthnSupported,
+  startRegistration,
+} from "@/lib/webauthn";
 import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +40,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogScrollContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -193,6 +213,197 @@ function cancelEnrollment() {
   activationCode.value = "";
   totpError.value = undefined;
 }
+
+// ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
+const supportsPasskey = isWebAuthnSupported();
+const passkeys = ref<WebAuthnCredentialView[]>([]);
+const passkeysLoaded = ref(false);
+const passkeyError = ref<string | undefined>();
+const passkeyAdding = ref(false);
+const passkeyBusyId = ref<string | undefined>();
+
+const editingId = ref<string | undefined>();
+const editName = ref("");
+
+const deleteTarget = ref<WebAuthnCredentialView | undefined>();
+const deleteOpen = ref(false);
+const deletePending = ref(false);
+
+// Promise-based step-up, mirroring VpnUsersView: collect a TOTP code once, cache
+// the short-lived grant, and reuse it across passkey mutations while valid.
+const stepUpOpen = ref(false);
+const stepUpCode = ref("");
+const stepUpError = ref("");
+const stepUpPending = ref(false);
+const stepUpGrant = ref("");
+const stepUpGrantExpiresAt = ref(0);
+let stepUpResolve: ((grant: string) => void) | undefined;
+let stepUpReject: ((error: Error) => void) | undefined;
+
+async function loadPasskeys() {
+  if (!supportsPasskey) return;
+  try {
+    const res = await api.security.webauthn.list();
+    passkeys.value = res.credentials ?? [];
+    passkeyError.value = undefined;
+  } catch (error) {
+    passkeyError.value = toMessage(error);
+  } finally {
+    passkeysLoaded.value = true;
+  }
+}
+
+function cachedStepUpGrant(): string {
+  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
+  return "";
+}
+
+function requestStepUp(): Promise<string> {
+  const cached = cachedStepUpGrant();
+  if (cached) return Promise.resolve(cached);
+  stepUpCode.value = "";
+  stepUpError.value = "";
+  stepUpOpen.value = true;
+  return new Promise((resolve, reject) => {
+    stepUpResolve = resolve;
+    stepUpReject = reject;
+  });
+}
+
+async function submitStepUp() {
+  const code = stepUpCode.value.trim();
+  if (!code || stepUpPending.value) return;
+  stepUpPending.value = true;
+  stepUpError.value = "";
+  let ok = false;
+  try {
+    const result = await api.security.stepUp(code);
+    stepUpGrant.value = result.grant;
+    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
+    stepUpOpen.value = false;
+    stepUpResolve?.(result.grant);
+    ok = true;
+  } catch (error) {
+    stepUpError.value = toMessage(error);
+  } finally {
+    stepUpPending.value = false;
+    if (ok) {
+      stepUpResolve = undefined;
+      stepUpReject = undefined;
+    }
+  }
+}
+
+function cancelStepUp() {
+  stepUpOpen.value = false;
+  stepUpReject?.(new Error(t("settings.security.passkeys.stepUpCancelled")));
+  stepUpResolve = undefined;
+  stepUpReject = undefined;
+}
+
+// A step-up grant is only required when TOTP is enrolled (server-enforced);
+// otherwise the mutation proceeds without one.
+async function grantForSensitive(): Promise<string | undefined> {
+  if (!totpEnabled.value) return undefined;
+  return await requestStepUp();
+}
+
+async function addPasskey() {
+  if (passkeyAdding.value) return;
+  passkeyError.value = undefined;
+  let grant: string | undefined;
+  try {
+    grant = await grantForSensitive();
+  } catch {
+    return; // step-up dismissed
+  }
+  passkeyAdding.value = true;
+  try {
+    const begin = await api.security.webauthn.registerBegin(grant);
+    const credential = await startRegistration(begin.publicKey);
+    const res = await api.security.webauthn.registerFinish({
+      challenge_id: begin.challenge_id,
+      credential,
+      step_up_grant: grant,
+    });
+    passkeys.value = [...passkeys.value, res.credential];
+    toast.success(t("settings.security.passkeys.added"));
+    beginRename(res.credential); // let the operator name it right away
+  } catch (error) {
+    if (!isPasskeyCancellation(error)) {
+      passkeyError.value = toMessage(error);
+      toast.error(t("settings.security.passkeys.addFailed"));
+    }
+  } finally {
+    passkeyAdding.value = false;
+  }
+}
+
+function beginRename(cred: WebAuthnCredentialView) {
+  editingId.value = cred.id;
+  editName.value = cred.name;
+}
+
+function cancelRename() {
+  editingId.value = undefined;
+  editName.value = "";
+}
+
+async function saveRename(cred: WebAuthnCredentialView) {
+  const name = editName.value.trim();
+  if (!name || name === cred.name) {
+    cancelRename();
+    return;
+  }
+  passkeyBusyId.value = cred.id;
+  try {
+    const res = await api.security.webauthn.rename(cred.id, name);
+    passkeys.value = passkeys.value.map((c) => (c.id === cred.id ? res.credential : c));
+    cancelRename();
+  } catch (error) {
+    toast.error(toMessage(error));
+  } finally {
+    passkeyBusyId.value = undefined;
+  }
+}
+
+function requestDeletePasskey(cred: WebAuthnCredentialView) {
+  deleteTarget.value = cred;
+  deleteOpen.value = true;
+}
+
+async function confirmDeletePasskey() {
+  const cred = deleteTarget.value;
+  if (!cred) return;
+  let grant: string | undefined;
+  try {
+    grant = await grantForSensitive();
+  } catch {
+    deleteOpen.value = false;
+    return;
+  }
+  deletePending.value = true;
+  try {
+    await api.security.webauthn.delete(cred.id, grant);
+    passkeys.value = passkeys.value.filter((c) => c.id !== cred.id);
+    toast.success(t("settings.security.passkeys.deleted"));
+    deleteOpen.value = false;
+    deleteTarget.value = undefined;
+  } catch (error) {
+    toast.error(toMessage(error));
+  } finally {
+    deletePending.value = false;
+  }
+}
+
+function formatPasskeyDate(value?: string): string {
+  if (!value) return t("settings.security.passkeys.never");
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
+onMounted(loadPasskeys);
 </script>
 
 <template>
@@ -522,6 +733,173 @@ function cancelEnrollment() {
         </form>
       </CardContent>
     </Card>
+
+    <Card>
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <Fingerprint class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t("settings.security.passkeys.title") }}
+        </CardTitle>
+        <CardDescription>
+          {{ $t("settings.security.passkeys.description") }}
+        </CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-5">
+        <div
+          v-if="!supportsPasskey"
+          class="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground"
+        >
+          {{ $t("settings.security.passkeys.unsupported") }}
+        </div>
+
+        <template v-else>
+          <p
+            v-if="passkeyError"
+            class="flex items-center gap-2 text-sm text-destructive"
+          >
+            <AlertTriangle class="size-4" aria-hidden="true" />
+            {{ passkeyError }}
+          </p>
+
+          <ul v-if="passkeys.length" class="space-y-3">
+            <li
+              v-for="cred in passkeys"
+              :key="cred.id"
+              class="rounded-md border border-border p-4"
+            >
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="min-w-0 space-y-1">
+                  <div v-if="editingId === cred.id" class="flex items-center gap-2">
+                    <Input
+                      v-model="editName"
+                      class="h-8 w-56"
+                      :maxlength="64"
+                      autocomplete="off"
+                      @keyup.enter="saveRename(cred)"
+                      @keyup.esc="cancelRename"
+                    />
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      :title="$t('common.actions.save')"
+                      :disabled="passkeyBusyId === cred.id"
+                      @click="saveRename(cred)"
+                    >
+                      <Check class="size-4" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      :title="$t('common.actions.cancel')"
+                      @click="cancelRename"
+                    >
+                      <X class="size-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                  <div v-else class="flex items-center gap-2">
+                    <span class="truncate font-medium">{{ cred.name }}</span>
+                    <Badge v-if="cred.backed_up" variant="secondary" class="gap-1">
+                      <Cloud class="size-3" aria-hidden="true" />
+                      {{ $t("settings.security.passkeys.syncedBadge") }}
+                    </Badge>
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    {{ $t("settings.security.passkeys.created", { date: formatPasskeyDate(cred.created_at) }) }}
+                    ·
+                    {{ $t("settings.security.passkeys.lastUsed", { date: formatPasskeyDate(cred.last_used_at) }) }}
+                  </p>
+                </div>
+                <div v-if="editingId !== cred.id" class="flex items-center gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    :title="$t('settings.security.passkeys.rename')"
+                    @click="beginRename(cred)"
+                  >
+                    <Pencil class="size-4" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    class="text-destructive hover:text-destructive"
+                    :title="$t('common.actions.delete')"
+                    :disabled="passkeyBusyId === cred.id"
+                    @click="requestDeletePasskey(cred)"
+                  >
+                    <Trash2 class="size-4" aria-hidden="true" />
+                  </Button>
+                </div>
+              </div>
+            </li>
+          </ul>
+
+          <div
+            v-else-if="passkeysLoaded"
+            class="rounded-md border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground"
+          >
+            {{ $t("settings.security.passkeys.empty") }}
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <Button type="button" :disabled="passkeyAdding" @click="addPasskey">
+              <RefreshCw v-if="passkeyAdding" class="size-4 animate-spin" aria-hidden="true" />
+              <Plus v-else class="size-4" aria-hidden="true" />
+              {{ $t("settings.security.passkeys.add") }}
+            </Button>
+            <span class="text-xs text-muted-foreground">
+              {{ $t("settings.security.passkeys.addHint") }}
+            </span>
+          </div>
+        </template>
+      </CardContent>
+    </Card>
+
+    <!-- Passkey step-up (only when the account has TOTP enrolled) -->
+    <Dialog :open="stepUpOpen" @update:open="(v) => { if (!v) cancelStepUp(); }">
+      <DialogScrollContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ $t("settings.security.passkeys.stepUpTitle") }}</DialogTitle>
+          <DialogDescription>
+            {{ $t("settings.security.passkeys.stepUpDescription") }}
+          </DialogDescription>
+        </DialogHeader>
+        <form class="space-y-3" @submit.prevent="submitStepUp">
+          <div class="grid gap-2">
+            <Label for="passkey-stepup-code">{{ $t("settings.security.passkeys.stepUpCode") }}</Label>
+            <Input
+              id="passkey-stepup-code"
+              v-model="stepUpCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="123456"
+            />
+          </div>
+          <p v-if="stepUpError" class="text-sm text-destructive">{{ stepUpError }}</p>
+          <DialogFooter>
+            <Button type="button" variant="ghost" :disabled="stepUpPending" @click="cancelStepUp">
+              {{ $t("common.actions.cancel") }}
+            </Button>
+            <Button type="submit" :disabled="stepUpPending">
+              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+              <ShieldCheck v-else class="size-4" aria-hidden="true" />
+              {{ $t("settings.security.passkeys.stepUpConfirm") }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Delete passkey confirmation -->
+    <ConfirmDialog
+      :open="deleteOpen"
+      :title="$t('settings.security.passkeys.deleteTitle')"
+      :description="deleteTarget ? $t('settings.security.passkeys.deleteConfirm', { name: deleteTarget.name }) : ''"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deletePending"
+      @update:open="(v) => { if (!v) { deleteOpen = false; deleteTarget = undefined; } }"
+      @confirm="confirmDeletePasskey"
+    />
 
     <!-- Disable 2FA confirmation -->
     <ConfirmDialog

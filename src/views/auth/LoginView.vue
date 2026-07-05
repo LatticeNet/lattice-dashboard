@@ -10,9 +10,11 @@ import {
   CircleAlert,
   ArrowLeft,
   ArrowRight,
+  Fingerprint,
 } from "lucide-vue-next";
 import { useAuthStore } from "@/stores/auth";
 import { api, ApiError, type SSOProvider } from "@/lib/api";
+import { isWebAuthnSupported, isPasskeyCancellation } from "@/lib/webauthn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,6 +38,9 @@ const errorMsg = ref<string | undefined>(undefined);
 const errorRequestId = ref<string | undefined>(undefined);
 
 const providers = ref<SSOProvider[]>([]);
+
+const passkeyPending = ref(false);
+const supportsPasskey = isWebAuthnSupported();
 
 const totpInput = ref<InstanceType<typeof Input> | null>(null);
 
@@ -126,6 +131,21 @@ function backToPassword() {
   recovery.value = "";
   useRecovery.value = false;
   step.value = "password";
+}
+
+async function onPasskeyLogin() {
+  if (passkeyPending.value || pending.value) return;
+  clearError();
+  passkeyPending.value = true;
+  try {
+    await auth.loginWebAuthn();
+    await router.push(redirect.value);
+  } catch (e) {
+    // A user who dismisses the native passkey sheet is not an error — stay quiet.
+    if (!isPasskeyCancellation(e)) setError(e);
+  } finally {
+    passkeyPending.value = false;
+  }
 }
 
 function startSso(id: string) {
@@ -343,6 +363,19 @@ onMounted(async () => {
                 <Button type="submit" class="w-full" :disabled="pending">
                   <Loader2 v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
                   <span>{{ pending ? $t('auth.signingIn') : $t('auth.signIn') }}</span>
+                </Button>
+
+                <Button
+                  v-if="supportsPasskey"
+                  type="button"
+                  variant="outline"
+                  class="w-full"
+                  :disabled="pending || passkeyPending"
+                  @click="onPasskeyLogin"
+                >
+                  <Loader2 v-if="passkeyPending" class="size-4 animate-spin" aria-hidden="true" />
+                  <Fingerprint v-else class="size-4" aria-hidden="true" />
+                  <span>{{ $t('auth.passkeySignIn') }}</span>
                 </Button>
               </form>
 

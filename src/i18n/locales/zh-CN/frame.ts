@@ -174,7 +174,14 @@ export default {
   },
 
   shell: {
-    sidebar: { toggle: "切换侧边栏", primaryNav: "主导航", collapse: "收起" },
+    sidebar: {
+      toggle: "切换侧边栏",
+      primaryNav: "主导航",
+      collapse: "收起",
+      shortcuts: "快捷入口",
+      pin: "固定到快捷入口",
+      unpin: "从快捷入口移除",
+    },
     header: {
       toggleTheme: "切换主题",
       appearance: "外观",
@@ -212,6 +219,7 @@ export default {
     useRecovery: "使用恢复码",
     useTotp: "使用验证器验证码",
     verify: "验证",
+    passkeySignIn: "使用 Passkey 登录",
     ssoContinue: "使用 {provider} 继续",
     ssoOr: "或",
     invalidCredentials: "用户名或密码错误。",

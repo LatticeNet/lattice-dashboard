@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { api, setCsrfToken, type Principal } from "@/lib/api";
+import { startAuthentication } from "@/lib/webauthn";
 
 /**
  * Session/auth state. The cookie is owned by the browser; we only track the
@@ -67,6 +68,19 @@ export const useAuthStore = defineStore("auth", () => {
     await bootstrap();
   }
 
+  /**
+   * Sign in with a passkey (usernameless/discoverable). Runs the WebAuthn
+   * assertion ceremony and, on success, establishes the session. A user-verified
+   * passkey satisfies both possession and inherence, so no separate second factor
+   * is required.
+   */
+  async function loginWebAuthn(): Promise<void> {
+    const begin = await api.auth.webauthnLoginBegin();
+    const assertion = await startAuthentication(begin.publicKey);
+    await api.auth.webauthnLoginFinish(begin.challenge_id, assertion);
+    await bootstrap();
+  }
+
   async function logout(): Promise<void> {
     try {
       await api.auth.logout();
@@ -88,6 +102,7 @@ export const useAuthStore = defineStore("auth", () => {
     bootstrap,
     login,
     completeTotp,
+    loginWebAuthn,
     logout,
   };
 });

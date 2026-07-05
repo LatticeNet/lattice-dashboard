@@ -175,7 +175,14 @@ export default {
   },
 
   shell: {
-    sidebar: { toggle: "Toggle sidebar", primaryNav: "Primary", collapse: "Collapse" },
+    sidebar: {
+      toggle: "Toggle sidebar",
+      primaryNav: "Primary",
+      collapse: "Collapse",
+      shortcuts: "Shortcuts",
+      pin: "Pin to shortcuts",
+      unpin: "Remove from shortcuts",
+    },
     header: {
       toggleTheme: "Toggle theme",
       appearance: "Appearance",
@@ -213,6 +220,7 @@ export default {
     useRecovery: "Use a recovery code",
     useTotp: "Use authenticator code",
     verify: "Verify",
+    passkeySignIn: "Sign in with a passkey",
     ssoContinue: "Continue with {provider}",
     ssoOr: "or",
     invalidCredentials: "Invalid username or password.",
