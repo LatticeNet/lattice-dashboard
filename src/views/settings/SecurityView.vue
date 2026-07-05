@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import {
@@ -375,11 +375,13 @@ function requestDeletePasskey(cred: WebAuthnCredentialView) {
 async function confirmDeletePasskey() {
   const cred = deleteTarget.value;
   if (!cred) return;
+  deleteOpen.value = false;
+  await nextTick();
   let grant: string | undefined;
   try {
     grant = await grantForSensitive();
   } catch {
-    deleteOpen.value = false;
+    deleteTarget.value = undefined;
     return;
   }
   deletePending.value = true;
