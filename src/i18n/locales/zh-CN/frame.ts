@@ -212,6 +212,7 @@ export default {
     useRecovery: "使用恢复码",
     useTotp: "使用验证器验证码",
     verify: "验证",
+    passkeySignIn: "使用 Passkey 登录",
     ssoContinue: "使用 {provider} 继续",
     ssoOr: "或",
     invalidCredentials: "用户名或密码错误。",

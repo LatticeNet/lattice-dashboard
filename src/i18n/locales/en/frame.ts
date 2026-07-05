@@ -213,6 +213,7 @@ export default {
     useRecovery: "Use a recovery code",
     useTotp: "Use authenticator code",
     verify: "Verify",
+    passkeySignIn: "Sign in with a passkey",
     ssoContinue: "Continue with {provider}",
     ssoOr: "or",
     invalidCredentials: "Invalid username or password.",
