@@ -1,4 +1,5 @@
 import { ApiError, http } from "./client";
+import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
 import type {
   Principal,
   LoginResponse,
@@ -45,6 +46,10 @@ import type {
   ProxyManagedTaskResponse,
   VPNCredentialRevealResponse,
   StepUpResponse,
+  WebAuthnRegisterBeginResponse,
+  WebAuthnLoginBeginResponse,
+  WebAuthnCredentialResponse,
+  WebAuthnCredentialsResponse,
   SubStoreImportRequest,
   SubStoreImportResponse,
   SubStoreStatusResponse,
@@ -162,6 +167,13 @@ export const api = {
       http.post<LoginResponse>("/api/login", { username, password }),
     loginTotp: (challenge_id: string, code?: string, recovery_code?: string) =>
       http.post<LoginResponse>("/api/login/totp", { challenge_id, code, recovery_code }),
+    // Usernameless (discoverable) passkey login. begin returns the assertion
+    // options; the browser produces a serialized assertion that finish verifies,
+    // issuing the same session the password+TOTP path does.
+    webauthnLoginBegin: () =>
+      http.post<WebAuthnLoginBeginResponse>("/api/auth/webauthn/login/begin", {}),
+    webauthnLoginFinish: (challenge_id: string, credential: AuthenticationResponseJSON) =>
+      http.post<LoginResponse>("/api/auth/webauthn/login/finish", { challenge_id, credential }),
     changePassword: (current_password: string, new_password: string) =>
       http.post<void>("/api/auth/password", { current_password, new_password }),
     totpEnroll: () => http.post<TOTPEnrollResponse>("/api/2fa/totp/enroll", {}),
@@ -180,6 +192,35 @@ export const api = {
 
   security: {
     stepUp: (code: string) => http.post<StepUpResponse>("/api/security/step-up", { code }),
+    // Passkey (WebAuthn) management for the current operator. Registering and
+    // deleting a login-capable credential require a fresh step-up grant when the
+    // account has TOTP enrolled (server-enforced); rename does not.
+    webauthn: {
+      list: () =>
+        http.get<WebAuthnCredentialsResponse>("/api/security/webauthn/credentials"),
+      registerBegin: (step_up_grant?: string) =>
+        http.post<WebAuthnRegisterBeginResponse>(
+          "/api/security/webauthn/register/begin",
+          step_up_grant ? { step_up_grant } : {},
+        ),
+      registerFinish: (input: {
+        challenge_id: string;
+        name?: string;
+        credential: RegistrationResponseJSON;
+        step_up_grant?: string;
+      }) =>
+        http.post<WebAuthnCredentialResponse>("/api/security/webauthn/register/finish", input),
+      rename: (id: string, name: string) =>
+        http.post<WebAuthnCredentialResponse>("/api/security/webauthn/credentials/rename", {
+          id,
+          name,
+        }),
+      delete: (id: string, step_up_grant?: string) =>
+        http.post<{ ok: boolean }>(
+          "/api/security/webauthn/credentials/delete",
+          step_up_grant ? { id, step_up_grant } : { id },
+        ),
+    },
   },
 
   nodes: {

@@ -1,6 +1,11 @@
 // Server model views (secret-free) faithful to lattice-server. Expanded
 // per-domain as screens are built; this covers identity, fleet, safe-ops.
 
+import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from "@/lib/webauthn";
+
 export interface Principal {
   actor_id: string;
   username?: string;
@@ -35,6 +40,35 @@ export interface TOTPEnrollResponse {
   secret: string;
   otpauth_uri: string;
   recovery_codes: string[];
+}
+
+/** A registered passkey, secret-free (public key stays server-side). */
+export interface WebAuthnCredentialView {
+  id: string;
+  name: string;
+  created_at: string;
+  last_used_at?: string;
+  backed_up: boolean;
+  transports?: string[];
+  aaguid?: string;
+}
+
+export interface WebAuthnRegisterBeginResponse {
+  challenge_id: string;
+  publicKey: PublicKeyCredentialCreationOptionsJSON;
+}
+
+export interface WebAuthnLoginBeginResponse {
+  challenge_id: string;
+  publicKey: PublicKeyCredentialRequestOptionsJSON;
+}
+
+export interface WebAuthnCredentialResponse {
+  credential: WebAuthnCredentialView;
+}
+
+export interface WebAuthnCredentialsResponse {
+  credentials: WebAuthnCredentialView[];
 }
 
 export interface SSOProvider {
