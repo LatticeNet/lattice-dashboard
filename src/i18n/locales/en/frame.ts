@@ -175,7 +175,14 @@ export default {
   },
 
   shell: {
-    sidebar: { toggle: "Toggle sidebar", primaryNav: "Primary", collapse: "Collapse" },
+    sidebar: {
+      toggle: "Toggle sidebar",
+      primaryNav: "Primary",
+      collapse: "Collapse",
+      shortcuts: "Shortcuts",
+      pin: "Pin to shortcuts",
+      unpin: "Remove from shortcuts",
+    },
     header: {
       toggleTheme: "Toggle theme",
       appearance: "Appearance",

@@ -174,7 +174,14 @@ export default {
   },
 
   shell: {
-    sidebar: { toggle: "切换侧边栏", primaryNav: "主导航", collapse: "收起" },
+    sidebar: {
+      toggle: "切换侧边栏",
+      primaryNav: "主导航",
+      collapse: "收起",
+      shortcuts: "快捷入口",
+      pin: "固定到快捷入口",
+      unpin: "从快捷入口移除",
+    },
     header: {
       toggleTheme: "切换主题",
       appearance: "外观",

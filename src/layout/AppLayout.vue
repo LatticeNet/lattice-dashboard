@@ -44,6 +44,7 @@ watchEffect(() => {
       <AppSidebar
         v-model:collapsed="collapsed"
         v-model:mobile-open="mobileOpen"
+        @open-command="commandOpen = true"
       />
 
       <div class="flex min-w-0 flex-1 flex-col">
