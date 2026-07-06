@@ -655,6 +655,7 @@ export default {
         createProfile: "Create profile",
         recordRenewal: "Record renewal",
         runReminders: "Run reminders",
+        unsavedChanges: "unsaved changes",
         cycle: {
           none: "None",
           monthly: "Monthly",

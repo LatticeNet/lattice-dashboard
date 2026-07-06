@@ -647,6 +647,7 @@ export default {
         createProfile: "创建档案",
         recordRenewal: "记录续费",
         runReminders: "运行提醒",
+        unsavedChanges: "未保存更改",
         cycle: {
           none: "无",
           monthly: "每月",
