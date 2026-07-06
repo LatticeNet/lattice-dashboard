@@ -471,7 +471,7 @@ export interface MachineProfileInput {
   currency?: string;
   renewal_cycle?: RenewalCycle | string;
   cycle_days?: number;
-  next_renewal?: string;
+  next_renewal?: string | null;
   auto_roll?: boolean;
   remind_days_before?: number[];
   reminders_enabled?: boolean;
