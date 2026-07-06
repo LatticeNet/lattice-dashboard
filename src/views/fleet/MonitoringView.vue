@@ -6,6 +6,7 @@ import { toast } from "vue-sonner";
 import {
   Activity,
   CheckCircle2,
+  Funnel,
   Gauge,
   Pause,
   Play,
@@ -21,6 +22,7 @@ import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatPercent, formatRelativeTime, shortId } from "@/lib/format";
+import { evalFilterExpression, tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 
 import { latencyClass } from "@/lib/latency";
@@ -122,11 +124,101 @@ const selectedMonitor = computed(() =>
 const selectedResults = computed(() => resultsQuery.data.value ?? []);
 
 const monitorSearch = ref("");
+const monitorExpression = ref("");
+
+const monitorExpressionError = computed(() => {
+  const expr = monitorExpression.value.trim();
+  if (!expr) return "";
+  const result = evalFilterExpression(expr, () => true);
+  return result.ok ? "" : result.error ?? "Invalid expression";
+});
+
+function monitorFieldValues(monitor: MonitorView, rawField: string): string[] {
+  const field = rawField.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  switch (field) {
+    case "id":
+    case "monitor":
+    case "monitor_id":
+      return [monitor.id, shortId(monitor.id)];
+    case "name":
+      return [monitor.name];
+    case "type":
+    case "protocol":
+      return [monitor.type];
+    case "target":
+    case "host":
+    case "url":
+      return [monitor.target];
+    case "status":
+    case "state":
+      return [monitor.enabled ? "enabled" : "disabled", monitor.enabled ? "on" : "off"];
+    case "enabled":
+      return [String(monitor.enabled), monitor.enabled ? "true" : "false"];
+    case "interval":
+    case "interval_sec":
+      return [String(monitor.interval_sec)];
+    case "timeout":
+    case "timeout_sec":
+      return [String(monitor.timeout_sec)];
+    case "scope":
+    case "assign":
+    case "assignment":
+      return [monitor.assign_all ? "all" : "selected"];
+    case "node":
+    case "node_id":
+      return monitor.assign_all ? ["all"] : monitor.node_ids ?? [];
+    case "created":
+    case "created_at":
+      return [monitor.created_at ?? ""];
+    case "updated":
+    case "updated_at":
+      return [monitor.updated_at ?? ""];
+    default:
+      return [];
+  }
+}
+
+function monitorHaystack(monitor: MonitorView): string {
+  return [
+    monitor.id,
+    shortId(monitor.id),
+    monitor.name,
+    monitor.type,
+    monitor.target,
+    monitor.enabled ? "enabled on" : "disabled off",
+    monitor.assign_all ? "all" : "selected",
+    monitor.interval_sec,
+    monitor.timeout_sec,
+    ...(monitor.node_ids ?? []),
+    monitor.created_at,
+    monitor.updated_at,
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" ");
+}
+
+function monitorMatchesExpression(monitor: MonitorView): boolean {
+  const expr = monitorExpression.value.trim();
+  if (!expr || monitorExpressionError.value) return true;
+  const result = evalFilterExpression(expr, (rawToken) => {
+    const splitAt = rawToken.indexOf(":");
+    if (splitAt > 0) {
+      const values = monitorFieldValues(monitor, rawToken.slice(0, splitAt));
+      const needle = rawToken.slice(splitAt + 1).trim();
+      return values.length > 0 && values.some((value) => tokenMatchesText(value, needle));
+    }
+    return tokenMatchesText(monitorHaystack(monitor), rawToken);
+  });
+  return result.ok ? result.value : true;
+}
+
 const sortedMonitors = computed(() => {
   const q = monitorSearch.value.trim().toLowerCase();
   return [...monitors.value]
     .filter(
-      (m) => !q || [m.name, m.id, m.target, m.type].some((v) => (v ?? "").toLowerCase().includes(q)),
+      (m) =>
+        monitorMatchesExpression(m) &&
+        (!q || [m.name, m.id, m.target, m.type].some((v) => (v ?? "").toLowerCase().includes(q))),
     )
     .sort((a, b) => {
       if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
@@ -435,17 +527,34 @@ async function deleteMonitor() {
           <CardDescription>{{ $t('fleet.monitoring.definitions.description', { enabled: enabledCount, total: monitors.length }) }}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div class="relative mb-3">
-            <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-            <Input v-model="monitorSearch" class="pl-8" :placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')" />
+          <div class="mb-3 space-y-2">
+            <div class="flex flex-col gap-2 lg:flex-row">
+              <div class="relative min-w-[220px] flex-1">
+                <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+                <Input v-model="monitorSearch" class="pl-8" :placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')" />
+              </div>
+              <div class="relative min-w-[260px] flex-1">
+                <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  v-model="monitorExpression"
+                  class="pl-8 font-mono text-xs"
+                  :class="monitorExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
+                  :placeholder="$t('fleet.monitoring.definitions.expressionPlaceholder')"
+                  aria-label="Monitor expression"
+                />
+              </div>
+            </div>
+            <p class="text-xs" :class="monitorExpressionError ? 'text-destructive' : 'text-muted-foreground'">
+              {{ monitorExpressionError || $t('fleet.monitoring.definitions.expressionHelp') }}
+            </p>
           </div>
           <DataState
             :loading="monitorsQuery.loading.value"
             :error="monitorsQuery.error.value"
             :has-data="monitorsQuery.data.value !== undefined"
-            :is-empty="monitors.length === 0"
-            :empty-title="$t('fleet.monitoring.definitions.emptyTitle')"
-            :empty-description="$t('fleet.monitoring.definitions.emptyDescription')"
+            :is-empty="sortedMonitors.length === 0"
+            :empty-title="monitors.length ? $t('fleet.monitoring.definitions.noMatchTitle') : $t('fleet.monitoring.definitions.emptyTitle')"
+            :empty-description="monitors.length ? $t('fleet.monitoring.definitions.noMatchDescription') : $t('fleet.monitoring.definitions.emptyDescription')"
             @retry="monitorsQuery.refresh"
           >
             <div class="space-y-3">

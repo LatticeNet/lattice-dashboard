@@ -7,6 +7,7 @@ import {
   Ban,
   CheckCircle2,
   ChevronDown,
+  Funnel,
   KeyRound,
   ListChecks,
   Lock,
@@ -23,6 +24,7 @@ import { api, unwrap, type LinesListResponse, type Node, type TaskResult, type T
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
+import { tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 import {
   agentConfigBadges,
@@ -127,6 +129,7 @@ const script = ref("");
 const timeoutSec = ref(60);
 const outputLimit = ref(16384);
 const taskSearch = ref("");
+const taskExpression = ref("");
 const expandedTasks = ref<Set<string>>(new Set());
 const expandedNodeRows = ref<Set<string>>(new Set());
 const seededPage = Number(route.query.page);
@@ -266,11 +269,131 @@ const rootTasks = computed(() =>
     .sort((a, b) => timeValue(b.created_at) - timeValue(a.created_at)),
 );
 
+const taskExpressionError = computed(() => {
+  const expr = taskExpression.value.trim();
+  if (!expr) return "";
+  const result = evalFilterExpression(expr, () => true);
+  return result.ok ? "" : result.error ?? "Invalid expression";
+});
+
+function filterTextSlice(value?: string): string {
+  return (value ?? "").slice(0, 4096);
+}
+
+function taskExpressionFieldValues(task: TaskView, rows: NodeExecutionRow[], rawField: string): string[] {
+  const attempts = attemptTasks(task);
+  const field = rawField.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  switch (field) {
+    case "id":
+    case "task":
+    case "task_id":
+      return [task.id, shortId(task.id), ...attempts.map((attempt) => attempt.id), ...attempts.map((attempt) => shortId(attempt.id))];
+    case "attempt":
+    case "attempt_id":
+      return attempts.map((attempt) => attempt.id);
+    case "status":
+    case "state":
+      return [groupStatus(task, rows), task.status, ...rows.map((row) => row.status)];
+    case "interpreter":
+    case "shell":
+      return [task.interpreter];
+    case "node":
+    case "node_id":
+    case "target":
+    case "target_id":
+      return [
+        ...task.targets,
+        ...task.targets.map((id) => nodeName(id)),
+        ...rows.map((row) => row.nodeId),
+        ...rows.map((row) => row.node?.name ?? ""),
+      ];
+    case "actor":
+    case "actor_id":
+      return [task.actor_id ?? ""];
+    case "token":
+    case "token_id":
+      return [task.token_id ?? ""];
+    case "approval":
+    case "approval_id":
+      return [task.approval_id ?? ""];
+    case "sha":
+    case "script":
+    case "script_sha256":
+      return [task.script_sha256 ?? ""];
+    case "result":
+    case "error":
+      return rows.flatMap((row) => [
+        filterTextSlice(row.latestResult?.error),
+        filterTextSlice(row.latestResult?.stderr),
+        filterTextSlice(row.latestResult?.stdout),
+      ]);
+    case "exit":
+    case "exit_code":
+      return rows.map((row) => String(row.latestResult?.exit_code ?? ""));
+    case "created":
+    case "created_at":
+      return [task.created_at ?? ""];
+    case "started":
+    case "started_at":
+      return [task.started_at ?? ""];
+    case "finished":
+    case "finished_at":
+      return [task.finished_at ?? ""];
+    default:
+      return [];
+  }
+}
+
+function taskExpressionHaystack(task: TaskView, rows: NodeExecutionRow[]): string {
+  return [
+    task.id,
+    shortId(task.id),
+    task.actor_id,
+    task.token_id,
+    task.approval_id,
+    task.interpreter,
+    task.status,
+    groupStatus(task, rows),
+    task.script_sha256,
+    task.created_at,
+    task.started_at,
+    task.finished_at,
+    ...attemptTasks(task).flatMap((attempt) => [attempt.id, shortId(attempt.id), attempt.status]),
+    ...task.targets,
+    ...task.targets.map((id) => nodeName(id)),
+    ...rows.flatMap((row) => [
+      row.nodeId,
+      row.node?.name,
+      row.status,
+      row.latestResult?.error,
+      row.latestResult?.exit_code,
+    ]),
+  ]
+    .filter((value) => value !== undefined && value !== null && value !== "")
+    .join(" ");
+}
+
+function taskMatchesExpression(task: TaskView, rows: NodeExecutionRow[]): boolean {
+  const expr = taskExpression.value.trim();
+  if (!expr || taskExpressionError.value) return true;
+  const result = evalFilterExpression(expr, (rawToken) => {
+    const splitAt = rawToken.indexOf(":");
+    if (splitAt > 0) {
+      const values = taskExpressionFieldValues(task, rows, rawToken.slice(0, splitAt));
+      const needle = rawToken.slice(splitAt + 1).trim();
+      return values.length > 0 && values.some((value) => tokenMatchesText(value, needle));
+    }
+    return tokenMatchesText(taskExpressionHaystack(task, rows), rawToken);
+  });
+  return result.ok ? result.value : true;
+}
+
 const filteredRootTasks = computed(() => {
   const q = taskSearch.value.trim().toLowerCase();
   return rootTasks.value.filter((task) => {
     const rows = nodeRows(task);
     if (statusFilter.value !== "all" && groupStatus(task, rows) !== statusFilter.value) return false;
+    if (!taskMatchesExpression(task, rows)) return false;
     if (!q) return true;
     const attemptIds = attemptTasks(task).map((attempt) => attempt.id);
     const haystack = [
@@ -296,7 +419,7 @@ const pagedRootTasks = computed(() => {
   return filteredRootTasks.value.slice(start, start + HISTORY_PAGE_SIZE);
 });
 
-watch([taskSearch, statusFilter], () => {
+watch([taskSearch, taskExpression, statusFilter], () => {
   historyPage.value = 1;
 });
 
@@ -825,6 +948,16 @@ async function deleteTask(task: TaskView) {
               <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
               <Input v-model="taskSearch" class="w-72 pl-8" :placeholder="$t('operations.tasks.searchPlaceholder')" />
             </div>
+            <div class="relative">
+              <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+              <Input
+                v-model="taskExpression"
+                class="w-80 pl-8 font-mono text-xs"
+                :class="taskExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
+                :placeholder="$t('operations.tasks.expressionPlaceholder')"
+                aria-label="Task expression"
+              />
+            </div>
             <Select v-model="statusFilter">
               <SelectTrigger class="w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -838,6 +971,9 @@ async function deleteTask(task: TaskView) {
             </Select>
           </div>
         </div>
+        <p class="mt-2 text-xs" :class="taskExpressionError ? 'text-destructive' : 'text-muted-foreground'">
+          {{ taskExpressionError || $t('operations.tasks.expressionHelp') }}
+        </p>
       </CardHeader>
       <CardContent>
         <DataState

@@ -3,8 +3,9 @@ import { computed, ref, watch, type HTMLAttributes } from "vue";
 import { useRouter, type RouteLocationRaw } from "vue-router";
 import { useDebounceFn, useMediaQuery } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
-import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Search, X } from "lucide-vue-next";
+import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Funnel, Search, X } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
+import { evalFilterExpression, normalizeExprToken, tokenMatchesText } from "@/lib/filterExpressions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,6 +23,10 @@ export interface DataTableColumn<Row> {
   sortable?: boolean;
   /** Include this column's value in the built-in text search. */
   searchable?: boolean;
+  /** Include this column in the expression filter even when it is not text-searchable. */
+  filterable?: boolean;
+  /** Extra field names accepted by expression filters, e.g. ["scope", "permission"]. */
+  filterAliases?: string[];
   /** Extra classes applied to both the header cell and body cells. */
   class?: HTMLAttributes["class"];
   /** Custom accessor for sort/search/default-cell value (defaults to `row[key]`). */
@@ -58,8 +63,14 @@ const props = withDefaults(
     pageSize?: number;
     /** Shows the built-in debounced search box (requires >=1 searchable column). */
     searchable?: boolean;
+    /** Shows the compact expression filter. Defaults on when searchable columns exist. */
+    expressionFilter?: boolean;
     /** Placeholder for the search box. */
     searchPlaceholder?: string;
+    /** Placeholder for the expression filter. */
+    expressionPlaceholder?: string;
+    /** Helper text below the expression filter. */
+    expressionHelp?: string;
     /** Accessible label for the clear-search button. */
     clearSearchLabel?: string;
     /** Label for the actions column shown in the stacked mobile card. */
@@ -89,7 +100,10 @@ const props = withDefaults(
     selectable: false,
     pageSize: 0,
     searchable: false,
+    expressionFilter: true,
     searchPlaceholder: "Search…",
+    expressionPlaceholder: undefined,
+    expressionHelp: undefined,
     clearSearchLabel: "Clear search",
     actionsLabel: "Actions",
     showingLabel: "Showing",
@@ -146,13 +160,21 @@ const isDesktop = useMediaQuery("(min-width: 768px)");
 /* ----------------------------- search ----------------------------- */
 const searchInput = ref("");
 const searchTerm = ref("");
+const expressionInput = ref("");
+const expressionTerm = ref("");
 const applySearch = useDebounceFn((value: string) => {
   searchTerm.value = value;
 }, 200);
+const applyExpression = useDebounceFn((value: string) => {
+  expressionTerm.value = value;
+}, 200);
 watch(searchInput, (value) => applySearch(value));
+watch(expressionInput, (value) => applyExpression(value));
 
 const searchableColumns = computed(() => props.columns.filter((c) => c.searchable));
 const showSearch = computed(() => props.searchable && searchableColumns.value.length > 0);
+const expressionColumns = computed(() => props.columns.filter((c) => c.searchable || c.filterable));
+const showExpression = computed(() => props.searchable && props.expressionFilter && expressionColumns.value.length > 0);
 
 function rawValue(row: T, column: DataTableColumn<T>): unknown {
   if (column.value) return column.value(row);
@@ -161,17 +183,77 @@ function rawValue(row: T, column: DataTableColumn<T>): unknown {
 
 function textOf(value: unknown): string {
   if (value == null) return "";
+  if (Array.isArray(value)) return value.map(textOf).filter(Boolean).join(" ");
   return String(value);
+}
+
+function fieldName(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function columnFieldNames(column: DataTableColumn<T>): string[] {
+  return [
+    column.key,
+    column.label,
+    ...(column.filterAliases ?? []),
+  ]
+    .map(fieldName)
+    .filter(Boolean);
+}
+
+function expressionPlaceholderText(): string {
+  if (props.expressionPlaceholder) return props.expressionPlaceholder;
+  const names = expressionColumns.value.flatMap(columnFieldNames);
+  const shown = [...new Set(names)].slice(0, 4);
+  if (shown.length === 0) return "AND(status:ok, name:edge)";
+  return `AND(${shown.map((name) => `${name}:...`).join(", ")})`;
+}
+
+const expressionHelpText = computed(() => {
+  if (props.expressionHelp) return props.expressionHelp;
+  const names = expressionColumns.value.flatMap(columnFieldNames);
+  const shown = [...new Set(names)].slice(0, 8);
+  return shown.length
+    ? `Fields: ${shown.join(", ")}. Use AND(...), OR(...), NOT(...), or field:value.`
+    : "Use AND(...), OR(...), NOT(...), or field:value.";
+});
+
+const expressionError = computed(() => {
+  const expr = expressionTerm.value.trim();
+  if (!expr) return "";
+  const result = evalFilterExpression(expr, () => true);
+  return result.ok ? "" : result.error ?? "Invalid expression";
+});
+
+function rowMatchesExpression(row: T, expression: string): boolean {
+  if (!expression || expressionError.value) return true;
+  const result = evalFilterExpression(expression, (rawToken) => {
+    const token = normalizeExprToken(rawToken);
+    const prefixed = token.match(/^([a-z0-9._-]+):(.*)$/);
+    if (prefixed) {
+      const [, rawField, value] = prefixed;
+      const field = fieldName(rawField ?? "");
+      if (!field || !value) return false;
+      return expressionColumns.value.some((column) => {
+        if (!columnFieldNames(column).includes(field)) return false;
+        return tokenMatchesText(textOf(rawValue(row, column)), value);
+      });
+    }
+    return expressionColumns.value.some((column) => tokenMatchesText(textOf(rawValue(row, column)), token));
+  });
+  return result.ok ? result.value : true;
 }
 
 /* ----------------------------- filtering ----------------------------- */
 const filteredRows = computed(() => {
   const term = searchTerm.value.trim().toLowerCase();
-  if (!term) return props.rows;
+  const expression = expressionTerm.value.trim();
   const cols = searchableColumns.value;
-  return props.rows.filter((row) =>
-    cols.some((col) => textOf(rawValue(row, col)).toLowerCase().includes(term)),
-  );
+  return props.rows.filter((row) => {
+    const matchesSearch =
+      !term || cols.some((col) => textOf(rawValue(row, col)).toLowerCase().includes(term));
+    return matchesSearch && rowMatchesExpression(row, expression);
+  });
 });
 
 /* ----------------------------- sorting ----------------------------- */
@@ -237,6 +319,9 @@ watch([totalRows, () => props.pageSize], () => {
   if (page.value < 1) page.value = 1;
 });
 watch(searchTerm, () => {
+  page.value = 1;
+});
+watch(expressionTerm, () => {
   page.value = 1;
 });
 
@@ -307,34 +392,61 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
 <template>
   <div :class="cn('space-y-4', props.class)">
     <!-- Toolbar -->
-    <div
-      v-if="showSearch || $slots.toolbar"
-      class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div v-if="showSearch" class="relative w-full sm:max-w-xs">
-        <Search
-          class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <Input
-          v-model="searchInput"
-          class="pl-8 pr-8"
-          type="search"
-          :placeholder="searchPlaceholder"
-        />
-        <button
-          v-if="searchInput"
-          type="button"
-          class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
-          :aria-label="clearSearchLabel"
-          @click="searchInput = ''"
-        >
-          <X class="size-4" aria-hidden="true" />
-        </button>
+    <div v-if="showSearch || showExpression || $slots.toolbar" class="space-y-2">
+      <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+        <div class="grid min-w-0 flex-1 gap-2 md:grid-cols-2">
+          <div v-if="showSearch" class="relative min-w-[220px]">
+            <Search
+              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              v-model="searchInput"
+              class="pl-8 pr-8"
+              type="search"
+              :placeholder="searchPlaceholder"
+            />
+            <button
+              v-if="searchInput"
+              type="button"
+              class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
+              :aria-label="clearSearchLabel"
+              @click="searchInput = ''"
+            >
+              <X class="size-4" aria-hidden="true" />
+            </button>
+          </div>
+          <div v-if="showExpression" class="relative min-w-[240px]">
+            <Funnel
+              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              v-model="expressionInput"
+              class="pl-8 pr-8 font-mono text-xs"
+              :class="expressionError && 'border-destructive focus-visible:ring-destructive/20'"
+              type="text"
+              :placeholder="expressionPlaceholderText()"
+              aria-label="Expression filter"
+            />
+            <button
+              v-if="expressionInput"
+              type="button"
+              class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
+              :aria-label="clearSearchLabel"
+              @click="expressionInput = ''"
+            >
+              <X class="size-4" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        <div class="flex shrink-0 items-center gap-2">
+          <slot name="toolbar" />
+        </div>
       </div>
-      <div class="flex items-center gap-2">
-        <slot name="toolbar" />
-      </div>
+      <p v-if="showExpression" class="text-xs" :class="expressionError ? 'text-destructive' : 'text-muted-foreground'">
+        {{ expressionError || expressionHelpText }}
+      </p>
     </div>
 
     <!-- Showing X of Y -->

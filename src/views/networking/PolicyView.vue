@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
+  AlertTriangle,
   FolderTree,
   Network,
   Pencil,
@@ -172,6 +173,13 @@ async function saveCell(payload: GroupPolicyUpsertRequest) {
 const planResult = ref<GroupPolicyPlanResult | undefined>(undefined);
 const planResultOpen = ref(false);
 const planningGroups = ref(false);
+const planSelectorRiskAccepted = ref(false);
+
+const planSelectorImpacts = computed(() => planResult.value?.selector_impacts ?? []);
+const planRequiresSelectorConfirmation = computed(() => planSelectorImpacts.value.length > 0);
+const canOpenPlanApprovals = computed(
+  () => !planRequiresSelectorConfirmation.value || planSelectorRiskAccepted.value,
+);
 
 async function planGroupPolicies() {
   if (!canAdmin.value) return;
@@ -179,6 +187,7 @@ async function planGroupPolicies() {
   try {
     const result = await api.groupPolicy.plan();
     planResult.value = result;
+    planSelectorRiskAccepted.value = false;
     planResultOpen.value = true;
     toast.success(t("networking.matrix.toastPlanned", { n: result.affected.length }));
   } catch (error) {
@@ -186,6 +195,17 @@ async function planGroupPolicies() {
   } finally {
     planningGroups.value = false;
   }
+}
+
+function setPlanResultOpen(value: boolean) {
+  planResultOpen.value = value;
+  if (!value) planSelectorRiskAccepted.value = false;
+}
+
+function openPlanApprovals() {
+  if (!canOpenPlanApprovals.value) return;
+  planResultOpen.value = false;
+  router.push("/approvals");
 }
 
 const sortedPolicies = computed(() =>
@@ -200,6 +220,18 @@ function policyNodeLabel(p: NetPolicyView): string {
 
 function nodeName(id: string): string {
   return nodes.value.find((n) => n.id === id)?.name || shortId(id, 14);
+}
+
+function nodeNameList(ids: string[], limit = 6): string {
+  const names = ids.slice(0, limit).map((id) => nodeName(id));
+  const remaining = ids.length - limit;
+  return remaining > 0 ? `${names.join(", ")} +${remaining}` : names.join(", ");
+}
+
+function selectorUseLabel(use: string): string {
+  if (use === "scope") return t("networking.matrix.selectorImpactUseScope");
+  if (use === "remote") return t("networking.matrix.selectorImpactUseRemote");
+  return use;
 }
 
 function activeRuleCount(p: NetPolicyView): number {
@@ -1427,7 +1459,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
     />
 
     <!-- Group-policy plan summary -->
-    <Dialog :open="planResultOpen" @update:open="(v) => (planResultOpen = v)">
+    <Dialog :open="planResultOpen" @update:open="setPlanResultOpen">
       <DialogScrollContent class="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{{ $t('networking.matrix.planResultTitle') }}</DialogTitle>
@@ -1438,6 +1470,52 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             <Badge variant="success">{{ $t('networking.matrix.planAffected', { n: planResult.affected.length }) }}</Badge>
             <Badge v-if="planResult.conflicts.length" variant="warning">{{ $t('networking.matrix.planConflicts', { n: planResult.conflicts.length }) }}</Badge>
             <Badge v-if="planResult.orphaned.length" variant="secondary">{{ $t('networking.matrix.planOrphaned', { n: planResult.orphaned.length }) }}</Badge>
+            <Badge v-if="planSelectorImpacts.length" variant="warning">{{ $t('networking.matrix.planSelectorImpacts', { n: planSelectorImpacts.length }) }}</Badge>
+          </div>
+          <div
+            v-if="planSelectorImpacts.length"
+            class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
+          >
+            <p class="flex items-center gap-2 font-medium text-foreground">
+              <AlertTriangle class="size-4 text-warning" aria-hidden="true" />
+              {{ $t('networking.matrix.selectorImpactTitle') }}
+            </p>
+            <p class="mt-1">{{ $t('networking.matrix.selectorImpactDescription') }}</p>
+            <ul class="mt-3 space-y-2">
+              <li
+                v-for="impact in planSelectorImpacts"
+                :key="impact.group_id"
+                class="rounded-md border border-warning/30 bg-background/60 px-2 py-1.5"
+              >
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <span class="font-medium text-foreground">{{ impact.group_name || shortId(impact.group_id, 12) }}</span>
+                  <Badge
+                    v-for="use in impact.uses"
+                    :key="use"
+                    variant="outline"
+                  >
+                    {{ selectorUseLabel(use) }}
+                  </Badge>
+                  <span class="text-xs text-muted-foreground">
+                    {{ $t('networking.matrix.selectorImpactDynamicMembers', { n: impact.selector_member_ids.length }) }}
+                  </span>
+                </div>
+                <p v-if="impact.selector_member_ids.length" class="mt-1 text-xs">
+                  {{ nodeNameList(impact.selector_member_ids) }}
+                </p>
+                <p v-else class="mt-1 text-xs">
+                  {{ $t('networking.matrix.selectorImpactNoDynamicMembers') }}
+                </p>
+              </li>
+            </ul>
+            <label class="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-background/60 p-2 text-xs text-foreground">
+              <input
+                v-model="planSelectorRiskAccepted"
+                type="checkbox"
+                class="mt-0.5 size-4 shrink-0 accent-primary"
+              />
+              <span>{{ $t('networking.matrix.selectorImpactConfirm') }}</span>
+            </label>
           </div>
           <div v-if="planResult.affected.length" class="space-y-1">
             <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('networking.matrix.planAffectedNodes') }}</p>
@@ -1469,8 +1547,11 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           </p>
         </div>
         <DialogFooter>
-          <Button variant="outline" @click="planResultOpen = false">{{ $t('common.actions.close') }}</Button>
-          <Button @click="() => { planResultOpen = false; router.push('/approvals'); }">
+          <Button variant="outline" @click="setPlanResultOpen(false)">{{ $t('common.actions.close') }}</Button>
+          <Button
+            :disabled="!canOpenPlanApprovals"
+            @click="openPlanApprovals"
+          >
             {{ $t('networking.shared.goToApprovals') }}
           </Button>
         </DialogFooter>

@@ -196,7 +196,7 @@ export default {
         description:
           "An operator account. For Google/OIDC login the username must equal the person's verified email.",
         username: "Username",
-        usernamePlaceholder: "alice@example.com",
+        usernamePlaceholder: "alice{'@'}example.com",
         usernameHint:
           "The login id. For SSO it must match the verified IdP email exactly; it cannot be changed later.",
         usernameRequired: "A username is required.",

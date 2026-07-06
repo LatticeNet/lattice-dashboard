@@ -362,7 +362,7 @@ export default {
       createChannelFirst: "请先创建渠道,再添加路由规则。",
       titleTemplateLabel: "标题模板",
       bodyTemplateLabel: "正文模板",
-      templateVarsHint: "可用变量: {{event_type}}, {{title}}, {{body}}。",
+      templateVarsHint: "可用变量: {'{'}event_type{'}'}, {'{'}title{'}'}, {'{'}body{'}'}。",
       ruleEnabledLabel: "启用规则",
       ruleCreated: "规则已创建",
       ruleUpdated: "规则已更新",
@@ -423,7 +423,7 @@ export default {
       targetVersionLabel: "目标版本",
       targetVersionPlaceholder: "latest 或 0.2.8",
       versionHint: "使用 latest 会在生成计划时解析当前官方发布（{latest}）。",
-      versionInvalid: "必须匹配 ^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$",
+      versionInvalid: "必须匹配 ^[A-Za-z0-9][A-Za-z0-9._+:-]{'{'}0,63{'}'}$",
       artifactMode: "产物来源",
       officialArtifactHint:
         "Binary URL 和 SHA-256 留空时，会按节点 OS/arch 使用官方 LatticeNet/lattice-node-agent 发布产物。",

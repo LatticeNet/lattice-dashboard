@@ -237,7 +237,7 @@ function goToNode(id: string) {
 }
 
 /* ----------------------------------------------------------------- */
-/* Display-only selector + live preview                              */
+/* Dynamic selector + live preview                                   */
 /* ----------------------------------------------------------------- */
 const previewCount = ref<number | null>(null);
 const previewing = ref(false);
@@ -621,7 +621,7 @@ watch(
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.leaderHint') }}</p>
               </div>
 
-              <!-- Display-only smart selector -->
+              <!-- Dynamic smart selector -->
               <div class="space-y-3 rounded-lg border border-border p-3">
                 <div class="flex items-center justify-between">
                   <Label>{{ $t('fleet.groups.selectorTitle') }}</Label>

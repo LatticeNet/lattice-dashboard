@@ -1015,6 +1015,16 @@ export interface GroupPolicyPlanResult {
   affected: { node_id: string; approval_id: string; plan_sha: string }[];
   conflicts: { node_id: string; reason: string }[];
   orphaned: string[];
+  selector_impacts?: {
+    group_id: string;
+    group_name: string;
+    uses: string[];
+    policy_ids: string[];
+    selector?: GroupSelector;
+    explicit_member_ids: string[];
+    selector_member_ids: string[];
+    resolved_member_ids: string[];
+  }[];
 }
 
 export interface MatrixGroup {
