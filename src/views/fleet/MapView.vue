@@ -4,21 +4,30 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Crosshair,
+  Funnel,
   Globe2,
   LocateFixed,
   MapPinned,
   RefreshCw,
+  Search,
   Radar,
   Route,
   Trash2,
   WifiOff,
 } from "lucide-vue-next";
-import { api, unwrap, type NodeGeoResolveResult, type NodeGeoView } from "@/lib/api";
+import { api, unwrap, type Node, type NodeGeoResolveResult } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { WORLD_RINGS } from "@/lib/map/worldGeo";
+import {
+  evalFilterExpression,
+  nodeHasAgentCapability,
+  nodeHasArchOsToken,
+  nodeHasTagToken,
+  nodeMatchesTargetToken,
+} from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -34,13 +43,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const MAP_WIDTH = 1000;
 const MAP_HEIGHT = 500;
 
 const auth = useAuthStore();
 const { t } = useI18n();
-const geoQuery = useAsyncData(() => api.nodes.geo().then((r) => unwrap(r, "nodes")), {
+const geoQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 10000,
 });
 
@@ -62,8 +78,16 @@ const isPanning = ref(false);
 const panStart = ref({ pointerId: -1, clientX: 0, clientY: 0, x: 0, y: 0, moved: false });
 const suppressMarkerClickUntil = ref(0);
 const locationEditorOpen = ref(false);
+const mapSearch = ref("");
+type StatusFilter = "all" | "online" | "offline" | "disabled";
+const statusFilter = ref<StatusFilter>("all");
+const nodeExpression = ref("");
+const activeAgentCaps = ref<string[]>([]);
+const activeArchOs = ref<string[]>([]);
+const activeTags = ref<string[]>([]);
 
-const nodes = computed(() => geoQuery.data.value ?? []);
+const allNodes = computed(() => geoQuery.data.value ?? []);
+const nodes = computed(() => filteredNodes.value);
 const withGeo = computed(() =>
   nodes.value.filter(hasCoordinates),
 );
@@ -76,6 +100,54 @@ const autoCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "
 const manualCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "operator" || !n.geo?.source).length);
 const coveragePercent = computed(() => (nodes.value.length ? Math.round((withGeo.value.length / nodes.value.length) * 100) : 0));
 const canAdminNodes = computed(() => auth.can("node:admin"));
+const hasMapFilters = computed(
+  () =>
+    !!mapSearch.value.trim() ||
+    statusFilter.value !== "all" ||
+    !!nodeExpression.value.trim() ||
+    activeAgentCaps.value.length > 0 ||
+    activeArchOs.value.length > 0 ||
+    activeTags.value.length > 0,
+);
+const nodeExpressionError = computed(() => {
+  const expr = nodeExpression.value.trim();
+  if (!expr) return "";
+  const result = evalFilterExpression(expr, () => true);
+  return result.ok ? "" : result.error ?? "Invalid expression";
+});
+
+const ARCH_OS_TOKENS = ["linux", "darwin", "amd64", "arm64"] as const;
+const AGENT_CAP_FILTERS = ["exec", "root", "terminal", "stream", "poll", "sing-box"] as const;
+
+const availableArchOs = computed(() =>
+  ARCH_OS_TOKENS.filter((token) => allNodes.value.some((node) => nodeHasArchOsToken(node, token))),
+);
+
+const availableAgentCaps = computed(() =>
+  AGENT_CAP_FILTERS.filter((cap) => allNodes.value.some((node) => nodeHasAgentCapability(node, cap))),
+);
+
+const allTags = computed(() => {
+  const set = new Set<string>();
+  for (const node of allNodes.value) {
+    if (node.role) set.add(node.role);
+    for (const tag of node.tags ?? []) set.add(tag);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+});
+
+const shownQuickTags = computed(() => allTags.value.slice(0, 16));
+const hiddenQuickTags = computed(() => Math.max(0, allTags.value.length - shownQuickTags.value.length));
+
+const filteredNodes = computed(() =>
+  allNodes.value.filter(
+    (node) =>
+      matchesStatus(node) &&
+      matchesMapSearch(node) &&
+      matchesQuickFilters(node) &&
+      matchesNodeExpression(node),
+  ),
+);
 
 const plotted = computed(() => {
   const keyCounts = new Map<string, number>();
@@ -109,8 +181,8 @@ const hoveredPoint = computed(() =>
   plotted.value.find((point) => point.node.id === hoveredNodeId.value),
 );
 
-const selectedNode = computed<NodeGeoView | undefined>(() =>
-  nodes.value.find((node) => node.id === selectedNodeId.value),
+const selectedNode = computed<Node | undefined>(() =>
+  allNodes.value.find((node) => node.id === selectedNodeId.value),
 );
 const selectedLookupIP = computed(() => (selectedNode.value ? lookupIP(selectedNode.value) : ""));
 const selectedCoordinates = computed(() => {
@@ -120,7 +192,7 @@ const selectedCoordinates = computed(() => {
 });
 
 const regions = computed(() => {
-  const groups = new Map<string, { key: string; label: string; nodes: NodeGeoView[]; online: number }>();
+  const groups = new Map<string, { key: string; label: string; nodes: Node[]; online: number }>();
   for (const node of withGeo.value) {
     const key = `${node.geo?.country || "??"}:${node.geo?.region || ""}`;
     const label = [node.geo?.country, node.geo?.region].filter(Boolean).join(" · ") || t("fleet.map.unknownRegion");
@@ -134,7 +206,7 @@ const regions = computed(() => {
 
 const landPaths = computed(() => WORLD_RINGS.map(ringToPath).filter(Boolean));
 
-function hasCoordinates(node: NodeGeoView) {
+function hasCoordinates(node: Node) {
   return typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number";
 }
 
@@ -159,11 +231,11 @@ function ringToPath(ring: readonly number[]) {
   return d ? `${d}Z` : "";
 }
 
-function lookupIP(node: NodeGeoView) {
+function lookupIP(node: Node) {
   return node.public_ip || node.public_ipv6 || "";
 }
 
-function locationLabel(node: NodeGeoView) {
+function locationLabel(node: Node) {
   return [node.geo?.city, node.geo?.region, node.geo?.country].filter(Boolean).join(", ") || t("fleet.map.noCoordinates");
 }
 
@@ -216,6 +288,10 @@ function setZoom(next: number, anchor = { x: MAP_WIDTH / 2, y: MAP_HEIGHT / 2 })
 
 function resetViewport() {
   applyViewport({ scale: 1, x: 0, y: 0 });
+}
+
+function markerFixed(value: number) {
+  return value / mapZoom.value;
 }
 
 function onMapWheel(event: WheelEvent) {
@@ -282,12 +358,12 @@ function markerScreenY(y: number) {
   return v.y + y * v.scale;
 }
 
-function selectMarkerNode(node: NodeGeoView) {
+function selectMarkerNode(node: Node) {
   if (Date.now() < suppressMarkerClickUntil.value) return;
   selectNode(node);
 }
 
-function selectNode(node: NodeGeoView) {
+function selectNode(node: Node) {
   selectedNodeId.value = node.id;
   country.value = node.geo?.country ?? "";
   region.value = node.geo?.region ?? "";
@@ -299,9 +375,89 @@ function selectNode(node: NodeGeoView) {
   asOrg.value = node.geo?.as_org ?? "";
 }
 
-function selectFirstNode(groupNodes: NodeGeoView[]) {
+function selectFirstNode(groupNodes: Node[]) {
   const node = groupNodes[0];
   if (node) selectNode(node);
+}
+
+function mapSearchFields(node: Node): string[] {
+  return [
+    node.id,
+    node.name,
+    node.role,
+    node.public_ip,
+    node.public_ipv6,
+    node.internal_ip,
+    node.internal_ipv6,
+    node.wireguard_ip,
+    node.geo?.country,
+    node.geo?.region,
+    node.geo?.city,
+    node.geo?.provider,
+    node.geo?.as_org,
+    node.host_facts?.hostname,
+    node.host_facts?.os,
+    node.host_facts?.platform,
+    node.host_facts?.arch,
+    ...(node.tags ?? []),
+  ]
+    .filter((value): value is string => !!value)
+    .map((value) => value.toLowerCase());
+}
+
+function matchesStatus(node: Node): boolean {
+  if (statusFilter.value === "online") return !!node.online && !node.disabled;
+  if (statusFilter.value === "offline") return !node.online && !node.disabled;
+  if (statusFilter.value === "disabled") return !!node.disabled;
+  return true;
+}
+
+function matchesMapSearch(node: Node): boolean {
+  const q = mapSearch.value.trim().toLowerCase();
+  if (!q) return true;
+  return mapSearchFields(node).some((field) => field.includes(q));
+}
+
+function matchesQuickFilters(node: Node): boolean {
+  if (activeAgentCaps.value.some((cap) => !nodeHasAgentCapability(node, cap))) return false;
+  if (activeArchOs.value.some((token) => !nodeHasArchOsToken(node, token))) return false;
+  if (activeTags.value.some((tag) => !nodeHasTagToken(node, tag))) return false;
+  return true;
+}
+
+function matchesNodeExpression(node: Node): boolean {
+  const expr = nodeExpression.value.trim();
+  if (!expr || nodeExpressionError.value) return true;
+  const result = evalFilterExpression(expr, (token) => nodeMatchesTargetToken(node, token));
+  return result.ok ? result.value : true;
+}
+
+function toggleListValue(list: string[], value: string): string[] {
+  const next = new Set(list);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return [...next];
+}
+
+function toggleAgentCap(value: string) {
+  activeAgentCaps.value = toggleListValue(activeAgentCaps.value, value);
+}
+
+function toggleArchOs(value: string) {
+  activeArchOs.value = toggleListValue(activeArchOs.value, value);
+}
+
+function toggleTag(value: string) {
+  activeTags.value = toggleListValue(activeTags.value, value);
+}
+
+function clearMapFilters() {
+  mapSearch.value = "";
+  statusFilter.value = "all";
+  nodeExpression.value = "";
+  activeAgentCaps.value = [];
+  activeArchOs.value = [];
+  activeTags.value = [];
 }
 
 function parseNumber(value: string): number | undefined {
@@ -333,7 +489,7 @@ async function saveGeo() {
     });
     toast.success(t("fleet.map.toast.locationSaved"));
     await geoQuery.refresh();
-    const refreshed = nodes.value.find((node) => node.id === selectedNodeId.value);
+    const refreshed = allNodes.value.find((node) => node.id === selectedNodeId.value);
     if (refreshed) selectNode(refreshed);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.map.toast.saveFailed"));
@@ -401,7 +557,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
   if (updated > 0) {
     toast.success(t("fleet.map.toast.resolved", { count: updated }));
     await geoQuery.refresh();
-    const refreshed = nodes.value.find((node) => node.id === selectedNodeId.value);
+    const refreshed = allNodes.value.find((node) => node.id === selectedNodeId.value);
     if (refreshed) selectNode(refreshed);
     return;
   }
@@ -469,6 +625,96 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
           <p class="text-xl font-semibold">{{ autoCount }}</p>
           <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.manual', { count: manualCount }) }}</p>
         </div>
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-border bg-card/80 p-3">
+      <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
+        <div class="relative min-w-[220px] flex-1">
+          <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            v-model="mapSearch"
+            class="h-8 pl-8 text-sm"
+            :placeholder="$t('fleet.map.filters.searchPlaceholder')"
+            :aria-label="$t('fleet.map.filters.searchPlaceholder')"
+          />
+        </div>
+        <Select v-model="statusFilter">
+          <SelectTrigger class="h-8 lg:w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{{ $t('fleet.map.filters.statusAll') }}</SelectItem>
+            <SelectItem value="online">{{ $t('common.status.online') }}</SelectItem>
+            <SelectItem value="offline">{{ $t('common.status.offline') }}</SelectItem>
+            <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+          </SelectContent>
+        </Select>
+        <div class="relative min-w-[260px] flex-[1.15]">
+          <Funnel class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+          <Input
+            id="map-node-expression"
+            v-model="nodeExpression"
+            class="h-8 pl-8 font-mono text-xs"
+            :class="nodeExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
+            :placeholder="$t('fleet.map.filters.expressionPlaceholder')"
+            aria-label="Node expression"
+          />
+        </div>
+        <Button v-if="hasMapFilters" type="button" variant="ghost" size="sm" class="h-8" @click="clearMapFilters">
+          {{ $t('fleet.map.filters.clear') }}
+        </Button>
+      </div>
+
+      <div class="mt-2 flex flex-wrap items-center gap-1.5">
+        <span class="mr-1 text-[11px] font-medium uppercase text-muted-foreground">{{ $t('fleet.map.filters.quick') }}</span>
+        <button
+          v-for="cap in availableAgentCaps"
+          :key="`agent-${cap}`"
+          type="button"
+          :class="cn(
+            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
+            activeAgentCaps.includes(cap) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/40',
+          )"
+          :aria-pressed="activeAgentCaps.includes(cap)"
+          @click="toggleAgentCap(cap)"
+        >
+          {{ cap }}
+        </button>
+        <span v-if="availableAgentCaps.length" class="mx-1 h-3.5 w-px bg-border" aria-hidden="true"></span>
+        <button
+          v-for="token in availableArchOs"
+          :key="`arch-${token}`"
+          type="button"
+          :class="cn(
+            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
+            activeArchOs.includes(token) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/40',
+          )"
+          :aria-pressed="activeArchOs.includes(token)"
+          @click="toggleArchOs(token)"
+        >
+          {{ token }}
+        </button>
+        <span v-if="shownQuickTags.length" class="mx-1 h-3.5 w-px bg-border" aria-hidden="true"></span>
+        <button
+          v-for="tag in shownQuickTags"
+          :key="`tag-${tag}`"
+          type="button"
+          :class="cn(
+            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
+            activeTags.includes(tag) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/40',
+          )"
+          :aria-pressed="activeTags.includes(tag)"
+          @click="toggleTag(tag)"
+        >
+          {{ tag }}
+        </button>
+        <span v-if="hiddenQuickTags > 0" class="text-[11px] text-muted-foreground">+{{ hiddenQuickTags }}</span>
+      </div>
+
+      <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>{{ $t('fleet.map.filters.showing', { mapped: withGeo.length, matching: nodes.length, total: allNodes.length }) }}</span>
+        <span :class="nodeExpressionError && 'text-destructive'">{{ nodeExpressionError || $t('fleet.map.filters.fieldsHelp') }}</span>
       </div>
     </div>
 
@@ -552,10 +798,11 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                       :cx="point.x"
                       :cy="point.y"
                       class="map-ping"
-                      r="2.8"
+                      :r="markerFixed(2.2)"
                       fill="none"
                       stroke="oklch(0.8 0.15 162 / 0.5)"
-                      stroke-width="1.2"
+                      :stroke-width="markerFixed(1.1)"
+                      vector-effect="non-scaling-stroke"
                     />
                     <g
                       role="button"
@@ -576,17 +823,17 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                         v-if="point.node.online"
                         :cx="point.x"
                         :cy="point.y"
-                        :r="point.selected || hoveredNodeId === point.node.id ? 7 : 5"
+                        :r="markerFixed(point.selected || hoveredNodeId === point.node.id ? 6 : 4)"
                         :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.26)' : 'oklch(0.8 0.15 162 / 0.13)'"
                       />
                       <!-- node dot: small + refined -->
                       <circle
                         :cx="point.x"
                         :cy="point.y"
-                        :r="point.selected || hoveredNodeId === point.node.id ? 4.6 : 2.8"
+                        :r="markerFixed(point.selected || hoveredNodeId === point.node.id ? 4 : 2.3)"
                         :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
                         :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
-                        :stroke-width="point.selected ? 1.5 : 1"
+                        :stroke-width="markerFixed(point.selected ? 1.3 : 0.9)"
                         :opacity="point.node.online ? 1 : 0.82"
                       />
                     </g>

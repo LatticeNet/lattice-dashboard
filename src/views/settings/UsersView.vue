@@ -174,8 +174,20 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
     searchable: true,
     value: (row) => row.username,
   },
-  { key: "scopes", label: t("settings.users.list.scopes") },
-  { key: "login", label: t("settings.users.list.login") },
+  {
+    key: "scopes",
+    label: t("settings.users.list.scopes"),
+    searchable: true,
+    filterAliases: ["scope", "permission", "rbac"],
+    value: (row) => (row.scopes.includes("*") ? ["full-admin", "admin", "*"] : row.scopes).join(" "),
+  },
+  {
+    key: "login",
+    label: t("settings.users.list.login"),
+    searchable: true,
+    filterAliases: ["auth", "method"],
+    value: (row) => [row.has_password ? "password" : "sso-only", row.totp_enabled ? "2fa" : ""].filter(Boolean).join(" "),
+  },
   { key: "created_at", label: t("settings.users.list.created"), sortable: true, align: "right" },
   { key: "actions", label: t("settings.users.list.actions"), align: "right" },
 ]);
