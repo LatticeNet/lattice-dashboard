@@ -486,9 +486,20 @@ export default {
       planAffected: "{n} affected",
       planConflicts: "{n} conflicts",
       planOrphaned: "{n} orphaned",
+      planSelectorImpacts: "{n} selector-backed group(s)",
       planAffectedNodes: "Affected nodes",
       planConflictsTitle: "Conflicts",
       planNoop: "No changes to plan.",
+      selectorImpactTitle: "Dynamic selector membership affects this plan",
+      selectorImpactDescription:
+        "These groups use smart selectors. The current selector matches were included in the per-node policy expansion, and future tag, role, or geo changes can change the next plan.",
+      selectorImpactUseScope: "scope",
+      selectorImpactUseRemote: "remote",
+      selectorImpactDynamicMembers: "{n} selector-added now",
+      selectorImpactNoDynamicMembers:
+        "No extra nodes are selector-added right now, but future node fact changes can add members.",
+      selectorImpactConfirm:
+        "I understand selector-backed membership is dynamic and this plan should be re-generated before approval if node facts changed.",
     },
   },
 } as const;

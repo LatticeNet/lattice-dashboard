@@ -67,6 +67,7 @@ export default {
       forceReplanHint:
         "仅在替换过期审批或重新发布锁定二进制时使用。它只会创建新的待审批计划，不会批准或应用更新。",
       forceReplanAgentUpdate: "强制生成新计划",
+      approvalNote: "审批提示",
       rejectionReason: "驳回原因",
       approveErrorTitle: "审批失败",
     },

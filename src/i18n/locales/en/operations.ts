@@ -68,6 +68,7 @@ export default {
       forceReplanHint:
         "Use this only to replace a stale approval or re-roll the pinned binary. It creates a new pending approval; it does not approve or apply the update.",
       forceReplanAgentUpdate: "Force fresh plan",
+      approvalNote: "Approval note",
       rejectionReason: "Rejection reason",
       approveErrorTitle: "Approval failed",
     },

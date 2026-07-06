@@ -629,6 +629,16 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
             </div>
           </div>
           <div
+            v-else-if="selected.status === 'pending' && selected.reason"
+            class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
+          >
+            <p class="flex items-center gap-2 font-medium text-foreground">
+              <AlertTriangle class="size-4 text-warning" aria-hidden="true" />
+              {{ $t('operations.approvals.approvalNote') }}
+            </p>
+            <p class="mt-1 break-words">{{ selected.reason }}</p>
+          </div>
+          <div
             v-else-if="selected.status === 'rejected' && selected.reason"
             class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
           >

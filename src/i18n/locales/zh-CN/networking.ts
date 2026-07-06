@@ -454,9 +454,18 @@ export default {
       planAffected: "影响 {n} 个",
       planConflicts: "{n} 个冲突",
       planOrphaned: "{n} 个孤立",
+      planSelectorImpacts: "{n} 个选择器分组",
       planAffectedNodes: "受影响节点",
       planConflictsTitle: "冲突",
       planNoop: "无需变更。",
+      selectorImpactTitle: "动态选择器成员会影响本次计划",
+      selectorImpactDescription:
+        "这些分组使用了智能选择器。当前选择器匹配到的节点已经参与本次按节点策略展开；未来节点标签、角色或地理信息变化会改变下一次计划。",
+      selectorImpactUseScope: "作用域",
+      selectorImpactUseRemote: "目标",
+      selectorImpactDynamicMembers: "当前选择器额外加入 {n} 个",
+      selectorImpactNoDynamicMembers: "当前没有选择器额外加入的节点，但后续节点信息变化可能会加入成员。",
+      selectorImpactConfirm: "我理解选择器分组成员是动态的；如果节点信息发生变化，批准前应重新生成计划。",
     },
   },
 } as const;

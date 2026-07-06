@@ -15,7 +15,7 @@ export default {
       emptyDescription: "Create a group, then use explicit members or a smart selector.",
       createTitle: "New group",
       editTitle: "Group",
-      editorDescription: "Explicit members drive policy; the smart selector only filters the dashboard.",
+      editorDescription: "Explicit members are pinned; smart selector matches are dynamic and participate in group policy plans.",
       fieldName: "Name",
       namePlaceholder: "Edge servers",
       fieldSlug: "Slug",
@@ -43,7 +43,7 @@ export default {
       selectorTitle: "Smart selector",
       displayOnly: "display only",
       selectorHint:
-        "Filters the dashboard and previews matches. It never changes a firewall. Comma-separated.",
+        "Dynamically adds matching nodes to this group. Group policy plans include current selector matches. Comma-separated.",
       matchTags: "Match any tag",
       matchRoles: "Match roles",
       matchCountry: "Match countries (ISO)",
