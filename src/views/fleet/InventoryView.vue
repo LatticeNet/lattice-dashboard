@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -23,7 +23,14 @@ import {
   Trash2,
   Wallet,
 } from "lucide-vue-next";
-import { api, unwrap, type MachineProfileInput, type MachineView } from "@/lib/api";
+import {
+  api,
+  unwrap,
+  type MachineProfileInput,
+  type MachineView,
+  type NotifyChannelView,
+  type NotifyRuleView,
+} from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import {
@@ -94,6 +101,7 @@ const auth = useAuthStore();
 const { t } = useI18n();
 const route = useRoute();
 const INVENTORY_GUIDE_URL = "https://latticenet.github.io/guide/operations#machine-inventory";
+const NOTIFICATIONS_ROUTE = "/platform/notifications";
 
 const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(r, "machines")), {
   pollInterval: 12000,
@@ -101,6 +109,18 @@ const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
+const canManageNotifications = computed(() => auth.can("notify:send"));
+const notifyChannelsQuery = useAsyncData(
+  () => (canManageNotifications.value ? api.notify.channels() : Promise.resolve([] as NotifyChannelView[])),
+  { pollInterval: 30000 },
+);
+const notifyRulesQuery = useAsyncData(
+  () =>
+    canManageNotifications.value
+      ? api.notify.rules().then((r) => unwrap(r, "rules"))
+      : Promise.resolve([] as NotifyRuleView[]),
+  { pollInterval: 30000 },
+);
 
 // ── View state ──────────────────────────────────────────────────────────────
 const search = ref("");
@@ -125,6 +145,8 @@ const region = ref("");
 const notes = ref("");
 const priceMajor = ref("");
 const currency = ref("USD");
+const purchasedAt = ref("");
+const needsRenewal = ref(false);
 const renewalCycle = ref("");
 const cycleDays = ref("");
 const nextRenewal = ref("");
@@ -138,13 +160,43 @@ const clearDetailUrl = ref(false);
 
 const machines = computed(() => machinesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
+const notifyChannels = computed(() => notifyChannelsQuery.data.value ?? []);
+const notifyRules = computed(() => notifyRulesQuery.data.value ?? []);
 const canAdminInventory = computed(() => auth.can("inventory:admin"));
 
 const editMachine = computed(() =>
   machines.value.find((machine) => machineKey(machine) === editKey.value),
 );
 const editHasProfile = computed(() => !!profileId.value);
-const canSave = computed(() => !!nodeId.value && canAdminInventory.value);
+const calculatedNextRenewal = computed(() => calculateNextRenewalFromPurchase());
+const customCycleValid = computed(
+  () => renewalCycle.value !== "custom_days" || Number(s(cycleDays.value)) > 0,
+);
+const renewalFormValid = computed(
+  () =>
+    !needsRenewal.value ||
+    (!!renewalCycle.value && customCycleValid.value && !!(nextRenewal.value || calculatedNextRenewal.value)),
+);
+const reminderFormValid = computed(() => !remindersEnabled.value || needsRenewal.value);
+const canSave = computed(
+  () => !!nodeId.value && canAdminInventory.value && renewalFormValid.value && reminderFormValid.value,
+);
+const enabledNotifyChannels = computed(() => notifyChannels.value.filter((channel) => channel.enabled));
+const enabledNotifyRules = computed(() => notifyRules.value.filter((rule) => rule.enabled));
+const renewalNotificationReady = computed(() => {
+  if (!canManageNotifications.value) return true;
+  if (enabledNotifyChannels.value.length === 0) return false;
+  if (enabledNotifyRules.value.length === 0) return true;
+  return enabledNotifyRules.value.some((rule) => {
+    const events = rule.event_types ?? [];
+    return (
+      events.length === 0 ||
+      events.includes("*") ||
+      events.includes("inventory.renewal") ||
+      events.includes("generic")
+    );
+  });
+});
 
 // ── Cost model ────────────────────────────────────────────────────────────────
 function machinePrice(machine: MachineView): number {
@@ -396,6 +448,50 @@ function isoDate(input: string): string | undefined {
   return `${input}T00:00:00Z`;
 }
 
+function dateFromInput(input: string): Date | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s(input));
+  if (!match) return undefined;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function dateInput(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addRenewalCycle(base: Date): Date | undefined {
+  if (renewalCycle.value === "monthly") return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate()));
+  if (renewalCycle.value === "quarterly") return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 3, base.getUTCDate()));
+  if (renewalCycle.value === "semiannual") return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 6, base.getUTCDate()));
+  if (renewalCycle.value === "annual") return new Date(Date.UTC(base.getUTCFullYear() + 1, base.getUTCMonth(), base.getUTCDate()));
+  if (renewalCycle.value === "custom_days") {
+    const days = Number(s(cycleDays.value));
+    if (!Number.isInteger(days) || days <= 0) return undefined;
+    return new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+  }
+  return undefined;
+}
+
+function calculateNextRenewalFromPurchase(): string {
+  if (!needsRenewal.value || !renewalCycle.value) return "";
+  const start = dateFromInput(purchasedAt.value);
+  if (!start) return "";
+  const today = dateFromInput(dateInput(new Date()))!;
+  let next = start;
+  let guard = 0;
+  while (next < today && guard < 1000) {
+    const advanced = addRenewalCycle(next);
+    if (!advanced || advanced.getTime() === next.getTime()) return "";
+    next = advanced;
+    guard += 1;
+  }
+  return dateInput(next);
+}
+
+function useCalculatedRenewal(): void {
+  if (calculatedNextRenewal.value) nextRenewal.value = calculatedNextRenewal.value;
+}
+
 function formatPrice(machine: MachineView): string {
   const cat = billingCategory(machine);
   if (cat === "free") return t("fleet.inventory.billing.free");
@@ -438,6 +534,13 @@ function loadForm(machine: MachineView) {
   notes.value = machine.notes || "";
   priceMajor.value = machine.price_cents ? (machine.price_cents / 100).toFixed(2) : "";
   currency.value = machine.currency || "USD";
+  purchasedAt.value = formatDate(machine.purchased_at);
+  needsRenewal.value = !!(
+    machine.renewal_cycle ||
+    machine.next_renewal ||
+    machine.auto_roll ||
+    machine.reminders_enabled
+  );
   renewalCycle.value = machine.renewal_cycle || "";
   cycleDays.value = machine.cycle_days ? String(machine.cycle_days) : "";
   nextRenewal.value = formatDate(machine.next_renewal);
@@ -478,6 +581,9 @@ function parseReminderDays(): number[] {
 }
 
 function buildInput(): MachineProfileInput {
+  const effectiveNextRenewal = needsRenewal.value
+    ? nextRenewal.value || calculatedNextRenewal.value
+    : "";
   return {
     id: profileId.value || undefined,
     node_id: nodeId.value,
@@ -487,18 +593,34 @@ function buildInput(): MachineProfileInput {
     notes: s(notes.value),
     price_cents: parsePriceCents() ?? 0,
     currency: s(currency.value),
-    renewal_cycle: renewalCycle.value,
-    cycle_days: renewalCycle.value === "custom_days" ? Number(s(cycleDays.value) || 0) : 0,
-    next_renewal: isoDate(nextRenewal.value) ?? null,
-    auto_roll: autoRoll.value,
-    remind_days_before: parseReminderDays(),
-    reminders_enabled: remindersEnabled.value,
+    purchased_at: isoDate(purchasedAt.value) ?? null,
+    renewal_cycle: needsRenewal.value ? renewalCycle.value : "",
+    cycle_days: needsRenewal.value && renewalCycle.value === "custom_days" ? Number(s(cycleDays.value) || 0) : 0,
+    next_renewal: needsRenewal.value ? isoDate(effectiveNextRenewal) ?? null : null,
+    auto_roll: needsRenewal.value && autoRoll.value,
+    remind_days_before: needsRenewal.value ? parseReminderDays() : [],
+    reminders_enabled: needsRenewal.value && remindersEnabled.value,
     console_url: s(consoleUrl.value) || undefined,
     detail_url: s(detailUrl.value) || undefined,
     clear_console_url: clearConsoleUrl.value,
     clear_detail_url: clearDetailUrl.value,
   };
 }
+
+watch(needsRenewal, (enabled) => {
+  if (enabled) return;
+  renewalCycle.value = "";
+  cycleDays.value = "";
+  nextRenewal.value = "";
+  autoRoll.value = false;
+  remindersEnabled.value = false;
+});
+
+watch([purchasedAt, renewalCycle, cycleDays, needsRenewal], () => {
+  if (needsRenewal.value && !nextRenewal.value && calculatedNextRenewal.value) {
+    nextRenewal.value = calculatedNextRenewal.value;
+  }
+});
 
 async function refreshAll() {
   await Promise.all([machinesQuery.refresh(), nodesQuery.refresh()]);
@@ -881,25 +1003,37 @@ async function runReminders(selectedOnly: boolean) {
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">
-            <div class="grid gap-2">
+            <div class="grid gap-2 content-start">
               <Label for="machine-price">{{ $t('fleet.inventory.profile.price') }}</Label>
               <Input id="machine-price" v-model="priceMajor" type="number" min="0" step="0.01" placeholder="9.90" />
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.priceHint') }}</p>
+              <p class="min-h-4 text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.priceHint') }}</p>
             </div>
-            <div class="grid gap-2">
-              <Label for="machine-renewal">{{ $t('fleet.inventory.profile.nextRenewal') }}</Label>
-              <Input id="machine-renewal" v-model="nextRenewal" type="date" />
+            <div class="grid gap-2 content-start">
+              <Label for="machine-purchased">{{ $t('fleet.inventory.profile.purchasedAt') }}</Label>
+              <Input id="machine-purchased" v-model="purchasedAt" type="date" />
+              <p class="min-h-4 text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.purchasedAtHint') }}</p>
             </div>
           </div>
 
+          <div class="rounded-md border border-border bg-muted/20 p-3">
+            <label class="flex items-start gap-2 text-sm font-medium">
+              <input v-model="needsRenewal" type="checkbox" class="mt-0.5 size-4 accent-primary" />
+              <span>
+                {{ $t('fleet.inventory.profile.needsRenewal') }}
+                <span class="block text-xs font-normal text-muted-foreground">{{ $t('fleet.inventory.profile.needsRenewalHint') }}</span>
+              </span>
+            </label>
+          </div>
+
           <div class="grid gap-3 sm:grid-cols-2">
-            <div class="grid gap-2">
+            <div class="grid gap-2 content-start">
               <Label for="machine-cycle">{{ $t('fleet.inventory.profile.renewalCycle') }}</Label>
               <!-- Native select retained: reka-ui Select cannot represent the empty-string
                    "None" reset value without losing the ability to clear back to undefined. -->
               <select
                 id="machine-cycle"
                 v-model="renewalCycle"
+                :disabled="!needsRenewal"
                 class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               >
                 <option value="">{{ $t('fleet.inventory.profile.cycle.none') }}</option>
@@ -909,34 +1043,92 @@ async function runReminders(selectedOnly: boolean) {
                 <option value="annual">{{ $t('fleet.inventory.profile.cycle.annual') }}</option>
                 <option value="custom_days">{{ $t('fleet.inventory.profile.cycle.customDays') }}</option>
               </select>
+              <p class="min-h-4 text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.renewalCycleHint') }}</p>
             </div>
-            <div class="grid gap-2">
+            <div class="grid gap-2 content-start">
               <Label for="machine-cycle-days">{{ $t('fleet.inventory.profile.cycleDays') }}</Label>
-              <Input id="machine-cycle-days" v-model="cycleDays" type="number" min="1" :disabled="renewalCycle !== 'custom_days'" />
+              <Input id="machine-cycle-days" v-model="cycleDays" type="number" min="1" :disabled="!needsRenewal || renewalCycle !== 'custom_days'" />
+              <p class="min-h-4 text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.cycleDaysHint') }}</p>
             </div>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div class="grid gap-2 content-start">
+              <Label for="machine-renewal">{{ $t('fleet.inventory.profile.nextRenewal') }}</Label>
+              <Input id="machine-renewal" v-model="nextRenewal" type="date" :disabled="!needsRenewal" />
+              <p class="min-h-4 text-xs text-muted-foreground">
+                {{ calculatedNextRenewal ? $t('fleet.inventory.profile.nextRenewalCalculated', { date: calculatedNextRenewal }) : $t('fleet.inventory.profile.nextRenewalHint') }}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              :disabled="!needsRenewal || !calculatedNextRenewal"
+              @click="useCalculatedRenewal"
+            >
+              <CalendarClock class="size-4" aria-hidden="true" />
+              {{ $t('fleet.inventory.profile.useCalculatedRenewal') }}
+            </Button>
+          </div>
+
+          <div v-if="needsRenewal && !renewalFormValid" class="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
+            {{ $t('fleet.inventory.profile.renewalInvalidHint') }}
           </div>
 
           <div class="grid gap-2">
             <Label for="machine-reminders">{{ $t('fleet.inventory.profile.remindersBefore') }}</Label>
-            <Input id="machine-reminders" v-model="remindDays" placeholder="14,7,1" />
+            <Input id="machine-reminders" v-model="remindDays" placeholder="14,7,1" :disabled="!needsRenewal" />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.remindersBeforeHint') }}</p>
           </div>
 
-          <div class="grid gap-2">
-            <Label for="machine-console">{{ $t('fleet.inventory.profile.consoleUrl') }}</Label>
-            <Input id="machine-console" v-model="consoleUrl" :placeholder="$t('fleet.inventory.profile.consoleUrlPlaceholder')" />
-            <label class="flex items-center gap-2 text-xs text-muted-foreground">
-              <input v-model="clearConsoleUrl" type="checkbox" class="size-4 accent-primary" />
-              {{ $t('fleet.inventory.profile.clearConsoleUrl') }}
+          <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
+            <label class="flex items-start gap-2">
+              <input v-model="autoRoll" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal" />
+              <span>
+                {{ $t('fleet.inventory.profile.autoRoll') }}
+                <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.autoRollHint') }}</span>
+              </span>
             </label>
+            <label class="flex items-start gap-2">
+              <input v-model="remindersEnabled" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal" />
+              <span>
+                {{ $t('fleet.inventory.profile.enableReminders') }}
+                <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.enableRemindersHint') }}</span>
+              </span>
+            </label>
+            <div v-if="remindersEnabled && canManageNotifications && !renewalNotificationReady" class="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning-foreground">
+              {{ $t('fleet.inventory.profile.reminderNoRoute') }}
+              <RouterLink :to="NOTIFICATIONS_ROUTE" class="font-medium underline underline-offset-2">
+                {{ $t('fleet.inventory.profile.configureNotifications') }}
+              </RouterLink>
+            </div>
+            <p v-else-if="remindersEnabled && canManageNotifications" class="text-xs text-muted-foreground">
+              {{ $t('fleet.inventory.profile.reminderRouteReady', { count: enabledNotifyChannels.length }) }}
+            </p>
+            <p v-else-if="remindersEnabled" class="text-xs text-muted-foreground">
+              {{ $t('fleet.inventory.profile.reminderRouteUnknown') }}
+            </p>
           </div>
 
-          <div class="grid gap-2">
-            <Label for="machine-detail">{{ $t('fleet.inventory.profile.detailUrl') }}</Label>
-            <Input id="machine-detail" v-model="detailUrl" :placeholder="$t('fleet.inventory.profile.detailUrlPlaceholder')" />
-            <label class="flex items-center gap-2 text-xs text-muted-foreground">
-              <input v-model="clearDetailUrl" type="checkbox" class="size-4 accent-primary" />
-              {{ $t('fleet.inventory.profile.clearDetailUrl') }}
-            </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label for="machine-console">{{ $t('fleet.inventory.profile.consoleUrl') }}</Label>
+              <Input id="machine-console" v-model="consoleUrl" :placeholder="$t('fleet.inventory.profile.consoleUrlPlaceholder')" />
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.writeOnlyUrlHint') }}</p>
+              <label class="flex items-center gap-2 text-xs text-muted-foreground">
+                <input v-model="clearConsoleUrl" type="checkbox" class="size-4 accent-primary" />
+                {{ $t('fleet.inventory.profile.clearConsoleUrl') }}
+              </label>
+            </div>
+            <div class="grid gap-2">
+              <Label for="machine-detail">{{ $t('fleet.inventory.profile.detailUrl') }}</Label>
+              <Input id="machine-detail" v-model="detailUrl" :placeholder="$t('fleet.inventory.profile.detailUrlPlaceholder')" />
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.writeOnlyUrlHint') }}</p>
+              <label class="flex items-center gap-2 text-xs text-muted-foreground">
+                <input v-model="clearDetailUrl" type="checkbox" class="size-4 accent-primary" />
+                {{ $t('fleet.inventory.profile.clearDetailUrl') }}
+              </label>
+            </div>
           </div>
 
           <div class="grid gap-2">
@@ -949,17 +1141,6 @@ async function runReminders(selectedOnly: boolean) {
             />
           </div>
 
-          <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
-            <label class="flex items-center gap-2">
-              <input v-model="autoRoll" type="checkbox" class="size-4 accent-primary" />
-              {{ $t('fleet.inventory.profile.autoRoll') }}
-            </label>
-            <label class="flex items-center gap-2">
-              <input v-model="remindersEnabled" type="checkbox" class="size-4 accent-primary" />
-              {{ $t('fleet.inventory.profile.enableReminders') }}
-            </label>
-          </div>
-
           <div class="flex flex-wrap gap-2">
             <Button type="submit" :disabled="pending || !canSave">
               <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
@@ -970,7 +1151,7 @@ async function runReminders(selectedOnly: boolean) {
               v-if="editHasProfile"
               type="button"
               variant="outline"
-              :disabled="renewPending || (!autoRoll && !nextRenewal)"
+              :disabled="renewPending || !needsRenewal || (!autoRoll && !nextRenewal)"
               @click="renewProfile"
             >
               <RefreshCw v-if="renewPending" class="size-4 animate-spin" aria-hidden="true" />
@@ -1016,6 +1197,10 @@ async function runReminders(selectedOnly: boolean) {
                 {{ formatPrice(editMachine) }}
                 <span v-if="editMachine.renewal_cycle" class="text-muted-foreground">· {{ formatCycle(editMachine) }}</span>
               </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.purchasedAt') }}</dt>
+              <dd>{{ formatDate(editMachine.purchased_at) || '—' }}</dd>
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.facts.renewal') }}</dt>

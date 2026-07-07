@@ -479,6 +479,7 @@ export interface MachineView {
   notes?: string;
   price_cents?: number;
   currency?: string;
+  purchased_at?: string;
   renewal_cycle?: RenewalCycle | string;
   cycle_days?: number;
   next_renewal?: string;
@@ -503,6 +504,7 @@ export interface MachineProfileInput {
   notes?: string;
   price_cents?: number;
   currency?: string;
+  purchased_at?: string | null;
   renewal_cycle?: RenewalCycle | string;
   cycle_days?: number;
   next_renewal?: string | null;
@@ -1665,6 +1667,7 @@ export interface AgentUpdatePolicyUpsertRequest {
 
 export interface AgentReleaseInfo {
   repo: string;
+  channel?: string;
   latest_tag: string;
   latest_version: string;
   release_url: string;

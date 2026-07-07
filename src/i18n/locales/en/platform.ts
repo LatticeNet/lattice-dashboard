@@ -385,10 +385,10 @@ export default {
       policiesTitle: "Update policies",
       policiesCount:
         "{count} policies · binary URL + binary artifact SHA-256 are integrity pins, applied via approved plans",
-      releaseTitle: "Official node-agent release",
+      releaseTitle: "Official stable node-agent release",
       releaseHint:
-        "The dashboard resolves latest once when this page loads. Plans still bind the concrete version, URL, and SHA-256 server-side.",
-      latestVersion: "Latest version",
+        "The dashboard resolves stable latest once when this page loads. Alpha/beta/rc releases must be entered explicitly; plans still bind the concrete version, URL, and SHA-256 server-side.",
+      latestVersion: "Stable latest",
       releaseRepo: "Release repo",
       releaseArtifacts: "Artifacts",
       releaseArtifactsHint: "platform binaries with SHA256SUMS",
@@ -414,6 +414,7 @@ export default {
       colSha256: "Binary SHA-256",
       colActions: "Actions",
       officialRelease: "official release",
+      stableLatestTarget: "latest stable -> {version}",
       resolvedInPlan: "resolved in plan",
       resolvedPlanned: "resolved {version}",
       autoPlan: "auto-plan",
@@ -428,8 +429,8 @@ export default {
       selectNode: "Select a node",
       nodeImmutable: "Node is the policy key and cannot change.",
       targetVersionLabel: "Target version",
-      targetVersionPlaceholder: "latest or 0.2.8",
-      versionHint: "Use latest to resolve the current official release ({latest}) at plan time.",
+      targetVersionPlaceholder: "latest, 0.2.8, or 0.3.3-alpha.1",
+      versionHint: "Use latest for the current stable official release ({latest}). Enter alpha/beta versions explicitly.",
       versionInvalid: "Must match ^[A-Za-z0-9][A-Za-z0-9._+:-]{'{'}0,63{'}'}$",
       artifactMode: "Artifact source",
       officialArtifactHint:

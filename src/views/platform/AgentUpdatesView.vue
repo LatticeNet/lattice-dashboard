@@ -249,7 +249,7 @@ const targetSuggestions = computed(() => {
 function targetLabel(policy: AgentUpdatePolicy): string {
   const target = policy.target_version || "latest";
   if (target.toLowerCase() === "latest" && releaseInfo.value?.latest_version) {
-    return `latest -> ${releaseInfo.value.latest_version}`;
+    return t("platform.agentUpdates.stableLatestTarget", { version: releaseInfo.value.latest_version });
   }
   return target;
 }
