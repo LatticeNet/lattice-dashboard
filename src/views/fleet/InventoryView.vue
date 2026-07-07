@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Cpu,
+  Eye,
   HardDrive,
   Link as LinkIcon,
   MemoryStick,
@@ -153,9 +154,11 @@ function machinePrice(machine: MachineView): number {
 function billingCategory(machine: MachineView): BillingCategory {
   if (!machine.id) return "unprofiled";
   const price = machinePrice(machine);
-  const hasCycle = !!machine.renewal_cycle;
-  if (price <= 0) return "free";
-  return hasCycle ? "recurring" : "onetime";
+  if (price > 0) return machine.renewal_cycle ? "recurring" : "onetime";
+  // Price 0/unset: a machine that is being billed (has a renewal cycle or a
+  // tracked renewal date) but has no price entered is "needs pricing"; a machine
+  // with no billing signal at all is genuinely free.
+  return machine.renewal_cycle || machine.next_renewal ? "unpriced" : "free";
 }
 
 // Monthly-equivalent cost in cents for a recurring machine; 0 otherwise.
@@ -683,11 +686,12 @@ async function runReminders(selectedOnly: boolean) {
       </div>
       <div class="flex items-center gap-2">
         <span class="text-xs font-medium text-muted-foreground">{{ $t('fleet.inventory.group.by') }}</span>
-        <div class="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-muted/30 p-1">
+        <div class="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-muted/30 p-1" role="group" :aria-label="$t('fleet.inventory.group.by')">
           <button
             v-for="opt in groupOptions"
             :key="opt"
             type="button"
+            :aria-pressed="groupBy === opt"
             :class="cn(
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
               groupBy === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
@@ -745,14 +749,13 @@ async function runReminders(selectedOnly: boolean) {
                   </p>
                 </div>
                 <Button
-                  v-if="canAdminInventory"
                   variant="outline"
                   size="sm"
                   class="shrink-0"
                   @click="openEdit(machine)"
                 >
-                  <component :is="machine.id ? Pencil : Plus" class="size-3.5" aria-hidden="true" />
-                  {{ machine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile') }}
+                  <component :is="canAdminInventory ? (machine.id ? Pencil : Plus) : Eye" class="size-3.5" aria-hidden="true" />
+                  {{ canAdminInventory ? (machine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile')) : $t('fleet.inventory.actions.details') }}
                 </Button>
               </div>
 
@@ -997,6 +1000,34 @@ async function runReminders(selectedOnly: boolean) {
           </div>
         </form>
 
+        <div v-else-if="editMachine" class="space-y-3">
+          <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendor') }}</dt>
+              <dd>{{ editMachine.vendor || '—' }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.region') }}</dt>
+              <dd>{{ editMachine.region || '—' }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.price') }}</dt>
+              <dd>
+                {{ formatPrice(editMachine) }}
+                <span v-if="editMachine.renewal_cycle" class="text-muted-foreground">· {{ formatCycle(editMachine) }}</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.facts.renewal') }}</dt>
+              <dd>{{ renewalLabel(editMachine) }}</dd>
+            </div>
+            <div v-if="editMachine.notes" class="sm:col-span-2">
+              <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.notes') }}</dt>
+              <dd class="whitespace-pre-wrap">{{ editMachine.notes }}</dd>
+            </div>
+          </dl>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.readOnlyDescription') }}</p>
+        </div>
         <EmptyState
           v-else
           :title="$t('fleet.inventory.profile.readOnlyTitle')"

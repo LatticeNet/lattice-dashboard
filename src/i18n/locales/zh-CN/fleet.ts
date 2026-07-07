@@ -583,6 +583,7 @@ export default {
       actions: {
         edit: "编辑",
         addProfile: "建档",
+        details: "详情",
       },
       billing: {
         recurring: "周期续费",
