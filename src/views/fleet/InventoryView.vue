@@ -75,7 +75,7 @@ import {
 } from "@/components/ui/select";
 
 type RenewalTone = "default" | "success" | "warning" | "destructive";
-type BillingCategory = "recurring" | "onetime" | "free" | "unpriced" | "unprofiled";
+type BillingCategory = "renewalIncomplete" | "recurring" | "onetime" | "free" | "unpriced" | "unprofiled";
 type GroupBy = "none" | "billing" | "vendor" | "region" | "renewal";
 
 // Approx. days per month, used to normalise custom-day billing cycles to a
@@ -203,14 +203,35 @@ function machinePrice(machine: MachineView): number {
   return machine.price_cents ?? 0;
 }
 
+function renewalDate(machine?: MachineView): string {
+  const date = formatDate(machine?.next_renewal);
+  if (!date || date.startsWith("0001-")) return "";
+  return date;
+}
+
+function hasRenewalIntent(machine: MachineView): boolean {
+  return !!(
+    machine.renewal_cycle ||
+    renewalDate(machine) ||
+    machine.auto_roll ||
+    machine.reminders_enabled
+  );
+}
+
+function renewalSetupIncomplete(machine: MachineView): boolean {
+  if (!hasRenewalIntent(machine)) return false;
+  return !machine.renewal_cycle || !renewalDate(machine);
+}
+
 function billingCategory(machine: MachineView): BillingCategory {
   if (!machine.id) return "unprofiled";
+  if (renewalSetupIncomplete(machine)) return "renewalIncomplete";
   const price = machinePrice(machine);
   if (price > 0) return machine.renewal_cycle ? "recurring" : "onetime";
   // Price 0/unset: a machine that is being billed (has a renewal cycle or a
   // tracked renewal date) but has no price entered is "needs pricing"; a machine
   // with no billing signal at all is genuinely free.
-  return machine.renewal_cycle || machine.next_renewal ? "unpriced" : "free";
+  return hasRenewalIntent(machine) ? "unpriced" : "free";
 }
 
 // Monthly-equivalent cost in cents for a recurring machine; 0 otherwise.
@@ -274,6 +295,7 @@ const freeCount = computed(() => machines.value.filter((m) => billingCategory(m)
 const renewalSoonCount = computed(
   () =>
     machines.value.filter((m) => {
+      if (!renewalDate(m)) return false;
       const days = m.days_until_renewal;
       return days !== undefined && days >= 0 && days <= 14;
     }).length,
@@ -281,11 +303,12 @@ const renewalSoonCount = computed(
 const overdueCount = computed(
   () =>
     machines.value.filter((m) => {
+      if (!renewalDate(m)) return false;
       const days = m.days_until_renewal;
-      return !!m.next_renewal && days !== undefined && days < 0;
+      return days !== undefined && days < 0;
     }).length,
 );
-const trackedRenewalCount = computed(() => machines.value.filter((m) => !!m.next_renewal).length);
+const trackedRenewalCount = computed(() => machines.value.filter((m) => !!renewalDate(m)).length);
 const remindersEnabledCount = computed(
   () => machines.value.filter((m) => m.reminders_enabled).length,
 );
@@ -317,7 +340,7 @@ type MachineGroup = {
   spend: CurrencySpend[];
 };
 
-const BILLING_ORDER: BillingCategory[] = ["recurring", "onetime", "free", "unpriced", "unprofiled"];
+const BILLING_ORDER: BillingCategory[] = ["renewalIncomplete", "recurring", "unpriced", "onetime", "free", "unprofiled"];
 
 const groups = computed<MachineGroup[]>(() => {
   const list = filteredMachines.value;
@@ -344,14 +367,15 @@ const groups = computed<MachineGroup[]>(() => {
 
   if (groupBy.value === "renewal") {
     const bucket = (m: MachineView): string => {
-      if (!m.next_renewal) return "notTracked";
+      if (renewalSetupIncomplete(m)) return "incomplete";
+      if (!renewalDate(m)) return "notTracked";
       const days = m.days_until_renewal;
       if (days === undefined) return "upcoming";
       if (days < 0) return "overdue";
       if (days <= 14) return "dueSoon";
       return "upcoming";
     };
-    const order = ["overdue", "dueSoon", "upcoming", "notTracked"];
+    const order = ["incomplete", "overdue", "dueSoon", "upcoming", "notTracked"];
     return order
       .map((key) => {
         const items = list.filter((m) => bucket(m) === key);
@@ -420,17 +444,21 @@ function billingBadgeVariant(cat: BillingCategory): "secondary" | "success" | "w
 }
 
 function renewalTone(machine?: MachineView): RenewalTone {
+  if (machine && renewalSetupIncomplete(machine)) return "warning";
   const days = machine?.days_until_renewal;
-  if (days === undefined || !machine?.next_renewal) return "default";
+  if (days === undefined || !renewalDate(machine)) return "default";
   if (days < 0) return "destructive";
   if (days <= 14) return "warning";
   return "success";
 }
 
 function renewalLabel(machine?: MachineView): string {
-  if (!machine?.next_renewal) return t("fleet.inventory.renewal.notTracked");
+  if (machine && renewalSetupIncomplete(machine)) return t("fleet.inventory.renewal.incomplete");
+  const next = renewalDate(machine);
+  if (!next) return t("fleet.inventory.renewal.notTracked");
+  if (!machine) return t("fleet.inventory.renewal.notTracked");
   const days = machine.days_until_renewal;
-  if (days === undefined) return formatDate(machine.next_renewal);
+  if (days === undefined) return next;
   if (days < 0) return t("fleet.inventory.renewal.overdue", { days: Math.abs(days) });
   if (days === 0) return t("fleet.inventory.renewal.dueToday");
   return t("fleet.inventory.renewal.daysLeft", { days });

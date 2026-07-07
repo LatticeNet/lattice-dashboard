@@ -594,6 +594,7 @@ export default {
         details: "Details",
       },
       billing: {
+        renewalIncomplete: "Renewal setup needed",
         recurring: "Recurring",
         onetime: "One-time",
         free: "Free",
@@ -624,6 +625,7 @@ export default {
         unknownRegion: "No region",
       },
       renewalGroup: {
+        incomplete: "Setup needed",
         overdue: "Overdue",
         dueSoon: "Due soon",
         upcoming: "Upcoming",
@@ -660,6 +662,7 @@ export default {
         needsProfile: "needs profile",
       },
       renewal: {
+        incomplete: "setup needed",
         notTracked: "not tracked",
         overdue: "{days}d overdue",
         dueToday: "due today",

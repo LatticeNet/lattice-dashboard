@@ -586,6 +586,7 @@ export default {
         details: "详情",
       },
       billing: {
+        renewalIncomplete: "续费配置待完善",
         recurring: "周期续费",
         onetime: "一次性",
         free: "免费",
@@ -616,6 +617,7 @@ export default {
         unknownRegion: "无区域",
       },
       renewalGroup: {
+        incomplete: "待完善",
         overdue: "已逾期",
         dueSoon: "即将到期",
         upcoming: "后续到期",
@@ -652,6 +654,7 @@ export default {
         needsProfile: "待建档",
       },
       renewal: {
+        incomplete: "待完善",
         notTracked: "未跟踪",
         overdue: "逾期 {days} 天",
         dueToday: "今日到期",
