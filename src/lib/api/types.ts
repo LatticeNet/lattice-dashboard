@@ -1673,7 +1673,17 @@ export interface AgentReleaseInfo {
   release_url: string;
   artifacts: string[];
   sha256: Record<string, string>;
+  candidates?: AgentReleaseCandidate[];
   fetched_at: string;
+}
+
+export interface AgentReleaseCandidate {
+  tag_name: string;
+  version: string;
+  channel: "stable" | "alpha" | "beta" | "rc" | "prerelease" | string;
+  prerelease: boolean;
+  latest_for_channel: boolean;
+  release_url: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

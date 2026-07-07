@@ -21,6 +21,7 @@ import {
   isStaleAgentUpdateApprovalView,
   type AgentUpdatePolicy,
   type AgentUpdatePolicyUpsertRequest,
+  type AgentReleaseCandidate,
   type AgentReleaseInfo,
   type ApprovalView,
 } from "@/lib/api";
@@ -92,6 +93,7 @@ const approvalsQuery = useAsyncData(
 
 const policies = computed(() => policiesQuery.data.value ?? []);
 const releaseInfo = computed(() => releaseQuery.data.value);
+const releaseCandidates = computed(() => releaseInfo.value?.candidates ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const approvals = computed(() => approvalsQuery.data.value ?? []);
 const staleAgentUpdateApprovals = computed(() =>
@@ -235,15 +237,82 @@ const canSubmit = computed(
     artifactPinsValid.value,
 );
 
+function normalizeReleaseVersion(version: string): string {
+  return version.trim().replace(/^v/i, "");
+}
+
+function releaseChannelLabel(channel: string): string {
+  const key = channel === "stable" || channel === "alpha" || channel === "beta" || channel === "rc" ? channel : "prerelease";
+  return t(`platform.agentUpdates.channels.${key}`);
+}
+
+const prereleaseCandidates = computed(() => releaseCandidates.value.filter((candidate) => candidate.prerelease));
+
+const releaseOptions = computed(() => {
+  const options: Array<{ value: string; label: string; channel: string; prerelease: boolean; latest: boolean }> = [];
+  const latest = releaseInfo.value?.latest_version;
+  options.push({
+    value: "latest",
+    label: latest
+      ? t("platform.agentUpdates.stableLatestOption", { version: latest })
+      : t("platform.agentUpdates.stableLatestOptionUnknown"),
+    channel: "stable",
+    prerelease: false,
+    latest: true,
+  });
+  const seen = new Set(["latest"]);
+  for (const candidate of releaseCandidates.value) {
+    const value = normalizeReleaseVersion(candidate.version);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    options.push({
+      value,
+      label: `${releaseChannelLabel(candidate.channel)} ${value}${candidate.latest_for_channel ? ` · ${t("platform.agentUpdates.latestForChannel")}` : ""}`,
+      channel: candidate.channel,
+      prerelease: candidate.prerelease,
+      latest: candidate.latest_for_channel,
+    });
+  }
+  return options.slice(0, 16);
+});
+
+const releaseOptionValue = computed(() => {
+  const target = form.value.target_version.trim();
+  if (!target || target.toLowerCase() === "latest") return "latest";
+  const normalized = normalizeReleaseVersion(target);
+  return releaseOptions.value.some((option) => option.value === normalized) ? normalized : "custom";
+});
+
+const selectedReleaseCandidate = computed<AgentReleaseCandidate | undefined>(() => {
+  const normalized = normalizeReleaseVersion(form.value.target_version);
+  return releaseCandidates.value.find((candidate) => normalizeReleaseVersion(candidate.version) === normalized);
+});
+
+const selectedTargetIsPrerelease = computed(() => {
+  if (selectedReleaseCandidate.value) return selectedReleaseCandidate.value.prerelease;
+  return /(?:^|[._+-])(alpha|beta|rc|pre|preview|dev|nightly)(?:[._+-]|$)/i.test(normalizeReleaseVersion(form.value.target_version));
+});
+
+function applyReleaseOption(value: unknown): void {
+  if (value === null || value === undefined) return;
+  const next = String(value);
+  if (next === "custom") return;
+  form.value.target_version = next;
+}
+
 const targetSuggestions = computed(() => {
   const latest = releaseInfo.value?.latest_version;
   const values = ["latest"];
   if (latest) values.push(latest, `v${latest}`);
+  for (const candidate of releaseCandidates.value) {
+    if (candidate.version && !values.includes(candidate.version)) values.push(candidate.version);
+    if (candidate.tag_name && !values.includes(candidate.tag_name)) values.push(candidate.tag_name);
+  }
   for (const policy of policies.value) {
     if (policy.target_version && !values.includes(policy.target_version)) values.push(policy.target_version);
     if (policy.last_applied_version && !values.includes(policy.last_applied_version)) values.push(policy.last_applied_version);
   }
-  return values.slice(0, 12);
+  return values.slice(0, 18);
 });
 
 function targetLabel(policy: AgentUpdatePolicy): string {
@@ -451,6 +520,26 @@ watch(
             <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.integrityHint') }}</p>
           </div>
         </div>
+        <div v-if="prereleaseCandidates.length" class="mt-4 border-t border-border pt-3">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {{ $t('platform.agentUpdates.releaseCandidates') }}
+            </span>
+            <a
+              v-for="candidate in prereleaseCandidates.slice(0, 6)"
+              :key="candidate.tag_name"
+              :href="candidate.release_url"
+              target="_blank"
+              rel="noreferrer"
+              class="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            >
+              <span>{{ releaseChannelLabel(candidate.channel) }}</span>
+              <span>{{ candidate.version }}</span>
+              <span v-if="candidate.latest_for_channel" class="text-primary">{{ $t('platform.agentUpdates.latestForChannel') }}</span>
+            </a>
+          </div>
+          <p class="mt-2 text-xs text-muted-foreground">{{ $t('platform.agentUpdates.releaseCandidatesHint') }}</p>
+        </div>
       </CardContent>
     </Card>
 
@@ -600,7 +689,7 @@ watch(
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid gap-3 lg:grid-cols-3">
             <div class="grid gap-2">
               <Label for="pol-node">{{ $t('platform.agentUpdates.nodeLabel') }}</Label>
               <Select v-model="form.node_id" :disabled="editing">
@@ -614,6 +703,26 @@ watch(
                 </SelectContent>
               </Select>
               <p v-if="editing" class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.nodeImmutable') }}</p>
+            </div>
+            <div class="grid gap-2">
+              <Label for="pol-release-choice">{{ $t('platform.agentUpdates.releaseChoiceLabel') }}</Label>
+              <Select :model-value="releaseOptionValue" @update:model-value="applyReleaseOption">
+                <SelectTrigger id="pol-release-choice">
+                  <SelectValue :placeholder="$t('platform.agentUpdates.releaseChoicePlaceholder')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="option in releaseOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </SelectItem>
+                  <SelectItem value="custom">{{ $t('platform.agentUpdates.customVersionOption') }}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="selectedTargetIsPrerelease" class="text-xs text-warning">
+                {{ $t('platform.agentUpdates.prereleaseTargetWarning') }}
+              </p>
+              <p v-else class="text-xs text-muted-foreground">
+                {{ $t('platform.agentUpdates.releaseChoiceHint') }}
+              </p>
             </div>
             <div class="grid gap-2">
               <Label for="pol-version">{{ $t('platform.agentUpdates.targetVersionLabel') }}</Label>
