@@ -660,8 +660,18 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               <CopyButton :value="selected.plan || ''" />
             </div>
             <template v-if="planView === 'diff'">
+              <div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                <span>{{ previousPlan ? $t('operations.approvals.diffAgainstApplied') : $t('operations.approvals.diffNoPrior') }}</span>
+                <span v-if="previousPlan" class="inline-flex items-center gap-1 rounded-full border border-destructive/30 px-2 py-0.5 text-destructive">
+                  <span class="font-mono">−</span>
+                  {{ $t('operations.approvals.diffRemovedLabel') }}
+                </span>
+                <span class="inline-flex items-center gap-1 rounded-full border border-success/30 px-2 py-0.5 text-success">
+                  <span class="font-mono">+</span>
+                  {{ $t('operations.approvals.diffAddedLabel') }}
+                </span>
+              </div>
               <PlanDiff :before="previousPlan" :after="selected.plan || ''" />
-              <p v-if="!previousPlan" class="text-xs text-muted-foreground">{{ $t('operations.approvals.diffNoPrior') }}</p>
             </template>
             <pre v-else class="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
           </div>
