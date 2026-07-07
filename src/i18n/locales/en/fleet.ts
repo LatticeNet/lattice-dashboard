@@ -591,6 +591,7 @@ export default {
       actions: {
         edit: "Edit",
         addProfile: "Add profile",
+        details: "Details",
       },
       billing: {
         recurring: "Recurring",
