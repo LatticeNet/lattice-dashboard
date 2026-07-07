@@ -57,6 +57,26 @@ import {
 } from "@/components/ui/select";
 
 type RenewalTone = "default" | "success" | "warning" | "destructive";
+type MachineFormSnapshot = {
+  profileId: string;
+  nodeId: string;
+  label: string;
+  vendor: string;
+  region: string;
+  notes: string;
+  priceMajor: string;
+  currency: string;
+  renewalCycle: string;
+  cycleDays: string;
+  nextRenewal: string;
+  autoRoll: boolean;
+  remindersEnabled: boolean;
+  remindDays: string;
+  consoleUrl: string;
+  detailUrl: string;
+  clearConsoleUrl: boolean;
+  clearDetailUrl: boolean;
+};
 
 const auth = useAuthStore();
 const { t } = useI18n();
@@ -95,12 +115,39 @@ const consoleUrl = ref("");
 const detailUrl = ref("");
 const clearConsoleUrl = ref(false);
 const clearDetailUrl = ref(false);
+const loadedMachineKey = ref("");
+const loadedSnapshot = ref<MachineFormSnapshot | undefined>();
+const optimisticMachine = ref<MachineView | undefined>();
 
 const machines = computed(() => machinesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const canAdminInventory = computed(() => auth.can("inventory:admin"));
 const selectedMachine = computed(() =>
-  machines.value.find((machine) => machineKey(machine) === selectedKey.value),
+  machines.value.find((machine) => machineKey(machine) === selectedKey.value) ||
+  (optimisticMachine.value && machineKey(optimisticMachine.value) === selectedKey.value ? optimisticMachine.value : undefined),
+);
+const currentSnapshot = computed<MachineFormSnapshot>(() => ({
+  profileId: profileId.value,
+  nodeId: nodeId.value,
+  label: label.value,
+  vendor: vendor.value,
+  region: region.value,
+  notes: notes.value,
+  priceMajor: priceMajor.value,
+  currency: currency.value,
+  renewalCycle: renewalCycle.value,
+  cycleDays: cycleDays.value,
+  nextRenewal: nextRenewal.value,
+  autoRoll: autoRoll.value,
+  remindersEnabled: remindersEnabled.value,
+  remindDays: remindDays.value,
+  consoleUrl: consoleUrl.value,
+  detailUrl: detailUrl.value,
+  clearConsoleUrl: clearConsoleUrl.value,
+  clearDetailUrl: clearDetailUrl.value,
+}));
+const formDirty = computed(() =>
+  loadedSnapshot.value ? JSON.stringify(currentSnapshot.value) !== JSON.stringify(loadedSnapshot.value) : false,
 );
 
 const sortedMachines = computed(() =>
@@ -158,12 +205,14 @@ watch(
   machines,
   (list) => {
     if (list.length === 0) {
+      if (formDirty.value) return;
       selectedKey.value = "";
       resetForm();
       return;
     }
     const first = sortedMachines.value[0];
     if (first && (!selectedKey.value || !list.some((machine) => machineKey(machine) === selectedKey.value))) {
+      if (formDirty.value && selectedKey.value) return;
       selectMachine(first);
     }
   },
@@ -171,7 +220,10 @@ watch(
 );
 
 watch(selectedMachine, (machine) => {
-  if (machine) loadForm(machine);
+  if (!machine) return;
+  const key = machineKey(machine);
+  if (formDirty.value && key === loadedMachineKey.value) return;
+  loadForm(machine);
 });
 
 // Deep-link: /inventory?node=<id> selects that node's machine row once the list
@@ -291,6 +343,11 @@ function selectMachine(machine: MachineView) {
   loadForm(machine);
 }
 
+function rememberCleanSnapshot(machine?: MachineView) {
+  loadedMachineKey.value = machine ? machineKey(machine) : "";
+  loadedSnapshot.value = { ...currentSnapshot.value };
+}
+
 function resetForm() {
   profileId.value = "";
   nodeId.value = "";
@@ -310,9 +367,12 @@ function resetForm() {
   detailUrl.value = "";
   clearConsoleUrl.value = false;
   clearDetailUrl.value = false;
+  optimisticMachine.value = undefined;
+  rememberCleanSnapshot();
 }
 
 function loadForm(machine: MachineView) {
+  optimisticMachine.value = machine;
   profileId.value = machine.id || "";
   nodeId.value = machine.node_id;
   label.value = machine.label || "";
@@ -331,21 +391,22 @@ function loadForm(machine: MachineView) {
   detailUrl.value = "";
   clearConsoleUrl.value = false;
   clearDetailUrl.value = false;
+  rememberCleanSnapshot(machine);
 }
 
 function buildInput(): MachineProfileInput {
   return {
     id: profileId.value || undefined,
     node_id: nodeId.value,
-    label: label.value.trim() || undefined,
-    vendor: vendor.value.trim() || undefined,
-    region: region.value.trim() || undefined,
-    notes: notes.value.trim() || undefined,
-    price_cents: parsePriceCents(),
-    currency: currency.value.trim() || undefined,
-    renewal_cycle: renewalCycle.value || undefined,
-    cycle_days: renewalCycle.value === "custom_days" ? Number(cycleDays.value || 0) : undefined,
-    next_renewal: isoDate(nextRenewal.value),
+    label: label.value.trim(),
+    vendor: vendor.value.trim(),
+    region: region.value.trim(),
+    notes: notes.value.trim(),
+    price_cents: parsePriceCents() ?? 0,
+    currency: currency.value.trim(),
+    renewal_cycle: renewalCycle.value,
+    cycle_days: renewalCycle.value === "custom_days" ? Number(cycleDays.value || 0) : 0,
+    next_renewal: isoDate(nextRenewal.value) ?? null,
     auto_roll: autoRoll.value,
     remind_days_before: parseReminderDays(),
     reminders_enabled: remindersEnabled.value,
@@ -356,9 +417,8 @@ function buildInput(): MachineProfileInput {
   };
 }
 
-function refreshAll() {
-  machinesQuery.refresh();
-  nodesQuery.refresh();
+async function refreshAll() {
+  await Promise.all([machinesQuery.refresh(), nodesQuery.refresh()]);
 }
 
 async function saveProfile() {
@@ -372,7 +432,7 @@ async function saveProfile() {
     toast.success(profileId.value ? t("fleet.inventory.toast.profileUpdated") : t("fleet.inventory.toast.profileCreated"));
     selectedKey.value = machineKey(saved);
     loadForm(saved);
-    refreshAll();
+    await refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.saveFailed"));
   } finally {
@@ -387,6 +447,8 @@ async function deleteProfile() {
     await api.machines.delete(profileId.value);
     toast.success(t("fleet.inventory.toast.profileDeleted"));
     profileId.value = "";
+    optimisticMachine.value = undefined;
+    rememberCleanSnapshot();
     deleteOpen.value = false;
     refreshAll();
   } catch (error) {
@@ -406,7 +468,7 @@ async function renewProfile() {
     );
     toast.success(t("fleet.inventory.toast.renewalRecorded"));
     loadForm(renewed);
-    refreshAll();
+    await refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.renewalFailed"));
   } finally {
@@ -589,6 +651,9 @@ async function runReminders(selectedOnly = false) {
           <CardDescription>
             <template v-if="selectedMachine">{{ displayName(selectedMachine) }}</template>
             <template v-else>{{ $t('fleet.inventory.profile.selectPrompt') }}</template>
+            <Badge v-if="formDirty" variant="warning" class="ml-2 align-middle">
+              {{ $t('fleet.inventory.profile.unsavedChanges') }}
+            </Badge>
           </CardDescription>
         </CardHeader>
         <CardContent>

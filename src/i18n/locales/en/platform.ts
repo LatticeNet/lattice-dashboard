@@ -368,7 +368,7 @@ export default {
       createChannelFirst: "Create a channel before adding a routing rule.",
       titleTemplateLabel: "Title template",
       bodyTemplateLabel: "Body template",
-      templateVarsHint: "Available variables: {{event_type}}, {{title}}, {{body}}.",
+      templateVarsHint: "Available variables: {'{'}event_type{'}'}, {'{'}title{'}'}, {'{'}body{'}'}.",
       ruleEnabledLabel: "Rule enabled",
       ruleCreated: "Rule created",
       ruleUpdated: "Rule updated",
@@ -430,7 +430,7 @@ export default {
       targetVersionLabel: "Target version",
       targetVersionPlaceholder: "latest or 0.2.8",
       versionHint: "Use latest to resolve the current official release ({latest}) at plan time.",
-      versionInvalid: "Must match ^[A-Za-z0-9][A-Za-z0-9._+:-]{0,63}$",
+      versionInvalid: "Must match ^[A-Za-z0-9][A-Za-z0-9._+:-]{'{'}0,63{'}'}$",
       artifactMode: "Artifact source",
       officialArtifactHint:
         "Leave Binary URL and SHA-256 empty to use the official LatticeNet/lattice-node-agent release for the node OS/arch.",

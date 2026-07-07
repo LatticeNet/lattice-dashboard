@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { AlertTriangle, ArchiveX, Ban, CheckCircle2, FileCode2, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, ArchiveX, Ban, CheckCircle2, FileCode2, Funnel, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
 import {
   api,
   APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
@@ -19,6 +19,7 @@ import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { approvalStatusMeta } from "@/lib/status";
 import { formatDateTime, shortId } from "@/lib/format";
+import { evalFilterExpression, tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -57,6 +58,7 @@ const selectedId = ref("");
 type ApprovalBucket = "active" | "pending" | "stale" | "approved" | "applied" | "rejected" | "dismissed" | "all";
 const approvalBucket = ref<ApprovalBucket>("active");
 const approvalSearch = ref("");
+const approvalExpression = ref("");
 const pendingApproval = ref<string | undefined>();
 const dismissingApproval = ref<string | undefined>();
 const replanningApproval = ref<string | undefined>();
@@ -158,6 +160,71 @@ function approvalHaystack(approval: ApprovalView): string {
     .toLowerCase();
 }
 
+const approvalExpressionError = computed(() => {
+  const expr = approvalExpression.value.trim();
+  if (!expr) return "";
+  const result = evalFilterExpression(expr, () => true);
+  return result.ok ? "" : result.error ?? "Invalid expression";
+});
+
+function approvalFieldValues(approval: ApprovalView, rawField: string): string[] {
+  const field = rawField.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  switch (field) {
+    case "id":
+      return [approval.id, shortId(approval.id)];
+    case "plugin":
+    case "service":
+      return [approval.plugin];
+    case "action":
+    case "mode":
+      return [approval.action];
+    case "node":
+    case "node_id":
+    case "target":
+      return [approval.node_id || "global"];
+    case "status":
+    case "state":
+      return [approval.status, isStaleAgentUpdateApproval(approval) ? "stale" : ""];
+    case "reason":
+    case "message":
+      return [approval.reason ?? "", approval.stale_code ?? ""];
+    case "actor":
+    case "actor_id":
+    case "created_by":
+      return [approval.actor_id ?? ""];
+    case "approved":
+    case "approved_by":
+    case "reviewer":
+      return [approval.approved_by ?? ""];
+    case "plan":
+    case "diff":
+      return [approval.plan ?? ""];
+    case "created":
+    case "created_at":
+      return [approval.created_at ?? ""];
+    case "updated":
+    case "updated_at":
+      return [approval.updated_at ?? ""];
+    default:
+      return [];
+  }
+}
+
+function approvalMatchesExpression(approval: ApprovalView): boolean {
+  const expr = approvalExpression.value.trim();
+  if (!expr || approvalExpressionError.value) return true;
+  const result = evalFilterExpression(expr, (rawToken) => {
+    const splitAt = rawToken.indexOf(":");
+    if (splitAt > 0) {
+      const values = approvalFieldValues(approval, rawToken.slice(0, splitAt));
+      const needle = rawToken.slice(splitAt + 1).trim();
+      return values.length > 0 && values.some((value) => tokenMatchesText(value, needle));
+    }
+    return tokenMatchesText(approvalHaystack(approval), rawToken);
+  });
+  return result.ok ? result.value : true;
+}
+
 const bucketCounts = computed<Record<ApprovalBucket, number>>(() => {
   const counts = Object.fromEntries(APPROVAL_BUCKETS.map((bucket) => [bucket, 0])) as Record<ApprovalBucket, number>;
   for (const approval of approvals.value) {
@@ -172,6 +239,7 @@ const filteredApprovals = computed(() => {
   const q = approvalSearch.value.trim().toLowerCase();
   return sortedApprovals.value.filter((approval) => {
     if (!matchesBucket(approval, approvalBucket.value)) return false;
+    if (!approvalMatchesExpression(approval)) return false;
     if (!q) return true;
     return approvalHaystack(approval).includes(q);
   });
@@ -432,6 +500,22 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               :placeholder="$t('operations.approvals.searchPlaceholder')"
             />
           </div>
+          <div class="relative">
+            <Funnel
+              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
+              v-model="approvalExpression"
+              class="pl-8 font-mono text-xs"
+              :class="approvalExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
+              :placeholder="$t('operations.approvals.expressionPlaceholder')"
+              aria-label="Approval expression"
+            />
+          </div>
+          <p class="text-xs" :class="approvalExpressionError ? 'text-destructive' : 'text-muted-foreground'">
+            {{ approvalExpressionError || $t('operations.approvals.expressionHelp') }}
+          </p>
 
           <div class="flex flex-wrap gap-1.5">
             <Button
@@ -543,6 +627,16 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                 {{ $t('operations.approvals.dismissStale') }}
               </Button>
             </div>
+          </div>
+          <div
+            v-else-if="selected.status === 'pending' && selected.reason"
+            class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
+          >
+            <p class="flex items-center gap-2 font-medium text-foreground">
+              <AlertTriangle class="size-4 text-warning" aria-hidden="true" />
+              {{ $t('operations.approvals.approvalNote') }}
+            </p>
+            <p class="mt-1 break-words">{{ selected.reason }}</p>
           </div>
           <div
             v-else-if="selected.status === 'rejected' && selected.reason"

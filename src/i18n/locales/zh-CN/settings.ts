@@ -218,7 +218,7 @@ export default {
         editTitle: "编辑用户",
         description: "运维账号。使用 Google/OIDC 登录时,用户名必须等于对方已验证的邮箱。",
         username: "用户名",
-        usernamePlaceholder: "alice@example.com",
+        usernamePlaceholder: "alice{'@'}example.com",
         usernameHint: "登录标识。SSO 场景下必须与 IdP 已验证邮箱完全一致;创建后不可修改。",
         usernameRequired: "用户名为必填项。",
         fullAdmin: "超级管理员 —— 授予全部权限(*)",
