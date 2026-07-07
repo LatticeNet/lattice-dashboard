@@ -852,6 +852,10 @@ export interface Line {
   public_host?: string;
   domain?: string;
   outbound_ref?: string;
+  /** Resolved downstream server host of the outbound this line routes to (config-fallback discovery only). */
+  outbound_server?: string;
+  /** Resolved downstream server port of the outbound this line routes to (config-fallback discovery only). */
+  outbound_port?: number;
   /** line_hash_ids of relayed/jumped lines, if this line chains to others. */
   jump_edges?: string[];
   user_count: number;
