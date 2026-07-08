@@ -251,7 +251,11 @@ const vendorByName = computed(() => {
 });
 
 const selectedVendorProfile = computed(() => vendorByName.value.get(normalizeVendorKey(vendor.value)));
-const explicitVendors = computed(() => vendors.value.filter((item) => !item.id.startsWith("derived:")));
+const vendorChoices = computed(() =>
+  vendors.value
+    .filter((item) => !!s(item.name))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+);
 
 const currencyOptions = computed(() => {
   const items = new Set<string>(COMMON_CURRENCIES);
@@ -628,6 +632,11 @@ function vendorHost(profile?: MachineVendorView): string {
   } catch {
     return profile.url;
   }
+}
+
+function vendorSubtitle(profile?: MachineVendorView): string {
+  if (!profile) return "";
+  return vendorHost(profile) || (profile.id.startsWith("derived:") ? t("fleet.inventory.profile.vendorDerivedHint") : "");
 }
 
 function billingBadgeVariant(cat: BillingCategory): "secondary" | "success" | "warning" | "outline" {
@@ -1417,14 +1426,14 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2">
               <Label for="machine-vendor">{{ $t('fleet.inventory.profile.vendor') }}</Label>
-              <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div class="grid gap-2">
                 <Select v-model="vendor">
                   <SelectTrigger class="min-w-0">
                     <SelectValue :placeholder="$t('fleet.inventory.profile.vendorSelectPlaceholder')" />
                   </SelectTrigger>
                   <SelectContent class="max-w-[min(92vw,28rem)]">
                     <SelectItem
-                      v-for="item in explicitVendors"
+                      v-for="item in vendorChoices"
                       :key="item.id"
                       :value="item.name"
                     >
@@ -1437,8 +1446,8 @@ async function runReminders(selectedOnly: boolean) {
                         />
                         <span class="min-w-0">
                           <span class="block truncate">{{ item.name }}</span>
-                          <span v-if="vendorHost(item)" class="block truncate text-[11px] text-muted-foreground">
-                            {{ vendorHost(item) }}
+                          <span v-if="vendorSubtitle(item)" class="block truncate text-[11px] text-muted-foreground">
+                            {{ vendorSubtitle(item) }}
                           </span>
                         </span>
                       </span>

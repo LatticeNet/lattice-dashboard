@@ -693,6 +693,7 @@ export default {
         vendor: "厂商",
         vendorSelectPlaceholder: "选择已有厂商",
         vendorNameHint: "可以选择已有厂商，也可以直接输入新的厂商名称。",
+        vendorDerivedHint: "来自已有机器记录",
         customVendor: "新厂商：{name}",
         vendorDirectory: "厂商目录",
         vendorDirectoryHint: "同名厂商的官网、logo 和说明会在多台机器间复用。",

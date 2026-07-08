@@ -701,6 +701,7 @@ export default {
         vendor: "Vendor",
         vendorSelectPlaceholder: "Choose saved vendor",
         vendorNameHint: "Choose a saved vendor or type a new vendor name.",
+        vendorDerivedHint: "Used by existing machines",
         customVendor: "New vendor: {name}",
         vendorDirectory: "Vendor directory",
         vendorDirectoryHint: "Reuses provider metadata across machines with the same vendor name.",
