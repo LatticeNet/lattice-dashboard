@@ -63,7 +63,9 @@ import {
 } from "@/components/ui/card";
 import {
   Dialog,
+  DialogClose,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogScrollContent,
   DialogTitle,
@@ -176,8 +178,11 @@ const consoleUrl = ref("");
 const detailUrl = ref("");
 const clearConsoleUrl = ref(false);
 const clearDetailUrl = ref(false);
+const fxDialogOpen = ref(false);
 const fxTarget = ref(loadFXTarget());
 const fxRates = ref<Record<string, string>>(loadFXRates());
+const fxTargetDraft = ref(fxTarget.value);
+const fxRatesDraft = ref<Record<string, string>>({ ...fxRates.value });
 
 const machines = computed(() => machinesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -257,6 +262,7 @@ const currencyOptions = computed(() => {
   const items = new Set<string>(COMMON_CURRENCIES);
   if (currency.value) items.add(normalizeCurrency(currency.value));
   if (fxTarget.value) items.add(normalizeCurrency(fxTarget.value));
+  if (fxTargetDraft.value) items.add(normalizeCurrency(fxTargetDraft.value));
   for (const entry of spendByCurrency.value) items.add(normalizeCurrency(entry.currency));
   return [...items].filter(Boolean).sort((a, b) => a.localeCompare(b));
 });
@@ -344,31 +350,54 @@ const primaryMonthlyLabel = computed(() => {
     amount: formatMoney(Math.round(p.monthly), p.currency),
   });
 });
-const spendHint = computed(() => {
-  const extra = spendByCurrency.value.length - 1;
-  const parts: string[] = [];
-  if (extra > 0) parts.push(t("fleet.inventory.spend.moreCurrencies", { count: extra }));
+const spendCurrencyLabels = computed(() =>
+  spendByCurrency.value.map((entry) =>
+    t("fleet.inventory.spend.perMonth", {
+      amount: formatMoney(Math.round(entry.monthly), entry.currency),
+    }),
+  ),
+);
+const totalSpendEstimate = computed(() => estimateTotalSpend(spendByCurrency.value));
+const draftSpendEstimate = computed(() =>
+  estimateTotalSpend(spendByCurrency.value, normalizeCurrency(fxTargetDraft.value) || "USD", fxRatesDraft.value),
+);
+const spendCardValue = computed(() => {
+  if (spendByCurrency.value.length === 0) return t("fleet.inventory.spend.none");
+  const target = normalizeCurrency(fxTarget.value) || "USD";
+  const estimate = totalSpendEstimate.value;
+  if (!estimate) return primaryMonthlyLabel.value;
+  return t("fleet.inventory.spend.perMonth", {
+    amount: formatMoney(estimate.monthlyCents, target),
+  });
+});
+const spendCardHint = computed(() => {
+  const parts = spendCurrencyLabels.value.slice(0, 3);
+  const remaining = spendCurrencyLabels.value.length - parts.length;
+  if (remaining > 0) parts.push(t("fleet.inventory.spend.moreCurrencies", { count: remaining }));
   if (freeCount.value > 0) parts.push(t("fleet.inventory.spend.free", { count: freeCount.value }));
+  const missing = totalSpendEstimate.value?.missing ?? [];
+  if (missing.length > 0) parts.push(t("fleet.inventory.spend.missingShort", { currencies: missing.join(", ") }));
   return parts.join(" · ");
 });
-const totalSpendEstimate = computed(() => estimateTotalSpend(spendByCurrency.value));
-const fxRateRows = computed(() => {
-  const target = normalizeCurrency(fxTarget.value) || "USD";
+const fxRateDraftRows = computed(() => buildFXRateRows(fxTargetDraft.value, fxRatesDraft.value));
+
+function buildFXRateRows(targetValue: string, rates: Record<string, string>) {
+  const target = normalizeCurrency(targetValue) || "USD";
   return spendByCurrency.value
     .filter((item) => normalizeCurrency(item.currency) !== target)
     .map((entry) => {
-      const rate = fxRateFor(entry.currency);
+      const rate = fxRateFor(entry.currency, targetValue, rates);
       return {
         ...entry,
         currency: normalizeCurrency(entry.currency),
         target,
-        rateValue: fxRateValue(entry.currency),
+        rateValue: fxRateValue(entry.currency, targetValue, rates),
         missing: !rate,
         convertedMonthlyCents: rate ? Math.round(entry.monthly * rate) : undefined,
         convertedAnnualCents: rate ? Math.round(entry.annual * rate) : undefined,
       };
     });
-});
+}
 
 // ── Fleet counters ────────────────────────────────────────────────────────────
 const profiledCount = computed(() => machines.value.filter((m) => !!m.id).length);
@@ -564,41 +593,64 @@ function normalizeFXRateKey(key: string): string {
   return src && dst ? `${src}->${dst}` : "";
 }
 
-function fxRateValue(currencyCode: string): string {
+function fxRateValue(
+  currencyCode: string,
+  targetValue = fxTarget.value,
+  rates: Record<string, string> = fxRates.value,
+): string {
   const cur = normalizeCurrency(currencyCode);
-  const target = normalizeCurrency(fxTarget.value) || "USD";
+  const target = normalizeCurrency(targetValue) || "USD";
   if (!cur || cur === target) return "1";
   const pair = fxPairKey(cur, target);
-  if (fxRates.value[pair] != null) return fxRates.value[pair];
+  if (rates[pair] != null) return rates[pair];
   // Compatibility with the original USD-targeted localStorage shape.
-  if (target === "USD" && fxRates.value[cur] != null) return fxRates.value[cur];
+  if (target === "USD" && rates[cur] != null) return rates[cur];
   return "";
 }
 
-function setFXRate(currencyCode: string, value: string) {
-  const cur = normalizeCurrency(currencyCode);
-  const target = normalizeCurrency(fxTarget.value) || "USD";
-  if (!cur || cur === target) return;
-  fxRates.value = { ...fxRates.value, [fxPairKey(cur, target)]: value };
-  persistFX();
+function openFXDialog() {
+  fxTargetDraft.value = normalizeCurrency(fxTarget.value) || "USD";
+  fxRatesDraft.value = { ...fxRates.value };
+  fxDialogOpen.value = true;
 }
 
-function fxRateFor(currencyCode: string): number | undefined {
+function setDraftFXRate(currencyCode: string, value: string) {
   const cur = normalizeCurrency(currencyCode);
-  const target = normalizeCurrency(fxTarget.value) || "USD";
+  const target = normalizeCurrency(fxTargetDraft.value) || "USD";
+  if (!cur || cur === target) return;
+  fxRatesDraft.value = { ...fxRatesDraft.value, [fxPairKey(cur, target)]: value };
+}
+
+function saveFXSettings() {
+  fxTarget.value = normalizeCurrency(fxTargetDraft.value) || "USD";
+  fxRates.value = { ...fxRatesDraft.value };
+  persistFX();
+  fxDialogOpen.value = false;
+}
+
+function fxRateFor(
+  currencyCode: string,
+  targetValue = fxTarget.value,
+  rates: Record<string, string> = fxRates.value,
+): number | undefined {
+  const cur = normalizeCurrency(currencyCode);
+  const target = normalizeCurrency(targetValue) || "USD";
   if (!cur) return undefined;
   if (cur === target) return 1;
-  const parsed = Number(s(fxRateValue(cur)));
+  const parsed = Number(s(fxRateValue(cur, target, rates)));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function estimateTotalSpend(spend: CurrencySpend[]): { monthlyCents: number; annualCents: number; missing: string[] } | undefined {
-  const target = normalizeCurrency(fxTarget.value) || "USD";
+function estimateTotalSpend(
+  spend: CurrencySpend[],
+  targetValue = fxTarget.value,
+  rates: Record<string, string> = fxRates.value,
+): { monthlyCents: number; annualCents: number; missing: string[] } | undefined {
   if (spend.length === 0) return undefined;
   let monthlyMajor = 0;
   const missing: string[] = [];
   for (const entry of spend) {
-    const rate = fxRateFor(entry.currency);
+    const rate = fxRateFor(entry.currency, targetValue, rates);
     if (!rate) {
       missing.push(entry.currency);
       continue;
@@ -1048,8 +1100,37 @@ async function runReminders(selectedOnly: boolean) {
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard :label="$t('fleet.inventory.stats.machines')" :value="machines.length" :icon="Boxes"
         :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })" />
-      <StatCard :label="$t('fleet.inventory.stats.monthlySpend')" :value="primaryMonthlyLabel" :icon="Wallet"
-        :hint="spendHint" />
+      <button
+        type="button"
+        class="group block rounded-xl text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        :aria-label="$t('fleet.inventory.spend.configureRates')"
+        @click="openFXDialog"
+      >
+        <Card interactive class="relative h-full overflow-hidden">
+          <CardContent class="flex items-start gap-3 p-4">
+            <div class="flex shrink-0 items-center justify-center rounded-lg bg-accent p-2 text-accent-foreground">
+              <Wallet class="size-4" aria-hidden="true" />
+            </div>
+            <div class="min-w-0 space-y-1">
+              <div class="flex min-w-0 items-center gap-2">
+                <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.stats.monthlySpend') }}</p>
+                <Badge v-if="totalSpendEstimate?.missing.length" variant="warning" class="shrink-0">
+                  {{ $t('fleet.inventory.spend.missingRate') }}
+                </Badge>
+              </div>
+              <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+                <p class="text-2xl font-semibold tabular leading-none text-foreground">
+                  {{ spendCardValue }}
+                </p>
+                <p v-if="spendCardHint" class="text-xs text-muted-foreground">{{ spendCardHint }}</p>
+              </div>
+              <p class="text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                {{ $t('fleet.inventory.spend.configureRates') }}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </button>
       <StatCard :label="$t('fleet.inventory.stats.renewalRisk')" :value="renewalSoonCount" :icon="CalendarClock"
         :tone="overdueCount > 0 ? 'destructive' : renewalSoonCount > 0 ? 'warning' : 'success'"
         :hint="$t('fleet.inventory.stats.overdueHint', { count: overdueCount })" />
@@ -1107,80 +1188,105 @@ async function runReminders(selectedOnly: boolean) {
               </div>
               <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.machineCount', { count: entry.count }) }}</p>
             </div>
-            <div class="mt-4 rounded-lg border border-border bg-background/70 p-3 shadow-xs">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p class="inline-flex items-center gap-2 text-sm font-medium">
-                    <Wallet class="size-4 text-muted-foreground" aria-hidden="true" />
-                    {{ $t('fleet.inventory.spend.estimatedTotal') }}
-                  </p>
-                  <p v-if="totalSpendEstimate" class="mt-0.5 text-xs text-muted-foreground">
-                    {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(totalSpendEstimate.monthlyCents, fxTarget) }) }}
-                    · {{ $t('fleet.inventory.spend.perYear', { amount: formatMoney(totalSpendEstimate.annualCents, fxTarget) }) }}
-                  </p>
-                  <p class="mt-1 text-[11px] text-muted-foreground">{{ $t('fleet.inventory.spend.rateCardHint') }}</p>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label for="inventory-fx-target" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.target') }}</Label>
-                  <Select v-model="fxTarget">
-                    <SelectTrigger id="inventory-fx-target" size="sm" class="w-32">
-                      <SelectValue :placeholder="$t('fleet.inventory.spend.target')" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem v-for="cur in currencyOptions" :key="`target-${cur}`" :value="cur">
-                        {{ cur }}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <p v-if="totalSpendEstimate?.missing.length" class="mt-3 rounded-md border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
-                {{ $t('fleet.inventory.spend.missingRates', { currencies: totalSpendEstimate.missing.join(', ') }) }}
-              </p>
-              <div v-if="fxRateRows.length" class="mt-3 grid gap-2">
-                <div
-                  v-for="entry in fxRateRows"
-                  :key="`rate-${entry.currency}`"
-                  :class="cn(
-                    'grid gap-2 rounded-md border p-2.5 sm:grid-cols-[minmax(90px,auto)_minmax(0,1fr)_minmax(120px,auto)] sm:items-center',
-                    entry.missing ? 'border-amber-400/50 bg-amber-500/10' : 'border-border bg-muted/20',
-                  )"
-                >
-                  <div class="min-w-0">
-                    <p class="text-xs font-medium">{{ entry.currency }} → {{ entry.target }}</p>
-                    <p class="text-[11px] text-muted-foreground">
-                      {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(Math.round(entry.monthly), entry.currency) }) }}
-                    </p>
-                  </div>
-                  <div class="flex min-w-0 items-center gap-2">
-                    <span class="shrink-0 text-xs text-muted-foreground">1 {{ entry.currency }} =</span>
-                    <Input
-                      class="h-8 min-w-24 flex-1 text-xs tabular"
-                      inputmode="decimal"
-                      :aria-label="$t('fleet.inventory.spend.rateInput', { source: entry.currency, target: entry.target })"
-                      :placeholder="entry.target"
-                      :model-value="entry.rateValue"
-                      @update:model-value="(value) => setFXRate(entry.currency, String(value ?? ''))"
-                    />
-                    <span class="shrink-0 text-xs text-muted-foreground">{{ entry.target }}</span>
-                  </div>
-                  <div class="text-xs sm:text-right">
-                    <span v-if="entry.convertedMonthlyCents != null" class="font-medium tabular">
-                      {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(entry.convertedMonthlyCents, entry.target) }) }}
-                    </span>
-                    <Badge v-else variant="warning">{{ $t('fleet.inventory.spend.missingRate') }}</Badge>
-                  </div>
-                </div>
-              </div>
-              <p v-else class="mt-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                {{ $t('fleet.inventory.spend.singleCurrency') }}
-              </p>
-            </div>
           </div>
           <p v-else class="mt-2 text-sm text-muted-foreground">{{ $t('fleet.inventory.spend.none') }}</p>
         </div>
       </CardContent>
     </Card>
+
+    <Dialog v-model:open="fxDialogOpen">
+      <DialogScrollContent class="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2">
+            <Wallet class="size-4 text-muted-foreground" aria-hidden="true" />
+            {{ $t('fleet.inventory.spend.rateDialogTitle') }}
+          </DialogTitle>
+          <DialogDescription>
+            {{ $t('fleet.inventory.spend.rateDialogDescription') }}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="grid gap-4">
+          <div class="rounded-lg border border-border bg-muted/20 p-3">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-medium">{{ $t('fleet.inventory.spend.estimatedTotal') }}</p>
+                <p v-if="draftSpendEstimate" class="mt-0.5 text-xs text-muted-foreground">
+                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(draftSpendEstimate.monthlyCents, fxTargetDraft) }) }}
+                  · {{ $t('fleet.inventory.spend.perYear', { amount: formatMoney(draftSpendEstimate.annualCents, fxTargetDraft) }) }}
+                </p>
+                <p class="mt-1 text-[11px] text-muted-foreground">{{ $t('fleet.inventory.spend.rateCardHint') }}</p>
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="inventory-fx-target" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.target') }}</Label>
+                <Select v-model="fxTargetDraft">
+                  <SelectTrigger id="inventory-fx-target" size="sm" class="w-32">
+                    <SelectValue :placeholder="$t('fleet.inventory.spend.target')" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="cur in currencyOptions" :key="`target-${cur}`" :value="cur">
+                      {{ cur }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p v-if="draftSpendEstimate?.missing.length" class="mt-3 rounded-md border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
+              {{ $t('fleet.inventory.spend.missingRates', { currencies: draftSpendEstimate.missing.join(', ') }) }}
+            </p>
+          </div>
+
+          <div v-if="fxRateDraftRows.length" class="grid gap-2">
+            <div
+              v-for="entry in fxRateDraftRows"
+              :key="`rate-draft-${entry.currency}`"
+              :class="cn(
+                'grid gap-2 rounded-md border p-2.5 sm:grid-cols-[minmax(90px,auto)_minmax(0,1fr)_minmax(120px,auto)] sm:items-center',
+                entry.missing ? 'border-amber-400/50 bg-amber-500/10' : 'border-border bg-muted/20',
+              )"
+            >
+              <div class="min-w-0">
+                <p class="text-xs font-medium">{{ entry.currency }} → {{ entry.target }}</p>
+                <p class="text-[11px] text-muted-foreground">
+                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(Math.round(entry.monthly), entry.currency) }) }}
+                </p>
+              </div>
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="shrink-0 text-xs text-muted-foreground">1 {{ entry.currency }} =</span>
+                <Input
+                  class="h-8 min-w-24 flex-1 text-xs tabular"
+                  inputmode="decimal"
+                  :aria-label="$t('fleet.inventory.spend.rateInput', { source: entry.currency, target: entry.target })"
+                  :placeholder="entry.target"
+                  :model-value="entry.rateValue"
+                  @update:model-value="(value) => setDraftFXRate(entry.currency, String(value ?? ''))"
+                />
+                <span class="shrink-0 text-xs text-muted-foreground">{{ entry.target }}</span>
+              </div>
+              <div class="text-xs sm:text-right">
+                <span v-if="entry.convertedMonthlyCents != null" class="font-medium tabular">
+                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(entry.convertedMonthlyCents, entry.target) }) }}
+                </span>
+                <Badge v-else variant="warning">{{ $t('fleet.inventory.spend.missingRate') }}</Badge>
+              </div>
+            </div>
+          </div>
+          <p v-else class="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            {{ $t('fleet.inventory.spend.singleCurrency') }}
+          </p>
+        </div>
+
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
+          </DialogClose>
+          <Button type="button" @click="saveFXSettings">
+            <Save class="size-4" aria-hidden="true" />
+            {{ $t('fleet.inventory.spend.saveRates') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
 
     <!-- Controls: search + group-by -->
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
