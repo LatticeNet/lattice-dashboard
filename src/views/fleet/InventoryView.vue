@@ -1097,50 +1097,47 @@ async function runReminders(selectedOnly: boolean) {
     </datalist>
 
     <!-- KPI board -->
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid auto-rows-[8rem] gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard :label="$t('fleet.inventory.stats.machines')" :value="machines.length" :icon="Boxes"
-        :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })" />
+        :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })"
+        class="h-full py-0" hint-placement="bottom" />
       <button
         type="button"
         class="group block h-full rounded-xl text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         :aria-label="$t('fleet.inventory.spend.configureRates')"
+        :title="$t('fleet.inventory.spend.configureRates')"
         @click="openFXDialog"
       >
         <Card class="relative h-full overflow-hidden py-0 transition-colors group-hover:bg-muted/20">
-          <CardContent class="flex items-start gap-3 p-4">
+          <CardContent class="flex h-full items-start gap-3 p-4">
             <div class="flex shrink-0 items-center justify-center rounded-lg bg-accent p-2 text-accent-foreground">
               <Wallet class="size-4" aria-hidden="true" />
             </div>
-            <div class="min-w-0 flex-1 space-y-1 pr-16">
+            <div class="flex h-full min-w-0 flex-1 flex-col">
               <div class="flex min-w-0 items-center gap-2">
                 <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.stats.monthlySpend') }}</p>
                 <Badge v-if="totalSpendEstimate?.missing.length" variant="warning" class="shrink-0">
                   {{ $t('fleet.inventory.spend.missingRate') }}
                 </Badge>
               </div>
-              <div class="flex min-w-0 items-baseline gap-x-2">
-                <p class="shrink-0 text-2xl font-semibold tabular leading-none text-foreground">
-                  {{ spendCardValue }}
-                </p>
-                <p v-if="spendCardHint" class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                  {{ spendCardHint }}
-                </p>
-              </div>
+              <p class="mt-1 truncate text-2xl font-semibold tabular leading-none text-foreground">
+                {{ spendCardValue }}
+              </p>
+              <p v-if="spendCardHint" class="mt-auto truncate text-xs text-muted-foreground">
+                {{ spendCardHint }}
+              </p>
             </div>
-            <span
-              class="pointer-events-none absolute right-3 top-3 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
-            >
-              {{ $t('fleet.inventory.spend.configureRates') }}
-            </span>
           </CardContent>
         </Card>
       </button>
       <StatCard :label="$t('fleet.inventory.stats.renewalRisk')" :value="renewalSoonCount" :icon="CalendarClock"
         :tone="overdueCount > 0 ? 'destructive' : renewalSoonCount > 0 ? 'warning' : 'success'"
-        :hint="$t('fleet.inventory.stats.overdueHint', { count: overdueCount })" />
+        :hint="$t('fleet.inventory.stats.overdueHint', { count: overdueCount })"
+        class="h-full py-0" hint-placement="bottom" />
       <StatCard :label="$t('fleet.inventory.stats.coverage')" :value="`${profiledCount} / ${machines.length}`"
         :icon="CheckCircle2" :tone="missingCount > 0 ? 'warning' : 'success'"
-        :hint="$t('fleet.inventory.stats.needsProfileHint', { count: missingCount })" />
+        :hint="$t('fleet.inventory.stats.needsProfileHint', { count: missingCount })"
+        class="h-full py-0" hint-placement="bottom" />
     </div>
 
     <!-- Billing composition + spend-by-currency -->

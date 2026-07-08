@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 
 type Tone = "default" | "success" | "warning" | "destructive";
+type HintPlacement = "inline" | "bottom";
 
 const props = withDefaults(
   defineProps<{
@@ -14,12 +15,14 @@ const props = withDefaults(
     icon?: Component;
     hint?: string;
     tone?: Tone;
+    hintPlacement?: HintPlacement;
     /** When set, the whole card becomes a drill-through link to this route. */
     to?: RouteLocationRaw;
     class?: HTMLAttributes["class"];
   }>(),
   {
     tone: "default",
+    hintPlacement: "inline",
   },
 );
 
@@ -48,6 +51,8 @@ const iconToneClass = computed(() => {
       return "bg-accent text-accent-foreground";
   }
 });
+
+const hintAtBottom = computed(() => props.hintPlacement === "bottom");
 </script>
 
 <template>
@@ -60,21 +65,25 @@ const iconToneClass = computed(() => {
     )"
   >
     <Card :class="cn('relative overflow-hidden', to && 'surface-interactive', props.class)">
-      <CardContent class="flex items-start gap-3 p-4">
+      <CardContent :class="cn('flex items-start gap-3 p-4', hintAtBottom && 'h-full')">
         <div
           v-if="icon"
           :class="cn('flex shrink-0 items-center justify-center rounded-lg p-2', iconToneClass)"
         >
           <component :is="icon" class="size-4" />
         </div>
-        <div class="min-w-0 space-y-1">
+        <div :class="cn('min-w-0', hintAtBottom ? 'flex h-full flex-1 flex-col' : 'space-y-1')">
           <p class="text-sm text-muted-foreground">{{ label }}</p>
-          <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <div v-if="!hintAtBottom" class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
             <p :class="cn('text-2xl font-semibold tabular leading-none', valueToneClass)">
               {{ value }}
             </p>
             <p v-if="hint" class="text-xs text-muted-foreground">{{ hint }}</p>
           </div>
+          <p v-else :class="cn('mt-1 truncate text-2xl font-semibold tabular leading-none', valueToneClass)">
+            {{ value }}
+          </p>
+          <p v-if="hintAtBottom && hint" class="mt-auto truncate text-xs text-muted-foreground">{{ hint }}</p>
         </div>
         <ArrowUpRight
           v-if="to"
