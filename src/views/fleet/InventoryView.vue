@@ -85,7 +85,8 @@ type GroupBy = "none" | "billing" | "vendor" | "region" | "renewal";
 // Approx. days per month, used to normalise custom-day billing cycles to a
 // monthly-equivalent figure (365.25 / 12).
 const DAYS_PER_MONTH = 30.4375;
-const COMMON_CURRENCIES = ["USD", "CNY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
+const COMMON_CURRENCIES = ["USD", "CNY", "CHY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
+const NO_RENEWAL_CYCLE = "__none";
 // Monthly divisor per named cycle; custom_days is handled separately.
 const CYCLE_DIVISOR: Record<string, number> = {
   monthly: 1,
@@ -250,6 +251,7 @@ const vendorByName = computed(() => {
 });
 
 const selectedVendorProfile = computed(() => vendorByName.value.get(normalizeVendorKey(vendor.value)));
+const explicitVendors = computed(() => vendors.value.filter((item) => !item.id.startsWith("derived:")));
 
 const currencyOptions = computed(() => {
   const items = new Set<string>(COMMON_CURRENCIES);
@@ -257,6 +259,12 @@ const currencyOptions = computed(() => {
   if (fxTarget.value) items.add(normalizeCurrency(fxTarget.value));
   for (const entry of spendByCurrency.value) items.add(normalizeCurrency(entry.currency));
   return [...items].filter(Boolean).sort((a, b) => a.localeCompare(b));
+});
+const renewalCycleSelect = computed({
+  get: () => renewalCycle.value || NO_RENEWAL_CYCLE,
+  set: (value: string) => {
+    renewalCycle.value = value === NO_RENEWAL_CYCLE ? "" : value;
+  },
 });
 
 // ── Cost model ────────────────────────────────────────────────────────────────
@@ -344,6 +352,23 @@ const spendHint = computed(() => {
   return parts.join(" · ");
 });
 const totalSpendEstimate = computed(() => estimateTotalSpend(spendByCurrency.value));
+const fxRateRows = computed(() => {
+  const target = normalizeCurrency(fxTarget.value) || "USD";
+  return spendByCurrency.value
+    .filter((item) => normalizeCurrency(item.currency) !== target)
+    .map((entry) => {
+      const rate = fxRateFor(entry.currency);
+      return {
+        ...entry,
+        currency: normalizeCurrency(entry.currency),
+        target,
+        rateValue: fxRateValue(entry.currency),
+        missing: !rate,
+        convertedMonthlyCents: rate ? Math.round(entry.monthly * rate) : undefined,
+        convertedAnnualCents: rate ? Math.round(entry.annual * rate) : undefined,
+      };
+    });
+});
 
 // ── Fleet counters ────────────────────────────────────────────────────────────
 const profiledCount = computed(() => machines.value.filter((m) => !!m.id).length);
@@ -508,17 +533,17 @@ function loadFXTarget(): string {
 }
 
 function loadFXRates(): Record<string, string> {
-  if (typeof localStorage === "undefined") return { USD: "1", USDT: "1", USDC: "1" };
+  if (typeof localStorage === "undefined") return { "USDT->USD": "1", "USDC->USD": "1" };
   try {
     const parsed = JSON.parse(localStorage.getItem(FX_RATES_KEY) || "{}") as Record<string, unknown>;
-    const out: Record<string, string> = { USD: "1", USDT: "1", USDC: "1" };
+    const out: Record<string, string> = { "USDT->USD": "1", "USDC->USD": "1" };
     for (const [key, value] of Object.entries(parsed)) {
-      const cur = normalizeCurrency(key);
-      if (cur) out[cur] = s(value);
+      const pair = normalizeFXRateKey(key);
+      if (pair) out[pair] = s(value);
     }
     return out;
   } catch {
-    return { USD: "1", USDT: "1", USDC: "1" };
+    return { "USDT->USD": "1", "USDC->USD": "1" };
   }
 }
 
@@ -528,10 +553,33 @@ function persistFX() {
   localStorage.setItem(FX_RATES_KEY, JSON.stringify(fxRates.value));
 }
 
+function fxPairKey(source: string, target = normalizeCurrency(fxTarget.value) || "USD"): string {
+  return `${normalizeCurrency(source)}->${normalizeCurrency(target) || "USD"}`;
+}
+
+function normalizeFXRateKey(key: string): string {
+  const [source, target] = key.includes("->") ? key.split("->") : [key, "USD"];
+  const src = normalizeCurrency(source);
+  const dst = normalizeCurrency(target);
+  return src && dst ? `${src}->${dst}` : "";
+}
+
+function fxRateValue(currencyCode: string): string {
+  const cur = normalizeCurrency(currencyCode);
+  const target = normalizeCurrency(fxTarget.value) || "USD";
+  if (!cur || cur === target) return "1";
+  const pair = fxPairKey(cur, target);
+  if (fxRates.value[pair] != null) return fxRates.value[pair];
+  // Compatibility with the original USD-targeted localStorage shape.
+  if (target === "USD" && fxRates.value[cur] != null) return fxRates.value[cur];
+  return "";
+}
+
 function setFXRate(currencyCode: string, value: string) {
   const cur = normalizeCurrency(currencyCode);
-  if (!cur) return;
-  fxRates.value = { ...fxRates.value, [cur]: value };
+  const target = normalizeCurrency(fxTarget.value) || "USD";
+  if (!cur || cur === target) return;
+  fxRates.value = { ...fxRates.value, [fxPairKey(cur, target)]: value };
   persistFX();
 }
 
@@ -540,7 +588,7 @@ function fxRateFor(currencyCode: string): number | undefined {
   const target = normalizeCurrency(fxTarget.value) || "USD";
   if (!cur) return undefined;
   if (cur === target) return 1;
-  const parsed = Number(s(fxRates.value[cur]));
+  const parsed = Number(s(fxRateValue(cur)));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
@@ -571,6 +619,15 @@ function nodeInventoryFor(nodeID?: string) {
 
 function vendorProfileFor(machine: MachineView): MachineVendorView | undefined {
   return machine.vendor_profile ?? vendorByName.value.get(normalizeVendorKey(machine.vendor));
+}
+
+function vendorHost(profile?: MachineVendorView): string {
+  if (!profile?.url) return "";
+  try {
+    return new URL(profile.url).host.replace(/^www\./, "");
+  } catch {
+    return profile.url;
+  }
 }
 
 function billingBadgeVariant(cat: BillingCategory): "secondary" | "success" | "warning" | "outline" {
@@ -1045,39 +1102,74 @@ async function runReminders(selectedOnly: boolean) {
               </div>
               <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.machineCount', { count: entry.count }) }}</p>
             </div>
-            <div class="mt-4 rounded-md border border-border bg-muted/20 p-3">
-              <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="mt-4 rounded-lg border border-border bg-background/70 p-3 shadow-xs">
+              <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p class="text-sm font-medium">{{ $t('fleet.inventory.spend.estimatedTotal') }}</p>
+                  <p class="inline-flex items-center gap-2 text-sm font-medium">
+                    <Wallet class="size-4 text-muted-foreground" aria-hidden="true" />
+                    {{ $t('fleet.inventory.spend.estimatedTotal') }}
+                  </p>
                   <p v-if="totalSpendEstimate" class="mt-0.5 text-xs text-muted-foreground">
                     {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(totalSpendEstimate.monthlyCents, fxTarget) }) }}
                     · {{ $t('fleet.inventory.spend.perYear', { amount: formatMoney(totalSpendEstimate.annualCents, fxTarget) }) }}
                   </p>
+                  <p class="mt-1 text-[11px] text-muted-foreground">{{ $t('fleet.inventory.spend.rateCardHint') }}</p>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="grid gap-1.5">
                   <Label for="inventory-fx-target" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.target') }}</Label>
-                  <Input id="inventory-fx-target" v-model="fxTarget" list="inventory-currencies" class="h-8 w-24 uppercase" maxlength="5" />
+                  <Select v-model="fxTarget">
+                    <SelectTrigger id="inventory-fx-target" size="sm" class="w-32">
+                      <SelectValue :placeholder="$t('fleet.inventory.spend.target')" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="cur in currencyOptions" :key="`target-${cur}`" :value="cur">
+                        {{ cur }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-              <p v-if="totalSpendEstimate?.missing.length" class="mt-2 text-xs text-amber-700 dark:text-amber-200">
+              <p v-if="totalSpendEstimate?.missing.length" class="mt-3 rounded-md border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
                 {{ $t('fleet.inventory.spend.missingRates', { currencies: totalSpendEstimate.missing.join(', ') }) }}
               </p>
-              <div class="mt-3 grid gap-2 sm:grid-cols-2">
+              <div v-if="fxRateRows.length" class="mt-3 grid gap-2">
                 <div
-                  v-for="entry in spendByCurrency.filter((item) => normalizeCurrency(item.currency) !== normalizeCurrency(fxTarget))"
+                  v-for="entry in fxRateRows"
                   :key="`rate-${entry.currency}`"
-                  class="flex items-center gap-2"
+                  :class="cn(
+                    'grid gap-2 rounded-md border p-2.5 sm:grid-cols-[minmax(90px,auto)_minmax(0,1fr)_minmax(120px,auto)] sm:items-center',
+                    entry.missing ? 'border-amber-400/50 bg-amber-500/10' : 'border-border bg-muted/20',
+                  )"
                 >
-                  <span class="w-20 shrink-0 text-xs text-muted-foreground">1 {{ entry.currency }}</span>
-                  <Input
-                    class="h-8 flex-1 text-xs"
-                    inputmode="decimal"
-                    :placeholder="`→ ${fxTarget}`"
-                    :value="fxRates[normalizeCurrency(entry.currency)] || ''"
-                    @input="setFXRate(entry.currency, inputValue($event))"
-                  />
+                  <div class="min-w-0">
+                    <p class="text-xs font-medium">{{ entry.currency }} → {{ entry.target }}</p>
+                    <p class="text-[11px] text-muted-foreground">
+                      {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(Math.round(entry.monthly), entry.currency) }) }}
+                    </p>
+                  </div>
+                  <div class="flex min-w-0 items-center gap-2">
+                    <span class="shrink-0 text-xs text-muted-foreground">1 {{ entry.currency }} =</span>
+                    <Input
+                      class="h-8 min-w-24 flex-1 text-xs tabular"
+                      inputmode="decimal"
+                      :aria-label="$t('fleet.inventory.spend.rateInput', { source: entry.currency, target: entry.target })"
+                      :placeholder="entry.target"
+                      :value="entry.rateValue"
+                      @input="setFXRate(entry.currency, inputValue($event))"
+                    />
+                    <span class="shrink-0 text-xs text-muted-foreground">{{ entry.target }}</span>
+                  </div>
+                  <div class="text-xs sm:text-right">
+                    <span v-if="entry.convertedMonthlyCents != null" class="font-medium tabular">
+                      {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(entry.convertedMonthlyCents, entry.target) }) }}
+                    </span>
+                    <Badge v-else variant="warning">{{ $t('fleet.inventory.spend.missingRate') }}</Badge>
+                  </div>
                 </div>
               </div>
+              <p v-else class="mt-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                {{ $t('fleet.inventory.spend.singleCurrency') }}
+              </p>
             </div>
           </div>
           <p v-else class="mt-2 text-sm text-muted-foreground">{{ $t('fleet.inventory.spend.none') }}</p>
@@ -1325,15 +1417,59 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2">
               <Label for="machine-vendor">{{ $t('fleet.inventory.profile.vendor') }}</Label>
-              <Input id="machine-vendor" v-model="vendor" list="inventory-vendors" placeholder="DMIT" />
+              <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <Select v-model="vendor">
+                  <SelectTrigger class="min-w-0">
+                    <SelectValue :placeholder="$t('fleet.inventory.profile.vendorSelectPlaceholder')" />
+                  </SelectTrigger>
+                  <SelectContent class="max-w-[min(92vw,28rem)]">
+                    <SelectItem
+                      v-for="item in explicitVendors"
+                      :key="item.id"
+                      :value="item.name"
+                    >
+                      <span class="flex min-w-0 items-center gap-2">
+                        <img
+                          v-if="item.logo_url"
+                          :src="item.logo_url"
+                          alt=""
+                          class="size-4 rounded-sm object-contain"
+                        />
+                        <span class="min-w-0">
+                          <span class="block truncate">{{ item.name }}</span>
+                          <span v-if="vendorHost(item)" class="block truncate text-[11px] text-muted-foreground">
+                            {{ vendorHost(item) }}
+                          </span>
+                        </span>
+                      </span>
+                    </SelectItem>
+                    <SelectItem v-if="vendor && !selectedVendorProfile" :value="vendor">
+                      {{ $t('fleet.inventory.profile.customVendor', { name: vendor }) }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Input id="machine-vendor" v-model="vendor" placeholder="DMIT" />
+              </div>
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendorNameHint') }}</p>
             </div>
           </div>
 
           <div v-if="vendor" class="grid gap-3 rounded-md border border-border bg-muted/20 p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p class="text-sm font-medium">{{ $t('fleet.inventory.profile.vendorDirectory') }}</p>
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendorDirectoryHint') }}</p>
+              <div class="flex min-w-0 items-center gap-2">
+                <div class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border bg-background">
+                  <img
+                    v-if="vendorLogoUrl"
+                    :src="vendorLogoUrl"
+                    alt=""
+                    class="max-h-6 max-w-6 rounded-sm object-contain"
+                  />
+                  <Boxes v-else class="size-4 text-muted-foreground" aria-hidden="true" />
+                </div>
+                <div class="min-w-0">
+                  <p class="truncate text-sm font-medium">{{ $t('fleet.inventory.profile.vendorDirectory') }}</p>
+                  <p class="truncate text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendorDirectoryHint') }}</p>
+                </div>
               </div>
               <a
                 v-if="selectedVendorProfile?.url"
@@ -1374,14 +1510,16 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2">
               <Label for="machine-currency">{{ $t('fleet.inventory.profile.currency') }}</Label>
-              <Input
-                id="machine-currency"
-                v-model="currency"
-                list="inventory-currencies"
-                maxlength="5"
-                placeholder="USD"
-                @blur="currency = normalizeCurrency(currency) || 'USD'"
-              />
+              <Select v-model="currency">
+                <SelectTrigger id="machine-currency">
+                  <SelectValue placeholder="USD" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="cur in currencyOptions" :key="`profile-currency-${cur}`" :value="cur">
+                    {{ cur }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 
@@ -1393,7 +1531,10 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2 content-start">
               <Label for="machine-purchased">{{ $t('fleet.inventory.profile.purchasedAt') }}</Label>
-              <Input id="machine-purchased" v-model="purchasedAt" type="date" />
+              <div class="relative">
+                <CalendarClock class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <Input id="machine-purchased" v-model="purchasedAt" type="date" class="pl-9" />
+              </div>
               <p class="min-h-4 text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.purchasedAtHint') }}</p>
             </div>
           </div>
@@ -1411,21 +1552,19 @@ async function runReminders(selectedOnly: boolean) {
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2 content-start">
               <Label for="machine-cycle">{{ $t('fleet.inventory.profile.renewalCycle') }}</Label>
-              <!-- Native select retained: reka-ui Select cannot represent the empty-string
-                   "None" reset value without losing the ability to clear back to undefined. -->
-              <select
-                id="machine-cycle"
-                v-model="renewalCycle"
-                :disabled="!needsRenewal"
-                class="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-              >
-                <option value="">{{ $t('fleet.inventory.profile.cycle.none') }}</option>
-                <option value="monthly">{{ $t('fleet.inventory.profile.cycle.monthly') }}</option>
-                <option value="quarterly">{{ $t('fleet.inventory.profile.cycle.quarterly') }}</option>
-                <option value="semiannual">{{ $t('fleet.inventory.profile.cycle.semiannual') }}</option>
-                <option value="annual">{{ $t('fleet.inventory.profile.cycle.annual') }}</option>
-                <option value="custom_days">{{ $t('fleet.inventory.profile.cycle.customDays') }}</option>
-              </select>
+              <Select v-model="renewalCycleSelect" :disabled="!needsRenewal">
+                <SelectTrigger id="machine-cycle">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="NO_RENEWAL_CYCLE">{{ $t('fleet.inventory.profile.cycle.none') }}</SelectItem>
+                  <SelectItem value="monthly">{{ $t('fleet.inventory.profile.cycle.monthly') }}</SelectItem>
+                  <SelectItem value="quarterly">{{ $t('fleet.inventory.profile.cycle.quarterly') }}</SelectItem>
+                  <SelectItem value="semiannual">{{ $t('fleet.inventory.profile.cycle.semiannual') }}</SelectItem>
+                  <SelectItem value="annual">{{ $t('fleet.inventory.profile.cycle.annual') }}</SelectItem>
+                  <SelectItem value="custom_days">{{ $t('fleet.inventory.profile.cycle.customDays') }}</SelectItem>
+                </SelectContent>
+              </Select>
               <p class="min-h-4 text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.renewalCycleHint') }}</p>
             </div>
             <div class="grid gap-2 content-start">
@@ -1438,7 +1577,10 @@ async function runReminders(selectedOnly: boolean) {
           <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <div class="grid gap-2 content-start">
               <Label for="machine-renewal">{{ $t('fleet.inventory.profile.nextRenewal') }}</Label>
-              <Input id="machine-renewal" v-model="nextRenewal" type="date" :disabled="!needsRenewal" />
+              <div class="relative">
+                <CalendarClock class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                <Input id="machine-renewal" v-model="nextRenewal" type="date" class="pl-9" :disabled="!needsRenewal" />
+              </div>
               <p class="min-h-4 text-xs text-muted-foreground">
                 {{ calculatedNextRenewal ? $t('fleet.inventory.profile.nextRenewalCalculated', { date: calculatedNextRenewal }) : $t('fleet.inventory.profile.nextRenewalHint') }}
               </p>
