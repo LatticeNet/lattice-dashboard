@@ -1102,32 +1102,36 @@ async function runReminders(selectedOnly: boolean) {
         :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })" />
       <button
         type="button"
-        class="group block rounded-xl text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        class="group block h-full rounded-xl text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         :aria-label="$t('fleet.inventory.spend.configureRates')"
         @click="openFXDialog"
       >
-        <Card interactive class="relative h-full overflow-hidden">
+        <Card class="relative h-full overflow-hidden py-0 transition-colors group-hover:bg-muted/20">
           <CardContent class="flex items-start gap-3 p-4">
             <div class="flex shrink-0 items-center justify-center rounded-lg bg-accent p-2 text-accent-foreground">
               <Wallet class="size-4" aria-hidden="true" />
             </div>
-            <div class="min-w-0 space-y-1">
+            <div class="min-w-0 flex-1 space-y-1 pr-16">
               <div class="flex min-w-0 items-center gap-2">
                 <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.stats.monthlySpend') }}</p>
                 <Badge v-if="totalSpendEstimate?.missing.length" variant="warning" class="shrink-0">
                   {{ $t('fleet.inventory.spend.missingRate') }}
                 </Badge>
               </div>
-              <div class="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
-                <p class="text-2xl font-semibold tabular leading-none text-foreground">
+              <div class="flex min-w-0 items-baseline gap-x-2">
+                <p class="shrink-0 text-2xl font-semibold tabular leading-none text-foreground">
                   {{ spendCardValue }}
                 </p>
-                <p v-if="spendCardHint" class="text-xs text-muted-foreground">{{ spendCardHint }}</p>
+                <p v-if="spendCardHint" class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {{ spendCardHint }}
+                </p>
               </div>
-              <p class="text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-                {{ $t('fleet.inventory.spend.configureRates') }}
-              </p>
             </div>
+            <span
+              class="pointer-events-none absolute right-3 top-3 text-[11px] text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+            >
+              {{ $t('fleet.inventory.spend.configureRates') }}
+            </span>
           </CardContent>
         </Card>
       </button>
