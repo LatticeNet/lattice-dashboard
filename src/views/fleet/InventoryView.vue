@@ -172,14 +172,22 @@ const calculatedNextRenewal = computed(() => calculateNextRenewalFromPurchase())
 const customCycleValid = computed(
   () => renewalCycle.value !== "custom_days" || Number(s(cycleDays.value)) > 0,
 );
-const renewalFormValid = computed(
+const hasEffectiveNextRenewal = computed(() => !!(nextRenewal.value || calculatedNextRenewal.value));
+const renewalSetupComplete = computed(
   () =>
     !needsRenewal.value ||
-    (!!renewalCycle.value && customCycleValid.value && !!(nextRenewal.value || calculatedNextRenewal.value)),
+    (!!renewalCycle.value && customCycleValid.value && hasEffectiveNextRenewal.value),
 );
-const reminderFormValid = computed(() => !remindersEnabled.value || needsRenewal.value);
+const renewalBlocksSave = computed(
+  () =>
+    needsRenewal.value &&
+    (!customCycleValid.value ||
+      (autoRoll.value && !renewalCycle.value) ||
+      (remindersEnabled.value && !hasEffectiveNextRenewal.value)),
+);
+const renewalDraftIncomplete = computed(() => needsRenewal.value && !renewalSetupComplete.value);
 const canSave = computed(
-  () => !!nodeId.value && canAdminInventory.value && renewalFormValid.value && reminderFormValid.value,
+  () => !!nodeId.value && canAdminInventory.value && !renewalBlocksSave.value,
 );
 const enabledNotifyChannels = computed(() => notifyChannels.value.filter((channel) => channel.enabled));
 const enabledNotifyRules = computed(() => notifyRules.value.filter((rule) => rule.enabled));
@@ -214,7 +222,8 @@ function hasRenewalIntent(machine: MachineView): boolean {
     machine.renewal_cycle ||
     renewalDate(machine) ||
     machine.auto_roll ||
-    machine.reminders_enabled
+    machine.reminders_enabled ||
+    machine.remind_days_before?.length
   );
 }
 
@@ -567,7 +576,8 @@ function loadForm(machine: MachineView) {
     machine.renewal_cycle ||
     machine.next_renewal ||
     machine.auto_roll ||
-    machine.reminders_enabled
+    machine.reminders_enabled ||
+    machine.remind_days_before?.length
   );
   renewalCycle.value = machine.renewal_cycle || "";
   cycleDays.value = machine.cycle_days ? String(machine.cycle_days) : "";
@@ -642,6 +652,14 @@ watch(needsRenewal, (enabled) => {
   nextRenewal.value = "";
   autoRoll.value = false;
   remindersEnabled.value = false;
+});
+
+watch([needsRenewal, renewalCycle], () => {
+  if (!needsRenewal.value || !renewalCycle.value) autoRoll.value = false;
+});
+
+watch([needsRenewal, nextRenewal, calculatedNextRenewal], () => {
+  if (!needsRenewal.value || !hasEffectiveNextRenewal.value) remindersEnabled.value = false;
 });
 
 watch([purchasedAt, renewalCycle, cycleDays, needsRenewal], () => {
@@ -1099,8 +1117,11 @@ async function runReminders(selectedOnly: boolean) {
             </Button>
           </div>
 
-          <div v-if="needsRenewal && !renewalFormValid" class="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
+          <div v-if="renewalBlocksSave" class="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
             {{ $t('fleet.inventory.profile.renewalInvalidHint') }}
+          </div>
+          <div v-else-if="renewalDraftIncomplete" class="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
+            {{ $t('fleet.inventory.profile.renewalDraftHint') }}
           </div>
 
           <div class="grid gap-2">
@@ -1111,14 +1132,14 @@ async function runReminders(selectedOnly: boolean) {
 
           <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
             <label class="flex items-start gap-2">
-              <input v-model="autoRoll" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal" />
+              <input v-model="autoRoll" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal || !renewalCycle" />
               <span>
                 {{ $t('fleet.inventory.profile.autoRoll') }}
                 <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.autoRollHint') }}</span>
               </span>
             </label>
             <label class="flex items-start gap-2">
-              <input v-model="remindersEnabled" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal" />
+              <input v-model="remindersEnabled" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal || !hasEffectiveNextRenewal" />
               <span>
                 {{ $t('fleet.inventory.profile.enableReminders') }}
                 <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.enableRemindersHint') }}</span>
