@@ -12,7 +12,9 @@ import {
   CircleDollarSign,
   Cpu,
   Eye,
+  ExternalLink,
   HardDrive,
+  KeyRound,
   Link as LinkIcon,
   MemoryStick,
   Pencil,
@@ -27,11 +29,13 @@ import {
   api,
   unwrap,
   type MachineProfileInput,
+  type MachineVendorView,
   type MachineView,
   type NotifyChannelView,
   type NotifyRuleView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import {
   formatBytes,
@@ -81,6 +85,7 @@ type GroupBy = "none" | "billing" | "vendor" | "region" | "renewal";
 // Approx. days per month, used to normalise custom-day billing cycles to a
 // monthly-equivalent figure (365.25 / 12).
 const DAYS_PER_MONTH = 30.4375;
+const COMMON_CURRENCIES = ["USD", "CNY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
 // Monthly divisor per named cycle; custom_days is handled separately.
 const CYCLE_DIVISOR: Record<string, number> = {
   monthly: 1,
@@ -97,11 +102,19 @@ function s(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function inputValue(event: Event): string {
+  return event.target instanceof HTMLInputElement ? event.target.value : "";
+}
+
 const auth = useAuthStore();
 const { t } = useI18n();
 const route = useRoute();
 const INVENTORY_GUIDE_URL = "https://latticenet.github.io/guide/operations#machine-inventory";
 const NOTIFICATIONS_ROUTE = "/platform/notifications";
+const FX_TARGET_KEY = "lattice:inventory:fx-target";
+const FX_RATES_KEY = "lattice:inventory:fx-rates";
+const warningPanelClass =
+  "rounded-md border border-amber-400/60 bg-amber-500/15 p-3 text-xs text-foreground shadow-sm dark:border-amber-300/40 dark:bg-amber-400/15";
 
 const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(r, "machines")), {
   pollInterval: 12000,
@@ -109,6 +122,10 @@ const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
+const vendorsQuery = useAsyncData(
+  () => api.machineVendors.list().then((r) => (Array.isArray(r) ? r : (r.vendors ?? []))),
+  { pollInterval: 60000 },
+);
 const canManageNotifications = computed(() => auth.can("notify:send"));
 const notifyChannelsQuery = useAsyncData(
   () => (canManageNotifications.value ? api.notify.channels() : Promise.resolve([] as NotifyChannelView[])),
@@ -135,12 +152,17 @@ const deleteOpen = ref(false);
 const renewPending = ref(false);
 const remindersPending = ref(false);
 const remindersAllPending = ref(false);
+const linkRevealPending = ref("");
 
 // ── Form model (populated when the edit dialog opens) ─────────────────────────
 const profileId = ref("");
 const nodeId = ref("");
 const label = ref("");
 const vendor = ref("");
+const vendorProfileId = ref("");
+const vendorUrl = ref("");
+const vendorLogoUrl = ref("");
+const vendorDescription = ref("");
 const region = ref("");
 const notes = ref("");
 const priceMajor = ref("");
@@ -157,12 +179,24 @@ const consoleUrl = ref("");
 const detailUrl = ref("");
 const clearConsoleUrl = ref(false);
 const clearDetailUrl = ref(false);
+const fxTarget = ref(loadFXTarget());
+const fxRates = ref<Record<string, string>>(loadFXRates());
 
 const machines = computed(() => machinesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
+const vendors = computed(() => vendorsQuery.data.value ?? []);
 const notifyChannels = computed(() => notifyChannelsQuery.data.value ?? []);
 const notifyRules = computed(() => notifyRulesQuery.data.value ?? []);
 const canAdminInventory = computed(() => auth.can("inventory:admin"));
+const inventoryStepUp = useStepUp({
+  required: t("fleet.inventory.stepUp.required"),
+  failed: t("fleet.inventory.stepUp.failed"),
+  passkeyFailed: t("fleet.inventory.stepUp.passkeyFailed"),
+});
+const stepUpOpen = inventoryStepUp.open;
+const stepUpCode = inventoryStepUp.code;
+const stepUpError = inventoryStepUp.error;
+const stepUpPending = inventoryStepUp.pending;
 
 const editMachine = computed(() =>
   machines.value.find((machine) => machineKey(machine) === editKey.value),
@@ -204,6 +238,25 @@ const renewalNotificationReady = computed(() => {
       events.includes("generic")
     );
   });
+});
+
+const vendorByName = computed(() => {
+  const out = new Map<string, MachineVendorView>();
+  for (const item of vendors.value) {
+    const key = normalizeVendorKey(item.name);
+    if (key) out.set(key, item);
+  }
+  return out;
+});
+
+const selectedVendorProfile = computed(() => vendorByName.value.get(normalizeVendorKey(vendor.value)));
+
+const currencyOptions = computed(() => {
+  const items = new Set<string>(COMMON_CURRENCIES);
+  if (currency.value) items.add(normalizeCurrency(currency.value));
+  if (fxTarget.value) items.add(normalizeCurrency(fxTarget.value));
+  for (const entry of spendByCurrency.value) items.add(normalizeCurrency(entry.currency));
+  return [...items].filter(Boolean).sort((a, b) => a.localeCompare(b));
 });
 
 // ── Cost model ────────────────────────────────────────────────────────────────
@@ -290,6 +343,7 @@ const spendHint = computed(() => {
   if (freeCount.value > 0) parts.push(t("fleet.inventory.spend.free", { count: freeCount.value }));
   return parts.join(" · ");
 });
+const totalSpendEstimate = computed(() => estimateTotalSpend(spendByCurrency.value));
 
 // ── Fleet counters ────────────────────────────────────────────────────────────
 const profiledCount = computed(() => machines.value.filter((m) => !!m.id).length);
@@ -440,9 +494,83 @@ function displayName(machine: MachineView): string {
   return machine.label || machine.node_name || machine.node_id;
 }
 
+function normalizeVendorKey(value?: string): string {
+  return s(value).toLowerCase();
+}
+
+function normalizeCurrency(value: unknown): string {
+  return s(value).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5);
+}
+
+function loadFXTarget(): string {
+  if (typeof localStorage === "undefined") return "USD";
+  return normalizeCurrency(localStorage.getItem(FX_TARGET_KEY)) || "USD";
+}
+
+function loadFXRates(): Record<string, string> {
+  if (typeof localStorage === "undefined") return { USD: "1", USDT: "1", USDC: "1" };
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FX_RATES_KEY) || "{}") as Record<string, unknown>;
+    const out: Record<string, string> = { USD: "1", USDT: "1", USDC: "1" };
+    for (const [key, value] of Object.entries(parsed)) {
+      const cur = normalizeCurrency(key);
+      if (cur) out[cur] = s(value);
+    }
+    return out;
+  } catch {
+    return { USD: "1", USDT: "1", USDC: "1" };
+  }
+}
+
+function persistFX() {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(FX_TARGET_KEY, normalizeCurrency(fxTarget.value) || "USD");
+  localStorage.setItem(FX_RATES_KEY, JSON.stringify(fxRates.value));
+}
+
+function setFXRate(currencyCode: string, value: string) {
+  const cur = normalizeCurrency(currencyCode);
+  if (!cur) return;
+  fxRates.value = { ...fxRates.value, [cur]: value };
+  persistFX();
+}
+
+function fxRateFor(currencyCode: string): number | undefined {
+  const cur = normalizeCurrency(currencyCode);
+  const target = normalizeCurrency(fxTarget.value) || "USD";
+  if (!cur) return undefined;
+  if (cur === target) return 1;
+  const parsed = Number(s(fxRates.value[cur]));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function estimateTotalSpend(spend: CurrencySpend[]): { monthlyCents: number; annualCents: number; missing: string[] } | undefined {
+  const target = normalizeCurrency(fxTarget.value) || "USD";
+  if (spend.length === 0) return undefined;
+  let monthlyMajor = 0;
+  const missing: string[] = [];
+  for (const entry of spend) {
+    const rate = fxRateFor(entry.currency);
+    if (!rate) {
+      missing.push(entry.currency);
+      continue;
+    }
+    monthlyMajor += (entry.monthly / 100) * rate;
+  }
+  return {
+    monthlyCents: Math.round(monthlyMajor * 100),
+    annualCents: Math.round(monthlyMajor * 12 * 100),
+    missing: [...new Set(missing)].sort(),
+  };
+}
+
 function nodeInventoryFor(nodeID?: string) {
   if (!nodeID) return undefined;
   return nodes.value.find((node) => node.id === nodeID)?.inventory ?? undefined;
+}
+
+function vendorProfileFor(machine: MachineView): MachineVendorView | undefined {
+  return machine.vendor_profile ?? vendorByName.value.get(normalizeVendorKey(machine.vendor));
 }
 
 function billingBadgeVariant(cat: BillingCategory): "secondary" | "success" | "warning" | "outline" {
@@ -561,16 +689,42 @@ function groupSpendLabel(spend: CurrencySpend[]): string {
     .join(" · ");
 }
 
+function linkPendingKey(machine: MachineView, kind: "console" | "detail"): string {
+  return `${machine.id || machine.node_id}:${kind}`;
+}
+
+async function revealMachineLink(machine: MachineView, kind: "console" | "detail") {
+  if (!machine.id || !canAdminInventory.value) return;
+  const key = linkPendingKey(machine, kind);
+  if (linkRevealPending.value) return;
+  linkRevealPending.value = key;
+  try {
+    const grant = await inventoryStepUp.request();
+    const revealed = await api.machines.revealLink(machine.id, kind, grant);
+    window.open(revealed.url, "_blank", "noopener,noreferrer");
+    toast.success(t("fleet.inventory.toast.linkOpened"));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.linkRevealFailed"));
+  } finally {
+    linkRevealPending.value = "";
+  }
+}
+
 // ── Edit dialog form lifecycle ────────────────────────────────────────────────
 function loadForm(machine: MachineView) {
   profileId.value = machine.id || "";
   nodeId.value = machine.node_id;
   label.value = machine.label || "";
   vendor.value = machine.vendor || "";
+  const vendorProfile = vendorProfileFor(machine);
+  vendorProfileId.value = vendorProfile && !vendorProfile.id.startsWith("derived:") ? vendorProfile.id : "";
+  vendorUrl.value = vendorProfile?.url || "";
+  vendorLogoUrl.value = vendorProfile?.logo_url || "";
+  vendorDescription.value = vendorProfile?.description || "";
   region.value = machine.region || "";
   notes.value = machine.notes || "";
   priceMajor.value = machine.price_cents ? (machine.price_cents / 100).toFixed(2) : "";
-  currency.value = machine.currency || "USD";
+  currency.value = normalizeCurrency(machine.currency) || "USD";
   purchasedAt.value = formatDate(machine.purchased_at);
   needsRenewal.value = !!(
     machine.renewal_cycle ||
@@ -591,6 +745,18 @@ function loadForm(machine: MachineView) {
   detailUrl.value = "";
   clearConsoleUrl.value = false;
   clearDetailUrl.value = false;
+}
+
+function syncVendorDetailsFromSelection() {
+  const selected = selectedVendorProfile.value;
+  if (!selected) {
+    vendorProfileId.value = "";
+    return;
+  }
+  vendorProfileId.value = selected.id.startsWith("derived:") ? "" : selected.id;
+  vendorUrl.value = selected.url || "";
+  vendorLogoUrl.value = selected.logo_url || "";
+  vendorDescription.value = selected.description || "";
 }
 
 function openEdit(machine: MachineView) {
@@ -630,7 +796,7 @@ function buildInput(): MachineProfileInput {
     region: s(region.value),
     notes: s(notes.value),
     price_cents: parsePriceCents() ?? 0,
-    currency: s(currency.value),
+    currency: normalizeCurrency(currency.value) || "USD",
     purchased_at: isoDate(purchasedAt.value) ?? null,
     renewal_cycle: needsRenewal.value ? renewalCycle.value : "",
     cycle_days: needsRenewal.value && renewalCycle.value === "custom_days" ? Number(s(cycleDays.value) || 0) : 0,
@@ -643,6 +809,24 @@ function buildInput(): MachineProfileInput {
     clear_console_url: clearConsoleUrl.value,
     clear_detail_url: clearDetailUrl.value,
   };
+}
+
+async function saveVendorMetadataIfNeeded() {
+  const name = s(vendor.value);
+  if (!name) return;
+  const selected = selectedVendorProfile.value;
+  const hasDetails = !!(s(vendorUrl.value) || s(vendorLogoUrl.value) || s(vendorDescription.value));
+  const selectedIsExplicit = !!selected && !selected.id.startsWith("derived:");
+  if (!hasDetails && !selectedIsExplicit && !vendorProfileId.value) return;
+  const res = await api.machineVendors.upsert({
+    id: vendorProfileId.value || (selectedIsExplicit ? selected?.id : undefined),
+    name,
+    url: s(vendorUrl.value),
+    logo_url: s(vendorLogoUrl.value),
+    description: s(vendorDescription.value),
+  });
+  vendorProfileId.value = res.vendor.id;
+  await vendorsQuery.refresh();
 }
 
 watch(needsRenewal, (enabled) => {
@@ -668,8 +852,18 @@ watch([purchasedAt, renewalCycle, cycleDays, needsRenewal], () => {
   }
 });
 
+watch(vendor, (next, prev) => {
+  if (normalizeVendorKey(next) === normalizeVendorKey(prev)) return;
+  syncVendorDetailsFromSelection();
+});
+
+watch(fxTarget, () => {
+  fxTarget.value = normalizeCurrency(fxTarget.value) || "USD";
+  persistFX();
+});
+
 async function refreshAll() {
-  await Promise.all([machinesQuery.refresh(), nodesQuery.refresh()]);
+  await Promise.all([machinesQuery.refresh(), nodesQuery.refresh(), vendorsQuery.refresh()]);
 }
 
 async function saveProfile() {
@@ -680,6 +874,11 @@ async function saveProfile() {
     const saved = profileId.value
       ? await api.machines.update({ ...input, id: profileId.value })
       : await api.machines.create(input);
+    try {
+      await saveVendorMetadataIfNeeded();
+    } catch (vendorError) {
+      toast.warning(vendorError instanceof Error ? vendorError.message : t("fleet.inventory.toast.vendorSaveFailed"));
+    }
     toast.success(
       profileId.value
         ? t("fleet.inventory.toast.profileUpdated")
@@ -776,6 +975,12 @@ async function runReminders(selectedOnly: boolean) {
         </div>
       </template>
     </PageHeader>
+    <datalist id="inventory-currencies">
+      <option v-for="item in currencyOptions" :key="item" :value="item" />
+    </datalist>
+    <datalist id="inventory-vendors">
+      <option v-for="item in vendors" :key="item.id" :value="item.name" />
+    </datalist>
 
     <!-- KPI board -->
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -839,6 +1044,40 @@ async function runReminders(selectedOnly: boolean) {
                 />
               </div>
               <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.machineCount', { count: entry.count }) }}</p>
+            </div>
+            <div class="mt-4 rounded-md border border-border bg-muted/20 p-3">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p class="text-sm font-medium">{{ $t('fleet.inventory.spend.estimatedTotal') }}</p>
+                  <p v-if="totalSpendEstimate" class="mt-0.5 text-xs text-muted-foreground">
+                    {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(totalSpendEstimate.monthlyCents, fxTarget) }) }}
+                    · {{ $t('fleet.inventory.spend.perYear', { amount: formatMoney(totalSpendEstimate.annualCents, fxTarget) }) }}
+                  </p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <Label for="inventory-fx-target" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.target') }}</Label>
+                  <Input id="inventory-fx-target" v-model="fxTarget" list="inventory-currencies" class="h-8 w-24 uppercase" maxlength="5" />
+                </div>
+              </div>
+              <p v-if="totalSpendEstimate?.missing.length" class="mt-2 text-xs text-amber-700 dark:text-amber-200">
+                {{ $t('fleet.inventory.spend.missingRates', { currencies: totalSpendEstimate.missing.join(', ') }) }}
+              </p>
+              <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                <div
+                  v-for="entry in spendByCurrency.filter((item) => normalizeCurrency(item.currency) !== normalizeCurrency(fxTarget))"
+                  :key="`rate-${entry.currency}`"
+                  class="flex items-center gap-2"
+                >
+                  <span class="w-20 shrink-0 text-xs text-muted-foreground">1 {{ entry.currency }}</span>
+                  <Input
+                    class="h-8 flex-1 text-xs"
+                    inputmode="decimal"
+                    :placeholder="`→ ${fxTarget}`"
+                    :value="fxRates[normalizeCurrency(entry.currency)] || ''"
+                    @input="setFXRate(entry.currency, inputValue($event))"
+                  />
+                </div>
+              </div>
             </div>
           </div>
           <p v-else class="mt-2 text-sm text-muted-foreground">{{ $t('fleet.inventory.spend.none') }}</p>
@@ -916,22 +1155,49 @@ async function runReminders(selectedOnly: boolean) {
                     <template v-if="machine.host_facts?.hostname"> · {{ machine.host_facts.hostname }}</template>
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="shrink-0"
-                  @click="openEdit(machine)"
-                >
-                  <component :is="canAdminInventory ? (machine.id ? Pencil : Plus) : Eye" class="size-3.5" aria-hidden="true" />
-                  {{ canAdminInventory ? (machine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile')) : $t('fleet.inventory.actions.details') }}
-                </Button>
+                <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                  <Button variant="ghost" size="sm" as-child>
+                    <RouterLink :to="{ name: 'node-detail', params: { id: machine.node_id } }">
+                      {{ $t('fleet.inventory.actions.node') }}
+                    </RouterLink>
+                  </Button>
+                  <Button variant="ghost" size="sm" as-child>
+                    <RouterLink :to="{ path: '/plugins/latticenet.vpn-core/lines', query: { node: machine.node_id } }">
+                      {{ $t('fleet.inventory.actions.vpn') }}
+                    </RouterLink>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    @click="openEdit(machine)"
+                  >
+                    <component :is="canAdminInventory ? (machine.id ? Pencil : Plus) : Eye" class="size-3.5" aria-hidden="true" />
+                    {{ canAdminInventory ? (machine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile')) : $t('fleet.inventory.actions.details') }}
+                  </Button>
+                </div>
               </div>
 
               <div class="mt-3 flex flex-wrap gap-1.5">
                 <Badge :variant="billingBadgeVariant(billingCategory(machine))">
                   {{ $t(`fleet.inventory.billing.${billingCategory(machine)}`) }}
                 </Badge>
-                <Badge v-if="machine.vendor" variant="outline">{{ machine.vendor }}</Badge>
+                <a
+                  v-if="machine.vendor && vendorProfileFor(machine)?.url"
+                  :href="vendorProfileFor(machine)?.url"
+                  target="_blank"
+                  rel="noreferrer"
+                  class="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+                >
+                  <img
+                    v-if="vendorProfileFor(machine)?.logo_url"
+                    :src="vendorProfileFor(machine)?.logo_url"
+                    alt=""
+                    class="size-3 rounded-sm object-contain"
+                  />
+                  {{ machine.vendor }}
+                  <ExternalLink class="size-3" aria-hidden="true" />
+                </a>
+                <Badge v-else-if="machine.vendor" variant="outline">{{ machine.vendor }}</Badge>
                 <Badge
                   v-if="nodeInventoryFor(machine.node_id)?.purity_percent != null"
                   variant="success"
@@ -961,11 +1227,37 @@ async function runReminders(selectedOnly: boolean) {
               </div>
 
               <div v-if="machine.has_console_url || machine.has_detail_url || machine.reminders_enabled" class="mt-3 flex flex-wrap gap-1.5">
-                <Badge v-if="machine.has_console_url" variant="info">
+                <Button
+                  v-if="machine.has_console_url && canAdminInventory"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  :disabled="!!linkRevealPending"
+                  @click="revealMachineLink(machine, 'console')"
+                >
+                  <RefreshCw v-if="linkRevealPending === linkPendingKey(machine, 'console')" class="size-3 animate-spin" aria-hidden="true" />
+                  <ExternalLink v-else class="size-3" aria-hidden="true" />
+                  {{ $t('fleet.inventory.list.openConsole') }}
+                </Button>
+                <Badge v-else-if="machine.has_console_url" variant="info">
                   <LinkIcon class="size-3" aria-hidden="true" />
                   {{ $t('fleet.inventory.list.consoleLinkStored') }}
                 </Badge>
-                <Badge v-if="machine.has_detail_url" variant="info">
+                <Button
+                  v-if="machine.has_detail_url && canAdminInventory"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  :disabled="!!linkRevealPending"
+                  @click="revealMachineLink(machine, 'detail')"
+                >
+                  <RefreshCw v-if="linkRevealPending === linkPendingKey(machine, 'detail')" class="size-3 animate-spin" aria-hidden="true" />
+                  <ExternalLink v-else class="size-3" aria-hidden="true" />
+                  {{ $t('fleet.inventory.list.openDetail') }}
+                </Button>
+                <Badge v-else-if="machine.has_detail_url" variant="info">
                   <LinkIcon class="size-3" aria-hidden="true" />
                   {{ $t('fleet.inventory.list.detailLinkStored') }}
                 </Badge>
@@ -1033,7 +1325,45 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2">
               <Label for="machine-vendor">{{ $t('fleet.inventory.profile.vendor') }}</Label>
-              <Input id="machine-vendor" v-model="vendor" placeholder="DMIT" />
+              <Input id="machine-vendor" v-model="vendor" list="inventory-vendors" placeholder="DMIT" />
+            </div>
+          </div>
+
+          <div v-if="vendor" class="grid gap-3 rounded-md border border-border bg-muted/20 p-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="text-sm font-medium">{{ $t('fleet.inventory.profile.vendorDirectory') }}</p>
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendorDirectoryHint') }}</p>
+              </div>
+              <a
+                v-if="selectedVendorProfile?.url"
+                :href="selectedVendorProfile.url"
+                target="_blank"
+                rel="noreferrer"
+                class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                {{ $t('fleet.inventory.profile.openVendor') }}
+                <ExternalLink class="size-3" aria-hidden="true" />
+              </a>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-2">
+                <Label for="machine-vendor-url">{{ $t('fleet.inventory.profile.vendorUrl') }}</Label>
+                <Input id="machine-vendor-url" v-model="vendorUrl" placeholder="https://example.com" />
+              </div>
+              <div class="grid gap-2">
+                <Label for="machine-vendor-logo">{{ $t('fleet.inventory.profile.vendorLogoUrl') }}</Label>
+                <Input id="machine-vendor-logo" v-model="vendorLogoUrl" placeholder="https://example.com/logo.png" />
+              </div>
+            </div>
+            <div class="grid gap-2">
+              <Label for="machine-vendor-description">{{ $t('fleet.inventory.profile.vendorDescription') }}</Label>
+              <textarea
+                id="machine-vendor-description"
+                v-model="vendorDescription"
+                class="min-h-16 rounded-md border border-input bg-background p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                :placeholder="$t('fleet.inventory.profile.vendorDescriptionPlaceholder')"
+              />
             </div>
           </div>
 
@@ -1044,7 +1374,14 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2">
               <Label for="machine-currency">{{ $t('fleet.inventory.profile.currency') }}</Label>
-              <Input id="machine-currency" v-model="currency" maxlength="3" placeholder="USD" />
+              <Input
+                id="machine-currency"
+                v-model="currency"
+                list="inventory-currencies"
+                maxlength="5"
+                placeholder="USD"
+                @blur="currency = normalizeCurrency(currency) || 'USD'"
+              />
             </div>
           </div>
 
@@ -1117,10 +1454,10 @@ async function runReminders(selectedOnly: boolean) {
             </Button>
           </div>
 
-          <div v-if="renewalBlocksSave" class="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
+          <div v-if="renewalBlocksSave" :class="warningPanelClass">
             {{ $t('fleet.inventory.profile.renewalInvalidHint') }}
           </div>
-          <div v-else-if="renewalDraftIncomplete" class="rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning-foreground">
+          <div v-else-if="renewalDraftIncomplete" :class="warningPanelClass">
             {{ $t('fleet.inventory.profile.renewalDraftHint') }}
           </div>
 
@@ -1145,7 +1482,7 @@ async function runReminders(selectedOnly: boolean) {
                 <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.enableRemindersHint') }}</span>
               </span>
             </label>
-            <div v-if="remindersEnabled && canManageNotifications && !renewalNotificationReady" class="rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning-foreground">
+            <div v-if="remindersEnabled && canManageNotifications && !renewalNotificationReady" :class="warningPanelClass">
               {{ $t('fleet.inventory.profile.reminderNoRoute') }}
               <RouterLink :to="NOTIFICATIONS_ROUTE" class="font-medium underline underline-offset-2">
                 {{ $t('fleet.inventory.profile.configureNotifications') }}
@@ -1267,6 +1604,44 @@ async function runReminders(selectedOnly: boolean) {
           :title="$t('fleet.inventory.profile.readOnlyTitle')"
           :description="$t('fleet.inventory.profile.readOnlyDescription')"
         />
+      </DialogScrollContent>
+    </Dialog>
+
+    <Dialog v-model:open="stepUpOpen">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="inventoryStepUp.cancel">
+        <DialogHeader>
+          <DialogTitle>{{ $t('fleet.inventory.stepUp.title') }}</DialogTitle>
+          <DialogDescription>{{ $t('fleet.inventory.stepUp.description') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="inventoryStepUp.submitTotp">
+          <div class="grid gap-2">
+            <Label for="inventory-step-up-code">{{ $t('fleet.inventory.stepUp.code') }}</Label>
+            <Input
+              id="inventory-step-up-code"
+              v-model="stepUpCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="123456"
+            />
+            <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
+          </div>
+          <div class="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" @click="inventoryStepUp.cancel">
+              {{ $t('common.actions.cancel') }}
+            </Button>
+            <Button type="button" variant="outline" :disabled="!!stepUpPending || !inventoryStepUp.supportsPasskey" @click="inventoryStepUp.submitPasskey">
+              <RefreshCw v-if="stepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
+              <KeyRound v-else class="size-4" aria-hidden="true" />
+              {{ $t('fleet.inventory.stepUp.passkey') }}
+            </Button>
+            <Button type="submit" :disabled="!!stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
+              <LinkIcon v-else class="size-4" aria-hidden="true" />
+              {{ $t('fleet.inventory.stepUp.submit') }}
+            </Button>
+          </div>
+        </form>
       </DialogScrollContent>
     </Dialog>
 

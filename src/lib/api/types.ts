@@ -473,6 +473,7 @@ export interface MachineView {
   online: boolean;
   host_facts?: HostFacts;
   vendor?: string;
+  vendor_profile?: MachineVendorView;
   region?: string;
   has_console_url?: boolean;
   has_detail_url?: boolean;
@@ -487,6 +488,16 @@ export interface MachineView {
   auto_roll?: boolean;
   remind_days_before?: number[];
   reminders_enabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MachineVendorView {
+  id: string;
+  name: string;
+  url?: string;
+  logo_url?: string;
+  description?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -511,6 +522,21 @@ export interface MachineProfileInput {
   auto_roll?: boolean;
   remind_days_before?: number[];
   reminders_enabled?: boolean;
+}
+
+export interface MachineVendorInput {
+  id?: string;
+  name: string;
+  url?: string;
+  logo_url?: string;
+  description?: string;
+}
+
+export interface MachineLinkRevealResponse {
+  ok: boolean;
+  id: string;
+  kind: "console" | "detail";
+  url: string;
 }
 
 export interface RenewalReminderFire {

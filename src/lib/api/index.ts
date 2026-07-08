@@ -27,6 +27,9 @@ import type {
   MonitorResult,
   MachineProfileInput,
   MachineView,
+  MachineVendorInput,
+  MachineVendorView,
+  MachineLinkRevealResponse,
   RenewalReminderFire,
   ProxyInboundView,
   ProxyInboundUpsertRequest,
@@ -193,6 +196,10 @@ export const api = {
 
   security: {
     stepUp: (code: string) => http.post<StepUpResponse>("/api/security/step-up", { code }),
+    stepUpWebAuthnBegin: () =>
+      http.post<WebAuthnLoginBeginResponse>("/api/security/step-up/webauthn/begin", {}),
+    stepUpWebAuthnFinish: (challenge_id: string, credential: AuthenticationResponseJSON) =>
+      http.post<StepUpResponse>("/api/security/step-up/webauthn/finish", { challenge_id, credential }),
     // Passkey (WebAuthn) management for the current operator. Registering and
     // deleting a login-capable credential require a fresh step-up grant when the
     // account has TOTP enrolled (server-enforced); rename does not.
@@ -392,6 +399,15 @@ export const api = {
       http.post<MachineView>("/api/machines/renew", { id, next_renewal }),
     runReminders: (id?: string) =>
       http.post<{ fired: RenewalReminderFire[] }>("/api/machines/reminders/run", id ? { id } : {}),
+    revealLink: (id: string, kind: "console" | "detail", step_up_grant: string) =>
+      http.post<MachineLinkRevealResponse>("/api/machines/reveal-link", { id, kind, step_up_grant }),
+  },
+
+  machineVendors: {
+    list: () => http.get<{ vendors: MachineVendorView[] } | MachineVendorView[]>("/api/machine-vendors"),
+    upsert: (input: MachineVendorInput) =>
+      http.post<{ vendor: MachineVendorView }>("/api/machine-vendors", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/machine-vendors/delete", { id }),
   },
 
   audit: {

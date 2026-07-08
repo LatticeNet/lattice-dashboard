@@ -22,6 +22,7 @@ import {
 } from "lucide-vue-next";
 import { api, unwrap, type LinesListResponse, type Node, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { tokenMatchesText } from "@/lib/filterExpressions";
@@ -140,61 +141,15 @@ const actionPending = ref<string | null>(null);
 const revealedScripts = ref<Record<string, string>>({});
 const revealingScriptID = ref("");
 
-const stepUpOpen = ref(false);
-const stepUpCode = ref("");
-const stepUpError = ref("");
-const stepUpPending = ref(false);
-const stepUpGrant = ref("");
-const stepUpGrantExpiresAt = ref(0);
-let stepUpResolve: ((grant: string) => void) | undefined;
-let stepUpReject: ((error: Error) => void) | undefined;
-
-function cachedStepUpGrant(): string {
-  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
-  return "";
-}
-
-function requestStepUp(): Promise<string> {
-  const cached = cachedStepUpGrant();
-  if (cached) return Promise.resolve(cached);
-  stepUpCode.value = "";
-  stepUpError.value = "";
-  stepUpOpen.value = true;
-  return new Promise((resolve, reject) => {
-    stepUpResolve = resolve;
-    stepUpReject = reject;
-  });
-}
-
-async function submitStepUp() {
-  const code = stepUpCode.value.trim();
-  if (!code || stepUpPending.value) return;
-  stepUpPending.value = true;
-  let ok = false;
-  try {
-    const result = await api.security.stepUp(code);
-    stepUpGrant.value = result.grant;
-    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
-    stepUpOpen.value = false;
-    stepUpResolve?.(result.grant);
-    ok = true;
-  } catch (error) {
-    stepUpError.value = error instanceof Error ? error.message : t("operations.tasks.stepUpFailed");
-  } finally {
-    stepUpPending.value = false;
-    if (ok) {
-      stepUpResolve = undefined;
-      stepUpReject = undefined;
-    }
-  }
-}
-
-function cancelStepUp() {
-  stepUpOpen.value = false;
-  stepUpReject?.(new Error(t("operations.tasks.stepUpRequired")));
-  stepUpResolve = undefined;
-  stepUpReject = undefined;
-}
+const stepUp = useStepUp({
+  required: t("operations.tasks.stepUpRequired"),
+  failed: t("operations.tasks.stepUpFailed"),
+  passkeyFailed: t("operations.tasks.stepUpPasskeyFailed"),
+});
+const stepUpOpen = stepUp.open;
+const stepUpCode = stepUp.code;
+const stepUpError = stepUp.error;
+const stepUpPending = stepUp.pending;
 
 const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const tasks = computed<TaskView[]>(() => tasksQuery.data.value ?? []);
@@ -666,7 +621,7 @@ async function revealScript(task: TaskView) {
   if (revealingScriptID.value) return;
   revealingScriptID.value = task.id;
   try {
-    const grant = await requestStepUp();
+    const grant = await stepUp.request();
     const result = await api.tasks.revealScript(task.id, grant);
     revealedScripts.value = { ...revealedScripts.value, [task.id]: result.script };
   } catch (error) {
@@ -1196,12 +1151,12 @@ async function deleteTask(task: TaskView) {
     </Card>
 
     <Dialog v-model:open="stepUpOpen">
-      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="cancelStepUp">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="stepUp.cancel">
         <DialogHeader>
           <DialogTitle>{{ $t('operations.tasks.stepUpTitle') }}</DialogTitle>
           <DialogDescription>{{ $t('operations.tasks.stepUpDescription') }}</DialogDescription>
         </DialogHeader>
-        <form class="space-y-4" @submit.prevent="submitStepUp">
+        <form class="space-y-4" @submit.prevent="stepUp.submitTotp">
           <div class="grid gap-2">
             <Label for="task-step-up-code">{{ $t('operations.tasks.stepUpCode') }}</Label>
             <Input
@@ -1215,11 +1170,16 @@ async function deleteTask(task: TaskView) {
             <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" @click="cancelStepUp">
+            <Button type="button" variant="outline" @click="stepUp.cancel">
               {{ $t('common.actions.cancel') }}
             </Button>
-            <Button type="submit" :disabled="stepUpPending || !stepUpCode.trim()">
-              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+            <Button type="button" variant="outline" :disabled="!!stepUpPending || !stepUp.supportsPasskey" @click="stepUp.submitPasskey">
+              <RefreshCw v-if="stepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
+              <KeyRound v-else class="size-4" aria-hidden="true" />
+              {{ $t('operations.tasks.stepUpPasskey') }}
+            </Button>
+            <Button type="submit" :disabled="!!stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
               <Lock v-else class="size-4" aria-hidden="true" />
               {{ $t('operations.tasks.stepUpSubmit') }}
             </Button>

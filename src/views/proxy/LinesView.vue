@@ -34,6 +34,7 @@ import {
   type TaskResult,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 
@@ -477,62 +478,15 @@ function shortNodeLabel(id?: string): string {
 }
 
 // ── Interactive 2FA step-up ─────────────────────────────────────────────────
-const stepUpOpen = ref(false);
-const stepUpCode = ref("");
-const stepUpError = ref("");
-const stepUpPending = ref(false);
-const stepUpGrant = ref("");
-const stepUpGrantExpiresAt = ref(0);
-let stepUpResolve: ((grant: string) => void) | undefined;
-let stepUpReject: ((error: Error) => void) | undefined;
-
-function cachedStepUpGrant(): string {
-  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
-  return "";
-}
-
-function requestStepUp(): Promise<string> {
-  const cached = cachedStepUpGrant();
-  if (cached) return Promise.resolve(cached);
-  stepUpCode.value = "";
-  stepUpError.value = "";
-  stepUpOpen.value = true;
-  return new Promise((resolve, reject) => {
-    stepUpResolve = resolve;
-    stepUpReject = reject;
-  });
-}
-
-async function submitStepUp() {
-  const code = stepUpCode.value.trim();
-  if (!code || stepUpPending.value) return;
-  stepUpPending.value = true;
-  stepUpError.value = "";
-  let ok = false;
-  try {
-    const result = await api.security.stepUp(code);
-    stepUpGrant.value = result.grant;
-    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
-    stepUpOpen.value = false;
-    stepUpResolve?.(result.grant);
-    ok = true;
-  } catch (error) {
-    stepUpError.value = error instanceof Error ? error.message : t("lines.stepUpFailed");
-  } finally {
-    stepUpPending.value = false;
-    if (ok) {
-      stepUpResolve = undefined;
-      stepUpReject = undefined;
-    }
-  }
-}
-
-function cancelStepUp() {
-  stepUpOpen.value = false;
-  stepUpReject?.(new Error(t("lines.stepUpRequired")));
-  stepUpResolve = undefined;
-  stepUpReject = undefined;
-}
+const stepUp = useStepUp({
+  required: t("lines.stepUpRequired"),
+  failed: t("lines.stepUpFailed"),
+  passkeyFailed: t("lines.stepUpPasskeyFailed"),
+});
+const stepUpOpen = stepUp.open;
+const stepUpCode = stepUp.code;
+const stepUpError = stepUp.error;
+const stepUpPending = stepUp.pending;
 
 // ── KPI strip ────────────────────────────────────────────────────────────────
 const totalLines = computed(() => linesQuery.data.value?.count ?? allLines.value.length);
@@ -836,7 +790,40 @@ const conncheckURL = ref("https://www.cloudflare.com/cdn-cgi/trace");
 const connchecking = ref(false);
 const conncheckTaskID = ref("");
 const revealedLine = ref<ProxyManagedLineRevealResponse | null>(null);
+const connectionFormat = ref<"url" | "yaml" | "json">("url");
 const revealingLine = ref(false);
+
+function yamlScalar(value: unknown): string {
+  if (value === undefined || value === null || value === "") return '""';
+  return JSON.stringify(String(value));
+}
+
+function revealedLineJSON(): string {
+  if (!revealedLine.value) return "";
+  return JSON.stringify(revealedLine.value, null, 2);
+}
+
+function revealedLineYAML(): string {
+  const reveal = revealedLine.value;
+  if (!reveal) return "";
+  const node = (reveal.node ?? {}) as Record<string, unknown>;
+  const lines = ["connection:"];
+  lines.push(`  share_url: ${yamlScalar(reveal.share_url)}`);
+  lines.push(`  line_hash_id: ${yamlScalar(reveal.line_hash_id)}`);
+  lines.push("  node:");
+  for (const [key, value] of Object.entries(node)) {
+    if (value === undefined || value === null || typeof value === "object") continue;
+    lines.push(`    ${key}: ${yamlScalar(value)}`);
+  }
+  return lines.join("\n");
+}
+
+function revealedLineContent(): string {
+  if (!revealedLine.value) return "";
+  if (connectionFormat.value === "json") return revealedLineJSON();
+  if (connectionFormat.value === "yaml") return revealedLineYAML();
+  return revealedLine.value.share_url ?? "";
+}
 
 function canDeleteLine(line: Line | null): boolean {
   return !!line && line.source === "discovered" && !!(line.name || line.tag);
@@ -858,7 +845,7 @@ async function confirmDeleteLine() {
   if (!line || !name || deleting.value) return;
   deleting.value = true;
   try {
-    const grant = await requestStepUp();
+    const grant = await stepUp.request();
     const res = await api.proxy.managed.delete({ node_id: line.node_id, name, step_up_grant: grant });
     toast.success(t("lines.toastDeleteQueued", { id: res.task_id }));
     deleteOpen.value = false;
@@ -922,12 +909,13 @@ async function revealLineConnection() {
   if (!line?.line_hash_id || revealingLine.value || !canAdmin.value) return;
   revealingLine.value = true;
   try {
-    const grant = await requestStepUp();
+    const grant = await stepUp.request();
     revealedLine.value = await api.proxy.managed.revealLine({
       node_id: line.node_id,
       line_hash_id: line.line_hash_id,
       step_up_grant: grant,
     });
+    connectionFormat.value = "url";
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("lines.revealFailed"));
   } finally {
@@ -1742,14 +1730,27 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
               <KeyRound v-else class="size-4" aria-hidden="true" />
               {{ $t('lines.revealConnection') }}
             </Button>
-            <div v-if="revealedLine?.share_url" class="rounded-md border border-border bg-muted/20">
+            <div v-if="revealedLine" class="rounded-md border border-border bg-muted/20">
               <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-                <span class="text-xs font-medium text-muted-foreground">{{ $t('lines.connectionLink') }}</span>
-                <CopyButton :value="revealedLine.share_url" />
+                <div class="inline-flex rounded-md border border-border bg-background p-0.5" role="group" :aria-label="$t('lines.connectionFormat')">
+                  <button
+                    v-for="fmt in (['url', 'yaml', 'json'] as const)"
+                    :key="fmt"
+                    type="button"
+                    :aria-pressed="connectionFormat === fmt"
+                    :class="cn(
+                      'rounded px-2 py-1 text-[11px] font-medium uppercase transition-colors',
+                      connectionFormat === fmt ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                    )"
+                    @click="connectionFormat = fmt"
+                  >
+                    {{ fmt }}
+                  </button>
+                </div>
+                <CopyButton :value="revealedLineContent()" />
               </div>
-              <code class="block max-h-32 overflow-auto break-all p-3 font-mono text-xs">{{ revealedLine.share_url }}</code>
+              <code class="block max-h-48 overflow-auto whitespace-pre-wrap break-all p-3 font-mono text-xs">{{ revealedLineContent() || $t('lines.noConnectionLink') }}</code>
             </div>
-            <p v-else-if="revealedLine" class="text-xs text-muted-foreground">{{ $t('lines.noConnectionLink') }}</p>
           </div>
 
           <div v-if="canConncheckLine(selected)" class="space-y-3 rounded-md border border-border p-3">
@@ -2068,12 +2069,12 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
     </Dialog>
 
     <Dialog v-model:open="stepUpOpen">
-      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="cancelStepUp">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="stepUp.cancel">
         <DialogHeader>
           <DialogTitle>{{ $t('lines.stepUpTitle') }}</DialogTitle>
           <DialogDescription>{{ $t('lines.stepUpDescription') }}</DialogDescription>
         </DialogHeader>
-        <form class="space-y-4" @submit.prevent="submitStepUp">
+        <form class="space-y-4" @submit.prevent="stepUp.submitTotp">
           <div class="grid gap-2">
             <Label for="line-step-up-code">{{ $t('lines.stepUpCode') }}</Label>
             <Input
@@ -2087,11 +2088,16 @@ const detailRows = computed<{ label: string; value: string }[]>(() => {
             <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" @click="cancelStepUp">
+            <Button type="button" variant="outline" @click="stepUp.cancel">
               {{ $t('common.actions.cancel') }}
             </Button>
-            <Button type="submit" :disabled="stepUpPending || !stepUpCode.trim()">
-              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+            <Button type="button" variant="outline" :disabled="!!stepUpPending || !stepUp.supportsPasskey" @click="stepUp.submitPasskey">
+              <RefreshCw v-if="stepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
+              <KeyRound v-else class="size-4" aria-hidden="true" />
+              {{ $t('lines.stepUpPasskey') }}
+            </Button>
+            <Button type="submit" :disabled="!!stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
               <Lock v-else class="size-4" aria-hidden="true" />
               {{ $t('lines.stepUpSubmit') }}
             </Button>

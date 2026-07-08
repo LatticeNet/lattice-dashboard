@@ -70,6 +70,7 @@ export interface RequestOptions {
 /* ------------------------------------------------------------------ */
 const SLOW_MS = 1200;
 const PERF_RING = 50;
+const GET_CACHE_MS = 750;
 
 interface PerfEntry {
   method: Method;
@@ -78,6 +79,14 @@ interface PerfEntry {
   ms: number;
   requestId?: string;
 }
+
+interface GETCacheEntry {
+  expiresAt: number;
+  promise: Promise<unknown>;
+}
+
+const getCache = new Map<string, GETCacheEntry>();
+const getInflight = new Map<string, Promise<unknown>>();
 
 function nowMs(): number {
   return typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
@@ -102,7 +111,7 @@ function logTiming(e: PerfEntry): void {
   }
 }
 
-async function request<T>(
+async function performRequest<T>(
   method: Method,
   path: string,
   body?: unknown,
@@ -159,6 +168,39 @@ async function request<T>(
   }
 
   return data as T;
+}
+
+async function request<T>(
+  method: Method,
+  path: string,
+  body?: unknown,
+  opts?: RequestOptions,
+): Promise<T> {
+  if (method === "GET" && body === undefined && !opts?.signal) {
+    const cached = getCache.get(path);
+    const now = nowMs();
+    if (cached && cached.expiresAt > now) return cached.promise as Promise<T>;
+    const inflight = getInflight.get(path);
+    if (inflight) return inflight as Promise<T>;
+    const promise = performRequest<T>(method, path, body, opts);
+    getInflight.set(path, promise);
+    try {
+      const result = await promise;
+      getCache.set(path, { promise: Promise.resolve(result), expiresAt: nowMs() + GET_CACHE_MS });
+      return result;
+    } catch (error) {
+      throw error;
+    } finally {
+      if (getInflight.get(path) === promise) getInflight.delete(path);
+    }
+  }
+
+  const result = await performRequest<T>(method, path, body, opts);
+  if (method !== "GET") {
+    getCache.clear();
+    getInflight.clear();
+  }
+  return result;
 }
 
 function withQuery(path: string, query?: Record<string, unknown>): string {

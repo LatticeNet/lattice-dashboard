@@ -26,6 +26,7 @@ import {
   isWebAuthnSupported,
   startRegistration,
 } from "@/lib/webauthn";
+import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 
@@ -229,16 +230,18 @@ const deleteTarget = ref<WebAuthnCredentialView | undefined>();
 const deleteOpen = ref(false);
 const deletePending = ref(false);
 
-// Promise-based step-up, mirroring VpnUsersView: collect a TOTP code once, cache
-// the short-lived grant, and reuse it across passkey mutations while valid.
-const stepUpOpen = ref(false);
-const stepUpCode = ref("");
-const stepUpError = ref("");
-const stepUpPending = ref(false);
-const stepUpGrant = ref("");
-const stepUpGrantExpiresAt = ref(0);
-let stepUpResolve: ((grant: string) => void) | undefined;
-let stepUpReject: ((error: Error) => void) | undefined;
+// Sensitive passkey mutations accept either an authenticator code or an
+// existing passkey step-up grant. First-passkey enrollment still falls back to
+// TOTP because there is no existing passkey to prove possession with.
+const stepUp = useStepUp({
+  required: t("settings.security.passkeys.stepUpRequired"),
+  failed: t("settings.security.passkeys.stepUpFailed"),
+  passkeyFailed: t("settings.security.passkeys.stepUpPasskeyFailed"),
+});
+const stepUpOpen = stepUp.open;
+const stepUpCode = stepUp.code;
+const stepUpError = stepUp.error;
+const stepUpPending = stepUp.pending;
 
 async function loadPasskeys() {
   if (!supportsPasskey) return;
@@ -253,59 +256,11 @@ async function loadPasskeys() {
   }
 }
 
-function cachedStepUpGrant(): string {
-  if (stepUpGrant.value && Date.now() < stepUpGrantExpiresAt.value - 1000) return stepUpGrant.value;
-  return "";
-}
-
-function requestStepUp(): Promise<string> {
-  const cached = cachedStepUpGrant();
-  if (cached) return Promise.resolve(cached);
-  stepUpCode.value = "";
-  stepUpError.value = "";
-  stepUpOpen.value = true;
-  return new Promise((resolve, reject) => {
-    stepUpResolve = resolve;
-    stepUpReject = reject;
-  });
-}
-
-async function submitStepUp() {
-  const code = stepUpCode.value.trim();
-  if (!code || stepUpPending.value) return;
-  stepUpPending.value = true;
-  stepUpError.value = "";
-  let ok = false;
-  try {
-    const result = await api.security.stepUp(code);
-    stepUpGrant.value = result.grant;
-    stepUpGrantExpiresAt.value = Date.parse(result.expires_at);
-    stepUpOpen.value = false;
-    stepUpResolve?.(result.grant);
-    ok = true;
-  } catch (error) {
-    stepUpError.value = toMessage(error);
-  } finally {
-    stepUpPending.value = false;
-    if (ok) {
-      stepUpResolve = undefined;
-      stepUpReject = undefined;
-    }
-  }
-}
-
-function cancelStepUp() {
-  stepUpOpen.value = false;
-  stepUpReject?.(new Error(t("settings.security.passkeys.stepUpCancelled")));
-  stepUpResolve = undefined;
-  stepUpReject = undefined;
-}
-
 // A step-up grant is only required when TOTP is enrolled (server-enforced);
 // otherwise the mutation proceeds without one.
 async function grantForSensitive(): Promise<string | undefined> {
   if (!totpEnabled.value) return undefined;
-  return await requestStepUp();
+  return await stepUp.request();
 }
 
 async function addPasskey() {
@@ -856,16 +811,16 @@ onMounted(loadPasskeys);
       </CardContent>
     </Card>
 
-    <!-- Passkey step-up (only when the account has TOTP enrolled) -->
-    <Dialog :open="stepUpOpen" @update:open="(v) => { if (!v) cancelStepUp(); }">
-      <DialogScrollContent class="sm:max-w-md">
+    <!-- Passkey/TOTP step-up (only when the account has TOTP enrolled) -->
+    <Dialog v-model:open="stepUpOpen">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="stepUp.cancel">
         <DialogHeader>
           <DialogTitle>{{ $t("settings.security.passkeys.stepUpTitle") }}</DialogTitle>
           <DialogDescription>
             {{ $t("settings.security.passkeys.stepUpDescription") }}
           </DialogDescription>
         </DialogHeader>
-        <form class="space-y-3" @submit.prevent="submitStepUp">
+        <form class="space-y-3" @submit.prevent="stepUp.submitTotp">
           <div class="grid gap-2">
             <Label for="passkey-stepup-code">{{ $t("settings.security.passkeys.stepUpCode") }}</Label>
             <Input
@@ -878,11 +833,16 @@ onMounted(loadPasskeys);
           </div>
           <p v-if="stepUpError" class="text-sm text-destructive">{{ stepUpError }}</p>
           <DialogFooter>
-            <Button type="button" variant="ghost" :disabled="stepUpPending" @click="cancelStepUp">
+            <Button type="button" variant="ghost" @click="stepUp.cancel">
               {{ $t("common.actions.cancel") }}
             </Button>
-            <Button type="submit" :disabled="stepUpPending">
-              <RefreshCw v-if="stepUpPending" class="size-4 animate-spin" aria-hidden="true" />
+            <Button type="button" variant="outline" :disabled="!!stepUpPending || !stepUp.supportsPasskey" @click="stepUp.submitPasskey">
+              <RefreshCw v-if="stepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
+              <KeyRound v-else class="size-4" aria-hidden="true" />
+              {{ $t("settings.security.passkeys.stepUpPasskey") }}
+            </Button>
+            <Button type="submit" :disabled="!!stepUpPending || !stepUpCode.trim()">
+              <RefreshCw v-if="stepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
               <ShieldCheck v-else class="size-4" aria-hidden="true" />
               {{ $t("settings.security.passkeys.stepUpConfirm") }}
             </Button>
