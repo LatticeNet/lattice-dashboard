@@ -1436,6 +1436,7 @@ async function runReminders(selectedOnly: boolean) {
                       v-for="item in vendorChoices"
                       :key="item.id"
                       :value="item.name"
+                      :text-value="item.name"
                     >
                       <span class="flex min-w-0 items-center gap-2">
                         <img
@@ -1452,7 +1453,7 @@ async function runReminders(selectedOnly: boolean) {
                         </span>
                       </span>
                     </SelectItem>
-                    <SelectItem v-if="vendor && !selectedVendorProfile" :value="vendor">
+                    <SelectItem v-if="vendor && !selectedVendorProfile" :value="vendor" :text-value="vendor">
                       {{ $t('fleet.inventory.profile.customVendor', { name: vendor }) }}
                     </SelectItem>
                   </SelectContent>
