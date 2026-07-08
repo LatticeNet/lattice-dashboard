@@ -103,10 +103,6 @@ function s(value: unknown): string {
   return String(value ?? "").trim();
 }
 
-function inputValue(event: Event): string {
-  return event.target instanceof HTMLInputElement ? event.target.value : "";
-}
-
 const auth = useAuthStore();
 const { t } = useI18n();
 const route = useRoute();
@@ -1163,8 +1159,8 @@ async function runReminders(selectedOnly: boolean) {
                       inputmode="decimal"
                       :aria-label="$t('fleet.inventory.spend.rateInput', { source: entry.currency, target: entry.target })"
                       :placeholder="entry.target"
-                      :value="entry.rateValue"
-                      @input="setFXRate(entry.currency, inputValue($event))"
+                      :model-value="entry.rateValue"
+                      @update:model-value="(value) => setFXRate(entry.currency, String(value ?? ''))"
                     />
                     <span class="shrink-0 text-xs text-muted-foreground">{{ entry.target }}</span>
                   </div>
