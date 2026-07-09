@@ -171,6 +171,8 @@ export default {
       "settings-about": "关于",
     },
     pluginContributed: "插件贡献",
+    pluginBadge: "插件",
+    pluginExtensions: "插件扩展",
   },
 
   shell: {

@@ -5,7 +5,9 @@ import { toast } from "vue-sonner";
 import {
   FileCode2,
   KeyRound,
+  Network,
   RefreshCw,
+  Route,
   ShieldCheck,
   Spline,
 } from "lucide-vue-next";
@@ -61,6 +63,14 @@ const sortedNodes = computed(() =>
   }),
 );
 const meshReadyCount = computed(() => nodes.value.filter((n) => !!n.wireguard_ip).length);
+const endpointCount = computed(() => nodes.value.filter((n) => !!n.wireguard_endpoint).length);
+const onlineMeshCount = computed(() => nodes.value.filter((n) => !!n.wireguard_ip && n.online && !n.disabled).length);
+const previewNode = computed(() => sortedNodes.value.find((n) => !!n.wireguard_ip));
+const previewPeers = computed(() =>
+  previewNode.value
+    ? sortedNodes.value.filter((n) => n.id !== previewNode.value?.id && !!n.wireguard_ip).slice(0, 4)
+    : [],
+);
 
 const columns = computed<DataTableColumn<Node>[]>(() => [
   {
@@ -121,6 +131,48 @@ async function submitPlan() {
 function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
 }
+
+function hostRoute(ip?: string): string {
+  if (!ip) return "—";
+  if (ip.includes("/")) return ip;
+  return ip.includes(":") ? `${ip}/128` : `${ip}/32`;
+}
+
+function listenPortOf(node?: Node): number {
+  if (!node) return 51820;
+  if (node.wireguard_port && node.wireguard_port > 0) return node.wireguard_port;
+  const endpoint = node.wireguard_endpoint ?? "";
+  const port = Number(endpoint.slice(endpoint.lastIndexOf(":") + 1));
+  return Number.isInteger(port) && port > 0 ? port : 51820;
+}
+
+function redactedKey(node?: Node): string {
+  const key = node?.wireguard_public_key ?? "";
+  if (!key) return "public-key-not-reported";
+  return `${key.slice(0, 8)}…${key.slice(-6)}`;
+}
+
+const previewConfig = computed(() => {
+  const target = previewNode.value;
+  if (!target) return "";
+  const lines = [
+    "[Interface]",
+    `PrivateKey = ${PLACEHOLDER}`,
+    `Address = ${target.wireguard_ip?.includes("/") ? target.wireguard_ip : `${target.wireguard_ip}/24`}`,
+    `ListenPort = ${listenPortOf(target)}`,
+  ];
+  for (const peer of previewPeers.value.slice(0, 2)) {
+    lines.push(
+      "",
+      "[Peer]",
+      `# ${peer.name || peer.id}`,
+      `PublicKey = ${redactedKey(peer)}`,
+      `AllowedIPs = ${hostRoute(peer.wireguard_ip)}`,
+    );
+    if (peer.wireguard_endpoint) lines.push(`Endpoint = ${peer.wireguard_endpoint}`);
+  }
+  return lines.join("\n");
+});
 </script>
 
 <template>
@@ -130,6 +182,7 @@ function nodeName(id: string): string {
       :description="$t('networking.wireguard.description')"
     >
       <template #status>
+        <Badge variant="outline">latticenet.wireguard</Badge>
         <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
       </template>
       <template #actions>
@@ -159,6 +212,105 @@ function nodeName(id: string): string {
             {{ $t('networking.wireguard.keysExplainerKeys') }} <code class="font-mono">AllowedIPs</code> {{ $t('networking.wireguard.keysExplainerPinned') }}
             <code class="font-mono">/32</code> {{ $t('networking.wireguard.keysExplainerOr') }} <code class="font-mono">/128</code> {{ $t('networking.wireguard.keysExplainerHostRoute') }}
           </p>
+        </div>
+      </CardContent>
+    </Card>
+
+    <div class="grid gap-3 md:grid-cols-3">
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Spline class="size-4" aria-hidden="true" />
+            {{ $t('networking.wireguard.statAddresses') }}
+          </div>
+          <div class="text-lg font-semibold tabular-nums">{{ meshReadyCount }} / {{ nodes.length }}</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.wireguard.statOnlineMesh', { count: onlineMeshCount }) }}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Network class="size-4" aria-hidden="true" />
+            {{ $t('networking.wireguard.statEndpoints') }}
+          </div>
+          <div class="text-lg font-semibold tabular-nums">{{ endpointCount }}</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.wireguard.statEndpointHint') }}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <FileCode2 class="size-4" aria-hidden="true" />
+            {{ $t('networking.wireguard.statPlan') }}
+          </div>
+          <div class="font-mono text-lg font-semibold">wg0.conf</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.wireguard.statPlanHint') }}</p>
+        </CardContent>
+      </Card>
+    </div>
+
+    <Card class="border-sidebar-primary/20 bg-sidebar-primary/[0.025]">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <Route class="size-4 text-sidebar-primary" aria-hidden="true" />
+          {{ $t('networking.wireguard.configModelTitle') }}
+        </CardTitle>
+        <CardDescription>{{ $t('networking.wireguard.configModelDescription') }}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div v-if="!previewNode" class="rounded-md border border-warning/35 bg-warning/5 p-3 text-sm text-muted-foreground">
+          {{ $t('networking.wireguard.noPreviewNode') }}
+        </div>
+        <div v-else class="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="rounded-md border border-border bg-background/55 p-3">
+              <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">[Interface]</p>
+              <dl class="mt-3 space-y-2 text-sm">
+                <div class="flex items-center justify-between gap-3">
+                  <dt class="text-muted-foreground">{{ $t('networking.wireguard.previewNode') }}</dt>
+                  <dd class="truncate font-medium">{{ previewNode.name || previewNode.id }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <dt class="text-muted-foreground">Address</dt>
+                  <dd class="font-mono text-xs">{{ previewNode.wireguard_ip }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <dt class="text-muted-foreground">ListenPort</dt>
+                  <dd class="font-mono text-xs">{{ listenPortOf(previewNode) }}</dd>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <dt class="text-muted-foreground">PrivateKey</dt>
+                  <dd class="font-mono text-xs text-info">{{ PLACEHOLDER }}</dd>
+                </div>
+              </dl>
+            </div>
+            <div class="rounded-md border border-border bg-background/55 p-3">
+              <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">[Peer]</p>
+              <div class="mt-3 space-y-2">
+                <div
+                  v-for="peer in previewPeers"
+                  :key="peer.id"
+                  class="rounded border border-border/70 bg-muted/25 p-2"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="truncate text-sm font-medium">{{ peer.name || peer.id }}</span>
+                    <Badge variant="outline">{{ peer.online ? $t('common.status.online') : $t('common.status.offline') }}</Badge>
+                  </div>
+                  <p class="mt-1 font-mono text-xs text-muted-foreground">AllowedIPs = {{ hostRoute(peer.wireguard_ip) }}</p>
+                  <p class="mt-1 truncate font-mono text-xs text-muted-foreground">Endpoint = {{ peer.wireguard_endpoint || '—' }}</p>
+                </div>
+                <p v-if="!previewPeers.length" class="text-sm text-muted-foreground">{{ $t('networking.wireguard.noPeers') }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-md border border-border bg-background/55">
+            <div class="flex items-center justify-between gap-3 border-b border-border px-3 py-2">
+              <span class="text-sm font-medium">{{ $t('networking.wireguard.previewConfig') }}</span>
+              <CopyButton :value="previewConfig" />
+            </div>
+            <pre class="max-h-[320px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ previewConfig }}</pre>
+          </div>
         </div>
       </CardContent>
     </Card>

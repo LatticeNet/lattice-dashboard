@@ -172,6 +172,8 @@ export default {
       "settings-about": "About",
     },
     pluginContributed: "Plugin-contributed",
+    pluginBadge: "Plugin",
+    pluginExtensions: "Plugin extensions",
   },
 
   shell: {

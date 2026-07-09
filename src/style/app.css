@@ -212,15 +212,7 @@
   background-size: 28px 28px;
 }
 
-/* ---- Motion: page + list + fade transitions ---- */
-/* Enter-only fast fade so navigation feels instant (no leave delay). */
-.page-fade-enter-active {
-  transition: opacity 0.12s ease;
-}
-.page-fade-enter-from {
-  opacity: 0;
-}
-
+/* ---- Motion: list + fade transitions ---- */
 .list-move,
 .list-enter-active,
 .list-leave-active {
@@ -271,7 +263,6 @@
     animation: none;
   }
 
-  .page-fade-enter-active,
   .list-move,
   .list-enter-active,
   .list-leave-active,
@@ -282,7 +273,6 @@
 
   /* Skip the offset start/end frames so reduced-motion users land directly on
      the resting (opaque, untranslated) state instead of flashing. */
-  .page-fade-enter-from,
   .list-enter-from,
   .list-leave-to,
   .fade-enter-from,

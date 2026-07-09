@@ -22,7 +22,7 @@ const slots = useSlots();
       )
     "
   >
-    <div class="space-y-1">
+    <div class="min-w-0 space-y-1">
       <h1 class="text-2xl font-semibold tracking-tight text-foreground">
         <span v-if="section" class="font-normal text-muted-foreground">
           {{ section }}
@@ -36,7 +36,7 @@ const slots = useSlots();
     </div>
     <div
       v-if="slots.status || slots.actions"
-      class="flex shrink-0 items-center gap-2"
+      class="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0 sm:justify-end"
     >
       <slot name="status" />
       <slot name="actions" />

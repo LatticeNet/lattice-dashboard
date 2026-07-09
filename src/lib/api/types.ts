@@ -184,7 +184,9 @@ export interface Node {
   role?: string;
   inventory?: NodeInventory | null;
   wireguard_ip?: string;
+  wireguard_public_key?: string;
   wireguard_endpoint?: string;
+  wireguard_port?: number;
   public_ip?: string;
   public_ipv6?: string;
   internal_ip?: string;
@@ -941,10 +943,82 @@ export interface NFTInputsUpsertBody extends NFTPlanBody {
   node_id: string;
 }
 
+export interface GuardPortRange {
+  from: number;
+  to: number;
+}
+
+export interface GuardZone {
+  id: string;
+  name: string;
+  builtin?: boolean;
+  interfaces?: string[];
+  cidrs?: string[];
+  description?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GuardRule {
+  id: string;
+  comment?: string;
+  action: string;
+  direction: string;
+  protocol: string;
+  ports?: GuardPortRange[];
+  remote: NetEndpoint;
+  log?: boolean;
+  disabled?: boolean;
+}
+
+export interface SecurityGroup {
+  id: string;
+  name: string;
+  description?: string;
+  rules: GuardRule[];
+  version?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SecurityGroupView extends SecurityGroup {
+  source: "stored" | "legacy" | string;
+  node_id?: string;
+}
+
+export interface NodeGuardBinding {
+  node_id: string;
+  group_ids: string[];
+  overrides?: GuardRule[];
+  zone_ids?: string[];
+  managed: boolean;
+  version?: number;
+  last_plan_sha?: string;
+  last_applied_at?: string;
+  last_error?: string;
+  applied_table_sha?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface NodeGuardView {
+  node_id: string;
+  node_name?: string;
+  source: "stored" | "legacy" | string;
+  binding: NodeGuardBinding;
+  groups: SecurityGroupView[];
+  zones: GuardZone[];
+}
+
+export interface NetGuardPlanResponse {
+  approval: ApprovalView;
+  findings?: unknown[];
+}
+
 export type NetRuleAction = "allow" | "deny";
 export type NetRuleDirection = "egress" | "ingress";
 export type NetRuleProtocol = "tcp" | "udp" | "any";
-export type NetEndpointKind = "node" | "cidr" | "domain" | "any" | "group";
+export type NetEndpointKind = "node" | "cidr" | "domain" | "any" | "group" | "zone";
 
 export interface NetEndpoint {
   kind: NetEndpointKind;
@@ -952,6 +1026,7 @@ export interface NetEndpoint {
   cidr?: string;
   domain?: string;
   group_id?: string;
+  zone_id?: string;
 }
 
 export interface NetRule {

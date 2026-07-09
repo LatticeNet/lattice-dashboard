@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { ChevronDown, ChevronRight, Hexagon, PanelLeftClose, PanelLeftOpen, Search } from "lucide-vue-next";
+import { Blocks, ChevronDown, ChevronRight, Hexagon, PanelLeftClose, PanelLeftOpen, Search } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/stores/auth";
@@ -53,6 +53,7 @@ type VisibleSection = {
   title: string;
   items: NavItem[];
   pluginGroups: PluginSidebarGroup[];
+  pluginOwned?: boolean;
 };
 
 /**
@@ -100,6 +101,7 @@ const pluginSectionTitles = computed<Record<string, string>>(() => {
 
 const staticSectionIds = new Set(NAV.map((section) => section.id));
 const collapsedPluginGroups = ref<Record<string, boolean>>({});
+const pluginInsertBefore = new Set(["networking"]);
 
 /**
  * Sections with their scope-visible static items, plus any plugin-contributed
@@ -109,7 +111,7 @@ const visibleSections = computed<VisibleSection[]>(() => {
   const staticSections = NAV.map((section) => {
     const staticItems = section.items.filter((item) => auth.canAny(item.scopes ?? []));
     const pluginGroups = pluginGroupsBySection.value[section.id] ?? [];
-    return { ...section, items: staticItems, pluginGroups };
+    return { ...section, items: staticItems, pluginGroups, pluginOwned: false };
   }).filter((section) => section.items.length > 0 || section.pluginGroups.length > 0);
   const dynamicSections = Object.entries(pluginGroupsBySection.value)
     .filter(([id, groups]) => !staticSectionIds.has(id) && groups.length > 0)
@@ -118,8 +120,20 @@ const visibleSections = computed<VisibleSection[]>(() => {
       title: pluginSectionTitles.value[id] ?? pluginSectionLabel(id),
       items: [],
       pluginGroups,
+      pluginOwned: true,
     }));
-  return [...staticSections, ...dynamicSections];
+  if (dynamicSections.length === 0) return staticSections;
+  const out: VisibleSection[] = [];
+  let inserted = false;
+  for (const section of staticSections) {
+    if (!inserted && pluginInsertBefore.has(section.id)) {
+      out.push(...dynamicSections);
+      inserted = true;
+    }
+    out.push(section);
+  }
+  if (!inserted) out.push(...dynamicSections);
+  return out;
 });
 
 // ── Nav index: stable id → renderable shortcut target ─────────────────────────
@@ -198,6 +212,10 @@ function togglePluginGroup(sectionId: string, groupId: string) {
     ...collapsedPluginGroups.value,
     [key]: collapsedPluginGroups.value[key] !== true,
   };
+}
+
+function isPluginBandStart(index: number): boolean {
+  return visibleSections.value[index]?.pluginOwned === true && visibleSections.value[index - 1]?.pluginOwned !== true;
 }
 
 // ── Collapsible sections ──────────────────────────────────────────────────────
@@ -324,23 +342,53 @@ function closeMobile() {
         </div>
       </div>
 
-      <div v-for="section in visibleSections" :key="section.id" class="space-y-1">
+      <div
+        v-for="(section, idx) in visibleSections"
+        :key="section.id"
+        :class="cn('space-y-1', section.pluginOwned && !collapsed && 'rounded-lg border border-sidebar-primary/20 bg-sidebar-primary/[0.045] p-1.5')"
+      >
+        <p
+          v-if="!collapsed && isPluginBandStart(idx)"
+          class="mb-1 flex items-center gap-1.5 px-2 text-[10.5px] font-semibold uppercase tracking-wider text-sidebar-primary"
+        >
+          <Blocks class="size-3.5" aria-hidden="true" />
+          {{ $t('nav.pluginExtensions') }}
+        </p>
         <!-- Section header doubles as a collapse toggle. In the 16px rail we skip
              the header entirely and keep every item visible as an icon. -->
         <button
           v-if="!collapsed"
           type="button"
-          class="group/section flex w-full items-center gap-1 rounded-md px-3 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          :class="
+            cn(
+              'group/section flex w-full items-center gap-1 rounded-md px-3 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+              section.pluginOwned && 'bg-sidebar-primary/[0.055] text-sidebar-accent-foreground hover:bg-sidebar-primary/10',
+            )
+          "
           :aria-expanded="sectionOpen(section.id)"
           @click="shortcuts.toggleSection(section.id)"
         >
-          <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <span
+            :class="
+              cn(
+                'text-[11px] font-medium uppercase tracking-wider',
+                section.pluginOwned ? 'text-sidebar-foreground/85' : 'text-muted-foreground',
+              )
+            "
+          >
             {{ staticSectionIds.has(section.id) ? $t('nav.sections.' + section.id) : section.title }}
+          </span>
+          <span
+            v-if="section.pluginOwned"
+            class="ml-auto rounded-full border border-sidebar-primary/25 bg-sidebar-primary/10 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-sidebar-primary"
+          >
+            {{ $t('nav.pluginBadge') }}
           </span>
           <ChevronDown
             :class="
               cn(
-                'ml-auto size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200 group-hover/section:text-muted-foreground',
+                'size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200 group-hover/section:text-muted-foreground',
+                !section.pluginOwned && 'ml-auto',
                 sectionOpen(section.id) ? 'rotate-0' : '-rotate-90',
               )
             "
@@ -370,7 +418,12 @@ function closeMobile() {
               <button
                 v-if="!collapsed"
                 type="button"
-                class="flex h-8 w-full items-center gap-2 rounded-md px-3 text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                :class="
+                  cn(
+                    'flex h-8 w-full items-center gap-2 rounded-md px-3 text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors hover:bg-sidebar-accent/40 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+                    section.pluginOwned && 'border border-sidebar-primary/15 bg-sidebar/50 text-sidebar-foreground/85 hover:bg-sidebar-primary/10',
+                  )
+                "
                 @click="togglePluginGroup(section.id, group.id)"
               >
                 <ChevronDown
@@ -380,6 +433,12 @@ function closeMobile() {
                 />
                 <ChevronRight v-else class="size-3.5 shrink-0" aria-hidden="true" />
                 <span class="min-w-0 flex-1 truncate text-left">{{ group.title }}</span>
+                <span
+                  v-if="section.pluginOwned"
+                  class="rounded-full bg-sidebar-primary/12 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-sidebar-primary"
+                >
+                  {{ $t('nav.pluginBadge') }}
+                </span>
                 <span class="rounded bg-sidebar-accent px-1.5 py-0.5 text-[10px] tabular text-sidebar-foreground/70">
                   {{ group.items.length }}
                 </span>

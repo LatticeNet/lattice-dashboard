@@ -3,19 +3,27 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
+  Boxes,
+  FileCode2,
+  Network,
   Pencil,
   Play,
   Plus,
   RefreshCw,
   Shield,
+  ShieldCheck,
   Trash2,
 } from "lucide-vue-next";
 import {
   api,
   unwrap,
   type ApprovalView,
+  type GuardRule,
+  type GuardZone,
+  type NodeGuardView,
   type NFTInputsUpsertBody,
   type NFTInputsView,
+  type SecurityGroupView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
@@ -58,8 +66,22 @@ import {
 const { t } = useI18n();
 const auth = useAuthStore();
 const canPlan = computed(() => auth.can("network:plan"));
+const canNetGuardRead = computed(() => auth.can("netguard:read"));
+const canNetGuardAdmin = computed(() => auth.can("netguard:admin"));
 
 const inputsQuery = useAsyncData(() => api.nft.inputs().then((r) => unwrap(r, "inputs")), {
+  pollInterval: 15000,
+});
+const guardGroupsQuery = useAsyncData(() => api.netguard.groups().then((r) => unwrap(r, "groups")), {
+  immediate: canNetGuardRead.value,
+  pollInterval: 15000,
+});
+const guardZonesQuery = useAsyncData(() => api.netguard.zones().then((r) => unwrap(r, "zones")), {
+  immediate: canNetGuardRead.value,
+  pollInterval: 15000,
+});
+const guardNodesQuery = useAsyncData(() => api.netguard.nodes().then((r) => unwrap(r, "nodes")), {
+  immediate: canNetGuardRead.value,
   pollInterval: 15000,
 });
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
@@ -68,6 +90,9 @@ const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "no
 
 const rows = computed(() => inputsQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
+const guardGroups = computed(() => guardGroupsQuery.data.value ?? []);
+const guardZones = computed(() => guardZonesQuery.data.value ?? []);
+const guardNodes = computed(() => guardNodesQuery.data.value ?? []);
 
 const sortedRows = computed(() =>
   [...rows.value].sort((a, b) =>
@@ -77,6 +102,64 @@ const sortedRows = computed(() =>
 
 function nodeLabel(row: NFTInputsView): string {
   return row.node_name || row.node_id;
+}
+
+function nodeGuardLabel(row: NodeGuardView): string {
+  return row.node_name || row.node_id;
+}
+
+const managedBindings = computed(() => guardNodes.value.filter((node) => node.binding?.managed).length);
+const legacyBindings = computed(() => guardNodes.value.filter((node) => node.source === "legacy" || !node.binding?.managed).length);
+const totalGuardRules = computed(() =>
+  guardGroups.value.reduce((sum, group) => sum + (group.rules?.length ?? 0), 0),
+);
+const trustedZoneRefs = computed(() =>
+  guardNodes.value.reduce((sum, node) => sum + (node.binding?.zone_ids?.length ?? 0), 0),
+);
+function rangeLabel(range: { from: number; to: number }): string {
+  return range.from === range.to ? String(range.from) : `${range.from}-${range.to}`;
+}
+
+function rulePorts(rule: GuardRule): string {
+  const ranges = rule.ports ?? [];
+  if (ranges.length === 0) return "all";
+  return ranges.map(rangeLabel).join(", ");
+}
+
+function remoteLabel(rule: GuardRule): string {
+  const remote = rule.remote ?? { kind: "any" };
+  switch (remote.kind) {
+    case "zone":
+      return `zone:${remote.zone_id || "any"}`;
+    case "cidr":
+      return remote.cidr || "cidr";
+    case "node":
+      return `node:${shortId(remote.node_id || "", 12)}`;
+    case "group":
+      return `group:${shortId(remote.group_id || "", 12)}`;
+    case "domain":
+      return remote.domain || "domain";
+    default:
+      return remote.kind || "any";
+  }
+}
+
+function zoneSurface(zone: GuardZone): string {
+  const parts = [...(zone.interfaces ?? []), ...(zone.cidrs ?? [])];
+  return parts.length ? parts.join(", ") : t("networking.guard.resolvedPerNode");
+}
+
+function sourceVariant(source?: string): "outline" | "secondary" | "warning" {
+  return source === "legacy" ? "warning" : source === "stored" ? "secondary" : "outline";
+}
+
+async function refreshAll() {
+  await Promise.all([
+    inputsQuery.refresh(),
+    canNetGuardRead.value ? guardGroupsQuery.refresh() : Promise.resolve(),
+    canNetGuardRead.value ? guardZonesQuery.refresh() : Promise.resolve(),
+    canNetGuardRead.value ? guardNodesQuery.refresh() : Promise.resolve(),
+  ]);
 }
 
 const columns = computed<DataTableColumn<NFTInputsView>[]>(() => [
@@ -236,6 +319,8 @@ async function confirmDelete() {
 // ── Plan dialog ───────────────────────────────────────────────────────────
 const planDigest = usePlanDigest();
 const planning = ref<string | undefined>(undefined);
+const netguardPlanning = ref<string | undefined>(undefined);
+const adopting = ref<string | undefined>(undefined);
 const planApproval = ref<ApprovalView | undefined>(undefined);
 const planSha = ref("");
 
@@ -260,6 +345,35 @@ async function plan(row: NFTInputsView) {
     toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
   } finally {
     planning.value = undefined;
+  }
+}
+
+async function adoptNetGuardNode(row: NodeGuardView) {
+  if (!canNetGuardAdmin.value) return;
+  adopting.value = row.node_id;
+  try {
+    await api.netguard.adopt(row.node_id);
+    toast.success(t("networking.guard.toastAdopted"));
+    await refreshAll();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.guard.toastAdoptFailed"));
+  } finally {
+    adopting.value = undefined;
+  }
+}
+
+async function planNetGuardNode(row: NodeGuardView) {
+  if (!canNetGuardAdmin.value || !canPlan.value) return;
+  netguardPlanning.value = row.node_id;
+  try {
+    const result = await api.netguard.plan(row.node_id);
+    planApproval.value = result.approval;
+    planSha.value = await planDigest.digestFor(result.approval);
+    toast.success(t("networking.shared.toastPlanCreated"));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
+  } finally {
+    netguardPlanning.value = undefined;
   }
 }
 
@@ -288,16 +402,17 @@ function closePlan(open: boolean) {
       :description="$t('networking.guard.description')"
     >
       <template #status>
+        <Badge variant="outline">latticenet.netguard</Badge>
         <FreshnessLabel :last-updated="inputsQuery.lastUpdated.value" />
       </template>
       <template #actions>
         <Button
           variant="outline"
           size="sm"
-          :disabled="inputsQuery.refreshing.value"
-          @click="inputsQuery.refresh"
+          :disabled="inputsQuery.refreshing.value || guardNodesQuery.refreshing.value"
+          @click="refreshAll"
         >
-          <RefreshCw :class="cn('size-4', inputsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+          <RefreshCw :class="cn('size-4', (inputsQuery.refreshing.value || guardNodesQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
         <Button
@@ -310,6 +425,182 @@ function closePlan(open: boolean) {
         </Button>
       </template>
     </PageHeader>
+
+    <div class="grid gap-3 md:grid-cols-4">
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <FileCode2 class="size-4" aria-hidden="true" />
+            {{ $t('networking.guard.statRenderer') }}
+          </div>
+          <div class="font-mono text-lg font-semibold">lattice_guard</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.guard.statRendererHint') }}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Network class="size-4" aria-hidden="true" />
+            {{ $t('networking.guard.statZones') }}
+          </div>
+          <div class="text-lg font-semibold tabular-nums">{{ guardZones.length }}</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.guard.statTrustedZones', { count: trustedZoneRefs }) }}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Boxes class="size-4" aria-hidden="true" />
+            {{ $t('networking.guard.statGroups') }}
+          </div>
+          <div class="text-lg font-semibold tabular-nums">{{ guardGroups.length }}</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.guard.statRules', { count: totalGuardRules }) }}</p>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent class="space-y-2 p-4">
+          <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <ShieldCheck class="size-4" aria-hidden="true" />
+            {{ $t('networking.guard.statBindings') }}
+          </div>
+          <div class="text-lg font-semibold tabular-nums">{{ managedBindings }} / {{ guardNodes.length }}</div>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.guard.statLegacy', { count: legacyBindings }) }}</p>
+        </CardContent>
+      </Card>
+    </div>
+
+    <Card class="border-sidebar-primary/20 bg-sidebar-primary/[0.025]">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <ShieldCheck class="size-4 text-sidebar-primary" aria-hidden="true" />
+          {{ $t('networking.guard.modelTitle') }}
+        </CardTitle>
+        <CardDescription>
+          {{ $t('networking.guard.modelDescription') }}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div v-if="!canNetGuardRead" class="rounded-md border border-warning/35 bg-warning/5 p-3 text-sm text-muted-foreground">
+          {{ $t('networking.guard.modelNoScope') }}
+        </div>
+        <div v-else-if="guardGroupsQuery.error.value || guardZonesQuery.error.value || guardNodesQuery.error.value" class="rounded-md border border-warning/35 bg-warning/5 p-3 text-sm text-muted-foreground">
+          {{ $t('networking.guard.modelUnavailable') }}
+        </div>
+        <div v-else class="grid gap-4 lg:grid-cols-3">
+          <section class="space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-sm font-medium">{{ $t('networking.guard.zonesTitle') }}</h2>
+              <Badge variant="outline">{{ guardZones.length }}</Badge>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="zone in guardZones.slice(0, 5)"
+                :key="zone.id"
+                class="rounded-md border border-border bg-background/55 p-3"
+              >
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-sm font-medium">{{ zone.name || zone.id }}</span>
+                  <Badge v-if="zone.builtin" variant="secondary">{{ $t('networking.guard.builtin') }}</Badge>
+                </div>
+                <p class="mt-1 font-mono text-xs text-muted-foreground">{{ zoneSurface(zone) }}</p>
+              </div>
+              <p v-if="!guardZones.length" class="text-sm text-muted-foreground">{{ $t('networking.guard.noZones') }}</p>
+            </div>
+          </section>
+
+          <section class="space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-sm font-medium">{{ $t('networking.guard.groupsTitle') }}</h2>
+              <Badge variant="outline">{{ totalGuardRules }}</Badge>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="group in guardGroups.slice(0, 5)"
+                :key="group.id"
+                class="rounded-md border border-border bg-background/55 p-3"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium">{{ group.name || group.id }}</p>
+                    <p class="truncate font-mono text-xs text-muted-foreground">{{ group.id }}</p>
+                  </div>
+                  <Badge :variant="sourceVariant(group.source)">{{ group.source }}</Badge>
+                </div>
+                <div class="mt-2 space-y-1">
+                  <div
+                    v-for="rule in (group.rules ?? []).slice(0, 2)"
+                    :key="rule.id"
+                    class="flex flex-wrap items-center gap-1 text-xs text-muted-foreground"
+                  >
+                    <Badge :variant="rule.action === 'deny' ? 'destructive' : 'success'">{{ rule.action }}</Badge>
+                    <span class="font-mono">{{ rule.protocol }}</span>
+                    <span class="font-mono">{{ rulePorts(rule) }}</span>
+                    <span>{{ remoteLabel(rule) }}</span>
+                  </div>
+                  <p v-if="(group.rules?.length ?? 0) > 2" class="text-xs text-muted-foreground">
+                    {{ $t('networking.guard.moreRules', { count: (group.rules?.length ?? 0) - 2 }) }}
+                  </p>
+                </div>
+              </div>
+              <p v-if="!guardGroups.length" class="text-sm text-muted-foreground">{{ $t('networking.guard.noGroups') }}</p>
+            </div>
+          </section>
+
+          <section class="space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-sm font-medium">{{ $t('networking.guard.bindingsTitle') }}</h2>
+              <Badge variant="outline">{{ managedBindings }} {{ $t('networking.guard.managedShort') }}</Badge>
+            </div>
+            <div class="space-y-2">
+              <div
+                v-for="node in guardNodes.slice(0, 5)"
+                :key="node.node_id"
+                class="rounded-md border border-border bg-background/55 p-3"
+              >
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium">{{ nodeGuardLabel(node) }}</p>
+                    <p class="truncate font-mono text-xs text-muted-foreground">{{ shortId(node.node_id, 16) }}</p>
+                  </div>
+                  <Badge :variant="node.binding?.managed ? 'success' : 'warning'">
+                    {{ node.binding?.managed ? $t('networking.guard.managed') : $t('networking.guard.observeOnly') }}
+                  </Badge>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-1">
+                  <Badge v-for="group in node.groups" :key="group.id" variant="outline">{{ group.name || group.id }}</Badge>
+                  <Badge v-for="zone in node.zones" :key="zone.id" variant="secondary">{{ zone.name || zone.id }}</Badge>
+                </div>
+                <div v-if="canNetGuardAdmin || canPlan" class="mt-3 flex justify-end gap-1">
+                  <Button
+                    v-if="canNetGuardAdmin && !node.binding?.managed"
+                    variant="outline"
+                    size="sm"
+                    :disabled="adopting === node.node_id"
+                    @click="adoptNetGuardNode(node)"
+                  >
+                    <RefreshCw v-if="adopting === node.node_id" class="size-4 animate-spin" aria-hidden="true" />
+                    <ShieldCheck v-else class="size-4" aria-hidden="true" />
+                    {{ $t('networking.guard.adopt') }}
+                  </Button>
+                  <Button
+                    v-if="canNetGuardAdmin && canPlan && node.binding?.managed"
+                    variant="outline"
+                    size="sm"
+                    :disabled="netguardPlanning === node.node_id"
+                    @click="planNetGuardNode(node)"
+                  >
+                    <RefreshCw v-if="netguardPlanning === node.node_id" class="size-4 animate-spin" aria-hidden="true" />
+                    <Play v-else class="size-4" aria-hidden="true" />
+                    {{ $t('networking.guard.planNetGuard') }}
+                  </Button>
+                </div>
+              </div>
+              <p v-if="!guardNodes.length" class="text-sm text-muted-foreground">{{ $t('networking.guard.noBindings') }}</p>
+            </div>
+          </section>
+        </div>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>

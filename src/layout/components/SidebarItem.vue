@@ -44,7 +44,7 @@ const active =
         :to="item.path"
         :exact-active-class="item.path === '/' ? active : ''"
         :active-class="item.path === '/' ? '' : active"
-        :class="cn(base, idle, 'justify-center px-0')"
+        :class="cn(base, idle, 'justify-center px-0', plugin && 'border border-sidebar-primary/15 bg-sidebar-primary/[0.045] text-sidebar-primary')"
       >
         <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
         <span class="sr-only">{{ label }}</span>
@@ -61,15 +61,23 @@ const active =
     :to="item.path"
     :exact-active-class="item.path === '/' ? active : ''"
     :active-class="item.path === '/' ? '' : active"
-    :class="cn(base, idle)"
+    :class="cn(base, idle, plugin && 'border border-sidebar-primary/15 bg-sidebar-primary/[0.045] hover:bg-sidebar-primary/10')"
   >
-    <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
+    <span
+      v-if="plugin"
+      class="grid size-6 shrink-0 place-items-center rounded-md bg-sidebar-primary/10 text-sidebar-primary"
+      aria-hidden="true"
+    >
+      <component :is="item.icon" class="size-3.5" />
+    </span>
+    <component v-else :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
     <span class="truncate">{{ label }}</span>
     <span
       v-if="plugin"
-      class="ml-auto size-1.5 shrink-0 rounded-full bg-sidebar-primary/70"
+      class="ml-auto rounded-full border border-sidebar-primary/20 bg-sidebar-primary/10 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-sidebar-primary"
       :title="$t('nav.pluginContributed')"
-      aria-hidden="true"
-    />
+    >
+      {{ $t('nav.pluginBadge') }}
+    </span>
   </RouterLink>
 </template>

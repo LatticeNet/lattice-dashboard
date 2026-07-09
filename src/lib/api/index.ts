@@ -59,6 +59,10 @@ import type {
   SubStoreStatusResponse,
   NFTInputsView,
   NFTInputsUpsertBody,
+  GuardZone,
+  SecurityGroupView,
+  NodeGuardView,
+  NetGuardPlanResponse,
   NetPolicyView,
   NetPolicyUpsertRequest,
   NetPolicyGraph,
@@ -493,6 +497,15 @@ export const api = {
       http.post<{ ok: boolean }>("/api/network/nft/inputs/delete", { node_id }),
     plan: (input: NFTInputsUpsertBody) =>
       http.post<ApprovalView>("/api/network/nft/plan", input),
+  },
+
+  netguard: {
+    groups: () => http.get<{ groups: SecurityGroupView[] }>("/api/netguard/groups"),
+    zones: () => http.get<{ zones: GuardZone[] }>("/api/netguard/zones"),
+    nodes: () => http.get<{ nodes: NodeGuardView[] }>("/api/netguard/nodes"),
+    adopt: (node_id: string) => http.post<NodeGuardView>("/api/netguard/nodes/adopt", { node_id }),
+    plan: (node_id: string, accept_lockout_risk = false) =>
+      http.post<NetGuardPlanResponse>("/api/netguard/plan", { node_id, accept_lockout_risk }),
   },
 
   netpolicy: {
