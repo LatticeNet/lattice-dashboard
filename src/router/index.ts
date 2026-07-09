@@ -73,6 +73,8 @@ const childRoutes: RouteRecordRaw[] = NAV.flatMap((section) =>
  * guard's scope check and the breadcrumb logic keep working unchanged.
  */
 const manualChildRoutes: RouteRecordRaw[] = [
+  { path: "network/guard", redirect: "/plugins/latticenet.netguard/firewall" },
+  { path: "network/wireguard", redirect: "/plugins/latticenet.wireguard/networks" },
   { path: "proxy/inbounds", redirect: "/plugins/latticenet.vpn-core/inbounds" },
   { path: "proxy/users", redirect: "/plugins/latticenet.vpn-core/users" },
   { path: "proxy/profiles", redirect: "/plugins/latticenet.vpn-core/profiles" },

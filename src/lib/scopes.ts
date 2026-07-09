@@ -22,6 +22,8 @@ export const SCOPE_CATALOG = [
   "log:write",
   "monitor:admin",
   "monitor:read",
+  "netguard:admin",
+  "netguard:read",
   "netpolicy:admin",
   "netpolicy:read",
   "network:apply",

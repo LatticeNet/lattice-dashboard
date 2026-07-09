@@ -14,6 +14,8 @@ import {
   Link,
   Radar,
   ServerCog,
+  Shield,
+  Spline,
   Store,
   Users,
 } from "lucide-vue-next";
@@ -33,6 +35,8 @@ const NAV_ICON_COMPONENTS: Record<string, Component> = {
   Users,
   Link,
   Gauge,
+  Shield,
+  Spline,
   Blocks,
 };
 /** view.kind ∈ here. */

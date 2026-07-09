@@ -68,6 +68,8 @@ const BUILTIN_COMPONENTS: Record<string, Component> = {
   "vpn-core.profiles": defineAsyncComponent(() => import("@/views/proxy/VpnCoreProfilesView.vue")),
   "vpn-core.subscriptions": defineAsyncComponent(() => import("@/views/proxy/VpnCoreSubscriptionsView.vue")),
   "proxy.substore": defineAsyncComponent(() => import("@/views/proxy/SubStoreView.vue")),
+  "netguard.firewall": defineAsyncComponent(() => import("@/views/networking/GuardView.vue")),
+  "wireguard.networks": defineAsyncComponent(() => import("@/views/networking/WireGuardView.vue")),
 };
 
 const route = useRoute();
