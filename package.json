@@ -10,7 +10,8 @@
     "build": "vue-tsc --build && vite build",
     "build:only": "vite build",
     "preview": "vite preview",
-    "type-check": "vue-tsc --build"
+    "type-check": "vue-tsc --build",
+    "test:navigation": "node --experimental-strip-types --test src/layout/__tests__/navigationModel.test.ts src/views/fleet/__tests__/mapPluginModel.test.ts src/composables/__tests__/pluginContributionModel.test.ts"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.0",

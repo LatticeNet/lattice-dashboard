@@ -171,9 +171,6 @@ export default {
       "settings-appearance": "Appearance",
       "settings-about": "About",
     },
-    pluginContributed: "Plugin-contributed",
-    pluginBadge: "Plugin",
-    pluginExtensions: "Plugin extensions",
   },
 
   shell: {
@@ -181,9 +178,14 @@ export default {
       toggle: "Toggle sidebar",
       primaryNav: "Primary",
       collapse: "Collapse",
-      shortcuts: "Shortcuts",
-      pin: "Pin to shortcuts",
-      unpin: "Remove from shortcuts",
+      console: "Console",
+      extensions: "Extensions",
+      pinned: "Pinned",
+      pin: "Pin destination",
+      unpin: "Unpin destination",
+      extensionsLoading: "Loading active extensions…",
+      extensionUnavailable: "Extension unavailable",
+      extensionUnavailableHint: "This extension is inactive, unavailable, or outside your permissions. The base console is unaffected.",
     },
     header: {
       toggleTheme: "Toggle theme",

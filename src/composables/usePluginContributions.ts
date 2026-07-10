@@ -1,11 +1,11 @@
 // usePluginContributions — the dashboard side of "VPN is a plugin end-to-end"
-// (design-10). Fetches the plugin registry ONCE (module-level cache shared by
-// the sidebar and every plugin page), then exposes the active plugins' declared
+// (design-10). Shares a last-good plugin registry across the sidebar and every
+// plugin page, then exposes the active plugins' declared
 // nav + view contributions, defensively filtered against the dashboard's FIXED
 // allow-lists. The dashboard owns the view primitives; plugins contribute DATA
 // only. Unknown enum values are treated as inert (skipped) — never thrown on.
 
-import { computed, ref, shallowRef, type Component } from "vue";
+import { computed, ref, shallowRef, watch, type Component } from "vue";
 import {
   Blocks,
   Boxes,
@@ -21,6 +21,11 @@ import {
 } from "lucide-vue-next";
 import { api, type PluginView, type PluginViewContribution } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
+import {
+  createLatestRequestEpoch,
+  pluginCacheIdentity,
+  withoutPlugin,
+} from "./pluginContributionModel";
 
 // ── Allow-lists (mirror the server; anything else is inert / skipped) ─────────
 /** nav.section shape; "plugins" aliases to Platform, unknown safe ids become plugin sections. */
@@ -83,29 +88,58 @@ export function isAllowedViewKind(kind?: string): boolean {
   return VIEW_KINDS.has(kind ?? "");
 }
 
-// ── Module-level cache (one fetch, shared everywhere) ─────────────────────────
+// ── Module-level last-good cache, shared everywhere ───────────────────────────
 const plugins = shallowRef<PluginView[]>([]);
 const ready = ref(false);
-let inflight: Promise<void> | null = null;
+const requestEpoch = createLatestRequestEpoch();
+let inflight: { epoch: number; promise: Promise<void>; controller: AbortController } | null = null;
+let backgroundRevalidationAttached = false;
+let cachedAuthIdentity: string | undefined;
 
 function load(force = false): Promise<void> {
-  if (inflight) return inflight;
+  if (inflight && !force) return inflight.promise;
   if (ready.value && !force) return Promise.resolve();
-  inflight = api.plugins
-    .contributions()
+
+  inflight?.controller.abort();
+  const epoch = requestEpoch.next();
+  const controller = new AbortController();
+  const promise = api.plugins
+    .contributions(controller.signal)
     .then((list) => {
+      if (!requestEpoch.isCurrent(epoch)) return;
       plugins.value = Array.isArray(list) ? list : [];
       ready.value = true;
     })
     .catch(() => {
-      // Keep last-good; a registry blip just means the sidebar shows no plugin
-      // items and pages fall back to their "view not available" empty state.
+      if (!requestEpoch.isCurrent(epoch)) return;
+      // Keep last-good on a transient registry blip. A known lifecycle disable
+      // explicitly invalidates/removes its plugin before attempting refresh.
       ready.value = true;
     })
     .finally(() => {
-      inflight = null;
+      if (inflight?.epoch === epoch) inflight = null;
     });
-  return inflight;
+  inflight = { epoch, promise, controller };
+  return promise;
+}
+
+function ensureBackgroundRevalidation() {
+  if (backgroundRevalidationAttached || typeof window === "undefined") return;
+  backgroundRevalidationAttached = true;
+  window.addEventListener("focus", () => {
+    if (ready.value) void load(true);
+  });
+  window.setInterval(() => {
+    if (document.visibilityState === "visible" && ready.value) void load(true);
+  }, 15_000);
+}
+
+function resetContributionCache() {
+  requestEpoch.invalidate();
+  inflight?.controller.abort();
+  inflight = null;
+  plugins.value = [];
+  ready.value = false;
 }
 
 /** A single plugin-contributed sidebar destination, fully resolved + gated. */
@@ -124,9 +158,35 @@ export interface PluginNavEntry {
 
 export function usePluginContributions() {
   const auth = useAuthStore();
+  ensureBackgroundRevalidation();
+
+  const authIdentity = computed(() =>
+    pluginCacheIdentity(
+      auth.principal?.actor_id,
+      auth.scopes,
+      auth.serverAllowlist,
+    ),
+  );
+
+  // Contribution payloads are already filtered for one principal. They must
+  // never survive logout, operator replacement, or scope/allowlist changes.
+  watch(
+    authIdentity,
+    (identity) => {
+      if (cachedAuthIdentity === undefined) {
+        cachedAuthIdentity = identity;
+        return;
+      }
+      if (cachedAuthIdentity === identity) return;
+      cachedAuthIdentity = identity;
+      resetContributionCache();
+      if (auth.isAuthenticated) void load(true);
+    },
+    { immediate: true },
+  );
 
   // Lazily kick off the cached fetch on first use.
-  if (!ready.value) void load();
+  if (auth.isAuthenticated && !ready.value) void load();
 
   const activePlugins = computed(() =>
     plugins.value.filter((p) => p.active === true || p.status === "active"),
@@ -171,12 +231,22 @@ export function usePluginContributions() {
     return views.find((v) => v?.route === route);
   }
 
+  function removeCachedPlugin(pluginId: string) {
+    // Invalidate any response that started before the lifecycle transition; it
+    // must not be able to resurrect a now-disabled extension.
+    requestEpoch.invalidate();
+    inflight?.controller.abort();
+    inflight = null;
+    plugins.value = withoutPlugin(plugins.value, pluginId);
+  }
+
   return {
     plugins,
     ready,
     navContributions,
     findPlugin,
     findView,
+    removeCachedPlugin,
     refresh: () => load(true),
   };
 }

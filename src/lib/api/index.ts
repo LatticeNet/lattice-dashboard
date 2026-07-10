@@ -577,7 +577,8 @@ export const api = {
 
   plugins: {
     list: () => http.get<PluginView[]>("/api/plugins"),
-    contributions: () => http.get<PluginView[]>("/api/plugin-contributions"),
+    contributions: (signal?: AbortSignal) =>
+      http.get<PluginView[]>("/api/plugin-contributions", undefined, { signal }),
     lifecycle: () => http.get<PluginInstallationView[]>("/api/plugins/lifecycle"),
     setLifecycle: (id: string, status: PluginLifecycleStatus) =>
       http.post<PluginInstallationView>("/api/plugins/lifecycle", { id, status }),
@@ -587,8 +588,13 @@ export const api = {
     // method through the capability/scope-gated server endpoint and returns the
     // raw JSON the method produced. The server validates that the plugin is
     // active and declares (service, method) and checks the interface's scopes.
-    call: <T = unknown>(id: string, service: string, method: string, payload?: unknown) =>
-      http.post<T>("/api/plugins/call", { id, service, method, payload }),
+    call: <T = unknown>(
+      id: string,
+      service: string,
+      method: string,
+      payload?: unknown,
+      signal?: AbortSignal,
+    ) => http.post<T>("/api/plugins/call", { id, service, method, payload }, { signal }),
   },
 
   workers: {

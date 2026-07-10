@@ -18,6 +18,7 @@ import {
   type PluginView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePluginContributions } from "@/composables/usePluginContributions";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,10 @@ const auth = useAuthStore();
 const canAudit = computed(() => auth.can("audit:read"));
 const canAdmin = computed(() => auth.can("plugin:admin"));
 const canVerify = computed(() => auth.can("plugin:verify"));
+const {
+  refresh: refreshPluginContributions,
+  removeCachedPlugin,
+} = usePluginContributions();
 
 const tab = ref<"registered" | "lifecycle">(canAudit.value ? "registered" : "lifecycle");
 
@@ -78,6 +83,7 @@ const sortedLifecycle = computed(() =>
 function refreshAll() {
   if (canAudit.value) registeredQuery.refresh();
   if (canAdmin.value) lifecycleQuery.refresh();
+  void refreshPluginContributions();
 }
 
 const registeredColumns = computed<DataTableColumn<PluginView>[]>(() => [
@@ -176,9 +182,14 @@ async function confirmTransition() {
   transitioning.value = true;
   try {
     await api.plugins.setLifecycle(row.id, status);
+    if (status === "disabled") removeCachedPlugin(row.id);
+    await Promise.all([
+      lifecycleQuery.refresh(),
+      refreshPluginContributions(),
+      canAudit.value ? registeredQuery.refresh() : Promise.resolve(),
+    ]);
     toast.success(`${row.name || row.id} → ${status}`);
     transitionTarget.value = undefined;
-    lifecycleQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.plugins.transitionFailed"));
   } finally {

@@ -2,39 +2,34 @@
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { Pin, PinOff } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { NavItem } from "@/router/nav";
 
 const props = defineProps<{
   item: NavItem;
   collapsed: boolean;
-  /**
-   * Plugin-contributed items carry their own (manifest-provided) title — there's
-   * no static `nav.items.*` i18n key — and render a small affordance marking them
-   * as contributed by an active plugin.
-   */
+  /** Manifest titles are already user-facing and do not have static i18n keys. */
   plugin?: boolean;
+  /** Optional section context shown in the collapsed-rail tooltip. */
+  context?: string;
+  pinnable?: boolean;
+  pinned?: boolean;
+}>();
+
+const emit = defineEmits<{
+  (e: "toggle-pin", id: string): void;
 }>();
 
 const { t } = useI18n();
-
-// Static items resolve their label from i18n by name; plugin items use the
-// manifest title verbatim.
-const label = computed(() =>
-  props.plugin ? props.item.title : t("nav.items." + props.item.name),
-);
+const label = computed(() => (props.plugin ? props.item.title : t(`nav.items.${props.item.name}`)));
 
 const base =
   "group/item flex h-9 items-center gap-3 rounded-md px-3 text-sm outline-none transition-colors focus-visible:ring-ring/50 focus-visible:ring-[3px]";
 const idle =
   "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground";
-const active =
-  "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
+const active = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
 </script>
 
 <template>
@@ -44,40 +39,45 @@ const active =
         :to="item.path"
         :exact-active-class="item.path === '/' ? active : ''"
         :active-class="item.path === '/' ? '' : active"
-        :class="cn(base, idle, 'justify-center px-0', plugin && 'border border-sidebar-primary/15 bg-sidebar-primary/[0.045] text-sidebar-primary')"
+        :class="cn(base, idle, 'justify-center px-0')"
       >
         <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
         <span class="sr-only">{{ label }}</span>
       </RouterLink>
     </TooltipTrigger>
-    <TooltipContent side="right" class="flex items-center gap-1.5">
-      {{ label }}
-      <span v-if="plugin" class="text-[10px] uppercase tracking-wide text-muted-foreground">{{ $t('nav.pluginContributed') }}</span>
+    <TooltipContent side="right">
+      <div class="font-medium">{{ label }}</div>
+      <div v-if="context" class="text-[10px] text-muted-foreground">{{ context }}</div>
     </TooltipContent>
   </Tooltip>
 
-  <RouterLink
-    v-else
-    :to="item.path"
-    :exact-active-class="item.path === '/' ? active : ''"
-    :active-class="item.path === '/' ? '' : active"
-    :class="cn(base, idle, plugin && 'border border-sidebar-primary/15 bg-sidebar-primary/[0.045] hover:bg-sidebar-primary/10')"
-  >
-    <span
-      v-if="plugin"
-      class="grid size-6 shrink-0 place-items-center rounded-md bg-sidebar-primary/10 text-sidebar-primary"
-      aria-hidden="true"
+  <div v-else class="group/nav-item relative flex items-center rounded-md">
+    <RouterLink
+      :to="item.path"
+      :exact-active-class="item.path === '/' ? active : ''"
+      :active-class="item.path === '/' ? '' : active"
+      :class="cn(base, idle, 'min-w-0 flex-1', pinnable && 'pr-10')"
     >
-      <component :is="item.icon" class="size-3.5" />
-    </span>
-    <component v-else :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
-    <span class="truncate">{{ label }}</span>
-    <span
-      v-if="plugin"
-      class="ml-auto rounded-full border border-sidebar-primary/20 bg-sidebar-primary/10 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-sidebar-primary"
-      :title="$t('nav.pluginContributed')"
+      <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
+      <span class="truncate">{{ label }}</span>
+    </RouterLink>
+    <button
+      v-if="pinnable"
+      type="button"
+      :class="
+        cn(
+          'absolute right-0 grid size-9 place-items-center rounded text-sidebar-foreground/55 outline-none transition-opacity hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring/50 md:right-1.5 md:size-6',
+          pinned
+            ? 'opacity-70 hover:opacity-100'
+            : 'opacity-0 group-hover/nav-item:opacity-60 hover:opacity-100 focus-visible:opacity-100',
+        )
+      "
+      :aria-label="pinned ? $t('shell.sidebar.unpin') : $t('shell.sidebar.pin')"
+      :title="pinned ? $t('shell.sidebar.unpin') : $t('shell.sidebar.pin')"
+      @click="emit('toggle-pin', item.name)"
     >
-      {{ $t('nav.pluginBadge') }}
-    </span>
-  </RouterLink>
+      <PinOff v-if="pinned" class="size-3.5" aria-hidden="true" />
+      <Pin v-else class="size-3.5" aria-hidden="true" />
+    </button>
+  </div>
 </template>

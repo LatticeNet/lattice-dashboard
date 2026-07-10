@@ -23,6 +23,8 @@ jobs:
           corepack prepare pnpm@10.33.0 --activate
       - name: install
         run: pnpm install --frozen-lockfile
+      - name: test extension navigation contracts
+        run: pnpm test:navigation
       - name: type check
         run: pnpm type-check
       - name: build

@@ -170,9 +170,6 @@ export default {
       "settings-appearance": "外观",
       "settings-about": "关于",
     },
-    pluginContributed: "插件贡献",
-    pluginBadge: "插件",
-    pluginExtensions: "插件扩展",
   },
 
   shell: {
@@ -180,9 +177,14 @@ export default {
       toggle: "切换侧边栏",
       primaryNav: "主导航",
       collapse: "收起",
-      shortcuts: "快捷入口",
-      pin: "固定到快捷入口",
-      unpin: "从快捷入口移除",
+      console: "控制台",
+      extensions: "扩展",
+      pinned: "已固定",
+      pin: "固定此入口",
+      unpin: "取消固定此入口",
+      extensionsLoading: "正在加载已激活扩展…",
+      extensionUnavailable: "扩展不可用",
+      extensionUnavailableHint: "此扩展未激活、不可用或超出你的权限范围；基础控制台不受影响。",
     },
     header: {
       toggleTheme: "切换主题",

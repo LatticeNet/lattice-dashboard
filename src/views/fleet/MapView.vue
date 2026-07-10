@@ -40,6 +40,13 @@ import {
   nodeMatchesTargetToken,
   vpnLineNodeIds,
 } from "@/lib/nodeFilterExpressions";
+import {
+  clearUnavailableVpnExpression,
+  expressionNeedsVpnLines,
+  filterMapCapabilities,
+  removeUnavailableVpnCapability,
+  vpnMapFeatureAvailable,
+} from "./mapPluginModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -78,12 +85,33 @@ const geoQuery = useAsyncData(() => api.nodes.geo().then((r) => unwrap(r, "nodes
 // and a gateway failure just marks the layer unavailable — the base map never
 // breaks. Deep-linkable via /map?layer=vpn (the Lines graph tab points here).
 const VPN_PLUGIN_ID = "latticenet.vpn-core";
+const VPN_LINES_SCOPES = ["proxy:read"];
 const route = useRoute();
-const { findPlugin } = usePluginContributions();
-const vpnLayerAvailable = computed(() => !!findPlugin(VPN_PLUGIN_ID));
+const { findPlugin, navContributions } = usePluginContributions();
+const vpnLinesContributionVisible = computed(() =>
+  navContributions.value.some(
+    (entry) => entry.pluginId === VPN_PLUGIN_ID && entry.route === "lines",
+  ),
+);
+const vpnLayerAvailable = computed(() =>
+  vpnMapFeatureAvailable(
+    !!findPlugin(VPN_PLUGIN_ID),
+    vpnLinesContributionVisible.value,
+    auth.canAll(VPN_LINES_SCOPES),
+  ),
+);
 const vpnLayerOn = ref(route.query.layer === "vpn");
 const vpnLinesQuery = useAsyncData(
-  () => api.plugins.call<LinesListResponse>(VPN_PLUGIN_ID, `${VPN_PLUGIN_ID}/lines`, "list"),
+  (signal) => {
+    if (!vpnLayerAvailable.value) return Promise.resolve({ groups: [], count: 0 });
+    return api.plugins.call<LinesListResponse>(
+      VPN_PLUGIN_ID,
+      `${VPN_PLUGIN_ID}/lines`,
+      "list",
+      undefined,
+      signal,
+    );
+  },
   { immediate: false },
 );
 
@@ -198,8 +226,26 @@ const activeMapArchOs = ref<string[]>([]);
 const activeMapAgentCaps = ref<AgentCapabilityFilter[]>([]);
 const vpnFilterNeedsLines = computed(
   () =>
-    activeMapAgentCaps.value.includes("vpn-lines") ||
-    /\b(vpn|vpn-core|vpncore|vpn-lines|line-recorded|line_recorded|lines)\b/i.test(mapExpr.value),
+    vpnLayerAvailable.value &&
+    (activeMapAgentCaps.value.includes("vpn-lines") ||
+      expressionNeedsVpnLines(mapExpr.value, vpnLayerAvailable.value)),
+);
+
+// Plugin deactivation is a full teardown, not merely a hidden toggle. Clear all
+// plugin-owned state and abort optional requests so the native Map immediately
+// returns to its base behavior without stale filters or errors.
+watch(
+  vpnLayerAvailable,
+  (available) => {
+    if (available) return;
+    vpnLayerOn.value = false;
+    activeMapAgentCaps.value = removeUnavailableVpnCapability(activeMapAgentCaps.value, false);
+    mapExpr.value = clearUnavailableVpnExpression(mapExpr.value, false);
+    vpnLinesQuery.stop();
+    vpnLinesQuery.data.value = undefined;
+    vpnLinesQuery.error.value = undefined;
+  },
+  { immediate: true },
 );
 
 watch(
@@ -266,7 +312,8 @@ const availableMapArchOs = computed(() =>
   ARCH_OS_TOKENS.filter((token) => nodes.value.some((node) => nodeHasArchOsToken(nodeForFilter(node), token))),
 );
 const availableMapAgentCaps = computed(() =>
-  AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => mapNodeHasAgentCapability(node, cap))),
+  filterMapCapabilities(AGENT_CAP_FILTERS, vpnLayerAvailable.value)
+    .filter((cap) => nodes.value.some((node) => mapNodeHasAgentCapability(node, cap))),
 );
 const hasMapFilters = computed(
   () =>
@@ -345,7 +392,11 @@ function nodeForFilter(node: NodeGeoView): Node {
 }
 
 function mapNodeHasAgentCapability(node: NodeGeoView, cap: AgentCapabilityFilter): boolean {
-  return nodeHasAgentCapability(nodeForFilter(node), cap, vpnLineNodes.value.has(node.id));
+  return nodeHasAgentCapability(
+    nodeForFilter(node),
+    cap,
+    vpnLayerAvailable.value && vpnLineNodes.value.has(node.id),
+  );
 }
 
 function matchesMapStatus(node: NodeGeoView): boolean {
@@ -429,7 +480,11 @@ function mapSearchScore(node: NodeGeoView, q: string): number {
 function matchesMapExpression(node: NodeGeoView): boolean {
   if (!mapExpr.value.trim()) return true;
   const result = evalFilterExpression(mapExpr.value, (token) =>
-    nodeMatchesTargetToken(nodeForFilter(node), token, vpnLineNodes.value.has(node.id)),
+    nodeMatchesTargetToken(
+      nodeForFilter(node),
+      token,
+      vpnLayerAvailable.value && vpnLineNodes.value.has(node.id),
+    ),
   );
   return result.ok && result.value;
 }

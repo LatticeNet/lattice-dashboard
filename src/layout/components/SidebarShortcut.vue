@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
-import { Pin, PinOff } from "lucide-vue-next";
-import { cn } from "@/lib/utils";
+import { PinOff } from "lucide-vue-next";
 
-/** A resolved pinned/recent destination (see AppSidebar's navIndex). */
+/** A live, authorized destination explicitly pinned by the operator. */
 export type ShortcutTarget = {
   id: string;
   title: string;
@@ -11,10 +10,7 @@ export type ShortcutTarget = {
   section: string;
 };
 
-defineProps<{
-  target: ShortcutTarget;
-  pinned: boolean;
-}>();
+defineProps<{ target: ShortcutTarget }>();
 
 const emit = defineEmits<{
   (e: "toggle-pin", id: string): void;
@@ -38,18 +34,12 @@ const emit = defineEmits<{
     </RouterLink>
     <button
       type="button"
-      :class="
-        cn(
-          'absolute right-1.5 grid size-6 place-items-center rounded text-sidebar-foreground/60 outline-none transition-opacity hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
-          pinned ? 'opacity-70 hover:opacity-100' : 'opacity-0 group-hover/shortcut:opacity-60 hover:opacity-100 focus-visible:opacity-100',
-        )
-      "
-      :aria-label="pinned ? $t('shell.sidebar.unpin') : $t('shell.sidebar.pin')"
-      :title="pinned ? $t('shell.sidebar.unpin') : $t('shell.sidebar.pin')"
+      class="absolute right-0 grid size-9 place-items-center rounded text-sidebar-foreground/60 opacity-70 outline-none transition-opacity hover:opacity-100 hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-ring/50 md:right-1.5 md:size-6"
+      :aria-label="$t('shell.sidebar.unpin')"
+      :title="$t('shell.sidebar.unpin')"
       @click.stop="emit('toggle-pin', target.id)"
     >
-      <PinOff v-if="pinned" class="size-3.5" aria-hidden="true" />
-      <Pin v-else class="size-3.5" aria-hidden="true" />
+      <PinOff class="size-3.5" aria-hidden="true" />
     </button>
   </div>
 </template>
