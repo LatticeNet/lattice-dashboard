@@ -25,6 +25,8 @@ import {
 import {
   buildExtensionSections,
   extensionWorkspaceVisible,
+  reconcileExpandedSections,
+  toggleExpandedSection,
   workspaceForRoute,
   type NavigationWorkspace,
 } from "@/layout/navigationModel";
@@ -187,9 +189,10 @@ const extensionPinnedTargets = computed(() =>
   pinnedTargets.value.filter((target) => target.workspace === "extensions"),
 );
 
-// ── Single-open workspace sections ------------------------------------------
-const openConsoleSectionId = ref("");
-const openExtensionSectionId = ref("");
+// Each workspace owns independent expansion state. Route owners are kept open,
+// while manual choices survive navigation and sibling toggles.
+const openConsoleSectionIds = ref<Set<string>>(new Set());
+const openExtensionSectionIds = ref<Set<string>>(new Set());
 
 function consoleSectionOwnsRoute(section: VisibleConsoleSection): boolean {
   const routeName = route.name ? String(route.name) : "";
@@ -204,13 +207,11 @@ watch(
   [() => route.name, consoleAccordionSections],
   () => {
     const owner = consoleAccordionSections.value.find(consoleSectionOwnsRoute);
-    if (owner) {
-      openConsoleSectionId.value = owner.id;
-      return;
-    }
-    if (!consoleAccordionSections.value.some((section) => section.id === openConsoleSectionId.value)) {
-      openConsoleSectionId.value = consoleAccordionSections.value[0]?.id ?? "";
-    }
+    openConsoleSectionIds.value = reconcileExpandedSections(
+      openConsoleSectionIds.value,
+      consoleAccordionSections.value.map((section) => section.id),
+      owner?.id,
+    );
   },
   { immediate: true },
 );
@@ -219,25 +220,23 @@ watch(
   [() => route.path, extensionSections],
   () => {
     const owner = extensionSections.value.find(extensionSectionOwnsRoute);
-    if (owner) {
-      openExtensionSectionId.value = owner.id;
-      return;
-    }
-    if (!extensionSections.value.some((section) => section.id === openExtensionSectionId.value)) {
-      openExtensionSectionId.value = extensionSections.value[0]?.id ?? "";
-    }
+    openExtensionSectionIds.value = reconcileExpandedSections(
+      openExtensionSectionIds.value,
+      extensionSections.value.map((section) => section.id),
+      owner?.id,
+    );
   },
   { immediate: true },
 );
 
 function toggleConsoleSection(section: VisibleConsoleSection) {
-  if (openConsoleSectionId.value === section.id && consoleSectionOwnsRoute(section)) return;
-  openConsoleSectionId.value = openConsoleSectionId.value === section.id ? "" : section.id;
+  const owner = consoleAccordionSections.value.find(consoleSectionOwnsRoute);
+  openConsoleSectionIds.value = toggleExpandedSection(openConsoleSectionIds.value, section.id, owner?.id);
 }
 
 function toggleExtensionSection(section: (typeof extensionSections.value)[number]) {
-  if (openExtensionSectionId.value === section.id && extensionSectionOwnsRoute(section)) return;
-  openExtensionSectionId.value = openExtensionSectionId.value === section.id ? "" : section.id;
+  const owner = extensionSections.value.find(extensionSectionOwnsRoute);
+  openExtensionSectionIds.value = toggleExpandedSection(openExtensionSectionIds.value, section.id, owner?.id);
 }
 
 function toggleCollapse() {
@@ -409,7 +408,7 @@ function closeMobile() {
               <button
                 type="button"
                 class="group/section flex h-9 w-full items-center gap-2 rounded-md px-3 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-7"
-                :aria-expanded="openConsoleSectionId === section.id"
+                :aria-expanded="openConsoleSectionIds.has(section.id)"
                 :aria-controls="`console-section-${section.id}`"
                 @click="toggleConsoleSection(section)"
               >
@@ -417,14 +416,14 @@ function closeMobile() {
                   {{ $t('nav.sections.' + section.id) }}
                 </span>
                 <ChevronDown
-                  :class="cn('size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200', openConsoleSectionId !== section.id && '-rotate-90')"
+                  :class="cn('size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200', !openConsoleSectionIds.has(section.id) && '-rotate-90')"
                   aria-hidden="true"
                 />
               </button>
               <div
                 :id="`console-section-${section.id}`"
                 class="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
-                :class="openConsoleSectionId === section.id ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+                :class="openConsoleSectionIds.has(section.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
               >
                 <div class="space-y-1 overflow-hidden">
                   <SidebarItem
@@ -502,7 +501,7 @@ function closeMobile() {
               <button
                 type="button"
                 class="group/section flex h-9 w-full items-center gap-2 rounded-md px-3 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-7"
-                :aria-expanded="openExtensionSectionId === section.id"
+                :aria-expanded="openExtensionSectionIds.has(section.id)"
                 :aria-controls="`extension-section-${section.id}`"
                 @click="toggleExtensionSection(section)"
               >
@@ -510,14 +509,14 @@ function closeMobile() {
                   {{ section.title }}
                 </span>
                 <ChevronDown
-                  :class="cn('size-3.5 shrink-0 text-sidebar-primary/50 transition-transform duration-200', openExtensionSectionId !== section.id && '-rotate-90')"
+                  :class="cn('size-3.5 shrink-0 text-sidebar-primary/50 transition-transform duration-200', !openExtensionSectionIds.has(section.id) && '-rotate-90')"
                   aria-hidden="true"
                 />
               </button>
               <div
                 :id="`extension-section-${section.id}`"
                 class="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
-                :class="openExtensionSectionId === section.id ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+                :class="openExtensionSectionIds.has(section.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
               >
                 <div class="space-y-1 overflow-hidden">
                   <SidebarItem

@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   buildExtensionSections,
   extensionWorkspaceVisible,
+  reconcileExpandedSections,
+  toggleExpandedSection,
   workspaceForRoute,
 } from "../navigationModel.ts";
 
@@ -111,4 +113,26 @@ test("blank section titles fall back to a readable section label", () => {
   ]);
 
   assert.equal(section?.title, "Network Security");
+});
+
+test("opening one navigation section preserves sections that are already open", () => {
+  const open = toggleExpandedSection(new Set(["fleet"]), "operations");
+
+  assert.deepEqual([...open], ["fleet", "operations"]);
+});
+
+test("navigation sections toggle independently while the active route owner stays open", () => {
+  assert.deepEqual([...toggleExpandedSection(new Set(["fleet", "operations"]), "fleet")], ["operations"]);
+  assert.deepEqual(
+    [...toggleExpandedSection(new Set(["fleet", "operations"]), "fleet", "fleet")],
+    ["fleet", "operations"],
+  );
+});
+
+test("section reconciliation retains valid choices, adds the route owner, and removes uninstalled sections", () => {
+  assert.deepEqual(
+    [...reconcileExpandedSections(new Set(["fleet", "removed-plugin"]), ["fleet", "operations", "network-security"], "network-security")],
+    ["fleet", "network-security"],
+  );
+  assert.deepEqual([...reconcileExpandedSections(new Set(), ["fleet", "operations"])], ["fleet"]);
 });

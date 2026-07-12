@@ -36,6 +36,34 @@ export function extensionWorkspaceVisible(entryCount: number, routePath: string)
   return entryCount > 0 || workspaceForRoute(routePath) === "extensions";
 }
 
+/** Toggle one section without collapsing its siblings or the active route owner. */
+export function toggleExpandedSection(
+  current: ReadonlySet<string>,
+  sectionId: string,
+  routeOwnerId = "",
+): Set<string> {
+  const next = new Set(current);
+  if (next.has(sectionId)) {
+    if (sectionId !== routeOwnerId) next.delete(sectionId);
+  } else {
+    next.add(sectionId);
+  }
+  return next;
+}
+
+/** Keep expansion state valid as routes and plugin contributions change. */
+export function reconcileExpandedSections(
+  current: ReadonlySet<string>,
+  availableIds: readonly string[],
+  routeOwnerId = "",
+): Set<string> {
+  const available = new Set(availableIds);
+  const next = new Set([...current].filter((id) => available.has(id)));
+  if (routeOwnerId && available.has(routeOwnerId)) next.add(routeOwnerId);
+  if (next.size === 0 && availableIds[0]) next.add(availableIds[0]);
+  return next;
+}
+
 /**
  * Flatten package ownership into the signed manifest's task-oriented sections.
  * Map preserves first-seen section order and each manifest's contribution order.
