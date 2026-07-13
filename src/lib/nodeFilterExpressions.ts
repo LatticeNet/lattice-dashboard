@@ -1,20 +1,12 @@
-import type { LineGroup, Node } from "@/lib/api/types";
+import type { Node } from "@/lib/api/types";
 import { normalizeExprToken } from "@/lib/filterExpressions";
 export { evalFilterExpression, normalizeExprToken, type ExprResult } from "@/lib/filterExpressions";
-
-export function vpnLineNodeIds(groups: LineGroup[] | undefined): Set<string> {
-  const ids = new Set<string>();
-  for (const group of groups ?? []) {
-    if ((group.lines ?? []).length > 0) ids.add(group.node_id);
-  }
-  return ids;
-}
 
 export function nodeAgentProfile(node: Node) {
   return node.agent_runtime ?? undefined;
 }
 
-export function nodeHasAgentCapability(node: Node, token: string, vpnRecorded = false): boolean {
+export function nodeHasAgentCapability(node: Node, token: string): boolean {
   const cap = normalizeExprToken(token);
   const profile = nodeAgentProfile(node);
   switch (cap) {
@@ -28,24 +20,18 @@ export function nodeHasAgentCapability(node: Node, token: string, vpnRecorded = 
       return !!profile?.allow_terminal && profile.terminal_transport === "stream" && !profile.no_exec;
     case "poll":
       return !!profile?.allow_terminal && profile.terminal_transport !== "stream" && !profile.no_exec;
-    case "sing-box":
-      return !!profile?.singbox_discover;
-    case "vpn-lines":
-      return vpnRecorded;
     default:
       return false;
   }
 }
 
-export function agentConfigBadges(node: Node, vpnRecorded = false): string[] {
+export function agentConfigBadges(node: Node): string[] {
   const badges: string[] = [];
-  if (nodeHasAgentCapability(node, "exec", vpnRecorded)) badges.push("exec");
-  if (nodeHasAgentCapability(node, "root", vpnRecorded)) badges.push("root");
-  if (nodeHasAgentCapability(node, "terminal", vpnRecorded)) {
-    badges.push(nodeHasAgentCapability(node, "stream", vpnRecorded) ? "terminal:stream" : "terminal:poll");
+  if (nodeHasAgentCapability(node, "exec")) badges.push("exec");
+  if (nodeHasAgentCapability(node, "root")) badges.push("root");
+  if (nodeHasAgentCapability(node, "terminal")) {
+    badges.push(nodeHasAgentCapability(node, "stream") ? "terminal:stream" : "terminal:poll");
   }
-  if (nodeHasAgentCapability(node, "sing-box", vpnRecorded)) badges.push("sing-box:on");
-  if (vpnRecorded) badges.push("vpn-lines");
   return badges;
 }
 
@@ -71,23 +57,22 @@ export function nodeHasTagToken(node: Node, token: string): boolean {
     .includes(wanted);
 }
 
-export function nodeMatchesTargetToken(node: Node, rawToken: string, vpnRecorded = false): boolean {
+export function nodeMatchesTargetToken(node: Node, rawToken: string): boolean {
   const token = rawToken.trim();
   const lower = token.toLowerCase();
   const prefixed = lower.match(/^([a-z-]+):(.*)$/);
   if (prefixed) {
     const [, namespace, value] = prefixed;
     if (!value) return false;
-    if (namespace === "agent" || namespace === "config") return nodeHasAgentCapability(node, value, vpnRecorded);
+    if (namespace === "agent" || namespace === "config") return nodeHasAgentCapability(node, value);
     if (namespace === "os" || namespace === "arch") return nodeHasArchOsToken(node, value);
     if (namespace === "tag" || namespace === "role") return nodeHasTagToken(node, value);
-    if (namespace === "vpn") return nodeHasAgentCapability(node, value === "recorded" ? "vpn-lines" : value, vpnRecorded);
     if (namespace === "region") return nodeRegionHaystack(node).includes(normalizeExprToken(value));
     if (namespace === "name") return (node.name || node.id).toLowerCase().includes(value.toLowerCase());
   }
 
   const wanted = normalizeExprToken(token);
-  if (nodeHasAgentCapability(node, wanted, vpnRecorded)) return true;
+  if (nodeHasAgentCapability(node, wanted)) return true;
   if (nodeHasArchOsToken(node, wanted)) return true;
   if (nodeHasTagToken(node, wanted)) return true;
   return [

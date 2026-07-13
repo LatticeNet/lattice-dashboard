@@ -34,15 +34,12 @@ const props = withDefaults(
     pendingNodeId?: string;
     /** Optional per-node agent update policies for the compact status column. */
     updatePolicies?: AgentUpdatePolicy[];
-    /** Node ids that already have actual vpn-core line records. */
-    vpnLineNodeIds?: Set<string>;
   }>(),
   {
     canOpenTerminal: false,
     canAdminNodes: false,
     pendingNodeId: undefined,
     updatePolicies: () => [],
-    vpnLineNodeIds: () => new Set<string>(),
   },
 );
 
@@ -104,7 +101,7 @@ function updateVariant(policy?: AgentUpdatePolicy): "success" | "secondary" | "o
 }
 
 function agentBadges(node: Node): string[] {
-  return agentConfigBadges(node, props.vpnLineNodeIds.has(node.id));
+  return agentConfigBadges(node);
 }
 
 /** Public IPv4 is the primary column; the rest ride along in the cell tooltip. */
@@ -115,7 +112,6 @@ function ipTooltip(node: Node): string {
     `${t("fleet.nodes.detail.internalIp")}: ${node.internal_ip || "—"}`,
     `${t("fleet.nodes.detail.internalIpv6")}: ${node.internal_ipv6 || "—"}`,
   ];
-  if (node.wireguard_ip) lines.push(`${t("fleet.nodes.detail.wireguardIp")}: ${node.wireguard_ip}`);
   return lines.join("\n");
 }
 
@@ -201,12 +197,12 @@ function onOpen(node: Node): void {
           <p class="truncate text-xs text-muted-foreground">{{ node.host_facts?.arch || '—' }}</p>
         </div>
 
-        <!-- Agent runtime / vpn-core line records -->
+        <!-- Agent runtime capabilities -->
         <div class="flex min-w-0 flex-wrap gap-1">
           <Badge
             v-for="badge in agentBadges(node).slice(0, 3)"
             :key="`${node.id}:${badge}`"
-            :variant="badge === 'vpn-lines' ? 'success' : 'outline'"
+            variant="outline"
             class="max-w-full truncate"
           >
             {{ badge }}

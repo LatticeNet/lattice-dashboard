@@ -45,7 +45,7 @@ const NAV_ICON_COMPONENTS: Record<string, Component> = {
   Blocks,
 };
 /** view.kind ∈ here. */
-const VIEW_KINDS = new Set(["table", "detail", "form", "kv", "markdown", "builtin", "sandbox"]);
+const VIEW_KINDS = new Set(["table", "detail", "form", "kv", "markdown", "sandbox"]);
 /** column.render ∈ here. */
 const COLUMN_RENDERS = new Set(["", "copy-secret", "bytes", "relative-time", "badge", "code"]);
 /** form field.kind ∈ here. */

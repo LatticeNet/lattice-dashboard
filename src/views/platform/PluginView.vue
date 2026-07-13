@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, reactive, ref, watch, type Component } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -57,22 +57,6 @@ import {
 
 type Row = Record<string, unknown>;
 
-const BUILTIN_COMPONENTS: Record<string, Component> = {
-  "proxy.inbounds": defineAsyncComponent(() => import("@/views/proxy/InboundsView.vue")),
-  "proxy.users": defineAsyncComponent(() => import("@/views/proxy/UsersView.vue")),
-  "proxy.profiles": defineAsyncComponent(() => import("@/views/proxy/ProfilesView.vue")),
-  "proxy.subscriptions": defineAsyncComponent(() => import("@/views/proxy/SubscriptionsView.vue")),
-  "proxy.usage": defineAsyncComponent(() => import("@/views/proxy/VpnCoreUsageView.vue")),
-  "vpn-core.usage": defineAsyncComponent(() => import("@/views/proxy/VpnCoreUsageView.vue")),
-  "proxy.discovered": defineAsyncComponent(() => import("@/views/proxy/DiscoveredView.vue")),
-  "vpn-core.lines": defineAsyncComponent(() => import("@/views/proxy/LinesView.vue")),
-  "vpn-core.users": defineAsyncComponent(() => import("@/views/proxy/VpnUsersView.vue")),
-  "vpn-core.profiles": defineAsyncComponent(() => import("@/views/proxy/VpnCoreProfilesView.vue")),
-  "vpn-core.subscriptions": defineAsyncComponent(() => import("@/views/proxy/VpnCoreSubscriptionsView.vue")),
-  "netguard.firewall": defineAsyncComponent(() => import("@/views/networking/GuardView.vue")),
-  "wireguard.networks": defineAsyncComponent(() => import("@/views/networking/WireGuardView.vue")),
-};
-
 const route = useRoute();
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -92,16 +76,12 @@ const view = computed(() => findView(pluginId.value, viewRoute.value));
 const pageTitle = computed(() => view.value?.title || plugin.value?.name || t("pluginViews.fallbackTitle"));
 const sectionLabel = computed(() => plugin.value?.name || t("nav.sections.platform"));
 const rawKind = computed(() => view.value?.kind ?? "");
-const builtinComponent = computed(() => {
-  const key = view.value?.component_key ?? "";
-  return key ? BUILTIN_COMPONENTS[key] : undefined;
-});
 const supportedKind = computed(() => {
   if (!view.value || !isAllowedViewKind(rawKind.value)) return false;
   if (rawKind.value === "sandbox") {
     return plugin.value?.ui_runtime?.mode === "sandbox" && !!plugin.value.ui_runtime.entry_url;
   }
-  return rawKind.value !== "builtin" || !!builtinComponent.value;
+  return true;
 });
 const kind = computed(() => (supportedKind.value ? rawKind.value : ""));
 const callableInterfaceFingerprint = computed(() => bridgeInterfaceFingerprint(plugin.value?.interfaces ?? []));
@@ -318,11 +298,6 @@ function onActionClick(a: PluginViewAction) {
     :plugin-route="viewRoute"
     :runtime="plugin.ui_runtime"
     :interfaces="plugin.interfaces ?? []"
-  />
-
-  <component
-    v-else-if="kind === 'builtin' && hasAccess && builtinComponent"
-    :is="builtinComponent"
   />
 
   <div v-else class="p-6 space-y-6">

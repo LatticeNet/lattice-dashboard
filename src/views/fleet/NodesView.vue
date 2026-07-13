@@ -21,7 +21,7 @@ import {
   Wifi,
   X,
 } from "lucide-vue-next";
-import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type EnrollTokenResponse, type LinesListResponse, type Node } from "@/lib/api";
+import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type EnrollTokenResponse, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -40,7 +40,6 @@ import {
   nodeHasAgentCapability,
   nodeHasArchOsToken,
   nodeHasTagToken,
-  vpnLineNodeIds,
 } from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -79,14 +78,6 @@ const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "no
 const agentUpdatesQuery = useAsyncData(() => api.agentUpdates.list().then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
 });
-const vpnLinesQuery = useAsyncData(
-  () =>
-    api.plugins
-      .call<LinesListResponse>("latticenet.vpn-core", "latticenet.vpn-core/lines", "list")
-      .catch(() => ({ groups: [], count: 0 })),
-  { pollInterval: 30000 },
-);
-
 // Client-side ring buffer: record each poll so NodeCard sparklines have history.
 const metricBuffer = useMetricBuffer();
 watch(
@@ -102,7 +93,6 @@ const enrollId = ref("");
 const enrollRole = ref("");
 const enrollTags = ref("");
 const enrollComment = ref("");
-const enrollWireGuardIp = ref("");
 const enrollAgentSourceAllowlist = ref("");
 const enrollGroups = ref<string[]>([]);
 const enrollOpen = ref(false);
@@ -113,11 +103,6 @@ const enrollNoExec = ref(false);
 const enrollAllowTerminal = ref(false);
 const enrollTerminalTransport = ref<"poll" | "stream">("stream");
 const enrollSSHAlerts = ref(false);
-const enrollSingBoxDiscover = ref(false);
-const enrollSingBoxBin = ref("sb");
-const enrollProxyUsageFile = ref("");
-const enrollProxyUsageURL = ref("");
-const enrollProxyUsageXrayAPI = ref("");
 const enrollPending = ref(false);
 const enrollResult = ref<EnrollTokenResponse | undefined>();
 const enrollPlatform = ref<"linux" | "manual">("linux");
@@ -134,7 +119,7 @@ const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
 /** arch/os quick-filter tokens currently engaged (every selected must match). */
 const activeArchOs = ref<string[]>([]);
-type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll" | "singbox" | "vpn-lines";
+type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll";
 const activeAgentCaps = ref<AgentCapabilityFilter[]>([]);
 const agentExpr = ref("");
 const archOsExpr = ref("");
@@ -183,7 +168,6 @@ watch(viewMode, (mode) => {
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
-const vpnLineNodes = computed(() => vpnLineNodeIds(vpnLinesQuery.data.value?.groups));
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
 const duplicatesQuery = useAsyncData(() => api.nodes.duplicates().then((r) => r.groups), {
   pollInterval: 30000,
@@ -243,7 +227,6 @@ function searchFields(node: Node): string[] {
     node.public_ipv6,
     node.internal_ip,
     node.internal_ipv6,
-    node.wireguard_ip,
     node.host_facts?.hostname,
     node.host_facts?.arch,
     node.host_facts?.os,
@@ -325,20 +308,20 @@ function toggleArchOs(tok: string) {
   activeArchOs.value = [...next];
 }
 
-const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll", "singbox", "vpn-lines"];
+const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll"];
 
 const availableAgentCaps = computed(() =>
   AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => nodeMatchesAgentCap(node, cap))),
 );
 
 function nodeMatchesAgentCap(node: Node, cap: AgentCapabilityFilter): boolean {
-  return nodeHasAgentCapability(node, cap, vpnLineNodes.value.has(node.id));
+  return nodeHasAgentCapability(node, cap);
 }
 
 function matchesAgentCaps(node: Node): boolean {
   if (activeAgentCaps.value.length > 0 && !activeAgentCaps.value.every((cap) => nodeMatchesAgentCap(node, cap))) return false;
   if (!agentExpr.value.trim()) return true;
-  return evalFilterExpression(agentExpr.value, (token) => nodeHasAgentCapability(node, token, vpnLineNodes.value.has(node.id))).value;
+  return evalFilterExpression(agentExpr.value, (token) => nodeHasAgentCapability(node, token)).value;
 }
 
 function toggleAgentCap(cap: AgentCapabilityFilter) {
@@ -400,7 +383,7 @@ function clearFilters() {
 }
 
 function agentBadges(node: Node): string[] {
-  return agentConfigBadges(node, vpnLineNodes.value.has(node.id));
+  return agentConfigBadges(node);
 }
 
 /* ----------------------------------------------------------------- */
@@ -513,11 +496,6 @@ function enrollAgentLaunch(): AgentLaunchConfig {
     allow_terminal: enrollAllowTerminal.value,
     terminal_transport: enrollAllowTerminal.value ? enrollTerminalTransport.value : undefined,
     ssh_alerts: enrollSSHAlerts.value,
-    singbox_discover: enrollSingBoxDiscover.value,
-    singbox_bin: enrollSingBoxDiscover.value ? enrollSingBoxBin.value.trim() || "sb" : undefined,
-    proxy_usage_file: enrollProxyUsageFile.value.trim() || undefined,
-    proxy_usage_url: enrollProxyUsageURL.value.trim() || undefined,
-    proxy_usage_xray_api: enrollProxyUsageXrayAPI.value.trim() || undefined,
   };
 }
 
@@ -541,7 +519,6 @@ async function enrollNode() {
       role: enrollRole.value.trim() || undefined,
       tags: parseTags(),
       comment: enrollComment.value.trim() || undefined,
-      wireguard_ip: enrollWireGuardIp.value.trim() || undefined,
       agent_source_allowlist: parseAgentSourceAllowlist(),
       group_ids: enrollGroups.value.length ? [...enrollGroups.value] : undefined,
       agent_launch: enrollAgentLaunch(),
@@ -551,7 +528,6 @@ async function enrollNode() {
     enrollRole.value = "";
     enrollTags.value = "";
     enrollComment.value = "";
-    enrollWireGuardIp.value = "";
     enrollAgentSourceAllowlist.value = "";
     enrollGroups.value = [];
     enrollAllowExec.value = false;
@@ -560,11 +536,6 @@ async function enrollNode() {
     enrollAllowTerminal.value = false;
     enrollTerminalTransport.value = "stream";
     enrollSSHAlerts.value = false;
-    enrollSingBoxDiscover.value = false;
-    enrollSingBoxBin.value = "sb";
-    enrollProxyUsageFile.value = "";
-    enrollProxyUsageURL.value = "";
-    enrollProxyUsageXrayAPI.value = "";
     toast.success(t("fleet.nodes.toast.tokenCreated"));
     nodesQuery.refresh();
     agentUpdatesQuery.refresh();
@@ -749,10 +720,6 @@ function openTerminal(node: Node) {
             <Label for="enroll-comment">{{ $t('fleet.nodes.enroll.comment') }}</Label>
             <Input id="enroll-comment" v-model="enrollComment" :placeholder="$t('common.misc.optional')" />
           </div>
-          <div class="grid gap-2">
-            <Label for="enroll-wg">{{ $t('fleet.nodes.enroll.wireguardIp') }}</Label>
-            <Input id="enroll-wg" v-model="enrollWireGuardIp" :placeholder="$t('common.misc.optional')" />
-          </div>
           <div class="grid gap-2 lg:col-span-2">
             <Label for="enroll-agent-source-allowlist">{{ $t('fleet.nodes.enroll.agentSourceAllowlist') }}</Label>
             <textarea
@@ -849,13 +816,6 @@ function openTerminal(node: Node) {
                 <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
               </span>
             </label>
-            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-              <input v-model="enrollSingBoxDiscover" type="checkbox" class="mt-0.5 size-4" />
-              <span>
-                <span class="block font-medium">{{ $t('fleet.nodes.enroll.singBoxDiscover') }}</span>
-                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.singBoxDiscoverHint') }}</span>
-              </span>
-            </label>
           </div>
           <div v-if="enrollAdvancedOpen" class="grid gap-3 px-3 pb-3 md:grid-cols-4">
             <div class="grid gap-1.5">
@@ -867,22 +827,6 @@ function openTerminal(node: Node) {
                   <SelectItem value="stream">stream</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div class="grid gap-1.5">
-              <Label>{{ $t('fleet.nodes.enroll.singBoxBin') }}</Label>
-              <Input v-model="enrollSingBoxBin" :disabled="!enrollSingBoxDiscover" placeholder="sb" />
-            </div>
-            <div class="grid gap-1.5">
-              <Label>{{ $t('fleet.nodes.enroll.proxyUsageFile') }}</Label>
-              <Input v-model="enrollProxyUsageFile" placeholder="/run/lattice/proxy-usage.json" />
-            </div>
-            <div class="grid gap-1.5">
-              <Label>{{ $t('fleet.nodes.enroll.proxyUsageUrl') }}</Label>
-              <Input v-model="enrollProxyUsageURL" placeholder="http://127.0.0.1:19090/stats" />
-            </div>
-            <div class="grid gap-1.5 md:col-span-2">
-              <Label>{{ $t('fleet.nodes.enroll.proxyUsageXray') }}</Label>
-              <Input v-model="enrollProxyUsageXrayAPI" placeholder="127.0.0.1:10085" />
             </div>
           </div>
         </div>
@@ -1205,7 +1149,7 @@ function openTerminal(node: Node) {
                       <Badge
                         v-for="badge in agentBadges(cardNode)"
                         :key="`${cardNode.id}:${badge}`"
-                        :variant="badge === 'vpn-lines' ? 'success' : 'outline'"
+                        variant="outline"
                       >
                         {{ badge }}
                       </Badge>
@@ -1253,7 +1197,6 @@ function openTerminal(node: Node) {
                   :can-admin-nodes="canAdminNodes"
                   :pending-node-id="pendingNode"
                   :update-policies="updatePolicies"
-                  :vpn-line-node-ids="vpnLineNodes"
                   @open="openNode"
                   @terminal="openTerminal"
                   @rotate="rotateToken"

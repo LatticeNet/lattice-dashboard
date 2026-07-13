@@ -1365,11 +1365,6 @@ async function runReminders(selectedOnly: boolean) {
                       {{ $t('fleet.inventory.actions.node') }}
                     </RouterLink>
                   </Button>
-                  <Button variant="ghost" size="sm" as-child>
-                    <RouterLink :to="{ path: '/plugins/latticenet.vpn-core/lines', query: { node: machine.node_id } }">
-                      {{ $t('fleet.inventory.actions.vpn') }}
-                    </RouterLink>
-                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

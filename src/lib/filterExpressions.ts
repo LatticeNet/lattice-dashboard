@@ -3,15 +3,6 @@ export type ExprResult = { ok: boolean; value: boolean; error?: string };
 export type TokenMatcher = (token: string) => boolean;
 
 const TOKEN_ALIASES: Record<string, string> = {
-  singbox: "sing-box",
-  "sing_box": "sing-box",
-  vpncore: "vpn-lines",
-  "vpn-core": "vpn-lines",
-  "vpn_line": "vpn-lines",
-  "vpn-lines": "vpn-lines",
-  "line-recorded": "vpn-lines",
-  "line_recorded": "vpn-lines",
-  lines: "vpn-lines",
   macos: "darwin",
   mac: "darwin",
   drawin: "darwin",

@@ -18,13 +18,11 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   terminal: () => import("@/views/operations/TerminalView.vue"),
   audit: () => import("@/views/operations/AuditView.vue"),
   // Networking
-  "network-guard": () => import("@/views/networking/GuardView.vue"),
   "network-policy": () => import("@/views/networking/PolicyView.vue"),
   "network-dns": () => import("@/views/networking/DnsView.vue"),
   "network-geo-routing": () => import("@/views/networking/GeoRoutingView.vue"),
   "network-ddns": () => import("@/views/networking/DdnsView.vue"),
   "network-tunnels": () => import("@/views/networking/TunnelsView.vue"),
-  "network-wireguard": () => import("@/views/networking/WireGuardView.vue"),
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
   "platform-workers": () => import("@/views/platform/WorkersView.vue"),
@@ -73,14 +71,6 @@ const childRoutes: RouteRecordRaw[] = NAV.flatMap((section) =>
  * guard's scope check and the breadcrumb logic keep working unchanged.
  */
 const manualChildRoutes: RouteRecordRaw[] = [
-  { path: "network/guard", redirect: "/plugins/latticenet.netguard/firewall" },
-  { path: "network/wireguard", redirect: "/plugins/latticenet.wireguard/networks" },
-  { path: "proxy/inbounds", redirect: "/plugins/latticenet.vpn-core/inbounds" },
-  { path: "proxy/users", redirect: "/plugins/latticenet.vpn-core/users" },
-  { path: "proxy/profiles", redirect: "/plugins/latticenet.vpn-core/profiles" },
-  { path: "proxy/subscriptions", redirect: "/plugins/latticenet.vpn-core/subscriptions" },
-  { path: "proxy/usage", redirect: "/plugins/latticenet.vpn-core/usage" },
-  { path: "proxy/discovered", redirect: "/plugins/latticenet.vpn-core/discovered" },
   {
     path: "nodes/:id",
     name: "node-detail",

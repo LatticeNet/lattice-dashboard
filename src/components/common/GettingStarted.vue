@@ -5,7 +5,6 @@ import {
   Circle,
   Server,
   Activity,
-  DoorOpen,
   KeyRound,
   Sparkles,
 } from "lucide-vue-next";
@@ -20,7 +19,6 @@ const props = defineProps<{
   nodeCount: number;
   twoFactorEnabled?: boolean;
   monitorCount?: number;
-  proxyInboundCount?: number;
 }>();
 
 const auth = useAuthStore();
@@ -58,16 +56,6 @@ const steps = computed<Step[]>(() => [
     cta: t("onboarding.addMonitorCta"),
     done: !!props.monitorCount && props.monitorCount > 0,
     allowed: auth.can("monitor:admin"),
-  },
-  {
-    key: "proxy-inbound",
-    icon: DoorOpen,
-    title: t("onboarding.addInbound"),
-    description: t("onboarding.addInboundHint"),
-    to: "/proxy/inbounds",
-    cta: t("onboarding.addInboundCta"),
-    done: !!props.proxyInboundCount && props.proxyInboundCount > 0,
-    allowed: auth.can("proxy:admin"),
   },
   {
     key: "two-factor",

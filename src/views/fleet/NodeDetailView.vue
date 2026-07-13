@@ -30,7 +30,6 @@ import {
   MapPin,
   Pencil,
   Power,
-  Radar,
   RadioTower,
   RefreshCw,
   RotateCw,
@@ -56,7 +55,6 @@ import {
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
-import { usePluginContributions } from "@/composables/usePluginContributions";
 import { useAuthStore } from "@/stores/auth";
 import { nodeStatusMeta } from "@/lib/status";
 import { groupColor } from "@/lib/groupColors";
@@ -110,22 +108,11 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-const { navContributions } = usePluginContributions();
-
 const nodeId = computed(() => String(route.params.id ?? ""));
-
-/** Guard: only show the VPN Discovery cross-link when the plugin is active and
- *  has contributed that nav entry — same active-filtered source as the sidebar. */
-const hasVpnDiscovery = computed(() =>
-  navContributions.value.some(
-    (n) => n.pluginId === "latticenet.vpn-core" && n.route === "discovered",
-  ),
-);
 
 const canAdminNodes = computed(() => auth.can("node:admin"));
 const canPlanUpdates = computed(() => auth.can("node:admin") && auth.can("network:plan"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
-const canRunTasks = computed(() => auth.can("task:run"));
 
 /** Treat 403 as "section not visible" rather than a hard error (per OverviewView). */
 function soften<T>(fetcher: () => Promise<T>) {
@@ -172,11 +159,6 @@ const launchNoExec = ref(false);
 const launchAllowTerminal = ref(false);
 const launchTerminalTransport = ref<"poll" | "stream">("stream");
 const launchSSHAlerts = ref(false);
-const launchSingBoxDiscover = ref(false);
-const launchSingBoxBin = ref("sb");
-const launchProxyUsageFile = ref("");
-const launchProxyUsageURL = ref("");
-const launchProxyUsageXrayAPI = ref("");
 const launchPlatform = ref<"linux" | "manual">("linux");
 const reconfigurePending = ref(false);
 const reconfigureResult = ref<{ command: string; commands?: Record<string, string>; agent_launch?: AgentLaunchConfig } | undefined>();
@@ -189,11 +171,6 @@ function seedLaunchDraft(n?: Node) {
   launchAllowTerminal.value = !!launch?.allow_terminal;
   launchTerminalTransport.value = launch?.terminal_transport === "poll" ? "poll" : "stream";
   launchSSHAlerts.value = !!launch?.ssh_alerts;
-  launchSingBoxDiscover.value = !!launch?.singbox_discover;
-  launchSingBoxBin.value = launch?.singbox_bin || "sb";
-  launchProxyUsageFile.value = launch?.proxy_usage_file || "";
-  launchProxyUsageURL.value = launch?.proxy_usage_url || "";
-  launchProxyUsageXrayAPI.value = launch?.proxy_usage_xray_api || "";
   reconfigureResult.value = undefined;
 }
 
@@ -211,11 +188,6 @@ function launchPayload(): AgentLaunchConfig {
     allow_terminal: launchAllowTerminal.value,
     terminal_transport: launchAllowTerminal.value ? launchTerminalTransport.value : undefined,
     ssh_alerts: launchSSHAlerts.value,
-    singbox_discover: launchSingBoxDiscover.value,
-    singbox_bin: launchSingBoxDiscover.value ? launchSingBoxBin.value.trim() || "sb" : undefined,
-    proxy_usage_file: launchProxyUsageFile.value.trim() || undefined,
-    proxy_usage_url: launchProxyUsageURL.value.trim() || undefined,
-    proxy_usage_xray_api: launchProxyUsageXrayAPI.value.trim() || undefined,
   };
 }
 
@@ -226,11 +198,6 @@ type LaunchSnapshot = {
   noExec: boolean;
   terminal: "off" | "poll" | "stream";
   sshAlerts: boolean;
-  singBoxDiscover: boolean;
-  singBoxBin: string;
-  usageFile: string;
-  usageUrl: string;
-  xrayStats: string;
 };
 
 function launchSnapshot(profile: AgentProfileLike): LaunchSnapshot {
@@ -241,11 +208,6 @@ function launchSnapshot(profile: AgentProfileLike): LaunchSnapshot {
     noExec: !!profile?.no_exec,
     terminal: allowTerminal ? (profile?.terminal_transport === "stream" ? "stream" : "poll") : "off",
     sshAlerts: !!profile?.ssh_alerts,
-    singBoxDiscover: !!profile?.singbox_discover,
-    singBoxBin: profile?.singbox_discover ? profile?.singbox_bin || "sb" : "",
-    usageFile: profile?.proxy_usage_file || "",
-    usageUrl: profile?.proxy_usage_url || "",
-    xrayStats: profile?.proxy_usage_xray_api || "",
   };
 }
 
@@ -255,11 +217,6 @@ const launchSnapshotKeys: Array<keyof LaunchSnapshot> = [
   "noExec",
   "terminal",
   "sshAlerts",
-  "singBoxDiscover",
-  "singBoxBin",
-  "usageFile",
-  "usageUrl",
-  "xrayStats",
 ];
 
 function launchValueLabel(value: LaunchSnapshot[keyof LaunchSnapshot]): string {
@@ -273,7 +230,6 @@ function launchSnapshotSummary(snapshot?: LaunchSnapshot): string {
     snapshot.noExec ? "no-exec" : snapshot.allowExec ? "exec" : "no task exec",
     snapshot.allowRootExec ? "root" : "no root",
     `terminal:${snapshot.terminal}`,
-    snapshot.singBoxDiscover ? "sing-box:on" : "sing-box:off",
   ];
   return parts.join(" · ");
 }
@@ -552,25 +508,6 @@ function goToInventory() {
 function goToMonitoring() {
   if (node.value) router.push({ name: "monitoring", query: { node: node.value.id } });
 }
-function goToVpnDiscovery() {
-  if (node.value) router.push({ path: "/plugins/latticenet.vpn-core/discovered", query: { node: node.value.id } });
-}
-
-const probePending = ref(false);
-
-async function probeSingBox() {
-  if (!node.value || !canRunTasks.value || !isLive.value || probePending.value) return;
-  probePending.value = true;
-  try {
-    const result = await api.proxy.managed.probe({ node_id: node.value.id });
-    toast.success(t("fleet.nodes.detail.probeSingBoxQueued", { id: result.task_id }));
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.nodes.detail.probeSingBoxFailed"));
-  } finally {
-    probePending.value = false;
-  }
-}
-
 /* ----------------------------------------------------------------- */
 /* Identity editing (name / role / tags). Operator-owned; gated on    */
 /* node:admin like the other admin controls. The form seeds once per  */
@@ -779,8 +716,6 @@ const DELETE_COUNT_FIELDS: { key: string; field: keyof NodeDeletePlanView }[] = 
   { key: "geoRoutingStripped", field: "geo_routing_stripped" },
   { key: "geoRoutingDeleted", field: "geo_routing_deleted" },
   { key: "agentUpdatePolicies", field: "agent_update_policies" },
-  { key: "proxyNodeProfiles", field: "proxy_node_profiles" },
-  { key: "proxyUsageSnapshots", field: "proxy_usage_snapshots" },
   { key: "monitorsStripped", field: "monitors_stripped" },
   { key: "monitorResults", field: "monitor_results" },
   { key: "logSources", field: "log_sources" },
@@ -788,7 +723,6 @@ const DELETE_COUNT_FIELDS: { key: string; field: keyof NodeDeletePlanView }[] = 
   { key: "approvals", field: "approvals" },
   { key: "tunnels", field: "tunnels" },
   { key: "terminalSessions", field: "terminal_sessions" },
-  { key: "proxyDriftCleared", field: "proxy_drift_cleared" },
 ];
 
 const deleteImpactRows = computed(() => {
@@ -1078,20 +1012,6 @@ async function resolveGeo() {
           <RadioTower class="size-4" aria-hidden="true" />
           {{ $t('fleet.nodes.detail.viewMonitoring') }}
         </Button>
-        <Button v-if="hasVpnDiscovery" variant="outline" size="sm" @click="goToVpnDiscovery">
-          <Radar class="size-4" aria-hidden="true" />
-          {{ $t('fleet.nodes.detail.viewVpnDiscovery') }}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="!canRunTasks || !isLive || probePending"
-          :title="$t('fleet.nodes.detail.probeSingBoxTitle')"
-          @click="probeSingBox"
-        >
-          <RefreshCw :class="cn('size-4', probePending && 'animate-spin')" aria-hidden="true" />
-          {{ $t('fleet.nodes.detail.probeSingBox') }}
-        </Button>
       </div>
     </div>
 
@@ -1357,20 +1277,6 @@ async function resolveGeo() {
                   :value="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
                 />
               </div>
-              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
-                <div class="min-w-0">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.wireguardIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.wireguard_ip || $t('fleet.nodes.detail.notSet') }}</p>
-                </div>
-                <CopyButton v-if="node.wireguard_ip" :value="node.wireguard_ip" />
-              </div>
-              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
-                <div class="min-w-0">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.wireguardEndpoint') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.wireguard_endpoint || $t('fleet.nodes.detail.notSet') }}</p>
-                </div>
-                <CopyButton v-if="node.wireguard_endpoint" :value="node.wireguard_endpoint" />
-              </div>
             </div>
 
             <!-- IP discovery override (operator-owned; pushed to the agent) -->
@@ -1533,13 +1439,6 @@ async function resolveGeo() {
                     <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
                   </span>
                 </label>
-                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <input v-model="launchSingBoxDiscover" type="checkbox" class="mt-0.5 size-4" />
-                  <span>
-                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.singBoxDiscover') }}</span>
-                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.singBoxDiscoverHint') }}</span>
-                  </span>
-                </label>
               </div>
 
               <div class="grid gap-3 md:grid-cols-3">
@@ -1552,22 +1451,6 @@ async function resolveGeo() {
                       <SelectItem value="stream">stream</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.nodes.enroll.singBoxBin') }}</Label>
-                  <Input v-model="launchSingBoxBin" :disabled="!launchSingBoxDiscover" placeholder="sb" />
-                </div>
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.nodes.enroll.proxyUsageFile') }}</Label>
-                  <Input v-model="launchProxyUsageFile" placeholder="/run/lattice/proxy-usage.json" />
-                </div>
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.nodes.enroll.proxyUsageUrl') }}</Label>
-                  <Input v-model="launchProxyUsageURL" placeholder="http://127.0.0.1:19090/stats" />
-                </div>
-                <div class="grid gap-1.5 md:col-span-2">
-                  <Label>{{ $t('fleet.nodes.enroll.proxyUsageXray') }}</Label>
-                  <Input v-model="launchProxyUsageXrayAPI" placeholder="127.0.0.1:10085" />
                 </div>
               </div>
 

@@ -6,7 +6,6 @@ import frame from "./frame";
 import fleet from "./fleet";
 import operations from "./operations";
 import networking from "./networking";
-import proxy from "./proxy";
 import platform from "./platform";
 import settings from "./settings";
 
@@ -15,7 +14,6 @@ export default {
   ...fleet,
   ...operations,
   ...networking,
-  ...proxy,
   ...platform,
   ...settings,
 };

@@ -20,7 +20,7 @@ import {
   Trash2,
   XCircle,
 } from "lucide-vue-next";
-import { api, unwrap, type LinesListResponse, type Node, type TaskResult, type TaskView } from "@/lib/api";
+import { api, unwrap, type Node, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
@@ -31,7 +31,6 @@ import {
   agentConfigBadges,
   evalFilterExpression,
   nodeMatchesTargetToken,
-  vpnLineNodeIds,
 } from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -104,14 +103,6 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
   () => api.nodes.list().then((r) => unwrap(r, "nodes")),
   { pollInterval: 5000 },
 );
-const vpnLinesQuery = useAsyncData(
-  () =>
-    api.plugins
-      .call<LinesListResponse>("latticenet.vpn-core", "latticenet.vpn-core/lines", "list")
-      .catch(() => ({ groups: [], count: 0 })),
-  { pollInterval: 30000 },
-);
-
 const statusFilter = ref<StatusFilter>("all");
 {
   const seeded = route.query.status;
@@ -154,7 +145,6 @@ const stepUpPending = stepUp.pending;
 const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const tasks = computed<TaskView[]>(() => tasksQuery.data.value ?? []);
 const results = computed<TaskResult[]>(() => resultsQuery.data.value ?? []);
-const vpnLineNodes = computed(() => vpnLineNodeIds(vpnLinesQuery.data.value?.groups));
 const nodesById = computed<Record<string, Node>>(() => Object.fromEntries(nodes.value.map((n) => [n.id, n])));
 const tasksById = computed<Record<string, TaskView>>(() => Object.fromEntries(tasks.value.map((task) => [task.id, task])));
 
@@ -176,7 +166,7 @@ const filteredTargetNodes = computed(() => {
     .filter((node) => {
       if (targetTag.value !== "all" && !(node.tags ?? []).includes(targetTag.value)) return false;
       if (targetRegion.value !== "all" && nodeRegion(node) !== targetRegion.value) return false;
-      if (targetExpr.value.trim() && !evalFilterExpression(targetExpr.value, (token) => nodeMatchesTargetToken(node, token, vpnLineNodes.value.has(node.id))).value) return false;
+      if (targetExpr.value.trim() && !evalFilterExpression(targetExpr.value, (token) => nodeMatchesTargetToken(node, token)).value) return false;
       if (!q) return true;
       return [
         node.id,
@@ -555,7 +545,7 @@ function taskProgressLabel(task: TaskView): string {
 }
 
 function nodeAgentBadges(node?: Node): string[] {
-  return node ? agentConfigBadges(node, vpnLineNodes.value.has(node.id)) : [];
+  return node ? agentConfigBadges(node) : [];
 }
 
 async function refreshAll() {
@@ -816,7 +806,7 @@ async function deleteTask(task: TaskView) {
                       <Badge
                         v-for="badge in nodeAgentBadges(node).slice(0, 3)"
                         :key="`${node.id}:${badge}`"
-                        :variant="badge === 'vpn-lines' ? 'success' : 'outline'"
+                        variant="outline"
                         class="text-[10px]"
                       >
                         {{ badge }}

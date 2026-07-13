@@ -31,35 +31,11 @@ import type {
   MachineVendorView,
   MachineLinkRevealResponse,
   RenewalReminderFire,
-  ProxyInboundView,
-  ProxyInboundUpsertRequest,
-  ProxyUserView,
-  ProxyUserUpsertRequest,
-  RotateSubTokenResponse,
-  ProxyNodeProfileView,
-  ProxyNodeProfileUpsertRequest,
-  ProxyUsageResponse,
-  SingBoxInventory,
-  ProxyManagedAddRequest,
-  ProxyManagedConncheckRequest,
-  ProxyManagedDeleteRequest,
-  ProxyManagedProbeRequest,
-  ProxyManagedUsersRequest,
-  ProxyManagedLineRevealRequest,
-  ProxyManagedLineRevealResponse,
-  ProxyManagedTaskResponse,
-  VPNCredentialRevealResponse,
   StepUpResponse,
   WebAuthnRegisterBeginResponse,
   WebAuthnLoginBeginResponse,
   WebAuthnCredentialResponse,
   WebAuthnCredentialsResponse,
-  NFTInputsView,
-  NFTInputsUpsertBody,
-  GuardZone,
-  SecurityGroupView,
-  NodeGuardView,
-  NetGuardPlanResponse,
   NetPolicyView,
   NetPolicyUpsertRequest,
   NetPolicyGraph,
@@ -73,7 +49,6 @@ import type {
   DDNSUpsertRequest,
   TunnelView,
   TunnelUpsertRequest,
-  WireGuardPlanRequest,
   PluginView,
   PluginInstallationView,
   PluginLifecycleStatus,
@@ -240,7 +215,6 @@ export const api = {
       comment?: string;
       tags?: string[];
       role?: string;
-      wireguard_ip?: string;
       agent_source_allowlist?: string[];
       group_ids?: string[];
       agent_launch?: AgentLaunchConfig;
@@ -429,71 +403,6 @@ export const api = {
     verify: () => http.get<AuditVerifyResponse>("/api/audit/verify"),
   },
 
-  proxy: {
-    inbounds: () => http.get<{ inbounds: ProxyInboundView[] }>("/api/proxy/inbounds"),
-    upsertInbound: (input: ProxyInboundUpsertRequest) =>
-      http.post<ProxyInboundView>("/api/proxy/inbounds", input),
-    deleteInbound: (id: string, force?: boolean) =>
-      http.post<{ ok: boolean }>("/api/proxy/inbounds/delete", { id, force }),
-    users: () => http.get<{ users: ProxyUserView[] }>("/api/proxy/users"),
-    upsertUser: (input: ProxyUserUpsertRequest) =>
-      http.post<ProxyUserView>("/api/proxy/users", input),
-    deleteUser: (id: string) => http.post<{ ok: boolean }>("/api/proxy/users/delete", { id }),
-    revealUserCredentials: (id: string, step_up_grant: string) =>
-      http.post<VPNCredentialRevealResponse>("/api/proxy/users/reveal-credentials", { id, step_up_grant }),
-    rotateSubToken: (id: string) =>
-      http.post<RotateSubTokenResponse>("/api/proxy/users/rotate-sub-token", { id }),
-    profiles: () => http.get<{ profiles: ProxyNodeProfileView[] }>("/api/proxy/profiles"),
-    upsertProfile: (input: ProxyNodeProfileUpsertRequest) =>
-      http.post<ProxyNodeProfileView>("/api/proxy/profiles", input),
-    deleteProfile: (node_id: string) =>
-      http.post<{ ok: boolean }>("/api/proxy/profiles/delete", { node_id }),
-    planNode: (node_id: string) =>
-      http.post<ApprovalView>(`/api/proxy/nodes/${encodeURIComponent(node_id)}/plan`, {}),
-    usage: () => http.get<ProxyUsageResponse>("/api/proxy/usage"),
-    // Read-only adoption bridge: sing-box nodes discovered on each machine but
-    // managed out-of-band (agents started with -singbox-discover).
-    discovered: () =>
-      http.get<{ inventories: SingBoxInventory[] }>("/api/proxy/discovered"),
-    // Model-B adoption bridge. These endpoints queue async node-agent tasks and
-    // return a task_id; probe is read-only and refreshes the discovered inventory
-    // when its task-result is accepted, while add/delete surface on the next
-    // discovery report. Mutations require proxy:admin/task:run as enforced server-side.
-    managed: {
-      probe: (input: ProxyManagedProbeRequest) =>
-        http.post<ProxyManagedTaskResponse>("/api/proxy/managed/probe", input),
-      add: (input: ProxyManagedAddRequest) =>
-        http.post<ProxyManagedTaskResponse>("/api/proxy/managed/add", input),
-      delete: (input: ProxyManagedDeleteRequest) =>
-        http.post<ProxyManagedTaskResponse>("/api/proxy/managed/delete", input),
-      conncheck: (input: ProxyManagedConncheckRequest) =>
-        http.post<ProxyManagedTaskResponse>("/api/proxy/managed/conncheck", input),
-      users: (input: ProxyManagedUsersRequest) =>
-        http.post<ProxyManagedTaskResponse & { bind_user_ids?: string[]; unbind_user_ids?: string[] }>("/api/proxy/managed/users", input),
-      revealLine: (input: ProxyManagedLineRevealRequest) =>
-        http.post<ProxyManagedLineRevealResponse>("/api/proxy/managed/reveal-line", input),
-    },
-  },
-
-  nft: {
-    inputs: () => http.get<{ inputs: NFTInputsView[] }>("/api/network/nft/inputs"),
-    upsertInputs: (input: NFTInputsUpsertBody) =>
-      http.post<NFTInputsView>("/api/network/nft/inputs", input),
-    deleteInputs: (node_id: string) =>
-      http.post<{ ok: boolean }>("/api/network/nft/inputs/delete", { node_id }),
-    plan: (input: NFTInputsUpsertBody) =>
-      http.post<ApprovalView>("/api/network/nft/plan", input),
-  },
-
-  netguard: {
-    groups: () => http.get<{ groups: SecurityGroupView[] }>("/api/netguard/groups"),
-    zones: () => http.get<{ zones: GuardZone[] }>("/api/netguard/zones"),
-    nodes: () => http.get<{ nodes: NodeGuardView[] }>("/api/netguard/nodes"),
-    adopt: (node_id: string) => http.post<NodeGuardView>("/api/netguard/nodes/adopt", { node_id }),
-    plan: (node_id: string, accept_lockout_risk = false) =>
-      http.post<NetGuardPlanResponse>("/api/netguard/plan", { node_id, accept_lockout_risk }),
-  },
-
   netpolicy: {
     list: () => http.get<{ policies: NetPolicyView[] }>("/api/netpolicy"),
     upsert: (input: NetPolicyUpsertRequest) => http.post<NetPolicyView>("/api/netpolicy", input),
@@ -554,11 +463,6 @@ export const api = {
     create: (input: TunnelUpsertRequest) => http.post<TunnelView>("/api/tunnels", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/tunnels/delete", { id }),
     plan: (id: string) => http.post<ApprovalView>("/api/tunnels/plan", { id }),
-  },
-
-  wireguard: {
-    plan: (input: WireGuardPlanRequest) =>
-      http.post<ApprovalView>("/api/network/wireguard/plan", input),
   },
 
   plugins: {

@@ -145,13 +145,6 @@ export interface AgentLaunchConfig {
   allow_terminal?: boolean;
   terminal_transport?: "poll" | "stream" | string;
   ssh_alerts?: boolean;
-  singbox_discover?: boolean;
-  singbox_bin?: string;
-  proxy_usage_file?: string;
-  proxy_usage_url?: string;
-  proxy_usage_xray_api?: string;
-  proxy_usage_xray_bin?: string;
-  proxy_usage_xray_pattern?: string;
   updated_at?: string;
 }
 
@@ -165,13 +158,6 @@ export interface AgentRuntimeConfig {
   task_sandbox_features?: string[];
   task_sandbox_warning?: string;
   ssh_alerts?: boolean;
-  singbox_discover?: boolean;
-  singbox_bin?: string;
-  proxy_usage_file?: string;
-  proxy_usage_url?: string;
-  proxy_usage_xray_api?: string;
-  proxy_usage_xray_bin?: string;
-  proxy_usage_xray_pattern?: string;
   reported_at?: string;
 }
 
@@ -183,10 +169,6 @@ export interface Node {
   tags?: string[];
   role?: string;
   inventory?: NodeInventory | null;
-  wireguard_ip?: string;
-  wireguard_public_key?: string;
-  wireguard_endpoint?: string;
-  wireguard_port?: number;
   public_ip?: string;
   public_ipv6?: string;
   internal_ip?: string;
@@ -549,272 +531,6 @@ export interface RenewalReminderFire {
   next_renewal: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Proxy (flagship) — VLESS + REALITY inbounds, subscriber users, node profiles.
-// Secrets (reality_private_key, uuid, password, sub_token) are write-only; reads
-// expose only has_* booleans. Subscription URL is one-time-revealed on rotate.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type ProxyCore = "sing-box" | "xray";
-export type ProxyUserStatus = "active" | "expired" | "over_quota" | "disabled" | string;
-
-export interface ProxyInboundView {
-  id: string;
-  name: string;
-  core: ProxyCore | string;
-  protocol: string;
-  listen?: string;
-  port: number;
-  transport?: string;
-  path?: string;
-  host?: string;
-  security?: string;
-  sni?: string;
-  alpn?: string[];
-  fingerprint?: string;
-  cert_path?: string;
-  key_path?: string;
-  has_reality_private_key: boolean;
-  reality_public_key?: string;
-  reality_short_ids?: string[];
-  reality_dest?: string;
-  ss_method?: string;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProxyInboundUpsertRequest {
-  id?: string;
-  name: string;
-  core?: ProxyCore | string;
-  protocol?: string;
-  listen?: string;
-  port: number;
-  transport?: string;
-  sni?: string;
-  alpn?: string[];
-  fingerprint?: string;
-  reality_private_key: string;
-  reality_public_key?: string;
-  reality_short_ids: string[];
-  reality_dest: string;
-  enabled?: boolean;
-}
-
-export interface ProxyUserView {
-  id: string;
-  name: string;
-  enabled: boolean;
-  has_uuid: boolean;
-  has_password: boolean;
-  has_sub_token: boolean;
-  inbound_ids?: string[];
-  traffic_limit_bytes?: number;
-  expires_at?: string;
-  used_bytes: number;
-  last_seen_at?: string;
-  status: ProxyUserStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProxyUserUpsertRequest {
-  id?: string;
-  name: string;
-  enabled?: boolean;
-  uuid?: string;
-  password?: string;
-  sub_token?: string;
-  inbound_ids?: string[];
-  traffic_limit_bytes?: number;
-  expires_at?: string;
-}
-
-export interface RotateSubTokenResponse {
-  user: ProxyUserView;
-  subscription_url: string;
-  token_sha256: string;
-}
-
-export interface ProxyNodeProfileView {
-  id: string;
-  node_id: string;
-  node_name?: string;
-  core: ProxyCore | string;
-  inbound_ids: string[];
-  hostname?: string;
-  listen_ip?: string;
-  config_path?: string;
-  stats_api?: string;
-  applied_sha256?: string;
-  last_apply_at?: string;
-  last_error?: string;
-  usage_collector_source?: string;
-  usage_collector_status?: string;
-  usage_collector_checked_at?: string;
-  usage_collector_last_ok_at?: string;
-  usage_collector_last_error?: string;
-  usage_collector_last_error_at?: string;
-  config_stale?: boolean;
-  pending_config_sha256?: string;
-  ineligible_users?: number;
-  drift_reason?: string;
-  drift_checked_at?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProxyNodeProfileUpsertRequest {
-  id?: string;
-  node_id: string;
-  core?: ProxyCore | string;
-  inbound_ids: string[];
-  hostname?: string;
-  listen_ip?: string;
-  config_path?: string;
-  stats_api?: string;
-}
-
-export interface ProxyUsageSnapshotView {
-  node_id: string;
-  node_name?: string;
-  at: string;
-  core_uptime_sec: number;
-  user_bytes: Record<string, number>;
-  line_user_bytes?: Record<string, Record<string, number>>;
-}
-
-export interface ProxyUsageUserView {
-  id: string;
-  name: string;
-  enabled: boolean;
-  used_bytes: number;
-  traffic_limit_bytes?: number;
-  last_seen_at?: string;
-  status: ProxyUserStatus;
-}
-
-export interface ProxyUsageResponse {
-  snapshots: ProxyUsageSnapshotView[];
-  users: ProxyUsageUserView[];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// On-box sing-box discovery (adoption bridge). Agents started with
-// -singbox-discover report the sing-box nodes that already exist on the machine
-// but are managed out-of-band, so the operator can see what is there before
-// adopting it. Read-only — `share_url` is credential-bearing and must never be
-// rendered inline; copy it out of band instead.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface SingBoxNode {
-  name: string;
-  protocol?: string;
-  network?: string;
-  address?: string;
-  port?: string;
-  sni?: string;
-  host?: string;
-  listen_host?: string;
-  outbound_ref?: string;
-  user_count?: number;
-  user_known?: boolean;
-  metadata?: Record<string, string>;
-  public_key?: string;
-  /** Credential-bearing share link — copy only, never display in full. */
-  share_url?: string;
-}
-
-export interface SingBoxInventory {
-  node_id: string;
-  /** RFC3339 timestamp of when the agent last reported this inventory. */
-  at: string;
-  core_version?: string;
-  /** "ok" | "error" — error inventories carry a human-readable `error`. */
-  status?: string;
-  error?: string;
-  nodes: SingBoxNode[];
-}
-
-export interface ProxyDiscoveredResponse {
-  inventories: SingBoxInventory[];
-}
-
-// Model-B adoption bridge (write side). Both endpoints queue an async task on
-// the node agent and return a task_id — the change only surfaces on the next
-// discovery poll, so callers must never block waiting on it.
-export interface ProxyManagedAddRequest {
-  node_id: string;
-  /** A server-allowlisted protocol token, e.g. "reality", "hy2", "ss". */
-  protocol: string;
-  /** Optional listen port (1-65535). */
-  port?: number;
-  /** Optional positional extras forwarded to the on-box generator. */
-  args?: string[];
-}
-
-export interface ProxyManagedDeleteRequest {
-  node_id: string;
-  /** Must match a node name already present in the machine's discovered inventory. */
-  name: string;
-  /** 1-minute interactive 2FA step-up grant required by the server. */
-  step_up_grant?: string;
-}
-
-export interface ProxyManagedProbeRequest {
-  node_id: string;
-}
-
-export interface ProxyManagedConncheckRequest {
-  node_id: string;
-  /** Must match a node name already present in the machine's discovered inventory. */
-  name: string;
-  /** Optional HTTP(S) URL tested through a temporary local sing-box client. */
-  url?: string;
-  /** Optional timeout in seconds; server accepts 2-60. */
-  timeout_sec?: number;
-}
-
-export interface ProxyManagedUsersRequest {
-  node_id: string;
-  line_hash_id: string;
-  bind_user_ids?: string[];
-  unbind_user_ids?: string[];
-}
-
-export interface ProxyManagedTaskResponse {
-  ok: boolean;
-  task_id: string;
-}
-
-export interface ProxyManagedLineRevealRequest {
-  node_id: string;
-  line_hash_id: string;
-  step_up_grant: string;
-}
-
-export interface ProxyManagedLineRevealResponse {
-  ok: boolean;
-  line_hash_id: string;
-  share_url?: string;
-  node?: SingBoxNode;
-}
-
-export interface VPNCredentialRevealResponse {
-  ok: boolean;
-  user: unknown;
-  credentials: Array<{
-    protocol: string;
-    uuid?: string;
-    password?: string;
-    flow?: string;
-    method?: string;
-    security?: string;
-  }>;
-  sub_id?: string;
-}
-
 export interface StepUpResponse {
   ok: boolean;
   grant: string;
@@ -822,168 +538,12 @@ export interface StepUpResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lines read-model (design-12). The unified per-node listener view owned by the
-// vpn-core plugin and served through the dashboard→plugin gateway
-// (api.plugins.call("latticenet.vpn-core", "latticenet.vpn-core/lines", …)).
-// A "line" is one listener/endpoint on a node; `source` records how it entered
-// the model. `user_known === false` marks a discovered line we have not yet
-// inspected, so its `user_count` (0) must render as "unknown", not "0".
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type LineSource = "managed" | "discovered" | "imported";
-
-export interface Line {
-  id: string;
-  /** Stable content hash identifying the line; mono + copyable in the UI. */
-  line_hash_id: string;
-  /** Stable identity persisted in sing-box `_lattice.line_id`, when available. */
-  line_id?: string;
-  node_id: string;
-  /** Stable node identity persisted in sing-box `_lattice.node_uuid`, when available. */
-  node_identity_uuid?: string;
-  core: string;
-  source: LineSource | string;
-  managed: boolean;
-  name: string;
-  tag?: string;
-  type?: string;
-  listen_host?: string;
-  listen_port?: number;
-  public_host?: string;
-  domain?: string;
-  outbound_ref?: string;
-  /** Resolved downstream server host of the outbound this line routes to (config-fallback discovery only). */
-  outbound_server?: string;
-  /** Resolved downstream server port of the outbound this line routes to (config-fallback discovery only). */
-  outbound_port?: number;
-  /** line_hash_ids of relayed/jumped lines, if this line chains to others. */
-  jump_edges?: string[];
-  user_count: number;
-  /** false ⇒ not yet inspected; render user_count as "unknown" rather than 0. */
-  user_known: boolean;
-  status?: string;
-  last_error?: string;
-  metadata?: Record<string, string>;
-}
-
-export interface LineGroup {
-  node_id: string;
-  node_name?: string;
-  lines: Line[];
-}
-
-export interface LinesListResponse {
-  groups: LineGroup[];
-  count: number;
-}
-
-export interface LineGetResponse {
-  line: Line;
-}
 
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Networking — Network Guard (nft), Network Policy (+graph), Self-host DNS,
 // Geo-Routing, DDNS, Tunnels, WireGuard. Most mutations go through plan→approve.
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface NFTPlanBody {
-  interface_name?: string;
-  wireguard_cidr?: string;
-  public_tcp?: number[];
-  public_udp?: number[];
-  wireguard_tcp?: number[];
-  wireguard_udp?: number[];
-}
-
-export interface NFTInputsView {
-  id: string;
-  node_id: string;
-  node_name?: string;
-  interface_name: string;
-  wireguard_cidr: string;
-  public_tcp?: number[];
-  public_udp?: number[];
-  wireguard_tcp?: number[];
-  wireguard_udp?: number[];
-  updated_at: string;
-}
-
-export interface NFTInputsUpsertBody extends NFTPlanBody {
-  node_id: string;
-}
-
-export interface GuardPortRange {
-  from: number;
-  to: number;
-}
-
-export interface GuardZone {
-  id: string;
-  name: string;
-  builtin?: boolean;
-  interfaces?: string[];
-  cidrs?: string[];
-  description?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface GuardRule {
-  id: string;
-  comment?: string;
-  action: string;
-  direction: string;
-  protocol: string;
-  ports?: GuardPortRange[];
-  remote: NetEndpoint;
-  log?: boolean;
-  disabled?: boolean;
-}
-
-export interface SecurityGroup {
-  id: string;
-  name: string;
-  description?: string;
-  rules: GuardRule[];
-  version?: number;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface SecurityGroupView extends SecurityGroup {
-  source: "stored" | "legacy" | string;
-  node_id?: string;
-}
-
-export interface NodeGuardBinding {
-  node_id: string;
-  group_ids: string[];
-  overrides?: GuardRule[];
-  zone_ids?: string[];
-  managed: boolean;
-  version?: number;
-  last_plan_sha?: string;
-  last_applied_at?: string;
-  last_error?: string;
-  applied_table_sha?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface NodeGuardView {
-  node_id: string;
-  node_name?: string;
-  source: "stored" | "legacy" | string;
-  binding: NodeGuardBinding;
-  groups: SecurityGroupView[];
-  zones: GuardZone[];
-}
-
-export interface NetGuardPlanResponse {
-  approval: ApprovalView;
-  findings?: unknown[];
-}
 
 export type NetRuleAction = "allow" | "deny";
 export type NetRuleDirection = "egress" | "ingress";
@@ -1377,19 +937,13 @@ export interface TunnelUpsertRequest {
   ingress: TunnelIngress[];
 }
 
-export interface WireGuardPlanRequest {
-  node_id: string;
-  listen_port?: number;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform — Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Plugin UI contributions. V1 manifests use dashboard-owned declarative/builtin
-// views. Signed v2 bundles may instead expose a sandboxed opaque-origin iframe;
-// its only host access is the declared, scope-gated POST /api/plugins/call bridge.
+// Plugin UI contributions. The host supports generic declarative views and v2
+// sandbox bundles; it never imports plugin-specific dashboard components.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PluginNavContribution {
@@ -1407,7 +961,7 @@ export interface PluginNavContribution {
 }
 
 export interface PluginViewSource {
-  /** Interface service id, e.g. "latticenet.vpn-core/nodes". */
+  /** Interface service id, namespaced by its owning plugin. */
   interface: string;
   method: string;
 }
@@ -1441,8 +995,6 @@ export interface PluginViewContribution {
   title: string;
   /** Allow-listed view kind: v1 primitives plus v2 "sandbox". */
   kind: string;
-  /** First-party dashboard-owned component key; valid only for kind="builtin". */
-  component_key?: string;
   source?: PluginViewSource;
   columns?: PluginViewColumn[];
   actions?: PluginViewAction[];
