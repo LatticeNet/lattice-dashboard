@@ -820,9 +820,7 @@ export default {
   },
   vpnSubs: {
     title: "Subscriptions",
-    description: "Per-identity subscription source. vpn-core produces; Sub-Store publishes.",
-    boundary: "vpn-core produces subscription sources (identities, credentials, line bindings). Sub-Store combines and publishes the actual delivery.",
-    openSubStore: "Open Sub-Store",
+    description: "Per-identity subscription source produced by vpn-core.",
     kpiIdentities: "Identities",
     kpiEligible: "Eligible",
     emptyTitle: "No subscriptions",

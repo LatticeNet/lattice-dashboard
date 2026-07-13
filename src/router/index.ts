@@ -80,7 +80,6 @@ const manualChildRoutes: RouteRecordRaw[] = [
   { path: "proxy/profiles", redirect: "/plugins/latticenet.vpn-core/profiles" },
   { path: "proxy/subscriptions", redirect: "/plugins/latticenet.vpn-core/subscriptions" },
   { path: "proxy/usage", redirect: "/plugins/latticenet.vpn-core/usage" },
-  { path: "proxy/substore", redirect: "/plugins/latticenet.sub-store/sub-store" },
   { path: "proxy/discovered", redirect: "/plugins/latticenet.vpn-core/discovered" },
   {
     path: "nodes/:id",

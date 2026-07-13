@@ -1,9 +1,9 @@
 // usePluginContributions — the dashboard side of "VPN is a plugin end-to-end"
 // (design-10). Shares a last-good plugin registry across the sidebar and every
 // plugin page, then exposes the active plugins' declared
-// nav + view contributions, defensively filtered against the dashboard's FIXED
-// allow-lists. The dashboard owns the view primitives; plugins contribute DATA
-// only. Unknown enum values are treated as inert (skipped) — never thrown on.
+// nav + view contributions, defensively filtered against the dashboard's fixed
+// host contract. V2 sandbox views own their rendered UI; unknown enum values are
+// inert and never execute.
 
 import { computed, ref, shallowRef, watch, type Component } from "vue";
 import {
@@ -45,7 +45,7 @@ const NAV_ICON_COMPONENTS: Record<string, Component> = {
   Blocks,
 };
 /** view.kind ∈ here. */
-const VIEW_KINDS = new Set(["table", "detail", "form", "kv", "markdown", "builtin"]);
+const VIEW_KINDS = new Set(["table", "detail", "form", "kv", "markdown", "builtin", "sandbox"]);
 /** column.render ∈ here. */
 const COLUMN_RENDERS = new Set(["", "copy-secret", "bytes", "relative-time", "badge", "code"]);
 /** form field.kind ∈ here. */

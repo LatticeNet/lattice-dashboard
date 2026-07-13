@@ -334,46 +334,6 @@ export default {
       statusUnknown: "未知",
     },
 
-    substore: {
-      title: "Sub-Store",
-      description: "将正在运行的 vpn-core 节点导入你自己的 Sub-Store 后端(仅内部使用)",
-      adminReason: "执行导入需要 proxy:admin 权限。",
-      noteTitle: "仅内部导入",
-      noteBody:
-        "此操作会把正在运行的 vpn-core 节点作为一个托管的本地订阅导入到你自己的 Sub-Store 后端,不会发布任何公开链接或下载——控制台只触发导入并上报后端可达性。",
-      backendTitle: "Sub-Store 后端",
-      backendDescription:
-        "填入你的 Sub-Store 后端地址(包含其密钥路径)。该地址不会写入服务端配置; 仅应在可信浏览器中选择长期记住。",
-      fieldBaseUrl: "后端基础 URL",
-      fieldBaseUrlPlaceholder: "https://host/<密钥路径>",
-      baseUrlHint:
-        "需包含密钥路径。远程后端请使用 HTTPS；http:// 仅限 localhost 或回环地址。默认仅在当前浏览器会话中保留。",
-      rememberBaseUrl: "记住这个密钥 URL。",
-      rememberBaseUrlHint: " 会写入本浏览器 localStorage; 仅在可信设备上启用。",
-      check: "检测",
-      checking: "检测中…",
-      statusReachable: "可达",
-      statusUnreachable: "不可达",
-      statusUnknown: "未检测",
-      managedSub: "托管订阅",
-      importTitle: "导入节点",
-      importDescription:
-        "导出正在运行的 vpn-core 节点链接,并写入该托管订阅。重复执行是幂等的,且绝不会影响你的其他订阅。",
-      fieldUserId: "用户过滤(可选)",
-      fieldUserIdPlaceholder: "proxy 用户 ID——留空则导出全部",
-      userIdHint: "可将导出限定到单个 proxy 用户,或留空导出全部节点。",
-      importNow: "立即导入",
-      importing: "导入中…",
-      resultTitle: "导入完成",
-      resultPushed: "已推送 {pushed} 条节点链接",
-      resultSub: "至 {name}",
-      errorBaseUrlRequired: "请先填写 Sub-Store 后端基础 URL。",
-      toastChecked: "Sub-Store 后端可达",
-      toastCheckFailed: "无法连接 Sub-Store 后端",
-      toastImported: "已导入 {pushed} 条节点链接至 {name}",
-      toastImportFailed: "Sub-Store 导入失败",
-    },
-
     discovered: {
       title: "已发现(机器本地)",
       description: "在各机器上发现、但由带外方式管理的 sing-box 节点——只读的纳管桥接",

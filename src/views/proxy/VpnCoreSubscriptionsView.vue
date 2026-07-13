@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { RefreshCw, Link2, Store, ArrowUpRight } from "lucide-vue-next";
+import { RefreshCw, Link2 } from "lucide-vue-next";
 import { api } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { cn } from "@/lib/utils";
@@ -26,12 +26,11 @@ interface SubscriptionSummary {
 
 const { t } = useI18n();
 const query = useAsyncData(
-  () => api.plugins.call<{ subscriptions: SubscriptionSummary[]; count: number; publisher: string }>("latticenet.vpn-core", "latticenet.vpn-core/subscriptions", "query"),
+  () => api.plugins.call<{ subscriptions: SubscriptionSummary[]; count: number }>("latticenet.vpn-core", "latticenet.vpn-core/subscriptions", "query"),
   { pollInterval: 20000 },
 );
 const subs = computed<SubscriptionSummary[]>(() => query.data.value?.subscriptions ?? []);
 const eligibleCount = computed(() => subs.value.filter((s) => s.eligible).length);
-const publisher = computed(() => query.data.value?.publisher ?? "latticenet.sub-store");
 </script>
 
 <template>
@@ -47,20 +46,6 @@ const publisher = computed(() => query.data.value?.publisher ?? "latticenet.sub-
         </Button>
       </template>
     </PageHeader>
-
-    <!-- producer/publisher boundary banner (design-12 S5) -->
-    <div class="flex items-start gap-3 rounded-md border border-border bg-muted/40 px-4 py-3 text-sm">
-      <Store class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <div class="space-y-1">
-        <p>{{ $t('vpnSubs.boundary') }}</p>
-        <RouterLink
-          :to="{ name: 'plugin-view', params: { pluginId: publisher, route: 'sub-store' } }"
-          class="inline-flex items-center gap-1 text-primary hover:underline"
-        >
-          {{ $t('vpnSubs.openSubStore') }} <ArrowUpRight class="size-3.5" aria-hidden="true" />
-        </RouterLink>
-      </div>
-    </div>
 
     <div class="grid gap-4 sm:grid-cols-2">
       <StatCard :label="$t('vpnSubs.kpiIdentities')" :value="subs.length" :icon="Link2" />

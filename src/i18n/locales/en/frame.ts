@@ -155,7 +155,6 @@ export default {
       "proxy-profiles": "Node Profiles",
       "proxy-subscriptions": "Subscriptions",
       "proxy-usage": "Usage",
-      "proxy-substore": "Sub-Store",
       "proxy-discovered": "Discovered",
       "platform-plugins": "Plugins",
       "platform-workers": "Workers",

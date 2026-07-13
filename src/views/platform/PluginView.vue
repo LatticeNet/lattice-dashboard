@@ -21,6 +21,8 @@ import { formatBytes, formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import PluginFrameHost from "./PluginFrameHost.vue";
+import { bridgeInterfaceFingerprint, interfaceMethodScopes } from "./pluginBridgeModel";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -67,7 +69,6 @@ const BUILTIN_COMPONENTS: Record<string, Component> = {
   "vpn-core.users": defineAsyncComponent(() => import("@/views/proxy/VpnUsersView.vue")),
   "vpn-core.profiles": defineAsyncComponent(() => import("@/views/proxy/VpnCoreProfilesView.vue")),
   "vpn-core.subscriptions": defineAsyncComponent(() => import("@/views/proxy/VpnCoreSubscriptionsView.vue")),
-  "proxy.substore": defineAsyncComponent(() => import("@/views/proxy/SubStoreView.vue")),
   "netguard.firewall": defineAsyncComponent(() => import("@/views/networking/GuardView.vue")),
   "wireguard.networks": defineAsyncComponent(() => import("@/views/networking/WireGuardView.vue")),
 };
@@ -97,9 +98,13 @@ const builtinComponent = computed(() => {
 });
 const supportedKind = computed(() => {
   if (!view.value || !isAllowedViewKind(rawKind.value)) return false;
+  if (rawKind.value === "sandbox") {
+    return plugin.value?.ui_runtime?.mode === "sandbox" && !!plugin.value.ui_runtime.entry_url;
+  }
   return rawKind.value !== "builtin" || !!builtinComponent.value;
 });
 const kind = computed(() => (supportedKind.value ? rawKind.value : ""));
+const callableInterfaceFingerprint = computed(() => bridgeInterfaceFingerprint(plugin.value?.interfaces ?? []));
 
 // ── Scope gating ──────────────────────────────────────────────────────────────
 // Prefer the source interface contract's declared scopes (the precise gate for
@@ -111,7 +116,8 @@ const requiredScopes = computed<string[]>(() => {
   if (!p || !v) return [];
   if (v.source?.interface) {
     const contract = p.interfaces?.find((i) => i.service === v.source!.interface);
-    if (contract?.scopes?.length) return contract.scopes;
+    const scopes = interfaceMethodScopes(contract, v.source.method);
+    if (scopes.length) return scopes;
   }
   const navEntry = p.ui?.nav?.find((n) => n.route === v.route);
   return navEntry?.scopes ?? [];
@@ -247,7 +253,7 @@ const markdownText = computed<string>(() => {
 const actions = computed<PluginViewAction[]>(() => view.value?.actions ?? []);
 function canRunAction(a: PluginViewAction): boolean {
   const contract = plugin.value?.interfaces?.find((i) => i.service === a.interface);
-  return auth.canAll([...(contract?.scopes ?? []), ...(a.scopes ?? [])]);
+  return auth.canAll([...interfaceMethodScopes(contract, a.method), ...(a.scopes ?? [])]);
 }
 function hasForm(a: PluginViewAction): boolean {
   return Array.isArray(a.form) && a.form.some((f) => isAllowedFieldKind(f.kind));
@@ -303,8 +309,19 @@ function onActionClick(a: PluginViewAction) {
 </script>
 
 <template>
+  <PluginFrameHost
+    v-if="kind === 'sandbox' && hasAccess && plugin?.ui_runtime"
+    :key="`${plugin.id}:${plugin.ui_runtime.asset_digest}:${viewRoute}:${callableInterfaceFingerprint}`"
+    :plugin-id="plugin.id"
+    :plugin-name="plugin.name || plugin.id"
+    :plugin-version="plugin.version"
+    :plugin-route="viewRoute"
+    :runtime="plugin.ui_runtime"
+    :interfaces="plugin.interfaces ?? []"
+  />
+
   <component
-    v-if="kind === 'builtin' && hasAccess && builtinComponent"
+    v-else-if="kind === 'builtin' && hasAccess && builtinComponent"
     :is="builtinComponent"
   />
 

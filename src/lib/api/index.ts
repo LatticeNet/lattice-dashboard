@@ -54,9 +54,6 @@ import type {
   WebAuthnLoginBeginResponse,
   WebAuthnCredentialResponse,
   WebAuthnCredentialsResponse,
-  SubStoreImportRequest,
-  SubStoreImportResponse,
-  SubStoreStatusResponse,
   NFTInputsView,
   NFTInputsUpsertBody,
   GuardZone,
@@ -476,17 +473,6 @@ export const api = {
       revealLine: (input: ProxyManagedLineRevealRequest) =>
         http.post<ProxyManagedLineRevealResponse>("/api/proxy/managed/reveal-line", input),
     },
-  },
-
-  // Sub-Store companion (internal-only). `status` probes the operator's Sub-Store
-  // backend reachability (proxy:read); `import` pushes the live vpn-core node
-  // links into it as a managed local subscription (proxy:admin). No public link
-  // is published — these only trigger an internal import + report reachability.
-  substore: {
-    status: (base_url: string) =>
-      http.get<SubStoreStatusResponse>("/api/substore/status", { base_url }),
-    import: (input: SubStoreImportRequest) =>
-      http.post<SubStoreImportResponse>("/api/substore/import", input),
   },
 
   nft: {

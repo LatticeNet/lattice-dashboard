@@ -1,6 +1,6 @@
 {
   "name": "@latticenet/dashboard",
-  "version": "0.2.2-alpha.1",
+  "version": "0.2.2-alpha.2",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.0",
@@ -11,7 +11,7 @@
     "build:only": "vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --build",
-    "test:navigation": "node --experimental-strip-types --test src/layout/__tests__/navigationModel.test.ts src/views/fleet/__tests__/mapPluginModel.test.ts src/composables/__tests__/pluginContributionModel.test.ts"
+    "test:navigation": "node --experimental-strip-types --test src/layout/__tests__/navigationModel.test.ts src/views/fleet/__tests__/mapPluginModel.test.ts src/composables/__tests__/pluginContributionModel.test.ts src/views/platform/__tests__/pluginBridgeModel.test.ts src/views/platform/__tests__/pluginIsolation.test.ts"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.0",

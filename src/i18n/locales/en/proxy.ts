@@ -348,49 +348,6 @@ export default {
       statusUnknown: "unknown",
     },
 
-    substore: {
-      title: "Sub-Store",
-      description: "Push your live vpn-core nodes into your own Sub-Store backend (internal only)",
-      adminReason: "proxy:admin scope is required to run an import.",
-      // Internal-only explainer banner.
-      noteTitle: "Internal import only",
-      noteBody:
-        "This imports your live vpn-core nodes into your own Sub-Store backend as a managed local subscription. It does not publish any public link or download — the dashboard only triggers the import and reports the backend's reachability.",
-      // Backend connection card.
-      backendTitle: "Sub-Store backend",
-      backendDescription:
-        "Point this at your Sub-Store backend, including its secret path. It stays out of server-side configuration; remember it only on a trusted browser.",
-      fieldBaseUrl: "Backend base URL",
-      fieldBaseUrlPlaceholder: "https://host/<secret-path>",
-      baseUrlHint:
-        "Include the secret path. Use HTTPS for remote backends; http:// is accepted only for localhost or loopback. By default it is retained only for this browser session.",
-      rememberBaseUrl: "Remember this secret URL.",
-      rememberBaseUrlHint: " Persists it in this browser's local storage; use only on a trusted device.",
-      check: "Check",
-      checking: "Checking…",
-      statusReachable: "Reachable",
-      statusUnreachable: "Unreachable",
-      statusUnknown: "Not checked",
-      managedSub: "Managed subscription",
-      // Import card.
-      importTitle: "Import nodes",
-      importDescription:
-        "Export the live vpn-core node links and upsert them into the managed subscription. Re-running is idempotent and never touches your other subscriptions.",
-      fieldUserId: "User filter (optional)",
-      fieldUserIdPlaceholder: "proxy user id — leave empty to export all",
-      userIdHint: "Restrict the export to a single proxy user, or leave empty to export every node.",
-      importNow: "Import now",
-      importing: "Importing…",
-      resultTitle: "Import complete",
-      resultPushed: "Pushed {pushed} node link | Pushed {pushed} node links",
-      resultSub: "into {name}",
-      errorBaseUrlRequired: "Enter the Sub-Store backend base URL first.",
-      toastChecked: "Sub-Store backend is reachable",
-      toastCheckFailed: "Could not reach the Sub-Store backend",
-      toastImported: "Imported {pushed} node links into {name}",
-      toastImportFailed: "Sub-Store import failed",
-    },
-
     discovered: {
       title: "Discovered (on-box)",
       description:

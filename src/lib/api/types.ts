@@ -701,36 +701,6 @@ export interface ProxyUsageResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-Store companion (internal-only). Imports the live vpn-core node links into
-// the operator's own Sub-Store backend as a managed local subscription, and
-// reports the backend's reachability. No public link is ever published — the
-// dashboard only triggers the import and surfaces the result.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface SubStoreImportRequest {
-  /** Sub-Store backend base URL, including its secret path (e.g. https://host/<secret>). */
-  base_url: string;
-  /** Managed subscription name; the server defaults it when omitted. */
-  sub_name?: string;
-  /** Restrict the export to a single proxy user; empty exports all. */
-  user_id?: string;
-}
-
-export interface SubStoreImportResponse {
-  ok: boolean;
-  /** The managed local subscription the links were pushed into. */
-  sub_name: string;
-  /** Number of node links pushed into the Sub-Store backend. */
-  pushed: number;
-}
-
-export interface SubStoreStatusResponse {
-  reachable: boolean;
-  /** The managed subscription name the companion owns inside Sub-Store. */
-  sub_name: string;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // On-box sing-box discovery (adoption bridge). Agents started with
 // -singbox-discover report the sing-box nodes that already exist on the machine
 // but are managed out-of-band, so the operator can see what is there before
@@ -1417,12 +1387,9 @@ export interface WireGuardPlanRequest {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Plugin UI contributions (design-10). When a plugin is ACTIVE and its signed
-// manifest declares `ui`, the dashboard renders that UI declaratively: the
-// dashboard owns a FIXED set of view primitives; the plugin contributes DATA
-// only (nav entries + view descriptors + the interface to fetch from). Plugin
-// code/HTML is NEVER executed — the trust surface is only the signed manifest
-// plus the capability/scope-gated gateway (POST /api/plugins/call).
+// Plugin UI contributions. V1 manifests use dashboard-owned declarative/builtin
+// views. Signed v2 bundles may instead expose a sandboxed opaque-origin iframe;
+// its only host access is the declared, scope-gated POST /api/plugins/call bridge.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PluginNavContribution {
@@ -1472,7 +1439,7 @@ export interface PluginViewContribution {
   /** Route slug; matches ^[a-z0-9][a-z0-9/_-]{0,64}$. */
   route: string;
   title: string;
-  /** Allow-listed view kind: "table" | "detail" | "form" | "kv" | "markdown" | "builtin". */
+  /** Allow-listed view kind: v1 primitives plus v2 "sandbox". */
   kind: string;
   /** First-party dashboard-owned component key; valid only for kind="builtin". */
   component_key?: string;
@@ -1488,8 +1455,22 @@ export interface PluginManifestUI {
 
 export interface PluginInterfaceContract {
   service: string;
-  methods: string[];
+  methods: Array<string | PluginInterfaceMethod>;
   scopes?: string[];
+}
+
+export interface PluginInterfaceMethod {
+  name: string;
+  effect: "read" | "write" | "plan" | string;
+  scopes?: string[];
+  operator_target_fields?: string[];
+}
+
+export interface PluginUIRuntime {
+  mode: "sandbox" | string;
+  entry_url: string;
+  bridge_version: string;
+  asset_digest: string;
 }
 
 export interface PluginView {
@@ -1506,6 +1487,8 @@ export interface PluginView {
   /** UI contributions — present ONLY when the plugin is active (server nils it otherwise). */
   ui?: PluginManifestUI;
   interfaces?: PluginInterfaceContract[];
+  /** Derived active-only metadata; never includes server filesystem paths. */
+  ui_runtime?: PluginUIRuntime;
 }
 
 export interface PluginRuntimeStatus {

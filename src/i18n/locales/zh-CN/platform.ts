@@ -807,9 +807,7 @@ export default {
   },
   vpnSubs: {
     title: "订阅",
-    description: "按身份的订阅来源。vpn-core 负责生产，Sub-Store 负责发布。",
-    boundary: "vpn-core 生产订阅来源（身份、凭据、线路绑定）；Sub-Store 负责组合并发布实际投递。",
-    openSubStore: "打开 Sub-Store",
+    description: "由 vpn-core 生成的按身份订阅来源。",
     kpiIdentities: "身份数",
     kpiEligible: "可用",
     emptyTitle: "暂无订阅",
