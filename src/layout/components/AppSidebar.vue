@@ -205,7 +205,12 @@ const extensionPinnedTargets = computed(() =>
 const openConsoleSectionIds = ref<Set<string>>(new Set());
 const openExtensionPluginIds = ref<Set<string>>(new Set());
 const isDraggingResizeHandle = ref(false);
-const dragState = ref<{ startX: number; startWidth: number } | null>(null);
+const dragState = ref<{
+  startX: number;
+  startWidth: number;
+  pointerId: number;
+  target: HTMLElement;
+} | null>(null);
 const previousBodyCursor = ref("");
 const previousBodyUserSelect = ref("");
 
@@ -263,12 +268,17 @@ function setDesktopWidth(next: number) {
 }
 
 function endResizeInteraction() {
+  const state = dragState.value;
   dragState.value = null;
   isDraggingResizeHandle.value = false;
+  if (state?.target.hasPointerCapture?.(state.pointerId)) {
+    state.target.releasePointerCapture(state.pointerId);
+  }
   if (typeof window !== "undefined") {
     window.removeEventListener("pointermove", onResizePointerMove);
-    window.removeEventListener("pointerup", endResizeInteraction);
-    window.removeEventListener("pointercancel", endResizeInteraction);
+    window.removeEventListener("pointerup", onResizePointerEnd);
+    window.removeEventListener("pointercancel", onResizePointerEnd);
+    window.removeEventListener("blur", endResizeInteraction);
   }
   if (typeof document !== "undefined") {
     document.body.style.cursor = previousBodyCursor.value;
@@ -277,7 +287,7 @@ function endResizeInteraction() {
 }
 
 function onResizePointerMove(event: PointerEvent) {
-  if (!dragState.value) return;
+  if (!dragState.value || event.pointerId !== dragState.value.pointerId) return;
   setDesktopWidth(
     resizeSidebarDesktopWidth(
       dragState.value.startWidth,
@@ -286,12 +296,22 @@ function onResizePointerMove(event: PointerEvent) {
   );
 }
 
+function onResizePointerEnd(event: PointerEvent) {
+  if (!dragState.value || event.pointerId !== dragState.value.pointerId) return;
+  endResizeInteraction();
+}
+
 function beginResize(event: PointerEvent) {
   if (props.collapsed || event.button !== 0) return;
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) return;
   dragState.value = {
     startX: event.clientX,
     startWidth: props.desktopWidth,
+    pointerId: event.pointerId,
+    target,
   };
+  target.setPointerCapture(event.pointerId);
   isDraggingResizeHandle.value = true;
   if (typeof document !== "undefined") {
     previousBodyCursor.value = document.body.style.cursor;
@@ -301,8 +321,9 @@ function beginResize(event: PointerEvent) {
   }
   if (typeof window !== "undefined") {
     window.addEventListener("pointermove", onResizePointerMove);
-    window.addEventListener("pointerup", endResizeInteraction);
-    window.addEventListener("pointercancel", endResizeInteraction);
+    window.addEventListener("pointerup", onResizePointerEnd);
+    window.addEventListener("pointercancel", onResizePointerEnd);
+    window.addEventListener("blur", endResizeInteraction);
   }
 }
 
@@ -576,7 +597,7 @@ function closeMobile() {
                 :key="item.name"
                 :item="item"
                 :collapsed="true"
-                :context="group.title"
+                :context="pluginGroupAriaLabel(group.title, group.id)"
                 plugin
                 @click="closeMobile"
               />
@@ -684,6 +705,7 @@ function closeMobile() {
       class="absolute inset-y-0 right-0 z-10 hidden w-3 translate-x-1/2 cursor-col-resize items-stretch md:flex"
       @dblclick="resetDesktopWidth"
       @keydown="onResizeKeydown"
+      @lostpointercapture="endResizeInteraction"
       @pointerdown.prevent="beginResize"
     >
       <span
