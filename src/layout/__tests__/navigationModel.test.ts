@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  buildExtensionSections,
+  buildExtensionPluginGroups,
   extensionWorkspaceVisible,
   reconcileExpandedSections,
   toggleExpandedSection,
@@ -23,96 +23,99 @@ test("Extensions stays absent from a pure base console but remains recoverable o
   assert.equal(extensionWorkspaceVisible(1, "/"), true);
 });
 
-test("extension sections flatten multiple plugin packages into task-oriented manifest sections", () => {
-  const sections = buildExtensionSections([
+test("extension navigation groups destinations by provider instead of shared manifest sections", () => {
+  const groups = buildExtensionPluginGroups([
     {
       pluginId: "latticenet.vpn-core",
-      section: "vpn-manage",
-      sectionTitle: "VPN Manage",
+      pluginName: "vpn-core (sing-box)",
+      section: "extensions",
       title: "Lines",
       route: "lines",
       to: "/plugins/latticenet.vpn-core/lines",
     },
     {
       pluginId: "latticenet.vpn-core",
-      section: "vpn-manage",
-      sectionTitle: "VPN Manage",
+      pluginName: "vpn-core (sing-box)",
+      section: "operations",
       title: "Users",
       route: "users",
       to: "/plugins/latticenet.vpn-core/users",
     },
     {
       pluginId: "latticenet.sub-store",
-      section: "vpn-manage",
-      sectionTitle: "VPN Manage",
+      pluginName: "Sub-Store companion",
+      section: "extensions",
       title: "Sub-Store",
       route: "sub-store",
       to: "/plugins/latticenet.sub-store/sub-store",
     },
     {
       pluginId: "latticenet.netguard",
-      section: "network-security",
-      sectionTitle: "Network Plugins",
-      title: "NetGuard",
-      route: "netguard",
-      to: "/plugins/latticenet.netguard/netguard",
+      pluginName: "NetGuard (nftables security groups)",
+      section: "extensions",
+      title: "Firewall",
+      route: "firewall",
+      to: "/plugins/latticenet.netguard/firewall",
     },
     {
       pluginId: "latticenet.wireguard",
-      section: "network-security",
-      sectionTitle: "Network Plugins",
-      title: "WireGuard",
-      route: "wireguard",
-      to: "/plugins/latticenet.wireguard/wireguard",
+      pluginName: "WireGuard (VPN networks)",
+      section: "extensions",
+      title: "Networks",
+      route: "networks",
+      to: "/plugins/latticenet.wireguard/networks",
     },
   ]);
 
   assert.deepEqual(
-    sections.map((section) => ({
-      id: section.id,
-      title: section.title,
-      items: section.items.map((item) => `${item.pluginId}:${item.title}`),
+    groups.map((group) => ({
+      id: group.id,
+      title: group.title,
+      items: group.items.map((item) => item.title),
     })),
     [
       {
-        id: "vpn-manage",
-        title: "VPN Manage",
-        items: [
-          "latticenet.vpn-core:Lines",
-          "latticenet.vpn-core:Users",
-          "latticenet.sub-store:Sub-Store",
-        ],
+        id: "latticenet.vpn-core",
+        title: "vpn-core (sing-box)",
+        items: ["Lines", "Users"],
       },
       {
-        id: "network-security",
-        title: "Network Plugins",
-        items: [
-          "latticenet.netguard:NetGuard",
-          "latticenet.wireguard:WireGuard",
-        ],
+        id: "latticenet.sub-store",
+        title: "Sub-Store companion",
+        items: ["Sub-Store"],
+      },
+      {
+        id: "latticenet.netguard",
+        title: "NetGuard (nftables security groups)",
+        items: ["Firewall"],
+      },
+      {
+        id: "latticenet.wireguard",
+        title: "WireGuard (VPN networks)",
+        items: ["Networks"],
       },
     ],
   );
 });
 
-test("section and item order remain the signed manifest contribution order", () => {
-  const sections = buildExtensionSections([
-    { pluginId: "b", section: "z-last", sectionTitle: "Z", title: "Second", route: "second", to: "/second" },
-    { pluginId: "a", section: "a-first", sectionTitle: "A", title: "First", route: "first", to: "/first" },
-    { pluginId: "c", section: "z-last", sectionTitle: "Ignored conflicting title", title: "Third", route: "third", to: "/third" },
+test("plugin and destination order remain first-seen contribution order", () => {
+  const groups = buildExtensionPluginGroups([
+    { pluginId: "b", pluginName: "Second plugin", section: "same", title: "Second", route: "second", to: "/second" },
+    { pluginId: "a", pluginName: "First plugin", section: "same", title: "First", route: "first", to: "/first" },
+    { pluginId: "b", pluginName: "Ignored conflicting name", section: "other", title: "Third", route: "third", to: "/third" },
   ]);
 
-  assert.deepEqual(sections.map((section) => section.id), ["z-last", "a-first"]);
-  assert.deepEqual(sections[0]?.items.map((item) => item.title), ["Second", "Third"]);
-  assert.equal(sections[0]?.title, "Z");
+  assert.deepEqual(groups.map((group) => group.id), ["b", "a"]);
+  assert.deepEqual(groups[0]?.items.map((item) => item.title), ["Second", "Third"]);
+  assert.equal(groups[0]?.title, "Second plugin");
 });
 
-test("blank section titles fall back to a readable section label", () => {
-  const [section] = buildExtensionSections([
-    { pluginId: "x", section: "network-security", sectionTitle: "  ", title: "NetGuard", route: "netguard", to: "/netguard" },
+test("blank plugin names fall back to the stable plugin id", () => {
+  const [group] = buildExtensionPluginGroups([
+    { pluginId: "latticenet.netguard", pluginName: "  ", section: "extensions", title: "Firewall", route: "firewall", to: "/firewall" },
   ]);
 
-  assert.equal(section?.title, "Network Security");
+  assert.equal(group?.title, "latticenet.netguard");
 });
 
 test("opening one navigation section preserves sections that are already open", () => {
@@ -131,8 +134,8 @@ test("navigation sections toggle independently while the active route owner stay
 
 test("section reconciliation retains valid choices, adds the route owner, and removes uninstalled sections", () => {
   assert.deepEqual(
-    [...reconcileExpandedSections(new Set(["fleet", "removed-plugin"]), ["fleet", "operations", "network-security"], "network-security")],
-    ["fleet", "network-security"],
+    [...reconcileExpandedSections(new Set(["latticenet.vpn-core", "removed-plugin"]), ["latticenet.vpn-core", "latticenet.netguard"], "latticenet.netguard")],
+    ["latticenet.vpn-core", "latticenet.netguard"],
   );
   assert.deepEqual([...reconcileExpandedSections(new Set(), ["fleet", "operations"])], ["fleet"]);
 });

@@ -7,6 +7,7 @@ import {
   ChevronDown,
   Hexagon,
   LayoutDashboard,
+  Package,
   PanelLeftClose,
   PanelLeftOpen,
   Search,
@@ -23,7 +24,7 @@ import {
   usePluginContributions,
 } from "@/composables/usePluginContributions";
 import {
-  buildExtensionSections,
+  buildExtensionPluginGroups,
   extensionWorkspaceVisible,
   reconcileExpandedSections,
   toggleExpandedSection,
@@ -57,8 +58,7 @@ type VisibleConsoleSection = NavSection & { items: NavItem[] };
 
 type ExtensionSidebarItem = NavItem & {
   pluginId: string;
-  section: string;
-  sectionTitle?: string;
+  pluginName: string;
   route: string;
   to: string;
 };
@@ -86,14 +86,13 @@ const extensionItems = computed<ExtensionSidebarItem[]>(() =>
     icon: resolvePluginNavIcon(entry.icon),
     scopes: entry.scopes,
     pluginId: entry.pluginId,
-    section: entry.section,
-    sectionTitle: entry.sectionTitle,
+    pluginName: entry.pluginName,
     route: entry.route,
     to: entry.to,
   })),
 );
 
-const extensionSections = computed(() => buildExtensionSections(extensionItems.value));
+const extensionPluginGroups = computed(() => buildExtensionPluginGroups(extensionItems.value));
 const extensionsVisible = computed(() =>
   extensionWorkspaceVisible(extensionItems.value.length, route.path),
 );
@@ -150,11 +149,11 @@ const navigationIndex = computed(() => {
       });
     }
   }
-  for (const section of extensionSections.value) {
-    for (const item of section.items) {
+  for (const group of extensionPluginGroups.value) {
+    for (const item of group.items) {
       index.set(item.name, {
         item,
-        sectionTitle: section.title,
+        sectionTitle: group.title,
         workspace: "extensions",
         manifestLabel: true,
       });
@@ -192,15 +191,15 @@ const extensionPinnedTargets = computed(() =>
 // Each workspace owns independent expansion state. Route owners are kept open,
 // while manual choices survive navigation and sibling toggles.
 const openConsoleSectionIds = ref<Set<string>>(new Set());
-const openExtensionSectionIds = ref<Set<string>>(new Set());
+const openExtensionPluginIds = ref<Set<string>>(new Set());
 
 function consoleSectionOwnsRoute(section: VisibleConsoleSection): boolean {
   const routeName = route.name ? String(route.name) : "";
   return section.items.some((item) => item.name === routeName);
 }
 
-function extensionSectionOwnsRoute(section: (typeof extensionSections.value)[number]): boolean {
-  return section.items.some((item) => item.path === route.path);
+function extensionPluginOwnsRoute(group: (typeof extensionPluginGroups.value)[number]): boolean {
+  return group.items.some((item) => item.path === route.path);
 }
 
 watch(
@@ -217,12 +216,12 @@ watch(
 );
 
 watch(
-  [() => route.path, extensionSections],
+  [() => route.path, extensionPluginGroups],
   () => {
-    const owner = extensionSections.value.find(extensionSectionOwnsRoute);
-    openExtensionSectionIds.value = reconcileExpandedSections(
-      openExtensionSectionIds.value,
-      extensionSections.value.map((section) => section.id),
+    const owner = extensionPluginGroups.value.find(extensionPluginOwnsRoute);
+    openExtensionPluginIds.value = reconcileExpandedSections(
+      openExtensionPluginIds.value,
+      extensionPluginGroups.value.map((group) => group.id),
       owner?.id,
     );
   },
@@ -234,9 +233,9 @@ function toggleConsoleSection(section: VisibleConsoleSection) {
   openConsoleSectionIds.value = toggleExpandedSection(openConsoleSectionIds.value, section.id, owner?.id);
 }
 
-function toggleExtensionSection(section: (typeof extensionSections.value)[number]) {
-  const owner = extensionSections.value.find(extensionSectionOwnsRoute);
-  openExtensionSectionIds.value = toggleExpandedSection(openExtensionSectionIds.value, section.id, owner?.id);
+function toggleExtensionPlugin(group: (typeof extensionPluginGroups.value)[number]) {
+  const owner = extensionPluginGroups.value.find(extensionPluginOwnsRoute);
+  openExtensionPluginIds.value = toggleExpandedSection(openExtensionPluginIds.value, group.id, owner?.id);
 }
 
 function toggleCollapse() {
@@ -471,7 +470,7 @@ function closeMobile() {
             {{ $t('shell.sidebar.extensionsLoading') }}
           </div>
           <div
-            v-else-if="extensionSections.length === 0"
+            v-else-if="extensionPluginGroups.length === 0"
             class="mx-1 rounded-md border border-dashed border-sidebar-border px-3 py-4"
           >
             <p class="text-sm font-medium text-sidebar-foreground/90">
@@ -483,13 +482,13 @@ function closeMobile() {
           </div>
 
           <template v-else-if="effectiveCollapsed">
-            <template v-for="section in extensionSections" :key="section.id">
+            <template v-for="group in extensionPluginGroups" :key="group.id">
               <SidebarItem
-                v-for="item in section.items"
+                v-for="item in group.items"
                 :key="item.name"
                 :item="item"
                 :collapsed="true"
-                :context="section.title"
+                :context="group.title"
                 plugin
                 @click="closeMobile"
               />
@@ -497,35 +496,57 @@ function closeMobile() {
           </template>
 
           <template v-else>
-            <div v-for="section in extensionSections" :key="section.id" class="space-y-1">
+            <div
+              v-for="group in extensionPluginGroups"
+              :key="group.id"
+              class="space-y-1 border-b border-sidebar-border/70 pb-2 last:border-b-0 last:pb-0"
+            >
               <button
                 type="button"
-                class="group/section flex h-9 w-full items-center gap-2 rounded-md px-3 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-7"
-                :aria-expanded="openExtensionSectionIds.has(section.id)"
-                :aria-controls="`extension-section-${section.id}`"
-                @click="toggleExtensionSection(section)"
+                class="group/plugin flex h-11 w-full items-center gap-2 rounded-md px-2 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-10"
+                :data-plugin-id="group.id"
+                :aria-expanded="openExtensionPluginIds.has(group.id)"
+                :aria-controls="`extension-plugin-${group.id}`"
+                @click="toggleExtensionPlugin(group)"
               >
-                <span class="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-sidebar-primary/85">
-                  {{ section.title }}
+                <span
+                  class="grid size-7 shrink-0 place-items-center rounded-md border border-sidebar-border bg-sidebar-accent/35 text-sidebar-primary"
+                  aria-hidden="true"
+                >
+                  <Package class="size-3.5" />
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-xs font-semibold text-sidebar-foreground/90">
+                    {{ group.title }}
+                  </span>
+                  <span class="block truncate font-mono text-[10px] text-muted-foreground">
+                    {{ group.id }}
+                  </span>
+                </span>
+                <span
+                  class="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums text-sidebar-foreground/65"
+                  :aria-label="String(group.items.length)"
+                >
+                  {{ group.items.length }}
                 </span>
                 <ChevronDown
-                  :class="cn('size-3.5 shrink-0 text-sidebar-primary/50 transition-transform duration-200', !openExtensionSectionIds.has(section.id) && '-rotate-90')"
+                  :class="cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200', !openExtensionPluginIds.has(group.id) && '-rotate-90')"
                   aria-hidden="true"
                 />
               </button>
               <div
-                :id="`extension-section-${section.id}`"
+                :id="`extension-plugin-${group.id}`"
                 class="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
-                :class="openExtensionSectionIds.has(section.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+                :class="openExtensionPluginIds.has(group.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
               >
-                <div class="space-y-1 overflow-hidden">
+                <div class="ml-3 space-y-1 overflow-hidden border-l border-sidebar-border/70 pl-2 pt-1">
                   <SidebarItem
-                    v-for="item in section.items"
+                    v-for="item in group.items"
                     :key="item.name"
                     :item="item"
                     :collapsed="false"
                     :pinned="shortcuts.isPinned(item.name)"
-                    :context="section.title"
+                    :context="group.title"
                     pinnable
                     plugin
                     @toggle-pin="shortcuts.togglePin"

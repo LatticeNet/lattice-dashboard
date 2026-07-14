@@ -2,25 +2,16 @@ export type NavigationWorkspace = "console" | "extensions";
 
 export interface ExtensionNavigationEntry {
   pluginId: string;
-  section: string;
-  sectionTitle?: string;
+  pluginName: string;
   title: string;
   route: string;
   to: string;
 }
 
-export interface ExtensionNavigationSection<T extends ExtensionNavigationEntry = ExtensionNavigationEntry> {
+export interface ExtensionNavigationPluginGroup<T extends ExtensionNavigationEntry = ExtensionNavigationEntry> {
   id: string;
   title: string;
   items: T[];
-}
-
-function humanizeSectionId(section: string): string {
-  return section
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 /** Routes owned by a plugin always live in the Extensions workspace. */
@@ -65,26 +56,26 @@ export function reconcileExpandedSections(
 }
 
 /**
- * Flatten package ownership into the signed manifest's task-oriented sections.
- * Map preserves first-seen section order and each manifest's contribution order.
+ * Keep package ownership visible even when several manifests contribute to the
+ * same task section. Map preserves first-seen plugin and contribution order.
  */
-export function buildExtensionSections<T extends ExtensionNavigationEntry>(
+export function buildExtensionPluginGroups<T extends ExtensionNavigationEntry>(
   entries: readonly T[],
-): ExtensionNavigationSection<T>[] {
-  const sections = new Map<string, ExtensionNavigationSection<T>>();
+): ExtensionNavigationPluginGroup<T>[] {
+  const groups = new Map<string, ExtensionNavigationPluginGroup<T>>();
 
   for (const entry of entries) {
-    let section = sections.get(entry.section);
-    if (!section) {
-      section = {
-        id: entry.section,
-        title: entry.sectionTitle?.trim() || humanizeSectionId(entry.section),
+    let group = groups.get(entry.pluginId);
+    if (!group) {
+      group = {
+        id: entry.pluginId,
+        title: entry.pluginName.trim() || entry.pluginId,
         items: [],
       };
-      sections.set(entry.section, section);
+      groups.set(entry.pluginId, group);
     }
-    section.items.push(entry);
+    group.items.push(entry);
   }
 
-  return [...sections.values()];
+  return [...groups.values()];
 }
