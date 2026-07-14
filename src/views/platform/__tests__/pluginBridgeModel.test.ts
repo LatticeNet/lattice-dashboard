@@ -230,3 +230,42 @@ test("bridge times out calls even when they ignore abort", async () => {
   } });
   assert.equal((posted.at(-1) as { code?: string }).code, "timeout");
 });
+
+// Regression: the rate budget used to be consumed only by well-formed calls, so a frame
+// could spam undeclared/duplicate/oversized calls — each still costing a host error post —
+// without ever reaching the ceiling.
+test("rejected calls still consume the rate budget", async () => {
+  const { session, source, posted } = makeSession({ maxCallsPerMinute: 3 });
+
+  for (let i = 0; i < 3; i += 1) {
+    await session.handle({
+      source,
+      data: { type: "lattice.plugin.call", nonce: "nonce-123", id: `bad-${i}`, service: "test.plugin/items", method: "nope" },
+    });
+  }
+  assert.deepEqual(posted.map((m) => m.code), ["method_not_declared", "method_not_declared", "method_not_declared"]);
+
+  // Budget is now spent — even a perfectly valid call must be refused.
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.call", nonce: "nonce-123", id: "good", service: "test.plugin/items", method: "list" },
+  });
+  assert.equal(posted.at(-1)?.code, "rate_limited");
+});
+
+test("resize is rate limited so a frame cannot thrash layout", async () => {
+  const heights: number[] = [];
+  const { session, source } = makeSession({
+    maxResizesPerMinute: 2,
+    resize: (height) => heights.push(height),
+  });
+
+  for (let i = 0; i < 5; i += 1) {
+    await session.handle({
+      source,
+      data: { type: "lattice.plugin.resize", nonce: "nonce-123", height: 500 + i },
+    });
+  }
+
+  assert.deepEqual(heights, [500, 501], "resizes past the ceiling are dropped");
+});

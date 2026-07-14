@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { AlertTriangle, LoaderCircle } from "lucide-vue-next";
 
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";
 import { PluginBridgeSession, resolvePluginFrameURL, type BridgeHostMessage } from "./pluginBridgeModel";
+import { PluginFrameLifecycle } from "./pluginFrameModel";
 
 const props = defineProps<{
   pluginId: string;
@@ -14,11 +15,23 @@ const props = defineProps<{
   interfaces: PluginInterfaceContract[];
 }>();
 
+const lifecycle = new PluginFrameLifecycle({ createNonce });
+
 const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
 const failed = ref(false);
+const frameDown = ref(false);
 const frameHeight = ref(720);
-const nonce = ref(createNonce());
+const nonce = ref(lifecycle.nonce);
+
+// Re-keying the iframe makes Vue discard the element together with its document.
+// Rotation must never be expressed as a bare `src` reassignment: the rotated URL
+// differs from the live one only in its fragment, which the browser resolves as a
+// same-document navigation — no reload, no `load` event. A fresh element has no
+// current document to compare against, so every rotation is a real navigation and
+// always fires `load`.
+const frameEpoch = ref(0);
+
 const frameSource = computed(() => props.runtime.bridge_version === "1"
   ? resolvePluginFrameURL(
       props.runtime.entry_url,
@@ -32,8 +45,6 @@ const frameSource = computed(() => props.runtime.bridge_version === "1"
 let session: PluginBridgeSession | undefined;
 let sourceWindow: Window | null = null;
 let themeObserver: MutationObserver | undefined;
-let completedLoad = false;
-let rotatingNonce = false;
 let handshakeComplete = false;
 let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -44,9 +55,7 @@ function clearHandshakeTimer() {
 
 function failHandshake() {
   if (handshakeComplete) return;
-  session?.dispose();
-  session = undefined;
-  sourceWindow = null;
+  teardownSession();
   failed.value = true;
   loaded.value = false;
 }
@@ -99,6 +108,14 @@ function postToFrame(message: BridgeHostMessage) {
   sourceWindow?.postMessage(message, "*");
 }
 
+function teardownSession() {
+  session?.dispose();
+  session = undefined;
+  sourceWindow = null;
+  clearHandshakeTimer();
+  handshakeComplete = false;
+}
+
 function armSession() {
   const nextSource = frame.value?.contentWindow ?? null;
   if (!nextSource) return;
@@ -129,33 +146,28 @@ function onMessage(event: MessageEvent) {
   void session?.handle({ source: event.source, data: event.data });
 }
 
-async function onLoad() {
-  if (rotatingNonce) {
-    rotatingNonce = false;
-    completedLoad = true;
+function onLoad() {
+  const outcome = lifecycle.noteLoad();
+  if (outcome.action === "handshake") {
     startHandshakeTimer();
     return;
   }
-  if (completedLoad) {
-    // A reload or in-frame navigation replaces the document without replacing
-    // its WindowProxy. Revoke the old bridge before the new document can reuse
-    // its fragment nonce, then navigate back to the verified entrypoint with a
-    // fresh nonce and require a new ready/init handshake.
-    session?.dispose();
-    session = undefined;
-    sourceWindow = null;
-    clearHandshakeTimer();
-    handshakeComplete = false;
-    nonce.value = createNonce();
-    rotatingNonce = true;
-    loaded.value = false;
-    failed.value = false;
-    await nextTick();
-    armSession();
+
+  // Every load after the first replaced the document underneath a stable
+  // WindowProxy. Revoke the bridge and abort its in-flight calls before the new
+  // document can reach the host.
+  teardownSession();
+  loaded.value = false;
+
+  if (outcome.action === "exhausted") {
+    frameDown.value = true;
+    failed.value = true;
     return;
   }
-  completedLoad = true;
-  startHandshakeTimer();
+
+  failed.value = false;
+  nonce.value = outcome.nonce;
+  frameEpoch.value += 1;
 }
 
 function onError() {
@@ -163,6 +175,13 @@ function onError() {
   failed.value = true;
   loaded.value = false;
 }
+
+// The remounted element is a different iframe, so it must be re-armed before its
+// document can post `ready` — same ordering guarantee as the initial mount.
+watch(frameEpoch, async () => {
+  await nextTick();
+  armSession();
+});
 
 onMounted(async () => {
   if (!frameSource.value) {
@@ -179,17 +198,15 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener("message", onMessage);
   themeObserver?.disconnect();
-  clearHandshakeTimer();
-  session?.dispose();
-  session = undefined;
-  sourceWindow = null;
+  teardownSession();
 });
 </script>
 
 <template>
   <div class="relative min-h-[calc(100vh-3.5rem)] w-full overflow-hidden bg-background">
     <iframe
-      v-if="frameSource"
+      v-if="frameSource && !frameDown"
+      :key="frameEpoch"
       ref="frame"
       :src="frameSource"
       :title="pluginName"

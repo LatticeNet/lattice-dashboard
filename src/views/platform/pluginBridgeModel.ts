@@ -52,6 +52,7 @@ interface PluginBridgeOptions {
   maxResultBytes?: number;
   maxInflight?: number;
   maxCallsPerMinute?: number;
+  maxResizesPerMinute?: number;
   timeoutMs?: number;
   now?: () => number;
 }
@@ -116,11 +117,12 @@ export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefi
 
 export class PluginBridgeSession {
   private readonly options: Required<Pick<PluginBridgeOptions,
-    "maxPayloadBytes" | "maxResultBytes" | "maxInflight" | "maxCallsPerMinute" | "timeoutMs" | "now"
+    "maxPayloadBytes" | "maxResultBytes" | "maxInflight" | "maxCallsPerMinute" | "maxResizesPerMinute" | "timeoutMs" | "now"
   >> & PluginBridgeOptions;
 
   private readonly pending = new Map<string, PendingCall>();
   private callTimes: number[] = [];
+  private resizeTimes: number[] = [];
   private disposed = false;
 
   constructor(options: PluginBridgeOptions) {
@@ -129,6 +131,7 @@ export class PluginBridgeSession {
       maxResultBytes: 1024 * 1024,
       maxInflight: 8,
       maxCallsPerMinute: 120,
+      maxResizesPerMinute: 120,
       timeoutMs: 15_000,
       now: () => Date.now(),
       ...options,
@@ -166,6 +169,7 @@ export class PluginBridgeSession {
         this.cancel(message.id);
         return;
       case "lattice.plugin.resize":
+        if (!this.consumeResizeBudget()) return;
         if (typeof message.height === "number" && Number.isFinite(message.height)) {
           this.options.resize?.(Math.max(320, Math.min(2400, Math.round(message.height))));
         }
@@ -199,6 +203,11 @@ export class PluginBridgeSession {
   }
 
   private async handleCall(message: Record<string, unknown>): Promise<void> {
+    // Budget is charged by every call-shaped message, not just the well-formed ones:
+    // charging only valid calls would let a frame spam rejects — each of which still
+    // costs a host `error` post — without ever reaching the ceiling. The specific
+    // rejection still wins the response, so error semantics are unchanged.
+    const withinBudget = this.consumeRateBudget();
     const id = typeof message.id === "string" ? message.id : "";
     const service = typeof message.service === "string" ? message.service : "";
     const method = typeof message.method === "string" ? message.method : "";
@@ -227,7 +236,7 @@ export class PluginBridgeSession {
       this.error(id, "payload_too_large", "plugin request payload exceeds the bridge limit");
       return;
     }
-    if (!this.consumeRateBudget()) {
+    if (!withinBudget) {
       this.error(id, "rate_limited", "plugin request rate exceeds the bridge limit");
       return;
     }
@@ -288,6 +297,17 @@ export class PluginBridgeSession {
     this.callTimes = this.callTimes.filter((time) => now - time < 60_000);
     if (this.callTimes.length >= this.options.maxCallsPerMinute) return false;
     this.callTimes.push(now);
+    return true;
+  }
+
+  // Height is already magnitude-clamped, but an unbounded resize stream can still
+  // thrash layout. Silently drop past the ceiling: resize is advisory, and a frame
+  // that floods it gets no error post to amplify against.
+  private consumeResizeBudget(): boolean {
+    const now = this.options.now();
+    this.resizeTimes = this.resizeTimes.filter((time) => now - time < 60_000);
+    if (this.resizeTimes.length >= this.options.maxResizesPerMinute) return false;
+    this.resizeTimes.push(now);
     return true;
   }
 
