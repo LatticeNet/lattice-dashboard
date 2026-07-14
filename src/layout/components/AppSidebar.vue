@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
@@ -31,16 +31,28 @@ import {
   workspaceForRoute,
   type NavigationWorkspace,
 } from "@/layout/navigationModel";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_DESKTOP_DEFAULT_WIDTH,
+  SIDEBAR_DESKTOP_MAX_WIDTH,
+  SIDEBAR_DESKTOP_MIN_WIDTH,
+  SIDEBAR_MOBILE_WIDTH,
+  nudgeSidebarDesktopWidth,
+  pluginGroupAriaLabel,
+  resizeSidebarDesktopWidth,
+} from "@/layout/sidebarModel";
 import SidebarItem from "./SidebarItem.vue";
 import SidebarShortcut, { type ShortcutTarget } from "./SidebarShortcut.vue";
 
 const props = defineProps<{
   collapsed: boolean;
+  desktopWidth: number;
   mobileOpen: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: "update:collapsed", value: boolean): void;
+  (e: "update:desktopWidth", value: number): void;
   (e: "update:mobileOpen", value: boolean): void;
   (e: "open-command"): void;
 }>();
@@ -192,6 +204,10 @@ const extensionPinnedTargets = computed(() =>
 // while manual choices survive navigation and sibling toggles.
 const openConsoleSectionIds = ref<Set<string>>(new Set());
 const openExtensionPluginIds = ref<Set<string>>(new Set());
+const isDraggingResizeHandle = ref(false);
+const dragState = ref<{ startX: number; startWidth: number } | null>(null);
+const previousBodyCursor = ref("");
+const previousBodyUserSelect = ref("");
 
 function consoleSectionOwnsRoute(section: VisibleConsoleSection): boolean {
   const routeName = route.name ? String(route.name) : "";
@@ -242,6 +258,76 @@ function toggleCollapse() {
   emit("update:collapsed", !props.collapsed);
 }
 
+function setDesktopWidth(next: number) {
+  emit("update:desktopWidth", next);
+}
+
+function endResizeInteraction() {
+  dragState.value = null;
+  isDraggingResizeHandle.value = false;
+  if (typeof window !== "undefined") {
+    window.removeEventListener("pointermove", onResizePointerMove);
+    window.removeEventListener("pointerup", endResizeInteraction);
+    window.removeEventListener("pointercancel", endResizeInteraction);
+  }
+  if (typeof document !== "undefined") {
+    document.body.style.cursor = previousBodyCursor.value;
+    document.body.style.userSelect = previousBodyUserSelect.value;
+  }
+}
+
+function onResizePointerMove(event: PointerEvent) {
+  if (!dragState.value) return;
+  setDesktopWidth(
+    resizeSidebarDesktopWidth(
+      dragState.value.startWidth,
+      event.clientX - dragState.value.startX,
+    ),
+  );
+}
+
+function beginResize(event: PointerEvent) {
+  if (props.collapsed || event.button !== 0) return;
+  dragState.value = {
+    startX: event.clientX,
+    startWidth: props.desktopWidth,
+  };
+  isDraggingResizeHandle.value = true;
+  if (typeof document !== "undefined") {
+    previousBodyCursor.value = document.body.style.cursor;
+    previousBodyUserSelect.value = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+  if (typeof window !== "undefined") {
+    window.addEventListener("pointermove", onResizePointerMove);
+    window.addEventListener("pointerup", endResizeInteraction);
+    window.addEventListener("pointercancel", endResizeInteraction);
+  }
+}
+
+function onResizeKeydown(event: KeyboardEvent) {
+  const next = nudgeSidebarDesktopWidth(props.desktopWidth, event.key);
+  if (next === props.desktopWidth) return;
+  event.preventDefault();
+  setDesktopWidth(next);
+}
+
+function resetDesktopWidth() {
+  setDesktopWidth(SIDEBAR_DESKTOP_DEFAULT_WIDTH);
+}
+
+const asideStyle = computed(() => ({
+  "--app-sidebar-mobile-width": `${SIDEBAR_MOBILE_WIDTH}px`,
+  "--app-sidebar-desktop-width": `${
+    effectiveCollapsed.value ? SIDEBAR_COLLAPSED_WIDTH : props.desktopWidth
+  }px`,
+}));
+
+onBeforeUnmount(() => {
+  endResizeInteraction();
+});
+
 function closeMobile() {
   emit("update:mobileOpen", false);
 }
@@ -255,11 +341,13 @@ function closeMobile() {
   />
 
   <aside
+    class="app-sidebar"
+    :style="asideStyle"
     :class="
       cn(
-        'z-50 flex h-screen flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-200',
-        collapsed ? 'md:w-16' : 'md:w-60',
-        'fixed inset-y-0 left-0 w-60 md:static md:translate-x-0',
+        'z-50 flex h-screen flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
+        isDraggingResizeHandle ? 'transition-none' : 'transition-all duration-200',
+        'fixed inset-y-0 left-0 md:static md:translate-x-0',
         mobileOpen ? 'translate-x-0' : '-translate-x-full',
       )
     "
@@ -501,39 +589,50 @@ function closeMobile() {
               :key="group.id"
               class="space-y-1 border-b border-sidebar-border/70 pb-2 last:border-b-0 last:pb-0"
             >
-              <button
-                type="button"
-                class="group/plugin flex h-11 w-full items-center gap-2 rounded-md px-2 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-10"
-                :data-plugin-id="group.id"
-                :aria-expanded="openExtensionPluginIds.has(group.id)"
-                :aria-controls="`extension-plugin-${group.id}`"
-                @click="toggleExtensionPlugin(group)"
-              >
-                <span
-                  class="grid size-7 shrink-0 place-items-center rounded-md border border-sidebar-border bg-sidebar-accent/35 text-sidebar-primary"
-                  aria-hidden="true"
-                >
-                  <Package class="size-3.5" />
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate text-xs font-semibold text-sidebar-foreground/90">
-                    {{ group.title }}
-                  </span>
-                  <span class="block truncate font-mono text-[10px] text-muted-foreground">
+              <Tooltip :delay-duration="0">
+                <TooltipTrigger as-child>
+                  <button
+                    type="button"
+                    class="group/plugin flex h-11 w-full items-center gap-2 rounded-md px-2 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-10"
+                    :data-plugin-id="group.id"
+                    :aria-expanded="openExtensionPluginIds.has(group.id)"
+                    :aria-controls="`extension-plugin-${group.id}`"
+                    :aria-label="pluginGroupAriaLabel(group.title, group.id)"
+                    @click="toggleExtensionPlugin(group)"
+                  >
+                    <span
+                      class="grid size-7 shrink-0 place-items-center rounded-md border border-sidebar-border bg-sidebar-accent/35 text-sidebar-primary"
+                      aria-hidden="true"
+                    >
+                      <Package class="size-3.5" />
+                    </span>
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate text-xs font-semibold text-sidebar-foreground/90">
+                        {{ group.title }}
+                      </span>
+                      <span class="block truncate font-mono text-[10px] text-muted-foreground">
+                        {{ group.id }}
+                      </span>
+                    </span>
+                    <span
+                      class="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums text-sidebar-foreground/65"
+                      :aria-label="String(group.items.length)"
+                    >
+                      {{ group.items.length }}
+                    </span>
+                    <ChevronDown
+                      :class="cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200', !openExtensionPluginIds.has(group.id) && '-rotate-90')"
+                      aria-hidden="true"
+                    />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right" class="max-w-72">
+                  <div class="font-medium leading-5 break-words">{{ group.title }}</div>
+                  <div class="font-mono text-[10px] leading-4 text-muted-foreground break-all">
                     {{ group.id }}
-                  </span>
-                </span>
-                <span
-                  class="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums text-sidebar-foreground/65"
-                  :aria-label="String(group.items.length)"
-                >
-                  {{ group.items.length }}
-                </span>
-                <ChevronDown
-                  :class="cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200', !openExtensionPluginIds.has(group.id) && '-rotate-90')"
-                  aria-hidden="true"
-                />
-              </button>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
               <div
                 :id="`extension-plugin-${group.id}`"
                 class="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
@@ -572,10 +671,35 @@ function closeMobile() {
         <span v-if="!effectiveCollapsed">{{ $t('shell.sidebar.collapse') }}</span>
       </Button>
     </div>
+
+    <div
+      v-if="!collapsed"
+      role="separator"
+      :aria-label="$t('shell.sidebar.resize')"
+      aria-orientation="vertical"
+      :aria-valuemin="SIDEBAR_DESKTOP_MIN_WIDTH"
+      :aria-valuemax="SIDEBAR_DESKTOP_MAX_WIDTH"
+      :aria-valuenow="desktopWidth"
+      tabindex="0"
+      class="absolute inset-y-0 right-0 z-10 hidden w-3 translate-x-1/2 cursor-col-resize items-stretch md:flex"
+      @dblclick="resetDesktopWidth"
+      @keydown="onResizeKeydown"
+      @pointerdown.prevent="beginResize"
+    >
+      <span
+        class="pointer-events-none mx-auto my-2 w-px rounded-full bg-sidebar-border/80 transition-colors"
+        :class="isDraggingResizeHandle && 'bg-sidebar-primary'"
+        aria-hidden="true"
+      />
+    </div>
   </aside>
 </template>
 
 <style scoped>
+.app-sidebar {
+  width: var(--app-sidebar-mobile-width);
+}
+
 nav :deep(a) {
   position: relative;
   transition: background-color 200ms ease, color 200ms ease;
@@ -605,6 +729,12 @@ nav :deep(a.bg-sidebar-accent)::before {
   nav :deep(a),
   nav :deep(a)::before {
     transition: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .app-sidebar {
+    width: var(--app-sidebar-desktop-width);
   }
 }
 </style>

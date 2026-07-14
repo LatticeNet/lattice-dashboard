@@ -19,6 +19,11 @@ const collapsed = computed({
   set: (v: boolean) => ui.setSidebarCollapsed(v),
 });
 
+const desktopWidth = computed({
+  get: () => ui.sidebarDesktopWidth,
+  set: (v: number) => ui.setSidebarDesktopWidth(v),
+});
+
 const mobileOpen = ref(false);
 const commandOpen = ref(false);
 
@@ -43,6 +48,7 @@ watchEffect(() => {
     <div class="flex h-screen overflow-hidden bg-background text-foreground">
       <AppSidebar
         v-model:collapsed="collapsed"
+        v-model:desktop-width="desktopWidth"
         v-model:mobile-open="mobileOpen"
         @open-command="commandOpen = true"
       />

@@ -171,6 +171,7 @@ export default {
       collapse: "Collapse",
       console: "Console",
       extensions: "Extensions",
+      resize: "Resize sidebar",
       pinned: "Pinned",
       pin: "Pin destination",
       unpin: "Unpin destination",

@@ -170,6 +170,7 @@ export default {
       collapse: "收起",
       console: "控制台",
       extensions: "扩展",
+      resize: "调整侧边栏宽度",
       pinned: "已固定",
       pin: "固定此入口",
       unpin: "取消固定此入口",

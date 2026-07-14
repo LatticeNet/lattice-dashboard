@@ -12,13 +12,10 @@ import {
 import { Menu, Palette, LogOut, User, KeyRound, Search } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { resolvePluginBreadcrumb } from "@/layout/headerModel";
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "@/router/nav";
-import {
-  pluginSectionLabel,
-  resolvePluginNavSectionId,
-  usePluginContributions,
-} from "@/composables/usePluginContributions";
+import { usePluginContributions } from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
 import AppearanceMenu from "./AppearanceMenu.vue";
 
@@ -35,7 +32,7 @@ const { t } = useI18n();
 // Plugin-contributed views (design-10) have a dynamic title/section that no
 // static `nav.items.*` / NAV section owns — resolve them from the live
 // contribution instead, so the breadcrumb matches the page heading.
-const { findPlugin, findView, navContributions } = usePluginContributions();
+const { findPlugin, findView } = usePluginContributions();
 const pluginCtx = computed(() => {
   if (route.name !== "plugin-view") return null;
   const rawRoute = route.params.route;
@@ -48,11 +45,12 @@ const pluginCtx = computed(() => {
 const title = computed(() => {
   const ctx = pluginCtx.value;
   if (ctx) {
-    return (
-      findView(ctx.pluginId, ctx.viewRoute)?.title ||
-      findPlugin(ctx.pluginId)?.name ||
-      ctx.viewRoute
-    );
+    return resolvePluginBreadcrumb({
+      pluginId: ctx.pluginId,
+      pluginDisplayName: findPlugin(ctx.pluginId)?.name,
+      viewTitle: findView(ctx.pluginId, ctx.viewRoute)?.title,
+      viewRoute: ctx.viewRoute,
+    }).title;
   }
   return route.name ? t("nav.items." + String(route.name)) : t("nav.items.overview");
 });
@@ -66,14 +64,12 @@ const title = computed(() => {
 const sectionLabel = computed(() => {
   const ctx = pluginCtx.value;
   if (ctx) {
-    // The contribution's nav entry carries the target section.
-    const entry = navContributions.value.find(
-      (n) => n.pluginId === ctx.pluginId && n.route === ctx.viewRoute,
-    );
-    const navId = entry ? resolvePluginNavSectionId(entry.section) : undefined;
-    if (!entry || !navId) return "";
-    const section = NAV.find((s) => s.id === navId);
-    return section ? t("nav.sections." + navId) : pluginSectionLabel(entry.section, entry.sectionTitle);
+    return resolvePluginBreadcrumb({
+      pluginId: ctx.pluginId,
+      pluginDisplayName: findPlugin(ctx.pluginId)?.name,
+      viewTitle: findView(ctx.pluginId, ctx.viewRoute)?.title,
+      viewRoute: ctx.viewRoute,
+    }).sectionLabel;
   }
   const name = route.name ? String(route.name) : "";
   const section = NAV.find((s) => s.items.some((item) => item.name === name));
