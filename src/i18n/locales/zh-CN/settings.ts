@@ -2,6 +2,8 @@
 // 外观文案在 frame.ts。命名空间:settings。复用 frame.ts 中的 common.*。
 export default {
   settings: {
+    scopeMigrationHint:
+      "迁移期间，proxy:* 覆盖两个插件，并可委派同等强度的 canonical 权限。vpncore:* 与 substore:* 更窄，不能委派 proxy 权限或相互委派。",
     security: {
       title: "安全与 2FA",
       description: "本管理会话的密码轮换与第二因子控制",

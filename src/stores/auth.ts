@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
 import { api, setCsrfToken, type Principal } from "@/lib/api";
+import { allowsRuntimeScope, allowsScopeGrant } from "@/lib/scopes";
 import { startAuthentication } from "@/lib/webauthn";
 
 /**
@@ -22,13 +23,14 @@ export const useAuthStore = defineStore("auth", () => {
     setCsrfToken(p?.csrf_token);
   }
 
-  /** Scope check honouring '*' superuser and 'prefix:*' wildcards. */
+  /** Runtime scope check, including the server's migration compatibility. */
   function can(required: string): boolean {
-    const s = scopes.value;
-    if (s.includes("*")) return true;
-    if (s.includes(required)) return true;
-    const [prefix] = required.split(":");
-    return s.includes(`${prefix}:*`);
+    return allowsRuntimeScope(scopes.value, required);
+  }
+
+  /** Directed assignment check aligned with server scope-migration rules. */
+  function canGrant(candidate: string): boolean {
+    return allowsScopeGrant(scopes.value, candidate);
   }
 
   function canAny(required: string[]): boolean {
@@ -97,6 +99,7 @@ export const useAuthStore = defineStore("auth", () => {
     scopes,
     serverAllowlist,
     can,
+    canGrant,
     canAny,
     canAll,
     bootstrap,
