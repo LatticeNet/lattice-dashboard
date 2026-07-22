@@ -82,11 +82,12 @@ const isSuperuser = computed(() => callerScopes.value.includes("*"));
 
 /**
  * The scopes this caller may grant: the full catalog when superuser, otherwise
- * the catalog intersected with what the caller holds (honoring `prefix:*`).
+ * the catalog intersected with what the caller may delegate. Legacy proxy
+ * grants may migrate to equal-strength canonical scopes; the reverse is denied.
  */
 const grantableScopes = computed(() => {
   if (isSuperuser.value) return [...SCOPE_CATALOG];
-  return SCOPE_CATALOG.filter((scope) => auth.can(scope));
+  return SCOPE_CATALOG.filter((scope) => auth.canGrant(scope));
 });
 
 const currentServerAllowlist = computed(() => auth.serverAllowlist.filter((nodeId) => nodeId !== "*"));
@@ -458,6 +459,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
                 {{ $t("settings.tokens.form.scopedHint") }}
               </template>
             </p>
+            <p class="text-xs text-muted-foreground">{{ $t("settings.scopeMigrationHint") }}</p>
             <div
               :class="
                 cn(

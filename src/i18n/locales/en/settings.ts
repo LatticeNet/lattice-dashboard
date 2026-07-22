@@ -3,6 +3,8 @@
 // Reuses common.* (actions/status/state/misc) from frame.ts for shared verbs.
 export default {
   settings: {
+    scopeMigrationHint:
+      "During migration, proxy:* covers both plugins and may delegate equal-strength canonical scopes. vpncore:* and substore:* are narrower and cannot delegate proxy scopes or each other.",
     security: {
       title: "Security & 2FA",
       description: "Password rotation and second-factor controls for this admin session",
