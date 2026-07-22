@@ -50,7 +50,7 @@ test("frame URL stays on the exact server-derived plugin digest path", () => {
       digest,
       "nonce-123",
     ),
-    `https://lattice.example/api/plugins/assets/test.plugin/${digest}/ui/index.html#lattice_nonce=nonce-123`,
+    `https://lattice.example/api/plugins/assets/test.plugin/${digest}/ui/index.html#lattice_nonce=nonce-123&host_origin=${encodeURIComponent("https://lattice.example")}`,
   );
   assert.equal(resolvePluginFrameURL("https://evil.example/ui", "https://lattice.example", "test.plugin", digest, "n"), undefined);
   assert.equal(resolvePluginFrameURL(`/api/plugins/assets/other/${digest}/ui/index.html`, "https://lattice.example", "test.plugin", digest, "n"), undefined);
