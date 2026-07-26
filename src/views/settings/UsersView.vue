@@ -48,7 +48,7 @@ const isSuperuser = computed(() => auth.scopes.includes("*"));
 // Scopes this admin may grant: the full catalog when superuser, else only those
 // they hold (the server enforces the same subset rule and is authoritative).
 const grantableScopes = computed(() =>
-  isSuperuser.value ? [...SCOPE_CATALOG] : SCOPE_CATALOG.filter((scope) => auth.can(scope)),
+  isSuperuser.value ? [...SCOPE_CATALOG] : SCOPE_CATALOG.filter((scope) => auth.canGrant(scope)),
 );
 
 const usersQuery = useAsyncData(() => api.users.list().then((r) => unwrap(r, "users")), {
@@ -314,6 +314,7 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
               <span class="text-xs text-muted-foreground">{{ $t('settings.users.form.selected', { count: form.scopes.length }) }}</span>
             </div>
             <p class="text-xs text-muted-foreground">{{ $t('settings.users.form.scopesHint') }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('settings.scopeMigrationHint') }}</p>
             <div
               :class="cn('grid max-h-72 grid-cols-1 gap-1.5 overflow-auto rounded-md border border-border p-2 sm:grid-cols-2', scopesError && 'border-destructive')"
             >

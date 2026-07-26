@@ -93,7 +93,7 @@ export function resolvePluginFrameURL(
   ) {
     return undefined;
   }
-  url.hash = `lattice_nonce=${encodeURIComponent(nonce)}`;
+  url.hash = `lattice_nonce=${encodeURIComponent(nonce)}&host_origin=${encodeURIComponent(origin)}`;
   return url.toString();
 }
 
