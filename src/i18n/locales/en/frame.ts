@@ -340,4 +340,12 @@ export default {
     stale: "Stale",
     idle: "No data yet",
   },
+  trust: {
+    banner: {
+      label: "Non-official plugin publisher trusted",
+      publishers: "Trusted beyond {official}: {names}",
+      unsigned: "Signature enforcement for host-risk plugins is OFF",
+      detail: "Plugins on this server may not be official builds. Do not treat this console as production.",
+    },
+  },
 } as const;

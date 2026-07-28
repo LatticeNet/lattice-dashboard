@@ -339,4 +339,12 @@ export default {
     stale: "已过期",
     idle: "暂无数据",
   },
+  trust: {
+    banner: {
+      label: "已信任非官方插件发布者",
+      publishers: "除 {official} 外还信任：{names}",
+      unsigned: "高风险插件的签名校验已关闭",
+      detail: "本服务器上的插件可能不是官方构建，请勿将此控制台视为生产环境。",
+    },
+  },
 } as const;
