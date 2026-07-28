@@ -49,6 +49,7 @@ import type {
   DDNSUpsertRequest,
   TunnelView,
   TunnelUpsertRequest,
+  PluginTrustView,
   PluginView,
   PluginInstallationView,
   PluginLifecycleStatus,
@@ -469,6 +470,8 @@ export const api = {
     list: () => http.get<PluginView[]>("/api/plugins"),
     contributions: (signal?: AbortSignal) =>
       http.get<PluginView[]>("/api/plugin-contributions", undefined, { signal }),
+    trust: (signal?: AbortSignal) =>
+      http.get<PluginTrustView>("/api/plugin-trust", undefined, { signal }),
     lifecycle: () => http.get<PluginInstallationView[]>("/api/plugins/lifecycle"),
     setLifecycle: (id: string, status: PluginLifecycleStatus) =>
       http.post<PluginInstallationView>("/api/plugins/lifecycle", { id, status }),

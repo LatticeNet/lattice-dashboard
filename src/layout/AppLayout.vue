@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { useUiStore } from "@/stores/ui";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppHeader from "./components/AppHeader.vue";
+import TrustBanner from "./components/TrustBanner.vue";
 import CommandPalette from "@/components/common/CommandPalette.vue";
 
 const ui = useUiStore();
@@ -54,6 +55,8 @@ watchEffect(() => {
       />
 
       <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+        <TrustBanner />
+
         <AppHeader
           @toggle-mobile="mobileOpen = !mobileOpen"
           @open-command="commandOpen = true"

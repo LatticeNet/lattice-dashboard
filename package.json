@@ -11,7 +11,7 @@
     "build:only": "vite build",
     "preview": "vite preview",
     "type-check": "vue-tsc --build",
-    "test:navigation": "node --experimental-strip-types --test src/lib/__tests__/scopes.test.ts src/layout/__tests__/navigationModel.test.ts src/layout/__tests__/sidebarModel.test.ts src/layout/__tests__/headerModel.test.ts src/composables/__tests__/pluginContributionModel.test.ts src/stores/__tests__/ui.test.ts src/views/platform/__tests__/pluginBridgeModel.test.ts src/views/platform/__tests__/pluginFrameModel.test.ts src/views/platform/__tests__/pluginIsolation.test.ts"
+    "test:navigation": "node --experimental-strip-types --test src/lib/__tests__/scopes.test.ts src/layout/__tests__/navigationModel.test.ts src/layout/__tests__/sidebarModel.test.ts src/layout/__tests__/headerModel.test.ts src/layout/__tests__/trustBannerModel.test.ts src/composables/__tests__/pluginContributionModel.test.ts src/stores/__tests__/ui.test.ts src/views/platform/__tests__/pluginBridgeModel.test.ts src/views/platform/__tests__/pluginFrameModel.test.ts src/views/platform/__tests__/pluginIsolation.test.ts"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.0",

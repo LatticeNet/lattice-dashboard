@@ -1025,6 +1025,18 @@ export interface PluginUIRuntime {
   asset_digest: string;
 }
 
+/**
+ * Read-only projection of the server's plugin TrustPolicy (TASK-0012).
+ * Names only — never key material. The server emits this object always, with
+ * `non_official: false` in the normal case, so absence means "server too old",
+ * never "nothing to report".
+ */
+export interface PluginTrustView {
+  non_official: boolean;
+  publishers: string[];
+  allow_unsigned_host_risk: boolean;
+}
+
 export interface PluginView {
   id: string;
   name: string;
