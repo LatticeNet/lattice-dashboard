@@ -23,6 +23,8 @@ const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "network-geo-routing": () => import("@/views/networking/GeoRoutingView.vue"),
   "network-ddns": () => import("@/views/networking/DdnsView.vue"),
   "network-tunnels": () => import("@/views/networking/TunnelsView.vue"),
+  "network-subscription-shares": () =>
+    import("@/views/networking/SubscriptionSharesView.vue"),
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
   "platform-workers": () => import("@/views/platform/WorkersView.vue"),

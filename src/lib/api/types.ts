@@ -1415,3 +1415,39 @@ export interface TokenCreateResponse {
   token: string;
   view: TokenView;
 }
+
+// ── subscription shares ─────────────────────────────────────────────────────
+
+/**
+ * Where a share gets its content. Exactly one of the two shapes is valid and
+ * the server refuses the mixed forms, so the UI models it as a discriminated
+ * union rather than four optional strings.
+ */
+export type ShareSource =
+  | { kind: "core.proxy_user"; proxy_user_id: string }
+  | { kind: "plugin"; plugin_id: string; subscription_id: string };
+
+/**
+ * The server returns the token on purpose. The share URL is copied out of the
+ * dashboard repeatedly, so hiding it after creation would trade a real
+ * workflow for protection the at-rest sealing already provides.
+ */
+export interface SubscriptionShareView {
+  id: string;
+  slug: string;
+  token: string;
+  source: ShareSource;
+  default_format?: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  rotated_at?: string;
+  expires_at?: string;
+}
+
+export interface SubscriptionShareCreateRequest {
+  slug: string;
+  source: ShareSource;
+  default_format?: string;
+  expires_at?: string;
+}
