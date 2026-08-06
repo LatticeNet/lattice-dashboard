@@ -93,6 +93,8 @@ import type {
   GroupPolicyView,
   GroupPolicyUpsertRequest,
   GroupPolicyPlanResult,
+  SubscriptionShareCreateRequest,
+  SubscriptionShareView,
 } from "./types";
 
 export * from "./types";
@@ -621,6 +623,23 @@ export const api = {
     create: (input: TokenCreateRequest) => http.post<TokenCreateResponse>("/api/tokens", input),
     revoke: (token_id: string) => http.post<TokenView>("/api/tokens/revoke", { token_id }),
     delete: (token_id: string) => http.post<{ ok: boolean }>("/api/tokens/delete", { token_id }),
+  },
+
+  subscriptionShares: {
+    list: () => http.get<SubscriptionShareView[]>("/api/subscription-shares"),
+    create: (body: SubscriptionShareCreateRequest) =>
+      http.post<SubscriptionShareView>("/api/subscription-shares", body),
+    // Rotation invalidates the old URL immediately and drops the cached output
+    // for that share, and returns the share carrying its new token — so the
+    // caller replaces the row it has rather than refetching the whole list.
+    rotate: (id: string) =>
+      http.post<SubscriptionShareView>(
+        `/api/subscription-shares/${encodeURIComponent(id)}/rotate`,
+        {},
+      ),
+    refresh: (id: string) =>
+      http.post<unknown>(`/api/subscription-shares/${encodeURIComponent(id)}/refresh`, {}),
+    remove: (id: string) => http.del<void>(`/api/subscription-shares/${encodeURIComponent(id)}`),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),
