@@ -1,11 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Copy, KeyRound, Link2, Loader2, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+import { CalendarClock, Copy, KeyRound, Link2, Loader2, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+
+import {
+  expiryFormError,
+  expiryInstant,
+  expiryLabel,
+  isExpired,
+  type DurationUnit,
+  type ExpiryForm,
+  type ExpiryMode,
+} from "./shareExpiryModel";
 
 import { api, ApiError } from "@/lib/api";
 import type {
   ShareSource,
   SubscriptionShareCreateRequest,
+  SubscriptionShareUpdateRequest,
   SubscriptionShareView,
 } from "@/lib/api";
 
@@ -33,15 +44,49 @@ const busyId = ref<string | null>(null);
 const creating = ref(false);
 const confirmingDelete = ref<string | null>(null);
 const rotatingConfirm = ref<string | null>(null);
+/** The share whose expiry is being edited, and what it is being set to. */
+const editingExpiry = ref<string | null>(null);
+const editExpiresOn = ref("");
 
-const form = ref<{ slug: string; kind: ShareSource["kind"]; pluginId: string; subscriptionId: string; proxyUserId: string; defaultFormat: string }>({
+const form = ref<{
+  slug: string;
+  kind: ShareSource["kind"];
+  pluginId: string;
+  subscriptionId: string;
+  proxyUserId: string;
+  defaultFormat: string;
+  expiryMode: ExpiryMode;
+  durationAmount: number;
+  durationUnit: DurationUnit;
+  expiresOn: string;
+}>({
   slug: "",
   kind: "plugin",
   pluginId: "latticenet.sub-store",
   subscriptionId: "",
   proxyUserId: "",
   defaultFormat: "",
+  expiryMode: "never",
+  durationAmount: 1,
+  durationUnit: "year",
+  expiresOn: "",
 });
+
+/** The shape the extracted model takes, read off the form. */
+function expiryForm(): ExpiryForm {
+  return {
+    mode: form.value.expiryMode,
+    amount: form.value.durationAmount,
+    unit: form.value.durationUnit,
+    on: form.value.expiresOn,
+  };
+}
+
+function expiryFromForm(): string | null {
+  return expiryInstant(expiryForm(), Date.now())?.toISOString() ?? null;
+}
+
+const expiryError = computed(() => expiryFormError(expiryForm(), Date.now()));
 
 /** Mirrors the server's `shareSlugRe`. Failing here saves a round trip and
  *  states the rule; the server still owns the decision. */
@@ -58,7 +103,7 @@ const slugError = computed(() => {
 });
 
 const formValid = computed(() => {
-  if (!form.value.slug.trim() || slugError.value) return false;
+  if (!form.value.slug.trim() || slugError.value || expiryError.value) return false;
   return form.value.kind === "plugin"
     ? !!form.value.pluginId.trim() && !!form.value.subscriptionId.trim()
     : !!form.value.proxyUserId.trim();
@@ -122,6 +167,7 @@ async function create(): Promise<void> {
       slug: form.value.slug.trim(),
       source,
       default_format: form.value.defaultFormat.trim() || undefined,
+      expires_at: expiryFromForm() ?? undefined,
     };
     const created = await api.subscriptionShares.create(body);
     shares.value = [...shares.value, created];
@@ -133,6 +179,45 @@ async function create(): Promise<void> {
     actionError.value = describe(error, "Share could not be created");
   } finally {
     creating.value = false;
+  }
+}
+
+function startExpiryEdit(share: SubscriptionShareView): void {
+  editingExpiry.value = editingExpiry.value === share.id ? null : share.id;
+  // Prefilled with what it already is, so "extend by a week" is an edit rather
+  // than a recall exercise.
+  editExpiresOn.value = share.expires_at ? new Date(share.expires_at).toISOString().slice(0, 10) : "";
+  actionError.value = "";
+}
+
+async function saveExpiry(share: SubscriptionShareView, clear: boolean): Promise<void> {
+  busyId.value = share.id;
+  actionError.value = "";
+  notice.value = "";
+  try {
+    let body: SubscriptionShareUpdateRequest;
+    if (clear) {
+      // Omitting the field would leave the expiry alone, which is why the
+      // server takes an explicit flag rather than a null.
+      body = { clear_expiry: true };
+    } else {
+      const end = new Date(`${editExpiresOn.value}T23:59:59`);
+      if (Number.isNaN(end.getTime()) || end.getTime() <= Date.now()) {
+        actionError.value = "Pick a date in the future.";
+        return;
+      }
+      body = { expires_at: end.toISOString() };
+    }
+    const updated = await api.subscriptionShares.update(share.id, body);
+    shares.value = shares.value.map((s) => (s.id === updated.id ? updated : s));
+    editingExpiry.value = null;
+    notice.value = clear
+      ? `${updated.slug} no longer expires.`
+      : `${updated.slug} now expires ${new Date(updated.expires_at ?? "").toLocaleString()}.`;
+  } catch (error) {
+    actionError.value = describe(error, "The expiry could not be changed");
+  } finally {
+    busyId.value = null;
   }
 }
 
@@ -249,6 +334,41 @@ onMounted(load);
           <span>Default format</span>
           <input v-model="form.defaultFormat" type="text" spellcheck="false" placeholder="Optional" />
         </label>
+
+        <label class="field">
+          <span>Expires</span>
+          <select v-model="form.expiryMode">
+            <option value="never">Never</option>
+            <option value="duration">After a period</option>
+            <option value="datetime">On a date</option>
+          </select>
+          <small class="hint">
+            An expired share answers exactly like an unknown path, so nothing about it leaks —
+            including that it ever existed.
+          </small>
+        </label>
+
+        <label v-if="form.expiryMode === 'duration'" class="field">
+          <span>For</span>
+          <div class="expiry-row">
+            <input v-model.number="form.durationAmount" type="number" min="1" step="1" />
+            <select v-model="form.durationUnit">
+              <option value="day">Days</option>
+              <option value="month">Months</option>
+              <option value="quarter">Quarters</option>
+              <option value="year">Years</option>
+            </select>
+          </div>
+          <small v-if="expiryError" class="err">{{ expiryError }}</small>
+          <small v-else class="hint">Counted from the moment you publish.</small>
+        </label>
+
+        <label v-if="form.expiryMode === 'datetime'" class="field">
+          <span>Until</span>
+          <input v-model="form.expiresOn" type="date" />
+          <small v-if="expiryError" class="err">{{ expiryError }}</small>
+          <small v-else class="hint">Stops working at the end of that day, in your timezone.</small>
+        </label>
       </div>
 
       <div class="actions">
@@ -303,6 +423,16 @@ onMounted(load);
                 <KeyRound :size="15" />
               </button>
               <button
+                class="icon"
+                type="button"
+                title="Change when this expires"
+                :aria-label="`Change when ${share.slug} expires`"
+                :disabled="busyId === share.id"
+                @click="startExpiryEdit(share)"
+              >
+                <CalendarClock :size="15" />
+              </button>
+              <button
                 class="icon danger"
                 type="button"
                 title="Delete the share"
@@ -320,8 +450,35 @@ onMounted(load);
           <p class="share-meta">
             {{ sourceLabel(share.source) }}
             <template v-if="share.default_format"> · {{ share.default_format }}</template>
+            · <span :class="{ 'expiry-gone': isExpired(share.expires_at, Date.now()) }">{{
+              expiryLabel(share.expires_at, Date.now())
+            }}</span>
             <template v-if="share.rotated_at"> · rotated {{ new Date(share.rotated_at).toLocaleString() }}</template>
           </p>
+
+          <div v-if="editingExpiry === share.id" class="banner">
+            <label class="field field-inline">
+              <span>Expires at the end of</span>
+              <input v-model="editExpiresOn" type="date" />
+            </label>
+            <button class="btn btn-sm" type="button" @click="editingExpiry = null">Cancel</button>
+            <button
+              class="btn btn-sm"
+              type="button"
+              :disabled="busyId === share.id"
+              @click="saveExpiry(share, true)"
+            >
+              Never expire
+            </button>
+            <button
+              class="btn btn-sm btn-primary"
+              type="button"
+              :disabled="busyId === share.id"
+              @click="saveExpiry(share, false)"
+            >
+              Save
+            </button>
+          </div>
 
           <p v-if="rotatingConfirm === share.id" class="banner banner-warn">
             Rotating replaces the token. Every client using the current URL stops working until you
@@ -343,6 +500,24 @@ onMounted(load);
 </template>
 
 <style scoped>
+.expiry-row {
+  display: flex;
+  gap: 8px;
+}
+.expiry-row input {
+  flex: 1 1 5rem;
+  min-width: 0;
+}
+/* An expired share is still listed, because deleting it is the operator's
+   call — but it must not read like a live one. */
+.expiry-gone {
+  color: var(--danger, #b52b2b);
+  font-weight: 600;
+}
+.field-inline {
+  flex: 1 1 14rem;
+}
+
 .page {
   display: flex;
   flex-direction: column;

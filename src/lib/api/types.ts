@@ -1451,3 +1451,17 @@ export interface SubscriptionShareCreateRequest {
   default_format?: string;
   expires_at?: string;
 }
+
+/**
+ * Every field is optional and omitting one leaves it alone.
+ *
+ * `clear_expiry` exists because "not supplied" and "cleared" are different
+ * requests: without it, an edit that only changed the format would silently
+ * remove the expiry.
+ */
+export interface SubscriptionShareUpdateRequest {
+  expires_at?: string;
+  clear_expiry?: boolean;
+  default_format?: string;
+  enabled?: boolean;
+}
