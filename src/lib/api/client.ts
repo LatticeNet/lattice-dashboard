@@ -55,7 +55,7 @@ export function getCsrfToken(): string {
   return csrfToken;
 }
 
-type Method = "GET" | "POST" | "DELETE";
+type Method = "GET" | "POST" | "DELETE" | "PATCH";
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -223,5 +223,10 @@ export const http = {
   // as the others, so it inherits the CSRF header that every unsafe method
   // requires — which is the reason this belongs here rather than as a one-off
   // fetch at the call site.
+  // PATCH rather than PUT because a share edit sends only what changed: an
+  // omitted field must keep its stored value, and a full replacement would make
+  // every partial edit a silent reset of everything it left out.
+  patch: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>("PATCH", path, body, opts),
   del: <T>(path: string, opts?: RequestOptions) => request<T>("DELETE", path, undefined, opts),
 };

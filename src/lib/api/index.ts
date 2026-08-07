@@ -94,6 +94,7 @@ import type {
   GroupPolicyUpsertRequest,
   GroupPolicyPlanResult,
   SubscriptionShareCreateRequest,
+  SubscriptionShareUpdateRequest,
   SubscriptionShareView,
 } from "./types";
 
@@ -639,6 +640,13 @@ export const api = {
       ),
     refresh: (id: string) =>
       http.post<unknown>(`/api/subscription-shares/${encodeURIComponent(id)}/refresh`, {}),
+    // Editing keeps the URL. Rotation is the separate action that does not,
+    // and conflating them would break every client holding the old link.
+    update: (id: string, body: SubscriptionShareUpdateRequest) =>
+      http.patch<SubscriptionShareView>(
+        `/api/subscription-shares/${encodeURIComponent(id)}`,
+        body,
+      ),
     remove: (id: string) => http.del<void>(`/api/subscription-shares/${encodeURIComponent(id)}`),
   },
 
