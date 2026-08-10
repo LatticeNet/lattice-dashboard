@@ -25,7 +25,7 @@ import { useAuthStore } from "@/stores/auth";
 import { NAV, type NavItem } from "@/router/nav";
 import { api, isActionablePendingApproval, unwrap, type ApprovalView } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
-import { groupApprovalsIntoEvents, partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
+import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
 import { createTtlCache, filterPendingSystemApprovals } from "./commandPaletteModel";
 
 /**
@@ -155,10 +155,16 @@ function isPaletteAction(value: unknown): value is PaletteAction {
 
 async function runApproveSystemEvents(): Promise<void> {
   if (systemActionRunning.value) return;
-  const groups = groupApprovalsIntoEvents(pendingSystemApprovals.value);
-  const targets: ApprovalView[] = [];
-  for (const group of groups) targets.push(...group.items);
-  if (targets.length === 0) return;
+  // Re-read before firing: the 30s probe cache keeps ⌘K instant, but a batch
+  // decision must bind fresh membership — an item dispositioned elsewhere
+  // since the probe would otherwise be toasted as this batch's success.
+  const fresh = await api.approvals.list().then((r) => unwrap(r, "approvals"));
+  const targets = filterPendingSystemApprovals(fresh).filter(isActionablePendingApproval);
+  if (targets.length === 0) {
+    systemApprovalsCache.invalidate();
+    pendingSystemApprovals.value = [];
+    return;
+  }
   systemActionRunning.value = true;
   isOpen.value = false;
   try {

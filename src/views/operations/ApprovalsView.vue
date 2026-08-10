@@ -259,6 +259,21 @@ watch(includeDismissed, () => {
   approvalsQuery.refresh();
 });
 
+// A fresh read retires batch state: failures still pending reappear as their
+// own card by grouping, so a lingering per-card error banner would describe a
+// batch the data no longer matches. Entries for batches still in flight stay
+// (the poll must not flicker a running progress display).
+watch(
+  () => approvalsQuery.data.value,
+  () => {
+    const running: Record<string, EventBatchState> = {};
+    for (const [key, state] of Object.entries(eventBatches.value)) {
+      if (state.running) running[key] = state;
+    }
+    eventBatches.value = running;
+  },
+);
+
 watch(approvalBucket, () => {
   // Re-slicing the inbox is an explicit re-read — drop the batch concealment.
   concealedIds.value = new Set();
