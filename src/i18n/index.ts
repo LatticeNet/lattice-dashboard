@@ -28,11 +28,36 @@ function detectLocale(): LocaleCode {
   return nav.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
 }
 
+/**
+ * Last-resort rendering for a key missing from every locale.
+ *
+ * vue-i18n's default is to render the raw key — which is how
+ * "nav.items.network-subscription-shares" once shipped to the sidebar. A raw
+ * dotted key is never acceptable UI copy, so we humanize the final segment
+ * and warn (once per key) so the gap is found in development, not production.
+ */
+const warnedMissing = new Set<string>();
+
+function humanizeKey(key: string): string {
+  const last = key.split(".").pop() || key;
+  const words = last.split(/[-_]/).filter(Boolean);
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function onMissing(locale: string, key: string): string {
+  if (!warnedMissing.has(key)) {
+    warnedMissing.add(key);
+    console.warn(`[i18n] missing translation (${locale}): ${key}`);
+  }
+  return humanizeKey(key);
+}
+
 export const i18n = createI18n({
   legacy: false,
   globalInjection: true,
   locale: detectLocale(),
   fallbackLocale: "en",
+  missing: onMissing,
   messages: { en, "zh-CN": zhCN },
 });
 
