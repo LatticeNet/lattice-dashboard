@@ -200,6 +200,8 @@ export default {
       placeholder: "Type to search pages…",
       empty: "No matching pages",
       recent: "Recent",
+      actions: "Actions",
+      approveSystemEvents: "Approve all system events",
     },
   },
 

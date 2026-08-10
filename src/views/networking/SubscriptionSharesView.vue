@@ -308,7 +308,9 @@ watch(() => route.query, applyShareDeepLink);
     <section class="card">
       <h2>Published</h2>
 
-      <p v-if="loading" class="muted">Loading…</p>
+      <div v-if="loading" class="share-skeletons" aria-hidden="true">
+        <div v-for="n in 3" :key="n" class="skeleton-block share-skeleton" />
+      </div>
       <p v-else-if="loadError" class="banner banner-error" role="alert">{{ loadError }}</p>
       <p v-else-if="!shares.length" class="muted">
         Nothing is published. A subscription stored in the plugin is not reachable until it has a
@@ -632,6 +634,19 @@ watch(() => route.query, applyShareDeepLink);
 .muted {
   color: var(--text-muted, #8b96a5);
   font-size: 13.5px;
+}
+
+/* Skeleton rows share the global .skeleton-block pulse; only their shape and
+   tint are local (this view keeps its own surface tokens — a raw --accent
+   block would glare on the dark card in light themes). */
+.share-skeletons {
+  display: grid;
+  gap: 12px;
+}
+
+.share-skeleton {
+  height: 96px;
+  background: var(--border, #242d3a);
 }
 
 .spin {

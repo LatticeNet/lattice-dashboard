@@ -8,7 +8,7 @@ const props = defineProps<{ class?: HTMLAttributes["class"] }>();
 <template>
   <div
     data-slot="skeleton"
-    :class="cn('bg-accent animate-pulse rounded-md', props.class)"
+    :class="cn('skeleton-block', props.class)"
   >
     <slot />
   </div>

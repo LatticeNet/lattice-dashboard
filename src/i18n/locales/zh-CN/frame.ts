@@ -199,6 +199,8 @@ export default {
       placeholder: "输入以搜索页面…",
       empty: "没有匹配的页面",
       recent: "最近",
+      actions: "操作",
+      approveSystemEvents: "批准全部系统事件",
     },
   },
 

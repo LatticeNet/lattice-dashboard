@@ -375,12 +375,21 @@ async function runEventBatch(group: ApprovalEventGroup<ApprovalView>, mode: "app
     concealedIds.value = next;
   }
   if (failed.length === 0) {
-    toast.success(t("operations.approvals.events.toastBatchDone", { title, done: succeeded.length, total: targets.length }));
+    toast.success(
+      t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApproveDone" : "toastBatchRejectDone"}`, {
+        count: succeeded.length,
+      }),
+    );
     const next = { ...eventBatches.value };
     delete next[group.key];
     eventBatches.value = next;
   } else {
-    toast.error(t("operations.approvals.events.toastBatchPartial", { title, failed: failed.length, total: targets.length }));
+    toast.warning(
+      t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApprovePartial" : "toastBatchRejectPartial"}`, {
+        done: succeeded.length,
+        failed: failed.length,
+      }),
+    );
     eventBatches.value = {
       ...eventBatches.value,
       [group.key]: {

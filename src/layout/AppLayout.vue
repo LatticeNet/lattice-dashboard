@@ -69,7 +69,7 @@ watchEffect(() => {
           class="min-h-0 flex-1 overflow-y-auto"
         >
           <RouterView v-slot="{ Component, route }">
-            <component :is="Component" :key="route.path" />
+            <component :is="Component" :key="route.path" class="view-enter" />
           </RouterView>
         </main>
       </div>
