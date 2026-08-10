@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { AlertTriangle, ArchiveX, Ban, CheckCircle2, FileCode2, Funnel, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, ArchiveX, Ban, CheckCircle2, ChevronDown, ChevronRight, FileCode2, Funnel, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
 import {
   api,
   APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
@@ -18,9 +18,18 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { approvalStatusMeta } from "@/lib/status";
-import { formatDateTime, shortId } from "@/lib/format";
+import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { evalFilterExpression, tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
+import {
+  UNKNOWN_WRITER,
+  groupApprovalsIntoEvents,
+  groupNodePreview,
+  isApprovalEventGroupable,
+  partitionBatchResults,
+  runWithConcurrency,
+  type ApprovalEventGroup,
+} from "./approvalsModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -46,6 +55,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -249,6 +259,151 @@ watch(includeDismissed, () => {
   approvalsQuery.refresh();
 });
 
+watch(approvalBucket, () => {
+  // Re-slicing the inbox is an explicit re-read — drop the batch concealment.
+  concealedIds.value = new Set();
+});
+
+// ── Event aggregation + batch disposition ────────────────────────────────────
+// The default inbox groups actionable approvals into one card per underlying
+// change (see approvalsModel). `concealedIds` hides items a batch has already
+// disposed of: approve-and-queue leaves an item in "approved" until the agent
+// applies it, so without concealment a fully successful batch would regroup
+// into the same card and look like it did nothing. Concealed items stay
+// visible in the Individual tab; any manual refresh or filter change
+// re-syncs from the server.
+type InboxTab = "events" | "individual";
+const inboxTab = ref<InboxTab>("events");
+const expandedEventKeys = ref<Set<string>>(new Set());
+const concealedIds = ref<Set<string>>(new Set());
+
+interface EventBatchState {
+  running: boolean;
+  done: number;
+  total: number;
+  failed: number;
+  error: string;
+}
+const eventBatches = ref<Record<string, EventBatchState>>({});
+
+const eventGroups = computed(() =>
+  groupApprovalsIntoEvents(
+    filteredApprovals.value.filter(
+      (approval) =>
+        isApprovalEventGroupable(approval) && !isStaleAgentUpdateApproval(approval) && !concealedIds.value.has(approval.id),
+    ),
+  ),
+);
+
+function eventTitleFor(group: ApprovalEventGroup<ApprovalView>): string {
+  if (group.titleKind === "fleet-upgrade") {
+    return group.transition
+      ? t("operations.approvals.events.titleFleetUpgrade", {
+          current: group.transition.current,
+          target: group.transition.target,
+        })
+      : t("operations.approvals.events.titleFleetUpgradeUnknown");
+  }
+  if (group.titleKind === "linemeta-sync") return t("operations.approvals.events.titleLinemetaSync");
+  return group.title;
+}
+
+function eventWriterFor(group: ApprovalEventGroup<ApprovalView>): string {
+  return group.writer === UNKNOWN_WRITER ? t("operations.approvals.events.unknownWriter") : group.writer;
+}
+
+function eventPendingItems(group: ApprovalEventGroup<ApprovalView>): ApprovalView[] {
+  return group.items.filter((item) => item.status === "pending");
+}
+
+function eventApprovedCount(group: ApprovalEventGroup<ApprovalView>): number {
+  return group.items.filter((item) => item.status === "approved").length;
+}
+
+function eventBatchFor(key: string): EventBatchState | undefined {
+  return eventBatches.value[key];
+}
+
+function canDecideEvent(group: ApprovalEventGroup<ApprovalView>): boolean {
+  return canDecideApproval(group.items[0]);
+}
+
+function toggleEventExpanded(key: string) {
+  const next = new Set(expandedEventKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  expandedEventKeys.value = next;
+}
+
+function refreshApprovals() {
+  concealedIds.value = new Set();
+  void approvalsQuery.refresh();
+}
+
+async function runEventBatch(group: ApprovalEventGroup<ApprovalView>, mode: "approve-queue" | "reject") {
+  // Batch actions target pending items only: approved-not-applied items have
+  // already been dispositioned, and the server rejects a second decision.
+  const targets = eventPendingItems(group);
+  if (targets.length === 0 || eventBatches.value[group.key]?.running) return;
+  const title = eventTitleFor(group);
+  if (mode === "reject" && !window.confirm(t("operations.approvals.events.rejectAllConfirm", { count: targets.length, title }))) {
+    return;
+  }
+  eventBatches.value = { ...eventBatches.value, [group.key]: { running: true, done: 0, total: targets.length, failed: 0, error: "" } };
+  // runWithConcurrency never rejects: per-item failures are collected so the
+  // batch runs to completion and the card shrinks to exactly the items that
+  // still need attention.
+  const results = await runWithConcurrency(
+    targets,
+    4,
+    async (item) => {
+      if (mode === "approve-queue") {
+        await api.approvals.approve(item.id, true, await digestFor(item));
+      } else {
+        await api.approvals.reject(item.id);
+      }
+    },
+    (done, total) => {
+      const state = eventBatches.value[group.key];
+      if (state) eventBatches.value = { ...eventBatches.value, [group.key]: { ...state, done, total } };
+    },
+  );
+  const { succeeded, failed } = partitionBatchResults(targets, results);
+  if (succeeded.length > 0) {
+    const next = new Set(concealedIds.value);
+    for (const item of succeeded) next.add(item.id);
+    concealedIds.value = next;
+  }
+  if (failed.length === 0) {
+    toast.success(
+      t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApproveDone" : "toastBatchRejectDone"}`, {
+        count: succeeded.length,
+      }),
+    );
+    const next = { ...eventBatches.value };
+    delete next[group.key];
+    eventBatches.value = next;
+  } else {
+    toast.warning(
+      t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApprovePartial" : "toastBatchRejectPartial"}`, {
+        done: succeeded.length,
+        failed: failed.length,
+      }),
+    );
+    eventBatches.value = {
+      ...eventBatches.value,
+      [group.key]: {
+        running: false,
+        done: targets.length,
+        total: targets.length,
+        failed: failed.length,
+        error: failed[0]?.error ?? "",
+      },
+    };
+  }
+  await approvalsQuery.refresh();
+}
+
 watch(
   filteredApprovals,
   (list) => {
@@ -445,7 +600,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
         <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="approvalsQuery.refresh">
+        <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="refreshApprovals">
           <RefreshCw :class="cn('size-4', approvalsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
@@ -486,9 +641,23 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
       <Card>
         <CardHeader>
           <CardTitle>{{ $t('operations.approvals.inbox') }}</CardTitle>
-          <CardDescription>{{ $t('operations.approvals.inboxHint') }}</CardDescription>
+          <CardDescription>
+            {{ inboxTab === 'events' ? $t('operations.approvals.events.hint') : $t('operations.approvals.inboxHint') }}
+          </CardDescription>
         </CardHeader>
         <CardContent class="space-y-3">
+          <Tabs v-model="inboxTab">
+            <TabsList class="w-full">
+              <TabsTrigger value="events" class="flex-1 gap-1.5">
+                {{ $t('operations.approvals.events.tab') }}
+                <Badge variant="outline">{{ eventGroups.length }}</Badge>
+              </TabsTrigger>
+              <TabsTrigger value="individual" class="flex-1 gap-1.5">
+                {{ $t('operations.approvals.events.tabIndividual') }}
+                <Badge variant="outline">{{ filteredApprovals.length }}</Badge>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
           <div class="relative">
             <Search
               class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
@@ -540,12 +709,136 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
             :loading="approvalsQuery.loading.value"
             :error="approvalsQuery.error.value"
             :has-data="approvalsQuery.data.value !== undefined"
-            :is-empty="filteredApprovals.length === 0"
+            :is-empty="inboxTab === 'individual' && filteredApprovals.length === 0"
             :empty-title="approvals.length ? $t('operations.approvals.noMatchTitle') : $t('operations.approvals.emptyTitle')"
             :empty-description="approvals.length ? $t('operations.approvals.noMatchDescription') : $t('operations.approvals.emptyDescription')"
             @retry="approvalsQuery.refresh"
           >
-            <div class="space-y-2">
+            <div v-if="inboxTab === 'events'" class="space-y-2">
+              <div
+                v-if="eventGroups.length === 0"
+                class="rounded-md border border-dashed border-border p-4 text-center"
+              >
+                <p class="text-sm font-medium">{{ $t('operations.approvals.events.noEventsTitle') }}</p>
+                <p class="mt-1 text-xs text-muted-foreground">{{ $t('operations.approvals.events.noEventsDescription') }}</p>
+                <Button type="button" variant="outline" size="sm" class="mt-3" @click="inboxTab = 'individual'">
+                  {{ $t('operations.approvals.events.noEventsSwitch') }}
+                </Button>
+              </div>
+
+              <div v-for="group in eventGroups" :key="group.key" class="rounded-md border border-border">
+                <div class="space-y-2 p-3">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="text-sm font-medium leading-snug">{{ eventTitleFor(group) }}</p>
+                      <p class="mt-0.5 text-xs text-muted-foreground">
+                        {{ $t('operations.approvals.events.count', { count: group.items.length }) }}
+                        · {{ $t('operations.approvals.events.writerBy', { writer: eventWriterFor(group) }) }}
+                        · {{ $t('operations.approvals.events.newest', { age: formatRelativeTime(group.newestCreatedAt) }) }}
+                      </p>
+                    </div>
+                    <Badge v-if="group.isSystem" variant="secondary" class="shrink-0">
+                      {{ $t('operations.approvals.events.systemBadge') }}
+                    </Badge>
+                  </div>
+
+                  <div class="flex flex-wrap items-center gap-1">
+                    <Badge
+                      v-for="node in groupNodePreview(group).nodes"
+                      :key="node"
+                      variant="outline"
+                      class="max-w-40 truncate font-normal"
+                    >
+                      {{ node }}
+                    </Badge>
+                    <span v-if="groupNodePreview(group).extra > 0" class="text-xs text-muted-foreground">
+                      {{ $t('operations.approvals.events.nodesMore', { count: groupNodePreview(group).extra }) }}
+                    </span>
+                  </div>
+
+                  <p v-if="eventApprovedCount(group) > 0" class="text-xs text-muted-foreground">
+                    {{ $t('operations.approvals.events.approvedNote', { count: eventApprovedCount(group) }) }}
+                  </p>
+
+                  <div
+                    v-if="eventBatchFor(group.key)?.running"
+                    class="flex items-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <RefreshCw class="size-3.5 animate-spin" aria-hidden="true" />
+                    {{
+                      $t('operations.approvals.events.progress', {
+                        done: eventBatchFor(group.key)?.done ?? 0,
+                        total: eventBatchFor(group.key)?.total ?? 0,
+                      })
+                    }}
+                  </div>
+
+                  <div
+                    v-if="eventBatchFor(group.key)?.error"
+                    class="rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-muted-foreground"
+                  >
+                    <p class="font-medium text-foreground">
+                      {{
+                        $t('operations.approvals.events.batchErrorTitle', {
+                          failed: eventBatchFor(group.key)?.failed ?? 0,
+                          total: eventBatchFor(group.key)?.total ?? 0,
+                        })
+                      }}
+                    </p>
+                    <p class="mt-0.5 break-words">{{ eventBatchFor(group.key)?.error }}</p>
+                  </div>
+
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      :disabled="!canDecideEvent(group) || eventPendingItems(group).length === 0 || !!eventBatchFor(group.key)?.running"
+                      @click="runEventBatch(group, 'approve-queue')"
+                    >
+                      <Play class="size-4" aria-hidden="true" />
+                      {{ $t('operations.approvals.events.approveAllQueue') }}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      :disabled="!canDecideEvent(group) || eventPendingItems(group).length === 0 || !!eventBatchFor(group.key)?.running"
+                      @click="runEventBatch(group, 'reject')"
+                    >
+                      <Ban class="size-4" aria-hidden="true" />
+                      {{ $t('operations.approvals.events.rejectAll') }}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" class="ml-auto" @click="toggleEventExpanded(group.key)">
+                      <ChevronDown v-if="expandedEventKeys.has(group.key)" class="size-4" aria-hidden="true" />
+                      <ChevronRight v-else class="size-4" aria-hidden="true" />
+                      {{ expandedEventKeys.has(group.key) ? $t('operations.approvals.events.collapse') : $t('operations.approvals.events.expand') }}
+                    </Button>
+                  </div>
+                </div>
+
+                <div v-if="expandedEventKeys.has(group.key)" class="border-t border-border">
+                  <button
+                    v-for="item in group.items"
+                    :key="item.id"
+                    type="button"
+                    :class="cn('surface-interactive w-full border-t border-border p-3 text-left first:border-t-0', selected?.id === item.id && 'bg-primary/5')"
+                    @click="selectedId = item.id"
+                  >
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="truncate text-sm font-medium">{{ item.plugin }} · {{ item.action }}</span>
+                      <Badge :variant="variantFor(item.status)" class="shrink-0">{{ $t('common.status.' + item.status) }}</Badge>
+                    </div>
+                    <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span>{{ shortId(item.id) }}</span>
+                      <span>{{ item.node_id || $t('common.misc.global') }}</span>
+                      <span>{{ formatDateTime(item.created_at) }}</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="space-y-2">
               <button
                 v-for="approval in filteredApprovals"
                 :key="approval.id"

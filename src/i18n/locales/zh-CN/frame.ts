@@ -147,6 +147,7 @@ export default {
       "network-geo-routing": "地理路由",
       "network-ddns": "动态 DNS",
       "network-tunnels": "隧道",
+      "network-subscription-shares": "订阅分享",
       "platform-plugins": "插件",
       "platform-workers": "Worker",
       "platform-kv": "KV 存储",
@@ -198,6 +199,10 @@ export default {
       placeholder: "输入以搜索页面…",
       empty: "没有匹配的页面",
       recent: "最近",
+      actions: "操作",
+      approveSystemEvents: "批准全部系统事件",
+      approveSystemEventsDone: "已批准并排队 {count} 项",
+      approveSystemEventsPartial: "{done} 项已批准并排队,{failed} 项失败 —— 失败的条目仍保留在审批收件箱中",
     },
   },
 

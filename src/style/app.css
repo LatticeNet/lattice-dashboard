@@ -236,6 +236,44 @@
   opacity: 0;
 }
 
+/* Route enter: a quick fade + 4px rise as the keyed view swaps in. AppLayout
+   keys the outlet by route.path, so a plain CSS animation on the incoming
+   view root does the job of a <transition> wrapper without one: the outgoing
+   view unmounts in the same tick, never overlaps, and siblings never reflow.
+   Transform/opacity only, one-shot — no perpetual motion. */
+@keyframes view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.view-enter {
+  animation: view-enter 160ms ease-out;
+}
+
+/* Shared skeleton placeholder block — the one loading-state look across
+   views: a muted panel with a slow, calm opacity pulse. Sizing comes from the
+   call site (utility classes or scoped styles); the motion and surface come
+   from here. */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.skeleton-block {
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
 /* Status pulse for live "online" dots. */
 @keyframes lattice-pulse {
   0%,
@@ -259,7 +297,9 @@
    ------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse-dot,
-  .animate-spin {
+  .animate-spin,
+  .view-enter,
+  .skeleton-block {
     animation: none;
   }
 

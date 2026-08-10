@@ -148,6 +148,7 @@ export default {
       "network-geo-routing": "Geo-Routing",
       "network-ddns": "DDNS",
       "network-tunnels": "Tunnels",
+      "network-subscription-shares": "Subscription Shares",
       "platform-plugins": "Plugins",
       "platform-workers": "Workers",
       "platform-kv": "KV Store",
@@ -199,6 +200,10 @@ export default {
       placeholder: "Type to search pages…",
       empty: "No matching pages",
       recent: "Recent",
+      actions: "Actions",
+      approveSystemEvents: "Approve all system events",
+      approveSystemEventsDone: "Approved and queued {count} items",
+      approveSystemEventsPartial: "{done} approved and queued, {failed} failed — the failures stay pending in the approvals inbox",
     },
   },
 
