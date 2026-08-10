@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { AlertTriangle, LoaderCircle } from "lucide-vue-next";
 
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";
 import { PluginBridgeSession, resolvePluginFrameURL, type BridgeHostMessage } from "./pluginBridgeModel";
 import { PluginFrameLifecycle } from "./pluginFrameModel";
+import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
 
 const props = defineProps<{
   pluginId: string;
@@ -16,6 +18,7 @@ const props = defineProps<{
 }>();
 
 const lifecycle = new PluginFrameLifecycle({ createNonce });
+const router = useRouter();
 
 const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
@@ -143,6 +146,26 @@ function armSession() {
 }
 
 function onMessage(event: MessageEvent) {
+  // Plugin-requested host navigation (e.g. Sub-Store's "publish a share"
+  // button → the subscription-shares deep link). The frame runs connect-src
+  // 'none', so postMessage is its only outbound channel and the host performs
+  // the route change for it. Identity is pinned to the armed frame window and
+  // its (opaque, sandboxed) origin; the route must be a strictly internal
+  // dashboard path — the worst a bad frame can do is move the host to another
+  // dashboard page. Anything else is dropped without disturbing the bridge.
+  const navigation = classifyPluginNavigateMessage(event.data);
+  if (navigation.kind === "navigate") {
+    if (event.source === sourceWindow && isExpectedPluginFrameOrigin(event.origin, window.location.origin)) {
+      void router.push(navigation.route);
+    } else {
+      console.debug("[plugin-frame] ignored navigate from an unexpected source or origin", event.origin);
+    }
+    return;
+  }
+  if (navigation.kind === "invalid") {
+    console.debug("[plugin-frame] ignored malformed or non-internal navigate request");
+    return;
+  }
   void session?.handle({ source: event.source, data: event.data });
 }
 

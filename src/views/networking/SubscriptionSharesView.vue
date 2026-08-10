@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
 import { Copy, KeyRound, Link2, Loader2, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 
 import { api, ApiError } from "@/lib/api";
@@ -8,6 +9,7 @@ import type {
   SubscriptionShareCreateRequest,
   SubscriptionShareView,
 } from "@/lib/api";
+import { SHARE_SLUG_RE, suggestShareSlug } from "./subscriptionSharesModel";
 
 /**
  * Subscription shares — the public URLs the server serves.
@@ -43,9 +45,7 @@ const form = ref<{ slug: string; kind: ShareSource["kind"]; pluginId: string; su
   defaultFormat: "",
 });
 
-/** Mirrors the server's `shareSlugRe`. Failing here saves a round trip and
- *  states the rule; the server still owns the decision. */
-const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const SLUG_RE = SHARE_SLUG_RE;
 
 const slugError = computed(() => {
   const slug = form.value.slug.trim();
@@ -184,7 +184,52 @@ async function remove(share: SubscriptionShareView): Promise<void> {
   }
 }
 
-onMounted(load);
+const route = useRoute();
+const router = useRouter();
+const createSection = ref<HTMLElement | null>(null);
+const slugInput = ref<HTMLInputElement | null>(null);
+
+/** The identity fields a deep link writes. pluginId keeps its Sub-Store
+ *  default and defaultFormat is cosmetic, so neither counts as "typed". */
+function formTouched(): boolean {
+  return !!(form.value.slug.trim() || form.value.subscriptionId.trim() || form.value.proxyUserId.trim());
+}
+
+/**
+ * Consume the subscription → share deep link
+ * (/network/subscription-shares?create=1&for=<name>) that the Sub-Store plugin
+ * frame asks the host to navigate to. If the operator has already typed into
+ * the form, the draft wins: nothing is overwritten and the params are left in
+ * the URL, so the link can still be applied after the draft is discarded or
+ * published.
+ */
+function applyShareDeepLink(): void {
+  if (route.query.create !== "1") return;
+  const rawFor = route.query.for;
+  const name = (Array.isArray(rawFor) ? rawFor[0] : rawFor)?.trim();
+  if (!name || formTouched()) return;
+  form.value.kind = "plugin";
+  form.value.subscriptionId = name;
+  // "" on a slug collision or an un-slugifiable name — the operator picks one.
+  form.value.slug = suggestShareSlug(name, shares.value.map((share) => share.slug));
+  // Strip the params so a refresh does not re-trigger the prefill.
+  const query = { ...route.query };
+  delete query.create;
+  delete query.for;
+  void router.replace({ query });
+  void nextTick(() => {
+    createSection.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+    slugInput.value?.focus({ preventScroll: true });
+  });
+}
+
+onMounted(async () => {
+  // The slug suggestion checks collisions against the loaded shares, so the
+  // deep link applies only after the first load settles.
+  await load();
+  applyShareDeepLink();
+});
+watch(() => route.query, applyShareDeepLink);
 </script>
 
 <template>
@@ -205,12 +250,12 @@ onMounted(load);
     <p v-if="actionError" class="banner banner-error" role="alert">{{ actionError }}</p>
     <p v-else-if="notice" class="banner banner-ok" role="status">{{ notice }}</p>
 
-    <section class="card">
+    <section ref="createSection" class="card">
       <h2>Publish a subscription</h2>
       <div class="grid">
         <label class="field">
           <span>Slug</span>
-          <input v-model="form.slug" type="text" spellcheck="false" placeholder="share-for-me" />
+          <input ref="slugInput" v-model="form.slug" type="text" spellcheck="false" placeholder="share-for-me" />
           <small v-if="slugError" class="err">{{ slugError }}</small>
           <small v-else class="hint">
             Appears in the URL and in reverse-proxy logs, so it is a label rather than a secret.
