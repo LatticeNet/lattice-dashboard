@@ -201,6 +201,8 @@ export default {
       recent: "最近",
       actions: "操作",
       approveSystemEvents: "批准全部系统事件",
+      approveSystemEventsDone: "已批准并排队 {count} 项",
+      approveSystemEventsPartial: "{done} 项已批准并排队,{failed} 项失败 —— 失败的条目仍保留在审批收件箱中",
     },
   },
 

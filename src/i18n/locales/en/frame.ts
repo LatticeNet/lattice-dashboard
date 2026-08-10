@@ -202,6 +202,8 @@ export default {
       recent: "Recent",
       actions: "Actions",
       approveSystemEvents: "Approve all system events",
+      approveSystemEventsDone: "Approved and queued {count} items",
+      approveSystemEventsPartial: "{done} approved and queued, {failed} failed — the failures stay pending in the approvals inbox",
     },
   },
 

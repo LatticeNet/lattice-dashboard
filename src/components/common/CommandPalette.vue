@@ -172,10 +172,14 @@ async function runApproveSystemEvents(): Promise<void> {
     // remainder, mirroring the event-card shrink-to-failures behavior.
     pendingSystemApprovals.value = failed.map((entry) => entry.item);
     if (failed.length === 0) {
-      toast.success(t("operations.approvals.events.toastBatchApproveDone", { count: succeeded.length }));
+      toast.success(t("shell.command.approveSystemEventsDone", { count: succeeded.length }));
     } else {
+      // Shell-scoped copy: the operations event-card text refers to "the
+      // card", which does not exist in palette context — here the honest
+      // remainder is that the failures stay pending (and the action keeps
+      // offering exactly them).
       toast.warning(
-        t("operations.approvals.events.toastBatchApprovePartial", { done: succeeded.length, failed: failed.length }),
+        t("shell.command.approveSystemEventsPartial", { done: succeeded.length, failed: failed.length }),
       );
     }
   } finally {
