@@ -35,6 +35,7 @@ import {
   RotateCw,
   Server,
   ScrollText,
+  ShieldCheck,
   SquareTerminal,
   Trash2,
   X,
@@ -51,8 +52,16 @@ import {
   type DDNSView,
   type AgentUpdatePolicy,
   type AuditEvent,
+  type ApprovalView,
+  type TaskResult,
+  type TaskView,
   type NodeDeletePlanView,
 } from "@/lib/api";
+import {
+  buildNodeTimeline,
+  groupByDay,
+  type TimelineEntry,
+} from "./nodeTimelineModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -145,8 +154,24 @@ const agentUpdatesQuery = useAsyncData<AgentUpdatePolicy[] | undefined>(
 );
 
 const auditQuery = useAsyncData<AuditEvent[] | undefined>(
-  soften(() => api.audit.query({ node_id: nodeId.value, limit: 20 }).then((r) => r.events ?? [])),
+  soften(() => api.audit.query({ node_id: nodeId.value, limit: 40 }).then((r) => r.events ?? [])),
   { pollInterval: 15000 },
+);
+
+// The timeline's other two sources. Both are soft: a node page must still
+// render when the operator cannot read tasks or approvals, and the timeline
+// then simply shows fewer kinds of event rather than an error.
+const nodeTasksQuery = useAsyncData<TaskView[] | undefined>(
+  soften(() => api.tasks.list().then((r) => unwrap(r, "tasks"))),
+  { pollInterval: 20000 },
+);
+const nodeResultsQuery = useAsyncData<TaskResult[] | undefined>(
+  soften(() => api.tasks.results({ node_id: nodeId.value, limit: 40 }).then((r) => unwrap(r, "results"))),
+  { pollInterval: 20000 },
+);
+const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
+  soften(() => api.approvals.list().then((r) => unwrap(r, "approvals"))),
+  { pollInterval: 20000 },
 );
 
 const node = computed<Node | undefined>(() =>
@@ -460,6 +485,55 @@ watch(
 );
 
 const auditEvents = computed(() => auditQuery.data.value ?? []);
+
+/**
+ * What happened to this machine, in order, from every source that records it.
+ * Audit alone answered "what did the server log"; the question an operator
+ * arrives with is "what happened here", and a task run, the approval that
+ * authorised it and the audit line it produced are three records of one story.
+ */
+const timeline = computed(() =>
+  buildNodeTimeline({
+    nodeId: nodeId.value,
+    audit: auditEvents.value,
+    tasks: nodeTasksQuery.data.value ?? [],
+    results: nodeResultsQuery.data.value ?? [],
+    approvals: nodeApprovalsQuery.data.value ?? [],
+    limit: timelineExpanded.value ? 100 : 12,
+  }),
+);
+const timelineDays = computed(() => groupByDay(timeline.value));
+const timelineExpanded = ref(false);
+const timelineHasMore = computed(
+  () =>
+    !timelineExpanded.value &&
+    buildNodeTimeline({
+      nodeId: nodeId.value,
+      audit: auditEvents.value,
+      tasks: nodeTasksQuery.data.value ?? [],
+      results: nodeResultsQuery.data.value ?? [],
+      approvals: nodeApprovalsQuery.data.value ?? [],
+    }).length > timeline.value.length,
+);
+
+/** Icon per source, so the eye can separate kinds without reading. */
+function timelineIcon(kind: TimelineEntry["kind"]) {
+  if (kind === "task") return SquareTerminal;
+  if (kind === "approval") return ShieldCheck;
+  return ScrollText;
+}
+
+/** allow/ok are quiet; deny/failed/rejected are the ones worth finding. */
+function outcomeVariant(outcome: string): "default" | "secondary" | "destructive" | "outline" {
+  if (["deny", "failed", "rejected", "cancelled"].includes(outcome)) return "destructive";
+  if (["allow", "ok", "applied", "finished", "approved"].includes(outcome)) return "secondary";
+  return "outline";
+}
+
+function timelineHref(entry: TimelineEntry): string | undefined {
+  if (!entry.ref) return undefined;
+  return entry.ref.kind === "task" ? "/tasks" : "/approvals";
+}
 
 function decisionVariant(d: string): "success" | "destructive" | "secondary" {
   if (d === "allow") return "success";
@@ -1798,21 +1872,58 @@ async function resolveGeo() {
               :loading="auditQuery.loading.value"
               :error="auditQuery.error.value"
               :has-data="auditQuery.data.value !== undefined"
-              :is-empty="auditEvents.length === 0"
+              :is-empty="timeline.length === 0"
               :empty-description="$t('fleet.nodes.detail.noActivity')"
               :skeleton-rows="4"
               @retry="auditQuery.refresh"
             >
-              <ul class="divide-y divide-border">
-                <li v-for="ev in auditEvents" :key="ev.id" class="flex items-center gap-3 py-2">
-                  <div class="min-w-0 flex-1">
-                    <p class="truncate font-mono text-xs tabular">{{ ev.action }}</p>
-                    <p class="truncate text-xs text-muted-foreground">{{ ev.actor_id || ev.token_id || '—' }}</p>
-                  </div>
-                  <Badge :variant="decisionVariant(ev.decision)">{{ ev.decision }}</Badge>
-                  <span class="shrink-0 text-xs text-muted-foreground tabular">{{ formatRelativeTime(ev.at) }}</span>
-                </li>
-              </ul>
+              <div class="space-y-4">
+                <section v-for="day in timelineDays" :key="day.day" class="space-y-1">
+                  <p class="text-xs font-medium text-muted-foreground tabular">{{ day.day }}</p>
+                  <ol class="relative space-y-0 border-l border-border pl-4">
+                    <li v-for="entry in day.entries" :key="entry.id" class="relative py-2">
+                      <span
+                        class="absolute -left-[1.4rem] top-2.5 flex size-4 items-center justify-center rounded-full bg-background text-muted-foreground"
+                      >
+                        <component :is="timelineIcon(entry.kind)" class="size-3.5" aria-hidden="true" />
+                      </span>
+                      <div class="flex items-start gap-2">
+                        <div class="min-w-0 flex-1">
+                          <p class="truncate font-mono text-xs tabular">
+                            <RouterLink
+                              v-if="timelineHref(entry)"
+                              :to="timelineHref(entry)!"
+                              class="hover:underline"
+                            >
+                              {{ entry.action }}
+                            </RouterLink>
+                            <template v-else>{{ entry.action }}</template>
+                          </p>
+                          <p class="truncate text-xs text-muted-foreground">
+                            <template v-if="entry.actor">{{ entry.actor }}</template>
+                            <template v-if="entry.actor && entry.detail"> · </template>
+                            <template v-if="entry.detail">{{ entry.detail }}</template>
+                            <template v-if="!entry.actor && !entry.detail">—</template>
+                          </p>
+                        </div>
+                        <Badge :variant="outcomeVariant(entry.outcome)" class="shrink-0">{{ entry.outcome }}</Badge>
+                        <span class="shrink-0 text-xs text-muted-foreground tabular">
+                          {{ formatRelativeTime(entry.at) }}
+                        </span>
+                      </div>
+                    </li>
+                  </ol>
+                </section>
+                <Button
+                  v-if="timelineHasMore"
+                  variant="outline"
+                  size="sm"
+                  class="w-full"
+                  @click="timelineExpanded = true"
+                >
+                  {{ $t('common.actions.loadMore') }}
+                </Button>
+              </div>
             </DataState>
           </CardContent>
         </Card>
