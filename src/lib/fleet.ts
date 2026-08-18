@@ -206,9 +206,16 @@ export function groupNodes(
   by: GroupBy,
   locale = "en",
   groups: { id: string; name: string; color?: string }[] = [],
+  opts: { preserveOrder?: boolean } = {},
 ): NodeGroup[] {
+  const preserveOrder = !!opts.preserveOrder;
   if (by === "none") {
-    return [finishGroup({ key: "all", label: "", glyph: "", order: 0, nodes: [...nodes], online: 0, total: 0 })];
+    return [
+      finishGroup(
+        { key: "all", label: "", glyph: "", order: 0, nodes: [...nodes], online: 0, total: 0 },
+        preserveOrder,
+      ),
+    ];
   }
 
   const groupMeta = new Map(groups.map((g) => [g.id, g] as const));
@@ -288,16 +295,21 @@ export function groupNodes(
   }
 
   return [...map.values()]
-    .map(finishGroup)
+    .map((g) => finishGroup(g, preserveOrder))
     .sort((a, b) => a.order - b.order || b.total - a.total || a.label.localeCompare(b.label));
 }
 
-function finishGroup(g: NodeGroup): NodeGroup {
-  g.nodes.sort((a, b) => {
-    if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
-    if (a.online !== b.online) return a.online ? -1 : 1;
-    return (a.name || a.id).localeCompare(b.name || b.id);
-  });
+function finishGroup(g: NodeGroup, preserveOrder = false): NodeGroup {
+  // Callers that already ordered the list (explicit column sort, search
+  // relevance) pass preserveOrder so bucketing does not silently re-rank the
+  // rows the operator just sorted.
+  if (!preserveOrder) {
+    g.nodes.sort((a, b) => {
+      if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return (a.name || a.id).localeCompare(b.name || b.id);
+    });
+  }
   g.total = g.nodes.length;
   g.online = g.nodes.filter(isLive).length;
   // The ungrouped bucket always sinks to the bottom regardless of size.

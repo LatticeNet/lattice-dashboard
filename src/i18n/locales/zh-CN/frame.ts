@@ -22,6 +22,11 @@ export default {
       untagged: "无标签",
       ungrouped: "未分组",
     },
+    table: {
+      columns: "列",
+      showAll: "显示全部列",
+      sortBy: "按{column}排序",
+    },
     actions: {
       refresh: "刷新",
       save: "保存",

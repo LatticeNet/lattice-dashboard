@@ -2,20 +2,29 @@
 /**
  * NodeTable — the horizontal, scan-many-nodes counterpart to {@link NodeCard}.
  *
- * Reuses the horizontal-table pattern from MonitoringView's result log: a
- * grid-cols header + rows wrapped in `overflow-x-auto` with a `min-w` so the
- * dense column set scrolls horizontally on narrow viewports instead of wrapping.
+ * A grid-cols header + rows wrapped in `overflow-x-auto` so the dense column
+ * set scrolls horizontally on narrow viewports instead of wrapping. The grid
+ * template is computed from the visible column set (column manager lives in
+ * the caller's toolbar), and sortable headers re-emit `toggle-sort` — state
+ * ownership stays with NodesView, which persists it.
  *
  * Presentational only — it does NOT fetch and does NOT mutate. It re-emits the
  * same intents NodesView already wires for NodeCard (`open` / `terminal` /
  * `rotate` / `set-disabled`) so the two view modes share one set of handlers.
  */
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { ArrowDown, ArrowUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
 import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
 import { nodeStatusMeta } from "@/lib/status";
 import { formatBytes, formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
+import {
+  gridTemplate,
+  visibleColumns,
+  type NodeSortState,
+  type NodeTableColumn,
+} from "@/views/fleet/nodesTableModel";
 
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
@@ -26,6 +35,10 @@ const props = withDefaults(
   defineProps<{
     /** Rows to render (already filtered/sorted by the caller). */
     nodes: Node[];
+    /** Ids of optional columns the caller has hidden. */
+    hiddenColumns?: ReadonlySet<string>;
+    /** Active sort; drives header indicators and aria-sort. */
+    sort?: NodeSortState;
     /** Gate the terminal action. */
     canOpenTerminal?: boolean;
     /** Gate the rotate / disable actions. */
@@ -36,6 +49,8 @@ const props = withDefaults(
     updatePolicies?: AgentUpdatePolicy[];
   }>(),
   {
+    hiddenColumns: () => new Set<string>(),
+    sort: () => ({ key: "", dir: "asc" }),
     canOpenTerminal: false,
     canAdminNodes: false,
     pendingNodeId: undefined,
@@ -52,9 +67,38 @@ const emit = defineEmits<{
   (e: "rotate", node: Node): void;
   /** Enable/disable toggle — second arg is the desired `disabled` value. */
   (e: "set-disabled", node: Node, disabled: boolean): void;
+  /** Sortable header activated — caller advances its sort-state machine. */
+  (e: "toggle-sort", columnId: string): void;
 }>();
 
 const { t } = useI18n();
+
+const columns = computed(() => visibleColumns(props.hiddenColumns));
+const gridStyle = computed(() => ({ gridTemplateColumns: gridTemplate(props.hiddenColumns) }));
+/** The min width shrinks as columns are hidden: roughly the sum of fixed
+ *  tracks plus room for the flexible ones. */
+const minWidth = computed(() => {
+  let px = 0;
+  for (const column of columns.value) {
+    const fixed = /^(\d+)px$/.exec(column.width);
+    if (fixed) px += Number(fixed[1]);
+    else px += 200;
+  }
+  return `${px + (columns.value.length - 1) * 12 + 24}px`;
+});
+
+function show(id: string): boolean {
+  return columns.value.some((c) => c.id === id);
+}
+
+function headerLabel(column: NodeTableColumn): string {
+  return t(column.labelKey);
+}
+
+function ariaSort(column: NodeTableColumn): "ascending" | "descending" | "none" {
+  if (!column.sortKey || props.sort.key !== column.sortKey) return "none";
+  return props.sort.dir === "asc" ? "ascending" : "descending";
+}
 
 /** Real, derived treatment (drives the dot colour). */
 function meta(node: Node) {
@@ -122,32 +166,45 @@ function onOpen(node: Node): void {
 
 <template>
   <div class="overflow-x-auto rounded-lg border border-border">
-    <div class="min-w-[1700px]">
+    <div :style="{ minWidth }">
       <!-- Header -->
       <div
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_170px_112px_116px_148px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+        class="grid gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+        :style="gridStyle"
+        role="row"
       >
-        <span>{{ $t('fleet.nodes.table.colName') }}</span>
-        <span>{{ $t('fleet.nodes.table.colStatus') }}</span>
-        <span>{{ $t('fleet.nodes.table.colRole') }}</span>
-        <span>{{ $t('fleet.nodes.table.colTags') }}</span>
-        <span>{{ $t('fleet.nodes.table.colPublicIp') }}</span>
-        <span>{{ $t('fleet.nodes.table.colArchOs') }}</span>
-        <span>{{ $t('fleet.nodes.table.colAgentConfig') }}</span>
-        <span>{{ $t('fleet.nodes.metric.cpu') }}</span>
-        <span>{{ $t('fleet.nodes.metric.memory') }}</span>
-        <span>{{ $t('fleet.nodes.metric.disk') }}</span>
-        <span>{{ $t('fleet.nodes.table.colNetwork') }}</span>
-        <span>{{ $t('fleet.nodes.table.colLastSeen') }}</span>
-        <span>{{ $t('fleet.nodes.table.colUpdate') }}</span>
-        <span class="text-right">{{ $t('fleet.nodes.table.colActions') }}</span>
+        <template v-for="column in columns" :key="column.id">
+          <button
+            v-if="column.sortKey"
+            type="button"
+            class="inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
+            :class="column.id === 'actions' && 'justify-end'"
+            :aria-sort="ariaSort(column)"
+            :title="$t('common.table.sortBy', { column: headerLabel(column) })"
+            @click="emit('toggle-sort', column.id)"
+          >
+            <span>{{ headerLabel(column) }}</span>
+            <ChevronUp
+              v-if="sort.key === column.sortKey && sort.dir === 'asc'"
+              class="size-3 text-foreground"
+              aria-hidden="true"
+            />
+            <ChevronDown
+              v-else-if="sort.key === column.sortKey && sort.dir === 'desc'"
+              class="size-3 text-foreground"
+              aria-hidden="true"
+            />
+          </button>
+          <span v-else :class="column.id === 'actions' && 'text-right'">{{ headerLabel(column) }}</span>
+        </template>
       </div>
 
       <!-- Rows -->
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="grid grid-cols-[minmax(180px,1.6fr)_90px_104px_minmax(120px,1fr)_150px_120px_150px_84px_84px_84px_170px_112px_116px_148px] items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none"
+        class="grid items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none density-row"
+        :style="gridStyle"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
         :tabindex="0"
@@ -173,13 +230,13 @@ function onOpen(node: Node): void {
         </div>
 
         <!-- Role -->
-        <div class="min-w-0">
+        <div v-if="show('role')" class="min-w-0">
           <Badge v-if="node.role" variant="secondary" class="max-w-full truncate">{{ node.role }}</Badge>
           <span v-else class="text-muted-foreground">—</span>
         </div>
 
         <!-- Tags -->
-        <div class="flex min-w-0 flex-wrap gap-1">
+        <div v-if="show('tags')" class="flex min-w-0 flex-wrap gap-1">
           <Badge v-for="tag in sortedTags(node)" :key="tag" variant="outline" class="max-w-full truncate">
             {{ tag }}
           </Badge>
@@ -187,18 +244,18 @@ function onOpen(node: Node): void {
         </div>
 
         <!-- Public IPv4 (other addresses in the tooltip) -->
-        <div class="min-w-0" :title="ipTooltip(node)">
+        <div v-if="show('publicIp')" class="min-w-0" :title="ipTooltip(node)">
           <p class="truncate font-mono text-xs">{{ node.public_ip || '—' }}</p>
         </div>
 
         <!-- Arch / OS -->
-        <div class="min-w-0">
+        <div v-if="show('archOs')" class="min-w-0">
           <p class="truncate">{{ archOs(node) }}</p>
           <p class="truncate text-xs text-muted-foreground">{{ node.host_facts?.arch || '—' }}</p>
         </div>
 
         <!-- Agent runtime capabilities -->
-        <div class="flex min-w-0 flex-wrap gap-1">
+        <div v-if="show('agentConfig')" class="flex min-w-0 flex-wrap gap-1">
           <Badge
             v-for="badge in agentBadges(node).slice(0, 3)"
             :key="`${node.id}:${badge}`"
@@ -212,12 +269,21 @@ function onOpen(node: Node): void {
         </div>
 
         <!-- CPU / Memory / Disk mini-bars -->
-        <MetricBar tone="cpu" :percent="node.metrics?.cpu_percent ?? 0" />
-        <MetricBar tone="memory" :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)" />
-        <MetricBar tone="disk" :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)" />
+        <MetricBar v-if="show('cpu')" tone="cpu" :percent="node.metrics?.cpu_percent ?? 0" />
+        <MetricBar
+          v-if="show('memory')"
+          tone="memory"
+          :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)"
+        />
+        <MetricBar
+          v-if="show('disk')"
+          tone="disk"
+          :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)"
+        />
 
         <!-- Net rx / tx -->
         <div
+          v-if="show('network')"
           class="space-y-0.5 text-xs text-muted-foreground tabular"
           :title="`RX total: ${formatBytes(node.metrics?.net_rx_bytes)}\nTX total: ${formatBytes(node.metrics?.net_tx_bytes)}`"
         >
@@ -234,10 +300,12 @@ function onOpen(node: Node): void {
         </div>
 
         <!-- Last seen -->
-        <span class="text-xs text-muted-foreground tabular">{{ formatRelativeTime(node.last_seen) }}</span>
+        <span v-if="show('lastSeen')" class="text-xs text-muted-foreground tabular">{{
+          formatRelativeTime(node.last_seen)
+        }}</span>
 
         <!-- Agent update mode -->
-        <div class="min-w-0">
+        <div v-if="show('update')" class="min-w-0">
           <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full truncate">
             {{ updateLabel(updatePolicy(node)) }}
           </Badge>
