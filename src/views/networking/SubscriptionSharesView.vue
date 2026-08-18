@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { Copy, KeyRound, Link2, Loader2, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+import { Copy, KeyRound, Link2, Loader2, MonitorSmartphone, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 
 import { api, ApiError } from "@/lib/api";
 import type {
@@ -99,6 +99,52 @@ async function copy(share: SubscriptionShareView): Promise<void> {
   try {
     await navigator.clipboard.writeText(shareUrl(share));
     notice.value = `Copied the URL for ${share.slug}.`;
+  } catch {
+    actionError.value = "The clipboard is unavailable — select the URL and copy it manually.";
+  }
+}
+
+/**
+ * The clients a share URL can name with ?target=. This mirrors the server's
+ * bounded allowlist (subscriptionShareTargets): a value outside it is refused
+ * before any render, because the target is part of the render cache key on an
+ * endpoint that answers without authentication.
+ */
+const SHARE_TARGETS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "URI", label: "Universal (URI)" },
+  { id: "Stash", label: "Stash" },
+  { id: "ClashMeta", label: "mihomo" },
+  { id: "Clash", label: "Clash" },
+  { id: "Egern", label: "Egern" },
+  { id: "Surge", label: "Surge" },
+  { id: "SurgeMac", label: "Surge Mac" },
+  { id: "Surfboard", label: "Surfboard" },
+  { id: "Loon", label: "Loon" },
+  { id: "Shadowrocket", label: "Shadowrocket" },
+  { id: "QX", label: "Quantumult X" },
+  { id: "sing-box", label: "sing-box" },
+  { id: "V2Ray", label: "V2Ray" },
+  { id: "JSON", label: "JSON" },
+];
+
+/** Which share's client menu is open, if any. */
+const clientMenuId = ref("");
+
+/**
+ * One URL per client. Without ?target= the served bytes depend on the client's
+ * User-Agent, which is a guess that fails for anything fetching with curl or a
+ * generic downloader; naming the client makes the URL say what it produces.
+ */
+function clientUrl(share: SubscriptionShareView, target: string): string {
+  return `${shareUrl(share)}?target=${encodeURIComponent(target)}`;
+}
+
+async function copyClient(share: SubscriptionShareView, target: string): Promise<void> {
+  actionError.value = "";
+  try {
+    await navigator.clipboard.writeText(clientUrl(share, target));
+    notice.value = `Copied the ${target} URL for ${share.slug}.`;
+    clientMenuId.value = "";
   } catch {
     actionError.value = "The clipboard is unavailable — select the URL and copy it manually.";
   }
@@ -343,6 +389,15 @@ watch(() => route.query, applyShareDeepLink);
               <button
                 class="icon"
                 type="button"
+                title="Copy a URL pinned to one client"
+                :disabled="busyId === share.id"
+                @click="clientMenuId = clientMenuId === share.id ? '' : share.id"
+              >
+                <MonitorSmartphone :size="15" />
+              </button>
+              <button
+                class="icon"
+                type="button"
                 title="Rotate the token"
                 :disabled="busyId === share.id"
                 @click="rotatingConfirm = rotatingConfirm === share.id ? null : share.id"
@@ -363,6 +418,25 @@ watch(() => route.query, applyShareDeepLink);
 
           <!-- Permanently visible, by request and by design. -->
           <code class="share-url">{{ shareUrl(share) }}</code>
+
+          <div v-if="clientMenuId === share.id" class="client-links">
+            <p class="client-links-hint">
+              Each of these is the same share pinned to one client. Without one, the served
+              configuration is chosen from the fetching client's User-Agent.
+            </p>
+            <div class="client-grid">
+              <button
+                v-for="target in SHARE_TARGETS"
+                :key="target.id"
+                class="btn btn-sm"
+                type="button"
+                :title="clientUrl(share, target.id)"
+                @click="copyClient(share, target.id)"
+              >
+                {{ target.label }}
+              </button>
+            </div>
+          </div>
 
           <p class="share-meta">
             {{ sourceLabel(share.source) }}
@@ -657,5 +731,25 @@ watch(() => route.query, applyShareDeepLink);
   to {
     transform: rotate(360deg);
   }
+}
+
+.client-links {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--muted) 40%, transparent);
+}
+
+.client-links-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.client-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
 }
 </style>
