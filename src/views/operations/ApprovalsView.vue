@@ -33,6 +33,7 @@ import {
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import PlanDiff from "@/components/common/PlanDiff.vue";
@@ -597,6 +598,111 @@ function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): b
   );
 }
 
+/**
+ * Columns for the individual inbox.
+ *
+ * A cluster of any size produces approvals faster than a stacked list can be
+ * read: forty-five pending decisions in one narrow column can only be scrolled,
+ * never sorted, compared, or acted on together. The table is the same data an
+ * operator already had, in the shape the job needs — sortable by age and
+ * status, and selectable so one decision can cover a whole batch.
+ */
+const approvalColumns = computed<DataTableColumn<ApprovalView>[]>(() => [
+  { key: "status", label: t("operations.approvals.columns.status"), sortable: true, filterable: true, class: "w-[8.5rem]" },
+  {
+    key: "what",
+    label: t("operations.approvals.columns.what"),
+    sortable: true,
+    searchable: true,
+    filterAliases: ["plugin", "action"],
+    value: (row) => `${row.plugin} · ${row.action}`,
+  },
+  {
+    key: "target",
+    label: t("operations.approvals.columns.target"),
+    sortable: true,
+    searchable: true,
+    filterAliases: ["node"],
+    value: (row) => row.node_id || t("common.misc.global"),
+  },
+  {
+    key: "created_at",
+    label: t("operations.approvals.columns.age"),
+    sortable: true,
+    align: "right",
+    class: "w-[9rem]",
+  },
+]);
+
+/** Selected rows, by approval id. */
+const selectedRows = ref<Set<string>>(new Set());
+
+/** The selected approvals a decision can still act on. */
+const decidableSelection = computed(() =>
+  filteredApprovals.value.filter(
+    (approval) => selectedRows.value.has(approval.id) && canDecideApproval(approval) && !isStaleAgentUpdateApproval(approval),
+  ),
+);
+
+const bulkRunning = ref(false);
+const bulkProgress = ref({ done: 0, total: 0 });
+
+/**
+ * Decide every selected approval.
+ *
+ * Failures do not stop the run — each item is independent, and abandoning the
+ * rest because one plan went stale would leave the operator worse off than
+ * before they clicked. What failed is reported, and the list re-reads so the
+ * survivors are exactly what still needs attention.
+ */
+async function decideSelected(mode: "approve-queue" | "reject"): Promise<void> {
+  const targets = [...decidableSelection.value];
+  if (targets.length === 0 || bulkRunning.value) return;
+  if (
+    mode === "reject" &&
+    !window.confirm(t("operations.approvals.bulk.rejectConfirm", { count: targets.length }))
+  ) {
+    return;
+  }
+  bulkRunning.value = true;
+  bulkProgress.value = { done: 0, total: targets.length };
+  const results = await runWithConcurrency(
+    targets,
+    4,
+    async (item) => {
+      if (mode === "approve-queue") {
+        await api.approvals.approve(item.id, true, await digestFor(item));
+      } else {
+        await api.approvals.reject(item.id);
+      }
+    },
+    (done, total) => {
+      bulkProgress.value = { done, total };
+    },
+  );
+  const { succeeded, failed } = partitionBatchResults(targets, results);
+  if (failed.length === 0) {
+    toast.success(
+      t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApproveDone" : "toastBatchRejectDone"}`, {
+        count: succeeded.length,
+      }),
+    );
+  } else {
+    toast.error(t("operations.approvals.bulk.partial", { done: succeeded.length, failed: failed.length }));
+  }
+  // Keep exactly the failures selected: the next click retries them, and a
+  // cleared selection would hide which items still need a decision.
+  selectedRows.value = new Set(failed.map((entry) => entry.item.id));
+  bulkRunning.value = false;
+  await approvalsQuery.refresh();
+}
+
+// A selection that survives a filter change would act on rows the operator can
+// no longer see, which is the one way a batch decision can surprise them.
+watch([approvalBucket, approvalSearch, approvalExpression, inboxTab], () => {
+  selectedRows.value = new Set();
+});
+
 function canDismissApproval(approval?: ApprovalView, staleOverride = false): boolean {
   return (
     !!approval &&
@@ -652,7 +758,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
       </Card>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[380px_minmax(0,1fr)]">
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <Card>
         <CardHeader>
           <CardTitle>{{ $t('operations.approvals.inbox') }}</CardTitle>
@@ -853,28 +959,83 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               </div>
             </div>
 
-            <div v-else class="space-y-2">
-              <button
-                v-for="approval in filteredApprovals"
-                :key="approval.id"
-                type="button"
-                :class="cn('surface-interactive w-full rounded-md border border-border p-3 text-left', selected?.id === approval.id && 'border-primary bg-primary/5')"
-                @click="selectedId = approval.id"
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <span class="truncate text-sm font-medium">{{ approval.plugin }} · {{ approval.action }}</span>
-                  <div class="flex shrink-0 items-center gap-1">
-                    <Badge v-if="isStaleAgentUpdateApproval(approval)" variant="outline">{{ $t('operations.approvals.staleBadge') }}</Badge>
-                    <Badge v-else :variant="variantFor(approval.status)">{{ $t('common.status.' + approval.status) }}</Badge>
-                  </div>
+            <DataTable
+              v-else
+              v-model:selected="selectedRows"
+              :columns="approvalColumns"
+              :rows="filteredApprovals"
+              :row-key="(row) => row.id"
+              :page-size="25"
+              :expression-filter="false"
+              selectable
+              :empty-title="$t('operations.approvals.emptyTitle')"
+              :empty-description="$t('operations.approvals.emptyDescription')"
+              :no-match-title="$t('operations.approvals.noMatchTitle')"
+              :no-match-description="$t('operations.approvals.noMatchDescription')"
+              @row-select="selectedId = $event.id"
+            >
+              <template #cell-status="{ row }">
+                <Badge v-if="isStaleAgentUpdateApproval(row)" variant="outline">
+                  {{ $t('operations.approvals.staleBadge') }}
+                </Badge>
+                <Badge v-else :variant="variantFor(row.status)">{{ $t('common.status.' + row.status) }}</Badge>
+              </template>
+
+              <template #cell-what="{ row }">
+                <div class="min-w-0">
+                  <p :class="cn('truncate text-sm', selected?.id === row.id && 'font-semibold text-primary')">
+                    {{ row.plugin }} · {{ row.action }}
+                  </p>
+                  <p class="truncate font-mono text-xs text-muted-foreground">{{ shortId(row.id) }}</p>
                 </div>
-                <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  <span>{{ shortId(approval.id) }}</span>
-                  <span>{{ approval.node_id || $t('common.misc.global') }}</span>
-                  <span>{{ formatDateTime(approval.created_at) }}</span>
+              </template>
+
+              <template #cell-target="{ row }">
+                <span class="truncate text-sm">{{ row.node_id || $t('common.misc.global') }}</span>
+              </template>
+
+              <template #cell-created_at="{ row }">
+                <span class="text-sm" :title="formatDateTime(row.created_at)">
+                  {{ formatRelativeTime(row.created_at) }}
+                </span>
+              </template>
+
+              <template #bulk-actions="{ count, clear }">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-sm">
+                    {{ $t('operations.approvals.bulk.selected', { count }) }}
+                    <template v-if="decidableSelection.length !== count">
+                      · {{ $t('operations.approvals.bulk.decidable', { count: decidableSelection.length }) }}
+                    </template>
+                  </span>
+                  <span v-if="bulkRunning" class="text-xs text-muted-foreground">
+                    {{ bulkProgress.done }} / {{ bulkProgress.total }}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    :disabled="!canApply || bulkRunning || decidableSelection.length === 0"
+                    @click="decideSelected('approve-queue')"
+                  >
+                    <CheckCircle2 class="size-4" aria-hidden="true" />
+                    {{ $t('operations.approvals.bulk.approve') }}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    :disabled="bulkRunning || decidableSelection.length === 0"
+                    @click="decideSelected('reject')"
+                  >
+                    <Ban class="size-4" aria-hidden="true" />
+                    {{ $t('operations.approvals.bulk.reject') }}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" :disabled="bulkRunning" @click="clear">
+                    {{ $t('common.actions.clear') }}
+                  </Button>
                 </div>
-              </button>
-            </div>
+              </template>
+            </DataTable>
           </DataState>
         </CardContent>
       </Card>
