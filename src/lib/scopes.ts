@@ -50,6 +50,8 @@ export const SCOPE_CATALOG = [
   "user:admin",
   "vpncore:admin",
   "vpncore:read",
+  "wireguard:admin",
+  "wireguard:read",
   "worker:deploy",
 ] as const;
 
