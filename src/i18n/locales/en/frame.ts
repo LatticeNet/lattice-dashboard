@@ -23,6 +23,11 @@ export default {
       untagged: "Untagged",
       ungrouped: "Ungrouped",
     },
+    table: {
+      columns: "Columns",
+      showAll: "Show all columns",
+      sortBy: "Sort by {column}",
+    },
     actions: {
       refresh: "Refresh",
       save: "Save",

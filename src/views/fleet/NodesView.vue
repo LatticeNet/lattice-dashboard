@@ -46,6 +46,17 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import NodeCard from "@/components/common/NodeCard.vue";
 import NodeTable from "@/components/common/NodeTable.vue";
+import TableColumnManager from "@/components/common/TableColumnManager.vue";
+import {
+  NODE_TABLE_COLUMNS,
+  nextSortState,
+  parseHiddenColumns,
+  parseSortState,
+  serializeHiddenColumns,
+  serializeSortState,
+  sortNodes,
+  type NodeSortState,
+} from "./nodesTableModel";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -141,7 +152,9 @@ const tagsExpr = ref("");
 /* ----------------------------------------------------------------- */
 type ViewMode = "card" | "list";
 const VIEW_STORAGE_KEY = "lattice.nodes.viewMode";
-const viewMode = ref<ViewMode>("card");
+// List is the default: nodes are the highest-cardinality operator data and
+// belong in the dense table; the card wall stays one click away.
+const viewMode = ref<ViewMode>("list");
 {
   const seeded = route.query.view;
   if (seeded === "card" || seeded === "list") {
@@ -165,6 +178,57 @@ watch(viewMode, (mode) => {
     router.replace({ query: { ...route.query, view: mode } }).catch(() => {});
   }
 });
+
+/* ----------------------------------------------------------------- */
+/* Table sort + column visibility (list mode). Both persist so the    */
+/* operator's working set survives reloads; the model lives in        */
+/* nodesTableModel.ts and is covered by node --test.                  */
+/* ----------------------------------------------------------------- */
+const SORT_STORAGE_KEY = "lattice.nodes.sort";
+const COLUMNS_STORAGE_KEY = "lattice.nodes.hiddenColumns";
+const tableSort = ref<NodeSortState>({ key: "", dir: "asc" });
+const hiddenColumns = ref<ReadonlySet<string>>(new Set<string>());
+{
+  try {
+    tableSort.value = parseSortState(localStorage.getItem(SORT_STORAGE_KEY));
+    hiddenColumns.value = parseHiddenColumns(localStorage.getItem(COLUMNS_STORAGE_KEY));
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function toggleTableSort(columnId: string) {
+  tableSort.value = nextSortState(tableSort.value, columnId);
+  try {
+    localStorage.setItem(SORT_STORAGE_KEY, serializeSortState(tableSort.value));
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function persistHiddenColumns(next: ReadonlySet<string>) {
+  hiddenColumns.value = next;
+  try {
+    localStorage.setItem(COLUMNS_STORAGE_KEY, serializeHiddenColumns(next));
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function toggleColumn(id: string) {
+  const next = new Set(hiddenColumns.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  persistHiddenColumns(next);
+}
+
+function resetColumns() {
+  persistHiddenColumns(new Set());
+}
+
+const optionalColumns = computed(() =>
+  NODE_TABLE_COLUMNS.filter((c) => c.optional).map((c) => ({ id: c.id, label: t(c.labelKey) })),
+);
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
@@ -344,6 +408,11 @@ const sortedNodes = computed(() => {
   const filtered = baseSorted.value.filter(
     (n) => matchesStatus(n) && matchesSearch(n) && matchesTags(n) && matchesArchOs(n) && matchesAgentCaps(n),
   );
+  // An explicit column sort (list mode only - card mode has no headers to
+  // show it) wins over search-relevance floating.
+  if (viewMode.value === "list" && tableSort.value.key) {
+    return sortNodes(filtered, tableSort.value);
+  }
   // With an active query, float the best matches up (stable sort keeps the
   // disabled/online/name order from baseSorted for equal scores).
   if (!q) return filtered;
@@ -452,7 +521,9 @@ function toggleEnrollGroup(id: string) {
 }
 
 const groups = computed<NodeGroup[]>(() =>
-  groupNodes(sortedNodes.value, groupBy.value, locale.value, fleetGroupsQuery.data.value ?? []),
+  groupNodes(sortedNodes.value, groupBy.value, locale.value, fleetGroupsQuery.data.value ?? [], {
+    preserveOrder: true,
+  }),
 );
 
 /** Aggregate bandwidth across the (unfiltered) fleet for the header stat. */
@@ -958,6 +1029,14 @@ function openTerminal(node: Node) {
                 <span class="hidden sm:inline">{{ $t('fleet.nodes.view.list') }}</span>
               </button>
             </div>
+
+            <TableColumnManager
+              v-if="viewMode === 'list'"
+              :columns="optionalColumns"
+              :hidden="hiddenColumns"
+              @toggle="toggleColumn"
+              @reset="resetColumns"
+            />
           </div>
 
           <div v-if="availableAgentCaps.length" class="flex flex-wrap items-center gap-1.5">
@@ -1193,6 +1272,8 @@ function openTerminal(node: Node) {
                 <NodeTable
                   v-else
                   :nodes="group.nodes"
+                  :hidden-columns="hiddenColumns"
+                  :sort="tableSort"
                   :can-open-terminal="canOpenTerminal"
                   :can-admin-nodes="canAdminNodes"
                   :pending-node-id="pendingNode"
@@ -1201,6 +1282,7 @@ function openTerminal(node: Node) {
                   @terminal="openTerminal"
                   @rotate="rotateToken"
                   @set-disabled="setDisabled"
+                  @toggle-sort="toggleTableSort"
                 />
               </div>
             </section>
