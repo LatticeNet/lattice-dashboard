@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, watch, type Ref } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import {
@@ -18,7 +18,7 @@ import {
   Terminal,
   Wifi,
 } from "lucide-vue-next";
-import { api, unwrap, ApiError, isActionablePendingApproval } from "@/lib/api";
+import { api, unwrap, isActionablePendingApproval } from "@/lib/api";
 import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
@@ -46,37 +46,34 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
-/** Treat 403 as "section not visible" rather than a hard error. */
-function soften<T>(fetcher: (signal: AbortSignal) => Promise<T>) {
-  return async (signal: AbortSignal): Promise<T | undefined> => {
-    try {
-      return await fetcher(signal);
-    } catch (e) {
-      if (e instanceof ApiError && e.isForbidden) return undefined;
-      throw e;
-    }
-  };
-}
-
+// Errors, including 403, flow into each section's DataState: a section the
+// principal cannot read renders its no-access card instead of silently
+// disappearing. Softening 403 to undefined here used to make forbidden and
+// absent indistinguishable on the operator's most-viewed screen.
 const fleet = useAsyncData<Node[] | undefined>(
-  soften(() => api.nodes.list().then((r) => unwrap(r, "nodes"))),
+  () => api.nodes.list().then((r) => unwrap(r, "nodes")),
   { pollInterval: 5000 },
 );
 
 const approvals = useAsyncData<ApprovalView[] | undefined>(
-  soften(() => api.approvals.list().then((r) => unwrap(r, "approvals"))),
+  () => api.approvals.list().then((r) => unwrap(r, "approvals")),
   { pollInterval: 10000 },
 );
 
 const tasks = useAsyncData<TaskView[] | undefined>(
-  soften(() => api.tasks.list().then((r) => unwrap(r, "tasks"))),
+  () => api.tasks.list().then((r) => unwrap(r, "tasks")),
   { pollInterval: 10000 },
 );
 
 const audit = useAsyncData<AuditEvent[] | undefined>(
-  soften(() => api.audit.query({ limit: 8 }).then((r) => r.events ?? [])),
+  () => api.audit.query({ limit: 8 }).then((r) => r.events ?? []),
   { pollInterval: 15000 },
 );
+
+/** KPI numbers must not report 0 when the truth is "could not read". */
+function statValue(query: { data: Ref<unknown> }, count: number): string | number {
+  return query.data.value === undefined ? "—" : count;
+}
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -206,13 +203,13 @@ function refreshAll() {
     <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatCard
         :label="$t('overview.kpi.nodes')"
-        :value="nodes.length"
+        :value="statValue(fleet, nodes.length)"
         :icon="Server"
         :to="{ name: 'nodes' }"
       />
       <StatCard
         :label="$t('overview.kpi.online')"
-        :value="onlineNodes"
+        :value="statValue(fleet, onlineNodes)"
         tone="success"
         :icon="Wifi"
         :hint="offlineNodes > 0 ? $t('overview.offlineCount', { count: offlineNodes }) : $t('overview.allOnline')"
@@ -220,14 +217,14 @@ function refreshAll() {
       />
       <StatCard
         :label="$t('overview.kpi.approvals')"
-        :value="pendingApprovals.length"
+        :value="statValue(approvals, pendingApprovals.length)"
         :tone="pendingApprovals.length > 0 ? 'warning' : 'default'"
         :icon="ShieldCheck"
         :to="{ name: 'approvals' }"
       />
       <StatCard
         :label="$t('nav.items.tasks')"
-        :value="queuedTasks"
+        :value="statValue(tasks, queuedTasks)"
         :icon="Terminal"
         :to="{ name: 'tasks', query: { status: 'queued' } }"
       />
