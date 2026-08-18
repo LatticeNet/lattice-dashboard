@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { CheckCircle2, ChevronLeft, ChevronRight, Download, RefreshCw, ScrollText, Search, ShieldCheck, X } from "lucide-vue-next";
+import { CheckCircle2, ChevronLeft, ChevronRight, Download, GitBranch, RefreshCw, ScrollText, Search, ShieldCheck, X } from "lucide-vue-next";
 import { api, type AuditEvent, type AuditVerifyResponse } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { type BadgeVariant } from "@/lib/status";
@@ -14,6 +14,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import CorrelationTrace from "@/components/common/CorrelationTrace.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -298,6 +299,15 @@ function clearAllFilters() {
   timeRange.value = "all";
   applyFilters();
 }
+
+// Correlation trace: click any event's correlation id to reconstruct the whole
+// operation (request timeline + resolved approval and per-node task results).
+const traceOpen = ref(false);
+const traceId = ref("");
+function openTrace(correlationId: string) {
+  traceId.value = correlationId;
+  traceOpen.value = true;
+}
 </script>
 
 <template>
@@ -531,9 +541,18 @@ function clearAllFilters() {
             <p class="mt-1 text-xs text-muted-foreground">
               {{ $t('operations.audit.actorPrefix') }} {{ row.actor_id || "system" }} · {{ $t('operations.audit.nodePrefix') }} {{ row.node_id || $t('common.misc.global') }}
             </p>
-            <div v-if="row.reason || row.correlation_id" class="mt-2 flex flex-wrap justify-end gap-2 text-xs text-muted-foreground md:justify-start">
+            <div v-if="row.reason || row.correlation_id" class="mt-2 flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground md:justify-start">
               <span v-if="row.reason">{{ row.reason }}</span>
-              <span v-if="row.correlation_id" class="font-mono">{{ $t('operations.audit.corrPrefix') }} {{ row.correlation_id }}</span>
+              <button
+                v-if="row.correlation_id"
+                type="button"
+                class="inline-flex items-center gap-1 rounded font-mono text-primary transition-colors hover:underline"
+                :title="$t('operations.trace.open')"
+                @click="openTrace(row.correlation_id)"
+              >
+                <GitBranch class="size-3" aria-hidden="true" />
+                {{ $t('operations.audit.corrPrefix') }} {{ row.correlation_id }}
+              </button>
             </div>
             <pre v-if="metadataText(row)" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-left font-mono text-xs">{{ metadataText(row) }}</pre>
           </template>
@@ -567,5 +586,7 @@ function clearAllFilters() {
         </div>
       </CardContent>
     </Card>
+
+    <CorrelationTrace v-model:open="traceOpen" :correlation-id="traceId" />
   </div>
 </template>

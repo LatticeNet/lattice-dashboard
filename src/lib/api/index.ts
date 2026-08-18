@@ -297,7 +297,8 @@ export const api = {
 
   tasks: {
     list: () => http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks"),
-    results: () => http.get<{ results: TaskResult[] } | TaskResult[]>("/api/task-results"),
+    results: (params?: { task_id?: string; node_id?: string; limit?: number; offset?: number }) =>
+      http.get<{ results: TaskResult[] } | TaskResult[]>("/api/task-results", params as Record<string, unknown>),
     revealScript: (id: string, step_up_grant: string) =>
       http.post<TaskScriptRevealResponse>("/api/tasks/reveal-script", { id, step_up_grant }),
     create: (input: {
