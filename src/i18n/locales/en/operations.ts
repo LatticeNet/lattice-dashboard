@@ -59,6 +59,20 @@ export default {
       toastDismissFailed: "Approval dismiss failed",
       toastStale: "Approval is stale — re-plan before approving.",
       staleBadge: "Stale",
+      columns: {
+        status: "Status",
+        what: "Change",
+        target: "Target",
+        age: "Requested",
+      },
+      bulk: {
+        selected: "{count} selected",
+        decidable: "{count} can be decided",
+        approve: "Approve + queue",
+        reject: "Reject",
+        rejectConfirm: "Reject {count} approval(s)? Each plan stays on record as rejected.",
+        partial: "{done} decided, {failed} failed — the failures are still selected.",
+      },
       staleTitle: "Plan changed since review",
       staleDescription:
         "This approval no longer matches the current update policy, target node state, or resolved artifact. Create a fresh plan and review the new plan-text digest before approving.",

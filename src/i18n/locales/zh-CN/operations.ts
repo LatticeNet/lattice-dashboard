@@ -58,6 +58,20 @@ export default {
       toastDismissFailed: "审批归档失败",
       toastStale: "审批已过期 — 请重新规划后再批准。",
       staleBadge: "已过期",
+      columns: {
+        status: "状态",
+        what: "变更",
+        target: "目标",
+        age: "提交于",
+      },
+      bulk: {
+        selected: "已选 {count} 项",
+        decidable: "其中 {count} 项可裁决",
+        approve: "批准并排队执行",
+        reject: "驳回",
+        rejectConfirm: "驳回 {count} 项审批？每个计划都会以驳回状态留档。",
+        partial: "成功 {done} 项，失败 {failed} 项，失败项仍处于选中状态。",
+      },
       staleTitle: "计划在审阅后已变化",
       staleDescription:
         "此审批不再匹配当前更新策略、目标节点状态或已解析制品。请创建新的计划，重新审阅新的计划文本摘要后再批准。",

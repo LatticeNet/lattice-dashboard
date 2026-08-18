@@ -57,6 +57,7 @@ export default {
       disable: "停用",
       viewAll: "查看全部",
       loadMore: "加载更多",
+      clear: "清除",
       loadOlder: "加载更早",
       back: "返回",
       done: "完成",

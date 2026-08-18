@@ -58,6 +58,7 @@ export default {
       disable: "Disable",
       viewAll: "View all",
       loadMore: "Load more",
+      clear: "Clear",
       loadOlder: "Load older",
       back: "Back",
       done: "Done",
