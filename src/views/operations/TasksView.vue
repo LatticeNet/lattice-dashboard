@@ -24,7 +24,7 @@ import { api, unwrap, type Node, type TaskResult, type TaskView } from "@/lib/ap
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime, shortId } from "@/lib/format";
+import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 import {
@@ -35,6 +35,7 @@ import {
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -144,6 +145,40 @@ const stepUpPending = stepUp.pending;
 
 const nodes = computed<Node[]>(() => nodesQuery.data.value ?? []);
 const tasks = computed<TaskView[]>(() => tasksQuery.data.value ?? []);
+
+/**
+ * The run that is open in the detail drawer.
+ *
+ * A run's interesting part is per-node: which target failed, on which attempt,
+ * with what output. That never fitted in a list — it used to be an accordion
+ * inside a card, so reading one node's failure meant scrolling past every
+ * other run's summary. The list is now a table that answers "which run" and
+ * the drawer answers "what happened", which is the split the job actually has.
+ */
+const detailTaskId = ref("");
+const detailTask = computed<TaskView | undefined>(() =>
+  detailTaskId.value ? tasksById.value[detailTaskId.value] : undefined,
+);
+const detailOpen = computed({
+  get: () => !!detailTask.value,
+  set: (open: boolean) => {
+    if (!open) detailTaskId.value = "";
+  },
+});
+
+const taskColumns = computed<DataTableColumn<TaskView>[]>(() => [
+  { key: "status", label: t("operations.tasks.colStatus"), sortable: true, class: "w-[7.5rem]" },
+  { key: "task", label: t("operations.tasks.colTask"), sortable: true, searchable: true, value: (row) => row.id },
+  {
+    key: "targets",
+    label: t("operations.tasks.colTargets"),
+    searchable: true,
+    value: (row) => row.targets.map((id) => nodeName(id)).join(" "),
+  },
+  { key: "progress", label: t("operations.tasks.targetProgress"), class: "w-[10rem]" },
+  { key: "created_at", label: t("operations.tasks.colCreated"), sortable: true, align: "right", class: "w-[9rem]" },
+  { key: "actions", label: "", align: "right", class: "w-[7rem]" },
+]);
 const results = computed<TaskResult[]>(() => resultsQuery.data.value ?? []);
 const nodesById = computed<Record<string, Node>>(() => Object.fromEntries(nodes.value.map((n) => [n.id, n])));
 const tasksById = computed<Record<string, TaskView>>(() => Object.fromEntries(tasks.value.map((task) => [task.id, task])));
@@ -936,62 +971,124 @@ async function deleteTask(task: TaskView) {
             </span>
           </div>
 
-          <div class="space-y-4">
-            <div
-              v-for="task in pagedRootTasks"
-              :key="task.id"
-              class="rounded-xl border border-border bg-card shadow-sm"
-            >
+          <DataTable
+            :columns="taskColumns"
+            :rows="filteredRootTasks"
+            :row-key="(row) => row.id"
+            :page-size="25"
+            :expression-filter="false"
+            :empty-title="$t('operations.tasks.emptyTitle')"
+            :empty-description="$t('operations.tasks.emptyDescription')"
+            :no-match-title="$t('operations.tasks.noMatch')"
+            no-match-description=""
+            @row-select="detailTaskId = $event.id"
+          >
+            <template #cell-status="{ row }">
+              <Badge :variant="statusVariant(groupStatus(row, nodeRows(row)))">
+                {{ statusLabel(groupStatus(row, nodeRows(row))) }}
+              </Badge>
+            </template>
+
+            <template #cell-task="{ row }">
+              <div class="min-w-0">
+                <p class="truncate font-mono text-sm">{{ shortId(row.id) }}</p>
+                <p class="truncate text-xs text-muted-foreground">
+                  {{ row.interpreter }} · {{ $t('operations.tasks.bytes', { count: row.script_size_bytes ?? 0 }) }}
+                </p>
+              </div>
+            </template>
+
+            <template #cell-targets="{ row }">
+              <div class="flex flex-wrap items-center gap-1">
+                <Badge v-for="nodeId in row.targets.slice(0, 2)" :key="nodeId" variant="secondary" class="max-w-40 truncate">
+                  {{ nodeName(nodeId) }}
+                </Badge>
+                <Badge v-if="row.targets.length > 2" variant="outline">+{{ row.targets.length - 2 }}</Badge>
+              </div>
+            </template>
+
+            <template #cell-progress="{ row }">
+              <span class="font-mono text-sm">
+                {{ taskCounts(nodeRows(row)).done }} / {{ taskCounts(nodeRows(row)).total }}
+              </span>
+              <span v-if="taskCounts(nodeRows(row)).failed" class="ml-2 text-xs text-destructive">
+                {{ taskCounts(nodeRows(row)).failed }} failed
+              </span>
+            </template>
+
+            <template #cell-created_at="{ row }">
+              <span class="text-sm" :title="formatDateTime(row.created_at)">{{ formatRelativeTime(row.created_at) }}</span>
+            </template>
+
+            <template #cell-actions="{ row }">
+              <div class="flex items-center justify-end gap-1">
+                <Button variant="ghost" size="sm" @click="detailTaskId = row.id">
+                  {{ $t('operations.tasks.openDetail') }}
+                </Button>
+              </div>
+            </template>
+          </DataTable>
+        </DataState>
+      </CardContent>
+    </Card>
+
+    <Dialog v-model:open="detailOpen">
+      <DialogScrollContent class="sm:max-w-5xl">
+        <DialogHeader>
+          <DialogTitle>{{ $t('operations.tasks.detailTitle', { id: detailTask ? shortId(detailTask.id) : '' }) }}</DialogTitle>
+          <DialogDescription>{{ $t('operations.tasks.detailDescription') }}</DialogDescription>
+        </DialogHeader>
+        <div v-if="detailTask">
               <div class="space-y-3 p-3">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                   <div class="min-w-0 space-y-2">
                     <div class="flex flex-wrap items-center gap-2">
-                      <Badge :variant="statusVariant(groupStatus(task, nodeRows(task)))">
-                        {{ statusLabel(groupStatus(task, nodeRows(task))) }}
+                      <Badge :variant="statusVariant(groupStatus(detailTask, nodeRows(detailTask)))">
+                        {{ statusLabel(groupStatus(detailTask, nodeRows(detailTask))) }}
                       </Badge>
-                      <span class="font-mono text-sm font-semibold">{{ shortId(task.id) }}</span>
-                      <Badge variant="outline">{{ task.interpreter }}</Badge>
-                      <span class="text-xs text-muted-foreground">{{ formatDateTime(task.created_at) }}</span>
+                      <span class="font-mono text-sm font-semibold">{{ shortId(detailTask.id) }}</span>
+                      <Badge variant="outline">{{ detailTask.interpreter }}</Badge>
+                      <span class="text-xs text-muted-foreground">{{ formatDateTime(detailTask.created_at) }}</span>
                     </div>
                     <div class="flex flex-wrap items-center gap-1.5">
                       <Badge
-                        v-for="nodeId in task.targets.slice(0, 4)"
+                        v-for="nodeId in detailTask.targets.slice(0, 4)"
                         :key="nodeId"
                         variant="secondary"
                         class="max-w-52 truncate"
                       >
                         {{ nodeName(nodeId) }}
                       </Badge>
-                      <Badge v-if="task.targets.length > 4" variant="outline">
-                        +{{ task.targets.length - 4 }}
+                      <Badge v-if="detailTask.targets.length > 4" variant="outline">
+                        +{{ detailTask.targets.length - 4 }}
                       </Badge>
                     </div>
                     <p class="line-clamp-1 text-xs text-muted-foreground">
-                      {{ taskLatestSummary(task) }}
+                      {{ taskLatestSummary(detailTask) }}
                     </p>
                   </div>
 
                   <div class="flex flex-wrap items-center justify-end gap-2">
                     <Badge variant="outline">
-                      {{ $t('operations.tasks.bytes', { count: task.script_size_bytes ?? 0 }) }}
+                      {{ $t('operations.tasks.bytes', { count: detailTask.script_size_bytes ?? 0 }) }}
                     </Badge>
                     <Badge variant="outline">
-                      {{ $t('operations.tasks.seconds', { count: task.timeout_sec ?? 0 }) }}
+                      {{ $t('operations.tasks.seconds', { count: detailTask.timeout_sec ?? 0 }) }}
                     </Badge>
-                    <Button variant="outline" size="sm" :disabled="revealingScriptID === task.id" @click="revealScript(task)">
-                      <RefreshCw v-if="revealingScriptID === task.id" class="size-4 animate-spin" aria-hidden="true" />
+                    <Button variant="outline" size="sm" :disabled="revealingScriptID === detailTask.id" @click="revealScript(detailTask)">
+                      <RefreshCw v-if="revealingScriptID === detailTask.id" class="size-4 animate-spin" aria-hidden="true" />
                       <KeyRound v-else class="size-4" aria-hidden="true" />
-                      {{ revealedScripts[task.id] ? $t('operations.tasks.hideScript') : $t('operations.tasks.revealScript') }}
+                      {{ revealedScripts[detailTask.id] ? $t('operations.tasks.hideScript') : $t('operations.tasks.revealScript') }}
                     </Button>
-                    <Button variant="outline" size="sm" :disabled="taskExecutionDisabled || actionPending === `task:${task.id}`" @click="rerunTask(task)">
+                    <Button variant="outline" size="sm" :disabled="taskExecutionDisabled || actionPending === `detailTask:${detailTask.id}`" @click="rerunTask(detailTask)">
                       <RotateCcw class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.rerun') }}
                     </Button>
-                    <Button v-if="task.status === 'queued'" variant="outline" size="sm" :disabled="actionPending === `task:${task.id}`" @click="cancelTask(task)">
+                    <Button v-if="detailTask.status === 'queued'" variant="outline" size="sm" :disabled="actionPending === `detailTask:${detailTask.id}`" @click="cancelTask(detailTask)">
                       <Ban class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.cancel') }}
                     </Button>
-                    <Button variant="ghost" size="icon" class="text-destructive" :disabled="actionPending === `task:${task.id}`" @click="deleteTask(task)">
+                    <Button variant="ghost" size="icon" class="text-destructive" :disabled="actionPending === `detailTask:${detailTask.id}`" @click="deleteTask(detailTask)">
                       <Trash2 class="size-4" aria-hidden="true" />
                     </Button>
                   </div>
@@ -1001,40 +1098,35 @@ async function deleteTask(task: TaskView) {
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.targetProgress') }}</p>
                     <p class="mt-1 font-medium">
-                      {{ taskCounts(nodeRows(task)).done }} / {{ taskCounts(nodeRows(task)).total }}
+                      {{ taskCounts(nodeRows(detailTask)).done }} / {{ taskCounts(nodeRows(detailTask)).total }}
                     </p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.failedTargets') }}</p>
-                    <p class="mt-1 font-medium">{{ taskCounts(nodeRows(task)).failed }}</p>
+                    <p class="mt-1 font-medium">{{ taskCounts(nodeRows(detailTask)).failed }}</p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.attempts') }}</p>
-                    <p class="mt-1 font-medium">{{ attemptTasks(task).length }}</p>
+                    <p class="mt-1 font-medium">{{ attemptTasks(detailTask).length }}</p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.latest') }}</p>
-                    <p class="mt-1 line-clamp-1 text-xs">{{ taskProgressLabel(task) }}</p>
+                    <p class="mt-1 line-clamp-1 text-xs">{{ taskProgressLabel(detailTask) }}</p>
                   </div>
                 </div>
 
-                <div v-if="revealedScripts[task.id]" class="rounded-md border border-border bg-muted/20 p-3">
+                <div v-if="revealedScripts[detailTask.id]" class="rounded-md border border-border bg-muted/20 p-3">
                   <div class="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                     <span class="inline-flex items-center gap-1">
                       <Lock class="size-3.5" aria-hidden="true" />
                       {{ $t('operations.tasks.scriptRevealed') }}
                     </span>
-                    <span class="font-mono">{{ task.script_sha256 }}</span>
+                    <span class="font-mono">{{ detailTask.script_sha256 }}</span>
                   </div>
-                  <pre class="max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[task.id] }}</pre>
+                  <pre class="max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[detailTask.id] }}</pre>
                 </div>
 
-                <Button variant="ghost" size="sm" @click="toggleExpanded(task.id)">
-                  <ChevronDown :class="cn('size-4 transition-transform', isExpanded(task.id) && 'rotate-180')" aria-hidden="true" />
-                  {{ isExpanded(task.id) ? $t('operations.tasks.collapseResults') : $t('operations.tasks.expandResults') }}
-                </Button>
-
-                <div v-if="isExpanded(task.id)" class="overflow-x-auto rounded-lg border border-border">
+                <div  class="overflow-x-auto rounded-lg border border-border">
                   <table class="w-full min-w-[760px] text-sm">
                     <thead class="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
@@ -1046,7 +1138,7 @@ async function deleteTask(task: TaskView) {
                       </tr>
                     </thead>
                     <tbody>
-                      <template v-for="row in nodeRows(task)" :key="row.nodeId">
+                      <template v-for="row in nodeRows(detailTask)" :key="row.nodeId">
                         <tr class="border-t border-border">
                           <td class="px-3 py-2">
                             <div class="min-w-0">
@@ -1079,24 +1171,24 @@ async function deleteTask(task: TaskView) {
                             <Button
                               variant="ghost"
                               size="sm"
-                              @click="toggleNodeExpanded(task.id, row.nodeId)"
+                              @click="toggleNodeExpanded(detailTask.id, row.nodeId)"
                             >
-                              <ChevronDown :class="cn('size-4 transition-transform', isNodeExpanded(task.id, row.nodeId) && 'rotate-180')" aria-hidden="true" />
-                              {{ isNodeExpanded(task.id, row.nodeId) ? $t('operations.tasks.collapseAttempts') : $t('operations.tasks.expandAttempts') }}
+                              <ChevronDown :class="cn('size-4 transition-transform', isNodeExpanded(detailTask.id, row.nodeId) && 'rotate-180')" aria-hidden="true" />
+                              {{ isNodeExpanded(detailTask.id, row.nodeId) ? $t('operations.tasks.collapseAttempts') : $t('operations.tasks.expandAttempts') }}
                             </Button>
                             <Button
                               v-if="row.failed"
                               variant="outline"
                               size="sm"
-                              :disabled="taskExecutionDisabled || actionPending === `node:${task.id}:${row.nodeId}`"
-                              @click="rerunNode(task, row.nodeId)"
+                              :disabled="taskExecutionDisabled || actionPending === `node:${detailTask.id}:${row.nodeId}`"
+                              @click="rerunNode(detailTask, row.nodeId)"
                             >
                               <RotateCcw class="size-4" aria-hidden="true" />
                               {{ $t('operations.tasks.actions.rerunNode') }}
                             </Button>
                           </td>
                         </tr>
-                        <tr v-if="isNodeExpanded(task.id, row.nodeId)" class="border-t border-border bg-muted/15">
+                        <tr v-if="isNodeExpanded(detailTask.id, row.nodeId)" class="border-t border-border bg-muted/15">
                           <td colspan="5" class="px-3 py-3">
                             <div class="space-y-2">
                               <p class="text-sm font-medium">{{ nodeName(row.nodeId) }}</p>
@@ -1126,19 +1218,9 @@ async function deleteTask(task: TaskView) {
                   </table>
                 </div>
               </div>
-            </div>
-          </div>
-          <div v-if="historyTotalPages > 1" class="mt-4 flex items-center justify-end gap-2">
-            <Button variant="outline" size="sm" :disabled="historyPage <= 1" @click="historyPage -= 1">
-              {{ $t('operations.tasks.prevPage') }}
-            </Button>
-            <Button variant="outline" size="sm" :disabled="historyPage >= historyTotalPages" @click="historyPage += 1">
-              {{ $t('operations.tasks.nextPage') }}
-            </Button>
-          </div>
-        </DataState>
-      </CardContent>
-    </Card>
+        </div>
+      </DialogScrollContent>
+    </Dialog>
 
     <Dialog v-model:open="stepUpOpen">
       <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="stepUp.cancel">
