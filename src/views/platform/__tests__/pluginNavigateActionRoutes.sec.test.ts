@@ -44,3 +44,34 @@ test("an inert deep link is still accepted", () => {
   });
   assert.equal(verdict.kind, "navigate");
 });
+
+/**
+ * Added with the fix, not with the gate above: the two assertions in the first
+ * test are the acceptance criterion and stayed exactly as written. These pin
+ * the edges the fix has to hold to be worth anything.
+ */
+test("a frame may still be sent to any page, it just cannot arm one", () => {
+  for (const route of ["/", "/nodes", "/terminal", "/operations/approvals"]) {
+    assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "navigate", route);
+  }
+});
+
+test("an undeclared parameter is refused even on a page that declares others", () => {
+  for (const route of [
+    "/network/subscription-shares?create=1&for=x&node_id=node-1",
+    "/nodes?view=list",
+    "/operations/approvals?bucket=pending",
+  ]) {
+    assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "invalid", route);
+  }
+});
+
+test("an encoded dot segment cannot borrow an allowed path's permission", () => {
+  for (const route of [
+    "/network/subscription-shares/%2e%2e/terminal?create=1&for=x",
+    "/network/subscription-shares/../terminal?create=1&for=x",
+    "/network/subscription-shares/%2e%2e%2fterminal?create=1&for=x",
+  ]) {
+    assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "invalid", route);
+  }
+});
