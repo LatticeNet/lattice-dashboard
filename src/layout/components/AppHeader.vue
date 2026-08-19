@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useMagicKeys, useActiveElement } from "@vueuse/core";
@@ -34,11 +34,19 @@ const emit = defineEmits<{
 const mobileToggle = ref<InstanceType<typeof Button> | null>(null);
 watch(
   () => props.mobileOpen,
-  (open, wasOpen) => {
+  async (open, wasOpen) => {
     if (open || !wasOpen || typeof document === "undefined") return;
-    if (document.activeElement && document.activeElement !== document.body) return;
+    // flush: "post" plus a tick, because the caret is only orphaned once the
+    // drawer has actually gone inert. Checking before that always sees the
+    // still-focused element inside it and declines to do anything.
+    await nextTick();
+    const active = document.activeElement;
+    const drawer = document.getElementById("app-sidebar");
+    const stranded = !active || active === document.body || !!drawer?.contains(active);
+    if (!stranded) return;
     (mobileToggle.value?.$el as HTMLElement | undefined)?.focus();
   },
+  { flush: "post" },
 );
 
 const route = useRoute();
