@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  isServing,
+  originTarget,
+  publishingState,
+  recordsForShare,
+  routeLabel,
+  routePath,
+  sortRecords,
+} from "../publishingModel.ts";
+
+const NOW = new Date("2026-08-19T12:00:00Z");
+
+function record(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "bind_1",
+    origin: "static",
+    bucket: "site",
+    hostname: "site.example",
+    any_host: false,
+    enabled: true,
+    reserved: false,
+    admin_scope: "static:admin",
+    ...overrides,
+  } as never;
+}
+
+test("a route turned off is not the same problem as one that lapsed", () => {
+  assert.equal(publishingState(record({ enabled: false }), NOW), "disabled");
+  assert.equal(publishingState(record({ expires_at: "2026-08-18T00:00:00Z" }), NOW), "expired");
+  assert.equal(publishingState(record({ expires_at: "2026-08-20T00:00:00Z" }), NOW), "serving");
+  assert.equal(publishingState(record(), NOW), "serving");
+});
+
+test("expiry is exclusive at the boundary, matching the server", () => {
+  // The server refuses to serve once now is no longer before the expiry, so a
+  // route whose expiry is exactly now reads as expired here too.
+  assert.equal(publishingState(record({ expires_at: NOW.toISOString() }), NOW), "expired");
+  assert.equal(isServing(record({ expires_at: NOW.toISOString() }), NOW), false);
+});
+
+test("a path is always rooted and never carries a trailing slash", () => {
+  assert.equal(routePath(record()), "/");
+  assert.equal(routePath(record({ path_prefix: "docs" })), "/docs");
+  assert.equal(routePath(record({ path_prefix: "/docs/" })), "/docs");
+  assert.equal(routePath(record({ path_prefix: "sub/cd-self" })), "/sub/cd-self");
+});
+
+test("a route on every host says so rather than showing an empty hostname", () => {
+  // A blank cell would read as missing data. Answering on every host is a fact
+  // about the route, and the subscription mount depends on it.
+  assert.equal(
+    routeLabel(record({ any_host: true, hostname: "", path_prefix: "sub/cd-self" }), "any host"),
+    "any host/sub/cd-self",
+  );
+  assert.equal(routeLabel(record({ path_prefix: "docs" })), "site.example/docs");
+  assert.equal(routeLabel(record()), "site.example");
+});
+
+test("a plugin route points at its share, not at a bucket name", () => {
+  assert.equal(originTarget(record({ origin: "plugin", bucket: "share_1", share_id: "share_1" })), "share_1");
+  assert.equal(originTarget(record()), "site");
+});
+
+test("routes group by origin so the table does not interleave them", () => {
+  const rows = sortRecords([
+    record({ id: "c", origin: "plugin", hostname: "", any_host: true, path_prefix: "sub/b" }),
+    record({ id: "a", origin: "static", hostname: "z.example" }),
+    record({ id: "b", origin: "kv", hostname: "a.example" }),
+  ]);
+  assert.deepEqual(
+    rows.map((r) => r.origin),
+    ["kv", "static", "plugin"],
+  );
+});
+
+test("a share's routes come from the plane, not from a second idea of the URL", () => {
+  const rows = [
+    record({ id: "1", origin: "plugin", share_id: "share_1", path_prefix: "sub/one" }),
+    record({ id: "2", origin: "plugin", share_id: "share_2", path_prefix: "sub/two" }),
+    record({ id: "3", origin: "static", bucket: "site" }),
+  ];
+  const mine = recordsForShare(rows, "share_1");
+  assert.equal(mine.length, 1);
+  assert.equal(routePath(mine[0]), "/sub/one");
+  assert.equal(recordsForShare(rows, "missing").length, 0);
+});

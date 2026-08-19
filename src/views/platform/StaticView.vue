@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import { FolderOpen, Plus, RefreshCw, Save } from "lucide-vue-next";
 import { api, type StaticObject } from "@/lib/api";
@@ -11,7 +12,6 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
-import StorageAdminPanel from "@/components/platform/StorageAdminPanel.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -203,7 +203,13 @@ async function submitPut() {
       </CardContent>
     </Card>
 
-    <StorageAdminPanel kind="static" :active-bucket="activeBucket" />
+    <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+      {{ $t('platform.publishing.movedFromStorage') }}
+      <RouterLink
+        to="/platform/publishing"
+        class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
+    </p>
 
     <!-- Content preview dialog -->
     <Dialog :open="!!previewTarget" @update:open="(v) => { if (!v) previewTarget = undefined; }">

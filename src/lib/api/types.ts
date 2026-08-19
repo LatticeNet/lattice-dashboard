@@ -1146,6 +1146,40 @@ export interface StaticObject {
 export type StorageKind = "kv" | "static";
 export type StorageAccess = "admin" | "read" | "write";
 
+/**
+ * A publishing origin says where a published route's bytes come from. The route
+ * itself, the host and path it answers on, is the same shape for all of them.
+ */
+export type PublishingOrigin = "kv" | "static" | "plugin";
+
+/** One published route: a URL the server answers on, and the rules for reading it. */
+export interface PublishingRecord {
+  id: string;
+  origin: PublishingOrigin | string;
+  /** The origin's target: a bucket name for kv and static, a share id for plugin. */
+  bucket: string;
+  hostname: string;
+  /** True when the route answers on every hostname rather than one. */
+  any_host: boolean;
+  path_prefix?: string;
+  enabled: boolean;
+  expires_at?: string;
+  /** Reserved routes cannot be moved or deleted: something outside this server depends on the URL. */
+  reserved: boolean;
+  share_id?: string;
+  /** The scope that gates editing this route, so a control can be disabled rather than 403. */
+  admin_scope: string;
+}
+
+export interface PublishingRecordList {
+  records: PublishingRecord[];
+  /**
+   * The origins the caller was allowed to look at. An empty records list with a
+   * shorter origins list is a permission boundary, not an empty product.
+   */
+  origins: string[];
+}
+
 export interface StorageBucket {
   id: string;
   kind: StorageKind | string;

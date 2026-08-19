@@ -476,7 +476,9 @@ async function revokeToken(token: StorageTokenView) {
             <KeyRound aria-hidden="true" class="size-4 text-muted-foreground" />
             {{ $t('platform.storage.tokensTitle') }}
           </CardTitle>
-          <CardDescription>{{ $t('platform.storage.tokensDescription') }}</CardDescription>
+          <CardDescription>
+            {{ isStatic ? $t('platform.storage.tokensDescriptionStatic') : $t('platform.storage.tokensDescriptionKv') }}
+          </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitToken">
