@@ -1404,7 +1404,7 @@ async function runReminders(selectedOnly: boolean) {
                   v-if="nodeInventoryFor(machine.node_id)?.purity_percent != null"
                   variant="success"
                 >
-                  {{ $t('lines.purityBadge', { percent: nodeInventoryFor(machine.node_id)?.purity_percent }) }}
+                  {{ $t('fleet.inventory.purityBadge', { percent: nodeInventoryFor(machine.node_id)?.purity_percent }) }}
                 </Badge>
                 <Badge
                   :variant="renewalTone(machine) === 'destructive' ? 'destructive' : renewalTone(machine) === 'warning' ? 'warning' : 'secondary'"

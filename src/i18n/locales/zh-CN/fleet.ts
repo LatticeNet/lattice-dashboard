@@ -596,6 +596,7 @@ export default {
 
     inventory: {
       title: "资产",
+      purityBadge: "IP 纯净度 {percent}%",
       description: "机器档案、成本信息与续费提醒",
       stats: {
         machines: "机器",

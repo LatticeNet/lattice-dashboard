@@ -605,6 +605,7 @@ export default {
 
     inventory: {
       title: "Inventory",
+      purityBadge: "IP purity {percent}%",
       description: "Machine profiles, cost metadata, and renewal reminders",
       stats: {
         machines: "Machines",
