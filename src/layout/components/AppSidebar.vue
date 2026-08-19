@@ -42,6 +42,8 @@ import {
   resizeSidebarDesktopWidth,
 } from "@/layout/sidebarModel";
 import SidebarItem from "./SidebarItem.vue";
+import { sectionSignal, formatBadge } from "../navSignals";
+import { useNavSignals } from "../useNavSignals";
 import SidebarShortcut, { type ShortcutTarget } from "./SidebarShortcut.vue";
 
 const props = defineProps<{
@@ -61,6 +63,13 @@ const route = useRoute();
 const auth = useAuthStore();
 const { t } = useI18n();
 const shortcuts = useNavShortcutsStore();
+
+/**
+ * Live state on the nav: what is waiting, what is failing. A navigation that
+ * only lists destinations makes an operator open four pages to find the one
+ * that needs them.
+ */
+const { signals } = useNavSignals();
 const {
   ready: contributionsReady,
   navContributions,
@@ -494,6 +503,7 @@ function closeMobile() {
                 :key="item.name"
                 :item="item"
                 :collapsed="true"
+                :signal="signals[item.name]"
                 :context="$t('nav.sections.' + section.id)"
                 @click="closeMobile"
               />
@@ -506,6 +516,7 @@ function closeMobile() {
               :key="item.name"
               :item="item"
               :collapsed="false"
+              :signal="signals[item.name]"
               :pinned="shortcuts.isPinned(item.name)"
               pinnable
               @toggle-pin="shortcuts.togglePin"
@@ -523,6 +534,21 @@ function closeMobile() {
                 <span class="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                   {{ $t('nav.sections.' + section.id) }}
                 </span>
+                <!-- A shut section that stays quiet while something inside it
+                     is failing is how the collapse becomes a place things go to
+                     be forgotten. -->
+                <span
+                  v-if="!openConsoleSectionIds.has(section.id) && sectionSignal(signals, section.items.map((i) => i.name))"
+                  :class="cn(
+                    'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
+                    sectionSignal(signals, section.items.map((i) => i.name))?.tone === 'attention'
+                      ? 'bg-destructive/15 text-destructive'
+                      : 'bg-warning/15 text-warning',
+                  )"
+                  :title="sectionSignal(signals, section.items.map((i) => i.name))?.label"
+                >
+                  {{ formatBadge(sectionSignal(signals, section.items.map((i) => i.name))!.count) }}
+                </span>
                 <ChevronDown
                   :class="cn('size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200', !openConsoleSectionIds.has(section.id) && '-rotate-90')"
                   aria-hidden="true"
@@ -539,6 +565,7 @@ function closeMobile() {
                     :key="item.name"
                     :item="item"
                     :collapsed="false"
+                    :signal="signals[item.name]"
                     :pinned="shortcuts.isPinned(item.name)"
                     pinnable
                     @toggle-pin="shortcuts.togglePin"
@@ -665,6 +692,7 @@ function closeMobile() {
                     :key="item.name"
                     :item="item"
                     :collapsed="false"
+                    :signal="signals[item.name]"
                     :pinned="shortcuts.isPinned(item.name)"
                     :context="group.title"
                     pinnable
