@@ -1,7 +1,7 @@
 <script setup lang="ts" generic="T">
-import { computed, getCurrentInstance, ref, watch, type HTMLAttributes } from "vue";
+import { computed, getCurrentInstance, nextTick, onMounted, ref, watch, type HTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter, type RouteLocationRaw } from "vue-router";
+import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { useDebounceFn, useMediaQuery } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Funnel, Search, X } from "lucide-vue-next";
@@ -11,6 +11,13 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
+import {
+  readTableUrlState,
+  tableStateParams,
+  tableUrlStatesEqual,
+  writeTableUrlState,
+  type TableUrlState,
+} from "./tableUrlState";
 
 /** Column descriptor for a single table column. */
 export interface DataTableColumn<Row> {
@@ -93,6 +100,15 @@ const props = withDefaults(
     /** Accessible label for the "drop the selection" button in the bulk bar. */
     clearSelectionLabel?: string;
     selectRowLabel?: string;
+    /**
+     * Opts this table into linkable view state.
+     *
+     * When set, the search box, expression filter, sort and page are mirrored
+     * into the route query under this key, so a narrowed list can be
+     * bookmarked, pasted to someone else, and survives a reload. Must be
+     * unique among the tables rendered on one route.
+     */
+    stateKey?: string;
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
   }>(),
@@ -121,6 +137,7 @@ const props = withDefaults(
     selectAllLabel: undefined,
     clearSelectionLabel: undefined,
     selectRowLabel: undefined,
+    stateKey: undefined,
   },
 );
 
@@ -208,11 +225,37 @@ defineSlots<
 
 const isDesktop = useMediaQuery("(min-width: 768px)");
 
+/* ----------------------------- linkable state ----------------------------- */
+const route = useRoute();
+const sortableKeys = computed(() => props.columns.filter((c) => c.sortable).map((c) => c.key));
+
+/**
+ * Seed from the URL at construction rather than assigning after the fact, so
+ * no watcher observes a transition out of the default state. A deep link that
+ * carries both a search and a page would otherwise have the search watcher
+ * knock the page back to one before the first render.
+ */
+const seed: TableUrlState = (() => {
+  const empty: TableUrlState = { q: "", expr: "", sort: "", dir: null, page: 1 };
+  if (!props.stateKey) return empty;
+  const state = readTableUrlState(route.query, props.stateKey, sortableKeys.value);
+  // A search term with nothing to search would filter every row away behind a
+  // hidden input. Refuse the parts of the URL this table cannot honour; the
+  // sync below then drops them from the address bar rather than leaving a
+  // stale param that does nothing.
+  const anySearchable = props.columns.some((c) => c.searchable);
+  if (!props.searchable || !anySearchable) state.q = "";
+  if (!props.searchable || !props.expressionFilter || !props.columns.some((c) => c.searchable || c.filterable)) {
+    state.expr = "";
+  }
+  return state;
+})();
+
 /* ----------------------------- search ----------------------------- */
-const searchInput = ref("");
-const searchTerm = ref("");
-const expressionInput = ref("");
-const expressionTerm = ref("");
+const searchInput = ref(seed.q);
+const searchTerm = ref(seed.q);
+const expressionInput = ref(seed.expr);
+const expressionTerm = ref(seed.expr);
 const applySearch = useDebounceFn((value: string) => {
   searchTerm.value = value;
 }, 200);
@@ -308,8 +351,8 @@ const filteredRows = computed(() => {
 });
 
 /* ----------------------------- sorting ----------------------------- */
-const sortKey = ref<string | null>(null);
-const sortDir = ref<SortDir>(null);
+const sortKey = ref<string | null>(seed.sort || null);
+const sortDir = ref<SortDir>(seed.dir);
 
 function toggleSort(column: DataTableColumn<T>): void {
   if (!column.sortable) return;
@@ -357,7 +400,7 @@ function ariaSortFor(column: DataTableColumn<T>): "ascending" | "descending" | "
 }
 
 /* ----------------------------- pagination ----------------------------- */
-const page = ref(1);
+const page = ref(seed.page);
 const paginationEnabled = computed(() => props.pageSize > 0);
 const totalRows = computed(() => sortedRows.value.length);
 const pageCount = computed(() =>
@@ -369,12 +412,19 @@ watch([totalRows, () => props.pageSize], () => {
   if (page.value > pageCount.value) page.value = pageCount.value;
   if (page.value < 1) page.value = 1;
 });
-watch(searchTerm, () => {
-  page.value = 1;
-});
-watch(expressionTerm, () => {
-  page.value = 1;
-});
+/**
+ * Narrowing or re-sorting the set invalidates the current page window, so the
+ * table returns to the first page. Suppressed while a whole state is being
+ * applied from the URL, where the page is part of what was asked for and must
+ * not be reset by the search term arriving alongside it.
+ */
+let applyingFromUrl = false;
+function resetPage(): void {
+  if (!applyingFromUrl) page.value = 1;
+}
+watch(searchTerm, resetPage);
+watch(expressionTerm, resetPage);
+watch([sortKey, sortDir], resetPage);
 
 const pagedRows = computed(() => {
   if (!paginationEnabled.value) return sortedRows.value;
@@ -386,6 +436,78 @@ const pageFrom = computed(() => (totalRows.value === 0 ? 0 : (page.value - 1) * 
 const pageTo = computed(() =>
   paginationEnabled.value ? Math.min(page.value * props.pageSize, totalRows.value) : totalRows.value,
 );
+
+/* ----------------------------- url sync ----------------------------- */
+/**
+ * Two-way mirror between the table's view state and the route query, active
+ * only when the caller passed a `state-key`.
+ *
+ * Outbound: any change to search, filter, sort or page rewrites the query,
+ * preserving every key this table does not own. `replace` rather than `push`
+ * so typing in the search box does not bury the previous page under a stack
+ * of history entries.
+ *
+ * Inbound: a query change this table did not cause (a pasted link, a
+ * back-navigation, a filter chip elsewhere in the view) is applied to the
+ * table. Both directions compare before acting, so the two watchers settle
+ * instead of chasing each other.
+ */
+const urlState = computed<TableUrlState>(() => ({
+  q: searchTerm.value.trim(),
+  expr: expressionTerm.value.trim(),
+  sort: sortDir.value ? sortKey.value ?? "" : "",
+  dir: sortKey.value ? sortDir.value : null,
+  page: page.value,
+}));
+
+if (props.stateKey) {
+  const stateKey = props.stateKey;
+
+  watch(urlState, (state) => {
+    const current = readTableUrlState(route.query, stateKey, sortableKeys.value);
+    if (tableUrlStatesEqual(current, state)) return;
+    router.replace({ query: writeTableUrlState(route.query, stateKey, state) }).catch(() => {});
+  });
+
+  /**
+   * Rewrite the address bar once if it asked for something this table refused:
+   * a column that is not sortable, a direction that is not asc/desc, a page
+   * below one, or a search on a table with nothing searchable. The URL then
+   * describes the table actually on screen, so copying it hands over the same
+   * view rather than the same broken request.
+   */
+  onMounted(() => {
+    const canonical = writeTableUrlState(route.query, stateKey, urlState.value);
+    const owned = Object.values(tableStateParams(stateKey));
+    const drifted = owned.some((name) => (route.query[name] ?? undefined) !== (canonical[name] ?? undefined));
+    if (drifted) router.replace({ query: canonical }).catch(() => {});
+  });
+
+  watch(
+    () => route.query,
+    (query) => {
+      const incoming = readTableUrlState(query, stateKey, sortableKeys.value);
+      if (tableUrlStatesEqual(incoming, urlState.value)) return;
+      applyingFromUrl = true;
+      nextTick(() => {
+        applyingFromUrl = false;
+      });
+      // Mirror into both the debounced term and the visible input so the box
+      // shows what is actually filtering.
+      if (incoming.q !== searchTerm.value) {
+        searchInput.value = incoming.q;
+        searchTerm.value = incoming.q;
+      }
+      if (incoming.expr !== expressionTerm.value) {
+        expressionInput.value = incoming.expr;
+        expressionTerm.value = incoming.expr;
+      }
+      sortKey.value = incoming.sort || null;
+      sortDir.value = incoming.dir;
+      page.value = incoming.page;
+    },
+  );
+}
 
 /* ----------------------------- selection ----------------------------- */
 const filteredIds = computed(() => filteredRows.value.map((row) => props.rowKey(row)));

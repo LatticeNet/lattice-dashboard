@@ -365,6 +365,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="tokens"
           :columns="columns"
           :rows="sortedTokens"
           :row-key="(token) => token.id"

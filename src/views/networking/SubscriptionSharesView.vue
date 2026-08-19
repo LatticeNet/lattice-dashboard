@@ -327,8 +327,12 @@ async function remove(): Promise<void> {
 async function refreshSource(share: SubscriptionShareView): Promise<void> {
   busyId.value = share.id;
   try {
-    await api.subscriptionShares.refresh(share.id);
-    toast.success(t("networking.shares.refreshed", { slug: share.slug }));
+    // The endpoint answers 200 even when the provider failed and the previous
+    // snapshot was kept, flagging it as `stale`. Reporting that as a successful
+    // refresh is exactly the lie this console exists to avoid.
+    const result = (await api.subscriptionShares.refresh(share.id)) as { stale?: boolean } | null;
+    if (result?.stale) toast.warning(t("networking.shares.refreshStale", { slug: share.slug }));
+    else toast.success(t("networking.shares.refreshed", { slug: share.slug }));
   } catch (error) {
     // A provider that cannot be reached is not a broken share: the last good
     // snapshot keeps being served. Say both halves.
@@ -438,6 +442,7 @@ watch(() => route.query, applyDeepLink);
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
       <DataTable
+        state-key="shares"
         :columns="columns"
         :rows="shares"
         :row-key="(row) => row.id"

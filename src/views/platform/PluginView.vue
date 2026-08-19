@@ -430,6 +430,7 @@ function confirmAction() {
     <Card v-else-if="kind === 'table'">
       <CardContent class="pt-6">
         <DataTable
+          state-key="records"
           v-if="hasSource"
           :columns="columns"
           :rows="rows"

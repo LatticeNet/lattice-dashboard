@@ -392,17 +392,21 @@ const queuedCount = computed(() => tasks.value.filter((task) => task.status === 
 const runningCount = computed(() => tasks.value.filter((task) => task.status === "leased").length);
 const failedCount = computed(() => rootTasks.value.filter((task) => groupStatus(task, nodeRows(task)) === "failed").length);
 
-watch(
-  statusFilter,
-  (status) => {
-    const query = { ...route.query };
-    delete query.page;
-    if (status !== "all") query.status = status;
-    else delete query.status;
-    router.replace({ query }).catch(() => {});
-  },
-  { immediate: true },
-);
+/**
+ * Mirror the status filter into the URL, and send the table back to its first
+ * page because the row set underneath it just changed.
+ *
+ * Not immediate: on mount the URL is the source of truth, and a deep link that
+ * carries both a status and a page must keep the page it was given rather than
+ * have it stripped before the table has read it.
+ */
+watch(statusFilter, (status) => {
+  const query = { ...route.query };
+  delete query["tasks.page"];
+  if (status !== "all") query.status = status;
+  else delete query.status;
+  router.replace({ query }).catch(() => {});
+});
 
 function nodeRegion(node: Node): string {
   return [node.geo?.country, node.geo?.region].filter(Boolean).join(" / ") || t("operations.tasks.unknownRegion");
@@ -527,8 +531,22 @@ function toggleNodeExpanded(taskId: string, nodeId: string) {
   expandedNodeRows.value = next;
 }
 
+/**
+ * What to say about a target that has reported nothing.
+ *
+ * A resultless row can be queued, leased, failed or cancelled, and calling all
+ * four of them "Running" told the operator a cancelled target was still working.
+ * Each state gets its own sentence.
+ */
+function resultlessText(row: NodeExecutionRow): string {
+  if (row.status === "queued") return t("operations.tasks.waitingLease");
+  if (row.status === "leased") return t("operations.tasks.running");
+  if (row.status === "cancelled") return t("operations.tasks.cancelledNoResult");
+  return t("operations.tasks.failedNoResult");
+}
+
 function rowLatestText(row: NodeExecutionRow): string {
-  if (!row.latestResult) return row.status === "queued" ? t("operations.tasks.waitingLease") : t("operations.tasks.running");
+  if (!row.latestResult) return resultlessText(row);
   const exit = t("operations.tasks.exit", { code: row.latestResult.exit_code ?? 0 });
   const error = row.latestResult.error?.trim();
   return error ? `${exit} · ${error}` : `${exit} · ${formatDateTime(row.latestResult.finished_at)}`;
@@ -972,10 +990,11 @@ async function confirmDeleteTask() {
           :has-data="tasksQuery.data.value !== undefined"
           :is-empty="filteredRootTasks.length === 0"
           :empty-title="rootTasks.length ? $t('operations.tasks.noMatch') : $t('operations.tasks.emptyTitle')"
-          :empty-description="rootTasks.length ? '' : $t('operations.tasks.emptyDescription')"
+          :empty-description="rootTasks.length ? $t('operations.tasks.noMatchDescription') : $t('operations.tasks.emptyDescription')"
           @retry="refreshAll"
         >
           <DataTable
+            state-key="tasks"
             :columns="taskColumns"
             :rows="filteredRootTasks"
             :row-key="(row) => row.id"
@@ -984,7 +1003,7 @@ async function confirmDeleteTask() {
             :empty-title="$t('operations.tasks.emptyTitle')"
             :empty-description="$t('operations.tasks.emptyDescription')"
             :no-match-title="$t('operations.tasks.noMatch')"
-            no-match-description=""
+            :no-match-description="$t('operations.tasks.noMatchDescription')"
             @row-select="detailTaskId = $event.id"
           >
             <template #cell-status="{ row }">
@@ -1174,7 +1193,7 @@ async function confirmDeleteTask() {
                               · {{ formatDateTime(row.latestResult.finished_at) }}
                             </p>
                             <p v-else class="text-xs text-muted-foreground">
-                              {{ row.status === 'queued' ? $t('operations.tasks.waitingLease') : $t('operations.tasks.running') }}
+                              {{ resultlessText(row) }}
                             </p>
                             <p v-if="row.latestResult?.error" class="mt-1 line-clamp-1 text-xs text-destructive" :title="row.latestResult.error">
                               {{ row.latestResult.error }}
