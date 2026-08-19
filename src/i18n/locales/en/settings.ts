@@ -326,6 +326,7 @@ export default {
         tokenLabel: "Token ({format})",
         copyOnce: "Copy now. This is shown once and never again.",
         acknowledge: "I have copied this token and stored it somewhere safe.",
+        blockedNavigation: "Copy the token first. Leaving this page destroys the only copy.",
         name: "Name",
         scopes: "Scopes",
       },

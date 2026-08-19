@@ -173,6 +173,15 @@ function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
   if (props.rowTo) router.push(props.rowTo(row));
 }
 
+/**
+ * An activatable row keeps its row semantics.
+ *
+ * `role="button"` was on the `<tr>` for drill-through tables, which both erases
+ * the row from the table's structure for a screen reader and, on any table with
+ * a per-row action button, claims a button contains a button. The row stays a
+ * row; it is still reachable by Tab and still activates on Enter or Space, and
+ * the cursor says so.
+ */
 function onRowKeydown(row: T, event: KeyboardEvent): void {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
@@ -604,7 +613,6 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 'bg-muted/30': selectable && isRowSelected(row),
                 'cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none': rowActivatable,
               }"
-              :role="rowActivatable ? 'button' : undefined"
               :tabindex="rowActivatable ? 0 : undefined"
               @click="rowActivatable && onRowActivate(row, $event)"
               @keydown="rowActivatable && onRowKeydown(row, $event)"
@@ -651,7 +659,6 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             'ring-1 ring-primary/40': selectable && isRowSelected(row),
             'surface-interactive': rowActivatable,
           }"
-          :role="rowActivatable ? 'button' : undefined"
           :tabindex="rowActivatable ? 0 : undefined"
           @click="rowActivatable && onRowActivate(row, $event)"
           @keydown="rowActivatable && onRowKeydown(row, $event)"

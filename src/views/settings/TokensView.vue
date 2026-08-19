@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { onBeforeRouteLeave } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -183,6 +184,17 @@ const canSubmit = computed(() => !!form.name.trim() && form.scopes.length > 0);
 // until the operator ticks the acknowledgement.
 const revealed = ref<TokenCreateResponse | undefined>();
 const revealAcknowledged = ref(false);
+
+/**
+ * Blocking the dialog's own dismissal was not enough: the sidebar is one click
+ * away, and leaving the page unmounts the only copy of the plaintext. Any
+ * navigation while an unacknowledged token is on screen is refused.
+ */
+onBeforeRouteLeave(() => {
+  if (!revealed.value || revealAcknowledged.value) return true;
+  toast.warning(t("settings.tokens.reveal.blockedNavigation"));
+  return false;
+});
 
 async function submitForm() {
   submitAttempted.value = true;

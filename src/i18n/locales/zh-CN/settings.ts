@@ -318,6 +318,7 @@ export default {
         tokenLabel: "令牌({format})",
         copyOnce: "请立即复制,仅显示这一次,之后不再显示。",
         acknowledge: "我已复制该令牌并妥善保存。",
+        blockedNavigation: "请先复制令牌。离开本页会销毁唯一的一份明文。",
         name: "名称",
         scopes: "权限范围",
       },
