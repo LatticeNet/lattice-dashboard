@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { useMediaQuery } from "@vueuse/core";
 import {
   Blocks,
   ChevronDown,
@@ -26,8 +27,9 @@ import {
 import {
   buildExtensionPluginGroups,
   extensionWorkspaceVisible,
-  reconcileExpandedSections,
-  toggleExpandedSection,
+  nextNavIndex,
+  reconcileCollapsedSections,
+  toggleCollapsedSection,
   workspaceForRoute,
   type NavigationWorkspace,
 } from "@/layout/navigationModel";
@@ -42,6 +44,7 @@ import {
   resizeSidebarDesktopWidth,
 } from "@/layout/sidebarModel";
 import SidebarItem from "./SidebarItem.vue";
+import SidebarRailSection from "./SidebarRailSection.vue";
 import { sectionSignal, formatBadge } from "../navSignals";
 import { buildControlPlaneIdentity, controlPlaneInitials } from "../controlPlaneModel";
 import { api } from "@/lib/api";
@@ -66,6 +69,7 @@ const route = useRoute();
 const auth = useAuthStore();
 const { t } = useI18n();
 const shortcuts = useNavShortcutsStore();
+const isDesktop = useMediaQuery("(min-width: 768px)");
 
 /**
  * Live state on the nav: what is waiting, what is failing. A navigation that
@@ -76,7 +80,7 @@ const { signals } = useNavSignals();
 
 /**
  * Which control plane this is. An operator keeps a laptop copy and the real one
- * open at once, and until now only the address bar told them apart — thin
+ * open at once, and until now only the address bar told them apart, thin
  * protection for a console whose buttons reconfigure machines.
  */
 const buildQuery = useAsyncData(() => api.version(), { pollInterval: 300000 });
@@ -107,8 +111,8 @@ const visibleConsoleSections = computed<VisibleConsoleSection[]>(() =>
   })).filter((section) => section.items.length > 0),
 );
 
-const overviewItems = computed(() =>
-  visibleConsoleSections.value.find((section) => section.id === "overview")?.items ?? [],
+const overviewItems = computed(
+  () => visibleConsoleSections.value.find((section) => section.id === "overview")?.items ?? [],
 );
 
 const consoleAccordionSections = computed(() =>
@@ -172,7 +176,10 @@ type NavigationIndexEntry = {
   manifestLabel: boolean;
 };
 
-type WorkspaceShortcutTarget = ShortcutTarget & { workspace: NavigationWorkspace };
+type WorkspaceShortcutTarget = ShortcutTarget & {
+  workspace: NavigationWorkspace;
+  item: NavItem;
+};
 
 const navigationIndex = computed(() => {
   const index = new Map<string, NavigationIndexEntry>();
@@ -208,6 +215,7 @@ function resolvePinnedTarget(id: string): WorkspaceShortcutTarget | null {
     path: entry.item.path,
     section: entry.sectionTitle,
     workspace: entry.workspace,
+    item: entry.item,
   };
 }
 
@@ -225,10 +233,14 @@ const extensionPinnedTargets = computed(() =>
   pinnedTargets.value.filter((target) => target.workspace === "extensions"),
 );
 
-// Each workspace owns independent expansion state. Route owners are kept open,
-// while manual choices survive navigation and sibling toggles.
-const openConsoleSectionIds = ref<Set<string>>(new Set());
-const openExtensionPluginIds = ref<Set<string>>(new Set());
+/**
+ * Sections are open unless the operator shut them, and the shut set persists.
+ * The old model stored what was OPEN, so a fresh console rendered exactly one
+ * expanded section and hid the rest of the product behind disclosures.
+ */
+const collapsedConsoleSectionIds = computed(() => shortcuts.collapsedSections);
+const collapsedExtensionPluginIds = ref<Set<string>>(new Set());
+
 const isDraggingResizeHandle = ref(false);
 const dragState = ref<{
   startX: number;
@@ -248,14 +260,19 @@ function extensionPluginOwnsRoute(group: (typeof extensionPluginGroups.value)[nu
   return group.items.some((item) => item.path === route.path);
 }
 
+const activeConsoleSectionId = computed(
+  () => consoleAccordionSections.value.find(consoleSectionOwnsRoute)?.id ?? "",
+);
+
 watch(
   [() => route.name, consoleAccordionSections],
   () => {
-    const owner = consoleAccordionSections.value.find(consoleSectionOwnsRoute);
-    openConsoleSectionIds.value = reconcileExpandedSections(
-      openConsoleSectionIds.value,
-      consoleAccordionSections.value.map((section) => section.id),
-      owner?.id,
+    shortcuts.setCollapsedSections(
+      reconcileCollapsedSections(
+        shortcuts.collapsedSections,
+        consoleAccordionSections.value.map((section) => section.id),
+        activeConsoleSectionId.value,
+      ),
     );
   },
   { immediate: true },
@@ -265,8 +282,8 @@ watch(
   [() => route.path, extensionPluginGroups],
   () => {
     const owner = extensionPluginGroups.value.find(extensionPluginOwnsRoute);
-    openExtensionPluginIds.value = reconcileExpandedSections(
-      openExtensionPluginIds.value,
+    collapsedExtensionPluginIds.value = reconcileCollapsedSections(
+      collapsedExtensionPluginIds.value,
       extensionPluginGroups.value.map((group) => group.id),
       owner?.id,
     );
@@ -274,14 +291,25 @@ watch(
   { immediate: true },
 );
 
+function isConsoleSectionOpen(id: string): boolean {
+  return !collapsedConsoleSectionIds.value.has(id);
+}
+
+function isExtensionGroupOpen(id: string): boolean {
+  return !collapsedExtensionPluginIds.value.has(id);
+}
+
 function toggleConsoleSection(section: VisibleConsoleSection) {
-  const owner = consoleAccordionSections.value.find(consoleSectionOwnsRoute);
-  openConsoleSectionIds.value = toggleExpandedSection(openConsoleSectionIds.value, section.id, owner?.id);
+  shortcuts.setCollapsedSections(
+    toggleCollapsedSection(shortcuts.collapsedSections, section.id),
+  );
 }
 
 function toggleExtensionPlugin(group: (typeof extensionPluginGroups.value)[number]) {
-  const owner = extensionPluginGroups.value.find(extensionPluginOwnsRoute);
-  openExtensionPluginIds.value = toggleExpandedSection(openExtensionPluginIds.value, group.id, owner?.id);
+  collapsedExtensionPluginIds.value = toggleCollapsedSection(
+    collapsedExtensionPluginIds.value,
+    group.id,
+  );
 }
 
 function toggleCollapse() {
@@ -377,18 +405,73 @@ onBeforeUnmount(() => {
 function closeMobile() {
   emit("update:mobileOpen", false);
 }
+
+/* ── Mobile drawer: escape, focus, and staying out of the tab order ────────── */
+
+const aside = ref<HTMLElement | null>(null);
+
+/**
+ * Off-canvas but still focusable is a real trap: Tab from the header walks into
+ * a drawer nobody can see. `inert` is the only thing that takes the whole
+ * subtree out of both the tab order and the accessibility tree.
+ */
+const hidden = computed(() => !isDesktop.value && !props.mobileOpen);
+
+function onWindowKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && props.mobileOpen) {
+    event.preventDefault();
+    closeMobile();
+  }
+}
+
+watch(
+  () => props.mobileOpen,
+  async (open) => {
+    if (typeof window === "undefined") return;
+    if (open) {
+      window.addEventListener("keydown", onWindowKeydown);
+      await nextTick();
+      aside.value?.querySelector<HTMLElement>("[data-nav-row], button")?.focus();
+    } else {
+      window.removeEventListener("keydown", onWindowKeydown);
+    }
+  },
+);
+
+onBeforeUnmount(() => {
+  if (typeof window !== "undefined") window.removeEventListener("keydown", onWindowKeydown);
+});
+
+/**
+ * Arrow keys walk the destination list. Tab still steps over the navigation in
+ * one or two stops; inside it, Up/Down is what an operator reaches for.
+ */
+function onNavKeydown(event: KeyboardEvent) {
+  const container = event.currentTarget;
+  if (!(container instanceof HTMLElement)) return;
+  const rows = [...container.querySelectorAll<HTMLElement>("[data-nav-row]")];
+  const next = nextNavIndex(rows.length, rows.indexOf(document.activeElement as HTMLElement), event.key);
+  if (next < 0) return;
+  event.preventDefault();
+  rows[next]?.focus();
+}
 </script>
 
 <template>
+  <!-- Plain scrim. A blurred backdrop is decoration that costs a compositor
+       layer on the machines this console is actually opened from. -->
   <div
     v-show="mobileOpen"
-    class="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm md:hidden"
+    class="fixed inset-0 z-40 bg-foreground/40 md:hidden"
+    aria-hidden="true"
     @click="closeMobile"
   />
 
   <aside
+    ref="aside"
     class="app-sidebar"
     :style="asideStyle"
+    :inert="hidden || undefined"
     :class="
       cn(
         'z-50 flex h-screen flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
@@ -419,7 +502,11 @@ function closeMobile() {
             v-if="controlPlane.kind === 'local'"
             class="shrink-0 rounded bg-warning/15 px-1 font-medium uppercase tracking-wide text-warning"
           >dev</span>
-          <span v-else-if="controlPlane.version" class="shrink-0 truncate font-mono">{{ controlPlane.version }}</span>
+          <span
+            v-else-if="controlPlane.version"
+            class="shrink-0 truncate font-mono"
+            :title="controlPlane.version"
+          >{{ controlPlane.version }}</span>
         </span>
       </div>
       <!-- Collapsed, the identity survives as the one thing worth keeping: a
@@ -429,7 +516,7 @@ function closeMobile() {
         v-else
         class="text-[10px] font-medium uppercase tracking-wide"
         :class="controlPlane.kind === 'local' ? 'text-warning' : 'text-muted-foreground'"
-        :title="`${controlPlane.host}${controlPlane.version ? ' · ' + controlPlane.version : ''}`"
+        :title="`${controlPlane.host}${controlPlane.version ? ' (' + controlPlane.version + ')' : ''}`"
       >{{ controlPlaneInitials(controlPlane.host) }}</span>
     </div>
 
@@ -514,38 +601,65 @@ function closeMobile() {
         <nav
           :aria-label="`${$t('shell.sidebar.primaryNav')}: ${$t('shell.sidebar.console')}`"
           class="h-full space-y-4 overflow-y-auto px-2 py-3"
+          @keydown="onNavKeydown"
         >
-          <div v-if="!effectiveCollapsed && consolePinnedTargets.length" class="space-y-1">
-            <p class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              {{ $t('shell.sidebar.pinned') }}
-            </p>
-            <div class="relative space-y-px pl-3">
-              <span class="absolute inset-y-1 left-[7px] w-px bg-sidebar-border" aria-hidden="true" />
-              <SidebarShortcut
+          <!-- Collapsed rail: sections stay the unit, so the IA survives 64px. -->
+          <template v-if="effectiveCollapsed">
+            <div v-if="consolePinnedTargets.length" class="space-y-1">
+              <SidebarItem
                 v-for="target in consolePinnedTargets"
                 :key="target.id"
-                :target="target"
-                @toggle-pin="shortcuts.togglePin"
-                @navigate="closeMobile"
+                :item="target.item"
+                :collapsed="true"
+                :signal="signals[target.item.name]"
+                :context="$t('shell.sidebar.pinned')"
+                @click="closeMobile"
               />
+              <div class="mx-2 h-px bg-sidebar-border" role="presentation" />
             </div>
-          </div>
 
-          <template v-if="effectiveCollapsed">
-            <template v-for="section in visibleConsoleSections" :key="section.id">
+            <div class="space-y-1">
               <SidebarItem
-                v-for="item in section.items"
+                v-for="item in overviewItems"
                 :key="item.name"
                 :item="item"
                 :collapsed="true"
                 :signal="signals[item.name]"
-                :context="$t('nav.sections.' + section.id)"
+                :context="$t('nav.sections.overview')"
                 @click="closeMobile"
               />
-            </template>
+              <SidebarRailSection
+                v-for="section in consoleAccordionSections"
+                :id="section.id"
+                :key="section.id"
+                :label="$t('nav.sections.' + section.id)"
+                :icon="section.icon"
+                :items="section.items"
+                :signals="signals"
+                :signal="sectionSignal(signals, section.items.map((i) => i.name))"
+                :active="activeConsoleSectionId === section.id"
+                @navigate="closeMobile"
+              />
+            </div>
           </template>
 
           <template v-else>
+            <div v-if="consolePinnedTargets.length" class="space-y-1">
+              <p class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {{ $t('shell.sidebar.pinned') }}
+              </p>
+              <div class="relative space-y-px pl-3">
+                <span class="absolute inset-y-1 left-[7px] w-px bg-sidebar-border" aria-hidden="true" />
+                <SidebarShortcut
+                  v-for="target in consolePinnedTargets"
+                  :key="target.id"
+                  :target="target"
+                  @toggle-pin="shortcuts.togglePin"
+                  @navigate="closeMobile"
+                />
+              </div>
+            </div>
+
             <SidebarItem
               v-for="item in overviewItems"
               :key="item.name"
@@ -562,10 +676,15 @@ function closeMobile() {
               <button
                 type="button"
                 class="group/section flex h-9 w-full items-center gap-2 rounded-md px-3 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-7"
-                :aria-expanded="openConsoleSectionIds.has(section.id)"
+                :aria-expanded="isConsoleSectionOpen(section.id)"
                 :aria-controls="`console-section-${section.id}`"
                 @click="toggleConsoleSection(section)"
               >
+                <component
+                  :is="section.icon"
+                  class="size-3.5 shrink-0 text-muted-foreground/70"
+                  aria-hidden="true"
+                />
                 <span class="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                   {{ $t('nav.sections.' + section.id) }}
                 </span>
@@ -573,7 +692,7 @@ function closeMobile() {
                      is failing is how the collapse becomes a place things go to
                      be forgotten. -->
                 <span
-                  v-if="!openConsoleSectionIds.has(section.id) && sectionSignal(signals, section.items.map((i) => i.name))"
+                  v-if="!isConsoleSectionOpen(section.id) && sectionSignal(signals, section.items.map((i) => i.name))"
                   :class="cn(
                     'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
                     sectionSignal(signals, section.items.map((i) => i.name))?.tone === 'attention'
@@ -585,14 +704,14 @@ function closeMobile() {
                   {{ formatBadge(sectionSignal(signals, section.items.map((i) => i.name))!.count) }}
                 </span>
                 <ChevronDown
-                  :class="cn('size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200', !openConsoleSectionIds.has(section.id) && '-rotate-90')"
+                  :class="cn('size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-200 motion-reduce:transition-none', !isConsoleSectionOpen(section.id) && '-rotate-90')"
                   aria-hidden="true"
                 />
               </button>
               <div
                 :id="`console-section-${section.id}`"
                 class="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
-                :class="openConsoleSectionIds.has(section.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+                :class="isConsoleSectionOpen(section.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
               >
                 <div class="space-y-1 overflow-hidden">
                   <SidebarItem
@@ -617,6 +736,7 @@ function closeMobile() {
         <nav
           :aria-label="`${$t('shell.sidebar.primaryNav')}: ${$t('shell.sidebar.extensions')}`"
           class="h-full space-y-4 overflow-y-auto px-2 py-3"
+          @keydown="onNavKeydown"
         >
           <div v-if="!effectiveCollapsed && extensionPinnedTargets.length" class="space-y-1">
             <p class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
@@ -653,17 +773,19 @@ function closeMobile() {
           </div>
 
           <template v-else-if="effectiveCollapsed">
-            <template v-for="group in extensionPluginGroups" :key="group.id">
-              <SidebarItem
-                v-for="item in group.items"
-                :key="item.name"
-                :item="item"
-                :collapsed="true"
-                :context="pluginGroupAriaLabel(group.title, group.id)"
+            <div class="space-y-1">
+              <SidebarRailSection
+                v-for="group in extensionPluginGroups"
+                :id="group.id"
+                :key="group.id"
+                :label="pluginGroupAriaLabel(group.title, group.id)"
+                :icon="Package"
+                :items="group.items"
+                :active="extensionPluginOwnsRoute(group)"
                 plugin
-                @click="closeMobile"
+                @navigate="closeMobile"
               />
-            </template>
+            </div>
           </template>
 
           <template v-else>
@@ -678,7 +800,7 @@ function closeMobile() {
                     type="button"
                     class="group/plugin flex h-11 w-full items-center gap-2 rounded-md px-2 text-left outline-none transition-colors hover:bg-sidebar-accent/35 focus-visible:ring-2 focus-visible:ring-ring/50 md:h-10"
                     :data-plugin-id="group.id"
-                    :aria-expanded="openExtensionPluginIds.has(group.id)"
+                    :aria-expanded="isExtensionGroupOpen(group.id)"
                     :aria-controls="`extension-plugin-${group.id}`"
                     :aria-label="pluginGroupAriaLabel(group.title, group.id)"
                     @click="toggleExtensionPlugin(group)"
@@ -704,7 +826,7 @@ function closeMobile() {
                       {{ group.items.length }}
                     </span>
                     <ChevronDown
-                      :class="cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200', !openExtensionPluginIds.has(group.id) && '-rotate-90')"
+                      :class="cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200 motion-reduce:transition-none', !isExtensionGroupOpen(group.id) && '-rotate-90')"
                       aria-hidden="true"
                     />
                   </button>
@@ -719,7 +841,7 @@ function closeMobile() {
               <div
                 :id="`extension-plugin-${group.id}`"
                 class="grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none"
-                :class="openExtensionPluginIds.has(group.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
+                :class="isExtensionGroupOpen(group.id) ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
               >
                 <div class="ml-3 space-y-1 overflow-hidden border-l border-sidebar-border/70 pl-2 pt-1">
                   <SidebarItem
@@ -744,16 +866,22 @@ function closeMobile() {
     </Tabs>
 
     <div class="hidden shrink-0 border-t border-sidebar-border p-2 md:block">
-      <Button
-        variant="ghost"
-        :aria-label="$t('shell.sidebar.toggle')"
-        :class="cn('w-full justify-start gap-3 text-sidebar-foreground/80', effectiveCollapsed && 'justify-center')"
-        @click="toggleCollapse"
-      >
-        <PanelLeftClose v-if="!effectiveCollapsed" class="size-4" aria-hidden="true" />
-        <PanelLeftOpen v-else class="size-4" aria-hidden="true" />
-        <span v-if="!effectiveCollapsed">{{ $t('shell.sidebar.collapse') }}</span>
-      </Button>
+      <Tooltip :delay-duration="400">
+        <TooltipTrigger as-child>
+          <Button
+            variant="ghost"
+            size="sm"
+            :aria-label="$t('shell.sidebar.toggle')"
+            :class="cn('w-full justify-start gap-3 text-sidebar-foreground/70', effectiveCollapsed && 'justify-center px-0')"
+            @click="toggleCollapse"
+          >
+            <PanelLeftClose v-if="!effectiveCollapsed" class="size-4" aria-hidden="true" />
+            <PanelLeftOpen v-else class="size-4" aria-hidden="true" />
+            <span v-if="!effectiveCollapsed" class="text-xs">{{ $t('shell.sidebar.collapse') }}</span>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{{ $t('shell.sidebar.toggle') }}</TooltipContent>
+      </Tooltip>
     </div>
 
     <div
@@ -765,7 +893,7 @@ function closeMobile() {
       :aria-valuemax="SIDEBAR_DESKTOP_MAX_WIDTH"
       :aria-valuenow="desktopWidth"
       tabindex="0"
-      class="absolute inset-y-0 right-0 z-10 hidden w-3 translate-x-1/2 cursor-col-resize items-stretch md:flex"
+      class="absolute inset-y-0 right-0 z-10 hidden w-3 translate-x-1/2 cursor-col-resize items-stretch outline-none focus-visible:ring-2 focus-visible:ring-ring/60 md:flex"
       @dblclick="resetDesktopWidth"
       @keydown="onResizeKeydown"
       @lostpointercapture="endResizeInteraction"
@@ -785,12 +913,18 @@ function closeMobile() {
   width: var(--app-sidebar-mobile-width);
 }
 
-nav :deep(a) {
+/*
+ * The active marker is keyed to `data-active`, which SidebarItem sets from the
+ * same computed that drives `aria-current`. It used to key off a utility class
+ * in the active class string, so renaming that class silently deleted the
+ * marker with nothing failing anywhere.
+ */
+nav :deep([data-nav-row]) {
   position: relative;
   transition: background-color 200ms ease, color 200ms ease;
 }
 
-nav :deep(a)::before {
+nav :deep([data-nav-row])::before {
   content: "";
   position: absolute;
   left: 0;
@@ -805,14 +939,14 @@ nav :deep(a)::before {
   transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 220ms ease;
 }
 
-nav :deep(a.bg-sidebar-accent)::before {
+nav :deep([data-nav-row][data-active="true"])::before {
   transform: translateY(-50%) scaleY(1);
   opacity: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  nav :deep(a),
-  nav :deep(a)::before {
+  nav :deep([data-nav-row]),
+  nav :deep([data-nav-row])::before {
     transition: none;
   }
 }

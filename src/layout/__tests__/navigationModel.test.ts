@@ -4,8 +4,9 @@ import test from "node:test";
 import {
   buildExtensionPluginGroups,
   extensionWorkspaceVisible,
-  reconcileExpandedSections,
-  toggleExpandedSection,
+  nextNavIndex,
+  reconcileCollapsedSections,
+  toggleCollapsedSection,
   workspaceForRoute,
 } from "../navigationModel.ts";
 
@@ -118,24 +119,48 @@ test("blank plugin names fall back to the stable plugin id", () => {
   assert.equal(group?.title, "latticenet.netguard");
 });
 
-test("opening one navigation section preserves sections that are already open", () => {
-  const open = toggleExpandedSection(new Set(["fleet"]), "operations");
+test("a fresh console has every section open, because nothing has been shut yet", () => {
+  const collapsed = reconcileCollapsedSections(new Set(), ["fleet", "operations", "networking"]);
 
-  assert.deepEqual([...open], ["fleet", "operations"]);
+  assert.deepEqual([...collapsed], []);
 });
 
-test("navigation sections toggle independently while the active route owner stays open", () => {
-  assert.deepEqual([...toggleExpandedSection(new Set(["fleet", "operations"]), "fleet")], ["operations"]);
+test("shutting one section leaves its siblings alone", () => {
+  const collapsed = toggleCollapsedSection(new Set(["fleet"]), "operations");
+
+  assert.deepEqual([...collapsed].sort(), ["fleet", "operations"]);
+  assert.deepEqual([...toggleCollapsedSection(collapsed, "fleet")], ["operations"]);
+});
+
+test("the section owning the current route is reopened, so the active page is never hidden", () => {
   assert.deepEqual(
-    [...toggleExpandedSection(new Set(["fleet", "operations"]), "fleet", "fleet")],
-    ["fleet", "operations"],
+    [...reconcileCollapsedSections(new Set(["fleet", "operations"]), ["fleet", "operations"], "fleet")],
+    ["operations"],
   );
 });
 
-test("section reconciliation retains valid choices, adds the route owner, and removes uninstalled sections", () => {
+test("a section that no longer exists stops being remembered", () => {
   assert.deepEqual(
-    [...reconcileExpandedSections(new Set(["latticenet.vpn-core", "removed-plugin"]), ["latticenet.vpn-core", "latticenet.netguard"], "latticenet.netguard")],
-    ["latticenet.vpn-core", "latticenet.netguard"],
+    [...reconcileCollapsedSections(new Set(["latticenet.vpn-core", "removed-plugin"]), ["latticenet.vpn-core"])],
+    ["latticenet.vpn-core"],
   );
-  assert.deepEqual([...reconcileExpandedSections(new Set(), ["fleet", "operations"])], ["fleet"]);
+});
+
+test("arrow keys wrap through the destination list and Home/End jump to its ends", () => {
+  assert.equal(nextNavIndex(5, 0, "ArrowDown"), 1);
+  assert.equal(nextNavIndex(5, 4, "ArrowDown"), 0);
+  assert.equal(nextNavIndex(5, 0, "ArrowUp"), 4);
+  assert.equal(nextNavIndex(5, 2, "Home"), 0);
+  assert.equal(nextNavIndex(5, 2, "End"), 4);
+});
+
+test("keys the navigation does not own, and an empty list, are left to the browser", () => {
+  assert.equal(nextNavIndex(5, 2, "Tab"), -1);
+  assert.equal(nextNavIndex(5, 2, "a"), -1);
+  assert.equal(nextNavIndex(0, -1, "ArrowDown"), -1);
+});
+
+test("focus starts at the top when nothing in the list is focused yet", () => {
+  assert.equal(nextNavIndex(3, -1, "ArrowDown"), 1);
+  assert.equal(nextNavIndex(3, -1, "ArrowUp"), 2);
 });
