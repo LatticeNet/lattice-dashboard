@@ -38,6 +38,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -511,12 +512,12 @@ async function confirmRun() {
             </div>
             <div class="grid gap-2">
               <Label for="ddns-wh-body">{{ $t('networking.ddns.webhookBody') }}</Label>
-              <textarea
+              <Textarea
                 id="ddns-wh-body"
                 v-model="form.webhook_body"
                 rows="3"
-                class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 placeholder='{"ip":"#ip#","domain":"#domain#","type":"#type#"}'
+                class="font-mono text-xs"
               />
               <p class="text-xs text-muted-foreground">
                 {{ $t('networking.ddns.webhookBodyHint') }}
@@ -526,12 +527,12 @@ async function confirmRun() {
             </div>
             <div class="grid gap-2">
               <Label for="ddns-wh-headers">{{ $t('networking.ddns.webhookHeaders') }}</Label>
-              <textarea
+              <Textarea
                 id="ddns-wh-headers"
                 v-model="form.webhook_headers"
                 rows="2"
-                class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 placeholder="Authorization: Bearer xxx&#10;Content-Type: application/json"
+                class="font-mono text-xs"
               />
               <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.webhookHeadersHint') }}</p>
             </div>

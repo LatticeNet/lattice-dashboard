@@ -23,6 +23,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -292,14 +293,15 @@ async function submitRun() {
           </div>
           <div class="grid gap-2">
             <Label for="worker-source">{{ $t('platform.workers.sourceLabel') }}</Label>
-            <textarea
+            <Textarea
               id="worker-source"
               v-model="deploySource"
               rows="10"
               spellcheck="false"
               :placeholder="$t('platform.workers.sourcePlaceholder')"
-              class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
+
+             class="font-mono text-xs"
+           />
           </div>
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
