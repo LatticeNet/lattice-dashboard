@@ -43,6 +43,9 @@ import {
 } from "@/layout/sidebarModel";
 import SidebarItem from "./SidebarItem.vue";
 import { sectionSignal, formatBadge } from "../navSignals";
+import { buildControlPlaneIdentity, controlPlaneInitials } from "../controlPlaneModel";
+import { api } from "@/lib/api";
+import { useAsyncData } from "@/composables/useAsyncData";
 import { useNavSignals } from "../useNavSignals";
 import SidebarShortcut, { type ShortcutTarget } from "./SidebarShortcut.vue";
 
@@ -70,6 +73,19 @@ const shortcuts = useNavShortcutsStore();
  * that needs them.
  */
 const { signals } = useNavSignals();
+
+/**
+ * Which control plane this is. An operator keeps a laptop copy and the real one
+ * open at once, and until now only the address bar told them apart — thin
+ * protection for a console whose buttons reconfigure machines.
+ */
+const buildQuery = useAsyncData(() => api.version(), { pollInterval: 300000 });
+const controlPlane = computed(() =>
+  buildControlPlaneIdentity({
+    host: typeof window === "undefined" ? "" : window.location.host,
+    serverVersion: buildQuery.data.value?.server_version,
+  }),
+);
 const {
   ready: contributionsReady,
   navContributions,
@@ -395,7 +411,26 @@ function closeMobile() {
       >
         <Hexagon class="size-4" aria-hidden="true" />
       </div>
-      <span v-if="!effectiveCollapsed" class="text-sm font-semibold tracking-tight">Lattice</span>
+      <div v-if="!effectiveCollapsed" class="min-w-0">
+        <span class="block text-sm font-semibold leading-tight tracking-tight">Lattice</span>
+        <span class="flex items-center gap-1.5 text-[10px] leading-tight text-muted-foreground">
+          <span class="truncate" :title="controlPlane.host">{{ controlPlane.host }}</span>
+          <span
+            v-if="controlPlane.kind === 'local'"
+            class="shrink-0 rounded bg-warning/15 px-1 font-medium uppercase tracking-wide text-warning"
+          >dev</span>
+          <span v-else-if="controlPlane.version" class="shrink-0 truncate font-mono">{{ controlPlane.version }}</span>
+        </span>
+      </div>
+      <!-- Collapsed, the identity survives as the one thing worth keeping: a
+           marker taken from the host, so the rail cannot be mistaken for the
+           other instance either. -->
+      <span
+        v-else
+        class="text-[10px] font-medium uppercase tracking-wide"
+        :class="controlPlane.kind === 'local' ? 'text-warning' : 'text-muted-foreground'"
+        :title="`${controlPlane.host}${controlPlane.version ? ' · ' + controlPlane.version : ''}`"
+      >{{ controlPlaneInitials(controlPlane.host) }}</span>
     </div>
 
     <div class="shrink-0 px-2 pt-3">
