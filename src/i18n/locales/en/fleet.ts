@@ -434,6 +434,27 @@ export default {
           proxyDriftCleared: "Proxy drift cache",
         },
       },
+      bulk: {
+        selectAllVisible: "Select all shown",
+        selectRow: "Select {name}",
+        selected: "{count} selected",
+        hiddenByFilter: "{count} of them are hidden by the current filter",
+        clear: "Clear selection",
+        running: "Working: {done} of {total}",
+        stateDisabled: "disabled",
+        stateEnabled: "enabled",
+        nothingToDo: "Nothing to do: all {count} selected nodes are already {state}.",
+        doneDisabled: "Disabled {count} nodes",
+        doneEnabled: "Enabled {count} nodes",
+        partialTitle: "{done} of {total} nodes changed",
+        failedTitle: "None of the {total} nodes changed",
+        failedHint: "The nodes below are still selected, so you can retry them.",
+        unchangedNote: "{count} were already {state} and were left alone.",
+        missingNote: "{count} selected nodes were no longer in the fleet.",
+        confirmDisableTitle: "Disable {count} nodes",
+        confirmDisableDescription:
+          "Disable {count} of the {selected} selected nodes? They stop accepting work until you enable them again. Nodes already disabled are left alone.",
+      },
       confirm: {
         rotateTitle: "Rotate enrollment token",
         rotateDescription:

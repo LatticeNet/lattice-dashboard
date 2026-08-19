@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
@@ -83,6 +83,16 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import PolicyMatrix from "@/components/networking/PolicyMatrix.vue";
 import PolicyCellEditor from "@/components/networking/PolicyCellEditor.vue";
+import { useRouteTab } from "@/composables/useRouteTab";
+
+/**
+ * Go's `omitempty` does not drop a zero time.Time, so a policy that was never
+ * applied arrives as "0001-01-01T00:00:00Z" and formats into a real-looking
+ * year-1 date rather than falling through to "never".
+ */
+function hasRealTime(value?: string): boolean {
+  return !!value && !value.startsWith("0001");
+}
 
 const { t } = useI18n();
 const router = useRouter();
@@ -90,7 +100,9 @@ const auth = useAuthStore();
 const canRead = computed(() => auth.can("netpolicy:read"));
 const canAdmin = computed(() => auth.can("netpolicy:admin"));
 
-const tab = ref<"matrix" | "policies" | "graph">("matrix");
+/** Tab lives in the URL, so a matrix or a graph can be linked to directly. */
+const POLICY_TABS = ["matrix", "policies", "graph"] as const;
+const tab = useRouteTab<(typeof POLICY_TABS)[number]>(() => POLICY_TABS, () => "matrix");
 
 const policiesQuery = useAsyncData(() => api.netpolicy.list().then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
@@ -191,7 +203,20 @@ async function planGroupPolicies() {
     planResult.value = result;
     planSelectorRiskAccepted.value = false;
     planResultOpen.value = true;
-    toast.success(t("networking.matrix.toastPlanned", { n: result.affected.length }));
+    // The server plans node by node and routes the ones it could not expand into
+    // `conflicts` while still answering 200. A green "Planned" toast over a run
+    // where half the fleet produced no plan is the failure mode this console is
+    // supposed to make impossible.
+    if (result.conflicts.length) {
+      toast.warning(
+        t("networking.matrix.toastPlannedPartial", {
+          n: result.affected.length,
+          c: result.conflicts.length,
+        }),
+      );
+    } else {
+      toast.success(t("networking.matrix.toastPlanned", { n: result.affected.length }));
+    }
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
   } finally {
@@ -261,10 +286,17 @@ function loadGraph() {
 }
 
 function onTabChange(value: string | number) {
-  const next = String(value) as "matrix" | "policies" | "graph";
-  tab.value = next;
-  if (next === "graph") loadGraph();
+  tab.value = String(value) as (typeof POLICY_TABS)[number];
 }
+
+/**
+ * The graph is fetched on demand. Watching the tab rather than the click means
+ * a deep link straight to ?tab=graph loads it too; hanging the fetch off the
+ * click handler alone left that URL showing an empty graph forever.
+ */
+watch(tab, (next) => {
+  if (next === "graph") loadGraph();
+}, { immediate: true });
 
 // ── Rules editor model ────────────────────────────────────────────────────
 interface RuleDraft {
@@ -923,6 +955,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
           </CardHeader>
           <CardContent>
             <DataTable
+              state-key="policies"
               :columns="policyColumns"
               :rows="sortedPolicies"
               :row-key="(p) => p.target_node_id"
@@ -952,7 +985,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 <span class="font-mono text-xs text-muted-foreground">{{ p.last_plan_sha ? shortId(p.last_plan_sha, 12) : $t('common.misc.none') }}</span>
               </template>
               <template #cell-last_applied="{ row: p }">
-                <span class="text-xs text-muted-foreground">{{ p.last_applied_at ? formatDateTime(p.last_applied_at) : $t('common.misc.none') }}</span>
+                <span class="text-xs text-muted-foreground">{{ hasRealTime(p.last_applied_at) ? formatDateTime(p.last_applied_at) : $t('common.misc.never') }}</span>
               </template>
               <template #cell-last_error="{ row: p }">
                 <span v-if="p.last_error" class="text-xs text-destructive">{{ p.last_error }}</span>
@@ -1552,7 +1585,10 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               </li>
             </ul>
           </div>
-          <p v-if="!planResult.affected.length && !planResult.conflicts.length" class="text-muted-foreground">
+          <p
+            v-if="!planResult.affected.length && !planResult.conflicts.length && !planResult.orphaned.length"
+            class="text-muted-foreground"
+          >
             {{ $t('networking.matrix.planNoop') }}
           </p>
         </div>

@@ -165,6 +165,7 @@ async function submitPut() {
         </form>
 
         <DataTable
+          state-key="entries"
           v-if="canRead"
           :columns="columns"
           :rows="sortedEntries"

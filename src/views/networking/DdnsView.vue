@@ -328,6 +328,7 @@ async function confirmRun() {
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="profiles"
           :columns="columns"
           :rows="sortedProfiles"
           :row-key="(profile) => profile.id"

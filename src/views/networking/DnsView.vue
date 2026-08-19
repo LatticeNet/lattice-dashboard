@@ -495,6 +495,7 @@ function closePlan(open: boolean) {
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="deployments"
           :columns="columns"
           :rows="sortedDeployments"
           :row-key="(dep) => dep.id"

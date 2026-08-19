@@ -331,7 +331,9 @@ function targetLabel(policy: AgentUpdatePolicy): string {
 }
 
 function releaseFetchedLabel(): string {
-  return releaseInfo.value?.fetched_at ? formatDateTime(releaseInfo.value.fetched_at) : t("common.misc.none");
+  return releaseInfo.value?.fetched_at
+    ? t("platform.agentUpdates.fetchedAt", { time: formatDateTime(releaseInfo.value.fetched_at) })
+    : t("platform.agentUpdates.fetchedNever");
 }
 
 async function submitForm(): Promise<void> {
@@ -508,13 +510,13 @@ watch(
         <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div>
             <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.latestVersion') }}</p>
-            <p class="mt-1 font-mono text-xl font-semibold">{{ releaseInfo?.latest_version || $t('common.misc.none') }}</p>
+            <p class="mt-1 font-mono text-xl font-semibold">{{ releaseInfo?.latest_version || $t('platform.agentUpdates.latestUnknown') }}</p>
             <p class="text-xs text-muted-foreground">{{ releaseInfo?.latest_tag || "latest" }}</p>
           </div>
           <div>
             <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.releaseRepo') }}</p>
             <p class="mt-1 font-mono text-sm">{{ releaseInfo?.repo || "LatticeNet/lattice-node-agent" }}</p>
-            <p class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.fetchedAt', { time: releaseFetchedLabel() }) }}</p>
+            <p class="text-xs text-muted-foreground">{{ releaseFetchedLabel() }}</p>
           </div>
           <div>
             <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.releaseArtifacts') }}</p>
@@ -585,6 +587,7 @@ watch(
         </div>
 
         <DataTable
+          state-key="updates"
           :columns="columns"
           :rows="sortedPolicies"
           :row-key="(policy) => policy.node_id"
@@ -630,11 +633,18 @@ watch(
               {{ $t('platform.agentUpdates.resolvedPlanned', { version: row.last_planned_version }) }}
             </p>
           </template>
+          <!--
+            last_applied_version is only ever written from a version the node
+            itself reported (heartbeat confirmation, or the noop path where the
+            node already runs the target). Empty means the node has never
+            confirmed one through this policy, not that it runs no agent.
+          -->
           <template #cell-last_applied_version="{ row }">
-            <span class="font-mono text-xs">{{ row.last_applied_version || $t('common.misc.none') }}</span>
+            <span v-if="row.last_applied_version" class="font-mono text-xs">{{ row.last_applied_version }}</span>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('platform.agentUpdates.appliedUnconfirmed') }}</span>
           </template>
           <template #cell-last_planned_at="{ row }">
-            <span class="text-xs text-muted-foreground">{{ row.last_planned_at ? formatDateTime(row.last_planned_at) : $t('common.misc.none') }}</span>
+            <span class="text-xs text-muted-foreground">{{ row.last_planned_at ? formatDateTime(row.last_planned_at) : $t('common.misc.never') }}</span>
           </template>
           <template #cell-binary_url="{ row }">
             <div v-if="row.binary_url" class="flex items-center gap-1">
@@ -752,7 +762,7 @@ watch(
                 {{ $t('platform.agentUpdates.versionInvalid') }}
               </p>
               <p v-else class="text-xs text-muted-foreground">
-                {{ $t('platform.agentUpdates.versionHint', { latest: releaseInfo?.latest_version || $t('common.misc.none') }) }}
+                {{ $t('platform.agentUpdates.versionHint', { latest: releaseInfo?.latest_version || $t('platform.agentUpdates.latestUnknown') }) }}
               </p>
             </div>
           </div>

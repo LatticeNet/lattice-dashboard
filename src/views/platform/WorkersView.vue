@@ -194,6 +194,7 @@ async function submitRun() {
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="workers"
           v-if="canDeploy"
           :columns="columns"
           :rows="sortedWorkers"

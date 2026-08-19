@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useRouteTab } from "@/composables/useRouteTab";
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -291,7 +292,8 @@ watch(approvalBucket, () => {
 // visible in the Individual tab; any manual refresh or filter change
 // re-syncs from the server.
 type InboxTab = "events" | "individual";
-const inboxTab = ref<InboxTab>("events");
+/** Tab lives in the URL so a grouped inbox and a flat list are both linkable. */
+const inboxTab = useRouteTab<InboxTab>(() => ["events", "individual"], () => "events");
 const expandedEventKeys = ref<Set<string>>(new Set());
 const concealedIds = ref<Set<string>>(new Set());
 
@@ -1039,6 +1041,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
             </div>
 
             <DataTable
+              state-key="approvals"
               v-else
               v-model:selected="selectedRows"
               :columns="approvalColumns"

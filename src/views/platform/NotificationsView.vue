@@ -85,24 +85,27 @@ const KIND_FIELDS: Record<NotifyKind, FieldDef[]> = {
 
 const KIND_OPTIONS: NotifyKind[] = ["telegram", "bark", "discord", "webhook"];
 const EVENT_OPTIONS = ["*", "monitor.down", "monitor.recovered", "ssh.login", "proxy.quota", "proxy.expiry"];
+// renderNotifyTemplate substitutes exactly three variables: event_type, title,
+// and body. Anything else is left in the delivered message verbatim, which is
+// how these presets used to ship literal "{{message}}" to Telegram.
 const RULE_PRESETS: RulePreset[] = [
   {
     key: "quota",
     events: "proxy.quota, proxy.expiry",
-    title: "{{event}} {{subject}}",
-    body: "{{message}}",
+    title: "{{event_type}}: {{title}}",
+    body: "{{body}}",
   },
   {
     key: "monitor",
     events: "monitor.down, monitor.recovered",
-    title: "{{event}} {{node}}",
-    body: "{{message}}",
+    title: "{{event_type}}: {{title}}",
+    body: "{{body}}",
   },
   {
     key: "ssh",
     events: "ssh.login",
-    title: "SSH login {{node}}",
-    body: "{{message}}",
+    title: "SSH login: {{title}}",
+    body: "{{body}}",
   },
 ];
 
@@ -477,6 +480,7 @@ async function confirmDeleteRule(): Promise<void> {
           </div>
         </div>
         <DataTable
+          state-key="channels"
           :columns="channelColumns"
           :rows="sortedChannels"
           :row-key="(channel) => channel.id"
@@ -557,6 +561,7 @@ async function confirmDeleteRule(): Promise<void> {
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="rules"
           :columns="ruleColumns"
           :rows="sortedRules"
           :row-key="(rule) => rule.id"
