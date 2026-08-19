@@ -83,9 +83,16 @@ const sortedGroups = computed(() =>
   [...groups.value].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
 );
 
-/** Nothing to show: no groups, no ungrouped bucket, and no editor open. */
+/**
+ * Nothing to show: no groups, and no editor open.
+ *
+ * The ungrouped bucket used to count here, which made one fleet state render as
+ * two different pages: with the bucket present you got the master-detail and
+ * two competing empty states, without it the whole page collapsed into one. The
+ * bucket only renders alongside real groups anyway, so it gets no vote.
+ */
 const pageEmpty = computed(
-  () => groups.value.length === 0 && !ungrouped.value && !editing.value,
+  () => groups.value.length === 0 && !editing.value,
 );
 
 function nodeLabel(id: string): string {
@@ -406,7 +413,7 @@ watch(
         <EmptyState
           :icon="FolderTree"
           :title="$t('fleet.groups.emptyTitle')"
-          :description="$t('fleet.groups.emptyDescription')"
+          :description="canAdmin ? $t('fleet.groups.emptyDescription') : $t('fleet.groups.emptyDescriptionReadOnly')"
         >
           <Button v-if="canAdmin" size="sm" @click="startCreate">
             <Plus class="size-4" aria-hidden="true" />

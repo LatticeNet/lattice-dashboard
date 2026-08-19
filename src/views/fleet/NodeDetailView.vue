@@ -12,7 +12,7 @@
  */
 import { computed, watch, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Activity,
@@ -95,8 +95,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -549,9 +551,18 @@ function outcomeVariant(outcome: string): "default" | "secondary" | "destructive
   return "outline";
 }
 
-function timelineHref(entry: TimelineEntry): string | undefined {
+/**
+ * Where a timeline entry leads, with the record's own id along for the ride.
+ * A bare /approvals drops the operator into a list of hundreds and asks them to
+ * find again the row they just clicked; the destination reads ?selected and
+ * selects it.
+ */
+function timelineHref(entry: TimelineEntry): RouteLocationRaw | undefined {
   if (!entry.ref) return undefined;
-  return entry.ref.kind === "task" ? "/tasks" : "/approvals";
+  return {
+    name: entry.ref.kind === "task" ? "tasks" : "approvals",
+    query: { selected: entry.ref.id },
+  };
 }
 
 function decisionVariant(d: string): "success" | "destructive" | "secondary" {
@@ -1206,11 +1217,10 @@ async function resolveGeo() {
             </div>
             <div class="grid gap-1.5">
               <Label for="identity-comment">{{ $t('fleet.nodes.detail.identityComment') }}</Label>
-              <textarea
+              <Textarea
                 id="identity-comment"
                 v-model="editComment"
                 rows="3"
-                class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 :placeholder="$t('fleet.nodes.detail.identityCommentPlaceholder')"
               />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
@@ -1243,21 +1253,19 @@ async function resolveGeo() {
             </div>
             <div class="grid gap-1.5">
               <Label for="identity-inventory-notes">{{ $t('fleet.nodes.detail.identityInventoryNotes') }}</Label>
-              <textarea
+              <Textarea
                 id="identity-inventory-notes"
                 v-model="editInventoryNotes"
                 rows="2"
-                class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 :placeholder="$t('fleet.nodes.detail.identityInventoryNotesPlaceholder')"
               />
             </div>
             <div class="grid gap-1.5">
               <Label for="identity-agent-source-allowlist">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlist') }}</Label>
-              <textarea
+              <Textarea
                 id="identity-agent-source-allowlist"
                 v-model="editAgentSourceAllowlist"
                 rows="3"
-                class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 :placeholder="$t('fleet.nodes.detail.identityAgentSourceAllowlistPlaceholder')"
               />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlistHint') }}</p>
@@ -1459,10 +1467,10 @@ async function resolveGeo() {
               </div>
               <div v-if="ipMode === 'resolver' || ipMode === 'auto'" class="grid gap-1.5">
                 <Label>{{ $t('fleet.nodes.detail.ipConfig.resolvers') }}</Label>
-                <textarea
+                <Textarea
                   v-model="ipResolvers"
                   rows="2"
-                  class="rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                  class="font-mono"
                   placeholder="https://api.ipify.org&#10;https://ifconfig.co/ip"
                 />
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.resolversHint') }}</p>
@@ -1474,10 +1482,10 @@ async function resolveGeo() {
                     {{ node.ip_config.script_sha256 }}
                   </Badge>
                 </div>
-                <textarea
+                <Textarea
                   v-model="ipScript"
                   rows="5"
-                  class="rounded-md border border-input bg-background p-2 font-mono text-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                  class="font-mono"
                   placeholder="curl -fsS https://api.ipify.org&#10;# optional: echo an IPv6 on another line"
                 />
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.scriptHint') }}</p>
@@ -1548,35 +1556,35 @@ async function resolveGeo() {
 
               <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <input v-model="launchAllowExec" type="checkbox" class="mt-0.5 size-4" :disabled="launchNoExec" />
+                  <Checkbox v-model="launchAllowExec" class="mt-0.5" :disabled="launchNoExec" />
                   <span>
                     <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowExec') }}</span>
                     <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowExecHint') }}</span>
                   </span>
                 </label>
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <input v-model="launchAllowRootExec" type="checkbox" class="mt-0.5 size-4" :disabled="launchNoExec || !launchAllowExec" />
+                  <Checkbox v-model="launchAllowRootExec" class="mt-0.5" :disabled="launchNoExec || !launchAllowExec" />
                   <span>
                     <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowRootExec') }}</span>
                     <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowRootExecHint') }}</span>
                   </span>
                 </label>
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <input v-model="launchNoExec" type="checkbox" class="mt-0.5 size-4" />
+                  <Checkbox v-model="launchNoExec" class="mt-0.5" />
                   <span>
                     <span class="block font-medium">{{ $t('fleet.nodes.enroll.noExec') }}</span>
                     <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.noExecHint') }}</span>
                   </span>
                 </label>
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <input v-model="launchAllowTerminal" type="checkbox" class="mt-0.5 size-4" :disabled="launchNoExec" />
+                  <Checkbox v-model="launchAllowTerminal" class="mt-0.5" :disabled="launchNoExec" />
                   <span>
                     <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowTerminal') }}</span>
                     <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowTerminalHint') }}</span>
                   </span>
                 </label>
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <input v-model="launchSSHAlerts" type="checkbox" class="mt-0.5 size-4" />
+                  <Checkbox v-model="launchSSHAlerts" class="mt-0.5" />
                   <span>
                     <span class="block font-medium">{{ $t('fleet.nodes.enroll.sshAlerts') }}</span>
                     <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
@@ -1867,7 +1875,7 @@ async function resolveGeo() {
                 />
               </div>
               <label class="flex items-start gap-2 text-sm">
-                <input v-model="updateAuto" type="checkbox" class="mt-0.5 size-4 accent-primary" @change="touchUpdateDraft" />
+                <Checkbox v-model="updateAuto" class="mt-0.5" @update:model-value="touchUpdateDraft" />
                 <span>
                   <span class="block font-medium">{{ $t('fleet.nodes.detail.autoPlan') }}</span>
                   <span class="block text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.autoUpdateHint') }}</span>
@@ -2067,12 +2075,11 @@ async function resolveGeo() {
             </div>
             <div class="mt-4 grid gap-3">
               <label class="flex items-start gap-3 text-sm">
-                <input
-                  type="checkbox"
-                  class="mt-0.5 size-4 accent-primary"
-                  :checked="!!node.agent_debug?.enabled"
+                <Checkbox
+                  class="mt-0.5"
+                  :model-value="!!node.agent_debug?.enabled"
                   :disabled="debugPending"
-                  @change="setNodeDebug(($event.target as HTMLInputElement).checked, node.agent_debug?.collect ?? true)"
+                  @update:model-value="(value) => setNodeDebug(value === true, node?.agent_debug?.collect ?? true)"
                 />
                 <span class="space-y-1">
                   <span class="block font-medium">{{ $t('fleet.nodes.detail.debugEnabled') }}</span>
@@ -2080,12 +2087,11 @@ async function resolveGeo() {
                 </span>
               </label>
               <label class="flex items-start gap-3 text-sm" :class="!node.agent_debug?.enabled && 'opacity-60'">
-                <input
-                  type="checkbox"
-                  class="mt-0.5 size-4 accent-primary"
-                  :checked="!!node.agent_debug?.collect"
+                <Checkbox
+                  class="mt-0.5"
+                  :model-value="!!node.agent_debug?.collect"
                   :disabled="!node.agent_debug?.enabled || debugPending"
-                  @change="setNodeDebug(true, ($event.target as HTMLInputElement).checked)"
+                  @update:model-value="(value) => setNodeDebug(true, value === true)"
                 />
                 <span class="space-y-1">
                   <span class="block font-medium">{{ $t('fleet.nodes.detail.debugCollect') }}</span>

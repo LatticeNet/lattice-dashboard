@@ -70,8 +70,10 @@ import {
   DialogScrollContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -1620,10 +1622,10 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div class="grid gap-2">
               <Label for="machine-vendor-description">{{ $t('fleet.inventory.profile.vendorDescription') }}</Label>
-              <textarea
+              <Textarea
                 id="machine-vendor-description"
                 v-model="vendorDescription"
-                class="min-h-16 rounded-md border border-input bg-background p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                class="min-h-16"
                 :placeholder="$t('fleet.inventory.profile.vendorDescriptionPlaceholder')"
               />
             </div>
@@ -1667,7 +1669,7 @@ async function runReminders(selectedOnly: boolean) {
 
           <div class="rounded-md border border-border bg-muted/20 p-3">
             <label class="flex items-start gap-2 text-sm font-medium">
-              <input v-model="needsRenewal" type="checkbox" class="mt-0.5 size-4 accent-primary" />
+              <Checkbox v-model="needsRenewal" class="mt-0.5" />
               <span>
                 {{ $t('fleet.inventory.profile.needsRenewal') }}
                 <span class="block text-xs font-normal text-muted-foreground">{{ $t('fleet.inventory.profile.needsRenewalHint') }}</span>
@@ -1737,14 +1739,14 @@ async function runReminders(selectedOnly: boolean) {
 
           <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
             <label class="flex items-start gap-2">
-              <input v-model="autoRoll" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal || !renewalCycle" />
+              <Checkbox v-model="autoRoll" class="mt-0.5" :disabled="!needsRenewal || !renewalCycle" />
               <span>
                 {{ $t('fleet.inventory.profile.autoRoll') }}
                 <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.autoRollHint') }}</span>
               </span>
             </label>
             <label class="flex items-start gap-2">
-              <input v-model="remindersEnabled" type="checkbox" class="mt-0.5 size-4 accent-primary" :disabled="!needsRenewal || !hasEffectiveNextRenewal" />
+              <Checkbox v-model="remindersEnabled" class="mt-0.5" :disabled="!needsRenewal || !hasEffectiveNextRenewal" />
               <span>
                 {{ $t('fleet.inventory.profile.enableReminders') }}
                 <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.enableRemindersHint') }}</span>
@@ -1770,7 +1772,7 @@ async function runReminders(selectedOnly: boolean) {
               <Input id="machine-console" v-model="consoleUrl" :placeholder="$t('fleet.inventory.profile.consoleUrlPlaceholder')" />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.writeOnlyUrlHint') }}</p>
               <label class="flex items-center gap-2 text-xs text-muted-foreground">
-                <input v-model="clearConsoleUrl" type="checkbox" class="size-4 accent-primary" />
+                <Checkbox v-model="clearConsoleUrl" />
                 {{ $t('fleet.inventory.profile.clearConsoleUrl') }}
               </label>
             </div>
@@ -1779,7 +1781,7 @@ async function runReminders(selectedOnly: boolean) {
               <Input id="machine-detail" v-model="detailUrl" :placeholder="$t('fleet.inventory.profile.detailUrlPlaceholder')" />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.writeOnlyUrlHint') }}</p>
               <label class="flex items-center gap-2 text-xs text-muted-foreground">
-                <input v-model="clearDetailUrl" type="checkbox" class="size-4 accent-primary" />
+                <Checkbox v-model="clearDetailUrl" />
                 {{ $t('fleet.inventory.profile.clearDetailUrl') }}
               </label>
             </div>
@@ -1787,10 +1789,9 @@ async function runReminders(selectedOnly: boolean) {
 
           <div class="grid gap-2">
             <Label for="machine-notes">{{ $t('fleet.inventory.profile.notes') }}</Label>
-            <textarea
+            <Textarea
               id="machine-notes"
               v-model="notes"
-              class="min-h-24 rounded-md border border-input bg-background p-3 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               :placeholder="$t('fleet.inventory.profile.notesPlaceholder')"
             />
           </div>

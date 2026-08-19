@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { AlertTriangle, ArchiveX, Ban, CheckCircle2, ChevronDown, ChevronRight, FileCode2, Funnel, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
 import {
@@ -39,6 +40,7 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import PlanDiff from "@/components/common/PlanDiff.vue";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Card,
@@ -61,6 +63,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRouteTab } from "@/composables/useRouteTab";
 
 const { t } = useI18n();
+const route = useRoute();
 const auth = useAuthStore();
 const includeDismissed = ref(false);
 const approvalsQuery = useAsyncData(() => api.approvals.list({ include_dismissed: includeDismissed.value }).then((r) => unwrap(r, "approvals")), {
@@ -262,6 +265,32 @@ const filteredApprovals = computed(() => {
 watch(includeDismissed, () => {
   approvalsQuery.refresh();
 });
+
+/**
+ * Deep-link: /approvals?selected=<id> lands on that approval.
+ *
+ * A caller that just created an approval knows its id, so handing over a bare
+ * /approvals and letting the operator hunt for it in a list of hundreds is a
+ * loss of information the page can avoid. Seeded once per id so a poll never
+ * yanks the selection back, and the bucket widens when the target sits outside
+ * the current slice, since a link that quietly selects something else is worse
+ * than one that does nothing.
+ */
+const seededSelection = ref<string | undefined>(undefined);
+watch(
+  [approvals, () => route.query.selected],
+  ([list, queryId]) => {
+    const id = typeof queryId === "string" ? queryId : undefined;
+    if (!id || id === seededSelection.value) return;
+    if (!list.some((approval) => approval.id === id)) return;
+    seededSelection.value = id;
+    selectedId.value = id;
+    if (!filteredApprovals.value.some((approval) => approval.id === id)) {
+      approvalBucket.value = "all";
+    }
+  },
+  { immediate: true },
+);
 
 // A fresh read retires batch state: failures still pending reappear as their
 // own card by grouping, so a lingering per-card error banner would describe a
@@ -898,7 +927,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
           </div>
 
           <label class="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            <input v-model="includeDismissed" type="checkbox" class="size-4 accent-primary" />
+            <Checkbox v-model="includeDismissed" />
             <span>{{ $t('operations.approvals.includeDismissed') }}</span>
           </label>
 
@@ -1047,6 +1076,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               :columns="approvalColumns"
               :rows="filteredApprovals"
               :row-key="(row) => row.id"
+              state-key="approvals"
               :page-size="25"
               :expression-filter="false"
               selectable

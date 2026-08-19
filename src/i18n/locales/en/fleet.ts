@@ -13,6 +13,7 @@ export default {
       ungrouped: "Ungrouped",
       emptyTitle: "No groups yet",
       emptyDescription: "Create a group, then use explicit members or a smart selector.",
+      emptyDescriptionReadOnly: "Ask an operator with group:admin to create the first one.",
       createTitle: "New group",
       editTitle: "Group",
       editorDescription: "Explicit members are pinned; smart selector matches are dynamic and participate in group policy plans.",
@@ -860,6 +861,8 @@ export default {
         description: "{enabled} active probes across {total} definitions",
         emptyTitle: "No monitors configured",
         emptyDescription: "Create a TCP or HTTP monitor to start collecting agent results.",
+        emptyAction: "Create the first monitor",
+        emptyReadOnly: "Ask an operator with monitor:admin to create the first one.",
         noMatchTitle: "No monitors match",
         noMatchDescription: "Adjust the search text or expression filter.",
         searchPlaceholder: "Search monitors by name, target, type…",
@@ -923,6 +926,8 @@ export default {
       history: {
         title: "Result history",
         selectPrompt: "Select a monitor to inspect probe results",
+        noSelectionTitle: "No monitor selected",
+        noSelectionDescription: "Choose a monitor from the list to read its probe results.",
         emptyTitle: "No results collected",
         emptyDescription:
           "Agents report results after their next interval. A disabled monitor never runs, and neither does one assigned only to nodes that no longer exist.",

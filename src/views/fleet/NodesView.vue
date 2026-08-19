@@ -85,8 +85,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { hasNeverReported } from "@/lib/status";
 import {
@@ -1009,11 +1011,10 @@ function openTerminal(node: Node) {
           </div>
           <div class="grid gap-2 lg:col-span-2">
             <Label for="enroll-agent-source-allowlist">{{ $t('fleet.nodes.enroll.agentSourceAllowlist') }}</Label>
-            <textarea
+            <Textarea
               id="enroll-agent-source-allowlist"
               v-model="enrollAgentSourceAllowlist"
               rows="3"
-              class="rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               :placeholder="$t('fleet.nodes.enroll.agentSourceAllowlistPlaceholder')"
             />
             <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.agentSourceAllowlistHint') }}</p>
@@ -1069,35 +1070,35 @@ function openTerminal(node: Node) {
           </button>
           <div v-if="enrollAdvancedOpen" class="grid gap-2 border-t border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-              <input v-model="enrollAllowExec" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec" />
+              <Checkbox v-model="enrollAllowExec" class="mt-0.5" :disabled="enrollNoExec" />
               <span>
                 <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowExec') }}</span>
                 <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowExecHint') }}</span>
               </span>
             </label>
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-              <input v-model="enrollAllowRootExec" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec || !enrollAllowExec" />
+              <Checkbox v-model="enrollAllowRootExec" class="mt-0.5" :disabled="enrollNoExec || !enrollAllowExec" />
               <span>
                 <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowRootExec') }}</span>
                 <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowRootExecHint') }}</span>
               </span>
             </label>
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-              <input v-model="enrollNoExec" type="checkbox" class="mt-0.5 size-4" />
+              <Checkbox v-model="enrollNoExec" class="mt-0.5" />
               <span>
                 <span class="block font-medium">{{ $t('fleet.nodes.enroll.noExec') }}</span>
                 <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.noExecHint') }}</span>
               </span>
             </label>
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-              <input v-model="enrollAllowTerminal" type="checkbox" class="mt-0.5 size-4" :disabled="enrollNoExec" />
+              <Checkbox v-model="enrollAllowTerminal" class="mt-0.5" :disabled="enrollNoExec" />
               <span>
                 <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowTerminal') }}</span>
                 <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowTerminalHint') }}</span>
               </span>
             </label>
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-              <input v-model="enrollSSHAlerts" type="checkbox" class="mt-0.5 size-4" />
+              <Checkbox v-model="enrollSSHAlerts" class="mt-0.5" />
               <span>
                 <span class="block font-medium">{{ $t('fleet.nodes.enroll.sshAlerts') }}</span>
                 <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>

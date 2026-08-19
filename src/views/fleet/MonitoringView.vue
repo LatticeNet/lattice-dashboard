@@ -43,6 +43,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -106,6 +107,13 @@ const selectedNodeIdsInput = computed({
 
 function parseNodeIdList(value: string): string[] {
   return [...new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
+}
+
+/** The assignment picker is a checkbox list writing into one array of ids. */
+function toggleAssignedNode(id: string, on: boolean) {
+  const has = selectedNodeIds.value.includes(id);
+  if (on && !has) selectedNodeIds.value = [...selectedNodeIds.value, id];
+  else if (!on && has) selectedNodeIds.value = selectedNodeIds.value.filter((n) => n !== id);
 }
 
 const resultsQuery = useAsyncData(
@@ -447,6 +455,18 @@ function refreshAll() {
   if (canReadNodes.value) nodesQuery.refresh();
 }
 
+/**
+ * Take the operator to the form the empty state just pointed at. With no
+ * monitors the create card is the only thing on the page worth doing, and on a
+ * narrow viewport it sits below everything else.
+ */
+function focusCreateMonitor() {
+  const el = document.getElementById("monitor-name");
+  if (!(el instanceof HTMLInputElement)) return;
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 async function createMonitor() {
   if (!canSubmit.value) return;
   createPending.value = true;
@@ -560,10 +580,30 @@ async function deleteMonitor() {
             :error="monitorsQuery.error.value"
             :has-data="monitorsQuery.data.value !== undefined"
             :is-empty="sortedMonitors.length === 0"
-            :empty-title="monitors.length ? $t('fleet.monitoring.definitions.noMatchTitle') : $t('fleet.monitoring.definitions.emptyTitle')"
-            :empty-description="monitors.length ? $t('fleet.monitoring.definitions.noMatchDescription') : $t('fleet.monitoring.definitions.emptyDescription')"
             @retry="monitorsQuery.refresh"
           >
+            <!-- Two different nothings: a filter that hid everything, and a
+                 server with no monitors at all. Only the second one gets a
+                 create action, and only for a token that can use it. -->
+            <template #empty>
+              <EmptyState
+                :icon="monitors.length ? Search : RadioTower"
+                :title="monitors.length ? $t('fleet.monitoring.definitions.noMatchTitle') : $t('fleet.monitoring.definitions.emptyTitle')"
+                :description="
+                  monitors.length
+                    ? $t('fleet.monitoring.definitions.noMatchDescription')
+                    : canAdminMonitors
+                      ? $t('fleet.monitoring.definitions.emptyDescription')
+                      : $t('fleet.monitoring.definitions.emptyReadOnly')
+                "
+              >
+                <Button v-if="!monitors.length && canAdminMonitors" size="sm" @click="focusCreateMonitor">
+                  <Plus class="size-4" aria-hidden="true" />
+                  {{ $t('fleet.monitoring.definitions.emptyAction') }}
+                </Button>
+              </EmptyState>
+            </template>
+
             <div class="space-y-3">
               <button
                 v-for="monitor in sortedMonitors"
@@ -706,7 +746,10 @@ async function deleteMonitor() {
                     :key="node.id"
                     class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
                   >
-                    <input v-model="selectedNodeIds" type="checkbox" :value="node.id" class="size-4 accent-primary" />
+                    <Checkbox
+                      :model-value="selectedNodeIds.includes(node.id)"
+                      @update:model-value="(value) => toggleAssignedNode(node.id, value === true)"
+                    />
                     <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
                     <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</Badge>
                   </label>
@@ -773,8 +816,8 @@ async function deleteMonitor() {
           :error="resultsQuery.error.value"
           :has-data="resultsQuery.data.value !== undefined"
           :is-empty="!selectedMonitor || selectedResults.length === 0"
-          :empty-title="$t('fleet.monitoring.history.emptyTitle')"
-          :empty-description="$t('fleet.monitoring.history.emptyDescription')"
+          :empty-title="selectedMonitor ? $t('fleet.monitoring.history.emptyTitle') : $t('fleet.monitoring.history.noSelectionTitle')"
+          :empty-description="selectedMonitor ? $t('fleet.monitoring.history.emptyDescription') : $t('fleet.monitoring.history.noSelectionDescription')"
           @retry="resultsQuery.refresh"
         >
           <div class="space-y-5">
