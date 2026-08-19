@@ -567,7 +567,7 @@ async function openPlan(tunnel: TunnelView) {
             <Button type="button" variant="outline">{{ $t('common.actions.close') }}</Button>
           </DialogClose>
           <Button as-child>
-            <RouterLink to="/approvals">{{ $t('networking.shared.goToApprovals') }}</RouterLink>
+            <RouterLink :to="{ path: '/approvals', query: approval ? { selected: approval.id } : {} }">{{ $t('networking.shared.goToApprovals') }}</RouterLink>
           </Button>
         </DialogFooter>
       </DialogScrollContent>

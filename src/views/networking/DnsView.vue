@@ -868,6 +868,7 @@ function closePlan(open: boolean) {
       :close-label="$t('common.actions.close')"
       :approvals-label="$t('networking.shared.goToApprovals')"
       approvals-to="/approvals"
+      :approval-id="planApproval?.id"
       @update:open="closePlan"
     />
   </div>

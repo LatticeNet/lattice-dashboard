@@ -468,7 +468,7 @@ function refreshAll() {
               <ul class="divide-y divide-border">
                 <li v-for="a in pendingApprovals.slice(0, APPROVALS_PREVIEW)" :key="a.id">
                   <RouterLink
-                    :to="{ name: 'approvals' }"
+                    :to="{ name: 'approvals', query: { selected: a.id } }"
                     class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
                   >
                     <StatusDot status="degraded" pulse />

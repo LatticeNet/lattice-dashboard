@@ -902,6 +902,7 @@ watch(
       :close-label="$t('common.actions.close')"
       :approvals-label="$t('platform.agentUpdates.goToApprovals')"
       approvals-to="/approvals"
+      :approval-id="approval?.id"
     >
       <template #badges>
         <Badge v-if="approval" variant="outline">{{ $t('platform.agentUpdates.approvalLabel', { id: shortId(approval.id, 12) }) }}</Badge>

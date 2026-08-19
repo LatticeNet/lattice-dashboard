@@ -7,6 +7,7 @@ import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
 
 import DataState from "./DataState.vue";
+import { pickerDegradeReason } from "./resourcePickerModel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -71,15 +72,23 @@ const selectPlaceholder = computed(
 );
 
 /** Why a list cannot be offered, or undefined when it can. */
+const REASON_KEYS = {
+  scope: "common.nodePicker.needsScope",
+  failed: "common.nodePicker.listFailed",
+  empty: "common.nodePicker.noNodes",
+  unknown: "common.nodePicker.unknownNode",
+} as const;
+
 const degradedReason = computed<string | undefined>(() => {
-  if (!canRead.value) return t("common.nodePicker.needsScope");
-  if (nodesQuery.error.value) return t("common.nodePicker.listFailed");
-  if (!loaded.value) return undefined;
-  if (nodes.value.length === 0) return t("common.nodePicker.noNodes");
-  if (modelValue.value && !nodes.value.some((node) => node.id === modelValue.value)) {
-    return t("common.nodePicker.unknownNode");
-  }
-  return undefined;
+  const reason = pickerDegradeReason({
+    canRead: canRead.value,
+    failed: !!nodesQuery.error.value,
+    loaded: loaded.value,
+    optionCount: nodes.value.length,
+    valueKnown: nodes.value.some((node) => node.id === modelValue.value),
+    hasValue: !!modelValue.value,
+  });
+  return reason ? t(REASON_KEYS[reason]) : undefined;
 });
 </script>
 

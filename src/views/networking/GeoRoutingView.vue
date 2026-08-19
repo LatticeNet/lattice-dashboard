@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import { pickerDegradeReason } from "@/components/common/resourcePickerModel";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -66,6 +67,33 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("geo:read"));
 const canAdmin = computed(() => auth.can("geo:admin"));
+
+/**
+ * DDNS profiles, so the profile field is a choice rather than an id the
+ * operator has to go and look up on another page.
+ */
+const ddnsQuery = useAsyncData(
+  () => (auth.can("ddns:admin") ? api.ddns.list() : Promise.resolve([])),
+  { immediate: auth.can("ddns:admin") },
+);
+const ddnsProfiles = computed(() => ddnsQuery.data.value ?? []);
+const DDNS_REASON_KEYS = {
+  scope: "common.nodePicker.needsScope",
+  failed: "common.nodePicker.listFailed",
+  empty: "networking.geoRouting.noDdnsProfiles",
+  unknown: "networking.geoRouting.unknownDdnsProfile",
+} as const;
+const ddnsDegraded = computed(() => {
+  const reason = pickerDegradeReason({
+    canRead: auth.can("ddns:admin"),
+    failed: !!ddnsQuery.error.value,
+    loaded: ddnsQuery.data.value !== undefined,
+    optionCount: ddnsProfiles.value.length,
+    valueKnown: ddnsProfiles.value.some((profile) => profile.id === form.ddns_profile_id),
+    hasValue: !!form.ddns_profile_id,
+  });
+  return reason ? t(DDNS_REASON_KEYS[reason]) : undefined;
+});
 const canReadNodes = computed(() => auth.can("node:read"));
 
 const routesQuery = useAsyncData(
@@ -574,7 +602,25 @@ const continentEntries = computed(() =>
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-ddns">{{ $t('networking.geoRouting.ddnsProfileId') }}</Label>
-              <Input id="geo-ddns" v-model="form.ddns_profile_id" :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')" />
+              <Select v-if="!ddnsDegraded" v-model="form.ddns_profile_id">
+                <SelectTrigger id="geo-ddns" class="w-full">
+                  <SelectValue :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="profile in ddnsProfiles" :key="profile.id" :value="profile.id">
+                    <span>{{ profile.name || profile.id }}</span>
+                    <span class="font-mono text-xs text-muted-foreground">{{ shortId(profile.id, 14) }}</span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                v-else
+                id="geo-ddns"
+                v-model="form.ddns_profile_id"
+                class="font-mono"
+                :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')"
+              />
+              <p v-if="ddnsDegraded" class="text-xs text-muted-foreground">{{ ddnsDegraded }}</p>
             </div>
             <label class="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm">
               <Checkbox v-model="form.publish_ns" />

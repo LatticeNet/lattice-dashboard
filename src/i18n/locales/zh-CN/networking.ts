@@ -218,6 +218,8 @@ export default {
       authoritativeNodes: "权威 DNS 节点",
       authoritativeNodesHint: "提供已渲染区域服务的自建 DNS 节点。",
       ddnsProfileId: "DDNS 配置 id(NS 委派)",
+      noDdnsProfiles: "还没有任何 DDNS 配置。请先在 DDNS 页面创建,或直接填写 id。",
+      unknownDdnsProfile: "该 id 不在当前的 DDNS 配置列表中,将按填写的内容保留。",
       ddnsProfilePlaceholder: "可选",
       publishNs: "发布父区 NS 委派",
       on: "开",

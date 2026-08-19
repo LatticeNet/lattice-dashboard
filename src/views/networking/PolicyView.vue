@@ -208,7 +208,13 @@ function setPlanResultOpen(value: boolean) {
 function openPlanApprovals() {
   if (!canOpenPlanApprovals.value) return;
   planResultOpen.value = false;
-  router.push("/approvals");
+  // A group-policy plan fans out to one approval per affected node. When it
+  // produced exactly one there is a right answer, so select it; when it
+  // produced several, the list is the right answer and picking one of them
+  // would be arbitrary.
+  const affected = planResult.value?.affected ?? [];
+  const only = affected.length === 1 ? affected[0]?.approval_id : undefined;
+  router.push(only ? { path: "/approvals", query: { selected: only } } : "/approvals");
 }
 
 const sortedPolicies = computed(() =>
@@ -1482,6 +1488,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
       :close-label="$t('common.actions.close')"
       :approvals-label="$t('networking.shared.goToApprovals')"
       approvals-to="/approvals"
+      :approval-id="planApproval?.id"
       @update:open="closePlan"
     />
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { ExternalLink, RefreshCw } from "lucide-vue-next";
 import { RouterLink } from "vue-router";
 import { cn } from "@/lib/utils";
@@ -92,6 +93,12 @@ const props = withDefaults(
     approvalsLabel?: string;
     /** Target route for the "go to approvals" CTA. */
     approvalsTo?: string;
+    /**
+     * The approval this plan produced. When known, the CTA selects it on
+     * arrival: sending someone to an unfiltered list of hundreds to find the
+     * thing that was on their screen a second ago is not navigation.
+     */
+    approvalId?: string;
   }>(),
   {
     planText: "",
@@ -109,7 +116,14 @@ const props = withDefaults(
     approveLabel: "Approve",
     approvalsLabel: "Go to approvals",
     approvalsTo: "/approvals",
+    approvalId: undefined,
   },
+);
+
+const approvalsTarget = computed(() =>
+  props.approvalId
+    ? { path: props.approvalsTo, query: { selected: props.approvalId } }
+    : props.approvalsTo,
 );
 
 const emit = defineEmits<{
@@ -196,7 +210,7 @@ function setOpen(value: boolean) {
           {{ props.approveLabel }}
         </Button>
         <Button v-else as-child>
-          <RouterLink :to="props.approvalsTo">
+          <RouterLink :to="approvalsTarget">
             <ExternalLink class="size-4" aria-hidden="true" />
             {{ props.approvalsLabel }}
           </RouterLink>

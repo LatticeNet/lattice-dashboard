@@ -234,6 +234,8 @@ export default {
       authoritativeNodes: "Authoritative DNS nodes",
       authoritativeNodesHint: "Self-host DNS nodes that serve the rendered zone.",
       ddnsProfileId: "DDNS profile id (NS delegation)",
+      noDdnsProfiles: "No DDNS profiles exist yet. Create one on the DDNS page, or type an id.",
+      unknownDdnsProfile: "This id is not one of the current DDNS profiles. It is kept as typed.",
       ddnsProfilePlaceholder: "optional",
       publishNs: "Publish parent-zone NS delegation",
       on: "on",
