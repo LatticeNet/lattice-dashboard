@@ -16,7 +16,7 @@ export default {
       },
       password: {
         title: "密码",
-        description: "修改管理员密码。所有现有会话都需要重新登录。",
+        description: "修改你自己的密码。以这个账号登录的所有浏览器会话都要重新登录，访问令牌不受影响。",
         current: "当前密码",
         new: "新密码",
         newHint: "至少 12 个字符。",
@@ -38,7 +38,7 @@ export default {
         unknown: "未知",
         scopes: "权限范围",
         superuserHelp: "* 是首个管理员的超级用户权限。它包含所有 dashboard 与 API 权限，包括 worker:deploy。",
-        scopedHelp: "该主体当前仅持有下列权限范围。侧边栏隐藏通常代表缺少对应权限。",
+        scopedHelp: "这次登录只持有下面这些权限范围。侧边栏少了哪个页面，通常就是这里缺少它需要的权限。",
         noScopes: "无权限范围",
       },
       totp: {
@@ -185,8 +185,8 @@ export default {
         issuerDuplicate: "已有其他提供方使用该签发者。",
         issuerHint: "提供方的发现基础 URL。在所有提供方中必须唯一。",
         testConnection: "测试连接",
-        testOk: "发现成功",
-        testOkWithEndpoint: "发现成功。授权端点:{endpoint}",
+        testOk: "已读到发现文档。这一步不校验 client ID 和 client secret。",
+        testOkWithEndpoint: "已读到发现文档，授权端点 {endpoint}。这一步不校验 client ID 和 client secret。",
         testFailed: "发现失败",
         issuerGuide: "OIDC discovery 基础 URL。Lattice 会从它读取 /.well-known/openid-configuration。",
         clientId: "客户端 ID",
@@ -212,7 +212,7 @@ export default {
         "“{name}”是最后一个启用的提供方。保存后登录页将不再提供单点登录,只剩密码与 Passkey 两种方式,没有本地密码的人会被锁在外面。",
       deleteTitle: "删除身份提供方?",
       deleteDescription:
-        "移除“{name}”。关联到该提供方的运维人员将无法再通过它登录。此操作无法撤销。",
+        "移除“{name}”。原先通过它登录的运维人员会失去这条登录途径，账号、权限、密码和 Passkey 都保留；没有其他登录方式的人会被挡在门外。此操作无法撤销。",
       toast: {
         updated: "提供方已更新",
         created: "提供方已创建",
@@ -260,7 +260,8 @@ export default {
         passwordPlaceholderCreate: "设置初始密码,或留空表示仅 SSO 登录",
         passwordPlaceholderEdit: "留空则保持当前密码",
         passwordHintCreate: "可选。至少 12 个字符。留空表示仅 SSO 账号(不支持密码登录)。加盐哈希存储。",
-        passwordHintEdit: "留空则保持现有密码。设置新密码会使该用户的会话失效。",
+        passwordHintEdit:
+          "留空则保持现有密码。无论你是否改动密码，保存都会把该用户从控制台登出；他们的访问令牌仍然有效。",
       },
       deleteTitle: "删除用户?",
       deleteDescription: "移除 “{name}”。该运维账号将立即失去 dashboard 与 API 访问权限,其令牌和 SSO 绑定会被吊销。此操作不可撤销。",
@@ -277,8 +278,8 @@ export default {
       description: "个人访问令牌(PAT),携带 RBAC 权限范围的 Bearer 凭据",
       newToken: "新增令牌",
       explainer: {
-        title: "权限受限的签发",
-        body: "令牌只能授予你自身权限范围的子集,且服务器允许列表不得超出你的范围。明文凭据仅在创建时显示一次,之后不再显示,服务端仅存储其加盐哈希。吊销是单向且幂等的。",
+        title: "新令牌能带走什么",
+        body: "令牌只能持有你已经持有的权限范围，节点允许列表也不能比你的更宽。服务端只保存加盐哈希，因此令牌明文仅在创建时显示一次，之后再也看不到。吊销是单向的，吊销之后没有任何办法把它恢复。",
       },
       list: {
         title: "令牌",
@@ -288,7 +289,7 @@ export default {
         name: "名称",
         actor: "主体",
         scopes: "权限范围",
-        serverAllowlist: "服务器允许列表",
+        serverAllowlist: "节点允许列表",
         created: "创建于",
         status: "状态",
         actions: "操作",
@@ -303,7 +304,7 @@ export default {
         superuserHint: "你持有 {star}(超级用户),可授予任意权限范围。",
         scopedHint: "仅提供你当前持有的权限范围。",
         noGrantableScopes: "你在目录中没有可授予的权限范围。",
-        serverAllowlist: "服务器允许列表",
+        serverAllowlist: "节点允许列表",
         serverAllowlistHint: "以逗号分隔的节点 ID。必须是你自身允许列表的子集。留空则适用于所有节点。",
         serverAllowlistRestrictedHint: "以逗号分隔的节点 ID。必须是你当前节点允许列表的非空子集。",
         yourServerAllowlist: "你当前的节点允许列表:",

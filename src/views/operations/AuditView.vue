@@ -126,10 +126,15 @@ async function verifyAudit() {
   try {
     verifyResult.value = await api.audit.verify();
     verifyCheckedAt.value = new Date().toISOString();
-    if (verifyResult.value.ok) {
+    // A server with no WAL answers {enabled:false} and no `ok`. Calling that a
+    // verification failure told the operator their chain was broken when the
+    // truth is that there is no chain to check.
+    if (!verifyResult.value.enabled) {
+      toast.info(t("operations.audit.toastVerifyDisabled"));
+    } else if (verifyResult.value.ok) {
       toast.success(t("operations.audit.toastVerified"));
     } else {
-      toast.error(t("operations.audit.toastVerifyFailed"));
+      toast.error(t("operations.audit.toastChainBroken"));
     }
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.audit.toastVerifyFailed"));
@@ -137,6 +142,25 @@ async function verifyAudit() {
     verifyPending.value = false;
   }
 }
+
+/**
+ * The chain summary tile has four states, not two. Never checked and "no chain
+ * configured" are both unknowns, and painting either of them in success green
+ * (or labelling the second one "Broken") is the kind of false certainty this
+ * console exists to avoid.
+ */
+const chainTileText = computed(() => {
+  const result = verifyResult.value;
+  if (!result) return t("operations.audit.chainUnverified");
+  if (!result.enabled) return t("operations.audit.chainOff");
+  return result.ok ? t("operations.audit.chainOk") : t("operations.audit.chainBad");
+});
+
+const chainTileClass = computed(() => {
+  const result = verifyResult.value;
+  if (!result || !result.enabled) return "text-muted-foreground";
+  return result.ok ? "text-success" : "text-destructive";
+});
 
 const offBoxAnchorRecord = computed(() => {
   const result = verifyResult.value;
@@ -374,9 +398,7 @@ function openTrace(correlationId: string) {
         <CardContent class="flex items-center justify-between p-4">
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.audit.chain') }}</p>
-            <p class="text-2xl font-semibold" :class="verifyResult?.ok === false ? 'text-destructive' : 'text-success'">
-              {{ verifyResult ? (verifyResult.ok ? $t('operations.audit.chainOk') : $t('operations.audit.chainBad')) : $t('common.misc.none') }}
-            </p>
+            <p class="text-2xl font-semibold" :class="chainTileClass">{{ chainTileText }}</p>
           </div>
           <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>

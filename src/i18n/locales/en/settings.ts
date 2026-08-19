@@ -17,7 +17,8 @@ export default {
       },
       password: {
         title: "Password",
-        description: "Change the admin password. All existing sessions must sign in again.",
+        description:
+          "Change your own password. Every browser session signed in as this account has to sign in again. Access tokens are not affected.",
         current: "Current password",
         new: "New password",
         newHint: "Use at least 12 characters.",
@@ -39,7 +40,7 @@ export default {
         unknown: "unknown",
         scopes: "Scopes",
         superuserHelp: "* is the bootstrap superuser scope. It includes every dashboard and API scope, including worker:deploy.",
-        scopedHelp: "Only the scopes listed below are active for this principal. Hidden navigation usually means the required scope is missing.",
+        scopedHelp: "Only the scopes listed below are active for this sign-in. A page missing from the sidebar usually means the scope it needs is missing here.",
         noScopes: "no scopes",
       },
       totp: {
@@ -188,8 +189,8 @@ export default {
         issuerDuplicate: "Another provider already uses this issuer.",
         issuerHint: "The provider's discovery base URL. Must be unique across providers.",
         testConnection: "Test connection",
-        testOk: "Discovery OK",
-        testOkWithEndpoint: "Discovery OK. Authorization endpoint: {endpoint}",
+        testOk: "Discovery document reached. This does not check the client ID or secret.",
+        testOkWithEndpoint: "Discovery document reached, authorization endpoint {endpoint}. This does not check the client ID or secret.",
         testFailed: "Discovery failed",
         issuerGuide: "The OIDC discovery base URL. Lattice reads /.well-known/openid-configuration from it.",
         clientId: "Client ID",
@@ -216,7 +217,7 @@ export default {
         '"{name}" is the last enabled provider. Saving removes single sign-on from the login screen, leaving password and passkey as the only way in. Anyone without a local password will be locked out.',
       deleteTitle: "Delete identity provider?",
       deleteDescription:
-        'Remove "{name}". Operators linked to this provider will no longer be able to sign in through it. This cannot be undone.',
+        'Remove "{name}". Operators who signed in through it lose that route and keep their accounts, scopes, passwords, and passkeys. Anyone with no other way in is locked out. This cannot be undone.',
       toast: {
         updated: "Provider updated",
         created: "Provider created",
@@ -267,7 +268,8 @@ export default {
         passwordPlaceholderEdit: "leave blank to keep the current password",
         passwordHintCreate:
           "Optional. Min 12 characters. Leave blank for an SSO-only account (no password login). Stored salted + hashed.",
-        passwordHintEdit: "Leave blank to keep the existing password. Setting one revokes the user's sessions.",
+        passwordHintEdit:
+          "Leave blank to keep the existing password. Saving this form signs the user out of the console whether or not you change it; their access tokens keep working.",
       },
       deleteTitle: "Delete user?",
       deleteDescription:
@@ -285,8 +287,8 @@ export default {
       description: "Personal access tokens (PATs), Bearer credentials carrying RBAC scopes",
       newToken: "New token",
       explainer: {
-        title: "Privilege-contained minting",
-        body: "A token can only grant scopes that are a subset of your own, and a server allowlist no broader than yours. The plaintext credential is shown exactly once at creation and never again, because only its salted hash is stored. Revocation is one-way and idempotent.",
+        title: "What a new token can carry",
+        body: "A token can only hold scopes you already hold, and a node allowlist no wider than yours. This server keeps only a salted hash, so the token itself is shown once at creation and never again. Revoking is one-way: nothing brings a revoked token back.",
       },
       list: {
         title: "Tokens",
@@ -296,7 +298,7 @@ export default {
         name: "Name",
         actor: "Actor",
         scopes: "Scopes",
-        serverAllowlist: "Server allowlist",
+        serverAllowlist: "Node allowlist",
         created: "Created",
         status: "Status",
         actions: "Actions",
@@ -311,7 +313,7 @@ export default {
         superuserHint: "You hold {star} (superuser), so any scope may be granted.",
         scopedHint: "Only the scopes you currently hold are offered.",
         noGrantableScopes: "You hold no grantable scopes from the catalog.",
-        serverAllowlist: "Server allowlist",
+        serverAllowlist: "Node allowlist",
         serverAllowlistHint: "Comma-separated node IDs. Must be a subset of your own allowlist. Leave empty for all nodes.",
         serverAllowlistRestrictedHint: "Comma-separated node IDs. Must be a non-empty subset of your current node allowlist.",
         yourServerAllowlist: "Your current node allowlist:",

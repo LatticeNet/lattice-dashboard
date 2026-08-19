@@ -638,7 +638,14 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
     return;
   }
   if (updated > 0) {
-    toast.success(t("fleet.map.toast.resolved", { count: updated }));
+    // A partly successful batch used to report only the successes: the nodes
+    // whose lookup failed, or that have no public IP, vanished from the toast.
+    const unresolved = failed + noPublicIp;
+    if (unresolved > 0) {
+      toast.warning(t("fleet.map.toast.resolvedWithFailures", { count: updated, failed: unresolved }));
+    } else {
+      toast.success(t("fleet.map.toast.resolved", { count: updated }));
+    }
     await geoQuery.refresh();
     const refreshed = nodes.value.find((node) => node.id === selectedNodeId.value);
     if (refreshed) selectNode(refreshed);
@@ -1105,7 +1112,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 <span class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <template v-if="lookupIP(node)">{{ lookupIP(node) }}</template>
                   <Badge v-else variant="outline" class="border-destructive/40 text-destructive">
-                    {{ $t('fleet.map.unlocated.noPublicIp') }}
+                    {{ $t('fleet.map.unlocated.noIp') }}
                   </Badge>
                 </span>
               </span>

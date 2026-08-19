@@ -61,6 +61,15 @@ import {
 
 type Strategy = "geoip" | "all-healthy";
 
+/**
+ * Go's `omitempty` does not drop a zero time.Time, so a routing that was never
+ * applied arrives as "0001-01-01T00:00:00Z" and formats into a real-looking
+ * year-1 date instead of falling through to "never".
+ */
+function hasRealTime(value?: string): boolean {
+  return !!value && !value.startsWith("0001");
+}
+
 const { t } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("geo:read"));
@@ -344,7 +353,7 @@ const continentEntries = computed(() =>
                     <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                   </td>
                   <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    {{ route.last_applied_at ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
+                    {{ hasRealTime(route.last_applied_at) ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
                   </td>
                   <td class="py-3 pr-4 max-w-[180px]">
                     <span

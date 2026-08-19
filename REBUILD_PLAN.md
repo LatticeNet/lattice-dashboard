@@ -34,14 +34,17 @@ while honoring Lattice's constraints.
    font/img exceptions, and talks **only to its own origin**. Vite is configured
    accordingly (`modulePreload.polyfill:false`, `assetsInlineLimit:0`, system
    fonts only). The pre-paint theme script is an external `/theme-init.js`.
-2. **No WebSocket / SSE** anywhere on the server — all data is request/response
-   JSON. "Real-time" is a disciplined **polling layer** (`useAsyncData` with
-   visibility-aware intervals, per-panel error isolation, last-good-data
-   retention). The browser terminal is still polling-backed: xterm handles PTY
-   rendering/input locally, while the server/agent exchange bounded JSON events
-   and inputs.
-3. **Maps under CSP** = bundled world GeoJSON rendered locally (echarts/SVG) —
-   **no external tile servers** (no Leaflet/MapLibre tiles).
+2. **Polling by default**: nearly all data is request/response JSON through a
+   disciplined polling layer (`useAsyncData` with visibility-aware intervals,
+   per-panel error isolation, last-good-data retention). This item used to read
+   "No WebSocket / SSE anywhere" and that is no longer true. The terminal opens a
+   real same-origin WebSocket (`src/components/terminal/XtermSession.vue`), the
+   server splices it to an agent-dialed WebSocket, and `stream` is the default
+   transport for modern agents. Polling remains as the compatibility fallback for
+   agents that have not reported `terminal_transport=stream`.
+3. **Maps under CSP** = bundled world GeoJSON rendered locally as inline SVG,
+   with no external tile servers (no Leaflet/MapLibre tiles). echarts was
+   considered here and never adopted. It is not a dependency.
 4. **Secret-free + one-time reveal** — the API never returns credentials
    (`has_*` booleans). The UI uses explicit one-time reveal flows (enroll, token
    create, sub-token rotate) and "blank = keep" affordances for write-only
@@ -56,8 +59,15 @@ while honoring Lattice's constraints.
 Vue 3.5 (script-setup + TS) · Vite 7 · Tailwind v4 (CSS-first, `@theme inline`)
 · reka-ui (shadcn-vue New-York) + cva + `cn()` · lucide icons · Pinia ·
 vue-router (history mode; server SPA-fallbacks non-`/api` paths to index.html) ·
-uPlot for live charts · echarts (lazy) for the world map · vue-sonner toasts ·
+vue-sonner toasts ·
 @vueuse/core. Dependency-light, matching Lattice's pure-Go/minimal ethos.
+
+Charting note, corrected 2026-08-19: this line used to promise uPlot for live
+charts and lazy echarts for the world map. echarts was never added, and while
+`uplot` is still declared in `package.json` nothing imports it, so every chart
+and the map are hand-rolled inline SVG today. Either drop the unused dependency
+or wire it up. Leaving it declared makes the bundle story read as if it were in
+use.
 
 ## Design identity
 

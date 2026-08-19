@@ -331,9 +331,17 @@ const meta = computed(() => nodeStatusMeta(node.value ?? { online: false }));
 
 const statusBadge = computed(() => {
   if (node.value?.disabled) return { variant: "secondary" as const, label: t("common.status.disabled") };
+  // The text follows the same health as the badge colour. A node saturated on
+  // CPU, memory or disk drew a warning-tinted badge that still read "online".
+  const health = meta.value.dotStatus;
   return {
     variant: meta.value.badgeVariant,
-    label: node.value?.online ? t("common.status.online") : t("common.status.offline"),
+    label:
+      health === "degraded"
+        ? t("common.status.degraded")
+        : health === "online"
+          ? t("common.status.online")
+          : t("common.status.offline"),
   };
 });
 
@@ -453,6 +461,23 @@ function seedUpdateDraft(policy: AgentUpdatePolicy | undefined, id: string) {
 
 function touchUpdateDraft() {
   updateDraftTouched.value = true;
+}
+
+/**
+ * A node that has never checked in carries the server's zero time
+ * ("0001-01-01T00:00:00Z"), which `formatRelativeTime` happily renders as a
+ * six-figure number of days ago. Say "never checked in" instead: the whole
+ * point of this console is that a node which has never reported must look like
+ * one.
+ */
+const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
+
+function lastSeenText(node: Node): string {
+  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
+  if (!Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS) {
+    return t("fleet.nodes.list.neverSeen");
+  }
+  return t("fleet.nodes.list.lastSeen", { time: formatRelativeTime(node.last_seen) });
 }
 
 const savedUpdateSummary = computed(() => {
@@ -1115,7 +1140,7 @@ async function resolveGeo() {
         </span>
         <span class="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground tabular">
           <Clock class="size-3.5" aria-hidden="true" />
-          {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(node.last_seen) }) }}
+          {{ lastSeenText(node) }}
         </span>
       </div>
 

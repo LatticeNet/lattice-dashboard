@@ -71,8 +71,14 @@ const resolvedEmptyTitle = computed(
 /** Title for the 404 "no longer exists" empty-style state. */
 const goneTitle = computed(() => props.emptyTitle ?? t("common.state.gone"));
 
-const errorMessage = computed(
-  () => apiError.value?.serverMessage || props.error?.message || t("common.state.somethingWrong"),
+/**
+ * The server's own sentence, when it sent one. It is detail, never the
+ * headline: the operator should read one stable house sentence and find the
+ * backend wording underneath it, not have a raw API string as the only thing
+ * the card says.
+ */
+const serverDetail = computed(
+  () => apiError.value?.serverMessage || props.error?.message || "",
 );
 </script>
 
@@ -155,7 +161,13 @@ const errorMessage = computed(
           />
           <div class="space-y-1">
             <p class="text-sm font-medium text-destructive">
-              {{ errorKind === 'offline' ? $t('common.state.connectionLost') : errorMessage }}
+              {{ errorKind === 'offline' ? $t('common.state.connectionLost') : $t('common.state.loadFailed') }}
+            </p>
+            <p
+              v-if="errorKind !== 'offline' && serverDetail"
+              class="text-xs text-muted-foreground"
+            >
+              {{ serverDetail }}
             </p>
             <p
               v-if="apiRequestId"

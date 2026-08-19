@@ -110,9 +110,31 @@ function isLive(node: Node): boolean {
   return !!node.online && !node.disabled;
 }
 
+/**
+ * The badge text now follows the same health the dot and the badge colour
+ * already follow. A node pinned at 95% disk used to draw a warning-tinted badge
+ * that still read "online".
+ */
 function statusLabel(node: Node): string {
   if (node.disabled) return t("common.status.disabled");
-  return node.online ? t("common.status.online") : t("common.status.offline");
+  const health = meta(node).dotStatus;
+  if (health === "degraded") return t("common.status.degraded");
+  return health === "online" ? t("common.status.online") : t("common.status.offline");
+}
+
+/**
+ * A node that has never checked in carries the server's zero time
+ * ("0001-01-01T00:00:00Z"), which `formatRelativeTime` renders as a six-figure
+ * number of days ago.
+ */
+const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
+
+function lastSeenLabel(node: Node): string {
+  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
+  if (!Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS) {
+    return t("fleet.nodes.list.neverSeen");
+  }
+  return formatRelativeTime(node.last_seen);
 }
 
 function statusVariant(node: Node): ReturnType<typeof meta>["badgeVariant"] {
@@ -301,7 +323,7 @@ function onOpen(node: Node): void {
 
         <!-- Last seen -->
         <span v-if="show('lastSeen')" class="text-xs text-muted-foreground tabular">{{
-          formatRelativeTime(node.last_seen)
+          lastSeenLabel(node)
         }}</span>
 
         <!-- Agent update mode -->
