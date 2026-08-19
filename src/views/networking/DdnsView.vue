@@ -26,6 +26,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import NodePicker from "@/components/common/NodePicker.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -436,19 +437,12 @@ async function confirmRun() {
               <Label for="ddns-name">{{ $t('networking.ddns.name') }}</Label>
               <Input id="ddns-name" v-model="form.name" required placeholder="edge-ddns" />
             </div>
-            <div class="grid gap-2">
-              <Label for="ddns-node">{{ $t('networking.ddns.nodeLabel') }}</Label>
-              <Select v-model="form.node_id">
-                <SelectTrigger id="ddns-node">
-                  <SelectValue :placeholder="$t('networking.ddns.selectNode')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
-                    {{ node.name || node.id }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <NodePicker
+              id="ddns-node"
+              v-model="form.node_id"
+              :label="$t('networking.ddns.nodeLabel')"
+              :placeholder="$t('networking.ddns.selectNode')"
+            />
           </div>
 
           <div class="grid gap-2">

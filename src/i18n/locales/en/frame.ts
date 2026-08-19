@@ -147,6 +147,17 @@ export default {
       created: "Created",
       keepBlank: "leave blank to keep current",
     },
+
+    // Shared node field (components/common/NodePicker.vue).
+    nodePicker: {
+      label: "Node",
+      placeholder: "Select a node",
+      idPlaceholder: "node id",
+      needsScope: "`node:read` is required to list nodes. Enter the node id instead.",
+      listFailed: "The node list could not be loaded. Enter the node id instead.",
+      noNodes: "No nodes are enrolled yet. Enter the node id instead.",
+      unknownNode: "This id is not in the node list, so it is shown as stored.",
+    },
   },
 
   nav: {
