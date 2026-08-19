@@ -6,7 +6,7 @@ export default {
     shared: {
       plan: "计划",
       planCreated: "已生成计划",
-      planReviewHint: "前往 运维 → 审批 审阅并批准。批准前不会应用任何变更。",
+      planReviewHint: "前往 运维 / 审批 审阅并批准。批准前不会应用任何变更。",
       planLabel: "计划",
       planTextSha256: "计划文本 SHA-256",
       goToApprovals: "前往审批",
@@ -417,7 +417,7 @@ export default {
       planSubtitle: "{plugin} / {action} 于 {node}",
       planReviewHint:
         "计划已生成。请在 {approvals} 审阅并批准后,节点才会应用。渲染出的 {configYml} 仅引用凭据文件路径，不会嵌入任何凭据内容。",
-      approvalsLabel: "运维 → 审批",
+      approvalsLabel: "运维 / 审批",
       approvalLabel: "审批 {id}",
       toastCreated: "隧道已创建",
       toastCreateFailed: "创建失败",
@@ -463,7 +463,7 @@ export default {
       toastSaveFailed: "保存分组策略失败",
       toastPlanned: "已生成计划，影响 {n} 个节点",
       planResultTitle: "分组策略计划",
-      planResultDescription: "已展开为按节点的计划。请在 运维 → 审批 中逐一批准。",
+      planResultDescription: "已展开为按节点的计划。请在 运维 / 审批 中逐一批准。",
       planAffected: "影响 {n} 个",
       planConflicts: "{n} 个冲突",
       planOrphaned: "{n} 个孤立",

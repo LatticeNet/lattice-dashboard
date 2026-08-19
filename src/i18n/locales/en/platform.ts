@@ -503,7 +503,7 @@ export default {
       planReviewOn: "{plugin} / {action} on {node}",
       planCreatedReview:
         "Plan created. The plan text digest shown here is different from the binary artifact SHA-256 inside the plan. Review and approve under",
-      operationsApprovals: "Operations → Approvals",
+      operationsApprovals: "Operations / Approvals",
       planAppliesAfter: "; the target node-agent applies it after approval.",
       plan: "Plan",
       approvalLabel: "approval {id}",

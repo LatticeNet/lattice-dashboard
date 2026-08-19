@@ -490,7 +490,7 @@ export default {
       planTitle: "Agent 更新计划",
       planReviewOn: "{plugin} / {action} 于 {node}",
       planCreatedReview: "计划已创建。这里显示的计划文本摘要不同于计划里的二进制制品 SHA-256。请在",
-      operationsApprovals: "运维 → 审批",
+      operationsApprovals: "运维 / 审批",
       planAppliesAfter: " 下查看并批准;目标 node-agent 将在批准后应用。",
       plan: "计划",
       approvalLabel: "审批 {id}",

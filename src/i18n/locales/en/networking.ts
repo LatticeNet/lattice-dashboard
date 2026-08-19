@@ -7,7 +7,7 @@ export default {
     shared: {
       plan: "Plan",
       planCreated: "Plan created",
-      planReviewHint: "Review & approve under Operations → Approvals. Nothing is applied until approved.",
+      planReviewHint: "Review & approve under Operations / Approvals. Nothing is applied until approved.",
       planLabel: "Plan",
       planTextSha256: "plan text SHA-256",
       goToApprovals: "Go to Approvals",
@@ -445,7 +445,7 @@ export default {
       planSubtitle: "{plugin} / {action} on {node}",
       planReviewHint:
         "Plan created. Review and approve under {approvals} before the node applies it. The rendered {configYml} references the credentials file path only, so no credential material is embedded.",
-      approvalsLabel: "Operations → Approvals",
+      approvalsLabel: "Operations / Approvals",
       approvalLabel: "approval {id}",
       toastCreated: "Tunnel created",
       toastCreateFailed: "Create failed",
@@ -494,7 +494,7 @@ export default {
       toastSaveFailed: "Failed to save group policy",
       toastPlanned: "Planned, {n} node(s) affected",
       planResultTitle: "Group policy plan",
-      planResultDescription: "Expanded to per-node plans. Approve each under Operations → Approvals.",
+      planResultDescription: "Expanded to per-node plans. Approve each under Operations / Approvals.",
       planAffected: "{n} affected",
       planConflicts: "{n} conflicts",
       planOrphaned: "{n} orphaned",
