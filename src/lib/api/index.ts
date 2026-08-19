@@ -76,6 +76,9 @@ import type {
   AgentUpdatePolicy,
   AgentUpdatePolicyUpsertRequest,
   AgentReleaseInfo,
+  AgentArtifactListing,
+  AgentArtifactRequest,
+  AgentArtifactView,
   OIDCProviderView,
   OIDCProviderUpsertRequest,
   OIDCProviderTestResult,
@@ -600,6 +603,15 @@ export const api = {
       http.post<{ ok: boolean }>("/api/nodes/agent-updates/delete", { node_id }),
     plan: (node_id: string, force?: boolean) =>
       http.post<ApprovalView>("/api/nodes/agent-updates/plan", { node_id, force }),
+    artifacts: () =>
+      http.get<AgentArtifactListing>("/api/nodes/agent-updates/artifacts"),
+    importArtifact: (input: AgentArtifactRequest) =>
+      http.post<AgentArtifactView>("/api/nodes/agent-updates/artifacts/import", input),
+    deleteArtifact: (input: AgentArtifactRequest) =>
+      http.post<{ deleted: boolean; sha256: string }>(
+        "/api/nodes/agent-updates/artifacts/delete",
+        input,
+      ),
   },
 
   oidc: {

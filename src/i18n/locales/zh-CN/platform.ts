@@ -406,6 +406,33 @@ export default {
       integrityPlanBound: "两个 SHA-256 绑定",
       integrityHint:
         "计划正文包含二进制制品 SHA-256。审批另用计划文本 SHA-256，确保批准的是已审阅的计划文本。",
+      distributionTitle: "由本控制平面分发",
+      distributionHint:
+        "节点通过它本来就在轮询的连接从这里取新二进制,升级不再取决于该节点能否连上发布站点。计划仍然锚定 SHA-256:控制平面在提供字节之前会重新校验,节点下载后再校验一次。",
+      distributionStorage: "已用 {used} / {limit}",
+      distributionEmptyTitle: "尚未存放任何二进制",
+      distributionEmptyDescription: "导入一个版本后即可从这里分发。在此之前,每个节点仍需自行访问发布站点。",
+      distributionDisabled:
+        "目前还不能把节点指向这里:本服务器没有配置 HTTPS 公开地址。请设置 LATTICE_PUBLIC_URL 并重新生成计划,否则每个节点仍会自行访问发布站点。",
+      importTitle: "导入版本",
+      importHint: "控制平面下载一次发布产物并对照公布的校验和验证。节点不会发起这个请求。",
+      importVersionLabel: "版本",
+      importVersionPlaceholder: "latest",
+      importArchLabel: "架构",
+      importAction: "导入",
+      importing: "导入中",
+      importDone: "已导入 {version}({arch})",
+      importFailed: "导入 {arch} 失败:{message}",
+      artifactColVersion: "版本",
+      artifactColPlatform: "平台",
+      artifactColDigest: "SHA-256",
+      artifactColSize: "大小",
+      artifactColStored: "占用",
+      deleteArtifactAria: "移除已存放的二进制",
+      deleteArtifactTitle: "移除已存放的二进制",
+      deleteArtifactBody:
+        "按 {version}({arch})规划的节点将退回到自行访问发布站点。已针对该版本生成的审批会变为过期,需要重新生成计划。",
+      deleteArtifactDone: "已移除 {version}({arch})",
       staleApprovalSummary: "{count} 个 Agent 更新审批已过期，需要重新生成计划。",
       staleApprovalSummaryHint:
         "这些计划在审阅后，策略、目标节点状态或已解析制品发生了变化。打开审批页，先生成并审阅新计划后再批准。",

@@ -12,6 +12,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  ServerCog,
   Trash2,
 } from "lucide-vue-next";
 import {
@@ -19,6 +20,8 @@ import {
   unwrap,
   isAgentUpdateNoopError,
   isStaleAgentUpdateApprovalView,
+  type AgentArtifactListing,
+  type AgentArtifactView,
   type AgentUpdatePolicy,
   type AgentUpdatePolicyUpsertRequest,
   type AgentReleaseCandidate,
@@ -28,7 +31,7 @@ import {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime, shortId } from "@/lib/format";
+import { formatBytes, formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -113,6 +116,96 @@ const staleApprovalsByNode = computed(() => {
 const sortedPolicies = computed(() =>
   [...policies.value].sort((a, b) => a.node_id.localeCompare(b.node_id)),
 );
+
+// ── Control-plane distribution ───────────────────────────────────────────────
+// What the control plane holds and can serve to nodes itself. A node's upgrade
+// depends on this rather than on its own egress to the release host, which is
+// what stranded slow and badly-resolving nodes before.
+const AGENT_ARCHES = ["amd64", "arm64"] as const;
+
+const artifactsQuery = useAsyncData<AgentArtifactListing>(() => api.agentUpdates.artifacts(), {
+  pollInterval: 30000,
+});
+const artifacts = computed(() => artifactsQuery.data.value?.artifacts ?? []);
+// A stored binary nodes cannot be pointed at is not the same as one they can.
+// Only say so once there is something stored, so an untouched install does not
+// carry a warning about a feature it is not using.
+const distributionDisabled = computed(
+  () => artifactsQuery.data.value?.serving_enabled === false && artifacts.value.length > 0,
+);
+const artifactStorageLabel = computed(() =>
+  t("platform.agentUpdates.distributionStorage", {
+    used: formatBytes(artifactsQuery.data.value?.stored_bytes ?? 0),
+    limit: formatBytes(artifactsQuery.data.value?.limit_bytes ?? 0),
+  }),
+);
+
+const importVersion = ref("");
+const importArches = ref<string[]>(["amd64"]);
+const importing = ref(false);
+
+function toggleImportArch(arch: string, on: boolean): void {
+  const next = new Set(importArches.value);
+  if (on) next.add(arch);
+  else next.delete(arch);
+  importArches.value = [...next];
+}
+
+// Each architecture is its own import, and each is reported on its own. A run
+// where one architecture failed is never rendered as a success.
+async function runImport(): Promise<void> {
+  if (importing.value || !importArches.value.length) return;
+  const version = importVersion.value.trim() || "latest";
+  importing.value = true;
+  let failed = 0;
+  try {
+    for (const arch of importArches.value) {
+      try {
+        const stored = await api.agentUpdates.importArtifact({ version, os: "linux", arch });
+        toast.success(
+          t("platform.agentUpdates.importDone", { version: stored.version, arch: stored.arch }),
+        );
+      } catch (error) {
+        failed += 1;
+        toast.error(
+          t("platform.agentUpdates.importFailed", {
+            arch,
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+    }
+  } finally {
+    importing.value = false;
+    artifactsQuery.refresh();
+    if (!failed) policiesQuery.refresh();
+  }
+}
+
+const artifactDeleteTarget = ref<AgentArtifactView | undefined>();
+const deletingArtifact = ref(false);
+
+async function confirmArtifactDelete(): Promise<void> {
+  const target = artifactDeleteTarget.value;
+  if (!target) return;
+  deletingArtifact.value = true;
+  try {
+    await api.agentUpdates.deleteArtifact({
+      version: target.version,
+      os: target.os,
+      arch: target.arch,
+    });
+    toast.success(
+      t("platform.agentUpdates.deleteArtifactDone", { version: target.version, arch: target.arch }),
+    );
+    artifactDeleteTarget.value = undefined;
+    artifactsQuery.refresh();
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("platform.agentUpdates.deleteFailed"));
+  } finally {
+    deletingArtifact.value = false;
+  }
+}
 
 function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
@@ -551,6 +644,125 @@ watch(
     </Card>
 
     <Card>
+      <CardHeader class="pb-3">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0">
+            <CardTitle class="flex items-center gap-2">
+              <ServerCog aria-hidden="true" class="size-4 text-muted-foreground" />
+              {{ $t('platform.agentUpdates.distributionTitle') }}
+            </CardTitle>
+            <CardDescription class="max-w-3xl">
+              {{ $t('platform.agentUpdates.distributionHint') }}
+            </CardDescription>
+          </div>
+          <Badge variant="outline" class="shrink-0 font-mono text-xs">{{ artifactStorageLabel }}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <div
+          v-if="artifactsQuery.error.value"
+          class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning"
+        >
+          {{ artifactsQuery.error.value.message }}
+        </div>
+
+        <div
+          v-if="distributionDisabled"
+          class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning"
+        >
+          <AlertTriangle class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span>{{ $t('platform.agentUpdates.distributionDisabled') }}</span>
+        </div>
+
+        <div v-if="!artifacts.length && !artifactsQuery.error.value" class="rounded-md border border-dashed border-border p-4">
+          <p class="text-sm font-medium">{{ $t('platform.agentUpdates.distributionEmptyTitle') }}</p>
+          <p class="mt-1 text-sm text-muted-foreground">
+            {{ $t('platform.agentUpdates.distributionEmptyDescription') }}
+          </p>
+        </div>
+
+        <div v-else-if="artifacts.length" class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+                <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.artifactColVersion') }}</th>
+                <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.artifactColPlatform') }}</th>
+                <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.artifactColDigest') }}</th>
+                <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.artifactColSize') }}</th>
+                <th scope="col" class="py-2 pr-4 font-medium">{{ $t('platform.agentUpdates.artifactColStored') }}</th>
+                <th scope="col" class="py-2 font-medium text-right">{{ $t('platform.agentUpdates.colActions') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="artifact in artifacts"
+                :key="`${artifact.version}/${artifact.os}/${artifact.arch}`"
+                class="border-b border-border/60 last:border-0"
+              >
+                <td class="py-2 pr-4 font-mono text-xs font-medium">{{ artifact.version }}</td>
+                <td class="py-2 pr-4 font-mono text-xs text-muted-foreground">{{ artifact.os }}/{{ artifact.arch }}</td>
+                <td class="py-2 pr-4">
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-mono text-xs text-muted-foreground">{{ artifact.sha256.slice(0, 16) }}</span>
+                    <CopyButton :value="artifact.sha256" />
+                  </div>
+                </td>
+                <td class="py-2 pr-4 tabular text-xs">{{ formatBytes(artifact.size_bytes) }}</td>
+                <td class="py-2 pr-4 tabular text-xs text-muted-foreground">{{ formatBytes(artifact.stored_bytes) }}</td>
+                <td class="py-2 text-right">
+                  <Button
+                    v-if="canAdmin"
+                    variant="ghost"
+                    size="icon"
+                    :aria-label="$t('platform.agentUpdates.deleteArtifactAria')"
+                    @click="artifactDeleteTarget = artifact"
+                  >
+                    <Trash2 aria-hidden="true" class="size-4" />
+                  </Button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="canAdmin" class="border-t border-border pt-4">
+          <p class="text-sm font-medium">{{ $t('platform.agentUpdates.importTitle') }}</p>
+          <p class="mt-1 max-w-3xl text-sm text-muted-foreground">
+            {{ $t('platform.agentUpdates.importHint') }}
+          </p>
+          <div class="mt-3 flex flex-wrap items-end gap-4">
+            <div class="grid gap-1.5">
+              <Label for="agent-artifact-version">{{ $t('platform.agentUpdates.importVersionLabel') }}</Label>
+              <Input
+                id="agent-artifact-version"
+                v-model="importVersion"
+                class="w-56 font-mono"
+                :placeholder="$t('platform.agentUpdates.importVersionPlaceholder')"
+              />
+            </div>
+            <fieldset class="grid gap-1.5">
+              <legend class="text-sm font-medium">{{ $t('platform.agentUpdates.importArchLabel') }}</legend>
+              <div class="flex items-center gap-4 pt-1">
+                <label v-for="arch in AGENT_ARCHES" :key="arch" class="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    :model-value="importArches.includes(arch)"
+                    @update:model-value="(v) => toggleImportArch(arch, v === true)"
+                  />
+                  <span class="font-mono">{{ arch }}</span>
+                </label>
+              </div>
+            </fieldset>
+            <Button :disabled="importing || !importArches.length" @click="runImport">
+              <RefreshCw v-if="importing" aria-hidden="true" class="size-4 animate-spin" />
+              <DownloadCloud v-else aria-hidden="true" class="size-4" />
+              {{ importing ? $t('platform.agentUpdates.importing') : $t('platform.agentUpdates.importAction') }}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <DownloadCloud aria-hidden="true" class="size-4 text-muted-foreground" />
@@ -856,6 +1068,20 @@ watch(
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"
       @confirm="confirmDelete"
+    />
+
+    <ConfirmDialog
+      :open="!!artifactDeleteTarget"
+      :title="$t('platform.agentUpdates.deleteArtifactTitle')"
+      :description="$t('platform.agentUpdates.deleteArtifactBody', {
+        version: artifactDeleteTarget?.version ?? '',
+        arch: artifactDeleteTarget?.arch ?? '',
+      })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deletingArtifact"
+      @update:open="(v) => { if (!v) artifactDeleteTarget = undefined; }"
+      @confirm="confirmArtifactDelete"
     />
 
     <!-- Noop (409): offer force plan -->

@@ -415,6 +415,35 @@ export default {
       integrityPlanBound: "two SHA-256 bindings",
       integrityHint:
         "The plan body includes the binary artifact SHA-256. Approval uses a separate plan-text SHA-256 so the reviewed text is what gets approved.",
+      distributionTitle: "Served by this control plane",
+      distributionHint:
+        "A node fetches its new binary from here over the connection it already polls, so upgrading does not depend on that node reaching the release host. The plan still pins the SHA-256, the control plane re-verifies the stored bytes before serving them, and the node verifies again after downloading.",
+      distributionStorage: "{used} of {limit} used",
+      distributionEmptyTitle: "Nothing stored yet",
+      distributionEmptyDescription:
+        "Import a version to serve it from here. Until then every node fetches from the release host itself.",
+      distributionDisabled:
+        "Nodes cannot be sent here yet: this server has no HTTPS public URL. Set one (LATTICE_PUBLIC_URL) and re-plan, or every node keeps fetching from the release host.",
+      importTitle: "Import a version",
+      importHint:
+        "The control plane downloads the release once and verifies it against the published checksums. Nodes never make that request.",
+      importVersionLabel: "Version",
+      importVersionPlaceholder: "latest",
+      importArchLabel: "Architecture",
+      importAction: "Import",
+      importing: "Importing",
+      importDone: "Imported {version} for {arch}",
+      importFailed: "Import failed for {arch}: {message}",
+      artifactColVersion: "Version",
+      artifactColPlatform: "Platform",
+      artifactColDigest: "SHA-256",
+      artifactColSize: "Size",
+      artifactColStored: "Stored",
+      deleteArtifactAria: "Remove stored binary",
+      deleteArtifactTitle: "Remove stored binary",
+      deleteArtifactBody:
+        "Nodes planned against {version} for {arch} will go back to fetching from the release host. Approvals already planned for this version become stale and need fresh plans.",
+      deleteArtifactDone: "Removed {version} for {arch}",
       staleApprovalSummary: "{count} stale agent-update approvals need fresh plans.",
       staleApprovalSummaryHint:
         "The policy, target node state, or resolved artifact changed after those plans were reviewed. Open Approvals and create fresh plans before approving.",
