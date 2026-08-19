@@ -49,6 +49,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogDescription,
@@ -899,10 +900,10 @@ async function confirmDeleteTask() {
             </div>
             <div class="grid gap-2">
               <Label>{{ $t('operations.tasks.script') }}</Label>
-              <textarea
+              <Textarea
                 v-model="script"
                 rows="12"
-                class="rounded-md border border-input bg-background p-3 font-mono text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                class="font-mono"
                 placeholder="uname -a"
               />
             </div>

@@ -13,6 +13,7 @@ import type {
 } from "@/lib/api";
 import GroupChip from "./GroupChip.vue";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -191,8 +192,8 @@ function submit() {
 
       <form class="space-y-5" @submit.prevent="submit">
         <div class="grid gap-3 sm:grid-cols-2">
-          <label class="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
-            <input v-model="meta.enabled" type="checkbox" class="size-4 accent-primary" />
+          <label class="flex h-9 cursor-pointer items-center gap-2 rounded-md border border-input px-3 text-sm">
+            <Checkbox v-model="meta.enabled" />
             {{ $t("networking.matrix.policyEnabled") }}
           </label>
           <div class="grid gap-1.5">
@@ -286,8 +287,8 @@ function submit() {
               </div>
             </div>
 
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="rule.disabled" type="checkbox" class="size-4 accent-primary" />
+            <label class="flex cursor-pointer items-center gap-2 text-sm">
+              <Checkbox v-model="rule.disabled" />
               {{ $t("networking.policy.disabled") }}
             </label>
 

@@ -558,8 +558,8 @@ function refreshAll(): void {
                   </Button>
                 </div>
 
-                <div class="overflow-x-auto rounded-md border border-border bg-muted/10">
-                  <table class="w-full text-xs">
+                <div class="hidden overflow-x-auto rounded-md border border-border bg-muted/10 md:block">
+                  <table class="w-full min-w-[560px] text-xs">
                     <thead>
                       <tr class="border-b border-border text-left text-muted-foreground">
                         <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.colSeq') }}</th>
@@ -583,6 +583,26 @@ function refreshAll(): void {
                     </tbody>
                   </table>
                 </div>
+
+                <!--
+                  Narrow viewports get the same lines stacked. A log line is the
+                  content, not a cell, so on a phone it takes the full width and
+                  the sequence and timestamp move above it as metadata.
+                -->
+                <ul class="space-y-2 md:hidden">
+                  <li
+                    v-for="line in renderedLines"
+                    :key="line.seq"
+                    class="rounded-md border border-border bg-muted/10 p-2.5"
+                  >
+                    <div class="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <span class="font-mono tabular">{{ line.seq }}</span>
+                      <span>{{ formatDateTime(line.at) }}</span>
+                      <Badge v-if="line.truncated" variant="warning">{{ $t('platform.logs.lineTruncated') }}</Badge>
+                    </div>
+                    <p class="mt-1 whitespace-pre-wrap break-all font-mono text-xs">{{ line.line }}</p>
+                  </li>
+                </ul>
 
                 <p v-if="renderCapped" class="text-xs text-muted-foreground">
                   {{ $t('platform.logs.renderCapped', { shown: LOG_RENDER_CAP, loaded: reversedLines.length }) }}

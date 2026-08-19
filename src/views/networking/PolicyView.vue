@@ -24,6 +24,7 @@ import {
   type GroupView,
   type MatrixGroup,
   type NetEndpointKind,
+  type NetGraphExternal,
   type NetGraphNode,
   type NetPolicyGraph,
   type NetPolicyMatrix,
@@ -254,6 +255,34 @@ const policyColumns = computed<DataTableColumn<NetPolicyView>[]>(() => [
   { key: "last_applied", label: t("networking.policy.colLastApplied"), sortable: true, value: (p) => p.last_applied_at ?? "" },
   { key: "last_error", label: t("networking.policy.colLastError"), sortable: true, value: (p) => p.last_error ?? "" },
   { key: "actions", label: t("networking.policy.colActions"), align: "right" },
+]);
+
+/**
+ * The externals adjacency is a plain list of rows, so it uses the shared table:
+ * sortable columns, a linkable filter, and stacked cards instead of six columns
+ * squeezed onto a phone.
+ */
+const externalColumns = computed<DataTableColumn<NetGraphExternal>[]>(() => [
+  {
+    key: "target",
+    label: t("networking.policy.extTargetNode"),
+    sortable: true,
+    searchable: true,
+    value: (ext) => nodeName(ext.target_node_id),
+  },
+  { key: "direction", label: t("networking.policy.extDirection"), sortable: true, searchable: true },
+  { key: "action", label: t("networking.policy.extAction"), sortable: true, searchable: true },
+  { key: "remote", label: t("networking.policy.extRemote"), sortable: true, searchable: true },
+  { key: "protocol", label: t("networking.policy.extProtocol"), sortable: true, searchable: true },
+  {
+    key: "ports",
+    label: t("networking.policy.extPorts"),
+    align: "right",
+    sortable: true,
+    class: "tabular",
+    filterable: true,
+    value: (ext) => (ext.ports?.length ? ext.ports.join(", ") : ""),
+  },
 ]);
 
 function loadGraph() {
@@ -1220,36 +1249,34 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
 
                 <!-- Externals adjacency table -->
-                <div v-if="externals.length" class="overflow-x-auto rounded-lg border border-border">
-                  <table class="w-full text-sm">
-                    <thead>
-                      <tr class="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
-                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extTargetNode') }}</th>
-                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extDirection') }}</th>
-                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extAction') }}</th>
-                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extRemote') }}</th>
-                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extProtocol') }}</th>
-                        <th scope="col" class="px-3 py-2 font-medium">{{ $t('networking.policy.extPorts') }}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr
-                        v-for="ext in externals"
-                        :key="`${ext.rule_id}:${ext.target_node_id}:${ext.remote}`"
-                        class="border-b border-border last:border-b-0"
-                      >
-                        <td class="px-3 py-2">{{ nodeName(ext.target_node_id) }}</td>
-                        <td class="px-3 py-2 text-xs">{{ ext.direction }}</td>
-                        <td class="px-3 py-2">
-                          <Badge :variant="ext.action === 'allow' ? 'success' : 'destructive'">{{ ext.action }}</Badge>
-                        </td>
-                        <td class="px-3 py-2 font-mono text-xs">{{ ext.remote }}</td>
-                        <td class="px-3 py-2 text-xs">{{ ext.protocol }}</td>
-                        <td class="px-3 py-2 font-mono text-xs tabular">{{ ext.ports?.length ? ext.ports.join(", ") : $t('common.misc.all') }}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  v-if="externals.length"
+                  :columns="externalColumns"
+                  :rows="externals"
+                  :row-key="(ext) => `${ext.rule_id}:${ext.target_node_id}:${ext.remote}`"
+                  searchable
+                  state-key="ext"
+                  :page-size="20"
+                  :search-placeholder="$t('common.actions.search')"
+                  :no-match-title="$t('networking.shared.noMatchTitle')"
+                  :no-match-description="$t('networking.shared.noMatchDescription')"
+                >
+                  <template #cell-direction="{ row: ext }">
+                    <span class="text-xs">{{ ext.direction }}</span>
+                  </template>
+                  <template #cell-action="{ row: ext }">
+                    <Badge :variant="ext.action === 'allow' ? 'success' : 'destructive'">{{ ext.action }}</Badge>
+                  </template>
+                  <template #cell-remote="{ row: ext }">
+                    <span class="font-mono text-xs">{{ ext.remote }}</span>
+                  </template>
+                  <template #cell-protocol="{ row: ext }">
+                    <span class="text-xs">{{ ext.protocol }}</span>
+                  </template>
+                  <template #cell-ports="{ row: ext }">
+                    <span class="font-mono text-xs">{{ ext.ports?.length ? ext.ports.join(", ") : $t('common.misc.all') }}</span>
+                  </template>
+                </DataTable>
               </div>
             </DataState>
           </CardContent>
