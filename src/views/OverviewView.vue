@@ -437,6 +437,7 @@ function refreshAll() {
                     :memory-label="t('overview.metric.memory')"
                     :disk-label="t('overview.metric.disk')"
                     :online-label="t('common.status.online')"
+                    :never-label="t('common.status.neverReported')"
                     :offline-label="t('common.status.offline')"
                     :disabled-label="t('common.status.disabled')"
                     :sparkline-label="t('overview.sparklineLabel')"

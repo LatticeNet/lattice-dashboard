@@ -140,6 +140,16 @@ function isLive(node: Node): boolean {
  * already follow. A node pinned at 95% disk used to draw a warning-tinted badge
  * that still read "online".
  */
+/**
+ * The dot reads the same derivation the badge does. Passing a boolean here
+ * capped it at two colors, so a node that never reported drew the red dot that
+ * means something broke.
+ */
+function dotStatus(node: Node): ReturnType<typeof meta>["dotStatus"] {
+  if (node.disabled) return "offline";
+  return meta(node).dotStatus;
+}
+
 function statusLabel(node: Node): string {
   if (node.disabled) return t("common.status.disabled");
   switch (meta(node).dotStatus) {
@@ -294,7 +304,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
 
         <!-- Name + status dot -->
         <div class="flex min-w-0 items-center gap-2">
-          <StatusDot :online="isLive(node)" :pulse="isLive(node)" />
+          <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" />
           <div class="min-w-0">
             <p class="truncate font-medium">{{ node.name || node.id }}</p>
             <p class="truncate font-mono text-xs text-muted-foreground tabular">

@@ -1522,6 +1522,7 @@ function openTerminal(node: Node) {
                   :memory-label="t('fleet.nodes.metric.memory')"
                   :disk-label="t('fleet.nodes.metric.disk')"
                   :online-label="t('common.status.online')"
+                  :never-label="t('common.status.neverReported')"
                   :offline-label="t('common.status.offline')"
                   :disabled-label="t('common.status.disabled')"
                   :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"

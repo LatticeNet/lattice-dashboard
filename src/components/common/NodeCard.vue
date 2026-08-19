@@ -109,6 +109,7 @@ const props = withDefaults(
     /** Footer status words / aria text. */
     onlineLabel?: string;
     offlineLabel?: string;
+    neverLabel?: string;
     disabledLabel?: string;
     /** Accessible label for the sparkline. */
     sparklineLabel?: string;
@@ -130,6 +131,7 @@ const props = withDefaults(
     diskLabel: "Disk",
     onlineLabel: "Online",
     offlineLabel: "Offline",
+    neverLabel: "Never reported",
     disabledLabel: "Disabled",
     sparklineLabel: "Recent trend",
     class: undefined,
@@ -155,13 +157,29 @@ const isLive = computed(() => props.node.online && !props.node.disabled);
 
 const displayName = computed(() => props.node.name || props.node.id);
 
+/**
+ * The dot reads the same derivation the badge does. Passing a boolean here
+ * capped it at two colors, so a node that never reported drew the red dot that
+ * means something broke.
+ */
+const dotStatus = computed(() =>
+  props.node.disabled ? ("offline" as const) : meta.value.dotStatus,
+);
+
 const statusBadge = computed(() => {
   if (props.node.disabled) {
     return { variant: "secondary" as const, label: props.disabledLabel };
   }
+  // Read the label off the same derivation the variant comes from. Choosing it
+  // from the online boolean instead let the badge render its outline
+  // never-reported treatment while the text next to it still said "offline".
+  const labels: Partial<Record<string, string>> = {
+    online: props.onlineLabel,
+    never: props.neverLabel,
+  };
   return {
     variant: meta.value.badgeVariant,
-    label: props.node.online ? props.onlineLabel : props.offlineLabel,
+    label: labels[meta.value.dotStatus] ?? props.offlineLabel,
   };
 });
 
@@ -286,7 +304,7 @@ function onGroup(id: string) {
         </span>
         <div class="min-w-0">
         <div class="flex min-w-0 items-center gap-2 font-medium">
-          <StatusDot :online="isLive" :pulse="isLive" />
+          <StatusDot :status="dotStatus" :pulse="isLive" />
           <span class="truncate">{{ displayName }}</span>
         </div>
         <p
