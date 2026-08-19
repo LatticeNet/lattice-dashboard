@@ -124,7 +124,7 @@ export interface NodeGeo {
 }
 
 // NodeInventory mirrors the operator-registered provenance/quality metadata on
-// the node model — e.g. "98% pure, high quality" IP purity notes kept in the
+// the node model. E.g. "98% pure, high quality" IP purity notes kept in the
 // fleet inventory. Purely informational; nothing branches on it.
 export interface NodeInventory {
   purity_percent?: number;
@@ -541,7 +541,7 @@ export interface StepUpResponse {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Networking — Network Guard (nft), Network Policy (+graph), Self-host DNS,
+// Networking: Network Guard (nft), Network Policy (+graph), Self-host DNS,
 // Geo-Routing, DDNS, Tunnels, WireGuard. Most mutations go through plan→approve.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -938,7 +938,7 @@ export interface TunnelUpsertRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Platform — Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates.
+// Platform: Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1027,7 +1027,7 @@ export interface PluginUIRuntime {
 
 /**
  * Read-only projection of the server's plugin TrustPolicy (TASK-0012).
- * Names only — never key material. The server emits this object always, with
+ * Names only. Never key material. The server emits this object always, with
  * `non_official: false` in the normal case, so absence means "server too old",
  * never "nothing to report".
  */
@@ -1048,7 +1048,7 @@ export interface PluginView {
   status?: string;
   /** Convenience flag mirroring (status === "active"). */
   active?: boolean;
-  /** UI contributions — present ONLY when the plugin is active (server nils it otherwise). */
+  /** UI contributions. Present ONLY when the plugin is active (server nils it otherwise). */
   ui?: PluginManifestUI;
   interfaces?: PluginInterfaceContract[];
   /** Derived active-only metadata; never includes server filesystem paths. */
@@ -1335,7 +1335,7 @@ export interface AgentReleaseCandidate {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Settings — SSO/OIDC providers, Access Tokens (PATs). Secrets write-only;
+// Settings: SSO/OIDC providers, Access Tokens (PATs). Secrets write-only;
 // PAT plaintext is one-time-revealed on create.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1371,7 +1371,7 @@ export interface OIDCProviderTestResult {
 }
 
 // Operator user (secret-free projection; the server never returns the password
-// hash). username is the login id and — for SSO — must equal the operator's
+// hash). username is the login id and. For SSO. Must equal the operator's
 // verified IdP email.
 export interface UserView {
   id: string;

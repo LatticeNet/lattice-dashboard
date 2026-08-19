@@ -33,7 +33,7 @@ import { createTtlCache, filterPendingSystemApprovals } from "./commandPaletteMo
  * the sidebar uses (`auth.canAny`), so it can never surface a destination the
  * operator lacks. Built on reka-ui DialogRoot (focus trap + Esc to close) wrapping
  * a ComboboxRoot which provides the search filtering and keyboard navigation
- * (arrows / Home / End / Enter) out of the box — CSP-safe, no inline scripts.
+ * (arrows / Home / End / Enter) out of the box. CSP-safe, no inline scripts.
  *
  * Recents are persisted to localStorage so the most-used destinations float to
  * the top on next open. Only nav `name`s are stored, never anything sensitive.
@@ -119,7 +119,7 @@ function onSelect(item: NavItem) {
 // ── Actions: approve all system events ───────────────────────────────────────
 // The server proposes its own plans (fleet upgrades, metadata syncs) stamped
 // with the lattice-server actor. When any are pending, the palette offers one
-// batch action that runs the exact event-card path from the Approvals inbox —
+// batch action that runs the exact event-card path from the Approvals inbox,
 // same plan-digest binding, same single-item approve endpoint, same
 // concurrency cap. The list is fetched on open behind a 30s cache so rapid
 // ⌘K use never hammers the API; a failed fetch just hides the action until
@@ -156,7 +156,7 @@ function isPaletteAction(value: unknown): value is PaletteAction {
 async function runApproveSystemEvents(): Promise<void> {
   if (systemActionRunning.value) return;
   // Re-read before firing: the 30s probe cache keeps ⌘K instant, but a batch
-  // decision must bind fresh membership — an item dispositioned elsewhere
+  // decision must bind fresh membership. An item dispositioned elsewhere
   // since the probe would otherwise be toasted as this batch's success.
   const fresh = await api.approvals.list().then((r) => unwrap(r, "approvals"));
   const targets = filterPendingSystemApprovals(fresh).filter(isActionablePendingApproval);
@@ -181,7 +181,7 @@ async function runApproveSystemEvents(): Promise<void> {
       toast.success(t("shell.command.approveSystemEventsDone", { count: succeeded.length }));
     } else {
       // Shell-scoped copy: the operations event-card text refers to "the
-      // card", which does not exist in palette context — here the honest
+      // card", which does not exist in palette context. Here the honest
       // remainder is that the failures stay pending (and the action keeps
       // offering exactly them).
       toast.warning(

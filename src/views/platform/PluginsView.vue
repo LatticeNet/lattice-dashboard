@@ -102,7 +102,7 @@ const lifecycleColumns = computed<DataTableColumn<PluginInstallationView>[]>(() 
   { key: "status", label: t("platform.plugins.colStatus"), sortable: true },
   { key: "runtime", label: t("platform.plugins.colRuntime"), value: (p) => p.runtime?.state ?? "" },
   { key: "available", label: t("platform.plugins.colAvailable"), sortable: true },
-  { key: "artifact_sha256", label: t("platform.plugins.colArtifact") },
+  { key: "artifact_sha256", label: t("platform.plugins.colArtifact"), sortable: true },
   { key: "capabilities", label: t("platform.plugins.colCapabilities") },
   { key: "actions", label: t("platform.plugins.colActions"), align: "right" },
 ]);
@@ -188,7 +188,9 @@ async function confirmTransition() {
       refreshPluginContributions(),
       canAudit.value ? registeredQuery.refresh() : Promise.resolve(),
     ]);
-    toast.success(`${row.name || row.id} → ${status}`);
+    toast.success(
+      t("platform.plugins.transitionDone", { name: row.name || row.id, status }),
+    );
     transitionTarget.value = undefined;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.plugins.transitionFailed"));
@@ -274,12 +276,14 @@ async function runVerify() {
 
     <Tabs v-model="tab">
       <TabsList class="w-full sm:w-auto">
-        <TabsTrigger value="registered">{{ $t('platform.plugins.tabRegistered') }}</TabsTrigger>
+        <!-- Without audit:read the registered list has nothing to show, so the
+             tab is dropped rather than leading to a dead panel. -->
+        <TabsTrigger v-if="canAudit" value="registered">{{ $t('platform.plugins.tabRegistered') }}</TabsTrigger>
         <TabsTrigger value="lifecycle">{{ $t('platform.plugins.tabLifecycle') }}</TabsTrigger>
       </TabsList>
 
       <!-- Registered tab -->
-      <TabsContent value="registered">
+      <TabsContent v-if="canAudit" value="registered">
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
@@ -290,7 +294,6 @@ async function runVerify() {
           </CardHeader>
           <CardContent>
             <DataTable
-              v-if="canAudit"
               :columns="registeredColumns"
               :rows="sortedRegistered"
               :row-key="(plugin) => plugin.id"
@@ -316,10 +319,10 @@ async function runVerify() {
                 <Badge variant="outline">{{ row.type }}</Badge>
               </template>
               <template #cell-version="{ row }">
-                <span class="font-mono text-xs">{{ row.version || "—" }}</span>
+                <span class="font-mono text-xs">{{ row.version || $t('common.misc.none') }}</span>
               </template>
               <template #cell-publisher="{ row }">
-                <span class="text-xs text-muted-foreground">{{ row.publisher || "—" }}</span>
+                <span class="text-xs text-muted-foreground">{{ row.publisher || $t('common.misc.none') }}</span>
               </template>
               <template #cell-capabilities="{ row }">
                 <div class="flex flex-wrap gap-1">
@@ -328,11 +331,6 @@ async function runVerify() {
                 </div>
               </template>
             </DataTable>
-            <p v-else class="text-sm text-muted-foreground">
-              <i18n-t keypath="platform.plugins.auditScopeRequired" tag="span" scope="global">
-                <template #scope><code class="font-mono">audit:read</code></template>
-              </i18n-t>
-            </p>
           </CardContent>
         </Card>
       </TabsContent>
@@ -375,14 +373,14 @@ async function runVerify() {
                 <Badge variant="outline">{{ row.type }}</Badge>
               </template>
               <template #cell-version="{ row }">
-                <span class="font-mono text-xs">{{ row.version || "—" }}</span>
+                <span class="font-mono text-xs">{{ row.version || $t('common.misc.none') }}</span>
               </template>
               <template #cell-status="{ row }">
                 <Badge :variant="statusVariant(row.status)">{{ row.status }}</Badge>
               </template>
               <template #cell-runtime="{ row }">
                 <Badge v-if="row.runtime" :variant="runtimeVariant(row.runtime.state)">{{ row.runtime.state }}</Badge>
-                <span v-else class="text-xs text-muted-foreground">—</span>
+                <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
               </template>
               <template #cell-available="{ row }">
                 <Badge :variant="row.available ? 'success' : 'secondary'">{{ row.available ? $t('common.misc.yes') : $t('common.misc.no') }}</Badge>
@@ -392,7 +390,7 @@ async function runVerify() {
                   <code class="font-mono text-xs text-muted-foreground">{{ shortId(row.artifact_sha256, 12) }}</code>
                   <CopyButton :value="row.artifact_sha256" />
                 </div>
-                <span v-else class="text-xs text-muted-foreground">—</span>
+                <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
               </template>
               <template #cell-capabilities="{ row }">
                 <div class="flex flex-wrap gap-1">
@@ -413,7 +411,7 @@ async function runVerify() {
                     <Play v-else aria-hidden="true" class="size-4" />
                     {{ transitionLabel(status) }}
                   </Button>
-                  <span v-if="!nextStates(row).length" class="text-xs text-muted-foreground">—</span>
+                  <span v-if="!nextStates(row).length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                 </div>
               </template>
             </DataTable>
@@ -480,6 +478,7 @@ async function runVerify() {
               :placeholder="$t('platform.plugins.artifactPlaceholder')"
               class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
+            <p class="text-xs text-muted-foreground">{{ $t('platform.plugins.verifyBothRequired') }}</p>
           </div>
 
           <div v-if="verifyResult" class="space-y-4 rounded-md border border-success/40 bg-success/5 p-4">
@@ -499,7 +498,7 @@ async function runVerify() {
               </div>
               <div class="rounded-md border border-border p-2">
                 <p class="font-medium uppercase text-muted-foreground">{{ $t('platform.plugins.versionPublisher') }}</p>
-                <p class="mt-1 font-mono">{{ verifyResult.manifest.version || "—" }} · {{ verifyResult.manifest.publisher || "—" }}</p>
+                <p class="mt-1 font-mono">{{ verifyResult.manifest.version || $t('common.misc.none') }} · {{ verifyResult.manifest.publisher || $t('common.misc.none') }}</p>
               </div>
             </div>
 

@@ -21,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -57,13 +58,13 @@ const columns = computed<DataTableColumn<WorkerScript>[]>(() => [
   { key: "capabilities", label: t("platform.workers.colCapabilities") },
   { key: "public", label: t("platform.workers.colPublic"), sortable: true },
   { key: "updated_at", label: t("platform.workers.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
-  { key: "source", label: t("platform.workers.colSource") },
+  { key: "source", label: t("platform.workers.colSource"), sortable: true },
   { key: "actions", label: t("platform.workers.colActions"), align: "right" },
 ]);
 
-function sourcePreview(source: string): string {
-  const firstLine = source.split("\n", 1)[0] ?? "";
-  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+/** First line of the script; CSS handles the visual truncation. */
+function sourceFirstLine(source: string): string {
+  return source.split("\n", 1)[0] ?? "";
 }
 
 // ── Source view dialog ──────────────────────────────────────────────────────
@@ -229,10 +230,11 @@ async function submitRun() {
             <button
               type="button"
               class="max-w-[280px] truncate text-left font-mono text-xs text-muted-foreground hover:text-primary"
-              :title="$t('platform.workers.viewSource')"
+              :title="sourceFirstLine(row.source) || $t('platform.workers.sourceEmpty')"
+              :aria-label="$t('platform.workers.viewSource')"
               @click="sourceTarget = row"
             >
-              {{ sourcePreview(row.source) || $t('platform.workers.sourceEmpty') }}
+              {{ sourceFirstLine(row.source) || $t('platform.workers.sourceEmpty') }}
             </button>
           </template>
           <template #cell-actions="{ row }">
@@ -294,11 +296,14 @@ async function submitRun() {
               <Label for="worker-caps">{{ $t('platform.workers.capabilitiesLabel') }}</Label>
               <Input id="worker-caps" v-model="deployCapabilities" placeholder="kv:read, static:read" />
             </div>
-            <div class="flex items-end">
-              <label class="flex items-center gap-2 text-sm">
-                <input v-model="deployPublic" type="checkbox" class="size-4 accent-primary" />
-                {{ $t('platform.workers.publicWorker') }}
+            <div class="grid gap-2">
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox v-model="deployPublic" />
+                <span>{{ $t('platform.workers.publicWorker') }}</span>
               </label>
+              <p :class="cn('text-xs', deployPublic ? 'text-warning' : 'text-muted-foreground')">
+                {{ $t('platform.workers.publicWorkerWarning') }}
+              </p>
             </div>
           </div>
           <DialogFooter>

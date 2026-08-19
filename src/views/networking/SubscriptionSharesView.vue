@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Published subscriptions — the public URLs this server serves.
+ * Published subscriptions: the public URLs this server serves.
  *
  * This lives in the dashboard rather than in a plugin because shares are
  * core-owned: the route, the token comparison, the rate limit and the audit
@@ -23,7 +23,6 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  Ban,
   Copy,
   ExternalLink,
   KeyRound,
@@ -57,6 +56,7 @@ import {
 } from "./publishedModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -120,7 +120,7 @@ const stateVariant: Record<PublishedState, "default" | "secondary" | "destructiv
 // ── publish ────────────────────────────────────────────────────────────────
 //
 // The old form asked for a plugin id and a subscription id as free text, with
-// the hint "as listed in the plugin's Subscriptions tab" — an instruction to go
+// the hint "as listed in the plugin's Subscriptions tab", an instruction to go
 // to another screen, copy an identifier, and come back. The dialog reads the
 // plugin's own records instead, so publishing is a choice rather than a
 // transcription.
@@ -261,16 +261,34 @@ const confirmMatches = computed(() => {
   return !!target && confirmText.value.trim() === target.slug;
 });
 
+/** Set when Confirm is pressed with a slug that does not match, so the click
+ *  answers instead of doing nothing. */
+const confirmError = ref(false);
+watch(confirmText, () => {
+  if (confirmMatches.value) confirmError.value = false;
+});
+
 function askRotate(share: SubscriptionShareView): void {
   confirmText.value = "";
+  confirmError.value = false;
   deleteTarget.value = null;
   rotateTarget.value = share;
 }
 
 function askDelete(share: SubscriptionShareView): void {
   confirmText.value = "";
+  confirmError.value = false;
   rotateTarget.value = null;
   deleteTarget.value = share;
+}
+
+function confirmDestructive(): void {
+  if (!confirmMatches.value) {
+    confirmError.value = true;
+    return;
+  }
+  if (rotateTarget.value) void rotate();
+  else void remove();
 }
 
 async function rotate(): Promise<void> {
@@ -352,6 +370,7 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
   {
     key: "format",
     label: t("networking.shares.columns.format"),
+    sortable: true,
     class: "w-[8rem]",
     value: (row) => row.default_format || "",
   },
@@ -434,8 +453,13 @@ watch(() => route.query, applyDeepLink);
       >
         <template #cell-slug="{ row }">
           <div class="min-w-0">
-            <p :class="cn('truncate font-medium', selectedId === row.id && 'text-primary')">/{{ row.slug }}</p>
-            <p class="truncate font-mono text-xs text-muted-foreground">{{ sharePath(row).slice(0, 24) }}…</p>
+            <p
+              :class="cn('truncate font-medium', selectedId === row.id && 'text-primary')"
+              :title="`/${row.slug}`"
+            >/{{ row.slug }}</p>
+            <p class="truncate font-mono text-xs text-muted-foreground" :title="sharePath(row)">
+              {{ sharePath(row) }}
+            </p>
           </div>
         </template>
 
@@ -446,7 +470,7 @@ watch(() => route.query, applyDeepLink);
         </template>
 
         <template #cell-source="{ row }">
-          <span class="truncate text-sm">{{ sourceLabel(row) }}</span>
+          <span class="truncate text-sm" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span>
         </template>
 
         <template #cell-format="{ row }">
@@ -456,7 +480,7 @@ watch(() => route.query, applyDeepLink);
         </template>
 
         <template #cell-rotated="{ row }">
-          <span class="text-sm" :title="formatDateTime(row.rotated_at || row.created_at)">
+          <span class="text-sm tabular" :title="formatDateTime(row.rotated_at || row.created_at)">
             {{ formatRelativeTime(row.rotated_at || row.created_at) }}
           </span>
         </template>
@@ -473,8 +497,8 @@ watch(() => route.query, applyDeepLink);
         <div v-else class="rounded-lg border border-border">
           <div class="flex items-start justify-between gap-3 border-b border-border p-4">
             <div class="min-w-0">
-              <p class="truncate font-medium">/{{ selected.slug }}</p>
-              <p class="truncate text-xs text-muted-foreground">{{ sourceLabel(selected) }}</p>
+              <p class="truncate font-medium" :title="`/${selected.slug}`">/{{ selected.slug }}</p>
+              <p class="truncate text-xs text-muted-foreground" :title="sourceLabel(selected)">{{ sourceLabel(selected) }}</p>
             </div>
             <Badge :variant="stateVariant[publishedState(selected)]">
               {{ $t('networking.shares.state.' + publishedState(selected)) }}
@@ -539,7 +563,9 @@ watch(() => route.query, applyDeepLink);
               variant="outline"
               size="sm"
               :disabled="busyId === selected.id || selected.source.kind !== 'plugin'"
-              :title="$t('networking.shares.refreshHint')"
+              :title="selected.source.kind === 'plugin'
+                ? $t('networking.shares.refreshHint')
+                : $t('networking.shares.refreshPluginOnly')"
               @click="refreshSource(selected)"
             >
               <RefreshCw :class="cn('size-4', busyId === selected.id && 'animate-spin')" aria-hidden="true" />
@@ -567,13 +593,17 @@ watch(() => route.query, applyDeepLink);
         <div class="rounded-lg border border-border p-4">
           <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.alsoPublishes') }}</p>
           <div class="mt-2 flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" @click="router.push('/platform/static')">
-              <ExternalLink class="size-3.5" aria-hidden="true" />
-              {{ $t('networking.shares.staticLink') }}
+            <Button variant="outline" size="sm" as-child>
+              <RouterLink to="/platform/static">
+                <ExternalLink class="size-3.5" aria-hidden="true" />
+                {{ $t('networking.shares.staticLink') }}
+              </RouterLink>
             </Button>
-            <Button variant="outline" size="sm" @click="router.push('/platform/workers')">
-              <ExternalLink class="size-3.5" aria-hidden="true" />
-              {{ $t('networking.shares.workersLink') }}
+            <Button variant="outline" size="sm" as-child>
+              <RouterLink to="/platform/workers">
+                <ExternalLink class="size-3.5" aria-hidden="true" />
+                {{ $t('networking.shares.workersLink') }}
+              </RouterLink>
             </Button>
           </div>
         </div>
@@ -620,7 +650,7 @@ watch(() => route.query, applyDeepLink);
               <Label>{{ $t('networking.shares.record') }}</Label>
               <Select v-model="draft.subscriptionId" :disabled="recordsLoading || !records.length">
                 <SelectTrigger>
-                  <SelectValue :placeholder="recordsLoading ? $t('common.states.loading') : $t('networking.shares.recordPlaceholder')" />
+                  <SelectValue :placeholder="recordsLoading ? $t('common.state.loading') : $t('networking.shares.recordPlaceholder')" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem v-for="record in records" :key="record.id" :value="record.id">
@@ -675,37 +705,35 @@ watch(() => route.query, applyDeepLink);
     </Dialog>
 
     <!-- ── rotate / delete confirmation ────────────────────────────────── -->
-    <Dialog :open="!!rotateTarget || !!deleteTarget" @update:open="(open) => { if (!open) { rotateTarget = null; deleteTarget = null; } }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
-            {{ rotateTarget ? $t('networking.shares.rotateTitle') : $t('networking.shares.deleteTitle') }}
-          </DialogTitle>
-          <DialogDescription>
-            {{ rotateTarget ? $t('networking.shares.rotateWarning') : $t('networking.shares.deleteWarning') }}
-          </DialogDescription>
-        </DialogHeader>
-        <div class="grid gap-2">
-          <Label for="share-confirm">
-            {{ $t('networking.shares.confirmPrompt', { slug: (rotateTarget ?? deleteTarget)?.slug }) }}
-          </Label>
-          <Input id="share-confirm" v-model="confirmText" autocomplete="off" spellcheck="false" />
-        </div>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button
-            :variant="deleteTarget ? 'destructive' : 'default'"
-            :disabled="!confirmMatches"
-            @click="rotateTarget ? rotate() : remove()"
-          >
-            <Ban v-if="deleteTarget" class="size-4" aria-hidden="true" />
-            <KeyRound v-else class="size-4" aria-hidden="true" />
-            {{ rotateTarget ? $t('networking.shares.rotate') : $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!rotateTarget || !!deleteTarget"
+      :title="rotateTarget ? $t('networking.shares.rotateTitle') : $t('networking.shares.deleteTitle')"
+      :description="rotateTarget
+        ? $t('networking.shares.rotateWarning', { slug: rotateTarget.slug })
+        : $t('networking.shares.deleteWarning', { slug: deleteTarget?.slug ?? '' })"
+      :confirm-label="rotateTarget ? $t('networking.shares.rotate') : $t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :variant="deleteTarget ? 'destructive' : 'default'"
+      :pending="!!busyId"
+      :confirm-disabled="!confirmMatches"
+      @update:open="(open) => { if (!open) { rotateTarget = null; deleteTarget = null; } }"
+      @confirm="confirmDestructive"
+    >
+      <div class="grid gap-2">
+        <Label for="share-confirm">
+          {{ $t('networking.shares.confirmPrompt', { slug: (rotateTarget ?? deleteTarget)?.slug }) }}
+        </Label>
+        <Input
+          id="share-confirm"
+          v-model="confirmText"
+          autocomplete="off"
+          spellcheck="false"
+          :aria-invalid="confirmError || undefined"
+        />
+        <p v-if="confirmError" class="text-xs text-destructive">
+          {{ $t('networking.shares.confirmMismatch') }}
+        </p>
+      </div>
+    </ConfirmDialog>
   </div>
 </template>

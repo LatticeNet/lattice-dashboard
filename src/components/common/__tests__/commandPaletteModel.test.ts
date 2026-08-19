@@ -72,7 +72,7 @@ test("concurrent loads share one in-flight fetch", async () => {
   assert.deepEqual([a, b, c], ["shared", "shared", "shared"]);
 });
 
-test("a failed fetch is not cached — the next load retries", async () => {
+test("a failed fetch is not cached. The next load retries", async () => {
   let calls = 0;
   const cache = createTtlCache<string>(30_000, () => 0);
 

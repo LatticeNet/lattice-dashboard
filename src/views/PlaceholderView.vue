@@ -17,11 +17,18 @@ const description = computed(() =>
     : String(route.meta.title ?? title.value),
 );
 
-/** Resolve the section's nav icon so the placeholder feels in-context. */
+/**
+ * Resolve the nav icon by route name. Matching on the displayed title breaks the
+ * moment either side is localised, so compare the stable route name instead.
+ */
 const icon = computed(() => {
-  const sec = NAV.find((s) => s.title === section.value);
-  const item = sec?.items.find((i) => i.title === title.value);
-  return item?.icon ?? Construction;
+  const routeName = String(route.name ?? "");
+  if (!routeName) return Construction;
+  for (const sec of NAV) {
+    const item = sec.items.find((i) => i.name === routeName);
+    if (item) return item.icon;
+  }
+  return Construction;
 });
 </script>
 
@@ -36,7 +43,7 @@ const icon = computed(() => {
       </template>
     </PageHeader>
 
-    <Card class="lattice-grid relative overflow-hidden rounded-xl border shadow-sm">
+    <Card class="relative overflow-hidden rounded-xl border shadow-sm">
       <div class="flex flex-col items-center justify-center gap-4 px-6 py-20 text-center">
         <div
           class="flex size-14 items-center justify-center rounded-xl border bg-card text-muted-foreground shadow-xs"

@@ -18,7 +18,7 @@ export interface ControlPlaneIdentity {
   /** The host as an operator says it: "lattice.roobli.org", "localhost:5273". */
   host: string;
   kind: ControlPlaneKind;
-  /** Server build, when it has been read. Empty until then — never guessed. */
+  /** Server build, when it has been read. Empty until then. Never guessed. */
   version: string;
   /** True when the served dashboard is not the one this server was built with. */
   dashboardDrift: boolean;

@@ -1,18 +1,18 @@
 /**
- * Approvals event aggregation — turns the flat approvals inbox into
+ * Approvals event aggregation. Turns the flat approvals inbox into
  * operator-meaningful "events" that can be dispositioned in one batch.
  *
  * The server emits one approval row per (node, plugin, action), so a single
  * fleet-wide change lands as dozens of inbox entries (e.g. 20 nodes upgrading
  * 0.3.0 → 0.3.3). Reviewing those one by one forces the operator to re-verify
  * the same plan text N times. This module groups actionable approvals by the
- * identity of the underlying change — (writer, plugin, action prefix, version
- * transition) — so one card represents one event.
+ * identity of the underlying change. (writer, plugin, action prefix, version
+ * transition). So one card represents one event.
  *
  * The grouping key is deliberately strict: no time-window fuzzy batching.
  * Two items belong to the same event iff they were written by the same actor,
  * for the same plugin, for the same action prefix (the part before ":"), and
- * — for agentupdate — the same current → target version transition parsed
+ *. For agentupdate. The same current → target version transition parsed
  * from the plan text. Anything that differs in any of those dimensions is a
  * different event and gets its own card.
  *
@@ -43,7 +43,7 @@ export type ApprovalEventTitleKind = "fleet-upgrade" | "linemeta-sync" | "generi
 export interface ApprovalEventGroup<T extends ApprovalEventItem = ApprovalEventItem> {
   /** Stable identity: writer | plugin | actionPrefix | transition. */
   key: string;
-  /** Normalized writer — never empty ("unknown" fallback). */
+  /** Normalized writer. Never empty ("unknown" fallback). */
   writer: string;
   plugin: string;
   actionPrefix: string;
@@ -54,9 +54,9 @@ export interface ApprovalEventGroup<T extends ApprovalEventItem = ApprovalEventI
   title: string;
   /** Items sorted by node label then id for deterministic display. */
   items: T[];
-  /** created_at of the newest item — drives card sorting and the age label. */
+  /** created_at of the newest item. Drives card sorting and the age label. */
   newestCreatedAt: string;
-  /** writer === SYSTEM_WRITER — the server itself proposed this change. */
+  /** writer === SYSTEM_WRITER. The server itself proposed this change. */
   isSystem: boolean;
 }
 
@@ -73,13 +73,13 @@ export const EVENT_NODE_PREVIEW_LIMIT = 6;
  * is included because approved-not-applied work is still an open disposition;
  * historical statuses (applied / rejected / dismissed / failed) are not.
  * Stale filtering stays in the view (it needs the stale heuristics from the
- * API layer) — stale plans must be re-planned individually, not batch-approved.
+ * API layer). Stale plans must be re-planned individually, not batch-approved.
  */
 export function isApprovalEventGroupable(item: Pick<ApprovalEventItem, "status">): boolean {
   return item.status === "pending" || item.status === "approved";
 }
 
-/** Action prefix — the part before the first ":" ("apply-metadata:abc…" → "apply-metadata"). */
+/** Action prefix. The part before the first ":" ("apply-metadata:abc…" → "apply-metadata"). */
 export function approvalActionPrefix(action: string): string {
   const at = action.indexOf(":");
   return (at === -1 ? action : action.slice(0, at)).trim();
@@ -276,7 +276,7 @@ export function partitionBatchResults<T>(
 /**
  * Run `worker` over `items` with at most `limit` in flight, preserving input
  * order in the settled-results array. Individual rejections are captured, not
- * thrown — a batch disposition must always run to completion so the operator
+ * thrown. A batch disposition must always run to completion so the operator
  * sees the full success/failure split instead of a halt at the first error.
  */
 export async function runWithConcurrency<T>(

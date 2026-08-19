@@ -7,15 +7,20 @@ export default {
     shared: {
       plan: "Plan",
       planCreated: "Plan created",
-      planReviewHint: "Review & approve under Operations → Approvals. Nothing is applied until approved.",
+      planReviewHint: "Review & approve under Operations / Approvals. Nothing is applied until approved.",
       planLabel: "Plan",
       planTextSha256: "plan text SHA-256",
       goToApprovals: "Go to Approvals",
       idLabel: "id {id}",
       noMatchTitle: "No matching results",
       noMatchDescription: "Try adjusting your search or filters.",
-      toastPlanCreated: "Plan created — review in Approvals",
+      toastPlanCreated: "Plan created, review in Approvals",
       toastPlanFailed: "Plan failed",
+      to: "to",
+      discardTitle: "Discard unsaved changes?",
+      discardDescription:
+        "This form has unsaved input, including any credentials you typed. Closing now discards it.",
+      discardConfirm: "Discard changes",
     },
 
     policy: {
@@ -163,7 +168,11 @@ export default {
       ddnsProfileId: "DDNS profile id",
       ddnsProfilePlaceholder: "optional alternative to token",
       hostnameNeedsCredential:
-        "A hostname requires a Cloudflare credential — provide a token or a DDNS profile id.",
+        "A hostname requires a Cloudflare credential: provide a token or a DDNS profile id.",
+      publishNeedsHostname: "Set a hostname first; public publishing needs one.",
+      publishTitle: "Publish public DNS records?",
+      publishDescription:
+        "Publish the current public IP addresses for {hostname} ({zones}) to the DNS provider now. Public DNS changes immediately, for everyone resolving that name.",
       credKeepHint:
         "A credential is already stored. Leave blank to keep it; type a new token to replace it.",
       createDeployment: "Create deployment",
@@ -184,7 +193,7 @@ export default {
     geoRouting: {
       title: "Geo-Routing",
       description:
-        "Geo-aware DNS apex routing — resolve each hostname to the nearest healthy node",
+        "Geo-aware DNS apex routing: resolve each hostname to the nearest healthy node",
       newRouting: "New geo-routing",
       routings: "Routings",
       apexRecords: "{count} geo-aware apex records",
@@ -216,7 +225,7 @@ export default {
       geoipDbHint:
         "Absolute path to a GeoLite2 mmdb on the DNS node. Leave blank to use the node default.",
       participatingNodes: "Participating nodes",
-      participatingNodesHint: "Answer targets — each needs geo lat/lon, a public IP, and health.",
+      participatingNodesHint: "Answer targets: each needs geo lat/lon, a public IP, and health.",
       noNodesTitle: "No nodes available",
       noNodesDescription: "Enroll nodes before configuring geo-routing.",
       nodeIdsPlaceholder: "node-a, node-b",
@@ -234,8 +243,9 @@ export default {
       previewTitle: "Geo-routing preview",
       previewSubtitle: "{hostname} · strategy {strategy}",
       renderOnlyLead: "render-only preview",
+      previewConfig: "Preview config",
       renderOnlyHint:
-        "This is a {renderOnly} of the CoreDNS configuration. Nothing is queued or applied — no approval is created.",
+        "This is a {renderOnly} of the CoreDNS configuration. Nothing is queued or applied, and no approval is created.",
       serverBlock: "CoreDNS server-block",
       warnings: "Warnings",
       perContinentTitle: "Per-continent node choice",
@@ -252,7 +262,7 @@ export default {
     ddns: {
       title: "DDNS",
       description:
-        "Dynamic DNS profiles — push each node's public IP to DNS when it changes",
+        "Dynamic DNS profiles: push each node's public IP to DNS when it changes",
       newProfile: "New profile",
       profiles: "Profiles",
       profileCount: "{count} DDNS profiles",
@@ -284,7 +294,7 @@ export default {
       ttlSeconds: "TTL (seconds)",
       maxRetries: "Max retries",
       cfApiToken: "Cloudflare API token",
-      cfTokenPlaceholder: "write-only — needs Zone:Read + DNS:Edit",
+      cfTokenPlaceholder: "write-only, needs Zone:Read + DNS:Edit",
       cfTokenHint: "Stored write-only; never returned by the API.",
       webhookUrl: "Webhook URL",
       method: "Method",
@@ -298,8 +308,11 @@ export default {
       toastCreateFailed: "Create failed",
       toastDeleted: "DDNS profile deleted",
       toastDeleteFailed: "Delete failed",
+      runTitle: "Run this DDNS update now?",
+      runDescription:
+        'Publish the current public IP of "{name}" to {domains} now. Public DNS changes immediately, for everyone resolving those names.',
       toastRunSuccess: "Published current node IP to DNS",
-      toastRunBadGateway: "Provider/network failure (502) — DNS publish did not complete",
+      toastRunBadGateway: "Provider/network failure (502), DNS publish did not complete",
       toastRunFailed: "Run failed",
     },
     shares: {
@@ -333,7 +346,7 @@ export default {
       notServing: "This URL is not being served right now, so clients using it get a 404.",
       clientLinks: "One URL per client",
       clientLinksHint:
-        "Without a client named, the served configuration is chosen from the fetching client's User-Agent — a guess that fails for curl and anything unfamiliar.",
+        "Without a client named, the served configuration is chosen from the fetching client's User-Agent, a guess that fails for curl and anything unfamiliar.",
       copiedClient: "Copied the {target} URL.",
       created: "Created",
       rotatedAt: "Rotated",
@@ -342,21 +355,24 @@ export default {
       formatHint: "Only the encoding envelope. The client's configuration format comes from the URL or its User-Agent.",
       refreshSource: "Refresh source",
       refreshHint: "Fetch from the provider now instead of waiting for the next client poll.",
+      refreshPluginOnly:
+        "Only a plugin-backed share can be refreshed. This one serves a proxy user, which has no provider to fetch from.",
       refreshed: "Refreshed {slug}.",
       refreshFailed: "Refresh failed.",
       lastGoodServed: "The last good snapshot is still being served.",
       rotate: "Rotate token",
       rotateTitle: "Rotate this token?",
       rotateWarning:
-        "Every client using the current URL stops working immediately and must be given the new one.",
+        "Rotating /{slug} invalidates its live public URL. Every client using the current URL stops working immediately and must be given the new one.",
       rotated: "Rotated {slug}. The previous URL now 404s like any unknown path.",
       rotateFailed: "The token could not be rotated.",
       deleteTitle: "Delete this share?",
       deleteWarning:
-        "The URL stops being served immediately. The subscription itself stays in the plugin.",
+        "/{slug} stops being served immediately. The subscription itself stays in the plugin.",
       deleted: "Deleted {slug}.",
       deleteFailed: "The share could not be deleted.",
       confirmPrompt: "Type {slug} to confirm.",
+      confirmMismatch: "That does not match the slug yet, so nothing was changed.",
       published: "Published {slug}. The URL is live now.",
       publishFailed: "The share could not be created.",
       sourceKind: "Source",
@@ -375,7 +391,7 @@ export default {
       slugRule: "Lowercase letters, digits and hyphens, starting with a letter or digit.",
       slugTaken: "A share with this slug already exists.",
       defaultFormat: "Encoding",
-      clipboardUnavailable: "The clipboard is unavailable — select the URL and copy it manually.",
+      clipboardUnavailable: "The clipboard is unavailable, select the URL and copy it manually.",
       alsoPublishes: "This server also publishes",
       staticLink: "Static objects",
       workersLink: "Worker routes",
@@ -384,7 +400,7 @@ export default {
     tunnels: {
       title: "Tunnels",
       description:
-        "Cloudflare Tunnels (cloudflared) — map public hostnames to node-local services",
+        "Cloudflare Tunnels (cloudflared): map public hostnames to node-local services",
       newTunnel: "New tunnel",
       tunnels: "Tunnels",
       tunnelCount: "{count} tunnels",
@@ -402,7 +418,7 @@ export default {
       rulesCountOne: "{count} rule",
       newTunnelTitle: "New tunnel",
       dialogDescription:
-        "Describe a cloudflared tunnel. Credentials live node-local — the server only stores topology.",
+        "Describe a cloudflared tunnel. Credentials live node-local; the server only stores topology.",
       name: "Name",
       nodeLabel: "Node",
       selectNode: "Select a node",
@@ -416,7 +432,11 @@ export default {
       hostnamePlaceholder: "app.example.com",
       servicePlaceholder: "http://localhost:8088",
       pathPlaceholder: "path (opt)",
+      hostnameAria: "Ingress rule {index} hostname",
+      serviceAria: "Ingress rule {index} local service",
+      pathAria: "Ingress rule {index} path (optional)",
       removeRule: "Remove rule",
+      removeRuleDisabled: "A tunnel needs at least one ingress rule.",
       serviceExamples:
         "Service examples: {http}, {ssh}, or {status}. A catch-all 404 is appended automatically.",
       deleteTitle: "Delete tunnel?",
@@ -424,14 +444,14 @@ export default {
       planTitle: "Tunnel config plan",
       planSubtitle: "{plugin} / {action} on {node}",
       planReviewHint:
-        "Plan created. Review and approve under {approvals} before the node applies it. The rendered {configYml} references the credentials file path only — no credential material is embedded.",
-      approvalsLabel: "Operations → Approvals",
+        "Plan created. Review and approve under {approvals} before the node applies it. The rendered {configYml} references the credentials file path only, so no credential material is embedded.",
+      approvalsLabel: "Operations / Approvals",
       approvalLabel: "approval {id}",
       toastCreated: "Tunnel created",
       toastCreateFailed: "Create failed",
       toastDeleted: "Tunnel deleted",
       toastDeleteFailed: "Delete failed",
-      toastPlanCreated: "Plan created — review in Approvals",
+      toastPlanCreated: "Plan created, review in Approvals",
       toastPlanFailed: "Plan failed",
     },
 
@@ -458,9 +478,11 @@ export default {
         "The matrix needs at least one group. Create groups to author who-can-reach-whom policy.",
       goToGroups: "Go to Groups",
       noPoliciesHint:
-        "No group policies yet — every cell defaults to your fleet baseline. Click a cell to author one.",
+        "No group policies yet, so every cell defaults to your fleet baseline. Click a cell to author one.",
       newGroupPolicy: "New group policy",
+      newGroupPolicyNeedsGroups: "Create at least one group first; a group policy needs one.",
       planAll: "Plan",
+      planAllNeedsPolicies: "Author at least one group policy first; there is nothing to plan yet.",
       editorTitle: "Policy",
       editorDescription:
         "Rules here govern traffic from the source group to the destination group. Other cells are preserved.",
@@ -470,15 +492,16 @@ export default {
       saveCell: "Save policy",
       toastSaved: "Group policy saved",
       toastSaveFailed: "Failed to save group policy",
-      toastPlanned: "Planned — {n} node(s) affected",
+      toastPlanned: "Planned, {n} node(s) affected",
       planResultTitle: "Group policy plan",
-      planResultDescription: "Expanded to per-node plans. Approve each under Operations → Approvals.",
+      planResultDescription: "Expanded to per-node plans. Approve each under Operations / Approvals.",
       planAffected: "{n} affected",
       planConflicts: "{n} conflicts",
       planOrphaned: "{n} orphaned",
       planSelectorImpacts: "{n} selector-backed group(s)",
       planAffectedNodes: "Affected nodes",
       planConflictsTitle: "Conflicts",
+      planConflictLine: "{node}: {reason}",
       planNoop: "No changes to plan.",
       selectorImpactTitle: "Dynamic selector membership affects this plan",
       selectorImpactDescription:

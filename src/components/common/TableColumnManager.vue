@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * TableColumnManager — toolbar button + small anchored panel for toggling a
+ * TableColumnManager: toolbar button + small anchored panel for toggling a
  * table's optional columns. State lives with the caller (which persists it);
  * this component only renders the catalog and re-emits toggles. No popover
  * primitive exists in components/ui, so the panel is a locally positioned

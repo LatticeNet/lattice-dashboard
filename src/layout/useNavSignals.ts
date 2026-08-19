@@ -7,7 +7,7 @@
  * expensive thing on screen.
  *
  * Every read is soft. A denied scope or a transient failure leaves the count
- * undefined, and an undefined count shows nothing — the nav degrades to what it
+ * undefined, and an undefined count shows nothing. The nav degrades to what it
  * was rather than claiming a fleet is healthy because it could not look.
  */
 import { computed } from "vue";

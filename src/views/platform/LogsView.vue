@@ -36,6 +36,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -135,7 +136,7 @@ const reversedLines = computed(() => lines.value.slice().reverse());
 
 // Cap the number of DOM rows. A query/tail can hold up to 5000 lines; rendering
 // them all stacks thousands of nodes and janks the page. Render only the newest
-// window — older lines stay reachable via search or "load older".
+// window; older lines stay reachable via search or "load older".
 const LOG_RENDER_CAP = 1500;
 const renderedLines = computed(() => reversedLines.value.slice(0, LOG_RENDER_CAP));
 const renderCapped = computed(() => reversedLines.value.length > LOG_RENDER_CAP);
@@ -419,17 +420,20 @@ function refreshAll(): void {
                 v-for="source in sortedSources"
                 :key="source.id"
                 :class="cn(
-                  'rounded-lg border border-border p-3 transition-colors hover:bg-muted/35',
+                  'rounded-lg border border-border p-3',
                   selectedSourceId === source.id && 'border-primary bg-primary/5',
                 )"
               >
+                <!-- The hover tint lives on the button, not the card: the padded
+                     strip around the row actions is not clickable. -->
                 <button
                   type="button"
-                  class="block w-full text-left"
+                  class="-mx-2 -mt-2 block w-full rounded-md p-2 text-left outline-none transition-colors hover:bg-muted/35 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  :aria-pressed="selectedSourceId === source.id"
                   @click="selectedSourceId = source.id"
                 >
                   <div class="flex items-start justify-between gap-2">
-                    <span class="truncate font-medium">{{ source.name || source.id }}</span>
+                    <span class="truncate font-medium" :title="source.name || source.id">{{ source.name || source.id }}</span>
                     <Badge :variant="source.enabled ? 'success' : 'secondary'">
                       {{ source.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                     </Badge>
@@ -489,15 +493,15 @@ function refreshAll(): void {
               </div>
               <div class="rounded-md border border-border p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statFirstSeen') }}</p>
-                <p class="mt-1 text-sm">{{ selectedStats?.first_at ? formatDateTime(selectedStats.first_at) : "—" }}</p>
+                <p class="mt-1 text-sm">{{ selectedStats?.first_at ? formatDateTime(selectedStats.first_at) : $t('common.misc.none') }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLastLine') }}</p>
-                <p class="mt-1 text-sm">{{ selectedStats?.last_at ? formatDateTime(selectedStats.last_at) : "—" }}</p>
+                <p class="mt-1 text-sm">{{ selectedStats?.last_at ? formatDateTime(selectedStats.last_at) : $t('common.misc.none') }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLastIngest') }}</p>
-                <p class="mt-1 text-sm">{{ selectedStats?.last_ingest_at ? formatDateTime(selectedStats.last_ingest_at) : "—" }}</p>
+                <p class="mt-1 text-sm">{{ selectedStats?.last_ingest_at ? formatDateTime(selectedStats.last_ingest_at) : $t('common.misc.none') }}</p>
               </div>
             </div>
           </CardContent>
@@ -522,7 +526,7 @@ function refreshAll(): void {
               class="flex flex-wrap items-end gap-3"
               @submit.prevent="applyFilter"
             >
-              <div class="grid flex-1 gap-2" style="min-width: 200px">
+              <div class="grid min-w-[200px] flex-1 gap-2">
                 <Label for="log-q">{{ $t('platform.logs.filterLabel') }}</Label>
                 <Input id="log-q" v-model="queryText" :placeholder="$t('platform.logs.filterPlaceholder')" />
               </div>
@@ -581,7 +585,7 @@ function refreshAll(): void {
                 </div>
 
                 <p v-if="renderCapped" class="text-xs text-muted-foreground">
-                  {{ $t('platform.logs.renderCapped', { shown: LOG_RENDER_CAP, total: reversedLines.length }) }}
+                  {{ $t('platform.logs.renderCapped', { shown: LOG_RENDER_CAP, loaded: reversedLines.length }) }}
                 </p>
                 <p v-if="truncated" class="text-xs text-warning">
                   {{ $t('platform.logs.resultTruncated') }}
@@ -674,9 +678,9 @@ function refreshAll(): void {
             </div>
           </div>
 
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-            {{ $t('platform.logs.enabledLabel') }}
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <Checkbox v-model="form.enabled" />
+            <span>{{ $t('platform.logs.enabledLabel') }}</span>
           </label>
 
           <DialogFooter>

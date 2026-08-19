@@ -34,8 +34,7 @@ export default {
       membersHint: "显式成员是与策略相关的规范成员集。",
       quickTag: "按标签快捷选择",
       quickTagPlaceholder: "选择一个标签",
-      taggedMatches: "匹配 {n} 个",
-      selectTagged: "选择匹配节点",
+      selectTaggedCount: "选择 {n} 个匹配节点",
       memberSearch: "搜索节点…",
       noNodes: "无匹配节点",
       removeMember: "移除成员",
@@ -282,7 +281,7 @@ export default {
         liveStatus: "实时状态",
         liveStatusDesc: "实时资源压力与近期趋势",
         sparklineLabel: "近期 CPU 趋势",
-        sparklinePending: "正在采集样本 —— 几次轮询后会显示趋势。",
+        sparklinePending: "正在采集样本:几次轮询后会显示趋势。",
         load: "负载(1 分钟)",
         uptime: "运行时长",
         sampleTime: "采样时间",
@@ -419,6 +418,16 @@ export default {
           proxyDriftCleared: "代理漂移缓存",
         },
       },
+      confirm: {
+        rotateTitle: "轮换接入令牌",
+        rotateDescription:
+          '要轮换 "{name}" 的接入令牌吗?当前令牌会立即失效,该节点必须用新令牌重新接入。',
+        disableTitle: "停用节点",
+        disableDescription: '要停用 "{name}" 吗?在重新启用之前它不再接受任务。',
+        clearIpTitle: "清除 IP 发现覆盖",
+        clearIpDescription:
+          '要清除 "{name}" 的 IP 发现覆盖吗?该节点会回到服务端默认配置,更改会立即保存。',
+      },
       toast: {
         tokenCreated: "接入令牌已生成",
         enrollFailed: "接入失败",
@@ -504,6 +513,7 @@ export default {
         title: "区域汇总",
         description: "按国家/地区与区域统计节点",
         empty: "设置坐标后会在这里汇总。",
+        opensFirst: "在位置编辑器中打开 {name}",
       },
       unlocated: {
         title: "未定位",
@@ -511,6 +521,7 @@ export default {
         empty: "所有可见节点都已定位。",
         noIp: "未上报公网 IP",
         noPublicIp: "无可路由公网 IP",
+        more: "另有 {count} 个未显示",
       },
       editor: {
         title: "位置编辑",
@@ -534,6 +545,10 @@ export default {
         clear: "清除",
         adminRequired: "编辑位置需要 `node:admin` 权限。",
       },
+      confirm: {
+        clearTitle: "清除已保存的位置",
+        clearDescription: '要清除 "{name}" 的坐标吗?在重新设置位置之前,该节点不会出现在地图上。',
+      },
       toast: {
         coordinatesRequired: "纬度和经度为必填项",
         locationSaved: "节点位置已保存",
@@ -545,7 +560,7 @@ export default {
         resolverDisabled: "服务器未配置 GeoIP 查询",
         resolvePartial: "{count} 个查询失败",
         resolveNoop: "没有节点位置发生变化",
-        resolveNoPublicIp: "{count} 个节点没有可路由的公网 IP —— 请在节点上设置 IP 模式",
+        resolveNoPublicIp: "{count} 个节点没有可路由的公网 IP:请在节点上设置 IP 模式",
       },
     },
 
@@ -594,6 +609,7 @@ export default {
         rateCardHint: "汇率为手动维护，保存在当前浏览器中，并按目标币种分别记录。",
         rateInput: "{source} 到 {target} 的汇率",
         missingRate: "缺汇率",
+        pair: "{source} 兑 {target}",
         saveRates: "保存汇率",
         singleCurrency: "所有周期性费用都已经是目标币种。",
         moreCurrencies: "另有 {count} 种币种",
@@ -807,6 +823,8 @@ export default {
         noMatchDescription: "调整搜索文本或表达式筛选。",
         searchPlaceholder: "按名称 / 目标 / 类型搜索监控……",
         expressionPlaceholder: "AND(type:http, status:enabled, target:443)",
+        expressionLabel: "监控筛选表达式",
+        expressionInvalid: "表达式无效",
         expressionHelp: "字段:id、name、type、target、status、enabled、interval、timeout、scope、node。支持 AND(...)、OR(...)、NOT(...) 或 field:value。",
         interval: "每 {interval} 秒,超时 {timeout} 秒",
         updated: "更新于 {time}",
@@ -819,7 +837,8 @@ export default {
         pause: "暂停",
         resume: "继续",
         newSince: "暂停后新增 {count} 条",
-        showing: "显示 {count} 条",
+        showingOf: "显示 {count} / {total} 条匹配",
+        showingCapped: "显示 {count} / {total} 条匹配(列表上限 {cap} 条)",
         empty: "没有符合此筛选的结果。",
       },
       assignment: {
@@ -879,6 +898,7 @@ export default {
         colObserved: "观测时间",
       },
       confirm: {
+        deleteTitle: "删除监控",
         delete: "确定删除监控「{name}」吗?",
       },
       toast: {

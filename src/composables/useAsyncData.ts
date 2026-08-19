@@ -2,7 +2,7 @@ import { ref, shallowRef, onScopeDispose, watch, type Ref, type ShallowRef } fro
 import { useDocumentVisibility } from "@vueuse/core";
 
 /**
- * Data fetching with optional visibility-aware polling — the backbone of the
+ * Data fetching with optional visibility-aware polling. The backbone of the
  * dashboard's "live" feel given the server exposes NO websocket/SSE. Each run
  * aborts the previous in-flight request, keeps the last good value on error
  * (so a transient blip doesn't blank the screen), and pauses while the tab is

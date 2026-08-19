@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { groupColor } from "@/lib/groupColors";
 
 /**
- * GroupChip — a compact, CSP-safe group identity badge (color dot + name).
+ * GroupChip: a compact, CSP-safe group identity badge (color dot + name).
  * Reused by the reachability matrix axes, the cell editor, and group lists.
  */
 const props = withDefaults(

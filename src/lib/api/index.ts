@@ -260,7 +260,7 @@ export const api = {
         input,
       ),
     // Suspected duplicate nodes (same machine enrolled twice): clustered by
-    // wireguard key / public+internal IP pair / host fingerprint — never public
+    // wireguard key / public+internal IP pair / host fingerprint. Never public
     // IP alone (NAT hosts share it). Detection only; the operator decides.
     duplicates: () =>
       http.get<{
@@ -631,7 +631,7 @@ export const api = {
     create: (body: SubscriptionShareCreateRequest) =>
       http.post<SubscriptionShareView>("/api/subscription-shares", body),
     // Rotation invalidates the old URL immediately and drops the cached output
-    // for that share, and returns the share carrying its new token — so the
+    // for that share, and returns the share carrying its new token. So the
     // caller replaces the row it has rather than refetching the whole list.
     rotate: (id: string) =>
       http.post<SubscriptionShareView>(

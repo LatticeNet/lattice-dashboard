@@ -46,6 +46,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -124,12 +125,18 @@ function staleApprovalCount(nodeId: string): number {
 const columns = computed<DataTableColumn<AgentUpdatePolicy>[]>(() => {
   const cols: DataTableColumn<AgentUpdatePolicy>[] = [
     { key: "node_id", label: t("platform.agentUpdates.colNode"), sortable: true, searchable: true, value: (p) => nodeName(p.node_id) },
-    { key: "state", label: t("platform.agentUpdates.colState") },
+    {
+      key: "state",
+      label: t("platform.agentUpdates.colState"),
+      sortable: true,
+      // The cell renders enabled + auto_plan; sort on the same pair.
+      value: (p) => (p.enabled ? 2 : 0) + (p.auto_plan ? 1 : 0),
+    },
     { key: "target_version", label: t("platform.agentUpdates.colTarget"), sortable: true, class: "font-mono text-xs" },
-    { key: "last_applied_version", label: t("platform.agentUpdates.colApplied"), class: "font-mono text-xs" },
+    { key: "last_applied_version", label: t("platform.agentUpdates.colApplied"), sortable: true, class: "font-mono text-xs" },
     { key: "last_planned_at", label: t("platform.agentUpdates.colLastPlanned"), sortable: true, class: "text-xs text-muted-foreground" },
-    { key: "binary_url", label: t("platform.agentUpdates.colBinaryUrl"), searchable: true },
-    { key: "sha256", label: t("platform.agentUpdates.colSha256") },
+    { key: "binary_url", label: t("platform.agentUpdates.colBinaryUrl"), sortable: true, searchable: true },
+    { key: "sha256", label: t("platform.agentUpdates.colSha256"), sortable: true },
   ];
   if (canPlan.value || canAdmin.value) {
     cols.push({ key: "actions", label: t("platform.agentUpdates.colActions"), align: "right" });
@@ -324,7 +331,7 @@ function targetLabel(policy: AgentUpdatePolicy): string {
 }
 
 function releaseFetchedLabel(): string {
-  return releaseInfo.value?.fetched_at ? formatDateTime(releaseInfo.value.fetched_at) : "—";
+  return releaseInfo.value?.fetched_at ? formatDateTime(releaseInfo.value.fetched_at) : t("common.misc.none");
 }
 
 async function submitForm(): Promise<void> {
@@ -378,7 +385,7 @@ const planOpen = ref(false);
 const planning = ref<string | undefined>();
 const approval = ref<ApprovalView | undefined>();
 const planDigest = ref("");
-// SECURITY-CRITICAL: digestHex hashes sha256Hex(input || "") — byte-for-byte
+// SECURITY-CRITICAL: digestHex hashes sha256Hex(input || ""), byte-for-byte
 // identical to the prior `sha256Hex(result.plan || "")` binding. Bytes unchanged.
 const { digestHex } = usePlanDigest();
 
@@ -501,7 +508,7 @@ watch(
         <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div>
             <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.latestVersion') }}</p>
-            <p class="mt-1 font-mono text-xl font-semibold">{{ releaseInfo?.latest_version || "—" }}</p>
+            <p class="mt-1 font-mono text-xl font-semibold">{{ releaseInfo?.latest_version || $t('common.misc.none') }}</p>
             <p class="text-xs text-muted-foreground">{{ releaseInfo?.latest_tag || "latest" }}</p>
           </div>
           <div>
@@ -606,7 +613,11 @@ watch(
                 {{ row.auto_plan ? $t('platform.agentUpdates.autoPlan') : $t('platform.agentUpdates.manual') }}
               </Badge>
             </div>
-            <p v-if="row.last_error" class="mt-1 max-w-[220px] break-words text-xs text-destructive">
+            <p
+              v-if="row.last_error"
+              class="mt-1 max-w-[220px] break-words text-xs text-destructive"
+              :title="row.last_error"
+            >
               {{ row.last_error }}
             </p>
             <Badge v-if="staleApprovalCount(row.node_id)" variant="warning" class="mt-1">
@@ -620,10 +631,10 @@ watch(
             </p>
           </template>
           <template #cell-last_applied_version="{ row }">
-            <span class="font-mono text-xs">{{ row.last_applied_version || "—" }}</span>
+            <span class="font-mono text-xs">{{ row.last_applied_version || $t('common.misc.none') }}</span>
           </template>
           <template #cell-last_planned_at="{ row }">
-            <span class="text-xs text-muted-foreground">{{ row.last_planned_at ? formatDateTime(row.last_planned_at) : "—" }}</span>
+            <span class="text-xs text-muted-foreground">{{ row.last_planned_at ? formatDateTime(row.last_planned_at) : $t('common.misc.none') }}</span>
           </template>
           <template #cell-binary_url="{ row }">
             <div v-if="row.binary_url" class="flex items-center gap-1">
@@ -741,7 +752,7 @@ watch(
                 {{ $t('platform.agentUpdates.versionInvalid') }}
               </p>
               <p v-else class="text-xs text-muted-foreground">
-                {{ $t('platform.agentUpdates.versionHint', { latest: releaseInfo?.latest_version || '—' }) }}
+                {{ $t('platform.agentUpdates.versionHint', { latest: releaseInfo?.latest_version || $t('common.misc.none') }) }}
               </p>
             </div>
           </div>
@@ -805,14 +816,19 @@ watch(
           </div>
 
           <div class="flex flex-wrap gap-6">
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-              {{ $t('platform.agentUpdates.enabledLabel') }}
+            <label class="flex cursor-pointer items-center gap-2 text-sm">
+              <Checkbox v-model="form.enabled" />
+              <span>{{ $t('platform.agentUpdates.enabledLabel') }}</span>
             </label>
-            <label class="flex items-center gap-2 text-sm">
-              <input v-model="form.auto_plan" type="checkbox" class="size-4 accent-primary" />
-              {{ $t('platform.agentUpdates.autoPlanLabel') }}
-            </label>
+            <div class="grid gap-1">
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox v-model="form.auto_plan" />
+                <span>{{ $t('platform.agentUpdates.autoPlanLabel') }}</span>
+              </label>
+              <p :class="cn('text-xs', form.auto_plan ? 'text-warning' : 'text-muted-foreground')">
+                {{ $t('platform.agentUpdates.autoPlanWarning') }}
+              </p>
+            </div>
           </div>
 
           <DialogFooter>
@@ -842,7 +858,7 @@ watch(
       @confirm="confirmDelete"
     />
 
-    <!-- Noop (409) — offer force plan -->
+    <!-- Noop (409): offer force plan -->
     <Dialog v-model:open="noopOpen">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>

@@ -178,7 +178,7 @@ async function submitPut() {
             <span class="font-mono text-xs">{{ row.path }}</span>
           </template>
           <template #cell-content_type="{ row }">
-            <Badge variant="outline">{{ row.content_type || "—" }}</Badge>
+            <Badge variant="outline">{{ row.content_type || $t('common.misc.none') }}</Badge>
           </template>
           <template #cell-size="{ row }">
             <span class="font-mono text-xs tabular text-muted-foreground">{{ formatBytes(row.size) }}</span>
@@ -210,7 +210,7 @@ async function submitPut() {
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle class="break-all font-mono text-base">{{ previewTarget?.path }}</DialogTitle>
-          <DialogDescription>{{ previewTarget?.content_type || "—" }}</DialogDescription>
+          <DialogDescription>{{ previewTarget?.content_type || $t('common.misc.none') }}</DialogDescription>
         </DialogHeader>
         <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed">{{ previewTarget?.content }}</pre>
         <DialogFooter>
@@ -234,7 +234,15 @@ async function submitPut() {
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="static-path">{{ $t('platform.static.pathLabel') }}</Label>
-              <Input id="static-path" v-model="putPath" required :disabled="editing" placeholder="assets/index.html" />
+              <Input
+                id="static-path"
+                v-model="putPath"
+                required
+                :disabled="editing"
+                :title="editing ? $t('platform.static.pathImmutable') : undefined"
+                placeholder="assets/index.html"
+              />
+              <p v-if="editing" class="text-xs text-muted-foreground">{{ $t('platform.static.pathImmutable') }}</p>
             </div>
             <div class="grid gap-2">
               <Label for="static-ct">{{ $t('platform.static.contentTypeLabel') }}</Label>

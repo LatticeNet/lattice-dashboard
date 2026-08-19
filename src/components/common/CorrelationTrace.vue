@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * CorrelationTrace — a dialog that reconstructs the full chain of one operation
+ * CorrelationTrace: a dialog that reconstructs the full chain of one operation
  * from the audit trail. Given a correlation id, it pulls every audit event that
  * shares it (the request's own timeline), resolves any approval_id / task_id
  * those events reference into the wider plan -> approve -> run lifecycle, and
@@ -145,7 +145,7 @@ const summaryOf = summarize;
                 <span class="ms-auto font-mono text-xs text-muted-foreground">{{ shortId(appr.id, 12) }}</span>
               </div>
               <p class="mt-1 text-xs text-muted-foreground">
-                {{ $t('operations.trace.plannedBy') }} {{ appr.actor_id || '—' }}
+                {{ $t('operations.trace.plannedBy') }} {{ appr.actor_id || $t('common.misc.none') }}
                 <template v-if="appr.approved_by"> · {{ $t('operations.trace.approvedBy') }} {{ appr.approved_by }}</template>
                 <template v-if="appr.node_id"> · {{ appr.node_id }}</template>
               </p>

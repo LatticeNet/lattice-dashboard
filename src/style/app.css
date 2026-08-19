@@ -1,7 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* Lattice operator console — design tokens.
+/* Lattice operator console. Design tokens.
    Built on the shadcn-vue OKLCH token system, re-skinned with Lattice's own
    identity: a deep slate-indigo surface set and an indigo brand accent.
    Two-axis theming: (1) light/dark via the .dark class (pre-painted by
@@ -33,7 +33,7 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
 
-  /* Status semantics — this is a status-heavy control plane. */
+  /* Status semantics. This is a status-heavy control plane. */
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
   --color-warning: var(--warning);
@@ -240,7 +240,7 @@
    keys the outlet by route.path, so a plain CSS animation on the incoming
    view root does the job of a <transition> wrapper without one: the outgoing
    view unmounts in the same tick, never overlaps, and siblings never reflow.
-   Transform/opacity only, one-shot — no perpetual motion. */
+   Transform/opacity only, one-shot. No perpetual motion. */
 @keyframes view-enter {
   from {
     opacity: 0;
@@ -255,7 +255,7 @@
   animation: view-enter 160ms ease-out;
 }
 
-/* Shared skeleton placeholder block — the one loading-state look across
+/* Shared skeleton placeholder block. The one loading-state look across
    views: a muted panel with a slow, calm opacity pulse. Sizing comes from the
    call site (utility classes or scoped styles); the motion and surface come
    from here. */
@@ -395,7 +395,7 @@
   }
 
   &:active {
-    /* Settle back to baseline from the hover lift — a tactile press. */
+    /* Settle back to baseline from the hover lift. A tactile press. */
     transform: translateY(0);
     background-color: color-mix(in oklab, var(--muted) 60%, transparent);
   }
@@ -410,18 +410,18 @@
    in compact mode, so comfortable mode is completely unaffected.
    ------------------------------------------------------------------------- */
 html[data-density="compact"] {
-  /* Row padding override — for list rows that opt in via `density-row`. */
+  /* Row padding override. For list rows that opt in via `density-row`. */
   .density-row {
     padding-top: 0.375rem; /* py-1.5 */
     padding-bottom: 0.375rem;
   }
 
-  /* Card padding override — for cards that opt in via `density-card`. */
+  /* Card padding override. For cards that opt in via `density-card`. */
   .density-card {
     padding: 0.75rem; /* p-3 */
   }
 
-  /* Vertical stack gap override — for opt-in `density-stack` containers. */
+  /* Vertical stack gap override. For opt-in `density-stack` containers. */
   .density-stack > * + * {
     margin-top: 0.5rem; /* space-y-2 */
   }

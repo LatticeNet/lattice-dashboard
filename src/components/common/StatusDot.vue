@@ -7,7 +7,7 @@ import type { NodeHealth } from "@/lib/status";
  * `inheritAttrs: false` is DELIBERATE. StatusDot owns a small, explicit prop
  * surface (`status` / `online` / `tone` / `pulse` / `label` / `class`). Without
  * this, a caller typo or a stray undeclared attribute (e.g. `:colour="..."`,
- * `:active="..."`) would silently fall through to the root <span> and no-op —
+ * `:active="..."`) would silently fall through to the root <span> and no-op,
  * the exact failure mode behind a past critical bug where a dot rendered the
  * wrong color with no error. With `inheritAttrs: false` such props are dropped
  * loudly (visible in DevTools / vue-tsc surface) instead of pretending to work.

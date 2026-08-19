@@ -1,7 +1,7 @@
 /**
  * What the operator is actually looking at on the publish surface.
  *
- * A share is core-owned plumbing — slug, token, source binding, format — and
+ * A share is core-owned plumbing. Slug, token, source binding, format. And
  * none of those words answer the question an operator opens the page with:
  * which of my subscriptions are live on the internet right now, and what does
  * each one serve? This module turns the server's records into that answer, and

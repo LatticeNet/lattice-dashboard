@@ -6,7 +6,7 @@
  * the subscription id and offers a slug derived from the record name. The
  * suggestion is only a starting point: it must already satisfy the server's
  * slug rule and must not collide with an existing share, otherwise the field
- * stays empty and the operator picks one — a wrong-guess slug that silently
+ * stays empty and the operator picks one. A wrong-guess slug that silently
  * differed from the record name would be worse than none.
  */
 

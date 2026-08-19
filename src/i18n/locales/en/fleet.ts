@@ -35,8 +35,7 @@ export default {
       membersHint: "Explicit members are the canonical, policy-relevant membership.",
       quickTag: "Quick select by tag",
       quickTagPlaceholder: "Choose a tag",
-      taggedMatches: "{n} match",
-      selectTagged: "Select matching nodes",
+      selectTaggedCount: "Select {n} matching nodes",
       memberSearch: "Search nodes…",
       noNodes: "No matching nodes",
       removeMember: "Remove member",
@@ -286,7 +285,7 @@ export default {
         liveStatus: "Live status",
         liveStatusDesc: "Live resource pressure and recent trend",
         sparklineLabel: "Recent CPU trend",
-        sparklinePending: "Collecting samples — the trend appears after a few polls.",
+        sparklinePending: "Collecting samples: the trend appears after a few polls.",
         load: "Load (1m)",
         uptime: "Uptime",
         sampleTime: "Sample time",
@@ -426,6 +425,17 @@ export default {
           proxyDriftCleared: "Proxy drift cache",
         },
       },
+      confirm: {
+        rotateTitle: "Rotate enrollment token",
+        rotateDescription:
+          'Rotate the enrollment token for "{name}"? The current token stops working immediately and the agent has to be re-enrolled with the new one.',
+        disableTitle: "Disable node",
+        disableDescription:
+          'Disable "{name}"? It stops accepting work until you enable it again.',
+        clearIpTitle: "Clear IP discovery override",
+        clearIpDescription:
+          'Clear the IP discovery override on "{name}"? The node goes back to the server default, and the change is saved immediately.',
+      },
       toast: {
         tokenCreated: "Enrollment token created",
         enrollFailed: "Enrollment failed",
@@ -511,6 +521,7 @@ export default {
         title: "Region Rollup",
         description: "Node count by country and region",
         empty: "Locations will group here after coordinates are set.",
+        opensFirst: "Opens {name} in the location editor",
       },
       unlocated: {
         title: "Unlocated",
@@ -518,6 +529,7 @@ export default {
         empty: "Every visible node has a location.",
         noIp: "no public IP reported",
         noPublicIp: "no routable public IP",
+        more: "{count} more not shown",
       },
       editor: {
         title: "Location Editor",
@@ -541,6 +553,11 @@ export default {
         clear: "Clear",
         adminRequired: "`node:admin` is required to edit locations.",
       },
+      confirm: {
+        clearTitle: "Clear stored location",
+        clearDescription:
+          'Clear the saved coordinates for "{name}"? The node drops off the map until a location is set again.',
+      },
       toast: {
         coordinatesRequired: "Latitude and longitude are required",
         locationSaved: "Node location saved",
@@ -552,7 +569,7 @@ export default {
         resolverDisabled: "GeoIP lookup is not configured on the server",
         resolvePartial: "{count} lookups failed",
         resolveNoop: "No node locations changed",
-        resolveNoPublicIp: "{count} nodes have no routable public IP — set the IP mode on the node",
+        resolveNoPublicIp: "{count} nodes have no routable public IP: set the IP mode on the node",
       },
     },
 
@@ -601,6 +618,7 @@ export default {
         rateCardHint: "Manual rates are stored in this browser and are scoped to the selected target currency.",
         rateInput: "Rate from {source} to {target}",
         missingRate: "Missing rate",
+        pair: "{source} to {target}",
         saveRates: "Save rates",
         singleCurrency: "Everything is already in the target currency.",
         moreCurrencies: "+{count} more currencies",
@@ -815,6 +833,8 @@ export default {
         noMatchDescription: "Adjust the search text or expression filter.",
         searchPlaceholder: "Search monitors by name, target, type…",
         expressionPlaceholder: "AND(type:http, status:enabled, target:443)",
+        expressionLabel: "Monitor filter expression",
+        expressionInvalid: "Invalid expression",
         expressionHelp: "Fields: id, name, type, target, status, enabled, interval, timeout, scope, node. Use AND(...), OR(...), NOT(...), or field:value.",
         interval: "every {interval}s, timeout {timeout}s",
         updated: "updated {time}",
@@ -827,7 +847,8 @@ export default {
         pause: "Pause",
         resume: "Resume",
         newSince: "{count} new since paused",
-        showing: "showing {count}",
+        showingOf: "showing {count} of {total} matches",
+        showingCapped: "showing {count} of {total} matches (list capped at {cap})",
         empty: "No results match this filter.",
       },
       assignment: {
@@ -888,6 +909,7 @@ export default {
         colObserved: "Observed",
       },
       confirm: {
+        deleteTitle: "Delete monitor",
         delete: 'Delete monitor "{name}"?',
       },
       toast: {

@@ -1,4 +1,4 @@
-// usePluginContributions — the dashboard side of "VPN is a plugin end-to-end"
+// usePluginContributions. The dashboard side of "VPN is a plugin end-to-end"
 // (design-10). Shares a last-good plugin registry across the sidebar and every
 // plugin page, then exposes the active plugins' declared
 // nav + view contributions, defensively filtered against the dashboard's fixed
@@ -199,7 +199,7 @@ export function usePluginContributions() {
       if (!Array.isArray(nav)) continue;
       for (const entry of nav) {
         if (!entry || typeof entry !== "object") continue;
-        // Skip anything that fails an allow-list — inert, never throw.
+        // Skip anything that fails an allow-list. Inert, never throw.
         if (typeof entry.section !== "string" || !SECTION_RE.test(entry.section)) continue;
         if (entry.icon && !(entry.icon in NAV_ICON_COMPONENTS)) continue;
         if (typeof entry.route !== "string" || !ROUTE_RE.test(entry.route)) continue;

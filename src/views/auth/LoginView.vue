@@ -141,7 +141,7 @@ async function onPasskeyLogin() {
     await auth.loginWebAuthn();
     await router.push(redirect.value);
   } catch (e) {
-    // A user who dismisses the native passkey sheet is not an error — stay quiet.
+    // A user who dismisses the native passkey sheet is not an error. Stay quiet.
     if (!isPasskeyCancellation(e)) setError(e);
   } finally {
     passkeyPending.value = false;
@@ -183,12 +183,12 @@ onMounted(async () => {
     history.replaceState(history.state, "", clean);
   }
 
-  // Optional SSO providers — tolerate failure / empty silently.
+  // Optional SSO providers. Tolerate failure / empty silently.
   try {
     const list = await api.auth.ssoProviders();
     if (Array.isArray(list)) providers.value = list;
   } catch {
-    /* SSO not configured — that's fine. */
+    /* SSO not configured. That's fine. */
   }
 });
 </script>
@@ -236,7 +236,7 @@ onMounted(async () => {
             Self-hosted control plane for your fleet.
           </h1>
           <p class="text-sm text-muted-foreground">
-            One pane of glass for every node — secure by default, auditable by design.
+            One pane of glass for every node. Secure by default, auditable by design.
           </p>
           <ul class="space-y-3 text-sm">
             <li class="flex items-center gap-3 text-muted-foreground">

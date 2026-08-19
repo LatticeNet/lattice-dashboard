@@ -71,7 +71,7 @@ interface RuleDraft {
 
 const meta = reactive({ enabled: true, priority: 0 });
 const drafts = ref<RuleDraft[]>([]);
-/** Rules on the source policy that target OTHER destinations — preserved as-is. */
+/** Rules on the source policy that target OTHER destinations. Preserved as-is. */
 const otherRules = ref<GroupNetRule[]>([]);
 
 function isDestRule(r: GroupNetRule): boolean {

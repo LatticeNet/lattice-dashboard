@@ -188,7 +188,7 @@ test("groups sort newest first; node preview dedupes and counts the remainder", 
       node_id: `node-${String(i).padStart(2, "0")}`,
     }),
   );
-  // Same node re-planned twice — the preview must show it once.
+  // Same node re-planned twice. The preview must show it once.
   newerGroupItems.push(makeItem({ created_at: "2026-08-06T11:00:00Z", plugin: "nftpolicy", action: "sync-rules", node_id: "node-00" }));
 
   const groups = groupApprovalsIntoEvents([older, ...newerGroupItems]);

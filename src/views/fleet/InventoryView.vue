@@ -99,7 +99,7 @@ const CYCLE_DIVISOR: Record<string, number> = {
 
 // Trimmed string coercion. Guards against non-string reactive values: shadcn
 // <Input type="number"> binds through defineModel<string|number>, so a numeric
-// field can hold a real `number` — calling `.trim()` on it used to throw
+// field can hold a real `number`, and calling `.trim()` on it used to throw
 // "value.trim is not a function" on submit.
 function s(value: unknown): string {
   return String(value ?? "").trim();
@@ -1120,10 +1120,10 @@ async function runReminders(selectedOnly: boolean) {
                   {{ $t('fleet.inventory.spend.missingRate') }}
                 </Badge>
               </div>
-              <p class="mt-1 truncate text-2xl font-semibold tabular leading-none text-foreground">
+              <p class="mt-1 truncate text-2xl font-semibold tabular leading-none text-foreground" :title="spendCardValue">
                 {{ spendCardValue }}
               </p>
-              <p v-if="spendCardHint" class="mt-auto truncate text-xs text-muted-foreground">
+              <p v-if="spendCardHint" class="mt-auto truncate text-xs text-muted-foreground" :title="spendCardHint">
                 {{ spendCardHint }}
               </p>
             </div>
@@ -1247,7 +1247,7 @@ async function runReminders(selectedOnly: boolean) {
               )"
             >
               <div class="min-w-0">
-                <p class="text-xs font-medium">{{ entry.currency }} → {{ entry.target }}</p>
+                <p class="text-xs font-medium">{{ $t('fleet.inventory.spend.pair', { source: entry.currency, target: entry.target }) }}</p>
                 <p class="text-[11px] text-muted-foreground">
                   {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(Math.round(entry.monthly), entry.currency) }) }}
                 </p>
@@ -1304,7 +1304,7 @@ async function runReminders(selectedOnly: boolean) {
             type="button"
             :aria-pressed="groupBy === opt"
             :class="cn(
-              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
               groupBy === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )"
             @click="groupBy = opt"
@@ -1352,9 +1352,12 @@ async function runReminders(selectedOnly: boolean) {
                 <div class="min-w-0">
                   <div class="flex min-w-0 items-center gap-2">
                     <StatusDot :online="machine.online" :pulse="machine.online" />
-                    <span class="truncate font-medium">{{ displayName(machine) }}</span>
+                    <span class="truncate font-medium" :title="displayName(machine)">{{ displayName(machine) }}</span>
                   </div>
-                  <p class="mt-1 truncate font-mono text-xs text-muted-foreground">
+                  <p
+                    class="mt-1 truncate font-mono text-xs text-muted-foreground"
+                    :title="[machine.node_id, machine.host_facts?.hostname].filter(Boolean).join(' · ')"
+                  >
                     {{ shortId(machine.node_id, 14) }}
                     <template v-if="machine.host_facts?.hostname"> · {{ machine.host_facts.hostname }}</template>
                   </p>
@@ -1471,7 +1474,7 @@ async function runReminders(selectedOnly: boolean) {
       </div>
     </DataState>
 
-    <!-- Edit / create dialog — opens centred regardless of list scroll -->
+    <!-- Edit / create dialog: opens centred regardless of list scroll -->
     <Dialog v-model:open="editOpen">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
@@ -1487,15 +1490,22 @@ async function runReminders(selectedOnly: boolean) {
         <div v-if="editMachine?.host_facts" class="grid gap-2 rounded-lg border border-border bg-muted/20 p-3 text-xs sm:grid-cols-3">
           <div class="flex items-center gap-2">
             <HardDrive class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="truncate">{{ editMachine.host_facts.os || editMachine.host_facts.platform || $t('fleet.inventory.facts.unknown') }}</span>
+            <span
+              class="truncate"
+              :title="editMachine.host_facts.os || editMachine.host_facts.platform || $t('fleet.inventory.facts.unknown')"
+            >
+              {{ editMachine.host_facts.os || editMachine.host_facts.platform || $t('fleet.inventory.facts.unknown') }}
+            </span>
           </div>
           <div class="flex items-center gap-2">
             <Cpu class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="truncate">{{ $t('fleet.inventory.facts.cpuCores', { value: editMachine.host_facts.cpu_cores || 0 }) }}</span>
+            <span class="truncate" :title="$t('fleet.inventory.facts.cpuCores', { value: editMachine.host_facts.cpu_cores || 0 })">
+              {{ $t('fleet.inventory.facts.cpuCores', { value: editMachine.host_facts.cpu_cores || 0 }) }}
+            </span>
           </div>
           <div class="flex items-center gap-2">
             <MemoryStick class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="truncate">{{ formatBytes(editMachine.host_facts.memory_total) }}</span>
+            <span class="truncate" :title="formatBytes(editMachine.host_facts.memory_total)">{{ formatBytes(editMachine.host_facts.memory_total) }}</span>
           </div>
         </div>
 
@@ -1544,8 +1554,12 @@ async function runReminders(selectedOnly: boolean) {
                           class="size-4 rounded-sm object-contain"
                         />
                         <span class="min-w-0">
-                          <span class="block truncate">{{ item.name }}</span>
-                          <span v-if="vendorSubtitle(item)" class="block truncate text-[11px] text-muted-foreground">
+                          <span class="block truncate" :title="item.name">{{ item.name }}</span>
+                          <span
+                            v-if="vendorSubtitle(item)"
+                            class="block truncate text-[11px] text-muted-foreground"
+                            :title="vendorSubtitle(item)"
+                          >
                             {{ vendorSubtitle(item) }}
                           </span>
                         </span>
@@ -1575,8 +1589,12 @@ async function runReminders(selectedOnly: boolean) {
                   <Boxes v-else class="size-4 text-muted-foreground" aria-hidden="true" />
                 </div>
                 <div class="min-w-0">
-                  <p class="truncate text-sm font-medium">{{ $t('fleet.inventory.profile.vendorDirectory') }}</p>
-                  <p class="truncate text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendorDirectoryHint') }}</p>
+                  <p class="truncate text-sm font-medium" :title="$t('fleet.inventory.profile.vendorDirectory')">
+                    {{ $t('fleet.inventory.profile.vendorDirectory') }}
+                  </p>
+                  <p class="truncate text-xs text-muted-foreground" :title="$t('fleet.inventory.profile.vendorDirectoryHint')">
+                    {{ $t('fleet.inventory.profile.vendorDirectoryHint') }}
+                  </p>
                 </div>
               </div>
               <a
@@ -1821,11 +1839,11 @@ async function runReminders(selectedOnly: boolean) {
           <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendor') }}</dt>
-              <dd>{{ editMachine.vendor || '—' }}</dd>
+              <dd>{{ editMachine.vendor || $t('common.misc.none') }}</dd>
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.region') }}</dt>
-              <dd>{{ editMachine.region || '—' }}</dd>
+              <dd>{{ editMachine.region || $t('common.misc.none') }}</dd>
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.price') }}</dt>
@@ -1836,7 +1854,7 @@ async function runReminders(selectedOnly: boolean) {
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.purchasedAt') }}</dt>
-              <dd>{{ formatDate(editMachine.purchased_at) || '—' }}</dd>
+              <dd>{{ formatDate(editMachine.purchased_at) || $t('common.misc.none') }}</dd>
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.facts.renewal') }}</dt>

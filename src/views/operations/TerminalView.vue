@@ -26,6 +26,7 @@ import { formatBytes, formatDateTime, formatRelativeTime, shortId } from "@/lib/
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -70,18 +71,37 @@ const closing = ref(false);
 const closeRequested = ref(false);
 const autoConnectAttempted = ref(false);
 type TerminalTransportMode = "auto" | "stream" | "poll";
-const storedTransportMode = localStorage.getItem("lattice.terminal.transport");
-const transportMode = ref<TerminalTransportMode>(
-  storedTransportMode === "stream" || storedTransportMode === "poll" ? storedTransportMode : "auto",
-);
-watch(transportMode, (mode) => localStorage.setItem("lattice.terminal.transport", mode));
+const TRANSPORT_STORAGE_KEY = "lattice.terminal.transport";
+
+// Storage can throw (private mode, blocked third-party storage, quota). An
+// unhandled throw here happens at module scope and takes the whole view down,
+// so both reads and writes stay best-effort.
+function readStoredTransport(): TerminalTransportMode {
+  try {
+    const stored = localStorage.getItem(TRANSPORT_STORAGE_KEY);
+    return stored === "stream" || stored === "poll" ? stored : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+const transportMode = ref<TerminalTransportMode>(readStoredTransport());
+watch(transportMode, (mode) => {
+  try {
+    localStorage.setItem(TRANSPORT_STORAGE_KEY, mode);
+  } catch {
+    /* preference is not persisted; the session still works */
+  }
+});
+
+const closeConfirmOpen = ref(false);
 
 // --- Console sizing + fullscreen ---
 // The console fits the viewport without forcing the page to scroll: its height is
 // measured from where the box actually starts (getBoundingClientRect().top, which
 // already includes the app header + page header + card header above it) down to
 // the viewport bottom, minus a small reserve for the status row + page padding.
-// It never shrinks below MIN_CONSOLE_H — below that the page scrolls instead of
+// It never shrinks below MIN_CONSOLE_H; below that the page scrolls instead of
 // squashing the terminal into uselessness.
 const MIN_CONSOLE_H = 360;
 const CONSOLE_BOTTOM_RESERVE = 88;
@@ -92,8 +112,8 @@ const xtermRef = ref<{ refit: () => void; requestClose?: () => void } | null>(nu
 
 // settleConsole re-measures (no-op in fullscreen) and forces the terminal to
 // refit after the DOM updates. Used on the discrete layout changes (fullscreen
-// toggle, session appearing) so the terminal never renders against a stale size
-// — that stale fit is what left the bottom row clipped until a manual resize.
+// toggle, session appearing) so the terminal never renders against a stale size:
+// that stale fit is what left the bottom row clipped until a manual resize.
 function settleConsole() {
   void nextTick(() => {
     recomputeConsoleHeight();
@@ -212,6 +232,21 @@ const terminalDisabled = computed(
     activeSession.value.status === "closed" ||
     activeSession.value.status === "failed",
 );
+
+/** Name shown in the console header, reused as its truncation title. */
+const consoleTitle = computed(() =>
+  activeSession.value
+    ? nodeName(activeSession.value.node_id)
+    : selectedNode.value?.name || t("operations.terminal.console"),
+);
+
+const SESSION_STATUS_KEYS: readonly string[] = ["idle", "open", "pending", "closed", "failed"];
+
+/** Translate a session status, falling back to the raw API value. */
+function sessionStatusLabel(status?: string): string {
+  const key = status || "idle";
+  return SESSION_STATUS_KEYS.includes(key) ? t(`operations.terminal.status.${key}`) : key;
+}
 
 const selectedNodeSubtitle = computed(() => {
   const node = selectedNode.value;
@@ -349,9 +384,15 @@ async function startSession(node: Node) {
   }
 }
 
+function askCloseSession() {
+  if (!activeSession.value || closing.value) return;
+  closeConfirmOpen.value = true;
+}
+
 async function closeSession() {
   const session = activeSession.value;
   if (!session || closing.value) return;
+  closeConfirmOpen.value = false;
   closing.value = true;
   closeRequested.value = true;
   try {
@@ -441,7 +482,12 @@ function openTerminalDocs() {
           <CardContent class="space-y-3">
             <div class="relative">
               <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-              <Input v-model="nodeSearch" class="pl-8" :placeholder="$t('operations.terminal.searchNodes')" />
+              <Input
+                v-model="nodeSearch"
+                class="pl-8"
+                :placeholder="$t('operations.terminal.searchNodes')"
+                :aria-label="$t('operations.terminal.searchNodes')"
+              />
             </div>
 
             <DataState
@@ -464,8 +510,8 @@ function openTerminalDocs() {
                 >
                   <span class="flex items-start justify-between gap-2">
                     <span class="min-w-0">
-                      <span class="block truncate font-medium">{{ node.name || node.id }}</span>
-                      <span class="mt-1 block truncate font-mono text-xs text-muted-foreground">
+                      <span class="block truncate font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
+                      <span class="mt-1 block truncate font-mono text-xs text-muted-foreground" :title="node.id">
                         {{ shortId(node.id, 14) }}
                       </span>
                     </span>
@@ -518,8 +564,12 @@ function openTerminalDocs() {
                 </Badge>
               </div>
               <div v-if="selectedNode" class="min-w-0">
-                <p class="truncate font-medium">{{ selectedNode.name || selectedNode.id }}</p>
-                <p class="truncate text-xs text-muted-foreground">{{ selectedNodeSubtitle || selectedNode.id }}</p>
+                <p class="truncate font-medium" :title="selectedNode.name || selectedNode.id">
+                  {{ selectedNode.name || selectedNode.id }}
+                </p>
+                <p class="truncate text-xs text-muted-foreground" :title="selectedNodeSubtitle || selectedNode.id">
+                  {{ selectedNodeSubtitle || selectedNode.id }}
+                </p>
               </div>
               <p v-else class="text-xs text-muted-foreground">{{ $t('operations.terminal.selectPrompt') }}</p>
             </div>
@@ -549,22 +599,37 @@ function openTerminalDocs() {
               <Power v-else class="size-4" aria-hidden="true" />
               {{ $t('operations.terminal.connect') }}
             </Button>
-            <Button
-              v-if="selectedSessionCount > 0"
-              class="w-full"
-              variant="outline"
-              :disabled="starting"
-              @click="attachLatestForSelected"
+            <DataState
+              :loading="sessionsQuery.loading.value"
+              :error="sessionsQuery.error.value"
+              :has-data="sessionsQuery.data.value !== undefined"
+              :skeleton-rows="1"
+              class="space-y-2"
+              @retry="sessionsQuery.refresh"
             >
-              <SquareTerminal class="size-4" aria-hidden="true" />
-              {{ $t('operations.terminal.resumeLatest') }}
-            </Button>
+              <p class="text-xs text-muted-foreground">
+                {{ $t('operations.terminal.activeSessions', { count: selectedSessionCount }) }}
+              </p>
+              <Button
+                v-if="selectedSessionCount > 0"
+                class="w-full"
+                variant="outline"
+                :disabled="starting"
+                @click="attachLatestForSelected"
+              >
+                <SquareTerminal class="size-4" aria-hidden="true" />
+                {{ $t('operations.terminal.resumeLatest') }}
+              </Button>
+            </DataState>
           </CardContent>
         </Card>
       </aside>
 
       <section class="min-w-0 space-y-4">
         <Card
+          :role="fullscreen ? 'dialog' : undefined"
+          :aria-modal="fullscreen ? 'true' : undefined"
+          :aria-label="fullscreen ? $t('operations.terminal.fullscreenRegion') : undefined"
           :class="cn(
             'overflow-hidden',
             fullscreen && 'fixed inset-0 z-50 flex flex-col rounded-none border-0 shadow-2xl',
@@ -575,9 +640,7 @@ function openTerminalDocs() {
               <div class="min-w-0">
                 <CardTitle class="flex min-w-0 items-center gap-2">
                   <SquareTerminal class="size-4 text-muted-foreground" aria-hidden="true" />
-                  <span class="truncate">
-                    {{ activeSession ? nodeName(activeSession.node_id) : (selectedNode?.name || $t('operations.terminal.console')) }}
-                  </span>
+                  <span class="truncate" :title="consoleTitle">{{ consoleTitle }}</span>
                 </CardTitle>
                 <CardDescription class="mt-1">
                   <template v-if="activeSession">
@@ -588,7 +651,7 @@ function openTerminalDocs() {
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <Badge :variant="statusVariant(activeSession?.status ?? 'idle')">
-                  {{ closeRequested ? $t('operations.terminal.closing') : (activeSession?.status ?? 'idle') }}
+                  {{ closeRequested ? $t('operations.terminal.closing') : sessionStatusLabel(activeSession?.status) }}
                 </Badge>
                 <Badge v-if="activeSession" :variant="selectedNodeTransport === 'stream' ? 'success' : 'secondary'">
                   <Zap class="size-3" aria-hidden="true" />
@@ -599,13 +662,14 @@ function openTerminalDocs() {
                   variant="outline"
                   size="sm"
                   :title="fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen')"
+                  :aria-pressed="fullscreen"
                   @click="toggleFullscreen"
                 >
                   <Minimize2 v-if="fullscreen" class="size-4" aria-hidden="true" />
                   <Maximize2 v-else class="size-4" aria-hidden="true" />
                   <span class="sr-only sm:not-sr-only">{{ fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen') }}</span>
                 </Button>
-                <Button v-if="activeSession" variant="outline" size="sm" :disabled="closing || activeSession.status === 'closed' || activeSession.status === 'failed'" @click="closeSession">
+                <Button v-if="activeSession" variant="outline" size="sm" :disabled="closing || activeSession.status === 'closed' || activeSession.status === 'failed'" @click="askCloseSession">
                   <CircleStop class="size-4" aria-hidden="true" />
                   {{ $t('operations.terminal.close') }}
                 </Button>
@@ -616,7 +680,7 @@ function openTerminalDocs() {
           <CardContent class="p-0" :class="fullscreen && 'flex-1 min-h-0'">
             <div
               ref="consoleEl"
-              class="bg-[#070a12]"
+              class="bg-background"
               :class="fullscreen ? 'h-full' : 'min-h-[360px]'"
               :style="fullscreen ? undefined : { height: consoleHeight + 'px' }"
             >
@@ -651,7 +715,7 @@ function openTerminalDocs() {
         <div v-if="activeSession && !fullscreen" class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
           <span class="inline-flex items-center gap-1">
             <Wifi class="size-3" aria-hidden="true" />
-            {{ activeSession.status }}
+            {{ sessionStatusLabel(activeSession.status) }}
           </span>
           <span class="inline-flex items-center gap-1">
             <Clock class="size-3" aria-hidden="true" />
@@ -664,5 +728,17 @@ function openTerminalDocs() {
         </div>
       </section>
     </div>
+
+    <ConfirmDialog
+      v-model:open="closeConfirmOpen"
+      :title="$t('operations.terminal.closeTitle')"
+      :description="activeSession
+        ? $t('operations.terminal.closeDescription', { node: nodeName(activeSession.node_id) })
+        : ''"
+      :confirm-label="$t('operations.terminal.close')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="closing"
+      @confirm="closeSession"
+    />
   </div>
 </template>

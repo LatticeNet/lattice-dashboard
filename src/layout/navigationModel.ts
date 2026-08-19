@@ -27,31 +27,44 @@ export function extensionWorkspaceVisible(entryCount: number, routePath: string)
   return entryCount > 0 || workspaceForRoute(routePath) === "extensions";
 }
 
-/** Toggle one section without collapsing its siblings or the active route owner. */
-export function toggleExpandedSection(
+/**
+ * Section state is stored as what the operator SHUT, not as what they opened.
+ *
+ * The previous model was the other way round, and the consequence was that a
+ * fresh console opened with one section expanded and every other destination
+ * hidden behind a disclosure. A navigation whose default answer to "where can I
+ * go" is "expand things until you find out" has no information scent: the
+ * operator has to remember the IA the sidebar is supposed to be showing them.
+ *
+ * Open is therefore the default and costs nothing to store; only a deliberate
+ * collapse is remembered, which is also what makes the state worth persisting.
+ */
+export function toggleCollapsedSection(
   current: ReadonlySet<string>,
   sectionId: string,
-  routeOwnerId = "",
 ): Set<string> {
   const next = new Set(current);
-  if (next.has(sectionId)) {
-    if (sectionId !== routeOwnerId) next.delete(sectionId);
-  } else {
-    next.add(sectionId);
-  }
+  if (next.has(sectionId)) next.delete(sectionId);
+  else next.add(sectionId);
   return next;
 }
 
-/** Keep expansion state valid as routes and plugin contributions change. */
-export function reconcileExpandedSections(
+/**
+ * Keep collapse state valid as routes and plugin contributions change.
+ *
+ * Two rules: a section that no longer exists stops being remembered, and the
+ * section owning the current route is force-opened. The second matters because
+ * the alternative is a sidebar showing no active item at all, which reads as a
+ * navigation that has lost track of where you are.
+ */
+export function reconcileCollapsedSections(
   current: ReadonlySet<string>,
   availableIds: readonly string[],
   routeOwnerId = "",
 ): Set<string> {
   const available = new Set(availableIds);
   const next = new Set([...current].filter((id) => available.has(id)));
-  if (routeOwnerId && available.has(routeOwnerId)) next.add(routeOwnerId);
-  if (next.size === 0 && availableIds[0]) next.add(availableIds[0]);
+  if (routeOwnerId) next.delete(routeOwnerId);
   return next;
 }
 
@@ -78,4 +91,28 @@ export function buildExtensionPluginGroups<T extends ExtensionNavigationEntry>(
   }
 
   return [...groups.values()];
+}
+
+/**
+ * Roving focus inside a vertical list of nav rows.
+ *
+ * Tab should step over the navigation, not through twenty-five destinations, so
+ * the list keeps one tab stop and the arrow keys move within it. Returns the
+ * index to focus, or -1 when the key is not ours to handle.
+ */
+export function nextNavIndex(count: number, current: number, key: string): number {
+  if (count <= 0) return -1;
+  const at = current < 0 || current >= count ? 0 : current;
+  switch (key) {
+    case "ArrowDown":
+      return (at + 1) % count;
+    case "ArrowUp":
+      return (at - 1 + count) % count;
+    case "Home":
+      return 0;
+    case "End":
+      return count - 1;
+    default:
+      return -1;
+  }
 }

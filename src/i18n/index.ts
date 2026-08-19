@@ -31,7 +31,7 @@ function detectLocale(): LocaleCode {
 /**
  * Last-resort rendering for a key missing from every locale.
  *
- * vue-i18n's default is to render the raw key — which is how
+ * vue-i18n's default is to render the raw key. Which is how
  * "nav.items.network-subscription-shares" once shipped to the sidebar. A raw
  * dotted key is never acceptable UI copy, so we humanize the final segment
  * and warn (once per key) so the gap is found in development, not production.

@@ -37,6 +37,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -122,7 +123,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canSend = computed(() => auth.can("notify:send"));
 
-// BARE ARRAY endpoint — do NOT unwrap.
+// BARE ARRAY endpoint: do NOT unwrap.
 const channelsQuery = useAsyncData(() => api.notify.channels(), { pollInterval: 12000 });
 const channels = computed(() => channelsQuery.data.value ?? []);
 const rulesQuery = useAsyncData(() => api.notify.rules(), { pollInterval: 12000 });
@@ -161,6 +162,9 @@ const editingId = ref<string | undefined>();
 
 const formName = ref("");
 const formKind = ref<NotifyKind>("telegram");
+// Kind the channel was loaded with. Switching kind while editing invalidates the
+// stored config, so the new kind's required fields must be entered in full.
+const editingKind = ref<NotifyKind | undefined>();
 const formEnabled = ref(true);
 const formConfig = ref<Record<string, string>>({});
 const formTitle = ref("");
@@ -177,6 +181,7 @@ function resetConfigForKind(): void {
 function openCreate(): void {
   if (!canSend.value) return;
   editingId.value = undefined;
+  editingKind.value = undefined;
   formName.value = "";
   formKind.value = "telegram";
   formEnabled.value = true;
@@ -193,6 +198,7 @@ function openEdit(channel: NotifyChannelView): void {
   formKind.value = (KIND_OPTIONS.includes(channel.kind as NotifyKind)
     ? channel.kind
     : "telegram") as NotifyKind;
+  editingKind.value = formKind.value;
   formEnabled.value = channel.enabled;
   formTitle.value = "";
   formBody.value = "";
@@ -210,8 +216,20 @@ const configComplete = computed(() =>
     .every((field) => (formConfig.value[field.key] ?? "").trim().length > 0),
 );
 
-const canSubmit = computed(() => !!formName.value.trim() && configComplete.value);
+// Secrets are write-only: the server never returns them, so an edit starts with
+// empty fields and a blank field means "leave the stored value alone". Demanding
+// every secret again just to rename a channel or flip `enabled` is what made
+// Save permanently unreachable on edit. Changing the kind is the exception: the
+// stored config belongs to the old kind and cannot carry over.
+const kindChanged = computed(() => !!editingId.value && formKind.value !== editingKind.value);
+const secretsOptional = computed(() => !!editingId.value && !kindChanged.value);
 
+const canSubmit = computed(
+  () => !!formName.value.trim() && (secretsOptional.value || configComplete.value),
+);
+
+// Blank fields are omitted, never sent as empty strings: an omitted key keeps
+// whatever the server already holds instead of clearing it.
 function buildConfig(): Record<string, string> {
   const config: Record<string, string> = {};
   for (const field of activeFields.value) {
@@ -346,6 +364,11 @@ function channelName(id: string): string {
   return sortedChannels.value.find((channel) => channel.id === id)?.name || id;
 }
 
+function toggleRuleChannel(id: string, checked: boolean): void {
+  const next = ruleChannelIds.value.filter((current) => current !== id);
+  ruleChannelIds.value = checked ? [...next, id] : next;
+}
+
 const canSubmitRule = computed(
   () => !!ruleName.value.trim() && parseRuleEvents(ruleEvents.value).length > 0 && ruleChannelIds.value.length > 0,
 );
@@ -433,6 +456,9 @@ async function confirmDeleteRule(): Promise<void> {
             <div>
               <p class="text-sm font-medium">{{ $t('platform.notifications.presetsTitle') }}</p>
               <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.presetsDescription') }}</p>
+              <p v-if="sortedChannels.length === 0" class="text-xs text-muted-foreground">
+                {{ $t('platform.notifications.presetsNeedChannel') }}
+              </p>
             </div>
             <div class="flex flex-wrap gap-2">
               <Button
@@ -441,6 +467,7 @@ async function confirmDeleteRule(): Promise<void> {
                 variant="outline"
                 size="sm"
                 :disabled="sortedChannels.length === 0"
+                :title="sortedChannels.length === 0 ? $t('platform.notifications.presetsNeedChannel') : undefined"
                 @click="openRulePreset(preset)"
               >
                 <Plus class="size-4" aria-hidden="true" />
@@ -632,23 +659,29 @@ async function confirmDeleteRule(): Promise<void> {
             <div v-for="field in activeFields" :key="field.key" class="grid gap-2">
               <Label :for="`cfg-${field.key}`">
                 {{ $t(field.label) }}
-                <span v-if="field.required" class="text-destructive">*</span>
+                <span v-if="field.required && !secretsOptional" class="text-destructive">*</span>
+                <span v-else-if="field.required" class="text-xs font-normal text-muted-foreground">
+                  ({{ $t('common.misc.keepBlank') }})
+                </span>
               </Label>
               <Input
                 :id="`cfg-${field.key}`"
                 v-model="formConfig[field.key]"
-                :placeholder="editingId ? $t('common.misc.keepBlank') : (field.placeholder.startsWith('platform.') ? $t(field.placeholder) : field.placeholder)"
+                :placeholder="secretsOptional ? $t('common.misc.keepBlank') : (field.placeholder.startsWith('platform.') ? $t(field.placeholder) : field.placeholder)"
                 autocomplete="off"
               />
             </div>
-            <p v-if="editingId" class="text-xs text-muted-foreground">
+            <p v-if="kindChanged" class="text-xs text-warning">
+              {{ $t('platform.notifications.kindChangedHint') }}
+            </p>
+            <p v-else-if="editingId" class="text-xs text-muted-foreground">
               {{ $t('platform.notifications.replaceConfigHint') }}
             </p>
           </div>
 
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="formEnabled" type="checkbox" class="size-4 accent-primary" />
-            {{ $t('platform.notifications.enabledLabel') }}
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <Checkbox v-model="formEnabled" />
+            <span>{{ $t('platform.notifications.enabledLabel') }}</span>
           </label>
 
           <div class="space-y-3 rounded-md border border-dashed border-border p-3">
@@ -730,12 +763,18 @@ async function confirmDeleteRule(): Promise<void> {
               <label
                 v-for="channel in sortedChannels"
                 :key="channel.id"
-                class="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                class="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
               >
-                <input v-model="ruleChannelIds" type="checkbox" :value="channel.id" class="size-4 accent-primary" />
+                <Checkbox
+                  :model-value="ruleChannelIds.includes(channel.id)"
+                  @update:model-value="(v) => toggleRuleChannel(channel.id, v === true)"
+                />
                 <span class="min-w-0">
-                  <span class="block truncate font-medium">{{ channel.name || channel.id }}</span>
-                  <span class="block truncate text-xs text-muted-foreground">{{ channel.kind }} · {{ channel.id }}</span>
+                  <span class="block truncate font-medium" :title="channel.name || channel.id">{{ channel.name || channel.id }}</span>
+                  <span
+                    class="block truncate text-xs text-muted-foreground"
+                    :title="`${channel.kind} · ${channel.id}`"
+                  >{{ channel.kind }} · {{ channel.id }}</span>
                 </span>
               </label>
             </div>
@@ -754,9 +793,9 @@ async function confirmDeleteRule(): Promise<void> {
           </div>
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.templateVarsHint') }}</p>
 
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="ruleEnabled" type="checkbox" class="size-4 accent-primary" />
-            {{ $t('platform.notifications.ruleEnabledLabel') }}
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <Checkbox v-model="ruleEnabled" />
+            <span>{{ $t('platform.notifications.ruleEnabledLabel') }}</span>
           </label>
 
           <DialogFooter>

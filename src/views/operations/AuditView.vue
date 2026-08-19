@@ -168,7 +168,7 @@ function exportAuditHead() {
 }
 
 // Export the currently-filtered events (what the operator is looking at). Honest
-// scope: this exports the loaded page, not the whole store — the count is shown.
+// scope: this exports the loaded page, not the whole store, and says so.
 function downloadFile(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -213,6 +213,13 @@ function exportCsv() {
   downloadFile("lattice-audit.csv", [headers.join(","), ...rows].join("\n"), "text/csv");
   toast.success(t("operations.audit.exported", { count: events.value.length }));
 }
+
+/** Says what an export actually covers, and why it is disabled at zero. */
+const exportHint = computed(() =>
+  events.value.length === 0
+    ? t("operations.audit.exportDisabledHint")
+    : t("operations.audit.exportScopeHint", { count: events.value.length }),
+);
 
 // Mirror the full filter + page state into the URL so a query is shareable.
 function syncUrl() {
@@ -317,13 +324,25 @@ function openTrace(correlationId: string) {
         <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="events.length === 0" @click="exportCsv">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="events.length === 0"
+          :title="exportHint"
+          @click="exportCsv"
+        >
           <Download class="size-4" aria-hidden="true" />
-          {{ $t('operations.audit.exportCsv') }}
+          {{ $t('operations.audit.exportCsv', { count: events.length }) }}
         </Button>
-        <Button variant="outline" size="sm" :disabled="events.length === 0" @click="exportNdjson">
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="events.length === 0"
+          :title="exportHint"
+          @click="exportNdjson"
+        >
           <Download class="size-4" aria-hidden="true" />
-          {{ $t('operations.audit.exportNdjson') }}
+          {{ $t('operations.audit.exportNdjson', { count: events.length }) }}
         </Button>
         <Button variant="outline" size="sm" :disabled="auditQuery.refreshing.value" @click="auditQuery.refresh">
           <RefreshCw :class="cn('size-4', auditQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
@@ -337,7 +356,7 @@ function openTrace(correlationId: string) {
         <CardContent class="flex items-center justify-between p-4">
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.audit.returned') }}</p>
-            <p class="text-2xl font-semibold">{{ events.length }}</p>
+            <p class="text-2xl font-semibold tabular">{{ events.length }}</p>
           </div>
           <ScrollText class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
@@ -346,7 +365,7 @@ function openTrace(correlationId: string) {
         <CardContent class="flex items-center justify-between p-4">
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.audit.totalMatch') }}</p>
-            <p class="text-2xl font-semibold">{{ total }}</p>
+            <p class="text-2xl font-semibold tabular">{{ total }}</p>
           </div>
           <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
         </CardContent>
@@ -356,7 +375,7 @@ function openTrace(correlationId: string) {
           <div>
             <p class="text-sm text-muted-foreground">{{ $t('operations.audit.chain') }}</p>
             <p class="text-2xl font-semibold" :class="verifyResult?.ok === false ? 'text-destructive' : 'text-success'">
-              {{ verifyResult ? (verifyResult.ok ? $t('operations.audit.chainOk') : $t('operations.audit.chainBad')) : "—" }}
+              {{ verifyResult ? (verifyResult.ok ? $t('operations.audit.chainOk') : $t('operations.audit.chainBad')) : $t('common.misc.none') }}
             </p>
           </div>
           <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
@@ -376,6 +395,7 @@ function openTrace(correlationId: string) {
             v-model="q"
             class="pl-8"
             :placeholder="$t('operations.audit.searchPlaceholder')"
+            :aria-label="$t('operations.audit.searchLabel')"
             @keyup.enter="applyFilters"
           />
         </div>
@@ -446,7 +466,9 @@ function openTrace(correlationId: string) {
             v-for="f in activeFilters"
             :key="f.key"
             type="button"
-            class="surface-interactive inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs"
+            class="surface-interactive inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            :aria-label="$t('operations.audit.removeFilter', { filter: f.label })"
+            :title="$t('operations.audit.removeFilter', { filter: f.label })"
             @click="clearFilter(f.key)"
           >
             {{ f.label }}
@@ -521,12 +543,11 @@ function openTrace(correlationId: string) {
           :row-key="(event) => event.id"
           :loading="auditQuery.loading.value"
           :error="auditQuery.error.value"
-          :page-size="pageSize"
+          :has-data="auditQuery.data.value !== undefined"
           :empty-title="$t('operations.audit.emptyTitle')"
           :empty-description="$t('operations.audit.emptyDescription')"
           :no-match-title="$t('operations.audit.noMatchTitle')"
           :no-match-description="$t('operations.audit.noMatchDescription')"
-          :actions-label="$t('operations.audit.colId')"
           @retry="auditQuery.refresh"
         >
           <template #cell-decision="{ row }">
@@ -539,7 +560,7 @@ function openTrace(correlationId: string) {
               <Badge v-if="row.scope" variant="outline">{{ row.scope }}</Badge>
             </div>
             <p class="mt-1 text-xs text-muted-foreground">
-              {{ $t('operations.audit.actorPrefix') }} {{ row.actor_id || "system" }} · {{ $t('operations.audit.nodePrefix') }} {{ row.node_id || $t('common.misc.global') }}
+              {{ $t('operations.audit.actorPrefix') }} {{ row.actor_id || $t('operations.audit.systemActor') }} · {{ $t('operations.audit.nodePrefix') }} {{ row.node_id || $t('common.misc.global') }}
             </p>
             <div v-if="row.reason || row.correlation_id" class="mt-2 flex flex-wrap items-center justify-end gap-2 text-xs text-muted-foreground md:justify-start">
               <span v-if="row.reason">{{ row.reason }}</span>
@@ -558,12 +579,12 @@ function openTrace(correlationId: string) {
           </template>
 
           <template #cell-at="{ row }">
-            <span class="text-xs text-muted-foreground">{{ formatDateTime(row.at) }}</span>
+            <span class="text-xs text-muted-foreground tabular">{{ formatDateTime(row.at) }}</span>
           </template>
 
           <template #cell-id="{ row }">
             <div class="flex items-center justify-end gap-2">
-              <code class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 12) }}</code>
+              <code class="font-mono text-xs text-muted-foreground" :title="row.id">{{ shortId(row.id, 12) }}</code>
               <CopyButton :value="row.id" />
             </div>
           </template>

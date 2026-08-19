@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * NodeDetailView — the deep-linkable, full-page node detail (route
+ * NodeDetailView: the deep-linkable, full-page node detail (route
  * `node-detail`, path `/nodes/:id`). Replaces the cramped `?node=` modal that
  * used to live in NodesView: a whole node card now navigates here.
  *
@@ -83,6 +83,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Button } from "@/components/ui/button";
@@ -136,7 +137,7 @@ function soften<T>(fetcher: () => Promise<T>) {
 }
 
 /* ----------------------------------------------------------------- */
-/* Data sources — node list is the spine; the rest are softened side  */
+/* Data sources: node list is the spine; the rest are softened side   */
 /* panels keyed off this node's id.                                    */
 /* ----------------------------------------------------------------- */
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
@@ -246,7 +247,7 @@ const launchSnapshotKeys: Array<keyof LaunchSnapshot> = [
 
 function launchValueLabel(value: LaunchSnapshot[keyof LaunchSnapshot]): string {
   if (typeof value === "boolean") return value ? t("fleet.nodes.detail.launch.enabled") : t("fleet.nodes.detail.launch.disabled");
-  return String(value || "—");
+  return String(value || t("common.misc.none"));
 }
 
 function launchSnapshotSummary(snapshot?: LaunchSnapshot): string {
@@ -347,7 +348,7 @@ watch(
 );
 
 /* ----------------------------------------------------------------- */
-/* In-session CPU sparkline (inline SVG, CSP-safe — same approach as   */
+/* In-session CPU sparkline (inline SVG, CSP-safe, same approach as    */
 /* NodeCard) from the shared metric buffer.                            */
 /* ----------------------------------------------------------------- */
 const SPARK_W = 240;
@@ -712,7 +713,7 @@ async function saveIdentity() {
 }
 
 function displayInternalAddress(value?: string, publicValue?: string): string {
-  if (!value) return "—";
+  if (!value) return t("common.misc.none");
   if (publicValue && value === publicValue) return t("fleet.nodes.detail.sameAsPublic");
   return value;
 }
@@ -734,6 +735,37 @@ const updateNoopMessage = ref("");
 const savingUpdatePolicy = ref(false);
 const resolvingGeo = ref(false);
 const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
+
+/* Disabling a node and rotating its token both take effect the moment they run,
+   so each is gated behind a confirm naming the node. Re-enabling is not
+   destructive and still runs straight away. */
+const disableOpen = ref(false);
+const rotateOpen = ref(false);
+const nodeLabel = computed(() => node.value?.name || node.value?.id || "");
+
+function requestDisable(disabled: boolean) {
+  if (!disabled) {
+    void setDisabled(false);
+    return;
+  }
+  disableOpen.value = true;
+}
+
+async function confirmDisable() {
+  try {
+    await setDisabled(true);
+  } finally {
+    disableOpen.value = false;
+  }
+}
+
+async function confirmRotateToken() {
+  try {
+    await rotateToken();
+  } finally {
+    rotateOpen.value = false;
+  }
+}
 
 async function setDisabled(disabled: boolean) {
   if (!node.value) return;
@@ -810,7 +842,7 @@ const deleteImpactRows = computed(() => {
 });
 
 /** Confirm is gated until the typed value exactly matches what the prompt asks
- *  for — the node name, or its id when the node has no name (matches the prompt
+ *  for: the node name, or its id when the node has no name (matches the prompt
  *  copy, which falls back to id). */
 const deleteNameMatches = computed(
   () =>
@@ -923,9 +955,16 @@ async function saveIPConfig() {
   }
 }
 
+// Clearing drops the override and saves immediately, so it asks first.
+const clearIPOpen = ref(false);
+
 async function clearIPConfig() {
   ipMode.value = "inherit";
-  await saveIPConfig();
+  try {
+    await saveIPConfig();
+  } finally {
+    clearIPOpen.value = false;
+  }
 }
 
 function officialUpdateRequest(autoPlan = updateAuto.value) {
@@ -1011,7 +1050,7 @@ async function resolveGeo() {
 <template>
   <!-- Resolved node: full page with a sticky header over a 2-column body. -->
   <div v-if="node">
-    <div class="sticky top-0 z-20 border-b border-border bg-background/85 px-6 py-4 backdrop-blur">
+    <div class="sticky top-0 z-20 border-b border-border bg-background px-6 py-4">
       <PageHeader :title="node.name || node.id" :section="$t('nav.sections.fleet')">
         <template #status>
           <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
@@ -1266,7 +1305,7 @@ async function resolveGeo() {
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.load') }}</p>
                 <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
                   <Gauge class="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {{ node.metrics?.load1?.toFixed(2) ?? '—' }}
+                  {{ node.metrics?.load1?.toFixed(2) ?? $t('common.misc.none') }}
                 </p>
               </div>
               <div class="rounded-md border border-border bg-muted/20 p-3">
@@ -1320,21 +1359,21 @@ async function resolveGeo() {
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.public_ip || '—' }}</p>
+                  <p class="mt-1 truncate font-mono text-sm" :title="node.public_ip || $t('common.misc.none')">{{ node.public_ip || $t('common.misc.none') }}</p>
                 </div>
                 <CopyButton v-if="node.public_ip" :value="node.public_ip" />
               </div>
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIpv6') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ node.public_ipv6 || '—' }}</p>
+                  <p class="mt-1 truncate font-mono text-sm" :title="node.public_ipv6 || $t('common.misc.none')">{{ node.public_ipv6 || $t('common.misc.none') }}</p>
                 </div>
                 <CopyButton v-if="node.public_ipv6" :value="node.public_ipv6" />
               </div>
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ displayInternalAddress(node.internal_ip, node.public_ip) }}</p>
+                  <p class="mt-1 truncate font-mono text-sm" :title="displayInternalAddress(node.internal_ip, node.public_ip)">{{ displayInternalAddress(node.internal_ip, node.public_ip) }}</p>
                 </div>
                 <CopyButton
                   v-if="copyableInternalAddress(node.internal_ip, node.public_ip)"
@@ -1344,7 +1383,7 @@ async function resolveGeo() {
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIpv6') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm">{{ displayInternalAddress(node.internal_ipv6, node.public_ipv6) }}</p>
+                  <p class="mt-1 truncate font-mono text-sm" :title="displayInternalAddress(node.internal_ipv6, node.public_ipv6)">{{ displayInternalAddress(node.internal_ipv6, node.public_ipv6) }}</p>
                 </div>
                 <CopyButton
                   v-if="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
@@ -1421,7 +1460,7 @@ async function resolveGeo() {
                   <RefreshCw v-if="ipConfigPending" class="size-3.5 animate-spin" aria-hidden="true" />
                   {{ $t('common.actions.save') }}
                 </Button>
-                <Button v-if="node.ip_config?.mode" variant="ghost" size="sm" :disabled="ipConfigPending" @click="clearIPConfig">
+                <Button v-if="node.ip_config?.mode" variant="ghost" size="sm" :disabled="ipConfigPending" @click="clearIPOpen = true">
                   {{ $t('fleet.nodes.detail.ipConfig.clear') }}
                 </Button>
               </div>
@@ -1546,9 +1585,10 @@ async function resolveGeo() {
                   <button
                     type="button"
                     :class="cn(
-                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                       launchPlatform === 'linux' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
                     )"
+                    :aria-pressed="launchPlatform === 'linux'"
                     @click="launchPlatform = 'linux'"
                   >
                     {{ $t('fleet.nodes.enroll.platformLinux') }}
@@ -1556,9 +1596,10 @@ async function resolveGeo() {
                   <button
                     type="button"
                     :class="cn(
-                      'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                      'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                       launchPlatform === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
                     )"
+                    :aria-pressed="launchPlatform === 'manual'"
                     @click="launchPlatform = 'manual'"
                   >
                     {{ $t('fleet.nodes.enroll.platformManual') }}
@@ -1594,27 +1635,27 @@ async function resolveGeo() {
               <div v-if="hasGeo" class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
                 <div>
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoCountry') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.country || '—' }}</p>
+                  <p class="mt-0.5">{{ node.geo?.country || $t('common.misc.none') }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoRegion') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.region || '—' }}</p>
+                  <p class="mt-0.5">{{ node.geo?.region || $t('common.misc.none') }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoCity') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.city || '—' }}</p>
+                  <p class="mt-0.5">{{ node.geo?.city || $t('common.misc.none') }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoAsn') }}</p>
-                  <p class="mt-0.5 font-mono">{{ node.geo?.asn ?? '—' }}</p>
+                  <p class="mt-0.5 font-mono">{{ node.geo?.asn ?? $t('common.misc.none') }}</p>
                 </div>
                 <div class="col-span-2">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoAsOrg') }}</p>
-                  <p class="mt-0.5 truncate">{{ node.geo?.as_org || '—' }}</p>
+                  <p class="mt-0.5 truncate" :title="node.geo?.as_org || $t('common.misc.none')">{{ node.geo?.as_org || $t('common.misc.none') }}</p>
                 </div>
                 <div>
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoProvider') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.provider || '—' }}</p>
+                  <p class="mt-0.5">{{ node.geo?.provider || $t('common.misc.none') }}</p>
                 </div>
                 <div v-if="node.geo?.updated_at" class="col-span-2 sm:col-span-3">
                   <p class="text-xs text-muted-foreground">
@@ -1640,35 +1681,35 @@ async function resolveGeo() {
             <dl v-if="node.host_facts" class="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factHostname') }}</dt>
-                <dd class="mt-0.5 truncate font-mono text-sm">{{ node.host_facts.hostname || '—' }}</dd>
+                <dd class="mt-0.5 truncate font-mono text-sm" :title="node.host_facts.hostname || $t('common.misc.none')">{{ node.host_facts.hostname || $t('common.misc.none') }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factOs') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.os || '—' }}</dd>
+                <dd class="mt-0.5 text-sm">{{ node.host_facts.os || $t('common.misc.none') }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factPlatform') }}</dt>
                 <dd class="mt-0.5 text-sm">
-                  {{ [node.host_facts.platform, node.host_facts.platform_version].filter(Boolean).join(' ') || '—' }}
+                  {{ [node.host_facts.platform, node.host_facts.platform_version].filter(Boolean).join(' ') || $t('common.misc.none') }}
                 </dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factKernel') }}</dt>
-                <dd class="mt-0.5 truncate font-mono text-sm">{{ hostKernel(node.host_facts) || '—' }}</dd>
+                <dd class="mt-0.5 truncate font-mono text-sm" :title="hostKernel(node.host_facts) || $t('common.misc.none')">{{ hostKernel(node.host_facts) || $t('common.misc.none') }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factArch') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.arch || '—' }}</dd>
+                <dd class="mt-0.5 text-sm">{{ node.host_facts.arch || $t('common.misc.none') }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpu') }}</dt>
                 <dd class="mt-0.5 text-sm">
-                  {{ node.host_facts.cpu_cores ? $t('fleet.nodes.detail.coresValue', { value: node.host_facts.cpu_cores }) : '—' }}
+                  {{ node.host_facts.cpu_cores ? $t('fleet.nodes.detail.coresValue', { value: node.host_facts.cpu_cores }) : $t('common.misc.none') }}
                 </dd>
               </div>
               <div class="sm:col-span-2">
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpuModel') }}</dt>
-                <dd class="mt-0.5 truncate text-sm">{{ node.host_facts.cpu_model || '—' }}</dd>
+                <dd class="mt-0.5 truncate text-sm" :title="node.host_facts.cpu_model || $t('common.misc.none')">{{ node.host_facts.cpu_model || $t('common.misc.none') }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factMemory') }}</dt>
@@ -1680,11 +1721,11 @@ async function resolveGeo() {
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factVirtualization') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.virtualization || '—' }}</dd>
+                <dd class="mt-0.5 text-sm">{{ node.host_facts.virtualization || $t('common.misc.none') }}</dd>
               </div>
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factBootTime') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.boot_time ? formatDateTime(node.host_facts.boot_time) : '—' }}</dd>
+                <dd class="mt-0.5 text-sm">{{ node.host_facts.boot_time ? formatDateTime(node.host_facts.boot_time) : $t('common.misc.none') }}</dd>
               </div>
             </dl>
             <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noHostFacts') }}</p>
@@ -1751,15 +1792,15 @@ async function resolveGeo() {
             <template v-if="updatePolicy">
               <div class="flex items-center justify-between gap-2">
                 <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.targetVersion') }}</span>
-                <span class="font-mono">{{ updatePolicy.target_version || '—' }}</span>
+                <span class="font-mono">{{ updatePolicy.target_version || $t('common.misc.none') }}</span>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.lastApplied') }}</span>
-                <span class="font-mono">{{ updatePolicy.last_applied_version || '—' }}</span>
+                <span class="font-mono">{{ updatePolicy.last_applied_version || $t('common.misc.none') }}</span>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.lastPlanned') }}</span>
-                <span class="tabular text-xs text-muted-foreground">{{ updatePolicy.last_planned_at ? formatRelativeTime(updatePolicy.last_planned_at) : '—' }}</span>
+                <span class="tabular text-xs text-muted-foreground">{{ updatePolicy.last_planned_at ? formatRelativeTime(updatePolicy.last_planned_at) : $t('common.misc.none') }}</span>
               </div>
               <div class="flex flex-wrap items-center gap-2 pt-1">
                 <Badge :variant="updatePolicy.enabled ? 'success' : 'secondary'">
@@ -1844,11 +1885,14 @@ async function resolveGeo() {
               class="rounded-md border border-border p-3"
             >
               <div class="flex items-center justify-between gap-2">
-                <span class="truncate text-sm font-medium">{{ d.name }}</span>
+                <span class="truncate text-sm font-medium" :title="d.name">{{ d.name }}</span>
                 <Badge variant="secondary">{{ d.provider }}</Badge>
               </div>
-              <p class="mt-1 truncate font-mono text-xs text-muted-foreground">
-                {{ d.domains.join(', ') || '—' }}
+              <p
+                class="mt-1 truncate font-mono text-xs text-muted-foreground"
+                :title="d.domains.join(', ') || $t('common.misc.none')"
+              >
+                {{ d.domains.join(', ') || $t('common.misc.none') }}
               </p>
               <p v-if="d.last_run_at" class="mt-1 text-xs text-muted-foreground">
                 {{ $t('fleet.nodes.detail.ddnsLastRun', { time: formatRelativeTime(d.last_run_at) }) }}
@@ -1889,7 +1933,7 @@ async function resolveGeo() {
                       </span>
                       <div class="flex items-start gap-2">
                         <div class="min-w-0 flex-1">
-                          <p class="truncate font-mono text-xs tabular">
+                          <p class="truncate font-mono text-xs tabular" :title="entry.action">
                             <RouterLink
                               v-if="timelineHref(entry)"
                               :to="timelineHref(entry)!"
@@ -1899,11 +1943,14 @@ async function resolveGeo() {
                             </RouterLink>
                             <template v-else>{{ entry.action }}</template>
                           </p>
-                          <p class="truncate text-xs text-muted-foreground">
+                          <p
+                            class="truncate text-xs text-muted-foreground"
+                            :title="[entry.actor, entry.detail].filter(Boolean).join(' · ') || $t('common.misc.none')"
+                          >
                             <template v-if="entry.actor">{{ entry.actor }}</template>
                             <template v-if="entry.actor && entry.detail"> · </template>
                             <template v-if="entry.detail">{{ entry.detail }}</template>
-                            <template v-if="!entry.actor && !entry.detail">—</template>
+                            <template v-if="!entry.actor && !entry.detail">{{ $t('common.misc.none') }}</template>
                           </p>
                         </div>
                         <Badge :variant="outcomeVariant(entry.outcome)" class="shrink-0">{{ entry.outcome }}</Badge>
@@ -1944,12 +1991,12 @@ async function resolveGeo() {
               :variant="node.disabled ? 'outline' : 'destructive'"
               size="sm"
               :disabled="pending"
-              @click="setDisabled(!node.disabled)"
+              @click="requestDisable(!node.disabled)"
             >
               <Power class="size-4" aria-hidden="true" />
               {{ node.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
             </Button>
-            <Button variant="outline" size="sm" :disabled="pending" @click="rotateToken">
+            <Button variant="outline" size="sm" :disabled="pending" @click="rotateOpen = true">
               <KeyRound class="size-4" aria-hidden="true" />
               {{ $t('fleet.nodes.detail.rotateToken') }}
             </Button>
@@ -2130,6 +2177,36 @@ async function resolveGeo() {
         </DialogFooter>
       </DialogScrollContent>
     </Dialog>
+
+    <ConfirmDialog
+      v-model:open="disableOpen"
+      :title="$t('fleet.nodes.confirm.disableTitle')"
+      :description="$t('fleet.nodes.confirm.disableDescription', { name: nodeLabel })"
+      :confirm-label="$t('common.actions.disable')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="pending"
+      @confirm="confirmDisable"
+    />
+
+    <ConfirmDialog
+      v-model:open="rotateOpen"
+      :title="$t('fleet.nodes.confirm.rotateTitle')"
+      :description="$t('fleet.nodes.confirm.rotateDescription', { name: nodeLabel })"
+      :confirm-label="$t('fleet.nodes.detail.rotateToken')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="pending"
+      @confirm="confirmRotateToken"
+    />
+
+    <ConfirmDialog
+      v-model:open="clearIPOpen"
+      :title="$t('fleet.nodes.confirm.clearIpTitle')"
+      :description="$t('fleet.nodes.confirm.clearIpDescription', { name: nodeLabel })"
+      :confirm-label="$t('fleet.nodes.detail.ipConfig.clear')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="ipConfigPending"
+      @confirm="clearIPConfig"
+    />
   </div>
 
   <!-- Loading / error / not-found. -->

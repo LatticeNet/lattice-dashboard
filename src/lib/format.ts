@@ -1,9 +1,19 @@
-/** Presentation helpers — bytes, rates, durations, relative time, money. */
+/** Presentation helpers: bytes, rates, durations, relative time, money. */
+
+/**
+ * What a formatter prints when there is no value to print.
+ *
+ * A hyphen rather than an em dash, and a constant rather than nine copies of a
+ * literal, so the console has one answer to "nothing here" and changing it is
+ * one edit instead of a grep. Deliberately locale-free: this module formats
+ * numbers and has no access to the message catalogue.
+ */
+export const NO_VALUE = "-";
 
 const UNITS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
 
 export function formatBytes(bytes?: number, digits = 1): string {
-  if (bytes === undefined || bytes === null || Number.isNaN(bytes)) return "—";
+  if (bytes === undefined || bytes === null || Number.isNaN(bytes)) return NO_VALUE;
   if (bytes < 1) return "0 B";
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), UNITS.length - 1);
   const v = bytes / Math.pow(1024, i);
@@ -11,12 +21,12 @@ export function formatBytes(bytes?: number, digits = 1): string {
 }
 
 export function formatBytesPerSec(bytes?: number): string {
-  if (bytes === undefined) return "—";
+  if (bytes === undefined) return NO_VALUE;
   return `${formatBytes(bytes)}/s`;
 }
 
 export function formatPercent(value?: number, digits = 0): string {
-  if (value === undefined || value === null || Number.isNaN(value)) return "—";
+  if (value === undefined || value === null || Number.isNaN(value)) return NO_VALUE;
   return `${value.toFixed(digits)}%`;
 }
 
@@ -26,7 +36,7 @@ export function ratio(used?: number, total?: number): number {
 }
 
 export function formatDuration(seconds?: number): string {
-  if (seconds === undefined || seconds < 0) return "—";
+  if (seconds === undefined || seconds < 0) return NO_VALUE;
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -41,7 +51,7 @@ const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 export function formatRelativeTime(input?: string | number | Date): string {
   if (!input) return "never";
   const then = new Date(input).getTime();
-  if (Number.isNaN(then)) return "—";
+  if (Number.isNaN(then)) return NO_VALUE;
   const diff = then - Date.now();
   const abs = Math.abs(diff);
   const min = 60_000,
@@ -54,9 +64,9 @@ export function formatRelativeTime(input?: string | number | Date): string {
 }
 
 export function formatDateTime(input?: string | number | Date): string {
-  if (!input) return "—";
+  if (!input) return NO_VALUE;
   const d = new Date(input);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return NO_VALUE;
   return d.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
@@ -67,7 +77,7 @@ export function formatDateTime(input?: string | number | Date): string {
 }
 
 export function formatMoney(cents?: number, currency = "USD"): string {
-  if (cents === undefined) return "—";
+  if (cents === undefined) return NO_VALUE;
   try {
     return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(cents / 100);
   } catch {
@@ -77,6 +87,6 @@ export function formatMoney(cents?: number, currency = "USD"): string {
 
 /** Short, copy-friendly id (first 8 chars). */
 export function shortId(id?: string, len = 8): string {
-  if (!id) return "—";
+  if (!id) return NO_VALUE;
   return id.length > len ? id.slice(0, len) : id;
 }

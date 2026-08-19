@@ -30,9 +30,12 @@ import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 
+import { formatDateTime } from "@/lib/format";
+
 import PageHeader from "@/components/common/PageHeader.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import DataState from "@/components/common/DataState.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -73,6 +76,10 @@ const totpEnabled = computed(() => !!auth.principal?.totp_enabled);
 const mfaRequired = computed(() => !!auth.principal?.mfa_required);
 const recoveryText = computed(() => enrollment.value?.recovery_codes.join("\n") ?? "");
 const isSuperuser = computed(() => (auth.principal?.scopes ?? []).includes("*"));
+/** Account a destructive security change applies to, named in confirmations. */
+const accountLabel = computed(
+  () => auth.principal?.username || auth.principal?.actor_id || "",
+);
 const principalScopes = computed(() => auth.principal?.scopes ?? []);
 
 const passwordReady = computed(() => {
@@ -218,7 +225,10 @@ function cancelEnrollment() {
 // ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
 const supportsPasskey = isWebAuthnSupported();
 const passkeys = ref<WebAuthnCredentialView[]>([]);
-const passkeysLoaded = ref(false);
+const passkeysLoading = ref(true);
+/** Failure of the list fetch; rendered by DataState with a retry. */
+const passkeyListError = ref<Error | null>(null);
+/** Failure of an add/rename action; rendered inline above the list. */
 const passkeyError = ref<string | undefined>();
 const passkeyAdding = ref(false);
 const passkeyBusyId = ref<string | undefined>();
@@ -244,15 +254,20 @@ const stepUpError = stepUp.error;
 const stepUpPending = stepUp.pending;
 
 async function loadPasskeys() {
-  if (!supportsPasskey) return;
+  if (!supportsPasskey) {
+    passkeysLoading.value = false;
+    return;
+  }
+  passkeysLoading.value = true;
   try {
     const res = await api.security.webauthn.list();
     passkeys.value = res.credentials ?? [];
+    passkeyListError.value = null;
     passkeyError.value = undefined;
   } catch (error) {
-    passkeyError.value = toMessage(error);
+    passkeyListError.value = error instanceof Error ? error : new Error(toMessage(error));
   } finally {
-    passkeysLoaded.value = true;
+    passkeysLoading.value = false;
   }
 }
 
@@ -355,9 +370,7 @@ async function confirmDeletePasskey() {
 
 function formatPasskeyDate(value?: string): string {
   if (!value) return t("settings.security.passkeys.never");
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString();
+  return formatDateTime(value);
 }
 
 onMounted(loadPasskeys);
@@ -590,7 +603,10 @@ onMounted(loadPasskeys);
                   <Label>{{ $t("settings.security.totp.provisioningUri") }}</Label>
                   <CopyButton :value="enrollment.otpauth_uri" />
                 </div>
-                <code class="line-clamp-3 block break-all font-mono text-xs text-muted-foreground">
+                <code
+                  class="line-clamp-3 block break-all font-mono text-xs text-muted-foreground"
+                  :title="enrollment.otpauth_uri"
+                >
                   {{ enrollment.otpauth_uri }}
                 </code>
               </div>
@@ -718,84 +734,92 @@ onMounted(loadPasskeys);
             {{ passkeyError }}
           </p>
 
-          <ul v-if="passkeys.length" class="space-y-3">
-            <li
-              v-for="cred in passkeys"
-              :key="cred.id"
-              class="rounded-md border border-border p-4"
-            >
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="min-w-0 space-y-1">
-                  <div v-if="editingId === cred.id" class="flex items-center gap-2">
-                    <Input
-                      v-model="editName"
-                      class="h-8 w-56"
-                      :maxlength="64"
-                      autocomplete="off"
-                      @keyup.enter="saveRename(cred)"
-                      @keyup.esc="cancelRename"
-                    />
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      :title="$t('common.actions.save')"
-                      :disabled="passkeyBusyId === cred.id"
-                      @click="saveRename(cred)"
-                    >
-                      <Check class="size-4" aria-hidden="true" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      :title="$t('common.actions.cancel')"
-                      @click="cancelRename"
-                    >
-                      <X class="size-4" aria-hidden="true" />
-                    </Button>
-                  </div>
-                  <div v-else class="flex items-center gap-2">
-                    <span class="truncate font-medium">{{ cred.name }}</span>
-                    <Badge v-if="cred.backed_up" variant="secondary" class="gap-1">
-                      <Cloud class="size-3" aria-hidden="true" />
-                      {{ $t("settings.security.passkeys.syncedBadge") }}
-                    </Badge>
-                  </div>
-                  <p class="text-xs text-muted-foreground">
-                    {{ $t("settings.security.passkeys.created", { date: formatPasskeyDate(cred.created_at) }) }}
-                    ·
-                    {{ $t("settings.security.passkeys.lastUsed", { date: formatPasskeyDate(cred.last_used_at) }) }}
-                  </p>
-                </div>
-                <div v-if="editingId !== cred.id" class="flex items-center gap-1">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    :title="$t('settings.security.passkeys.rename')"
-                    @click="beginRename(cred)"
-                  >
-                    <Pencil class="size-4" aria-hidden="true" />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    class="text-destructive hover:text-destructive"
-                    :title="$t('common.actions.delete')"
-                    :disabled="passkeyBusyId === cred.id"
-                    @click="requestDeletePasskey(cred)"
-                  >
-                    <Trash2 class="size-4" aria-hidden="true" />
-                  </Button>
-                </div>
-              </div>
-            </li>
-          </ul>
-
-          <div
-            v-else-if="passkeysLoaded"
-            class="rounded-md border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground"
+          <DataState
+            :loading="passkeysLoading"
+            :error="passkeyListError"
+            :has-data="passkeys.length > 0"
+            :is-empty="passkeys.length === 0"
+            :empty-title="$t('settings.security.passkeys.emptyTitle')"
+            :empty-description="$t('settings.security.passkeys.empty')"
+            :skeleton-rows="2"
+            @retry="loadPasskeys"
           >
-            {{ $t("settings.security.passkeys.empty") }}
-          </div>
+            <ul class="space-y-3">
+              <li
+                v-for="cred in passkeys"
+                :key="cred.id"
+                class="rounded-md border border-border p-4"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <div class="min-w-0 space-y-1">
+                    <div v-if="editingId === cred.id" class="flex items-center gap-2">
+                      <Input
+                        v-model="editName"
+                        class="h-8 w-56"
+                        :maxlength="64"
+                        autocomplete="off"
+                        @keyup.enter="saveRename(cred)"
+                        @keyup.esc="cancelRename"
+                      />
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        :title="$t('common.actions.save')"
+                        :aria-label="$t('common.actions.save')"
+                        :disabled="passkeyBusyId === cred.id"
+                        @click="saveRename(cred)"
+                      >
+                        <Check class="size-4" aria-hidden="true" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        :title="$t('common.actions.cancel')"
+                        :aria-label="$t('common.actions.cancel')"
+                        @click="cancelRename"
+                      >
+                        <X class="size-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                    <div v-else class="flex items-center gap-2">
+                      <span class="truncate font-medium" :title="cred.name">{{ cred.name }}</span>
+                      <Badge v-if="cred.backed_up" variant="secondary" class="gap-1">
+                        <Cloud class="size-3" aria-hidden="true" />
+                        {{ $t("settings.security.passkeys.syncedBadge") }}
+                      </Badge>
+                    </div>
+                    <p class="text-xs text-muted-foreground">
+                      {{ $t("settings.security.passkeys.created", { date: formatPasskeyDate(cred.created_at) }) }}
+                      ·
+                      {{ $t("settings.security.passkeys.lastUsed", { date: formatPasskeyDate(cred.last_used_at) }) }}
+                    </p>
+                  </div>
+                  <div v-if="editingId !== cred.id" class="flex items-center gap-1">
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      :title="$t('settings.security.passkeys.rename')"
+                      :aria-label="$t('settings.security.passkeys.renameNamed', { name: cred.name })"
+                      @click="beginRename(cred)"
+                    >
+                      <Pencil class="size-4" aria-hidden="true" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      class="text-destructive hover:text-destructive"
+                      :title="$t('common.actions.delete')"
+                      :aria-label="$t('settings.security.passkeys.deleteNamed', { name: cred.name })"
+                      :disabled="passkeyBusyId === cred.id"
+                      @click="requestDeletePasskey(cred)"
+                    >
+                      <Trash2 class="size-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </DataState>
 
           <div class="flex flex-wrap items-center gap-3">
             <Button type="button" :disabled="passkeyAdding" @click="addPasskey">
@@ -867,7 +891,7 @@ onMounted(loadPasskeys);
     <ConfirmDialog
       :open="disableConfirmOpen"
       :title="$t('settings.security.totp.disableConfirmTitle')"
-      :description="$t('settings.security.totp.disableConfirmDescription')"
+      :description="$t('settings.security.totp.disableConfirmDescription', { account: accountLabel })"
       :confirm-label="$t('settings.security.totp.disable')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="totpPending === 'disable'"

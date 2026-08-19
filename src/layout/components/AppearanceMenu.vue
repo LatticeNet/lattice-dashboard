@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { Sun, Monitor, Moon, Check, Rows3, Rows4 } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/stores/theme";
@@ -21,6 +22,7 @@ import type { ThemeMode } from "@/stores/theme";
 
 const theme = useThemeStore();
 const ui = useUiStore();
+const { t } = useI18n();
 
 const MODES: { value: ThemeMode; label: string; icon: any }[] = [
   { value: "light", label: "Light", icon: Sun },
@@ -35,14 +37,24 @@ const DENSITIES: { value: Density; icon: any }[] = [
 
 const swatchKeys = COLOR_THEME_KEYS.filter((k) => k !== "custom");
 
-function swatchColor(key: ColorThemeName): string {
-  return key === "custom"
-    ? theme.customColor
-    : PALETTES[key as Exclude<ColorThemeName, "custom">].swatch;
-}
+/**
+ * Every colour this menu paints, published once as custom properties on its
+ * root. Per-element inline styles do not survive a strict style-src, and this
+ * menu carried the same pattern the Appearance page just shed.
+ */
+const swatchVars = computed<Record<string, string>>(() => {
+  const vars: Record<string, string> = { "--swatch-custom": theme.customColor };
+  for (const key of swatchKeys) {
+    vars[`--swatch-${key}`] = PALETTES[key as Exclude<ColorThemeName, "custom">].swatch;
+  }
+  return vars;
+});
 
-function label(key: string): string {
-  return key.charAt(0).toUpperCase() + key.slice(1);
+/** Palette names are product vocabulary, so they come from the catalogue. */
+function paletteLabel(key: string): string {
+  const path = `settings.appearance.palettes.${key}`;
+  const translated = t(path);
+  return translated === path ? key.charAt(0).toUpperCase() + key.slice(1) : translated;
 }
 
 // Language switcher: a two-way computed over the i18n active locale that persists
@@ -54,7 +66,7 @@ const locale = computed<LocaleCode>({
 </script>
 
 <template>
-  <div class="w-72 space-y-4 p-1">
+  <div class="w-72 space-y-4 p-1" :style="swatchVars">
     <!-- Mode segmented control -->
     <div class="space-y-2">
       <p class="text-xs font-medium text-muted-foreground">{{ $t('appearance.mode') }}</p>
@@ -87,18 +99,23 @@ const locale = computed<LocaleCode>({
           v-for="key in swatchKeys"
           :key="key"
           type="button"
-          :title="label(key)"
-          :aria-label="label(key)"
+          :title="paletteLabel(key)"
+          :aria-label="paletteLabel(key)"
           :class="
             cn(
               'relative flex h-8 items-center justify-center rounded-md border outline-none ring-offset-2 ring-offset-background transition-all focus-visible:ring-ring/50 focus-visible:ring-[3px]',
+              'swatch-fill',
               theme.color === key && 'ring-2 ring-ring',
             )
           "
-          :style="{ backgroundColor: swatchColor(key) }"
+          :data-palette="key"
           @click="theme.setColor(key)"
         >
-          <Check v-if="theme.color === key" class="size-4 text-white drop-shadow" aria-hidden="true" />
+          <Check
+            v-if="theme.color === key"
+            class="size-4 text-primary-foreground drop-shadow"
+            aria-hidden="true"
+          />
         </button>
       </div>
     </div>
@@ -115,10 +132,7 @@ const locale = computed<LocaleCode>({
         "
         @click="theme.setColor('custom')"
       >
-        <span
-          class="size-5 shrink-0 rounded-full border"
-          :style="{ backgroundColor: theme.customColor }"
-        />
+        <span class="swatch-custom size-5 shrink-0 rounded-full border" />
         <span class="flex-1 truncate font-mono text-xs text-muted-foreground">
           {{ theme.customColor }}
         </span>
@@ -175,3 +189,28 @@ const locale = computed<LocaleCode>({
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+ * Swatch fills read the custom properties published on the menu root, so no
+ * element carries its own inline style. The palette values themselves stay in
+ * theme/palettes.ts; these rules only route them.
+ */
+.swatch-fill {
+  /* Fallback keeps an unmapped palette visible rather than transparent. */
+  background-color: var(--swatch-current, var(--muted));
+}
+.swatch-custom {
+  background-color: var(--swatch-custom);
+}
+.swatch-fill[data-palette="lattice"] { --swatch-current: var(--swatch-lattice); }
+.swatch-fill[data-palette="teal"] { --swatch-current: var(--swatch-teal); }
+.swatch-fill[data-palette="blue"] { --swatch-current: var(--swatch-blue); }
+.swatch-fill[data-palette="violet"] { --swatch-current: var(--swatch-violet); }
+.swatch-fill[data-palette="green"] { --swatch-current: var(--swatch-green); }
+.swatch-fill[data-palette="rose"] { --swatch-current: var(--swatch-rose); }
+.swatch-fill[data-palette="orange"] { --swatch-current: var(--swatch-orange); }
+.swatch-fill[data-palette="yellow"] { --swatch-current: var(--swatch-yellow); }
+.swatch-fill[data-palette="red"] { --swatch-current: var(--swatch-red); }
+.swatch-fill[data-palette="stone"] { --swatch-current: var(--swatch-stone); }
+</style>

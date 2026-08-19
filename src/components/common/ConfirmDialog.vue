@@ -31,7 +31,7 @@ import {
  */
 const props = withDefaults(
   defineProps<{
-    /** v-model:open — controls visibility. */
+    /** v-model:open. Controls visibility. */
     open: boolean;
     /** Dialog heading (pass a translated string). */
     title: string;
@@ -45,6 +45,13 @@ const props = withDefaults(
     variant?: "destructive" | "default";
     /** When true, disables the confirm button and shows a spinner. */
     pending?: boolean;
+    /**
+     * Blocks confirmation without claiming work is in flight. Dialogs that ask
+     * the operator to type a resource name need this: `pending` would spin and
+     * also disable Cancel, which reads as "already running" for a dialog that
+     * has not started anything.
+     */
+    confirmDisabled?: boolean;
   }>(),
   {
     description: undefined,
@@ -52,6 +59,7 @@ const props = withDefaults(
     cancelLabel: "Cancel",
     variant: "destructive",
     pending: false,
+    confirmDisabled: false,
   },
 );
 
@@ -73,7 +81,7 @@ function onCancel() {
 }
 
 function onConfirm() {
-  if (props.pending) return;
+  if (props.pending || props.confirmDisabled) return;
   emit("confirm");
 }
 </script>
@@ -94,7 +102,12 @@ function onConfirm() {
         <Button type="button" variant="outline" :disabled="pending" @click="onCancel">
           {{ cancelLabel }}
         </Button>
-        <Button type="button" :variant="confirmVariant" :disabled="pending" @click="onConfirm">
+        <Button
+        type="button"
+        :variant="confirmVariant"
+        :disabled="pending || confirmDisabled"
+        @click="onConfirm"
+      >
           <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
           {{ confirmLabel }}
         </Button>

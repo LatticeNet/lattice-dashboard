@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 
 /**
- * PlanReviewDialog — DRY home for the `plan -> approve -> apply` review dialog
+ * PlanReviewDialog: DRY home for the `plan -> approve -> apply` review dialog
  * copy-pasted across the safety-critical mutation views (Guard, DNS, Policy,
  * Tunnels, WireGuard, GeoRouting, Profiles, AgentUpdates, Approvals).
  *
@@ -25,8 +25,8 @@ import {
  * the API. The caller computes the SHA-256 digest (via `usePlanDigest`) over the
  * EXACT bytes it passes here as `planText`, then passes that hex string as
  * `digest`. Because the digest the operator reads is rendered from the same
- * `digest` prop that the caller binds the approval to — and that digest was
- * derived from the same `planText` string shown in the <pre> — the displayed
+ * `digest` prop that the caller binds the approval to. And that digest was
+ * derived from the same `planText` string shown in the <pre>. The displayed
  * digest provably matches the bytes the approval will bind. Do NOT re-derive the
  * digest in this component; doing so could desync displayed-vs-bound bytes.
  *
@@ -39,7 +39,7 @@ import {
  */
 
 interface BadgeSpec {
-  /** Visible label text (plain text — never rendered as HTML). */
+  /** Visible label text (plain text. Never rendered as HTML). */
   label: string;
   /** Badge variant; defaults to "outline" when omitted. */
   variant?:
@@ -54,7 +54,7 @@ interface BadgeSpec {
 
 const props = withDefaults(
   defineProps<{
-    /** v-model:open — controls dialog visibility. */
+    /** v-model:open. Controls dialog visibility. */
     open: boolean;
     /**
      * The exact plan/diff text the operator reviews AND the bytes the caller
@@ -71,7 +71,7 @@ const props = withDefaults(
     busy?: boolean;
     /**
      * When true, render the primary approve button (emits `approve`). When
-     * false (default), only the Approvals CTA is shown — for views that hand
+     * false (default), only the Approvals CTA is shown. For views that hand
      * off to the Approvals inbox rather than approving inline.
      */
     showApprove?: boolean;
@@ -152,7 +152,7 @@ function setOpen(value: boolean) {
           </slot>
         </div>
 
-        <!-- Plan diff (CSP-safe text — NOT v-html) -->
+        <!-- Plan diff (CSP-safe text. NOT v-html) -->
         <div class="rounded-md border border-border">
           <div
             class="flex items-center justify-between gap-3 border-b border-border px-3 py-2"

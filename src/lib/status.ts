@@ -8,7 +8,7 @@
  * whose `badgeVariant` is one of the REAL `badgeVariants` defined in
  * `src/components/ui/badge/badgeVariants.ts`.
  *
- * Pure TS — no Vue import. Safe to use in `<script setup>`, computed getters,
+ * Pure TS. No Vue import. Safe to use in `<script setup>`, computed getters,
  * table cells, or plain data transforms.
  */
 
@@ -17,7 +17,7 @@ import type { BadgeVariants } from "@/components/ui/badge/badgeVariants";
 /** Health states understood by {@link StatusDot} (`src/components/common/StatusDot.vue`). */
 export type NodeHealth = "online" | "offline" | "degraded" | "pending" | "unknown";
 
-/** Real Badge variants — mirrors {@link BadgeVariants} so it can never drift. */
+/** Real Badge variants. Mirrors {@link BadgeVariants} so it can never drift. */
 export type BadgeVariant = NonNullable<BadgeVariants["variant"]>;
 
 /** Quota usage buckets: under the soft limit / approaching it / over it. */
@@ -25,12 +25,12 @@ export type QuotaState = "ok" | "near" | "over";
 
 /**
  * The full visual treatment for a status. Every field is a class string (or
- * variant token) the caller can bind directly — `:variant`, `:class`, etc.
+ * variant token) the caller can bind directly. `:variant`, `:class`, etc.
  */
 export interface StatusMeta {
   /** Drives `<StatusDot :status="...">` (and conveys the canonical health). */
   dotStatus: NodeHealth;
-  /** Drives `<Badge :variant="...">` — always a real variant token. */
+  /** Drives `<Badge :variant="...">`. Always a real variant token. */
   badgeVariant: BadgeVariant;
   /** Foreground text color, e.g. `text-success` / `text-warning`. */
   textClass: string;
@@ -41,7 +41,7 @@ export interface StatusMeta {
 }
 
 /* ------------------------------------------------------------------ */
-/* Treatment table — the ONLY place colors are assigned to a state.    */
+/* Treatment table. The ONLY place colors are assigned to a state.    */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -99,7 +99,7 @@ export function statusMeta(health: NodeHealth): StatusMeta {
 /* Node health.                                                        */
 /* ------------------------------------------------------------------ */
 
-/** Minimal shape needed to derive node health — structurally matches `Node`. */
+/** Minimal shape needed to derive node health. Structurally matches `Node`. */
 export interface NodeHealthInput {
   online?: boolean;
   disabled?: boolean;
@@ -122,12 +122,12 @@ export interface NodeHealthInput {
  *  - `online === true`:
  *      - degraded when any core resource is critically saturated
  *        (CPU >= 90%, memory >= 90%, or disk >= 95%). This derivation is
- *        OPTIONAL/heuristic — pass a node without metrics and it stays
+ *        OPTIONAL/heuristic. Pass a node without metrics and it stays
  *        `"online"`. Tweak {@link DEGRADED_THRESHOLDS} to adjust.
  *      - otherwise `"online"`.
  *  - `online === undefined` (no signal at all) -> `"unknown"`.
  *
- * `"pending"` is never produced here — it is reserved for enrollment/approval
+ * `"pending"` is never produced here. It is reserved for enrollment/approval
  * flows that call {@link statusMeta}/{@link approvalStatusMeta} directly.
  */
 export function nodeHealth(node: NodeHealthInput): NodeHealth {

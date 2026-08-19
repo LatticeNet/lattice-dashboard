@@ -66,7 +66,7 @@ test("the plugin iframe keeps the strict opaque-origin boundary", () => {
   // Rotation must remount the element (`:key`), never merely reassign `src`: a
   // rotated URL differs from the live one only in its fragment, and a bare `src`
   // reassignment would be resolved as a same-document navigation that fires no
-  // `load` — which is how a stale bridge session used to survive a reload.
+  // `load`. Which is how a stale bridge session used to survive a reload.
   assert.match(host, /:key="frameEpoch"/);
   assert.match(host, /frameEpoch\.value \+= 1/);
   assert.match(host, /lifecycle\.noteLoad\(\)/);

@@ -130,7 +130,7 @@ const monitorExpressionError = computed(() => {
   const expr = monitorExpression.value.trim();
   if (!expr) return "";
   const result = evalFilterExpression(expr, () => true);
-  return result.ok ? "" : result.error ?? "Invalid expression";
+  return result.ok ? "" : result.error ?? t("fleet.monitoring.definitions.expressionInvalid");
 });
 
 function monitorFieldValues(monitor: MonitorView, rawField: string): string[] {
@@ -258,6 +258,13 @@ const filteredResults = computed(() =>
 const displayResults = computed(() =>
   paused.value && frozen.value ? frozen.value : filteredResults.value.slice(0, LOG_CAP),
 );
+/** The rendered window is capped, so the count label has to say so. While
+ *  paused the frozen snapshot can outlive the live match set, so the total
+ *  never reads lower than what is actually on screen. */
+const logMatchTotal = computed(() =>
+  Math.max(displayResults.value.length, filteredResults.value.length),
+);
+const logCapped = computed(() => displayResults.value.length < logMatchTotal.value);
 const newSincePause = computed(() => {
   const snap = frozen.value;
   const first = snap?.[0];
@@ -296,7 +303,7 @@ watch(
 const enabledCount = computed(() => monitors.value.filter((monitor) => monitor.enabled).length);
 const failureCount = computed(() => selectedResults.value.filter((result) => !result.success).length);
 const selectedSuccessRate = computed(() => {
-  if (selectedResults.value.length === 0) return "n/a";
+  if (selectedResults.value.length === 0) return t("common.misc.none");
   const ok = selectedResults.value.filter((result) => result.success).length;
   return formatPercent((ok / selectedResults.value.length) * 100, 1);
 });
@@ -304,7 +311,7 @@ const averageLatency = computed(() => {
   const values = selectedResults.value
     .map((result) => result.latency_ms)
     .filter((value): value is number => value !== undefined && Number.isFinite(value));
-  if (values.length === 0) return "n/a";
+  if (values.length === 0) return t("common.misc.none");
   return formatLatency(values.reduce((sum, value) => sum + value, 0) / values.length);
 });
 const canSubmit = computed(
@@ -374,7 +381,7 @@ function timestamp(input?: string): number {
 }
 
 function formatLatency(ms?: number): string {
-  if (ms === undefined || !Number.isFinite(ms)) return "n/a";
+  if (ms === undefined || !Number.isFinite(ms)) return t("common.misc.none");
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
   return `${ms.toFixed(ms < 10 ? 1 : 0)}ms`;
 }
@@ -540,7 +547,7 @@ async function deleteMonitor() {
                   class="pl-8 font-mono text-xs"
                   :class="monitorExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
                   :placeholder="$t('fleet.monitoring.definitions.expressionPlaceholder')"
-                  aria-label="Monitor expression"
+                  :aria-label="$t('fleet.monitoring.definitions.expressionLabel')"
                 />
               </div>
             </div>
@@ -575,7 +582,7 @@ async function deleteMonitor() {
                         :class="cn('size-4 shrink-0', monitor.enabled ? 'text-success' : 'text-muted-foreground')"
                         aria-hidden="true"
                       />
-                      <span class="truncate font-medium">{{ monitor.name || monitor.id }}</span>
+                      <span class="truncate font-medium" :title="monitor.name || monitor.id">{{ monitor.name || monitor.id }}</span>
                     </div>
                     <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
                       {{ monitor.target }}
@@ -652,14 +659,16 @@ async function deleteMonitor() {
                 <div class="grid grid-cols-2 rounded-md border border-input p-1">
                   <button
                     type="button"
-                    :class="cn('rounded px-2 py-1.5 text-sm transition-colors', assignAll && 'bg-primary text-primary-foreground')"
+                    :class="cn('rounded px-2 py-1.5 text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', assignAll && 'bg-primary text-primary-foreground')"
+                    :aria-pressed="assignAll"
                     @click="assignAll = true"
                   >
                     {{ $t('fleet.monitoring.create.all') }}
                   </button>
                   <button
                     type="button"
-                    :class="cn('rounded px-2 py-1.5 text-sm transition-colors', !assignAll && 'bg-primary text-primary-foreground')"
+                    :class="cn('rounded px-2 py-1.5 text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', !assignAll && 'bg-primary text-primary-foreground')"
+                    :aria-pressed="!assignAll"
                     @click="assignAll = false"
                   >
                     {{ $t('fleet.monitoring.create.selected') }}
@@ -698,7 +707,7 @@ async function deleteMonitor() {
                     class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
                   >
                     <input v-model="selectedNodeIds" type="checkbox" :value="node.id" class="size-4 accent-primary" />
-                    <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
+                    <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
                     <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</Badge>
                   </label>
                 </div>
@@ -832,7 +841,8 @@ async function deleteMonitor() {
                   v-for="opt in (['all', 'failures', 'slow'] as const)"
                   :key="opt"
                   type="button"
-                  :class="cn('rounded px-2 py-1 transition-colors', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
+                  :class="cn('rounded px-2 py-1 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
+                  :aria-pressed="logStatus === opt"
                   @click="logStatus = opt"
                 >
                   {{ $t(`fleet.monitoring.log.${opt}`) }}
@@ -853,7 +863,9 @@ async function deleteMonitor() {
                 {{ $t('fleet.monitoring.log.newSince', { count: newSincePause }) }}
               </span>
               <span class="ms-auto text-xs text-muted-foreground">
-                {{ $t('fleet.monitoring.log.showing', { count: displayResults.length }) }}
+                {{ logCapped
+                  ? $t('fleet.monitoring.log.showingCapped', { count: displayResults.length, total: logMatchTotal, cap: LOG_CAP })
+                  : $t('fleet.monitoring.log.showingOf', { count: displayResults.length, total: logMatchTotal }) }}
               </span>
             </div>
             <div class="overflow-x-auto rounded-lg border border-border">
@@ -870,7 +882,7 @@ async function deleteMonitor() {
                   class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border px-3 py-3 text-sm last:border-b-0"
                 >
                   <div class="min-w-0">
-                    <p class="truncate font-medium">{{ nodeName(result.node_id) }}</p>
+                    <p class="truncate font-medium" :title="nodeName(result.node_id)">{{ nodeName(result.node_id) }}</p>
                     <p v-if="result.error" class="mt-1 break-words text-xs text-destructive">{{ result.error }}</p>
                   </div>
                   <div>
@@ -895,7 +907,7 @@ async function deleteMonitor() {
 
     <ConfirmDialog
       v-model:open="deleteOpen"
-      :title="$t('common.actions.delete')"
+      :title="$t('fleet.monitoring.confirm.deleteTitle')"
       :description="selectedMonitor ? $t('fleet.monitoring.confirm.delete', { name: selectedMonitor.name || selectedMonitor.id }) : ''"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"

@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { NAV } from "../nav.ts";
+import { concreteRoutes } from "../routeComponents.ts";
+
+function navNames(): string[] {
+  return NAV.flatMap((section) => section.items.map((item) => item.name));
+}
+
+/**
+ * The route table is built by iterating NAV, so a view registered in
+ * routeComponents with no NAV entry is a feature with no way in. Agent Updates
+ * shipped that way: route, view, and both locales present, nothing reachable.
+ */
+test("every view registered for the console has a nav entry that reaches it", () => {
+  const reachable = new Set(navNames());
+  const orphaned = Object.keys(concreteRoutes).filter((name) => !reachable.has(name));
+
+  assert.deepEqual(orphaned, []);
+});
+
+/** The other direction: a nav entry with no view silently renders a placeholder. */
+test("every nav destination has a real view behind it", () => {
+  const placeholders = navNames().filter((name) => !(name in concreteRoutes));
+
+  assert.deepEqual(placeholders, []);
+});
+
+test("nav destination names and paths are unique", () => {
+  const names = navNames();
+  const paths = NAV.flatMap((section) => section.items.map((item) => item.path));
+
+  assert.equal(new Set(names).size, names.length);
+  assert.equal(new Set(paths).size, paths.length);
+});
+
+/**
+ * The collapsed rail renders one control per section, so a section without an
+ * icon is a blank 64px button.
+ */
+test("every nav section carries the icon the collapsed rail renders", () => {
+  const missing = NAV.filter((section) => !section.icon).map((section) => section.id);
+
+  assert.deepEqual(missing, []);
+});
+
+test("every nav destination carries an icon and a path rooted at /", () => {
+  for (const section of NAV) {
+    for (const item of section.items) {
+      assert.ok(item.icon, `${item.name} has no icon`);
+      assert.ok(item.path.startsWith("/"), `${item.name} path is not absolute`);
+    }
+  }
+});

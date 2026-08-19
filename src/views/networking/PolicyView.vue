@@ -11,6 +11,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Star,
   Trash2,
 } from "lucide-vue-next";
 import {
@@ -35,7 +36,7 @@ import {
 } from "@/lib/api";
 import {
   type Continent,
-  continentGlyph,
+  continentMark,
   continentLabel,
   continentOf,
 } from "@/lib/fleet";
@@ -61,6 +62,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -130,7 +132,7 @@ function goToGroups() {
   router.push("/groups");
 }
 
-// ── Group-policy cell editor (source group → dest group) ──────────────────
+// ── Group-policy cell editor (source group to dest group) ──────────────────
 const cellEditorOpen = ref(false);
 const cellSource = ref<MatrixGroup | undefined>(undefined);
 const cellDest = ref<MatrixGroup | undefined>(undefined);
@@ -169,7 +171,7 @@ async function saveCell(payload: GroupPolicyUpsertRequest) {
   }
 }
 
-// ── Group-policy plan (expand → per-node approvals) ───────────────────────
+// ── Group-policy plan (expand to per-node approvals) ───────────────────────
 const planResult = ref<GroupPolicyPlanResult | undefined>(undefined);
 const planResultOpen = ref(false);
 const planningGroups = ref(false);
@@ -248,9 +250,9 @@ const policyColumns = computed<DataTableColumn<NetPolicyView>[]>(() => [
   },
   { key: "enabled", label: t("networking.policy.colEnabled"), sortable: true, value: (p) => (p.enabled ? 1 : 0) },
   { key: "rules", label: t("networking.policy.colRules"), align: "right", sortable: true, value: (p) => p.rules.length },
-  { key: "last_plan", label: t("networking.policy.colLastPlan") },
+  { key: "last_plan", label: t("networking.policy.colLastPlan"), sortable: true, value: (p) => p.last_plan_sha ?? "" },
   { key: "last_applied", label: t("networking.policy.colLastApplied"), sortable: true, value: (p) => p.last_applied_at ?? "" },
-  { key: "last_error", label: t("networking.policy.colLastError") },
+  { key: "last_error", label: t("networking.policy.colLastError"), sortable: true, value: (p) => p.last_error ?? "" },
   { key: "actions", label: t("networking.policy.colActions"), align: "right" },
 ]);
 
@@ -329,7 +331,7 @@ const form = reactive<{ target_node_id: string; enabled: boolean; rules: RuleDra
   rules: [],
 });
 
-// Snapshot of the form at open time — drives the unsaved-changes (dirty) guard.
+// Snapshot of the form at open time, drives the unsaved-changes (dirty) guard.
 const formSnapshot = ref("");
 function snapshotForm(): string {
   return JSON.stringify({
@@ -508,14 +510,14 @@ function closePlan(open: boolean) {
 // ── Topology graph (CSP-safe inline SVG: hub-and-spoke + region clusters) ──
 //
 // The fleet is outbound-only: every node connects to ONE control-plane server.
-// The previous flat circle hid both facts — there was no server, and nodes were
+// The previous flat circle hid both facts: there was no server, and nodes were
 // scattered with no sense of where they live. This layout fixes both:
 //   • the control-plane SERVER sits at the centre (the hub everything dials);
 //   • fleet nodes are CLUSTERED by region (continent) into contiguous arcs, so
 //     "asia / us-west / europe" read at a glance, each region tinted + labelled;
-//   • faint dashed spokes show the management plane (server → each agent);
+//   • faint dashed spokes show the management plane (server to each agent);
 //   • policy allow/deny edges curve between nodes on top;
-//   • group-leaders (role) get an accent ring + ★.
+//   • group-leaders (role) get an accent ring + a star marker.
 const GRAPH_W = 860;
 const GRAPH_H = 660;
 const GCX = GRAPH_W / 2;
@@ -582,7 +584,7 @@ function isLeaderNode(id: string, role?: string): boolean {
   return isLeaderRole(role);
 }
 
-// Continent → Tailwind colour classes (class-based, no inline styles — CSP-safe).
+// Continent to Tailwind colour classes (class-based, no inline styles, CSP-safe).
 interface RegionColor {
   dot: string; // SVG fill for node-ring accent + legend
   ring: string; // SVG stroke for leader/sector ring
@@ -695,7 +697,7 @@ const layout = computed<GraphLayout>(() => {
     arcs.push({
       key: `arc:${c}`,
       continent: c,
-      glyph: continentGlyph(c),
+      glyph: continentMark(c),
       color,
       path: arcPath(REGION_ARC_R, a0 + 0.03, a1 - 0.03),
       lx: lp.x,
@@ -746,7 +748,7 @@ const spokes = computed<Spoke[]>(() =>
   }),
 );
 
-// Policy edges: node→node allow/deny, bowed outward so they clear the hub.
+// Policy edges: node-to-node allow/deny, bowed outward so they clear the hub.
 interface DrawnEdge {
   key: string;
   path: string;
@@ -818,13 +820,19 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             variant="outline"
             size="sm"
             :disabled="planningGroups || !hasGroupPolicies"
+            :title="!hasGroupPolicies ? $t('networking.matrix.planAllNeedsPolicies') : undefined"
             @click="planGroupPolicies"
           >
             <RefreshCw v-if="planningGroups" class="size-4 animate-spin" aria-hidden="true" />
             <Play v-else class="size-4" aria-hidden="true" />
             {{ $t('networking.matrix.planAll') }}
           </Button>
-          <Button size="sm" :disabled="!hasGroups" @click="newGroupPolicy">
+          <Button
+            size="sm"
+            :disabled="!hasGroups"
+            :title="!hasGroups ? $t('networking.matrix.newGroupPolicyNeedsGroups') : undefined"
+            @click="newGroupPolicy"
+          >
             <Plus class="size-4" aria-hidden="true" />
             {{ $t('networking.matrix.newGroupPolicy') }}
           </Button>
@@ -926,7 +934,6 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
               :empty-description="canRead ? $t('networking.policy.emptyWithRead') : $t('networking.policy.emptyNeedRead')"
               :no-match-title="$t('networking.shared.noMatchTitle')"
               :no-match-description="$t('networking.shared.noMatchDescription')"
-              :actions-label="$t('networking.policy.colActions')"
               @retry="policiesQuery.refresh"
             >
               <template #cell-target="{ row: p }">
@@ -942,14 +949,14 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 <span class="tabular-nums">{{ activeRuleCount(p) }} / {{ p.rules.length }}</span>
               </template>
               <template #cell-last_plan="{ row: p }">
-                <span class="font-mono text-xs text-muted-foreground">{{ p.last_plan_sha ? shortId(p.last_plan_sha, 12) : "—" }}</span>
+                <span class="font-mono text-xs text-muted-foreground">{{ p.last_plan_sha ? shortId(p.last_plan_sha, 12) : $t('common.misc.none') }}</span>
               </template>
               <template #cell-last_applied="{ row: p }">
-                <span class="text-xs text-muted-foreground">{{ p.last_applied_at ? formatDateTime(p.last_applied_at) : "—" }}</span>
+                <span class="text-xs text-muted-foreground">{{ p.last_applied_at ? formatDateTime(p.last_applied_at) : $t('common.misc.none') }}</span>
               </template>
               <template #cell-last_error="{ row: p }">
                 <span v-if="p.last_error" class="text-xs text-destructive">{{ p.last_error }}</span>
-                <span v-else class="text-xs text-muted-foreground">—</span>
+                <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
               </template>
               <template #cell-actions="{ row: p }">
                 <div class="flex items-center justify-end gap-1">
@@ -1041,7 +1048,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                     <span class="inline-block h-0.5 w-6 rounded bg-destructive"></span> {{ $t('networking.policy.legendDeny') }}
                   </span>
                   <span v-if="leaderCount > 0" class="inline-flex items-center gap-1.5">
-                    <span class="text-amber-400">★</span> {{ $t('networking.policy.legendLeader') }}
+                    <Star class="size-3.5 text-warning" aria-hidden="true" /> {{ $t('networking.policy.legendLeader') }}
                   </span>
                 </div>
 
@@ -1104,7 +1111,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                       </text>
                     </g>
 
-                    <!-- management spokes (control plane → each agent) -->
+                    <!-- management spokes (control plane to each agent) -->
                     <line
                       v-for="s in spokes"
                       :key="s.key"
@@ -1189,6 +1196,13 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                       >
                         {{ node.name.length > 9 ? node.name.slice(0, 8) + "…" : node.name }}
                       </text>
+                      <Star
+                        v-if="node.leader"
+                        :x="node.x + node.r - 4"
+                        :y="node.y - node.r - 4"
+                        class="size-3.5 text-warning"
+                        aria-hidden="true"
+                      />
                       <text
                         v-if="node.leader"
                         :x="node.x"
@@ -1196,7 +1210,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                         text-anchor="middle"
                         :class="cn('text-[8px] font-semibold', node.color.text)"
                       >
-                        ★ {{ $t('networking.policy.leader') }}
+                        {{ $t('networking.policy.leader') }}
                       </text>
                     </g>
                   </svg>
@@ -1222,7 +1236,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                       <tr
                         v-for="ext in externals"
                         :key="`${ext.rule_id}:${ext.target_node_id}:${ext.remote}`"
-                        class="border-b border-border last:border-b-0 hover:bg-muted/40"
+                        class="border-b border-border last:border-b-0"
                       >
                         <td class="px-3 py-2">{{ nodeName(ext.target_node_id) }}</td>
                         <td class="px-3 py-2 text-xs">{{ ext.direction }}</td>
@@ -1231,7 +1245,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                         </td>
                         <td class="px-3 py-2 font-mono text-xs">{{ ext.remote }}</td>
                         <td class="px-3 py-2 text-xs">{{ ext.protocol }}</td>
-                        <td class="px-3 py-2 font-mono text-xs">{{ ext.ports?.length ? ext.ports.join(", ") : $t('common.misc.all') }}</td>
+                        <td class="px-3 py-2 font-mono text-xs tabular">{{ ext.ports?.length ? ext.ports.join(", ") : $t('common.misc.all') }}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -1270,8 +1284,8 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
             </div>
             <div class="grid gap-2">
               <Label>{{ $t('networking.policy.policyState') }}</Label>
-              <label class="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
-                <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
+              <label class="flex h-9 cursor-pointer items-center gap-2 rounded-md border border-input px-3 text-sm">
+                <Checkbox v-model="form.enabled" />
                 {{ $t('networking.policy.enabled') }}
               </label>
             </div>
@@ -1384,8 +1398,8 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                   <Label class="text-xs">{{ $t('networking.policy.comment') }}</Label>
                   <Input v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />
                 </div>
-                <label class="flex items-center gap-2 self-end pb-2 text-sm">
-                  <input v-model="rule.disabled" type="checkbox" class="size-4 accent-primary" />
+                <label class="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm">
+                  <Checkbox v-model="rule.disabled" />
                   {{ $t('networking.policy.disabled') }}
                 </label>
               </div>
@@ -1444,7 +1458,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
       @update:open="closePlan"
     />
 
-    <!-- Group-policy cell editor (source group → dest group) -->
+    <!-- Group-policy cell editor (source group to dest group) -->
     <PolicyCellEditor
       v-if="cellSource && cellDest"
       :open="cellEditorOpen"
@@ -1508,12 +1522,8 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </p>
               </li>
             </ul>
-            <label class="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-background/60 p-2 text-xs text-foreground">
-              <input
-                v-model="planSelectorRiskAccepted"
-                type="checkbox"
-                class="mt-0.5 size-4 shrink-0 accent-primary"
-              />
+            <label class="mt-3 flex cursor-pointer items-start gap-2 rounded-md border border-warning/30 bg-background/60 p-2 text-xs text-foreground">
+              <Checkbox v-model="planSelectorRiskAccepted" class="mt-0.5 shrink-0" />
               <span>{{ $t('networking.matrix.selectorImpactConfirm') }}</span>
             </label>
           </div>
@@ -1525,7 +1535,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 :key="a.approval_id"
                 class="flex items-center justify-between gap-2 rounded-md border border-border px-2 py-1.5"
               >
-                <span class="truncate">{{ nodeName(a.node_id) }}</span>
+                <span class="truncate" :title="nodeName(a.node_id)">{{ nodeName(a.node_id) }}</span>
                 <span class="font-mono text-xs text-muted-foreground">{{ shortId(a.plan_sha, 10) }}</span>
               </li>
             </ul>
@@ -1538,7 +1548,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 :key="i"
                 class="rounded-md border border-warning/40 bg-warning/5 px-2 py-1.5 text-xs"
               >
-                <span class="font-medium">{{ nodeName(c.node_id) }}</span> — {{ c.reason }}
+                {{ $t('networking.matrix.planConflictLine', { node: nodeName(c.node_id), reason: c.reason }) }}
               </li>
             </ul>
           </div>

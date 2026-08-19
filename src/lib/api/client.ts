@@ -62,7 +62,7 @@ export interface RequestOptions {
 }
 
 /* ------------------------------------------------------------------ */
-/* Lightweight request timing — surfaces perceived slowness in the     */
+/* Lightweight request timing. Surfaces perceived slowness in the     */
 /* browser console without a build flag. Every call logs at `debug`    */
 /* (filter via the devtools log-level menu); anything slower than      */
 /* SLOW_MS (or a 0/5xx) is promoted to `warn` and kept in a small ring */
@@ -104,7 +104,7 @@ function logTiming(e: PerfEntry): void {
       ring.push(e);
       if (ring.length > PERF_RING) ring.splice(0, ring.length - PERF_RING);
     } catch {
-      /* locked-down global — ignore */
+      /* locked-down global. Ignore */
     }
   } else {
     console.debug(line);
@@ -221,7 +221,7 @@ export const http = {
     request<T>("POST", path, body, opts),
   // First DELETE the dashboard has needed. It goes through the same `request`
   // as the others, so it inherits the CSRF header that every unsafe method
-  // requires — which is the reason this belongs here rather than as a one-off
+  // requires. Which is the reason this belongs here rather than as a one-off
   // fetch at the call site.
   del: <T>(path: string, opts?: RequestOptions) => request<T>("DELETE", path, undefined, opts),
 };

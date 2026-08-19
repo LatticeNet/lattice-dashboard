@@ -1,5 +1,6 @@
 <script setup lang="ts" generic="T">
 import { computed, getCurrentInstance, ref, watch, type HTMLAttributes } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter, type RouteLocationRaw } from "vue-router";
 import { useDebounceFn, useMediaQuery } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
@@ -47,6 +48,12 @@ const props = withDefaults(
     loading?: boolean;
     /** Forwarded to DataState. */
     error?: Error | null;
+    /**
+     * True when a previous load succeeded. Forwarded to DataState so a failed
+     * refresh keeps the last good table instead of blanking it. Callers were
+     * already passing this; until now it was silently dropped on the floor.
+     */
+    hasData?: boolean;
     /** Number of skeleton rows shown while loading. */
     skeletonRows?: number;
     /** Empty (no rows at all) title/description, forwarded to DataState. */
@@ -73,8 +80,6 @@ const props = withDefaults(
     expressionHelp?: string;
     /** Accessible label for the clear-search button. */
     clearSearchLabel?: string;
-    /** Label for the actions column shown in the stacked mobile card. */
-    actionsLabel?: string;
     /** "Showing {shown} of {total}" template parts. */
     showingLabel?: string;
     ofLabel?: string;
@@ -85,6 +90,8 @@ const props = withDefaults(
     nextLabel?: string;
     /** Accessible label for the select-all header checkbox. */
     selectAllLabel?: string;
+    /** Accessible label for the "drop the selection" button in the bulk bar. */
+    clearSelectionLabel?: string;
     selectRowLabel?: string;
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
@@ -92,29 +99,54 @@ const props = withDefaults(
   {
     loading: false,
     error: null,
+    hasData: false,
     skeletonRows: 5,
     emptyTitle: undefined,
     emptyDescription: undefined,
-    noMatchTitle: "No matching results",
-    noMatchDescription: "Try adjusting your search or filters.",
+    noMatchTitle: undefined,
+    noMatchDescription: undefined,
     selectable: false,
     pageSize: 0,
     searchable: false,
     expressionFilter: true,
-    searchPlaceholder: "Search…",
+    searchPlaceholder: undefined,
     expressionPlaceholder: undefined,
     expressionHelp: undefined,
-    clearSearchLabel: "Clear search",
-    actionsLabel: "Actions",
-    showingLabel: "Showing",
-    ofLabel: "of",
-    pageOfLabel: "of",
-    prevLabel: "Previous page",
-    nextLabel: "Next page",
-    selectAllLabel: "Select all rows",
-    selectRowLabel: "Select row",
+    clearSearchLabel: undefined,
+    showingLabel: undefined,
+    ofLabel: undefined,
+    pageOfLabel: undefined,
+    prevLabel: undefined,
+    nextLabel: undefined,
+    selectAllLabel: undefined,
+    clearSelectionLabel: undefined,
+    selectRowLabel: undefined,
   },
 );
+
+const { t } = useI18n();
+
+/**
+ * Table chrome speaks the console's language by default.
+ *
+ * Each of these stayed a prop so a caller can still say something more specific
+ * ("Search 412 nodes"), but the default is now a translation rather than an
+ * English literal that only looked right in one locale.
+ */
+const label = {
+  noMatchTitle: computed(() => props.noMatchTitle ?? t("common.table.noMatchTitle")),
+  noMatchDescription: computed(() => props.noMatchDescription ?? t("common.table.noMatchDescription")),
+  searchPlaceholder: computed(() => props.searchPlaceholder ?? t("common.table.searchPlaceholder")),
+  clearSearch: computed(() => props.clearSearchLabel ?? t("common.table.clearSearch")),
+  showing: computed(() => props.showingLabel ?? t("common.table.showing")),
+  of: computed(() => props.ofLabel ?? t("common.table.of")),
+  pageOf: computed(() => props.pageOfLabel ?? t("common.table.of")),
+  prev: computed(() => props.prevLabel ?? t("common.table.previousPage")),
+  next: computed(() => props.nextLabel ?? t("common.table.nextPage")),
+  selectAll: computed(() => props.selectAllLabel ?? t("common.table.selectAll")),
+  selectRow: computed(() => props.selectRowLabel ?? t("common.table.selectRow")),
+  clearSelection: computed(() => props.clearSelectionLabel ?? t("common.table.clearSelection")),
+};
 
 const emit = defineEmits<{ retry: []; "row-select": [row: T] }>();
 const router = useRouter();
@@ -123,7 +155,7 @@ const instance = getCurrentInstance();
 /**
  * A row is activatable when it goes somewhere (rowTo) OR when the parent is
  * listening for the selection. Requiring rowTo alone made every table that
- * selects in place — an inbox with a detail pane beside it — silently ignore
+ * selects in place. An inbox with a detail pane beside it. Silently ignore
  * row clicks: the listener was attached, the handler was never called, and the
  * page just looked broken.
  */
@@ -141,6 +173,15 @@ function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
   if (props.rowTo) router.push(props.rowTo(row));
 }
 
+/**
+ * An activatable row keeps its row semantics.
+ *
+ * `role="button"` was on the `<tr>` for drill-through tables, which both erases
+ * the row from the table's structure for a screen reader and, on any table with
+ * a per-row action button, claims a button contains a button. The row stays a
+ * row; it is still reachable by Tab and still activates on Enter or Space, and
+ * the cursor says so.
+ */
 function onRowKeydown(row: T, event: KeyboardEvent): void {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
@@ -224,15 +265,15 @@ const expressionHelpText = computed(() => {
   const names = expressionColumns.value.flatMap(columnFieldNames);
   const shown = [...new Set(names)].slice(0, 8);
   return shown.length
-    ? `Fields: ${shown.join(", ")}. Use AND(...), OR(...), NOT(...), or field:value.`
-    : "Use AND(...), OR(...), NOT(...), or field:value.";
+    ? t("common.table.expressionHelp", { fields: shown.join(", ") })
+    : t("common.table.expressionHelpBare");
 });
 
 const expressionError = computed(() => {
   const expr = expressionTerm.value.trim();
   if (!expr) return "";
   const result = evalFilterExpression(expr, () => true);
-  return result.ok ? "" : result.error ?? "Invalid expression";
+  return result.ok ? "" : result.error ?? t("common.table.expressionInvalid");
 });
 
 function rowMatchesExpression(row: T, expression: string): boolean {
@@ -414,13 +455,13 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               v-model="searchInput"
               class="pl-8 pr-8"
               type="search"
-              :placeholder="searchPlaceholder"
+              :placeholder="label.searchPlaceholder.value"
             />
             <button
               v-if="searchInput"
               type="button"
               class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
-              :aria-label="clearSearchLabel"
+              :aria-label="label.clearSearch.value"
               @click="searchInput = ''"
             >
               <X class="size-4" aria-hidden="true" />
@@ -437,13 +478,13 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               :class="expressionError && 'border-destructive focus-visible:ring-destructive/20'"
               type="text"
               :placeholder="expressionPlaceholderText()"
-              aria-label="Expression filter"
+              :aria-label="$t('common.table.expressionLabel')"
             />
             <button
               v-if="expressionInput"
               type="button"
               class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
-              :aria-label="clearSearchLabel"
+              :aria-label="label.clearSearch.value"
               @click="expressionInput = ''"
             >
               <X class="size-4" aria-hidden="true" />
@@ -464,17 +505,24 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
       v-if="!loading && !error && !isEmpty"
       class="flex items-center justify-between text-xs text-muted-foreground"
     >
-      <span>{{ showingLabel }} {{ shownCount }} {{ ofLabel }} {{ totalCount }}</span>
+      <span>{{ label.showing.value }} {{ shownCount }} {{ label.of.value }} {{ totalCount }}</span>
     </div>
 
     <!-- Bulk action bar -->
     <div
       v-if="selectable && selectedCount > 0"
-      class="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/60 px-3 py-2 text-sm backdrop-blur"
+      class="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm"
     >
       <span class="font-medium tabular-nums">{{ selectedCount }}</span>
-      <span class="text-muted-foreground">{{ ofLabel }} {{ shownCount }}</span>
-      <Button size="sm" variant="ghost" type="button" @click="clearSelection">
+      <span class="text-muted-foreground">{{ label.of.value }} {{ shownCount }}</span>
+      <Button
+        size="sm"
+        variant="ghost"
+        type="button"
+        :aria-label="label.clearSelection.value"
+        :title="label.clearSelection.value"
+        @click="clearSelection"
+      >
         <X class="size-4" aria-hidden="true" />
       </Button>
       <div class="ms-auto flex items-center gap-2">
@@ -490,10 +538,11 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
     <DataState
       :loading="loading"
       :error="error"
+      :has-data="hasData"
       :skeleton-rows="skeletonRows"
       :is-empty="isEmpty || isNoMatch"
-      :empty-title="isNoMatch ? noMatchTitle : emptyTitle"
-      :empty-description="isNoMatch ? noMatchDescription : emptyDescription"
+      :empty-title="isNoMatch ? label.noMatchTitle.value : emptyTitle"
+      :empty-description="isNoMatch ? label.noMatchDescription.value : emptyDescription"
       @retry="emit('retry')"
     >
       <template #empty>
@@ -511,7 +560,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               <th v-if="selectable" scope="col" class="w-10 px-3 py-2">
                 <Checkbox
                   :model-value="headerCheckboxState"
-                  :aria-label="selectAllLabel"
+                  :aria-label="label.selectAll.value"
                   @update:model-value="toggleAll"
                 />
               </th>
@@ -562,9 +611,8 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               class="group border-b border-border last:border-0 hover:bg-muted/40"
               :class="{
                 'bg-muted/30': selectable && isRowSelected(row),
-                'cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none': !!rowTo,
+                'cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none': rowActivatable,
               }"
-              :role="rowTo ? 'button' : undefined"
               :tabindex="rowActivatable ? 0 : undefined"
               @click="rowActivatable && onRowActivate(row, $event)"
               @keydown="rowActivatable && onRowKeydown(row, $event)"
@@ -572,7 +620,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               <td v-if="selectable" class="px-3 py-3 align-top">
                 <Checkbox
                   :model-value="isRowSelected(row)"
-                  :aria-label="selectRowLabel"
+                  :aria-label="label.selectRow.value"
                   @update:model-value="(value) => toggleRow(row, value)"
                 />
               </td>
@@ -609,9 +657,8 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           class="rounded-lg border border-border p-3"
           :class="{
             'ring-1 ring-primary/40': selectable && isRowSelected(row),
-            'surface-interactive': !!rowTo,
+            'surface-interactive': rowActivatable,
           }"
-          :role="rowTo ? 'button' : undefined"
           :tabindex="rowActivatable ? 0 : undefined"
           @click="rowActivatable && onRowActivate(row, $event)"
           @keydown="rowActivatable && onRowKeydown(row, $event)"
@@ -619,7 +666,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           <div v-if="selectable" class="mb-2 flex items-center gap-2">
             <Checkbox
               :model-value="isRowSelected(row)"
-              :aria-label="selectRowLabel"
+              :aria-label="label.selectRow.value"
               @update:model-value="(value) => toggleRow(row, value)"
             />
           </div>
@@ -656,7 +703,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
       >
         <p class="text-xs text-muted-foreground">
-          {{ showingLabel }} {{ pageFrom }}-{{ pageTo }} {{ pageOfLabel }} {{ totalRows }}
+          {{ label.showing.value }} {{ pageFrom }}-{{ pageTo }} {{ label.pageOf.value }} {{ totalRows }}
         </p>
         <div class="flex items-center gap-1">
           <Button
@@ -664,7 +711,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             variant="outline"
             type="button"
             :disabled="page <= 1"
-            :aria-label="prevLabel"
+            :aria-label="label.prev.value"
             @click="page = Math.max(1, page - 1)"
           >
             <ChevronLeft class="size-4" aria-hidden="true" />
@@ -677,7 +724,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             variant="outline"
             type="button"
             :disabled="page >= pages"
-            :aria-label="nextLabel"
+            :aria-label="label.next.value"
             @click="page = Math.min(pages, page + 1)"
           >
             <ChevronRight class="size-4" aria-hidden="true" />

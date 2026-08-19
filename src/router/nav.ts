@@ -27,6 +27,8 @@ import {
   Palette,
   Info,
   UserCog,
+  SlidersHorizontal,
+  CircleArrowUp,
 } from "lucide-vue-next";
 
 /** A single navigable destination in the sidebar. */
@@ -42,6 +44,12 @@ export type NavItem = {
 export type NavSection = {
   id: string;
   title: string;
+  /**
+   * Rail icon. The collapsed sidebar shows one control per section rather than
+   * a flat wall of every destination, so each section needs a mark an operator
+   * can aim at.
+   */
+  icon: any;
   items: NavItem[];
 };
 
@@ -53,6 +61,7 @@ export const NAV: NavSection[] = [
   {
     id: "overview",
     title: "Overview",
+    icon: LayoutDashboard,
     items: [
       { name: "overview", title: "Overview", path: "/", icon: LayoutDashboard, scopes: [] },
     ],
@@ -60,6 +69,7 @@ export const NAV: NavSection[] = [
   {
     id: "fleet",
     title: "Fleet",
+    icon: Server,
     items: [
       { name: "nodes", title: "Nodes", path: "/nodes", icon: Server, scopes: ["node:read"] },
       { name: "groups", title: "Groups", path: "/groups", icon: FolderTree, scopes: ["group:read"] },
@@ -71,6 +81,7 @@ export const NAV: NavSection[] = [
   {
     id: "operations",
     title: "Operations",
+    icon: ClipboardList,
     items: [
       {
         name: "approvals",
@@ -87,6 +98,7 @@ export const NAV: NavSection[] = [
   {
     id: "networking",
     title: "Networking",
+    icon: Network,
     items: [
       { name: "network-policy", title: "Network Policy", path: "/network/policy", icon: Network, scopes: ["netpolicy:read"] },
       { name: "network-dns", title: "Self-host DNS", path: "/network/dns", icon: Globe2, scopes: ["dns:admin"] },
@@ -101,6 +113,7 @@ export const NAV: NavSection[] = [
   {
     id: "platform",
     title: "Platform",
+    icon: Blocks,
     items: [
       { name: "platform-plugins", title: "Plugins", path: "/platform/plugins", icon: Blocks, scopes: ["audit:read", "plugin:admin", "plugin:verify"] },
       { name: "platform-workers", title: "Workers", path: "/platform/workers", icon: Cpu, scopes: ["worker:deploy"] },
@@ -108,11 +121,16 @@ export const NAV: NavSection[] = [
       { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read", "static:write"] },
       { name: "platform-logs", title: "Logs", path: "/platform/logs", icon: FileText, scopes: ["log:read", "log:admin"] },
       { name: "platform-notifications", title: "Notifications", path: "/platform/notifications", icon: Bell, scopes: ["notify:send"] },
+      // The route and the view have existed since agent rollouts shipped; the
+      // nav entry did not, and NAV is what builds the route table, so the whole
+      // surface was unreachable in a running console.
+      { name: "platform-agent-updates", title: "Agent Updates", path: "/platform/agent-updates", icon: CircleArrowUp, scopes: ["node:admin"] },
     ],
   },
   {
     id: "settings",
     title: "Settings",
+    icon: SlidersHorizontal,
     items: [
       { name: "settings-security", title: "Security & 2FA", path: "/settings/security", icon: KeyRound, scopes: [] },
       { name: "settings-sso", title: "Single Sign-On", path: "/settings/sso", icon: Fingerprint, scopes: ["oidc:admin"] },
