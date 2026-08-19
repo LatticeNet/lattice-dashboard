@@ -828,6 +828,18 @@ const DELETE_COUNT_FIELDS: { key: string; field: keyof NodeDeletePlanView }[] = 
   { key: "groups", field: "groups" },
   { key: "approvals", field: "approvals" },
   { key: "tunnels", field: "tunnels" },
+  // These were reported by the server and never shown. A delete preview that
+  // under-reports is worse than none: it is the one screen whose entire job is
+  // telling the operator what disappears.
+  { key: "proxyNodeProfiles", field: "proxy_node_profiles" },
+  { key: "proxyUsageSnapshots", field: "proxy_usage_snapshots" },
+  { key: "guardRealitySnapshots", field: "guard_reality_snapshots" },
+  { key: "guardBindings", field: "guard_bindings" },
+  { key: "managedLines", field: "managed_lines" },
+  { key: "lineChainAttemptsReleased", field: "line_chain_attempts_released" },
+  { key: "lineChainDefinitionsDeleted", field: "line_chain_definitions_deleted" },
+  { key: "lineChainTargetsDrifted", field: "line_chain_targets_drifted" },
+  { key: "lineChainLeaseConflicts", field: "line_chain_lease_conflicts" },
   { key: "terminalSessions", field: "terminal_sessions" },
 ];
 

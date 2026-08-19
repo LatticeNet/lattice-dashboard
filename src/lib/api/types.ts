@@ -219,6 +219,13 @@ export interface NodeDeletePlanView {
   groups: number;
   approvals: number;
   tunnels: number;
+  guard_reality_snapshots: number;
+  guard_bindings: number;
+  managed_lines: number;
+  line_chain_attempts_released: number;
+  line_chain_definitions_deleted: number;
+  line_chain_targets_drifted: number;
+  line_chain_lease_conflicts: number;
   terminal_sessions: number;
   proxy_drift_cleared: number;
   log_store_purged: number;
