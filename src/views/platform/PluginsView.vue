@@ -30,6 +30,7 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Card,
   CardContent,
@@ -471,25 +472,27 @@ async function runVerify() {
         <form class="space-y-4" @submit.prevent="runVerify">
           <div class="grid gap-2">
             <Label for="verify-manifest">{{ $t('platform.plugins.manifestLabel') }}</Label>
-            <textarea
+            <Textarea
               id="verify-manifest"
               v-model="manifestText"
               rows="8"
               spellcheck="false"
               placeholder='{"id":"...","name":"...","type":"wasm","capabilities":[]}'
-              class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
+
+             class="font-mono text-xs"
+           />
           </div>
           <div class="grid gap-2">
             <Label for="verify-artifact">{{ $t('platform.plugins.artifactLabel') }}</Label>
-            <textarea
+            <Textarea
               id="verify-artifact"
               v-model="artifactText"
               rows="4"
               spellcheck="false"
               :placeholder="$t('platform.plugins.artifactPlaceholder')"
-              class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
+
+             class="font-mono text-xs"
+           />
             <p class="text-xs text-muted-foreground">{{ $t('platform.plugins.verifyBothRequired') }}</p>
           </div>
 

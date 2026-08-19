@@ -21,6 +21,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -259,13 +260,14 @@ async function submitPut() {
           </div>
           <div class="grid gap-2">
             <Label for="kv-value">{{ $t('platform.kv.valueLabel') }}</Label>
-            <textarea
+            <Textarea
               id="kv-value"
               v-model="putValue"
               rows="6"
               spellcheck="false"
-              class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
+
+             class="font-mono text-xs"
+           />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" @click="putOpen = false">{{ $t('common.actions.cancel') }}</Button>

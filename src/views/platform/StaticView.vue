@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -258,13 +259,14 @@ async function submitPut() {
           </div>
           <div class="grid gap-2">
             <Label for="static-content">{{ $t('platform.static.contentLabel') }}</Label>
-            <textarea
+            <Textarea
               id="static-content"
               v-model="putContent"
               rows="10"
               spellcheck="false"
-              class="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
+
+             class="font-mono text-xs"
+           />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" @click="putOpen = false">{{ $t('common.actions.cancel') }}</Button>
