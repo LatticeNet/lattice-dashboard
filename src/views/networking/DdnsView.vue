@@ -35,6 +35,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -46,8 +47,6 @@ import {
 } from "@/components/ui/select";
 import {
   Dialog,
-  DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -61,7 +60,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("ddns:admin"));
 
-// BARE ARRAY endpoint — do NOT unwrap.
+// BARE ARRAY endpoint: do NOT unwrap.
 const profilesQuery = useAsyncData(() => api.ddns.list(), { pollInterval: 15000 });
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
@@ -99,11 +98,26 @@ const columns = computed<DataTableColumn<DDNSView>[]>(() => [
   },
   { key: "provider", label: t("networking.ddns.colProvider"), sortable: true },
   { key: "domains", label: t("networking.ddns.colDomains") },
-  { key: "stack", label: t("networking.ddns.colStack") },
-  { key: "credential", label: t("networking.ddns.colCredential") },
+  {
+    key: "stack",
+    label: t("networking.ddns.colStack"),
+    sortable: true,
+    value: (p) => `${p.enable_ipv4 ? 1 : 0}${p.enable_ipv6 ? 1 : 0}`,
+  },
+  {
+    key: "credential",
+    label: t("networking.ddns.colCredential"),
+    sortable: true,
+    value: (p) => (p.has_credential ? 1 : 0),
+  },
   { key: "last_run", label: t("networking.ddns.colLastRun"), sortable: true, value: (p) => p.last_run_at ?? "" },
-  { key: "last_ips", label: t("networking.ddns.colLastIps") },
-  { key: "last_error", label: t("networking.ddns.colLastError") },
+  {
+    key: "last_ips",
+    label: t("networking.ddns.colLastIps"),
+    sortable: true,
+    value: (p) => p.last_ipv4 || p.last_ipv6 || "",
+  },
+  { key: "last_error", label: t("networking.ddns.colLastError"), sortable: true, value: (p) => p.last_error ?? "" },
   { key: "actions", label: t("networking.ddns.colActions"), align: "right" },
 ]);
 
@@ -147,6 +161,40 @@ function openCreate() {
   if (!canAdmin.value) return;
   resetForm();
   formOpen.value = true;
+}
+
+/**
+ * The form holds a Cloudflare token or a webhook body, so an Escape or an
+ * overlay click must not discard typed credentials without asking.
+ */
+const isDirty = computed(
+  () =>
+    !!form.name.trim() ||
+    !!form.node_id ||
+    !!form.domains.trim() ||
+    !!form.cf_api_token.trim() ||
+    !!form.webhook_url.trim() ||
+    !!form.webhook_body.trim() ||
+    !!form.webhook_headers.trim(),
+);
+const discardOpen = ref(false);
+
+function onFormOpenChange(next: boolean) {
+  if (next) {
+    formOpen.value = true;
+    return;
+  }
+  if (isDirty.value && !saving.value) {
+    discardOpen.value = true;
+    return;
+  }
+  formOpen.value = false;
+}
+
+function confirmDiscard() {
+  discardOpen.value = false;
+  formOpen.value = false;
+  resetForm();
 }
 
 const parsedDomains = computed(() =>
@@ -215,13 +263,19 @@ async function confirmDelete() {
 }
 
 // ── Run now ─────────────────────────────────────────────────────────────────
+//
+// A run publishes the node's current public IP to live public DNS, so it is
+// confirmed first with the profile and its domains named.
 const running = ref<string | undefined>();
+const runTarget = ref<DDNSView | undefined>();
 
-async function runNow(profile: DDNSView) {
-  if (!canAdmin.value) return;
+async function confirmRun() {
+  const profile = runTarget.value;
+  if (!profile || !canAdmin.value) return;
   running.value = profile.id;
   try {
     await api.ddns.run(profile.id);
+    runTarget.value = undefined;
     toast.success(t("networking.ddns.toastRunSuccess"));
     profilesQuery.refresh();
   } catch (error) {
@@ -285,7 +339,6 @@ async function runNow(profile: DDNSView) {
           :empty-description="$t('networking.ddns.emptyDescription')"
           :no-match-title="$t('networking.shared.noMatchTitle')"
           :no-match-description="$t('networking.shared.noMatchDescription')"
-          :actions-label="$t('networking.ddns.colActions')"
           @retry="profilesQuery.refresh"
         >
           <template #cell-name="{ row: profile }">
@@ -325,14 +378,18 @@ async function runNow(profile: DDNSView) {
             <div class="font-mono text-xs text-muted-foreground">
               <div v-if="profile.last_ipv4">{{ profile.last_ipv4 }}</div>
               <div v-if="profile.last_ipv6">{{ profile.last_ipv6 }}</div>
-              <span v-if="!profile.last_ipv4 && !profile.last_ipv6">—</span>
+              <span v-if="!profile.last_ipv4 && !profile.last_ipv6">{{ $t('common.misc.none') }}</span>
             </div>
           </template>
           <template #cell-last_error="{ row: profile }">
-            <span v-if="profile.last_error" class="break-words text-xs text-destructive">
+            <span
+              v-if="profile.last_error"
+              class="line-clamp-3 break-words text-xs text-destructive"
+              :title="profile.last_error"
+            >
               {{ profile.last_error }}
             </span>
-            <span v-else class="text-xs text-muted-foreground">—</span>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
           </template>
           <template #cell-actions="{ row: profile }">
             <div class="flex justify-end gap-1">
@@ -341,7 +398,7 @@ async function runNow(profile: DDNSView) {
                 variant="ghost"
                 size="sm"
                 :disabled="running === profile.id"
-                @click="runNow(profile)"
+                @click="runTarget = profile"
               >
                 <RefreshCw v-if="running === profile.id" class="size-4 animate-spin" aria-hidden="true" />
                 <Play v-else class="size-4" aria-hidden="true" />
@@ -363,7 +420,7 @@ async function runNow(profile: DDNSView) {
     </Card>
 
     <!-- Create dialog -->
-    <Dialog v-model:open="formOpen">
+    <Dialog :open="formOpen" @update:open="onFormOpenChange">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{ $t('networking.ddns.newProfileTitle') }}</DialogTitle>
@@ -411,12 +468,12 @@ async function runNow(profile: DDNSView) {
               </Select>
             </div>
             <div class="flex flex-wrap items-end gap-4 pb-1">
-              <label class="flex items-center gap-2 text-sm">
-                <input v-model="form.enable_ipv4" type="checkbox" class="size-4 accent-primary" />
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox v-model="form.enable_ipv4" />
                 IPv4 (A)
               </label>
-              <label class="flex items-center gap-2 text-sm">
-                <input v-model="form.enable_ipv6" type="checkbox" class="size-4 accent-primary" />
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <Checkbox v-model="form.enable_ipv6" />
                 IPv6 (AAAA)
               </label>
             </div>
@@ -464,7 +521,7 @@ async function runNow(profile: DDNSView) {
                 id="ddns-wh-body"
                 v-model="form.webhook_body"
                 rows="3"
-                class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+                class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 placeholder='{"ip":"#ip#","domain":"#domain#","type":"#type#"}'
               />
               <p class="text-xs text-muted-foreground">
@@ -479,7 +536,7 @@ async function runNow(profile: DDNSView) {
                 id="ddns-wh-headers"
                 v-model="form.webhook_headers"
                 rows="2"
-                class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+                class="rounded-md border border-input bg-background px-3 py-2 font-mono text-xs shadow-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 placeholder="Authorization: Bearer xxx&#10;Content-Type: application/json"
               />
               <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.webhookHeadersHint') }}</p>
@@ -487,9 +544,9 @@ async function runNow(profile: DDNSView) {
           </template>
 
           <DialogFooter>
-            <DialogClose as-child>
-              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-            </DialogClose>
+            <Button type="button" variant="outline" @click="onFormOpenChange(false)">
+              {{ $t('common.actions.cancel') }}
+            </Button>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
@@ -499,6 +556,34 @@ async function runNow(profile: DDNSView) {
         </form>
       </DialogScrollContent>
     </Dialog>
+
+    <!-- Run now: this publishes to live public DNS, so confirm it first. -->
+    <ConfirmDialog
+      :open="!!runTarget"
+      variant="default"
+      :title="$t('networking.ddns.runTitle')"
+      :description="$t('networking.ddns.runDescription', {
+        name: runTarget?.name || runTarget?.id || '',
+        domains: runTarget?.domains?.join(', ') || $t('common.misc.none'),
+      })"
+      :confirm-label="$t('common.actions.runNow')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!running"
+      @update:open="(v) => { if (!v) runTarget = undefined; }"
+      @confirm="confirmRun"
+    />
+
+    <!-- Unsaved-changes guard: the form carries a Cloudflare token. -->
+    <ConfirmDialog
+      :open="discardOpen"
+      variant="destructive"
+      :title="$t('networking.shared.discardTitle')"
+      :description="$t('networking.shared.discardDescription')"
+      :confirm-label="$t('networking.shared.discardConfirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      @update:open="(v) => { if (!v) discardOpen = false; }"
+      @confirm="confirmDiscard"
+    />
 
     <!-- Delete confirmation -->
     <ConfirmDialog

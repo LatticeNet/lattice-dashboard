@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,6 +39,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -50,7 +52,6 @@ import {
 import {
   Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -231,7 +232,7 @@ async function confirmDelete() {
   }
 }
 
-// ── Plan preview (pure render — NOT an approval) ────────────────────────────
+// ── Plan preview (pure render, NOT an approval) ────────────────────────────
 const planOpen = ref(false);
 const planning = ref<string | undefined>();
 const plan = ref<GeoRoutingPlanView | undefined>();
@@ -324,7 +325,7 @@ const continentEntries = computed(() =>
                 <tr
                   v-for="route in sortedRoutes"
                   :key="route.id"
-                  class="border-b border-border last:border-b-0 hover:bg-muted/40"
+                  class="border-b border-border last:border-b-0"
                 >
                   <td class="py-3 pr-4">
                     <div class="font-medium">{{ route.name || route.id }}</div>
@@ -340,16 +341,20 @@ const continentEntries = computed(() =>
                     <Badge v-if="route.status" :variant="route.status === 'configured' ? 'success' : 'warning'">
                       {{ route.status }}
                     </Badge>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
+                    <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                   </td>
                   <td class="py-3 pr-4 text-xs text-muted-foreground">
                     {{ route.last_applied_at ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
                   </td>
                   <td class="py-3 pr-4 max-w-[180px]">
-                    <span v-if="route.last_error" class="break-words text-xs text-destructive">
+                    <span
+                      v-if="route.last_error"
+                      class="line-clamp-3 break-words text-xs text-destructive"
+                      :title="route.last_error"
+                    >
                       {{ route.last_error }}
                     </span>
-                    <span v-else class="text-xs text-muted-foreground">—</span>
+                    <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                   </td>
                   <td class="py-3 pl-4">
                     <div class="flex justify-end gap-1">
@@ -362,7 +367,7 @@ const continentEntries = computed(() =>
                       >
                         <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" aria-hidden="true" />
                         <FileCode2 v-else class="size-4" aria-hidden="true" />
-                        {{ $t('networking.shared.plan') }}
+                        {{ $t('networking.geoRouting.previewConfig') }}
                       </Button>
                       <Button
                         v-if="canAdmin"
@@ -463,15 +468,13 @@ const continentEntries = computed(() =>
                 <label
                   v-for="node in nodes"
                   :key="node.id"
-                  class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
+                  class="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
                 >
-                  <input
-                    type="checkbox"
-                    class="size-4 accent-primary"
-                    :checked="form.node_ids.includes(node.id)"
-                    @change="toggleId('node_ids', node.id)"
+                  <Checkbox
+                    :model-value="form.node_ids.includes(node.id)"
+                    @update:model-value="toggleId('node_ids', node.id)"
                   />
-                  <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
+                  <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
                   <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('networking.geoRouting.on') : $t('networking.geoRouting.off') }}</Badge>
                 </label>
               </div>
@@ -489,22 +492,32 @@ const continentEntries = computed(() =>
           <div class="grid gap-2">
             <Label>{{ $t('networking.geoRouting.authoritativeNodes') }}</Label>
             <p class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.authoritativeNodesHint') }}</p>
-            <div v-if="canReadNodes" class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
-              <label
-                v-for="node in nodes"
-                :key="node.id"
-                class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
-              >
-                <input
-                  type="checkbox"
-                  class="size-4 accent-primary"
-                  :checked="form.dns_node_ids.includes(node.id)"
-                  @change="toggleId('dns_node_ids', node.id)"
-                />
-                <span class="min-w-0 flex-1 truncate">{{ node.name || node.id }}</span>
-                <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('networking.geoRouting.on') : $t('networking.geoRouting.off') }}</Badge>
-              </label>
-            </div>
+            <DataState
+              v-if="canReadNodes"
+              :loading="nodesQuery.loading.value"
+              :error="nodesQuery.error.value"
+              :has-data="nodesQuery.data.value !== undefined"
+              :is-empty="nodes.length === 0"
+              :empty-title="$t('networking.geoRouting.noNodesTitle')"
+              :empty-description="$t('networking.geoRouting.noNodesDescription')"
+              :skeleton-rows="2"
+              @retry="nodesQuery.refresh"
+            >
+              <div class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
+                <label
+                  v-for="node in nodes"
+                  :key="node.id"
+                  class="flex cursor-pointer items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
+                >
+                  <Checkbox
+                    :model-value="form.dns_node_ids.includes(node.id)"
+                    @update:model-value="toggleId('dns_node_ids', node.id)"
+                  />
+                  <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
+                  <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('networking.geoRouting.on') : $t('networking.geoRouting.off') }}</Badge>
+                </label>
+              </div>
+            </DataState>
             <div v-else class="grid gap-2">
               <Input
                 id="geo-dns-node-ids"
@@ -520,8 +533,8 @@ const continentEntries = computed(() =>
               <Label for="geo-ddns">{{ $t('networking.geoRouting.ddnsProfileId') }}</Label>
               <Input id="geo-ddns" v-model="form.ddns_profile_id" :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')" />
             </div>
-            <label class="flex items-center gap-2 self-end pb-2 text-sm">
-              <input v-model="form.publish_ns" type="checkbox" class="size-4 accent-primary" />
+            <label class="flex cursor-pointer items-center gap-2 self-end pb-2 text-sm">
+              <Checkbox v-model="form.publish_ns" />
               {{ $t('networking.geoRouting.publishNs') }}
             </label>
           </div>
@@ -541,26 +554,19 @@ const continentEntries = computed(() =>
     </Dialog>
 
     <!-- Delete confirmation -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.geoRouting.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.geoRouting.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id, hostname: deleteTarget?.hostname }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('networking.geoRouting.deleteTitle')"
+      :description="$t('networking.geoRouting.deleteDescription', {
+        name: deleteTarget?.name || deleteTarget?.id || '',
+        hostname: deleteTarget?.hostname ?? '',
+      })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
 
     <!-- Plan preview (pure render, not an approval) -->
     <Dialog v-model:open="planOpen">

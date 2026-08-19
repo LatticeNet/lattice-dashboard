@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { ArrowRight } from "lucide-vue-next";
+import { ArrowRight, Check, Circle, Contrast, Minus, X } from "lucide-vue-next";
 import type { MatrixCell, MatrixGroup, NetPolicyMatrix, NetRuleDirection } from "@/lib/api";
 import GroupChip from "./GroupChip.vue";
 import PolicyMatrixCell from "./PolicyMatrixCell.vue";
@@ -76,11 +76,11 @@ function onDirection(value: unknown) {
         </Select>
       </div>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span><span class="font-semibold text-success">✓</span> {{ $t("networking.matrix.legendAllow") }}</span>
-        <span><span class="font-semibold text-destructive">✗</span> {{ $t("networking.matrix.legendDeny") }}</span>
-        <span><span class="font-semibold text-amber-600 dark:text-amber-400">◐</span> {{ $t("networking.matrix.legendMixed") }}</span>
-        <span><span class="font-semibold text-muted-foreground/60">—</span> {{ $t("networking.matrix.legendNone") }}</span>
-        <span><span class="font-semibold text-muted-foreground/60">●</span> {{ $t("networking.matrix.legendSelf") }}</span>
+        <span class="inline-flex items-center gap-1"><Check class="size-3.5 text-success" aria-hidden="true" /> {{ $t("networking.matrix.legendAllow") }}</span>
+        <span class="inline-flex items-center gap-1"><X class="size-3.5 text-destructive" aria-hidden="true" /> {{ $t("networking.matrix.legendDeny") }}</span>
+        <span class="inline-flex items-center gap-1"><Contrast class="size-3.5 text-warning" aria-hidden="true" /> {{ $t("networking.matrix.legendMixed") }}</span>
+        <span class="inline-flex items-center gap-1"><Minus class="size-3.5 text-muted-foreground/60" aria-hidden="true" /> {{ $t("networking.matrix.legendNone") }}</span>
+        <span class="inline-flex items-center gap-1"><Circle class="size-3.5 text-muted-foreground/60" aria-hidden="true" /> {{ $t("networking.matrix.legendSelf") }}</span>
       </div>
     </div>
 
@@ -135,7 +135,7 @@ function onDirection(value: unknown) {
               <Badge v-if="externalFor(src.id) > 0" variant="secondary" class="tabular-nums">
                 {{ externalFor(src.id) }}
               </Badge>
-              <span v-else class="text-muted-foreground/50">—</span>
+              <span v-else class="text-muted-foreground/50">{{ $t("common.misc.none") }}</span>
             </td>
           </tr>
         </tbody>

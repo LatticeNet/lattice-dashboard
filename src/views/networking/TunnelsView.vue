@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,7 +51,6 @@ import {
 import {
   Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -64,7 +64,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("tunnel:admin"));
 
-// BARE ARRAY endpoint — do NOT unwrap.
+// BARE ARRAY endpoint: do NOT unwrap.
 const tunnelsQuery = useAsyncData(() => api.tunnels.list(), { pollInterval: 15000 });
 const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
@@ -110,6 +110,40 @@ function openCreate() {
   if (!canAdmin.value) return;
   resetForm();
   formOpen.value = true;
+}
+
+/**
+ * A half-filled tunnel form is real work: the tunnel id, the credentials path
+ * and every ingress row. Confirm before an Escape or an overlay click drops it.
+ */
+const isDirty = computed(
+  () =>
+    !!form.name.trim() ||
+    !!form.node_id ||
+    !!form.tunnel_id.trim() ||
+    !!form.credentials_file.trim() ||
+    form.ingress.some(
+      (rule) => rule.hostname.trim() || rule.service.trim() || rule.path?.trim(),
+    ),
+);
+const discardOpen = ref(false);
+
+function onFormOpenChange(next: boolean) {
+  if (next) {
+    formOpen.value = true;
+    return;
+  }
+  if (isDirty.value && !saving.value) {
+    discardOpen.value = true;
+    return;
+  }
+  formOpen.value = false;
+}
+
+function confirmDiscard() {
+  discardOpen.value = false;
+  formOpen.value = false;
+  resetForm();
 }
 
 function addRow() {
@@ -188,7 +222,7 @@ async function confirmDelete() {
   }
 }
 
-// ── Plan → approval ─────────────────────────────────────────────────────────
+// ── Plan to approval ─────────────────────────────────────────────────────────
 const planOpen = ref(false);
 const planning = ref<string | undefined>();
 const approval = ref<ApprovalView | undefined>();
@@ -269,7 +303,7 @@ async function openPlan(tunnel: TunnelView) {
               </thead>
               <tbody>
                 <template v-for="tunnel in sortedTunnels" :key="tunnel.id">
-                  <tr class="border-b border-border hover:bg-muted/40">
+                  <tr class="border-b border-border">
                     <td class="py-3 pr-4">
                       <div class="font-medium">{{ tunnel.name || tunnel.id }}</div>
                       <div class="font-mono text-xs text-muted-foreground">{{ shortId(tunnel.id, 16) }}</div>
@@ -282,12 +316,14 @@ async function openPlan(tunnel: TunnelView) {
                       </div>
                     </td>
                     <td class="py-3 pr-4 font-mono text-xs text-muted-foreground">
-                      {{ tunnel.credentials_file || "—" }}
+                      {{ tunnel.credentials_file || $t('common.misc.none') }}
                     </td>
                     <td class="py-3 pr-4">
                       <button
                         type="button"
-                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs hover:bg-muted/60"
+                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs hover:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 outline-none"
+                        :aria-expanded="!!expanded[tunnel.id]"
+                        :aria-controls="`tunnel-ingress-${tunnel.id}`"
                         @click="toggleExpand(tunnel.id)"
                       >
                         <ChevronDown v-if="expanded[tunnel.id]" class="size-3.5" aria-hidden="true" />
@@ -320,7 +356,11 @@ async function openPlan(tunnel: TunnelView) {
                       </div>
                     </td>
                   </tr>
-                  <tr v-if="expanded[tunnel.id]" class="border-b border-border bg-muted/20">
+                  <tr
+                    v-if="expanded[tunnel.id]"
+                    :id="`tunnel-ingress-${tunnel.id}`"
+                    class="border-b border-border bg-muted/20"
+                  >
                     <td colspan="6" class="px-4 py-3">
                       <div class="space-y-1">
                         <div
@@ -329,7 +369,7 @@ async function openPlan(tunnel: TunnelView) {
                           class="flex flex-wrap items-center gap-2 font-mono text-xs"
                         >
                           <span class="text-foreground">{{ rule.hostname }}</span>
-                          <span class="text-muted-foreground">→</span>
+                          <span class="text-muted-foreground">{{ $t('networking.shared.to') }}</span>
                           <span class="text-foreground">{{ rule.service }}</span>
                           <Badge v-if="rule.path" variant="outline">{{ rule.path }}</Badge>
                         </div>
@@ -345,7 +385,7 @@ async function openPlan(tunnel: TunnelView) {
     </Card>
 
     <!-- Create dialog -->
-    <Dialog v-model:open="formOpen">
+    <Dialog :open="formOpen" @update:open="onFormOpenChange">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{ $t('networking.tunnels.newTunnelTitle') }}</DialogTitle>
@@ -412,15 +452,28 @@ async function openPlan(tunnel: TunnelView) {
                 :key="index"
                 class="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_1fr_120px_auto]"
               >
-                <Input v-model="rule.hostname" :placeholder="$t('networking.tunnels.hostnamePlaceholder')" />
-                <Input v-model="rule.service" :placeholder="$t('networking.tunnels.servicePlaceholder')" />
-                <Input v-model="rule.path" :placeholder="$t('networking.tunnels.pathPlaceholder')" />
+                <Input
+                  v-model="rule.hostname"
+                  :aria-label="$t('networking.tunnels.hostnameAria', { index: index + 1 })"
+                  :placeholder="$t('networking.tunnels.hostnamePlaceholder')"
+                />
+                <Input
+                  v-model="rule.service"
+                  :aria-label="$t('networking.tunnels.serviceAria', { index: index + 1 })"
+                  :placeholder="$t('networking.tunnels.servicePlaceholder')"
+                />
+                <Input
+                  v-model="rule.path"
+                  :aria-label="$t('networking.tunnels.pathAria', { index: index + 1 })"
+                  :placeholder="$t('networking.tunnels.pathPlaceholder')"
+                />
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
                   :aria-label="$t('networking.tunnels.removeRule')"
                   :disabled="form.ingress.length === 1"
+                  :title="form.ingress.length === 1 ? $t('networking.tunnels.removeRuleDisabled') : undefined"
                   @click="removeRow(index)"
                 >
                   <X class="size-4" />
@@ -441,9 +494,9 @@ async function openPlan(tunnel: TunnelView) {
           </div>
 
           <DialogFooter>
-            <DialogClose as-child>
-              <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-            </DialogClose>
+            <Button type="button" variant="outline" @click="onFormOpenChange(false)">
+              {{ $t('common.actions.cancel') }}
+            </Button>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
@@ -455,26 +508,28 @@ async function openPlan(tunnel: TunnelView) {
     </Dialog>
 
     <!-- Delete confirmation -->
-    <Dialog :open="!!deleteTarget" @update:open="(v) => { if (!v) deleteTarget = undefined; }">
-      <DialogContent class="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.tunnels.deleteTitle') }}</DialogTitle>
-          <DialogDescription>
-            {{ $t('networking.tunnels.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id }) }}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button type="button" variant="destructive" :disabled="deleting" @click="confirmDelete">
-            <RefreshCw v-if="deleting" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      :open="!!deleteTarget"
+      :title="$t('networking.tunnels.deleteTitle')"
+      :description="$t('networking.tunnels.deleteDescription', { name: deleteTarget?.name || deleteTarget?.id || '' })"
+      :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="deleting"
+      @update:open="(v) => { if (!v) deleteTarget = undefined; }"
+      @confirm="confirmDelete"
+    />
+
+    <!-- Unsaved-changes guard: the form describes a whole tunnel. -->
+    <ConfirmDialog
+      :open="discardOpen"
+      variant="destructive"
+      :title="$t('networking.shared.discardTitle')"
+      :description="$t('networking.shared.discardDescription')"
+      :confirm-label="$t('networking.shared.discardConfirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      @update:open="(v) => { if (!v) discardOpen = false; }"
+      @confirm="confirmDiscard"
+    />
 
     <!-- Plan dialog (creates a pending Approval) -->
     <Dialog v-model:open="planOpen">
@@ -524,9 +579,9 @@ async function openPlan(tunnel: TunnelView) {
           <DialogClose as-child>
             <Button type="button" variant="outline">{{ $t('common.actions.close') }}</Button>
           </DialogClose>
-          <RouterLink to="/approvals">
-            <Button type="button">{{ $t('networking.shared.goToApprovals') }}</Button>
-          </RouterLink>
+          <Button as-child>
+            <RouterLink to="/approvals">{{ $t('networking.shared.goToApprovals') }}</RouterLink>
+          </Button>
         </DialogFooter>
       </DialogScrollContent>
     </Dialog>

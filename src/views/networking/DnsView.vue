@@ -41,6 +41,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -106,13 +107,13 @@ const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
     searchable: true,
     value: (dep) => nodeLabel(dep),
   },
-  { key: "listen", label: t("networking.dns.colListen") },
+  { key: "listen", label: t("networking.dns.colListen"), sortable: true, value: (dep) => dep.listen_port ?? 0 },
   { key: "exposure", label: t("networking.dns.colExposure"), sortable: true },
   { key: "zones", label: t("networking.dns.colZones"), align: "right", sortable: true, value: (dep) => dep.zones.length },
-  { key: "hostname", label: t("networking.dns.colHostname"), searchable: true },
+  { key: "hostname", label: t("networking.dns.colHostname"), sortable: true, searchable: true },
   { key: "status", label: t("networking.dns.colStatus"), sortable: true },
-  { key: "credential", label: t("networking.dns.colCredential") },
-  { key: "published", label: t("networking.dns.colPublished") },
+  { key: "credential", label: t("networking.dns.colCredential"), sortable: true, value: (dep) => (dep.has_credential ? 1 : 0) },
+  { key: "published", label: t("networking.dns.colPublished"), sortable: true, value: (dep) => dep.last_published_at ?? "" },
   { key: "actions", label: t("networking.dns.colActions"), align: "right" },
 ]);
 
@@ -179,6 +180,38 @@ const editingHasCredential = ref(false);
 const saving = ref(false);
 const form = reactive<DnsForm>(emptyForm());
 
+// Snapshot of the form at open time, drives the unsaved-changes (dirty) guard.
+// The dialog carries a Cloudflare token, so an accidental Escape must not throw
+// it away silently.
+const formSnapshot = ref("");
+function snapshotForm(): string {
+  return JSON.stringify(form);
+}
+const isDirty = computed(() => dialogOpen.value && snapshotForm() !== formSnapshot.value);
+const discardConfirmOpen = ref(false);
+
+/** Intercept dialog close: when dirty, ask before discarding. */
+function requestCloseDialog() {
+  if (isDirty.value && !saving.value) {
+    discardConfirmOpen.value = true;
+    return;
+  }
+  dialogOpen.value = false;
+}
+
+function onDialogOpenChange(open: boolean) {
+  if (open) {
+    dialogOpen.value = true;
+    return;
+  }
+  requestCloseDialog();
+}
+
+function confirmDiscard() {
+  discardConfirmOpen.value = false;
+  dialogOpen.value = false;
+}
+
 function emptyForm(): DnsForm {
   return {
     name: "",
@@ -201,6 +234,7 @@ function openCreate() {
   editingId.value = undefined;
   editingHasCredential.value = false;
   Object.assign(form, emptyForm());
+  formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
 
@@ -222,6 +256,7 @@ function openEdit(dep: DNSDeploymentView) {
     cf_api_token: "",
     ddns_profile_id: dep.ddns_profile_id ?? "",
   } satisfies DnsForm);
+  formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
 
@@ -352,14 +387,29 @@ async function confirmDelete() {
 }
 
 // ── Publish (direct action, no approval) ──────────────────────────────────
+//
+// Publishing writes public DNS for a live deployment the moment it is clicked,
+// so it goes through a confirmation that names the hostname and its zones.
 const publishing = ref<string | undefined>(undefined);
+const publishTarget = ref<DNSDeploymentView | undefined>(undefined);
 
-async function publish(dep: DNSDeploymentView) {
-  if (!canAdmin.value) return;
+/** Zone suffixes of the pending publish target, for the confirmation copy. */
+const publishZones = computed(() => {
+  const dep = publishTarget.value;
+  if (!dep) return "";
+  const suffixes = dep.zones.map((zone) => zone.suffix).filter(Boolean);
+  return suffixes.length ? suffixes.join(", ") : t("common.misc.none");
+});
+
+async function confirmPublish() {
+  const dep = publishTarget.value;
+  if (!dep || !canAdmin.value) return;
   publishing.value = dep.id;
   try {
     const res = await api.dns.publish(dep.id);
-    toast.success(t("networking.dns.toastPublished", { ipv4: res.ipv4 || "—", ipv6: res.ipv6 || "—" }));
+    const none = t("common.misc.none");
+    toast.success(t("networking.dns.toastPublished", { ipv4: res.ipv4 || none, ipv6: res.ipv6 || none }));
+    publishTarget.value = undefined;
     deploymentsQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("networking.dns.toastPublishFailed"));
@@ -456,7 +506,6 @@ function closePlan(open: boolean) {
           :empty-description="$t('networking.dns.emptyDescription')"
           :no-match-title="$t('networking.shared.noMatchTitle')"
           :no-match-description="$t('networking.shared.noMatchDescription')"
-          :actions-label="$t('networking.dns.colActions')"
           @retry="deploymentsQuery.refresh"
         >
           <template #cell-name="{ row: dep }">
@@ -482,11 +531,11 @@ function closePlan(open: boolean) {
             <span class="tabular-nums">{{ dep.zones.length }}</span>
           </template>
           <template #cell-hostname="{ row: dep }">
-            <span class="font-mono text-xs">{{ dep.hostname || "—" }}</span>
+            <span class="font-mono text-xs">{{ dep.hostname || $t('common.misc.none') }}</span>
           </template>
           <template #cell-status="{ row: dep }">
             <Badge :variant="statusVariant(dep.status)">{{ dep.status }}</Badge>
-            <div v-if="dep.last_error" class="mt-1 max-w-[180px] text-xs text-destructive">{{ dep.last_error }}</div>
+            <div v-if="dep.last_error" class="mt-1 max-w-[180px] truncate text-xs text-destructive" :title="dep.last_error">{{ dep.last_error }}</div>
           </template>
           <template #cell-credential="{ row: dep }">
             <Badge v-if="dep.has_credential" variant="success">
@@ -495,8 +544,8 @@ function closePlan(open: boolean) {
             <Badge v-else variant="outline">{{ $t('networking.dns.credNone') }}</Badge>
           </template>
           <template #cell-published="{ row: dep }">
-            <div class="text-xs text-muted-foreground">{{ dep.last_published_at ? formatDateTime(dep.last_published_at) : "—" }}</div>
-            <div v-if="dep.last_publish_error" class="mt-1 max-w-[180px] text-xs text-destructive">{{ dep.last_publish_error }}</div>
+            <div class="text-xs text-muted-foreground">{{ dep.last_published_at ? formatDateTime(dep.last_published_at) : $t('common.misc.none') }}</div>
+            <div v-if="dep.last_publish_error" class="mt-1 max-w-[180px] truncate text-xs text-destructive" :title="dep.last_publish_error">{{ dep.last_publish_error }}</div>
           </template>
           <template #cell-actions="{ row: dep }">
             <div class="flex flex-wrap items-center justify-end gap-1">
@@ -516,7 +565,7 @@ function closePlan(open: boolean) {
                 variant="outline"
                 size="sm"
                 :disabled="publishing === dep.id"
-                @click="publish(dep)"
+                @click="publishTarget = dep"
               >
                 <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" aria-hidden="true" />
                 <UploadCloud v-else class="size-4" aria-hidden="true" />
@@ -547,7 +596,7 @@ function closePlan(open: boolean) {
     </Card>
 
     <!-- Create / edit dialog -->
-    <Dialog v-model:open="dialogOpen">
+    <Dialog :open="dialogOpen" @update:open="onDialogOpenChange">
       <DialogScrollContent class="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{{ editingId ? $t('networking.dns.editTitle') : $t('networking.dns.newTitle') }}</DialogTitle>
@@ -585,11 +634,11 @@ function closePlan(open: boolean) {
             <div class="grid gap-2">
               <Label>{{ $t('networking.dns.protocols') }}</Label>
               <div class="flex h-9 items-center gap-4 rounded-md border border-input px-3 text-sm">
-                <label class="flex items-center gap-1.5">
-                  <input v-model="form.enable_udp" type="checkbox" class="size-4 accent-primary" /> UDP
+                <label class="flex cursor-pointer items-center gap-1.5">
+                  <Checkbox v-model="form.enable_udp" /> UDP
                 </label>
-                <label class="flex items-center gap-1.5">
-                  <input v-model="form.enable_tcp" type="checkbox" class="size-4 accent-primary" /> TCP
+                <label class="flex cursor-pointer items-center gap-1.5">
+                  <Checkbox v-model="form.enable_tcp" /> TCP
                 </label>
               </div>
             </div>
@@ -708,15 +757,28 @@ function closePlan(open: boolean) {
               </div>
               <div class="grid gap-1.5">
                 <Label class="text-xs">{{ $t('networking.dns.recordTtlLabel') }}</Label>
-                <Input v-model="form.record_ttl" type="number" min="1" max="86400" :disabled="!form.hostname.trim()" />
+                <Input
+                  v-model="form.record_ttl"
+                  type="number"
+                  min="1"
+                  max="86400"
+                  :disabled="!form.hostname.trim()"
+                  :title="!form.hostname.trim() ? $t('networking.dns.publishNeedsHostname') : undefined"
+                />
               </div>
             </div>
             <div class="flex flex-wrap items-center gap-4 text-sm">
-              <label class="flex items-center gap-1.5">
-                <input v-model="form.publish_ipv4" type="checkbox" class="size-4 accent-primary" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv4') }}
+              <label
+                class="flex cursor-pointer items-center gap-1.5"
+                :title="!form.hostname.trim() ? $t('networking.dns.publishNeedsHostname') : undefined"
+              >
+                <Checkbox v-model="form.publish_ipv4" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv4') }}
               </label>
-              <label class="flex items-center gap-1.5">
-                <input v-model="form.publish_ipv6" type="checkbox" class="size-4 accent-primary" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv6') }}
+              <label
+                class="flex cursor-pointer items-center gap-1.5"
+                :title="!form.hostname.trim() ? $t('networking.dns.publishNeedsHostname') : undefined"
+              >
+                <Checkbox v-model="form.publish_ipv6" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv6') }}
               </label>
             </div>
             <div class="grid gap-3 sm:grid-cols-2">
@@ -743,7 +805,7 @@ function closePlan(open: boolean) {
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" @click="dialogOpen = false">{{ $t('common.actions.cancel') }}</Button>
+            <Button type="button" variant="outline" @click="requestCloseDialog">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="!canSubmit || saving">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
               {{ editingId ? $t('common.actions.saveChanges') : $t('networking.dns.createDeployment') }}
@@ -752,6 +814,34 @@ function closePlan(open: boolean) {
         </form>
       </DialogScrollContent>
     </Dialog>
+
+    <!-- Publish confirm: this writes public DNS immediately, with no approval. -->
+    <ConfirmDialog
+      :open="!!publishTarget"
+      variant="default"
+      :title="$t('networking.dns.publishTitle')"
+      :description="$t('networking.dns.publishDescription', {
+        hostname: publishTarget?.hostname ?? '',
+        zones: publishZones,
+      })"
+      :confirm-label="$t('common.actions.publish')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!publishing"
+      @update:open="(v) => { if (!v) publishTarget = undefined; }"
+      @confirm="confirmPublish"
+    />
+
+    <!-- Unsaved-changes (dirty) guard: the form carries a Cloudflare token. -->
+    <ConfirmDialog
+      :open="discardConfirmOpen"
+      variant="destructive"
+      :title="$t('networking.shared.discardTitle')"
+      :description="$t('networking.shared.discardDescription')"
+      :confirm-label="$t('networking.shared.discardConfirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      @update:open="(v) => { if (!v) discardConfirmOpen = false; }"
+      @confirm="confirmDiscard"
+    />
 
     <!-- Delete confirm dialog -->
     <ConfirmDialog

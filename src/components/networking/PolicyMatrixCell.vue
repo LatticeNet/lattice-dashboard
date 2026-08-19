@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, type Component } from "vue";
 import { useI18n } from "vue-i18n";
+import { Check, Circle, Contrast, Minus, X } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import type { MatrixCell } from "@/lib/api";
 
 /**
- * One cell of the reachability matrix: source group (row) → dest group (col).
+ * One cell of the reachability matrix: source group (row) to dest group (col).
  *
- * Glyphs follow the spec legend:
- *   ✓ allow · ✗ deny · ◐ mixed · — none · ● self (same group, no explicit rule)
+ * Icons follow the spec legend (keep PolicyMatrix's legend in step):
+ *   check allow, x deny, contrast mixed, minus none, circle self (same group,
+ *   no explicit rule)
  */
 const props = withDefaults(
   defineProps<{
@@ -25,17 +27,17 @@ const emit = defineEmits<{ (e: "edit"): void }>();
 
 const { t } = useI18n();
 
-type Glyph = { ch: string; tone: string; key: string };
+type Glyph = { icon: Component; tone: string; key: string };
 
 const glyph = computed<Glyph>(() => {
   const c = props.cell;
   if (c) {
-    if (c.mixed) return { ch: "◐", tone: "text-amber-600 dark:text-amber-400", key: "mixed" };
-    if (c.action === "allow") return { ch: "✓", tone: "text-success", key: "allow" };
-    return { ch: "✗", tone: "text-destructive", key: "deny" };
+    if (c.mixed) return { icon: Contrast, tone: "text-warning", key: "mixed" };
+    if (c.action === "allow") return { icon: Check, tone: "text-success", key: "allow" };
+    return { icon: X, tone: "text-destructive", key: "deny" };
   }
-  if (props.isSelf) return { ch: "●", tone: "text-muted-foreground/50", key: "self" };
-  return { ch: "—", tone: "text-muted-foreground/40", key: "none" };
+  if (props.isSelf) return { icon: Circle, tone: "text-muted-foreground/50", key: "self" };
+  return { icon: Minus, tone: "text-muted-foreground/40", key: "none" };
 });
 
 /** Hover summary: protocol/ports/rule-count when a rule exists. */
@@ -74,7 +76,7 @@ const subLabel = computed(() => {
     "
     @click="editable ? emit('edit') : undefined"
   >
-    <span :class="cn('font-semibold', glyph.tone)">{{ glyph.ch }}</span>
+    <component :is="glyph.icon" :key="glyph.key" :class="cn('size-3.5', glyph.tone)" aria-hidden="true" />
     <span v-if="subLabel" class="font-mono text-[10px] text-muted-foreground">{{ subLabel }}</span>
   </component>
 </template>
