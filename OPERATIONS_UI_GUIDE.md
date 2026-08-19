@@ -88,10 +88,10 @@ Supported operators:
 
 Common examples:
 
-- `AND(exec, root, NOT(sing-box))`
-- `AND(sing-box, NOT(vpn-lines))`
+- `AND(exec, root)`
+- `AND(exec, NOT(terminal))`
 - `OR(linux, darwin, amd64, arm64)`
-- `AND(tag:cd, agent:exec, NOT(vpn:recorded))`
+- `AND(tag:cd, agent:exec, NOT(agent:terminal))`
 
 Current limitations are intentional:
 
@@ -101,12 +101,24 @@ Current limitations are intentional:
 - token matching is case-insensitive substring/prefix matching depending on the
   field
 
-Important distinction:
+Capability tokens, and what happens to anything else:
 
-- `sing-box` means the agent runtime or desired launch profile has sing-box
-  discovery enabled.
-- `vpn-lines` means the official vpn-core plugin already has recorded line data
-  for that node.
+The only capability tokens the evaluator understands are `exec`, `root`,
+`terminal`, `stream`, and `poll` (`src/lib/nodeFilterExpressions.ts`,
+`matchesCapability`). They read the node's reported agent profile.
+
+Any other bare word is not an error. It falls through to a substring match over
+the node's id, name, role, country, region, city, hostname, and tags. So a token
+like `sing-box` selects nodes whose name or hostname happens to contain the text
+"sing-box", not nodes with sing-box discovery enabled. A token with an
+unrecognised namespace, such as `vpn:recorded`, matches nothing at all, silently.
+
+This guide previously documented `sing-box` and `vpn-lines` as capability tokens
+meaning "the agent has sing-box discovery enabled" and "vpn-core has recorded
+line data for this node". Neither has ever been true of the evaluator, and
+because unknown tokens degrade to a text search rather than an error, an
+expression built on them looks like it works and quietly selects the wrong
+nodes. Both were removed from the examples above.
 
 ## Node detail page
 
@@ -262,8 +274,10 @@ focused on the canvas while preserving manual authoritative edits.
 
 ## Node agent updates
 
-The old Platform -> Agent Updates table is no longer a primary navigation item.
-Agent update state is shown where operators make node decisions:
+Platform -> Agent Updates is a primary navigation item again
+(`src/router/nav.ts`, `platform-agent-updates`, gated on `node:admin`). This
+section used to say it had been demoted; that is no longer true. Agent update
+state is also shown where operators make node decisions:
 
 - Nodes table/card: compact update mode (`auto-update`, `manual update`, or no
   policy)
@@ -479,10 +493,17 @@ The official `latticenet.vpn-core` plugin contributes VPN Manage pages:
 - Subscriptions
 - Usage
 
-The dashboard treats these as built-in views registered by plugin contribution
-keys. The plugin manifest supplies navigation and interface declarations; the
-dashboard/server builtin registries resolve those keys to trusted first-party
-views.
+These are plugin-owned pages rendered in the sandboxed plugin frame. The plugin
+manifest supplies navigation and interface declarations, and the dashboard
+mounts the plugin's own UI for them.
+
+There is no builtin registry and no trusted first-party view path. An earlier
+version of this section described one. `src/views/platform/__tests__/pluginIsolation.test.ts`
+now asserts the opposite: `BUILTIN_COMPONENTS` and `component_key` must not
+appear, no plugin-domain view file may exist in the host, and no
+`/api/netguard/`, `/api/substore/` or `/api/proxy/` route may be reachable from
+the dashboard. If you are looking for where to add a first-party view for a
+plugin domain, the answer is that you do not: it goes in the plugin.
 
 Important operational boundary:
 

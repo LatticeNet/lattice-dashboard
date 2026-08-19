@@ -73,9 +73,12 @@ const audit = useAsyncData<AuditEvent[] | undefined>(
   { pollInterval: 15000 },
 );
 
-/** KPI numbers must not report 0 when the truth is "could not read". */
+/**
+ * KPI numbers must not report 0 when the truth is "could not read". They must
+ * not report "none" either: an unread query is unknown, not empty.
+ */
 function statValue(query: { data: Ref<unknown> }, count: number): string | number {
-  return query.data.value === undefined ? t("common.misc.none") : count;
+  return query.data.value === undefined ? t("common.misc.unknown") : count;
 }
 
 const auth = useAuthStore();
@@ -127,6 +130,14 @@ const sortedNodes = computed(() =>
 
 /** Fleet-wide aggregate for the health panel (CPU mean, mem/disk sums, BW). */
 const totals = computed(() => fleetTotals(nodes.value));
+/**
+ * Exactly the set `fleetTotals` averages and sums over: online, not disabled,
+ * and carrying a metrics object. The health bars used to be labelled with the
+ * plain online count, which overstates the contributing set on both counts.
+ */
+const reportingNodes = computed(
+  () => nodes.value.filter((n) => n.online && !n.disabled && !!n.metrics).length,
+);
 const hasFleet = computed(() => nodes.value.length > 0);
 const nodesWithRootExec = computed(() =>
   nodes.value.filter((node) => {
@@ -249,7 +260,7 @@ function refreshAll() {
                 <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
                 {{ $t('overview.fleetHealth') }}
                 <span class="ml-auto text-xs font-normal text-muted-foreground">
-                  {{ $t('overview.acrossLive', { count: onlineNodes }) }}
+                  {{ $t('overview.acrossLive', { count: reportingNodes }) }}
                 </span>
               </div>
               <MetricBar

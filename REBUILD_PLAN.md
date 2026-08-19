@@ -1,9 +1,10 @@
-# Lattice Dashboard — Rebuild Plan
+# Lattice Dashboard rebuild plan
 
 > Status: **feature-complete.** The modern Vue console is now the canonical
 > `lattice-dashboard` project, replacing the old vanilla-JS app. Every one of the
-> 31 sidebar routes is a real, API-backed screen — all 18 server domains are
-> covered. Remaining work is polish (i18n, charts, a11y/perf budgets, onboarding)
+> 29 sidebar routes (6 sections, counted from `NAV` in `src/router/nav.ts`) is a
+> real, API-backed screen. This said 31 and 18 server domains; both numbers
+> predate the move of the proxy, guard and WireGuard surfaces into plugins. Remaining work is polish (i18n, charts, a11y/perf budgets, onboarding)
 > and live-server E2E. `vue-tsc` + `vite build` clean; strict-CSP verified.
 > Reliability patch 2026-06-17: stale chunk recovery, server cache headers,
 > SSO docs linking, permission-correct empty states, and first-cycle CPU telemetry
@@ -34,15 +35,18 @@ while honoring Lattice's constraints.
    font/img exceptions, and talks **only to its own origin**. Vite is configured
    accordingly (`modulePreload.polyfill:false`, `assetsInlineLimit:0`, system
    fonts only). The pre-paint theme script is an external `/theme-init.js`.
-2. **No WebSocket / SSE** anywhere on the server — all data is request/response
-   JSON. "Real-time" is a disciplined **polling layer** (`useAsyncData` with
-   visibility-aware intervals, per-panel error isolation, last-good-data
-   retention). The browser terminal is still polling-backed: xterm handles PTY
-   rendering/input locally, while the server/agent exchange bounded JSON events
-   and inputs.
-3. **Maps under CSP** = bundled world GeoJSON rendered locally (echarts/SVG) —
-   **no external tile servers** (no Leaflet/MapLibre tiles).
-4. **Secret-free + one-time reveal** — the API never returns credentials
+2. **Polling by default**: nearly all data is request/response JSON through a
+   disciplined polling layer (`useAsyncData` with visibility-aware intervals,
+   per-panel error isolation, last-good-data retention). This item used to read
+   "No WebSocket / SSE anywhere" and that is no longer true. The terminal opens a
+   real same-origin WebSocket (`src/components/terminal/XtermSession.vue`), the
+   server splices it to an agent-dialed WebSocket, and `stream` is the default
+   transport for modern agents. Polling remains as the compatibility fallback for
+   agents that have not reported `terminal_transport=stream`.
+3. **Maps under CSP** = bundled world GeoJSON rendered locally as inline SVG,
+   with no external tile servers (no Leaflet/MapLibre tiles). echarts was
+   considered here and never adopted. It is not a dependency.
+4. **Secret-free + one-time reveal**: the API never returns credentials
    (`has_*` booleans). The UI uses explicit one-time reveal flows (enroll, token
    create, sub-token rotate) and "blank = keep" affordances for write-only
    fields.
@@ -56,8 +60,15 @@ while honoring Lattice's constraints.
 Vue 3.5 (script-setup + TS) · Vite 7 · Tailwind v4 (CSS-first, `@theme inline`)
 · reka-ui (shadcn-vue New-York) + cva + `cn()` · lucide icons · Pinia ·
 vue-router (history mode; server SPA-fallbacks non-`/api` paths to index.html) ·
-uPlot for live charts · echarts (lazy) for the world map · vue-sonner toasts ·
+vue-sonner toasts ·
 @vueuse/core. Dependency-light, matching Lattice's pure-Go/minimal ethos.
+
+Charting note, corrected 2026-08-19: this line used to promise uPlot for live
+charts and lazy echarts for the world map. echarts was never added, and while
+`uplot` is still declared in `package.json` nothing imports it, so every chart
+and the map are hand-rolled inline SVG today. Either drop the unused dependency
+or wire it up. Leaving it declared makes the bundle story read as if it were in
+use.
 
 ## Design identity
 
@@ -66,23 +77,23 @@ face: a **deep slate-indigo** surface set + an **indigo brand accent**
 (`--primary`). Two-axis theming: light/dark (pre-painted, no FOUC) + a brand
 palette swatch engine (indigo default + 8 presets + custom hex). Added semantic
 status tokens (`success`/`warning`/`info`) because this is a status-heavy
-control plane. All colors are tokens — re-skinning is a one-file change.
+control plane. All colors are tokens, so re-skinning is a one-file change.
 
 ## Information architecture (sidebar, scope-gated)
 
 Permission-derived: each item reveals only if the principal has the scope.
 
-- **Overview** — fleet health at a glance (KPIs, node grid, approvals inbox,
+- **Overview**: fleet health at a glance (KPIs, node grid, approvals inbox,
   recent activity)
-- **Fleet** — Nodes, Map, Inventory (machines/cost), Monitoring
-- **Operations** — Approvals (unified inbox), Tasks, Audit
-- **Networking** — Network Guard (nft), Network Policy + graph, Self-host DNS,
+- **Fleet**: Nodes, Map, Inventory (machines/cost), Monitoring
+- **Operations**: Approvals (unified inbox), Tasks, Audit
+- **Networking**: Network Guard (nft), Network Policy + graph, Self-host DNS,
   Geo-Routing, DDNS, Tunnels, WireGuard
-- **Proxy** — Inbounds, Users, Node Profiles, Subscriptions, Usage
-- **Platform** — Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates
-- **Settings** — Security & 2FA, Single Sign-On, Access Tokens, Appearance
+- **Proxy**: Inbounds, Users, Node Profiles, Subscriptions, Usage
+- **Platform**: Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates
+- **Settings**: Security & 2FA, Single Sign-On, Access Tokens, Appearance
 
-## API surface (18 domains — all mapped)
+## API surface (18 domains, all mapped)
 
 Auth/2FA/SSO · Nodes/Agents · Batch Tasks · Monitoring · Inventory/Machines ·
 Geo/Map · Geo-Routing · Proxy Core + Subscriptions · Network Guard (nft) ·
@@ -93,60 +104,60 @@ Notifications/Health. Cookie session + `X-Lattice-CSRF`; bearer PAT alt; errors
 
 ## Phasing
 
-- **Phase 1 — Foundation:** project scaffold, design tokens, theme
+- **Phase 1, Foundation:** project scaffold, design tokens, theme
   engine, API client + polling layer, auth store, UI primitive library, app
   shell (data-driven sidebar + header), router with scope-gated nav, **Login**
   and **Overview** flagship screens.
-- **Phase 1.5 — Account security:** **Settings -> Security & 2FA** with admin
+- **Phase 1.5, Account security:** **Settings -> Security & 2FA** with admin
   password rotation, TOTP enrollment, activation, recovery-code display, and
   disable flow. Password and 2FA disable actions intentionally return the user
   to login because the server invalidates old sessions.
-- **Phase 2 — Fleet & Ops:** **Nodes** (+enroll, host facts, detail dialog,
+- **Phase 2, Fleet & Ops:** **Nodes** (+enroll, host facts, detail dialog,
   rotate/disable), **Fleet Map** (CSP-safe SVG projection + node geo editor),
   **Inventory** (machine profiles, cost metadata, write-only console/detail
   links, renewal reminders), **Monitoring** (TCP/HTTP monitor create/delete,
   assignments, result history, latency trend), **Approvals** inbox (plan review
   + client-side sha bind), **Tasks** runner, and **Audit** viewer are live.
   Remaining Phase 2 work is live-server E2E against a deployed control plane.
-- **Phase 3 — Networking & Proxy (flagship): DONE.** Proxy **Inbounds**
+- **Phase 3, Networking & Proxy (flagship): DONE.** Proxy **Inbounds**
   (VLESS+REALITY), **Users** (quota/expiry, one-time sub-token reveal),
   **Subscriptions**, **Node Profiles** (plan→approve + drift signals), **Usage**;
   **Network Guard** (nft), **Network Policy** + inline-SVG topology graph, **Self-host
   DNS** (plan + direct publish), **Geo-Routing** (render preview), **DDNS**,
   **Tunnels**, **WireGuard** (mesh planner) are all live.
-- **Phase 4 — Platform & Settings: DONE (polish pending).** **Plugins** (verify +
+- **Phase 4, Platform & Settings: DONE (polish pending).** **Plugins** (verify +
   lifecycle), **Workers** (deploy/run), **KV**, **Static**, **Logs** (sources +
   query/tail + stats), **Notifications** (channels + test), **Agent Updates**
   (plan→approve); Settings **Single Sign-On** (OIDC), **Access Tokens** (one-time
   PAT reveal), **Appearance** are live.
-- **Phase 4 polish — DONE.** **Charts** (CSP-safe inline-SVG trend chart on
+- **Phase 4 polish, DONE.** **Charts** (CSP-safe inline-SVG trend chart on
   Monitoring latency + Proxy Usage traffic bars), **first-run onboarding**
   (empty-fleet Getting Started checklist), **a11y** (skip link, landmarks,
   `aria-current`, icon-button labels, table semantics, live Copied announce),
   and **i18n** (all 33 views in English + Simplified Chinese with a language
   switcher) are shipped. Only **live-server E2E** against a deployed control
   plane remains, which happens during deploy validation.
-- **Deployment reliability — DONE.** Server static hosting now sends `no-cache`
+- **Deployment reliability, DONE.** Server static hosting now sends `no-cache`
   for app-shell/fallback routes and immutable cache headers for hashed assets;
   the router performs one guarded reload on stale dynamic-import chunk failures.
-- **Operator diagnostics — DONE.** Node detail exposes server-controlled
+- **Operator diagnostics, DONE.** Node detail exposes server-controlled
   `lattice-agent v0.2.1+` debug policy: enable local node diagnostics, collect
   centrally by default into managed Logs, or keep debug output local only.
-- **SSO setup guidance — DONE.** The New Provider dialog includes the exact
+- **SSO setup guidance, DONE.** The New Provider dialog includes the exact
   redirect URI, an IdP checklist, field-by-field explanations, and a deep link
   to `https://latticenet.github.io/guide/sso`.
-- **Fleet Map auto-location — DONE.** `/map` now shows a proper SVG world map,
+- **Fleet Map auto-location, DONE.** `/map` now shows a proper SVG world map,
   region rollups, source-aware manual/GeoIP placement, and one-click missing
   node location using the server-side no-token default GeoIP provider. Set
   `LATTICE_GEOIP_LOOKUP_URL=off` to disable external lookup, or point it at an
   internal HTTPS provider.
-- **Browser Terminal MVP — DONE.** `/terminal` is a real Operations page that
+- **Browser Terminal MVP, DONE.** `/terminal` is a real Operations page that
   creates in-memory server sessions, renders output with xterm, sends input,
   resize, and close controls, and requires `terminal:open`. Nodes expose a direct
   "Open terminal" entrypoint that opens the terminal route in a new tab. The node
   agent must opt in with `LATTICE_AGENT_ALLOW_TERMINAL=1`; this is an agent PTY
   path, not inbound SSH.
-- **Protocol-level future work — NOT dashboard-only.** KV Store v2
+- **Protocol-level future work, NOT dashboard-only.** KV Store v2
   (bucket-bound credentials and domain/IP binding), Static hosting v2
   (domain-bound sites / optional Cloudflare Pages workflow), Terminal v2
   (recorded transcripts, stronger idle timeout controls), and group-leader topology require

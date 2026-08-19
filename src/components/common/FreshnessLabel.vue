@@ -50,7 +50,9 @@ const text = computed(() => {
     case "stale":
       return { key: "freshness.updatedAgo", params: { n: seconds.value } };
     case "dead":
-      return { key: "freshness.stale", params: {} };
+      // Says how long the console has gone without a successful poll rather
+      // than the bare word "stale", which told the operator nothing.
+      return { key: "freshness.stale", params: { n: seconds.value } };
     default:
       return { key: "freshness.idle", params: {} };
   }

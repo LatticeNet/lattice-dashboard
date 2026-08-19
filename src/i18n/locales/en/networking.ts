@@ -7,7 +7,7 @@ export default {
     shared: {
       plan: "Plan",
       planCreated: "Plan created",
-      planReviewHint: "Review & approve under Operations / Approvals. Nothing is applied until approved.",
+      planReviewHint: "Review and approve this under Operations / Approvals. No node applies anything until you approve it.",
       planLabel: "Plan",
       planTextSha256: "plan text SHA-256",
       goToApprovals: "Go to Approvals",
@@ -34,8 +34,10 @@ export default {
       nodePoliciesHint:
         "Each policy is an ordered set of allow/deny L3/L4 rules for one target node.",
       emptyTitle: "No network policies",
-      emptyWithRead: "Create a policy to control egress and ingress for a node.",
-      emptyNeedRead: "`netpolicy:read` is required to view policies.",
+      emptyWithRead:
+        "Create a policy to control egress and ingress for a node. This list also shows only policies on nodes your token can read, so an empty list is not proof the fleet has none.",
+      emptyNeedRead:
+        "You need `netpolicy:read` to see policies here, and `netpolicy:admin` to create one. Ask an admin to grant them.",
       colTargetNode: "Target node",
       colEnabled: "Enabled",
       colRules: "Rules",
@@ -49,7 +51,7 @@ export default {
       reloadGraph: "Reload graph",
       graphEmptyTitle: "No nodes in graph",
       graphEmptyDescription:
-        "Only nodes you can read with active policies appear in the topology.",
+        "Only nodes your token can read appear here. A node with no active policy still shows, it just draws no edges.",
       controlPlane: "Control plane",
       leader: "leader",
       legendServer: "control plane",
@@ -95,7 +97,8 @@ export default {
       createPolicy: "Create policy",
       deleteTitle: "Delete policy",
       deleteDescription: "Delete the network policy for",
-      deleteIrreversible: "This cannot be undone.",
+      deleteIrreversible:
+        "The node keeps enforcing the nftables ruleset it last applied, and once this record is gone the console can no longer plan its removal.",
       discardTitle: "Discard unsaved changes?",
       discardDescription: "You have unsaved edits to this policy. Closing now will discard them.",
       discardConfirm: "Discard changes",
@@ -107,7 +110,7 @@ export default {
       toastUpdated: "Policy updated",
       toastCreated: "Policy created",
       toastSaveFailed: "Failed to save policy",
-      toastDeleted: "Policy deleted",
+      toastDeleted: "Policy record deleted from this server",
       toastDeleteFailed: "Failed to delete policy",
     },
 
@@ -118,7 +121,7 @@ export default {
       newDeployment: "New deployment",
       cardTitle: "CoreDNS deployments",
       cardDescription:
-        "Plan changes go through Approvals; publishing pushes public IPs to Cloudflare directly.",
+        "Config changes go to Approvals first, and no node applies them until you approve the plan. Publishing does not wait: it writes public DNS the moment you confirm.",
       emptyTitle: "No DNS deployments",
       emptyDescription: "Create a CoreDNS deployment to serve zones from a node.",
       colName: "Name",
@@ -129,7 +132,7 @@ export default {
       colHostname: "Hostname",
       colStatus: "Status",
       colCredential: "Credential",
-      colPublished: "Published",
+      colPublished: "Last publish attempt",
       colActions: "Actions",
       editTitle: "Edit deployment",
       newTitle: "New deployment",
@@ -178,15 +181,17 @@ export default {
       createDeployment: "Create deployment",
       deleteTitle: "Delete deployment",
       deleteDescription: "Delete the DNS deployment",
-      deleteIrreversible: "This cannot be undone.",
+      deleteIrreversible:
+        "CoreDNS keeps running on the node with the config it last applied, and any public records this deployment published stay published.",
       credSet: "set",
       credNone: "none",
       toastUpdated: "Deployment updated",
       toastCreated: "Deployment created",
       toastSaveFailed: "Failed to save deployment",
-      toastDeleted: "Deployment deleted",
+      toastDeleted: "Deployment record deleted from this server",
       toastDeleteFailed: "Failed to delete deployment",
-      toastPublished: "published ipv4={ipv4} ipv6={ipv6}",
+      toastPublished:
+        "Publish finished with no record errors. This deployment now reports IPv4 {ipv4} and IPv6 {ipv6}.",
       toastPublishFailed: "Publish failed",
     },
 
@@ -200,7 +205,7 @@ export default {
       apexRecord: "{count} geo-aware apex record",
       emptyTitle: "No geo-routings configured",
       emptyDescription:
-        "Create a geo-aware DNS apex to steer clients to the nearest healthy node.",
+        "Create a geo-aware DNS apex to steer clients to the nearest healthy node. This list also shows only what your token can read.",
       colName: "Name",
       colHostname: "Hostname",
       colStrategy: "Strategy",
@@ -227,7 +232,8 @@ export default {
       participatingNodes: "Participating nodes",
       participatingNodesHint: "Answer targets: each needs geo lat/lon, a public IP, and health.",
       noNodesTitle: "No nodes available",
-      noNodesDescription: "Enroll nodes before configuring geo-routing.",
+      noNodesDescription:
+        "Enroll nodes before configuring geo-routing. This picker also lists only the nodes your token can read.",
       nodeIdsPlaceholder: "node-a, node-b",
       nodeIdsManualHint:
         "Your token cannot list nodes. Enter authorized node IDs manually; the server still enforces geo:admin.",
@@ -245,7 +251,7 @@ export default {
       renderOnlyLead: "render-only preview",
       previewConfig: "Preview config",
       renderOnlyHint:
-        "This is a {renderOnly} of the CoreDNS configuration. Nothing is queued or applied, and no approval is created.",
+        "This is a {renderOnly} of the CoreDNS configuration. Nothing is queued or applied, and no approval is created. It uses the health this server knows right now, which can lag a node going down by up to two minutes.",
       serverBlock: "CoreDNS server-block",
       warnings: "Warnings",
       perContinentTitle: "Per-continent node choice",
@@ -277,7 +283,7 @@ export default {
       colStack: "Stack",
       colCredential: "Credential",
       colLastRun: "Last run",
-      colLastIps: "Last IPs",
+      colLastIps: "IPs at last run",
       colLastError: "Last error",
       colActions: "Actions",
       credSet: "set",
@@ -289,7 +295,8 @@ export default {
       nodeLabel: "Node",
       selectNode: "Select a node",
       domains: "Domains",
-      domainsHint: "Comma-separated. Records are pushed for every entry.",
+      domainsHint:
+        "Comma-separated. Each name gets a record for every address family this node actually has an IP for.",
       provider: "Provider",
       ttlSeconds: "TTL (seconds)",
       maxRetries: "Max retries",
@@ -311,14 +318,16 @@ export default {
       runTitle: "Run this DDNS update now?",
       runDescription:
         'Publish the current public IP of "{name}" to {domains} now. Public DNS changes immediately, for everyone resolving those names.',
-      toastRunSuccess: "Published current node IP to DNS",
-      toastRunBadGateway: "Provider/network failure (502), DNS publish did not complete",
+      toastRunSuccess:
+        "Run finished with no provider errors. Only the address families this node has an IP for were written.",
+      toastRunBadGateway:
+        "The update did not complete. The server answered 502, so either the DNS provider failed or the request never reached Lattice.",
       toastRunFailed: "Run failed",
     },
     shares: {
       title: "Published subscriptions",
       description:
-        "The public URLs this server serves. Anything that is not a valid share returns an empty 404, so a prober cannot tell an existing share from a missing one.",
+        "A subscription is the record that produces the config. A share is the public URL this server serves it on. Any path that is not a live share returns an empty 404, so a prober cannot tell an existing share from a missing one.",
       publish: "Publish",
       publishTitle: "Publish a subscription",
       publishDescription:
@@ -357,18 +366,20 @@ export default {
       refreshHint: "Fetch from the provider now instead of waiting for the next client poll.",
       refreshPluginOnly:
         "Only a plugin-backed share can be refreshed. This one serves a proxy user, which has no provider to fetch from.",
-      refreshed: "Refreshed {slug}.",
+      refreshed: "Fetched {slug} from its provider. Clients now get the new content.",
+      refreshStale:
+        "The provider did not answer for {slug}, so nothing changed. Clients keep getting the last good snapshot.",
       refreshFailed: "Refresh failed.",
       lastGoodServed: "The last good snapshot is still being served.",
       rotate: "Rotate token",
       rotateTitle: "Rotate this token?",
       rotateWarning:
-        "Rotating /{slug} invalidates its live public URL. Every client using the current URL stops working immediately and must be given the new one.",
+        "Rotating /{slug} replaces its token, so the current URL stops working the moment you confirm. Every client still holding it gets a 404 until you hand out the new URL.",
       rotated: "Rotated {slug}. The previous URL now 404s like any unknown path.",
       rotateFailed: "The token could not be rotated.",
       deleteTitle: "Delete this share?",
       deleteWarning:
-        "/{slug} stops being served immediately. The subscription itself stays in the plugin.",
+        "/{slug} stops being served the moment you confirm, and every client using it gets a 404. The subscription it serves is not deleted, only this URL for it.",
       deleted: "Deleted {slug}.",
       deleteFailed: "The share could not be deleted.",
       confirmPrompt: "Type {slug} to confirm.",
@@ -440,16 +451,17 @@ export default {
       serviceExamples:
         "Service examples: {http}, {ssh}, or {status}. A catch-all 404 is appended automatically.",
       deleteTitle: "Delete tunnel?",
-      deleteDescription: 'Remove "{name}". This cannot be undone.',
+      deleteDescription:
+        'Remove "{name}" from this server. cloudflared keeps running on the node with the config it last applied, and once this record is gone the console can no longer plan its removal.',
       planTitle: "Tunnel config plan",
       planSubtitle: "{plugin} / {action} on {node}",
       planReviewHint:
         "Plan created. Review and approve under {approvals} before the node applies it. The rendered {configYml} references the credentials file path only, so no credential material is embedded.",
       approvalsLabel: "Operations / Approvals",
       approvalLabel: "approval {id}",
-      toastCreated: "Tunnel created",
+      toastCreated: "Tunnel saved on this server. Nothing reaches the node until you plan it and approve the plan.",
       toastCreateFailed: "Create failed",
-      toastDeleted: "Tunnel deleted",
+      toastDeleted: "Tunnel record removed from this server",
       toastDeleteFailed: "Delete failed",
       toastPlanCreated: "Plan created, review in Approvals",
       toastPlanFailed: "Plan failed",
@@ -492,9 +504,12 @@ export default {
       saveCell: "Save policy",
       toastSaved: "Group policy saved",
       toastSaveFailed: "Failed to save group policy",
-      toastPlanned: "Planned, {n} node(s) affected",
+      toastPlanned: "Planned {n} node(s). Approve each one before any node applies it.",
+      toastPlannedPartial:
+        "Planned {n} node(s). {c} node(s) produced no plan and are listed as conflicts.",
       planResultTitle: "Group policy plan",
-      planResultDescription: "Expanded to per-node plans. Approve each under Operations / Approvals.",
+      planResultDescription:
+        "Each affected node got its own plan, and none of them run until you approve them under Operations / Approvals. Conflicting nodes produced no plan, and orphaned policies stay on their nodes with nothing to approve.",
       planAffected: "{n} affected",
       planConflicts: "{n} conflicts",
       planOrphaned: "{n} orphaned",
@@ -502,7 +517,7 @@ export default {
       planAffectedNodes: "Affected nodes",
       planConflictsTitle: "Conflicts",
       planConflictLine: "{node}: {reason}",
-      planNoop: "No changes to plan.",
+      planNoop: "Nothing to plan: no node came out of the current group policies.",
       selectorImpactTitle: "Dynamic selector membership affects this plan",
       selectorImpactDescription:
         "These groups use smart selectors. The current selector matches were included in the per-node policy expansion, and future tag, role, or geo changes can change the next plan.",

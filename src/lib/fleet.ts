@@ -4,9 +4,10 @@
  *
  * Everything here is a pure function over the polled `Node[]` list:
  *  - country/continent helpers turn the server's ISO-3166 alpha-2 `geo.country`
- *    (uppercased + validated server-side) into a flag emoji and a coarse
- *    continent "region cluster" (Asia / Europe / North America …). Which is
- *    the grouping operators actually think in ("asia / us-west").
+ *    (uppercased + validated server-side) into the two-letter mark itself and a
+ *    coarse continent "region cluster" (Asia / Europe / North America ...),
+ *    which is the grouping operators actually think in ("asia / us-west").
+ *    Flag emoji were removed on purpose; see `countryMark` below for why.
  *  - `groupNodes()` buckets a fleet by region / country / role / status / tag.
  *  - `fleetTotals()` rolls per-node metrics up into one fleet-wide summary.
  *
