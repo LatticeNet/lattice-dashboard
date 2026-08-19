@@ -51,7 +51,7 @@ const sortedEntries = computed(() =>
 const columns = computed<DataTableColumn<KVEntry>[]>(() => {
   const cols: DataTableColumn<KVEntry>[] = [
     { key: "key", label: t("platform.kv.colKey"), sortable: true, searchable: true, class: "font-mono text-xs" },
-    { key: "value", label: t("platform.kv.colValue"), searchable: true },
+    { key: "value", label: t("platform.kv.colValue"), sortable: true, searchable: true },
     { key: "updated_at", label: t("platform.kv.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
   ];
   if (canWrite.value) {
@@ -189,16 +189,21 @@ async function submitPut() {
                 v-if="expanded.has(row.key)"
                 class="max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 font-mono text-xs"
               >{{ row.value }}</pre>
-              <span v-else class="block max-w-[420px] truncate font-mono text-xs text-muted-foreground">{{ row.value }}</span>
+              <span
+                v-else
+                class="block max-w-[420px] truncate font-mono text-xs text-muted-foreground"
+                :title="row.value"
+              >{{ row.value }}</span>
               <button
                 type="button"
-                class="mt-1 text-xs text-primary hover:underline"
+                class="mt-1 rounded-sm text-xs text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                :aria-expanded="expanded.has(row.key)"
                 @click="toggleExpand(row.key)"
               >
                 {{ expanded.has(row.key) ? $t('platform.kv.collapse') : $t('platform.kv.expand') }}
               </button>
             </template>
-            <span v-else class="font-mono text-xs">{{ row.value || "—" }}</span>
+            <span v-else class="font-mono text-xs">{{ row.value || $t('common.misc.none') }}</span>
           </template>
           <template #cell-updated_at="{ row }">
             <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
@@ -235,7 +240,15 @@ async function submitPut() {
         <form class="space-y-4" @submit.prevent="submitPut">
           <div class="grid gap-2">
             <Label for="kv-key">{{ $t('platform.kv.keyLabel') }}</Label>
-            <Input id="kv-key" v-model="putKey" required :disabled="editing" placeholder="my-key" />
+            <Input
+              id="kv-key"
+              v-model="putKey"
+              required
+              :disabled="editing"
+              :title="editing ? $t('platform.kv.keyImmutable') : undefined"
+              placeholder="my-key"
+            />
+            <p v-if="editing" class="text-xs text-muted-foreground">{{ $t('platform.kv.keyImmutable') }}</p>
           </div>
           <div class="grid gap-2">
             <Label for="kv-value">{{ $t('platform.kv.valueLabel') }}</Label>

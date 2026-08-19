@@ -6,7 +6,7 @@
 // document can talk to the host.
 //
 // This lives outside the component because the rule it encodes is a security
-// invariant, not a rendering detail — keeping it pure is what makes it directly
+// invariant, not a rendering detail. Keeping it pure is what makes it directly
 // testable without a DOM harness.
 
 export type FrameLoadOutcome =

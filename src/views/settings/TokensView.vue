@@ -38,6 +38,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -55,13 +56,13 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("token:admin"));
 
-// BARE ARRAY endpoint — do NOT unwrap.
+// BARE ARRAY endpoint: do NOT unwrap.
 const tokensQuery = useAsyncData(() => api.tokens.list(), { pollInterval: 15000 });
 const tokens = computed(() => tokensQuery.data.value ?? []);
 
 // A token is revoked only if revoked_at is a REAL timestamp. Go's `omitempty`
 // does not omit a zero time.Time, so active tokens serialize the zero time
-// ("0001-01-01T00:00:00Z") instead of omitting the field — treating that as
+// ("0001-01-01T00:00:00Z") instead of omitting the field, and treating that as
 // truthy would wrongly mark every active token as revoked.
 function isRevoked(token: TokenView): boolean {
   const r = token.revoked_at;
@@ -177,7 +178,11 @@ const scopesError = computed(() =>
 const canSubmit = computed(() => !!form.name.trim() && form.scopes.length > 0);
 
 // ── One-time reveal ──────────────────────────────────────────────────────────
+// The plaintext is never re-fetchable, so dismissing this dialog destroys the
+// only copy. Escape and overlay clicks are blocked and the close paths stay shut
+// until the operator ticks the acknowledgement.
 const revealed = ref<TokenCreateResponse | undefined>();
+const revealAcknowledged = ref(false);
 
 async function submitForm() {
   submitAttempted.value = true;
@@ -196,7 +201,8 @@ async function submitForm() {
 
     const created = await api.tokens.create(req);
     formOpen.value = false;
-    revealed.value = created; // one-time reveal — never re-fetched.
+    revealAcknowledged.value = false;
+    revealed.value = created; // one-time reveal, never re-fetched.
     toast.success(t("settings.tokens.toast.created"));
     tokensQuery.refresh();
   } catch (error) {
@@ -208,6 +214,13 @@ async function submitForm() {
 
 function closeReveal() {
   revealed.value = undefined;
+  revealAcknowledged.value = false;
+}
+
+/** Only an acknowledged reveal may close; every other dismissal is refused. */
+function onRevealOpenChange(next: boolean) {
+  if (next || !revealAcknowledged.value) return;
+  closeReveal();
 }
 
 // ── Revoke confirmation ──────────────────────────────────────────────────────
@@ -267,6 +280,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
   {
     key: "actor",
     label: t("settings.tokens.list.actor"),
+    sortable: true,
     searchable: true,
     value: (row) => row.actor_id,
   },
@@ -277,6 +291,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
     label: t("settings.tokens.list.created"),
     sortable: true,
     align: "right",
+    class: "tabular",
   },
   {
     key: "status",
@@ -382,8 +397,8 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
           </template>
 
           <template #cell-created_at="{ row }">
-            <span class="text-xs text-muted-foreground">
-              {{ row.created_at ? formatDateTime(row.created_at) : "—" }}
+            <span class="tabular text-xs text-muted-foreground">
+              {{ row.created_at ? formatDateTime(row.created_at) : $t("common.misc.none") }}
             </span>
           </template>
 
@@ -471,13 +486,11 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
               <label
                 v-for="scope in grantableScopes"
                 :key="scope"
-                class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
+                class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
               >
-                <input
-                  type="checkbox"
-                  class="size-4 accent-primary"
-                  :checked="form.scopes.includes(scope)"
-                  @change="toggleScope(scope)"
+                <Checkbox
+                  :model-value="form.scopes.includes(scope)"
+                  @update:model-value="toggleScope(scope)"
                 />
                 <span class="font-mono text-xs">{{ scope }}</span>
               </label>
@@ -532,8 +545,12 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
     />
 
     <!-- One-time reveal -->
-    <Dialog :open="!!revealed" @update:open="(v) => { if (!v) closeReveal(); }">
-      <DialogContent class="sm:max-w-xl">
+    <Dialog :open="!!revealed" @update:open="onRevealOpenChange">
+      <DialogContent
+        class="sm:max-w-xl"
+        @escape-key-down.prevent
+        @interact-outside.prevent
+      >
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
             <TriangleAlert class="size-5 text-warning" aria-hidden="true" />
@@ -581,8 +598,15 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
           </div>
         </div>
 
+        <label class="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 p-3 text-sm">
+          <Checkbox v-model="revealAcknowledged" class="mt-0.5" />
+          <span>{{ $t("settings.tokens.reveal.acknowledge") }}</span>
+        </label>
+
         <DialogFooter>
-          <Button type="button" @click="closeReveal">{{ $t("common.actions.done") }}</Button>
+          <Button type="button" :disabled="!revealAcknowledged" @click="closeReveal">
+            {{ $t("common.actions.done") }}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

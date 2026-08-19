@@ -232,7 +232,7 @@ test("bridge times out calls even when they ignore abort", async () => {
 });
 
 // Regression: the rate budget used to be consumed only by well-formed calls, so a frame
-// could spam undeclared/duplicate/oversized calls — each still costing a host error post —
+// could spam undeclared/duplicate/oversized calls. Each still costing a host error post
 // without ever reaching the ceiling.
 test("rejected calls still consume the rate budget", async () => {
   const { session, source, posted } = makeSession({ maxCallsPerMinute: 3 });
@@ -245,7 +245,7 @@ test("rejected calls still consume the rate budget", async () => {
   }
   assert.deepEqual(posted.map((m) => m.code), ["method_not_declared", "method_not_declared", "method_not_declared"]);
 
-  // Budget is now spent — even a perfectly valid call must be refused.
+  // Budget is now spent. Even a perfectly valid call must be refused.
   await session.handle({
     source,
     data: { type: "lattice.plugin.call", nonce: "nonce-123", id: "good", service: "test.plugin/items", method: "list" },

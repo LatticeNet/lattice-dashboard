@@ -204,8 +204,8 @@ export class PluginBridgeSession {
 
   private async handleCall(message: Record<string, unknown>): Promise<void> {
     // Budget is charged by every call-shaped message, not just the well-formed ones:
-    // charging only valid calls would let a frame spam rejects — each of which still
-    // costs a host `error` post — without ever reaching the ceiling. The specific
+    // charging only valid calls would let a frame spam rejects. Each of which still
+    // costs a host `error` post. Without ever reaching the ceiling. The specific
     // rejection still wins the response, so error semantics are unchanged.
     const withinBudget = this.consumeRateBudget();
     const id = typeof message.id === "string" ? message.id : "";

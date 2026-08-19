@@ -40,6 +40,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -60,7 +61,7 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("oidc:admin"));
 const redirectUri = computed(() => `${window.location.origin}/api/auth/oidc/callback`);
 
-// Wrapped object endpoint — unwrap "providers".
+// Wrapped object endpoint: unwrap "providers".
 const providersQuery = useAsyncData(
   () => api.oidc.providers().then((r) => unwrap(r, "providers")),
   { pollInterval: 15000 },
@@ -194,6 +195,29 @@ async function testConnection() {
   }
 }
 
+// ── Last-provider guard ──────────────────────────────────────────────────────
+// Turning off the only enabled provider takes SSO login away from everyone who
+// has no local password or passkey, so it confirms before saving.
+const enabledProviderCount = computed(() => providers.value.filter((p) => p.enabled).length);
+const disablingLastProvider = computed(
+  () => !!editing.value && editing.value.enabled && !form.enabled && enabledProviderCount.value <= 1,
+);
+const disableConfirmOpen = ref(false);
+
+function requestSubmit() {
+  if (!canSubmit.value || !canAdmin.value) return;
+  if (disablingLastProvider.value) {
+    disableConfirmOpen.value = true;
+    return;
+  }
+  void submitForm();
+}
+
+function confirmDisableLast() {
+  disableConfirmOpen.value = false;
+  void submitForm();
+}
+
 // ── Delete confirmation ──────────────────────────────────────────────────────
 const deleteTarget = ref<OIDCProviderView | undefined>();
 const deleting = ref(false);
@@ -220,7 +244,7 @@ const enabledMeta = (provider: OIDCProviderView) =>
 const secretMeta = (provider: OIDCProviderView) =>
   statusMeta(provider.has_secret ? "online" : "degraded");
 
-// DataTable columns — every existing column and the edit/delete row actions are
+// DataTable columns: every existing column and the edit/delete row actions are
 // preserved, rendered through #cell-<key> slots.
 const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
   {
@@ -239,9 +263,15 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
   {
     key: "client_id",
     label: t("settings.sso.list.clientId"),
+    sortable: true,
     searchable: true,
   },
-  { key: "secret", label: t("settings.sso.list.secret") },
+  {
+    key: "secret",
+    label: t("settings.sso.list.secret"),
+    sortable: true,
+    value: (row) => (row.has_secret ? 0 : 1),
+  },
   {
     key: "status",
     label: t("settings.sso.list.status"),
@@ -337,11 +367,17 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
           </template>
 
           <template #cell-issuer="{ row }">
-            <span class="break-all font-mono text-xs text-muted-foreground md:line-clamp-2 md:max-w-[240px]">{{ row.issuer }}</span>
+            <span
+              class="break-all font-mono text-xs text-muted-foreground md:line-clamp-2 md:max-w-[240px]"
+              :title="row.issuer"
+            >{{ row.issuer }}</span>
           </template>
 
           <template #cell-client_id="{ row }">
-            <span class="break-all font-mono text-xs text-muted-foreground md:max-w-[180px]">{{ row.client_id }}</span>
+            <span
+              class="break-all font-mono text-xs text-muted-foreground md:max-w-[180px]"
+              :title="row.client_id"
+            >{{ row.client_id }}</span>
           </template>
 
           <template #cell-secret="{ row }">
@@ -364,7 +400,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
                 {{ scope }}
               </Badge>
             </div>
-            <span v-else class="text-xs text-muted-foreground">—</span>
+            <span v-else class="text-xs text-muted-foreground">{{ $t("common.misc.none") }}</span>
           </template>
 
           <template #cell-allowed_domains="{ row }">
@@ -477,7 +513,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
           </dl>
         </div>
 
-        <form class="space-y-4" @submit.prevent="submitForm">
+        <form class="space-y-4" @submit.prevent="requestSubmit">
           <div class="grid gap-2">
             <Label for="oidc-display">{{ $t("settings.sso.form.displayName") }}</Label>
             <Input id="oidc-display" v-model="form.display_name" :placeholder="$t('settings.sso.form.displayNamePlaceholder')" />
@@ -500,8 +536,12 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             <p v-else class="text-xs text-muted-foreground">
               {{ $t("settings.sso.form.issuerHint") }}
             </p>
-            <p v-if="testResult?.ok" class="text-xs text-emerald-500">
-              {{ $t("settings.sso.form.testOk") }} · auth: {{ testResult.authorization_endpoint }}
+            <p v-if="testResult?.ok" class="text-xs text-success">
+              {{
+                testResult.authorization_endpoint
+                  ? $t("settings.sso.form.testOkWithEndpoint", { endpoint: testResult.authorization_endpoint })
+                  : $t("settings.sso.form.testOk")
+              }}
             </p>
             <p v-else-if="testResult && !testResult.ok" class="text-xs text-destructive">
               {{ testResult.error || $t("settings.sso.form.testFailed") }}
@@ -544,10 +584,15 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             </p>
           </div>
 
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="form.enabled" type="checkbox" class="size-4 accent-primary" />
-            {{ $t("settings.sso.form.enabled") }}
-          </label>
+          <div class="grid gap-1">
+            <label class="flex cursor-pointer items-center gap-2 text-sm">
+              <Checkbox v-model="form.enabled" />
+              <span>{{ $t("settings.sso.form.enabled") }}</span>
+            </label>
+            <p v-if="disablingLastProvider" class="text-xs text-warning">
+              {{ $t("settings.sso.form.disableLastWarning") }}
+            </p>
+          </div>
 
           <DialogFooter>
             <DialogClose as-child>
@@ -567,6 +612,18 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
         </form>
       </DialogScrollContent>
     </Dialog>
+
+    <!-- Disabling the last enabled provider -->
+    <ConfirmDialog
+      :open="disableConfirmOpen"
+      :title="$t('settings.sso.disableLastTitle')"
+      :description="$t('settings.sso.disableLastDescription', { name: editing?.display_name || editing?.issuer })"
+      :confirm-label="$t('common.actions.disable')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="saving"
+      @update:open="(v) => { if (!v) disableConfirmOpen = false; }"
+      @confirm="confirmDisableLast"
+    />
 
     <!-- Delete confirmation -->
     <ConfirmDialog

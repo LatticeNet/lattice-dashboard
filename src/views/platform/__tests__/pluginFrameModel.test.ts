@@ -32,10 +32,10 @@ test("a reload revokes the session and rotates the nonce", () => {
 });
 
 // Regression: rotation used to be expressed as a fragment-only `src` change, which the
-// browser resolves as a same-document navigation — so no `load` fired, the rotating flag
+// browser resolves as a same-document navigation. So no `load` fired, the rotating flag
 // stuck, and the NEXT real reload took an early-return branch that skipped dispose and
 // nonce rotation entirely, carrying a bridge session across a document replacement.
-test("every reload rotates — a second reload is never silently trusted", () => {
+test("every reload rotates. A second reload is never silently trusted", () => {
   const frame = lifecycle();
   const boot = frame.nonce;
 

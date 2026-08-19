@@ -62,7 +62,7 @@ export default {
         disable: "Disable 2FA",
         disableConfirmTitle: "Disable two-factor authentication?",
         disableConfirmDescription:
-          "This removes the second factor from your account and signs out the current session. You will need to sign in again with your password.",
+          "This removes the second factor from the account {account} and signs out the current session. You will need to sign in again with your password.",
         enterAuthenticatorCode: "Enter the code from your authenticator app.",
         enterDisableCode: "Enter a TOTP code or recovery code.",
         enrollmentStarted: "2FA enrollment started",
@@ -78,9 +78,12 @@ export default {
         unsupported: "This browser does not support passkeys.",
         add: "Add a passkey",
         addHint: "You'll be prompted by your device to create one.",
+        emptyTitle: "No passkeys yet",
         empty:
-          "No passkeys yet. On Apple devices a passkey is saved to Apple Passwords and synced through iCloud Keychain automatically — no extra setup.",
+          "On Apple devices a passkey is saved to Apple Passwords and synced through iCloud Keychain automatically, with no extra setup.",
         rename: "Rename",
+        renameNamed: "Rename the passkey {name}",
+        deleteNamed: "Remove the passkey {name}",
         syncedBadge: "Synced",
         created: "Added {date}",
         lastUsed: "Last used {date}",
@@ -106,7 +109,21 @@ export default {
     appearance: {
       // settings-scoped Appearance strings (the bulk live in frame.ts `appearance.*`).
       reducedMotionNote:
-        "Animations honor your system's reduced-motion setting — when it is on, transitions and motion are minimized automatically.",
+        "Animations honor your system's reduced-motion setting. When it is on, transitions and motion are minimized automatically.",
+      previewInertNote:
+        "This panel is a styling sample. Its buttons and badges are inert and do nothing.",
+      palettes: {
+        lattice: "Lattice",
+        teal: "Teal",
+        blue: "Blue",
+        violet: "Violet",
+        green: "Green",
+        rose: "Rose",
+        orange: "Orange",
+        yellow: "Yellow",
+        red: "Red",
+        stone: "Stone",
+      },
     },
     about: {
       title: "About",
@@ -114,6 +131,7 @@ export default {
       version: "Version",
       commit: "Commit",
       builtAt: "Built at",
+      unknown: "unknown",
       server: {
         title: "Server",
         description: "Runtime version reported by lattice-server",
@@ -132,7 +150,7 @@ export default {
       guide: "Setup guide",
       explainer: {
         title: "Auth-code flow with PKCE",
-        body: "Lattice authenticates against each provider using the authorization-code flow with PKCE. A Lattice-local TOTP second factor is still enforced after SSO when it is enabled — single sign-on never bypasses 2FA. Client secrets are write-only and never returned by the API.",
+        body: "Lattice authenticates against each provider using the authorization-code flow with PKCE. A Lattice-local TOTP second factor is still enforced after SSO when it is enabled, so single sign-on never bypasses 2FA. Client secrets are write-only and never returned by the API.",
         guideLink: "Open the OIDC provider setup guide",
       },
       list: {
@@ -171,13 +189,14 @@ export default {
         issuerHint: "The provider's discovery base URL. Must be unique across providers.",
         testConnection: "Test connection",
         testOk: "Discovery OK",
+        testOkWithEndpoint: "Discovery OK. Authorization endpoint: {endpoint}",
         testFailed: "Discovery failed",
         issuerGuide: "The OIDC discovery base URL. Lattice reads /.well-known/openid-configuration from it.",
         clientId: "Client ID",
         clientIdGuide: "The public application identifier assigned by the provider.",
         clientSecret: "Client secret",
         clientSecretPlaceholderEdit: "leave blank to keep",
-        clientSecretPlaceholderCreate: "write-only — stored at rest",
+        clientSecretPlaceholderCreate: "write-only, stored at rest",
         clientSecretHint: "Write-only.",
         clientSecretHintEdit: "Leave blank to keep the existing secret.",
         clientSecretHintCreate: "Stored encrypted; never returned by the API.",
@@ -189,7 +208,12 @@ export default {
         allowedDomainsHint: "Comma-separated. Leave empty to allow any verified email domain.",
         allowedDomainsGuide: "Optional verified email-domain allowlist. Leave empty only when every IdP user may sign in.",
         enabled: "Enabled (offer this provider on the login screen)",
+        disableLastWarning:
+          "This is the only enabled provider. Turning it off removes SSO from the login screen for everyone.",
       },
+      disableLastTitle: "Disable the only SSO provider?",
+      disableLastDescription:
+        '"{name}" is the last enabled provider. Saving removes single sign-on from the login screen, leaving password and passkey as the only way in. Anyone without a local password will be locked out.',
       deleteTitle: "Delete identity provider?",
       deleteDescription:
         'Remove "{name}". Operators linked to this provider will no longer be able to sign in through it. This cannot be undone.',
@@ -228,10 +252,11 @@ export default {
           "An operator account. For Google/OIDC login the username must equal the person's verified email.",
         username: "Username",
         usernamePlaceholder: "alice{'@'}example.com",
+        usernameImmutable: "The username is fixed once the account exists. Create a new user to use a different one.",
         usernameHint:
           "The login id. For SSO it must match the verified IdP email exactly; it cannot be changed later.",
         usernameRequired: "A username is required.",
-        fullAdmin: "Full administrator — grant all permissions (*)",
+        fullAdmin: "Full administrator, grants all permissions (*)",
         scopes: "Scopes",
         selected: "{count} selected",
         scopesHint: "RBAC scopes granted to this operator.",
@@ -257,11 +282,11 @@ export default {
     },
     tokens: {
       title: "Access Tokens",
-      description: "Personal access tokens (PATs) — Bearer credentials carrying RBAC scopes",
+      description: "Personal access tokens (PATs), Bearer credentials carrying RBAC scopes",
       newToken: "New token",
       explainer: {
         title: "Privilege-contained minting",
-        body: "A token can only grant scopes that are a subset of your own, and a server allowlist no broader than yours. The plaintext credential is shown exactly once at creation and never again — only its salted hash is stored. Revocation is one-way and idempotent.",
+        body: "A token can only grant scopes that are a subset of your own, and a server allowlist no broader than yours. The plaintext credential is shown exactly once at creation and never again, because only its salted hash is stored. Revocation is one-way and idempotent.",
       },
       list: {
         title: "Tokens",
@@ -283,7 +308,7 @@ export default {
         name: "Name",
         scopes: "Scopes",
         selected: "{count} selected",
-        superuserHint: "You hold {star} (superuser) — any scope may be granted.",
+        superuserHint: "You hold {star} (superuser), so any scope may be granted.",
         scopedHint: "Only the scopes you currently hold are offered.",
         noGrantableScopes: "You hold no grantable scopes from the catalog.",
         serverAllowlist: "Server allowlist",
@@ -299,7 +324,8 @@ export default {
         title: "Copy your token now",
         description: "This is the only time the full credential is shown. It is never stored in plaintext and cannot be retrieved again.",
         tokenLabel: "Token ({format})",
-        copyOnce: "Copy now — this is shown once and never again.",
+        copyOnce: "Copy now. This is shown once and never again.",
+        acknowledge: "I have copied this token and stored it somewhere safe.",
         name: "Name",
         scopes: "Scopes",
       },
@@ -314,7 +340,7 @@ export default {
         "You have selected scopes and entered details that have not been created yet. Closing now discards them.",
       discardConfirm: "Discard",
       toast: {
-        created: "Token created — copy it now",
+        created: "Token created, copy it now",
         createFailed: "Token creation failed",
         revoked: "Token revoked",
         revokeFailed: "Revoke failed",

@@ -29,6 +29,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -186,9 +187,16 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
     label: t("settings.users.list.login"),
     searchable: true,
     filterAliases: ["auth", "method"],
+    sortable: true,
     value: (row) => [row.has_password ? "password" : "sso-only", row.totp_enabled ? "2fa" : ""].filter(Boolean).join(" "),
   },
-  { key: "created_at", label: t("settings.users.list.created"), sortable: true, align: "right" },
+  {
+    key: "created_at",
+    label: t("settings.users.list.created"),
+    sortable: true,
+    align: "right",
+    class: "tabular",
+  },
   { key: "actions", label: t("settings.users.list.actions"), align: "right" },
 ]);
 </script>
@@ -259,7 +267,7 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
           </template>
 
           <template #cell-created_at="{ row }">
-            <span class="text-xs text-muted-foreground">{{ row.created_at ? formatDateTime(row.created_at) : '—' }}</span>
+            <span class="tabular text-xs text-muted-foreground">{{ row.created_at ? formatDateTime(row.created_at) : $t('common.misc.none') }}</span>
           </template>
 
           <template #cell-actions="{ row }">
@@ -293,19 +301,21 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
               id="user-username"
               v-model="form.username"
               :disabled="!!editing"
+              :title="editing ? $t('settings.users.form.usernameImmutable') : undefined"
               :placeholder="$t('settings.users.form.usernamePlaceholder')"
             />
             <p v-if="usernameError" class="text-xs text-destructive">{{ usernameError }}</p>
+            <p v-else-if="editing" class="text-xs text-muted-foreground">{{ $t('settings.users.form.usernameImmutable') }}</p>
             <p v-else class="text-xs text-muted-foreground">{{ $t('settings.users.form.usernameHint') }}</p>
           </div>
 
           <label
             v-if="isSuperuser"
-            class="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
+            class="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
           >
-            <input v-model="form.fullAdmin" type="checkbox" class="size-4 accent-primary" />
+            <Checkbox v-model="form.fullAdmin" />
             <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
-            {{ $t('settings.users.form.fullAdmin') }}
+            <span>{{ $t('settings.users.form.fullAdmin') }}</span>
           </label>
 
           <div v-if="!form.fullAdmin" class="grid gap-2">
@@ -321,13 +331,11 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
               <label
                 v-for="scope in grantableScopes"
                 :key="scope"
-                class="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
+                class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
               >
-                <input
-                  type="checkbox"
-                  class="size-4 accent-primary"
-                  :checked="form.scopes.includes(scope)"
-                  @change="toggleScope(scope)"
+                <Checkbox
+                  :model-value="form.scopes.includes(scope)"
+                  @update:model-value="toggleScope(scope)"
                 />
                 <span class="font-mono text-xs">{{ scope }}</span>
               </label>
@@ -371,6 +379,7 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
       :title="$t('settings.users.deleteTitle')"
       :description="$t('settings.users.deleteDescription', { name: deleteTarget?.username })"
       :confirm-label="$t('common.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"
       @confirm="confirmDelete"

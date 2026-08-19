@@ -30,7 +30,7 @@ const nonce = ref(lifecycle.nonce);
 // Re-keying the iframe makes Vue discard the element together with its document.
 // Rotation must never be expressed as a bare `src` reassignment: the rotated URL
 // differs from the live one only in its fragment, which the browser resolves as a
-// same-document navigation — no reload, no `load` event. A fresh element has no
+// same-document navigation. No reload, no `load` event. A fresh element has no
 // current document to compare against, so every rotation is a real navigation and
 // always fires `load`.
 const frameEpoch = ref(0);
@@ -151,7 +151,7 @@ function onMessage(event: MessageEvent) {
   // 'none', so postMessage is its only outbound channel and the host performs
   // the route change for it. Identity is pinned to the armed frame window and
   // its (opaque, sandboxed) origin; the route must be a strictly internal
-  // dashboard path — the worst a bad frame can do is move the host to another
+  // dashboard path. The worst a bad frame can do is move the host to another
   // dashboard page. Anything else is dropped without disturbing the bridge.
   const navigation = classifyPluginNavigateMessage(event.data);
   if (navigation.kind === "navigate") {
@@ -200,7 +200,7 @@ function onError() {
 }
 
 // The remounted element is a different iframe, so it must be re-armed before its
-// document can post `ready` — same ordering guarantee as the initial mount.
+// document can post `ready`. Same ordering guarantee as the initial mount.
 watch(frameEpoch, async () => {
   await nextTick();
   armSession();

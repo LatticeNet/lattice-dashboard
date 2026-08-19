@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader.vue";
 import PluginFrameHost from "./PluginFrameHost.vue";
 import { bridgeInterfaceFingerprint, interfaceMethodScopes } from "./pluginBridgeModel";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -63,7 +64,7 @@ const auth = useAuthStore();
 const { ready, findPlugin, findView } = usePluginContributions();
 
 // The component remounts per route (AppLayout keys RouterView by route.path), so
-// reading params reactively is enough — but we keep them computed for safety.
+// reading params reactively is enough, but we keep them computed for safety.
 const pluginId = computed(() => String(route.params.pluginId ?? ""));
 const viewRoute = computed(() => {
   const raw = route.params.route;
@@ -137,10 +138,13 @@ function toNumber(v: unknown): number | undefined {
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
 }
+/** Placeholder for a cell with no value. */
+const noneLabel = computed(() => t("common.misc.none"));
+
 // Mask a credential-bearing value: keep a recognisable scheme, hide the rest.
 function maskSecret(v: unknown): string {
   const s = toText(v);
-  if (!s) return "—";
+  if (!s) return noneLabel.value;
   const idx = s.indexOf("://");
   if (idx > 0) return `${s.slice(0, idx)}://••••••`;
   return "••••••";
@@ -160,21 +164,47 @@ function asRows(data: unknown): Row[] {
 }
 const rows = computed<Row[]>(() => asRows(sourceQuery.data.value));
 
+/**
+ * A column is sortable and searchable only when every row holds a scalar there.
+ * Objects and arrays have no meaningful ordering, and secrets stay out of the
+ * search index so a masked column never matches on its plaintext.
+ */
+function isScalarKey(key: string): boolean {
+  return rows.value.every((r) => {
+    const v = r[key];
+    return v == null || typeof v !== "object";
+  });
+}
+
 const columns = computed<DataTableColumn<Row>[]>(() => {
   const declared = view.value?.columns ?? [];
   if (declared.length) {
-    return declared.map((c) => ({
-      key: c.key,
-      label: c.label || c.key,
-      align: renderOf(c) === "copy-secret" || renderOf(c) === "bytes" ? "right" : undefined,
-      value: (r: Row) => r[c.key],
-    }));
+    return declared.map((c) => {
+      const render = renderOf(c);
+      const scalar = isScalarKey(c.key);
+      return {
+        key: c.key,
+        label: c.label || c.key,
+        align: render === "copy-secret" || render === "bytes" ? "right" : undefined,
+        sortable: scalar && render !== "copy-secret",
+        searchable: scalar && render !== "copy-secret",
+        value: (r: Row) => r[c.key],
+      } satisfies DataTableColumn<Row>;
+    });
   }
   // Fallback: derive columns from the first row's keys.
   const first = rows.value[0];
   if (!first) return [];
-  return Object.keys(first).map((k) => ({ key: k, label: k, value: (r: Row) => r[k] }));
+  return Object.keys(first).map((k) => ({
+    key: k,
+    label: k,
+    sortable: isScalarKey(k),
+    searchable: isScalarKey(k),
+    value: (r: Row) => r[k],
+  }));
 });
+
+const hasSearchableColumn = computed(() => columns.value.some((c) => c.searchable));
 
 const renderByKey = computed<Record<string, string>>(() => {
   const map: Record<string, string> = {};
@@ -231,27 +261,42 @@ const markdownText = computed<string>(() => {
 
 // ── Actions (gateway-driven; optional modal form) ────────────────────────────
 const actions = computed<PluginViewAction[]>(() => view.value?.actions ?? []);
-function canRunAction(a: PluginViewAction): boolean {
+
+/** Scopes this action needs that the caller does not hold. */
+function missingActionScopes(a: PluginViewAction): string[] {
   const contract = plugin.value?.interfaces?.find((i) => i.service === a.interface);
-  return auth.canAll([...interfaceMethodScopes(contract, a.method), ...(a.scopes ?? [])]);
+  const required = [...interfaceMethodScopes(contract, a.method), ...(a.scopes ?? [])];
+  return required.filter((scope) => !auth.canAll([scope]));
+}
+function canRunAction(a: PluginViewAction): boolean {
+  return missingActionScopes(a).length === 0;
+}
+/** Tooltip naming the exact scope a disabled action is waiting on. */
+function actionTitle(a: PluginViewAction): string | undefined {
+  const missing = missingActionScopes(a);
+  if (!missing.length) return undefined;
+  return t("platform.plugins.actionScopeMissing", { scopes: missing.join(", ") });
 }
 function hasForm(a: PluginViewAction): boolean {
   return Array.isArray(a.form) && a.form.some((f) => isAllowedFieldKind(f.kind));
 }
 
-const runningAction = ref<string | null>(null);
-async function runAction(a: PluginViewAction, payload?: Record<string, unknown>) {
-  if (!canRunAction(a) || runningAction.value) return;
-  runningAction.value = a.label;
+// Keyed by position, not by label: two contributed actions may share a label,
+// and a label-keyed flag makes them block and spin each other.
+const runningIndex = ref<number | null>(null);
+async function runAction(index: number, a: PluginViewAction, payload?: Record<string, unknown>) {
+  if (!canRunAction(a) || runningIndex.value !== null) return;
+  runningIndex.value = index;
   try {
     await api.plugins.call(pluginId.value, a.interface, a.method, payload);
     toast.success(t("pluginViews.actionDone", { label: a.label }));
     formOpen.value = false;
+    confirmTarget.value = undefined;
     if (hasSource.value) sourceQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("pluginViews.actionFailed"));
   } finally {
-    runningAction.value = null;
+    runningIndex.value = null;
   }
 }
 
@@ -263,9 +308,12 @@ const formFields = computed(() =>
   (formAction.value?.form ?? []).filter((f) => isAllowedFieldKind(f.kind)),
 );
 
-function openActionForm(a: PluginViewAction) {
+const formActionIndex = ref<number>(-1);
+
+function openActionForm(index: number, a: PluginViewAction) {
   if (!canRunAction(a)) return;
   formAction.value = a;
+  formActionIndex.value = index;
   for (const key of Object.keys(formState)) delete formState[key];
   for (const f of a.form ?? []) {
     if (isAllowedFieldKind(f.kind)) formState[f.key] = "";
@@ -280,11 +328,22 @@ function submitActionForm() {
     const raw = formState[f.key] ?? "";
     payload[f.key] = f.kind === "int" ? (toNumber(raw) ?? raw) : raw;
   }
-  runAction(a, payload);
+  runAction(formActionIndex.value, a, payload);
 }
-function onActionClick(a: PluginViewAction) {
-  if (hasForm(a)) openActionForm(a);
-  else runAction(a);
+
+// An action without a form used to fire straight off the click, including the
+// ones a plugin labels "delete" or "revoke". Every form-less action now goes
+// through a confirm that names the plugin and the action first.
+const confirmTarget = ref<{ index: number; action: PluginViewAction } | undefined>();
+
+function onActionClick(index: number, a: PluginViewAction) {
+  if (hasForm(a)) openActionForm(index, a);
+  else confirmTarget.value = { index, action: a };
+}
+function confirmAction() {
+  const target = confirmTarget.value;
+  if (!target) return;
+  runAction(target.index, target.action);
 }
 </script>
 
@@ -320,13 +379,14 @@ function onActionClick(a: PluginViewAction) {
              surfaces them in its body instead. -->
         <template v-if="view && hasAccess && kind !== 'form'">
           <Button
-            v-for="a in actions"
-            :key="a.label"
+            v-for="(a, i) in actions"
+            :key="`${i}:${a.label}`"
             size="sm"
-            :disabled="!canRunAction(a) || runningAction === a.label"
-            @click="onActionClick(a)"
+            :disabled="!canRunAction(a) || runningIndex !== null"
+            :title="actionTitle(a)"
+            @click="onActionClick(i, a)"
           >
-            <RefreshCw v-if="runningAction === a.label" class="size-4 animate-spin" aria-hidden="true" />
+            <RefreshCw v-if="runningIndex === i" class="size-4 animate-spin" aria-hidden="true" />
             <Play v-else class="size-4" aria-hidden="true" />
             {{ a.label }}
           </Button>
@@ -377,6 +437,8 @@ function onActionClick(a: PluginViewAction) {
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
           :page-size="50"
+          :searchable="hasSearchableColumn"
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('pluginViews.emptyTitle')"
           :empty-description="$t('pluginViews.emptyDescription')"
           :showing-label="$t('pluginViews.showing')"
@@ -400,13 +462,13 @@ function onActionClick(a: PluginViewAction) {
                 :title="$t('pluginViews.secretHidden')"
               >{{ maskSecret(value) }}</code>
               <CopyButton v-if="toText(value)" :value="toText(value)" :label="$t('pluginViews.copy')" />
-              <span v-else class="text-xs text-muted-foreground">—</span>
+              <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
             </div>
             <Badge v-else-if="renderByKey[col.key] === 'badge'" variant="outline">
-              {{ toText(value) || "—" }}
+              {{ toText(value) || $t('common.misc.none') }}
             </Badge>
             <code v-else-if="renderByKey[col.key] === 'code'" class="font-mono text-xs">
-              {{ toText(value) || "—" }}
+              {{ toText(value) || $t('common.misc.none') }}
             </code>
             <span v-else-if="renderByKey[col.key] === 'bytes'" class="font-mono text-xs tabular">
               {{ formatBytes(toNumber(value)) }}
@@ -415,9 +477,9 @@ function onActionClick(a: PluginViewAction) {
               v-else-if="renderByKey[col.key] === 'relative-time'"
               :title="formatDateTime(toText(value))"
             >
-              {{ value ? formatRelativeTime(toText(value)) : "—" }}
+              {{ value ? formatRelativeTime(toText(value)) : $t('common.misc.none') }}
             </span>
-            <span v-else>{{ toText(value) || "—" }}</span>
+            <span v-else>{{ toText(value) || $t('common.misc.none') }}</span>
           </template>
         </DataTable>
         <EmptyState
@@ -448,7 +510,7 @@ function onActionClick(a: PluginViewAction) {
               :class="cn(idx % 2 === 1 && 'bg-muted/30', idx > 0 && 'border-t border-border')"
             >
               <dt class="shrink-0 text-xs font-medium text-muted-foreground">{{ key }}</dt>
-              <dd class="min-w-0 break-words text-right font-mono text-sm">{{ toText(val) || "—" }}</dd>
+              <dd class="min-w-0 break-words text-right font-mono text-sm">{{ toText(val) || $t('common.misc.none') }}</dd>
             </div>
           </dl>
         </DataState>
@@ -481,12 +543,13 @@ function onActionClick(a: PluginViewAction) {
       <CardContent>
         <div v-if="actions.length" class="flex flex-wrap gap-2">
           <Button
-            v-for="a in actions"
-            :key="a.label"
-            :disabled="!canRunAction(a) || runningAction === a.label"
-            @click="onActionClick(a)"
+            v-for="(a, i) in actions"
+            :key="`${i}:${a.label}`"
+            :disabled="!canRunAction(a) || runningIndex !== null"
+            :title="actionTitle(a)"
+            @click="onActionClick(i, a)"
           >
-            <RefreshCw v-if="runningAction === a.label" class="size-4 animate-spin" aria-hidden="true" />
+            <RefreshCw v-if="runningIndex === i" class="size-4 animate-spin" aria-hidden="true" />
             <Play v-else class="size-4" aria-hidden="true" />
             {{ a.label }}
           </Button>
@@ -499,6 +562,23 @@ function onActionClick(a: PluginViewAction) {
         />
       </CardContent>
     </Card>
+
+    <!-- Form-less actions confirm first; the plugin and action are named. -->
+    <ConfirmDialog
+      :open="!!confirmTarget"
+      :title="$t('platform.plugins.actionConfirmTitle')"
+      :description="confirmTarget
+        ? $t('platform.plugins.actionConfirmDescription', {
+            action: confirmTarget.action.label,
+            plugin: plugin?.name || pluginId,
+          })
+        : ''"
+      :confirm-label="confirmTarget?.action.label ?? $t('common.actions.confirm')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="runningIndex !== null"
+      @update:open="(v) => { if (!v) confirmTarget = undefined; }"
+      @confirm="confirmAction"
+    />
 
     <!-- Action form modal (text / int / select) -->
     <Dialog v-model:open="formOpen">
@@ -530,8 +610,8 @@ function onActionClick(a: PluginViewAction) {
 
           <DialogFooter>
             <Button type="button" variant="outline" @click="formOpen = false">{{ $t('common.actions.cancel') }}</Button>
-            <Button type="submit" :disabled="!!runningAction">
-              <RefreshCw v-if="runningAction" class="size-4 animate-spin" aria-hidden="true" />
+            <Button type="submit" :disabled="runningIndex !== null">
+              <RefreshCw v-if="runningIndex !== null" class="size-4 animate-spin" aria-hidden="true" />
               <Play v-else class="size-4" aria-hidden="true" />
               {{ $t('pluginViews.submit') }}
             </Button>
