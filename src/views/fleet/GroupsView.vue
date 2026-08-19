@@ -83,6 +83,11 @@ const sortedGroups = computed(() =>
   [...groups.value].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
 );
 
+/** Nothing to show: no groups, no ungrouped bucket, and no editor open. */
+const pageEmpty = computed(
+  () => groups.value.length === 0 && !ungrouped.value && !editing.value,
+);
+
 function nodeLabel(id: string): string {
   return nodeById.value[id]?.name || shortId(id, 14);
 }
@@ -394,9 +399,22 @@ watch(
       :loading="groupsQuery.loading.value"
       :error="groupsQuery.error.value"
       :has-data="groupsQuery.data.value !== undefined"
-      :is-empty="false"
+      :is-empty="pageEmpty"
       @retry="groupsQuery.refresh"
     >
+      <template #empty>
+        <EmptyState
+          :icon="FolderTree"
+          :title="$t('fleet.groups.emptyTitle')"
+          :description="$t('fleet.groups.emptyDescription')"
+        >
+          <Button v-if="canAdmin" size="sm" @click="startCreate">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t('fleet.groups.newGroup') }}
+          </Button>
+        </EmptyState>
+      </template>
+
       <div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
         <!-- Left: group list -->
         <Card class="h-fit">
@@ -426,13 +444,13 @@ watch(
                 :key="g.id"
                 type="button"
                 :class="cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors',
+                  'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                   selectedId === g.id ? 'bg-muted' : 'hover:bg-muted/50',
                 )"
                 @click="selectGroup(g)"
               >
                 <span :class="cn('size-2.5 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
-                <span class="truncate font-medium">{{ g.name }}</span>
+                <span class="truncate font-medium" :title="g.name">{{ g.name }}</span>
                 <Badge variant="secondary" class="ml-auto shrink-0 tabular-nums">
                   {{ g.rollup.online }}/{{ g.rollup.total }}
                 </Badge>
@@ -444,7 +462,7 @@ watch(
                 class="mt-2 flex items-center gap-2 rounded-md border border-dashed border-border px-2 py-2 text-sm text-muted-foreground"
               >
                 <span class="size-2.5 shrink-0 rounded-full bg-muted-foreground/40" aria-hidden="true" />
-                <span class="truncate">{{ $t('fleet.groups.ungrouped') }}</span>
+                <span class="truncate" :title="$t('fleet.groups.ungrouped')">{{ $t('fleet.groups.ungrouped') }}</span>
                 <Badge variant="outline" class="ml-auto shrink-0 tabular-nums">
                   {{ ungrouped.rollup.online }}/{{ ungrouped.rollup.total }}
                 </Badge>
@@ -547,9 +565,6 @@ watch(
                     </Select>
                   </div>
                   <div class="flex items-center gap-2 sm:self-end">
-                    <span class="text-xs text-muted-foreground">
-                      {{ $t('fleet.groups.taggedMatches', { n: quickTagMatches.length }) }}
-                    </span>
                     <Button
                       type="button"
                       variant="outline"
@@ -557,7 +572,7 @@ watch(
                       :disabled="!memberQuickTag || quickTagMatches.length === 0"
                       @click="selectMembersByTag"
                     >
-                      {{ $t('fleet.groups.selectTagged') }}
+                      {{ $t('fleet.groups.selectTaggedCount', { n: quickTagMatches.length }) }}
                     </Button>
                   </div>
                 </div>
@@ -565,24 +580,33 @@ watch(
                   <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                   <Input v-model="memberSearch" class="pl-9" :placeholder="$t('fleet.groups.memberSearch')" />
                 </div>
-                <div class="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-1">
-                  <label
-                    v-for="n in filteredNodes"
-                    :key="n.id"
-                    class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
-                  >
-                    <Checkbox
-                      :model-value="isMember(n.id)"
-                      @update:model-value="(v) => setMember(n.id, v === true)"
-                    />
-                    <StatusDot :online="!!n.online && !n.disabled" :label="''" />
-                    <span class="truncate">{{ n.name || n.id }}</span>
-                    <span v-if="n.role" class="ml-auto shrink-0 text-xs text-muted-foreground">{{ n.role }}</span>
-                  </label>
-                  <p v-if="filteredNodes.length === 0" class="px-2 py-3 text-center text-xs text-muted-foreground">
-                    {{ $t('fleet.groups.noNodes') }}
-                  </p>
-                </div>
+                <!-- The node list is its own request: a failure must not read as
+                     an empty fleet, so it carries its own loading/error/empty. -->
+                <DataState
+                  :loading="nodesQuery.loading.value"
+                  :error="nodesQuery.error.value"
+                  :has-data="nodesQuery.data.value !== undefined"
+                  :is-empty="filteredNodes.length === 0"
+                  :empty-title="$t('fleet.groups.noNodes')"
+                  :skeleton-rows="3"
+                  @retry="nodesQuery.refresh"
+                >
+                  <div class="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-1">
+                    <label
+                      v-for="n in filteredNodes"
+                      :key="n.id"
+                      class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
+                    >
+                      <Checkbox
+                        :model-value="isMember(n.id)"
+                        @update:model-value="(v) => setMember(n.id, v === true)"
+                      />
+                      <StatusDot :online="!!n.online && !n.disabled" :label="''" />
+                      <span class="truncate" :title="n.name || n.id">{{ n.name || n.id }}</span>
+                      <span v-if="n.role" class="ml-auto shrink-0 text-xs text-muted-foreground">{{ n.role }}</span>
+                    </label>
+                  </div>
+                </DataState>
                 <div v-if="form.members.length" class="flex flex-wrap gap-1.5">
                   <Badge
                     v-for="id in form.members"
@@ -597,7 +621,7 @@ watch(
                       :aria-label="$t('fleet.groups.removeMember')"
                       @click.prevent="setMember(id, false)"
                     >
-                      <X class="size-3" />
+                      <X class="size-3" aria-hidden="true" />
                     </button>
                   </Badge>
                 </div>
@@ -716,13 +740,12 @@ watch(
     </DataState>
 
     <ConfirmDialog
-      :open="deleteOpen"
+      v-model:open="deleteOpen"
       :title="$t('fleet.groups.deleteTitle')"
-      :description="`${$t('fleet.groups.deleteDescription', { name: form.name })}`"
+      :description="$t('fleet.groups.deleteDescription', { name: form.name })"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
-      @update:open="(v) => { if (!v) deleteOpen = false; }"
       @confirm="confirmDelete"
     />
   </div>

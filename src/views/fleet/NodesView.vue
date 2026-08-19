@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ChevronDown,
@@ -59,6 +60,7 @@ import {
 } from "./nodesTableModel";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -464,7 +466,7 @@ const collapsed = ref<Set<string>>(new Set());
 
 // Group metadata (id -> name/color/leader) for group chips on every card AND the
 // "Group" grouping mode. Fetched EAGERLY so chips render on first paint (it used
-// to be lazy — only on groupBy==='group'); degrades to no chips / a single
+// to be lazy, only on groupBy==='group'); degrades to no chips / a single
 // Ungrouped bucket if the request fails (e.g. the token lacks group:read).
 const fleetGroupsQuery = useAsyncData(() => api.groups.list().then((r) => r.groups), {
   immediate: true,
@@ -622,7 +624,32 @@ const enrollCommand = computed(() => {
   return enrollResult.value.commands?.[enrollPlatform.value] || enrollResult.value.command || enrollResult.value.token;
 });
 
-async function rotateToken(node: Node) {
+/* Destructive node actions are confirmed before they run. Both the card footer
+   and the table row emit into these handlers, so gating here covers every entry
+   point. Re-enabling a node is not destructive and still runs straight away. */
+const rotateTarget = ref<Node | undefined>(undefined);
+const disableTarget = ref<Node | undefined>(undefined);
+
+const rotateOpen = computed({
+  get: () => rotateTarget.value !== undefined,
+  set: (open: boolean) => {
+    if (!open) rotateTarget.value = undefined;
+  },
+});
+const disableOpen = computed({
+  get: () => disableTarget.value !== undefined,
+  set: (open: boolean) => {
+    if (!open) disableTarget.value = undefined;
+  },
+});
+
+function rotateToken(node: Node) {
+  rotateTarget.value = node;
+}
+
+async function confirmRotateToken() {
+  const node = rotateTarget.value;
+  if (!node) return;
   pendingNode.value = node.id;
   rotatedToken.value = undefined;
   try {
@@ -633,10 +660,29 @@ async function rotateToken(node: Node) {
     toast.error(error instanceof Error ? error.message : t("fleet.nodes.toast.rotationFailed"));
   } finally {
     pendingNode.value = undefined;
+    rotateTarget.value = undefined;
   }
 }
 
-async function setDisabled(node: Node, disabled: boolean) {
+function setDisabled(node: Node, disabled: boolean) {
+  if (!disabled) {
+    void applyDisabled(node, false);
+    return;
+  }
+  disableTarget.value = node;
+}
+
+async function confirmDisable() {
+  const node = disableTarget.value;
+  if (!node) return;
+  try {
+    await applyDisabled(node, true);
+  } finally {
+    disableTarget.value = undefined;
+  }
+}
+
+async function applyDisabled(node: Node, disabled: boolean) {
   pendingNode.value = node.id;
   try {
     await api.nodes.disable(node.id, disabled);
@@ -677,8 +723,9 @@ function openTerminal(node: Node) {
       v-if="duplicateGroups.length"
       class="rounded-lg border border-warning/40 bg-warning/5 p-4 space-y-2"
     >
-      <p class="text-sm font-medium text-warning">
-        ⚠ {{ $t('fleet.nodes.duplicates.title', { count: duplicateGroups.length }) }}
+      <p class="flex items-center gap-1.5 text-sm font-medium text-warning">
+        <AlertTriangle class="size-4 shrink-0" aria-hidden="true" />
+        {{ $t('fleet.nodes.duplicates.title', { count: duplicateGroups.length }) }}
       </p>
       <ul class="space-y-1 text-sm text-muted-foreground">
         <li
@@ -914,9 +961,10 @@ function openTerminal(node: Node) {
             <button
               type="button"
               :class="cn(
-                'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 enrollPlatform === 'linux' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
               )"
+              :aria-pressed="enrollPlatform === 'linux'"
               @click="enrollPlatform = 'linux'"
             >
               {{ $t('fleet.nodes.enroll.platformLinux') }}
@@ -924,9 +972,10 @@ function openTerminal(node: Node) {
             <button
               type="button"
               :class="cn(
-                'rounded px-2.5 py-1 text-xs font-medium transition-colors',
+                'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                 enrollPlatform === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
               )"
+              :aria-pressed="enrollPlatform === 'manual'"
               @click="enrollPlatform = 'manual'"
             >
               {{ $t('fleet.nodes.enroll.platformManual') }}
@@ -1007,7 +1056,7 @@ function openTerminal(node: Node) {
               <button
                 type="button"
                 :class="cn(
-                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-sm font-medium transition-colors',
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-sm font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                   viewMode === 'card' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
                 )"
                 :aria-pressed="viewMode === 'card'"
@@ -1019,7 +1068,7 @@ function openTerminal(node: Node) {
               <button
                 type="button"
                 :class="cn(
-                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-sm font-medium transition-colors',
+                  'inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-sm font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
                   viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
                 )"
                 :aria-pressed="viewMode === 'list'"
@@ -1232,7 +1281,7 @@ function openTerminal(node: Node) {
                       >
                         {{ badge }}
                       </Badge>
-                      <span v-if="agentBadges(cardNode).length === 0" class="text-xs text-muted-foreground">—</span>
+                      <span v-if="agentBadges(cardNode).length === 0" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                     </div>
                     <p class="mt-3 font-mono text-xs text-muted-foreground">
                       {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
@@ -1291,5 +1340,24 @@ function openTerminal(node: Node) {
       </CardContent>
     </Card>
 
+    <ConfirmDialog
+      v-model:open="rotateOpen"
+      :title="$t('fleet.nodes.confirm.rotateTitle')"
+      :description="$t('fleet.nodes.confirm.rotateDescription', { name: rotateTarget?.name || rotateTarget?.id })"
+      :confirm-label="$t('fleet.nodes.list.rotateToken')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!rotateTarget && pendingNode === rotateTarget.id"
+      @confirm="confirmRotateToken"
+    />
+
+    <ConfirmDialog
+      v-model:open="disableOpen"
+      :title="$t('fleet.nodes.confirm.disableTitle')"
+      :description="$t('fleet.nodes.confirm.disableDescription', { name: disableTarget?.name || disableTarget?.id })"
+      :confirm-label="$t('common.actions.disable')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!disableTarget && pendingNode === disableTarget.id"
+      @confirm="confirmDisable"
+    />
   </div>
 </template>

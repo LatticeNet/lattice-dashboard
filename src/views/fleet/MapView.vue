@@ -38,6 +38,7 @@ import {
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,6 +122,10 @@ const filteredNodes = computed(() => {
 const withGeo = computed(() => nodes.value.filter(hasCoordinates));
 const filteredWithGeo = computed(() => filteredNodes.value.filter(hasCoordinates));
 const withoutGeo = computed(() => filteredNodes.value.filter((n) => !hasCoordinates(n)));
+/** The card lists a short window; the remainder is counted, never dropped silently. */
+const UNLOCATED_SHOWN = 8;
+const unlocatedShown = computed(() => withoutGeo.value.slice(0, UNLOCATED_SHOWN));
+const unlocatedHidden = computed(() => Math.max(0, withoutGeo.value.length - UNLOCATED_SHOWN));
 const withLookupIP = computed(() => nodes.value.filter((n) => lookupIP(n) && !hasCoordinates(n)));
 const onlineCount = computed(() => nodes.value.filter((n) => n.online).length);
 const offlineCount = computed(() => Math.max(0, nodes.value.length - onlineCount.value));
@@ -569,6 +574,12 @@ async function saveGeo() {
   }
 }
 
+// Clearing wipes the stored coordinates on the server, so it asks first.
+const clearOpen = ref(false);
+const selectedNodeLabel = computed(
+  () => selectedNode.value?.name || selectedNode.value?.id || "",
+);
+
 async function clearGeo() {
   if (!selectedNodeId.value) return;
   pendingSave.value = true;
@@ -588,6 +599,7 @@ async function clearGeo() {
     toast.error(error instanceof Error ? error.message : t("fleet.map.toast.clearFailed"));
   } finally {
     pendingSave.value = false;
+    clearOpen.value = false;
   }
 }
 
@@ -844,11 +856,6 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 @pointercancel="onMapPointerUp"
               >
                 <defs>
-                  <linearGradient id="fleet-ocean" x1="0" x2="1" y1="0" y2="1">
-                    <stop offset="0%" stop-color="oklch(0.24 0.04 255)" />
-                    <stop offset="54%" stop-color="oklch(0.18 0.035 265)" />
-                    <stop offset="100%" stop-color="oklch(0.14 0.025 250)" />
-                  </linearGradient>
                   <pattern id="fleet-grid" width="62.5" height="52" patternUnits="userSpaceOnUse">
                     <path d="M 62.5 0 L 0 0 0 52" fill="none" stroke="oklch(0.78 0.03 250 / 0.12)" stroke-width="1" />
                   </pattern>
@@ -864,7 +871,8 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   </filter>
                 </defs>
 
-                <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" fill="url(#fleet-ocean)" />
+                <!-- Flat ocean: one solid surface colour from the map canvas class. -->
+                <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" class="map-ocean" />
                 <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" fill="url(#fleet-grid)" />
 
                 <g :transform="mapZoomTransform">
@@ -902,7 +910,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   <g
                     role="button"
                     tabindex="0"
-                    class="cursor-pointer outline-none"
+                    class="map-marker cursor-pointer"
                     :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
                     @click.stop="selectMarkerNode(point.node)"
                     @mouseenter="hoveredNodeId = point.node.id"
@@ -941,36 +949,32 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
               </svg>
 
               <div v-if="filteredWithGeo.length === 0" class="absolute inset-0 grid place-items-center p-6 text-center">
-                <div class="max-w-sm rounded-lg border border-white/10 bg-black/30 p-4 backdrop-blur">
-                  <MapPinned class="mx-auto size-5 text-white/80" aria-hidden="true" />
+                <div class="max-w-sm rounded-lg border border-border bg-card p-4 text-card-foreground">
+                  <MapPinned class="mx-auto size-5 text-muted-foreground" aria-hidden="true" />
                   <p class="mt-2 text-sm font-medium">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedTitle') : $t('fleet.map.mapEmptyTitle') }}</p>
-                  <p class="mt-1 text-xs text-white/65">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedDescription') : $t('fleet.map.mapEmptyDescription') }}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedDescription') : $t('fleet.map.mapEmptyDescription') }}</p>
                 </div>
               </div>
 
               <div class="absolute left-4 top-4 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" class="bg-black/35 text-white hover:bg-black/35">
-                  {{ $t('fleet.map.legend.online') }}
-                </Badge>
-                <Badge variant="secondary" class="bg-black/35 text-white hover:bg-black/35">
-                  {{ $t('fleet.map.legend.offline') }}
-                </Badge>
+                <Badge variant="secondary">{{ $t('fleet.map.legend.online') }}</Badge>
+                <Badge variant="secondary">{{ $t('fleet.map.legend.offline') }}</Badge>
               </div>
 
-              <div class="absolute right-4 top-4 flex items-center gap-1 rounded-md border border-white/10 bg-black/35 p-1 backdrop-blur">
+              <div class="absolute right-4 top-4 flex items-center gap-1 rounded-md border border-border bg-card p-1 text-card-foreground">
                 <button
                   type="button"
-                  class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
+                  class="rounded px-2 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
                   :disabled="mapZoom <= 1"
                   :aria-label="$t('fleet.map.zoomOut')"
                   @click="setZoom(mapZoom - 0.2)"
                 >
                   -
                 </button>
-                <span class="min-w-10 text-center text-xs tabular text-white/70">{{ Math.round(mapZoom * 100) }}%</span>
+                <span class="min-w-10 text-center text-xs tabular text-muted-foreground">{{ Math.round(mapZoom * 100) }}%</span>
                 <button
                   type="button"
-                  class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
+                  class="rounded px-2 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
                   :disabled="mapZoom >= 5"
                   :aria-label="$t('fleet.map.zoomIn')"
                   @click="setZoom(mapZoom + 0.2)"
@@ -979,7 +983,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 </button>
                 <button
                   type="button"
-                  class="rounded px-2 py-1 text-xs font-medium text-white/85 hover:bg-white/10 disabled:opacity-40"
+                  class="rounded px-2 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
                   :disabled="mapZoom <= 1 && mapViewport.x === 0 && mapViewport.y === 0"
                   :aria-label="$t('fleet.map.resetView')"
                   @click="resetViewport"
@@ -988,13 +992,13 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 </button>
               </div>
 
-              <div class="absolute bottom-4 left-4 rounded-md border border-white/10 bg-black/35 px-3 py-2 text-xs text-white/70 backdrop-blur">
+              <div class="absolute bottom-4 left-4 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
                 {{ $t('fleet.map.canvasHint') }}
               </div>
 
               <div
                 v-if="hoveredPoint"
-                class="pointer-events-none absolute z-10 w-64 rounded-lg border border-white/10 bg-black/75 p-3 text-xs text-white shadow-xl backdrop-blur"
+                class="pointer-events-none absolute z-10 w-64 rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-xl"
                 :style="{
                   left: `${(markerScreenX(hoveredPoint.x) / MAP_WIDTH) * 100}%`,
                   top: `${(markerScreenY(hoveredPoint.y) / MAP_HEIGHT) * 100}%`,
@@ -1003,20 +1007,29 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
               >
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0">
-                    <p class="truncate text-sm font-semibold">{{ hoveredPoint.node.name || hoveredPoint.node.id }}</p>
-                    <p class="mt-1 text-white/65">{{ hoveredPoint.label }}</p>
+                    <p class="truncate text-sm font-semibold" :title="hoveredPoint.node.name || hoveredPoint.node.id">
+                      {{ hoveredPoint.node.name || hoveredPoint.node.id }}
+                    </p>
+                    <p class="mt-1 text-muted-foreground">{{ hoveredPoint.label }}</p>
                   </div>
-                  <Badge variant="secondary" class="shrink-0 bg-white/10 text-white hover:bg-white/10">
+                  <Badge variant="secondary" class="shrink-0">
                     {{ hoveredPoint.node.online ? $t('common.status.online') : $t('common.status.offline') }}
                   </Badge>
                 </div>
-                <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-white/70">
+                <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
                   <span>{{ $t('fleet.map.hover.ip') }}</span>
-                  <span class="truncate text-right font-mono">{{ lookupIP(hoveredPoint.node) || '—' }}</span>
+                  <span class="truncate text-right font-mono" :title="lookupIP(hoveredPoint.node) || $t('common.misc.none')">
+                    {{ lookupIP(hoveredPoint.node) || $t('common.misc.none') }}
+                  </span>
                   <span>{{ $t('fleet.map.hover.source') }}</span>
-                  <span class="truncate text-right">{{ sourceLabel(hoveredPoint.node.geo?.source) }}</span>
+                  <span class="truncate text-right" :title="sourceLabel(hoveredPoint.node.geo?.source)">
+                    {{ sourceLabel(hoveredPoint.node.geo?.source) }}
+                  </span>
                   <span>{{ $t('fleet.map.hover.coords') }}</span>
-                  <span class="truncate text-right font-mono">
+                  <span
+                    class="truncate text-right font-mono"
+                    :title="`${hoveredPoint.node.geo?.lat?.toFixed(2)}, ${hoveredPoint.node.geo?.lon?.toFixed(2)}`"
+                  >
                     {{ hoveredPoint.node.geo?.lat?.toFixed(2) }}, {{ hoveredPoint.node.geo?.lon?.toFixed(2) }}
                   </span>
                 </div>
@@ -1039,19 +1052,27 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             <div v-if="regions.length === 0" class="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
               {{ $t('fleet.map.regions.empty') }}
             </div>
+            <!-- The click opens the region's first node in the location editor,
+                 so the row says that outright rather than implying a region view. -->
             <button
               v-for="group in regions"
               :key="group.key"
               type="button"
-              class="w-full rounded-md border border-border p-3 text-left transition-colors hover:bg-muted/40"
+              class="w-full rounded-md border border-border p-3 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
               @click="selectFirstNode(group.nodes)"
             >
               <div class="flex items-center justify-between gap-3">
                 <span class="text-sm font-medium">{{ group.label }}</span>
                 <Badge variant="outline">{{ group.online }}/{{ group.nodes.length }}</Badge>
               </div>
-              <p class="mt-1 truncate text-xs text-muted-foreground">
+              <p
+                class="mt-1 truncate text-xs text-muted-foreground"
+                :title="group.nodes.map((node) => node.name || node.id).join(', ')"
+              >
                 {{ group.nodes.map((node) => node.name || node.id).join(", ") }}
+              </p>
+              <p v-if="group.nodes[0]" class="mt-1 text-[11px] text-muted-foreground">
+                {{ $t('fleet.map.regions.opensFirst', { name: group.nodes[0].name || group.nodes[0].id }) }}
               </p>
             </button>
           </CardContent>
@@ -1070,16 +1091,16 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
               {{ $t('fleet.map.unlocated.empty') }}
             </div>
             <button
-              v-for="node in withoutGeo.slice(0, 8)"
+              v-for="node in unlocatedShown"
               :key="node.id"
               type="button"
-              class="flex w-full items-center justify-between gap-3 rounded-md border border-border p-3 text-left transition-colors hover:bg-muted/40"
+              class="flex w-full items-center justify-between gap-3 rounded-md border border-border p-3 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
               @click="selectNode(node)"
             >
               <span class="min-w-0">
                 <span class="flex items-center gap-2">
                   <StatusDot :online="node.online" :pulse="node.online" />
-                  <span class="truncate text-sm font-medium">{{ node.name || node.id }}</span>
+                  <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
                 </span>
                 <span class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <template v-if="lookupIP(node)">{{ lookupIP(node) }}</template>
@@ -1090,6 +1111,9 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
               </span>
               <Badge v-if="node.role" variant="outline">{{ node.role }}</Badge>
             </button>
+            <p v-if="unlocatedHidden > 0" class="px-1 text-xs text-muted-foreground">
+              {{ $t('fleet.map.unlocated.more', { count: unlocatedHidden }) }}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -1107,7 +1131,12 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
               <Badge v-if="selectedNode?.geo" variant="outline">{{ sourceLabel(selectedNode.geo.source) }}</Badge>
               <Badge v-else variant="outline">{{ $t('fleet.map.noCoordinates') }}</Badge>
             </div>
-            <p class="truncate text-sm text-muted-foreground">
+            <p
+              class="truncate text-sm text-muted-foreground"
+              :title="selectedNode
+                ? [selectedNodeLabel, selectedCoordinates || locationLabel(selectedNode), selectedLookupIP].filter(Boolean).join(' · ')
+                : $t('fleet.map.editor.description')"
+            >
               <template v-if="selectedNode">
                 {{ selectedNode.name || selectedNode.id }}
                 <span class="text-muted-foreground/70"> · </span>
@@ -1208,7 +1237,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                   <LocateFixed v-else class="size-4" aria-hidden="true" />
                   {{ $t('fleet.map.editor.save') }}
                 </Button>
-                <Button type="button" variant="outline" :disabled="pendingSave || !selectedNodeId" @click="clearGeo">
+                <Button type="button" variant="outline" :disabled="pendingSave || !selectedNodeId" @click="clearOpen = true">
                   <Trash2 class="size-4" aria-hidden="true" />
                   {{ $t('fleet.map.editor.clear') }}
                 </Button>
@@ -1221,11 +1250,34 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
         </div>
       </div>
     </Card>
+
+    <ConfirmDialog
+      v-model:open="clearOpen"
+      :title="$t('fleet.map.confirm.clearTitle')"
+      :description="$t('fleet.map.confirm.clearDescription', { name: selectedNodeLabel })"
+      :confirm-label="$t('fleet.map.editor.clear')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="pendingSave"
+      @confirm="clearGeo"
+    />
   </div>
 </template>
 
 <style scoped>
-/* Subtle expanding ping on online node markers — refined, not flashy. */
+/* The map canvas stays dark in both themes (light markers, light graticule),
+   so the ocean is one flat colour matching the canvas background. */
+.map-ocean {
+  fill: oklch(0.18 0.025 265);
+}
+
+/* Keyboard focus on a marker: SVG cannot carry a box-shadow ring, so the
+   focused group gets a real outline instead of nothing at all. */
+.map-marker:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Subtle expanding ping on online node markers: refined, not flashy. */
 .map-ping {
   transform-box: fill-box;
   transform-origin: center;
