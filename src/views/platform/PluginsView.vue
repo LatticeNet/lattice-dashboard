@@ -294,6 +294,7 @@ async function runVerify() {
           </CardHeader>
           <CardContent>
             <DataTable
+              state-key="plugins"
               :columns="registeredColumns"
               :rows="sortedRegistered"
               :row-key="(plugin) => plugin.id"
@@ -349,6 +350,7 @@ async function runVerify() {
           </CardHeader>
           <CardContent>
             <DataTable
+              state-key="registry"
               v-if="canAdmin"
               :columns="lifecycleColumns"
               :rows="sortedLifecycle"

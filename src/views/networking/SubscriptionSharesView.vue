@@ -438,6 +438,7 @@ watch(() => route.query, applyDeepLink);
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
       <DataTable
+        state-key="shares"
         :columns="columns"
         :rows="shares"
         :row-key="(row) => row.id"

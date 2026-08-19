@@ -229,6 +229,7 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="users"
           :columns="columns"
           :rows="sortedUsers"
           :row-key="(user) => user.id"

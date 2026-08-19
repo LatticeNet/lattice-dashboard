@@ -349,6 +349,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
       </CardHeader>
       <CardContent>
         <DataTable
+          state-key="sso"
           :columns="columns"
           :rows="sortedProviders"
           :row-key="(provider) => provider.id"
