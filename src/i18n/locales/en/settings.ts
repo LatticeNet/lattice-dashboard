@@ -233,6 +233,8 @@ export default {
       fullAdmin: "Full admin",
       noScopes: "no scopes",
       list: {
+        serverAllowlist: "Nodes",
+        allNodes: "All nodes",
         title: "Operator users",
         description: "Local accounts that can sign in (password and/or SSO).",
         username: "Username",
@@ -247,6 +249,9 @@ export default {
         emptyDescription: "Create an operator account to grant dashboard and API access.",
       },
       form: {
+        serverAllowlist: "Node allowlist",
+        serverAllowlistHint:
+          "Comma-separated node IDs. Leave empty to let this operator reach every node. Narrowing an account signs it out of its current sessions.",
         createTitle: "New user",
         editTitle: "Edit user",
         description:

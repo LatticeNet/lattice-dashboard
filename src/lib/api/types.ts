@@ -1391,6 +1391,8 @@ export interface UserView {
   id: string;
   username: string;
   scopes: string[];
+  /** Nodes this account may reach. Empty means every node. */
+  server_allowlist?: string[];
   totp_enabled: boolean;
   has_password: boolean;
   created_at: string;
@@ -1399,12 +1401,19 @@ export interface UserView {
 export interface UserCreateRequest {
   username: string;
   scopes: string[];
+  server_allowlist?: string[]; // omit or empty for every node
   password?: string; // omit for an SSO-only account (no password login)
 }
 
 export interface UserUpdateRequest {
   id: string;
   scopes: string[];
+  /**
+   * Omit to leave the confinement untouched. Send [] to widen the account back
+   * to every node. The server tells the two apart, so a scope edit or password
+   * reset that carries no allowlist cannot silently un-confine the account.
+   */
+  server_allowlist?: string[];
   password?: string; // omit/blank to keep the existing password
 }
 

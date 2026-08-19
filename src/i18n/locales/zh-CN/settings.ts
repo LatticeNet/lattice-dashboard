@@ -228,6 +228,8 @@ export default {
       fullAdmin: "超级管理员",
       noScopes: "无权限",
       list: {
+        serverAllowlist: "节点",
+        allNodes: "所有节点",
         title: "运维用户",
         description: "可登录的本地账号(密码和/或 SSO)。",
         username: "用户名",
@@ -242,6 +244,8 @@ export default {
         emptyDescription: "创建一个运维账号以授予 dashboard 和 API 访问权限。",
       },
       form: {
+        serverAllowlist: "节点白名单",
+        serverAllowlistHint: "逗号分隔的节点 ID。留空表示该操作员可以访问所有节点。收窄权限会让该账号当前的会话立即失效。",
         createTitle: "新增用户",
         editTitle: "编辑用户",
         description: "运维账号。使用 Google/OIDC 登录时,用户名必须等于对方已验证的邮箱。",

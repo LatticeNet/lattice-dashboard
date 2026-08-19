@@ -70,6 +70,9 @@ const form = reactive({
   username: "",
   fullAdmin: false,
   scopes: [] as string[],
+  // Comma-separated node ids, matching the token form so the two places that
+  // confine a principal ask for it the same way. Empty means every node.
+  serverAllowlist: "",
   password: "",
 });
 
@@ -77,6 +80,7 @@ function resetForm() {
   form.username = "";
   form.fullAdmin = false;
   form.scopes = [];
+  form.serverAllowlist = "";
   form.password = "";
   submitAttempted.value = false;
 }
@@ -94,6 +98,7 @@ function openEdit(user: UserView) {
   form.username = user.username;
   form.fullAdmin = user.scopes.includes("*");
   form.scopes = user.scopes.filter((s) => s !== "*");
+  form.serverAllowlist = (user.server_allowlist ?? []).join(", ");
   form.password = "";
   submitAttempted.value = false;
   formOpen.value = true;
@@ -106,6 +111,13 @@ function toggleScope(scope: string) {
 }
 
 const effectiveScopes = computed(() => (form.fullAdmin ? ["*"] : [...form.scopes]));
+
+const effectiveAllowlist = computed(() =>
+  form.serverAllowlist
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean),
+);
 const usernameError = computed(() =>
   submitAttempted.value && !editing.value && !form.username.trim()
     ? t("settings.users.form.usernameRequired")
@@ -126,7 +138,13 @@ async function submitForm() {
   saving.value = true;
   try {
     if (editing.value) {
-      const req: UserUpdateRequest = { id: editing.value.id, scopes: effectiveScopes.value };
+      // Always sent when editing, including as [], because the dialog shows the
+      // current confinement and clearing the field is how you widen the account.
+      const req: UserUpdateRequest = {
+        id: editing.value.id,
+        scopes: effectiveScopes.value,
+        server_allowlist: effectiveAllowlist.value,
+      };
       if (form.password.trim()) req.password = form.password;
       await api.users.update(req);
       toast.success(t("settings.users.toast.updated"));
@@ -135,6 +153,7 @@ async function submitForm() {
         username: form.username.trim(),
         scopes: effectiveScopes.value,
       };
+      if (effectiveAllowlist.value.length) req.server_allowlist = effectiveAllowlist.value;
       if (form.password.trim()) req.password = form.password;
       await api.users.create(req);
       toast.success(t("settings.users.toast.created"));
@@ -181,6 +200,16 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
     searchable: true,
     filterAliases: ["scope", "permission", "rbac"],
     value: (row) => (row.scopes.includes("*") ? ["full-admin", "admin", "*"] : row.scopes).join(" "),
+  },
+  {
+    key: "server_allowlist",
+    label: t("settings.users.list.serverAllowlist"),
+    searchable: true,
+    filterAliases: ["allowlist", "nodes", "confined", "scope"],
+    // Searchable as "all-nodes" too, so an operator can find the accounts that
+    // are not confined, which is the question worth asking of this column.
+    value: (row) =>
+      row.server_allowlist?.length ? row.server_allowlist.join(" ") : "all-nodes",
   },
   {
     key: "login",
@@ -257,6 +286,17 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
               </Badge>
               <span v-if="!row.scopes.length" class="text-xs text-muted-foreground">{{ $t('settings.users.noScopes') }}</span>
             </div>
+          </template>
+
+          <template #cell-server_allowlist="{ row }">
+            <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[220px]">
+              <Badge v-for="node in row.server_allowlist" :key="node" variant="outline" class="font-mono">
+                {{ node }}
+              </Badge>
+            </div>
+            <span v-else class="text-xs text-muted-foreground">
+              {{ $t('settings.users.list.allNodes') }}
+            </span>
           </template>
 
           <template #cell-login="{ row }">
@@ -345,6 +385,18 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
               </p>
             </div>
             <p v-if="scopesError" class="text-xs text-destructive">{{ scopesError }}</p>
+          </div>
+
+          <div class="grid gap-2">
+            <Label for="user-allowlist">{{ $t('settings.users.form.serverAllowlist') }}</Label>
+            <Input
+              id="user-allowlist"
+              v-model="form.serverAllowlist"
+              placeholder="node_a1b2, node_c3d4"
+            />
+            <p class="text-xs text-muted-foreground">
+              {{ $t('settings.users.form.serverAllowlistHint') }}
+            </p>
           </div>
 
           <div class="grid gap-2">
