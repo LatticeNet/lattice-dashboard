@@ -101,9 +101,15 @@ const events = computed<AuditEvent[]>(() => auditQuery.data.value?.events ?? [])
 const total = computed(() => auditQuery.data.value?.total ?? events.value.length);
 
 const columns = computed<DataTableColumn<AuditEvent>[]>(() => [
-  { key: "decision", label: t("operations.audit.decision"), sortable: true },
-  { key: "action", label: t("operations.audit.action"), sortable: true },
-  { key: "at", label: t("operations.audit.colTime"), sortable: true, align: "right" },
+  // Deliberately not sortable. This view pages server-side through
+  // offset/limit, and /api/audit accepts no sort parameter, so a sortable
+  // header would reorder the fifty rows that happen to be loaded and present
+  // that as the order of twelve thousand. In the one view whose whole job is
+  // being trustworthy, that is the last place to offer a control that lies.
+  // The server already returns the log newest first.
+  { key: "decision", label: t("operations.audit.decision") },
+  { key: "action", label: t("operations.audit.action") },
+  { key: "at", label: t("operations.audit.colTime"), align: "right" },
   { key: "id", label: t("operations.audit.colId"), align: "right" },
 ]);
 

@@ -1,7 +1,7 @@
 <script setup lang="ts" generic="T">
 import { computed, getCurrentInstance, ref, watch, type HTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter, type RouteLocationRaw } from "vue-router";
+import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { useDebounceFn, useMediaQuery } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Funnel, Search, X } from "lucide-vue-next";
@@ -11,6 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
+import {
+  queryChanged,
+  readTableState,
+  writeTableState,
+  type TableViewState,
+} from "./dataTableState";
 
 /** Column descriptor for a single table column. */
 export interface DataTableColumn<Row> {
@@ -93,6 +99,14 @@ const props = withDefaults(
     /** Accessible label for the "drop the selection" button in the bulk bar. */
     clearSelectionLabel?: string;
     selectRowLabel?: string;
+    /**
+     * Mirror this table's search, filter, sort and page into the URL under this
+     * prefix. Without it a list is not linkable and loses everything it was
+     * showing on reload, which is the difference between "here is the failing
+     * node" and "open Nodes, then type these four things again". Give each
+     * table on a page a distinct key.
+     */
+    stateKey?: string;
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
   }>(),
@@ -121,6 +135,7 @@ const props = withDefaults(
     selectAllLabel: undefined,
     clearSelectionLabel: undefined,
     selectRowLabel: undefined,
+    stateKey: undefined,
   },
 );
 
@@ -150,6 +165,7 @@ const label = {
 
 const emit = defineEmits<{ retry: []; "row-select": [row: T] }>();
 const router = useRouter();
+const route = useRoute();
 const instance = getCurrentInstance();
 
 /**
@@ -375,6 +391,46 @@ watch(searchTerm, () => {
 watch(expressionTerm, () => {
   page.value = 1;
 });
+
+/* ----------------------------- URL persistence ----------------------------- */
+/**
+ * When the caller names this table, its view state lives in the URL. Reading
+ * happens once on mount so a deep link arrives already filtered; writing is
+ * `replace` rather than `push`, because typing in a search box should not build
+ * a back-button history of every keystroke.
+ */
+const sortableKeys = computed(() => props.columns.filter((c) => c.sortable).map((c) => c.key));
+
+if (props.stateKey) {
+  const restored = readTableState(
+    route.query as Record<string, unknown>,
+    props.stateKey,
+    sortableKeys.value,
+  );
+  searchInput.value = restored.search;
+  searchTerm.value = restored.search;
+  expressionInput.value = restored.expression;
+  expressionTerm.value = restored.expression;
+  sortKey.value = restored.sortKey;
+  sortDir.value = restored.sortDir;
+  page.value = restored.page;
+
+  watch(
+    () => [searchTerm.value, expressionTerm.value, sortKey.value, sortDir.value, page.value] as const,
+    () => {
+      const state: TableViewState = {
+        search: searchTerm.value,
+        expression: expressionTerm.value,
+        sortKey: sortKey.value,
+        sortDir: sortDir.value,
+        page: page.value,
+      };
+      const current = route.query as Record<string, unknown>;
+      const next = writeTableState(current, props.stateKey!, state);
+      if (queryChanged(current, next)) void router.replace({ query: next as never });
+    },
+  );
+}
 
 const pagedRows = computed(() => {
   if (!paginationEnabled.value) return sortedRows.value;

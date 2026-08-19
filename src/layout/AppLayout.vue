@@ -69,9 +69,13 @@ watchEffect(() => {
           tabindex="-1"
           class="min-h-0 flex-1 overflow-y-auto"
         >
-          <RouterView v-slot="{ Component, route }">
-            <component :is="Component" :key="route.path" class="view-enter" />
-          </RouterView>
+          <!-- One width ceiling for every route, rather than thirty views each
+               remembering to set their own. -->
+          <div class="page-shell">
+            <RouterView v-slot="{ Component, route }">
+              <component :is="Component" :key="route.path" class="view-enter" />
+            </RouterView>
+          </div>
         </main>
       </div>
     </div>

@@ -200,6 +200,23 @@
   }
 }
 
+/* ----------------------------------------------------------------------------
+   Page width ceiling.
+   The console is opened on very wide displays (the reference machine reports a
+   2423px CSS viewport). Without a ceiling a four-column table spreads eight
+   short strings across a metre of glass and every row becomes a scan across
+   dead space. One value, applied once by the shell, so no view has to remember.
+   ------------------------------------------------------------------------- */
+:root {
+  --page-max-width: 1600px;
+}
+
+@utility page-shell {
+  margin-inline: auto;
+  width: 100%;
+  max-width: var(--page-max-width);
+}
+
 @utility tabular {
   font-variant-numeric: tabular-nums;
 }
