@@ -1,7 +1,7 @@
 // Canonical grantable RBAC scope catalog, kept in sync with the server's
-// rbac.KnownScopes. The server is authoritative — it validates every assigned
+// rbac.KnownScopes. The server is authoritative. It validates every assigned
 // scope against this same set and rejects anything not within the caller's own
-// grant — so this list is for the UI picker only. The global "*" superuser scope
+// grant. So this list is for the UI picker only. The global "*" superuser scope
 // is handled separately (a dedicated "full administrator" toggle), not as a grid
 // entry.
 export const SCOPE_CATALOG = [

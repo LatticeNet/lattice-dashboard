@@ -7,7 +7,7 @@ import { ref, computed, onScopeDispose, watch, unref, type Ref, type ComputedRef
  * a websocket/SSE: the UI watches the age of the last successful poll and flips
  * between live → stale → dead as time passes since the last refresh.
  *
- * It returns STRUCTURED data only — no text and no i18n. A `FreshnessLabel`
+ * It returns STRUCTURED data only. No text and no i18n. A `FreshnessLabel`
  * component formats `state`/`seconds` into user-facing copy; `color` is a status
  * token class (text-success / text-warning / text-destructive) so the label can
  * be tinted without re-deriving the state.

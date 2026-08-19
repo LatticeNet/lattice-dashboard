@@ -2,7 +2,7 @@ import { ref, type Ref } from "vue";
 import { sha256Hex } from "@/lib/crypto";
 
 /**
- * usePlanDigest — DRY home for the SECURITY-CRITICAL client-side plan binding
+ * usePlanDigest. DRY home for the SECURITY-CRITICAL client-side plan binding
  * used across the safety-critical mutation views (Approvals, Guard, DNS, Policy,
  * Tunnels, WireGuard, GeoRouting, Profiles, AgentUpdates).
  *
@@ -18,7 +18,7 @@ import { sha256Hex } from "@/lib/crypto";
  * i.e. the UTF-8 encoding (via `new TextEncoder().encode`, see `@/lib/crypto`)
  * of the approval's `plan` STRING field, with an empty-string fallback when that
  * field is falsy (undefined / null / ""). `sha256Hex` lowercases hex, 2-char
- * zero-padded per byte. NOTHING else is serialized — no JSON.stringify, no key
+ * zero-padded per byte. NOTHING else is serialized. No JSON.stringify, no key
  * sorting, no trimming, no normalization. Do NOT add any.
  *
  * ── digestFor vs digestHex ───────────────────────────────────────────────────
@@ -33,7 +33,7 @@ import { sha256Hex } from "@/lib/crypto";
  *
  * ── Cache semantics (identical to ApprovalsView's `digestCache`) ──────────────
  * Per-key memo keyed by the approval's `id`. A present (truthy) cached value
- * short-circuits — a SHA-256 hex string is never empty, so the truthiness check
+ * short-circuits. A SHA-256 hex string is never empty, so the truthiness check
  * can never mistake a real digest for a miss. The cache ref is reassigned with a
  * fresh object on write (`{ ...cache.value, [id]: digest }`) so it stays
  * reactive for templates that read `cache[id]` directly, matching the original.

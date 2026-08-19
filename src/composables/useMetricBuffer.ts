@@ -3,8 +3,8 @@ import type { Metrics } from "@/lib/api/types";
 
 /**
  * Client-side ring buffer of recent polled node-metric samples. The server has
- * NO history endpoint and exposes NO websocket/SSE — the fleet is polled every
- * ~5s — so node cards/detail synthesize their own short-window sparklines by
+ * NO history endpoint and exposes NO websocket/SSE. The fleet is polled every
+ * ~5s. So node cards/detail synthesize their own short-window sparklines by
  * appending each poll's snapshot here and reading back a fixed-length series.
  *
  * It is generic and dependency-free: per node it keeps a fixed-capacity ring of
@@ -15,7 +15,7 @@ import type { Metrics } from "@/lib/api/types";
  * the SAME buffer and stay in sync without re-recording.
  */
 
-/** Channels a sparkline can plot. cpu/memory/disk are percent (0–100); netRx/netTx are bytes/sec. */
+/** Channels a sparkline can plot. cpu/memory/disk are percent (0 to 100); netRx/netTx are bytes/sec. */
 export type MetricKey = "cpu" | "memory" | "disk" | "netRx" | "netTx";
 
 /** One ring slot: a timestamp plus the derived value for every channel. */
@@ -67,7 +67,7 @@ function num(value: number | undefined): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** used/total as a 0–100 percent; 0 when total is missing/zero. */
+/** used/total as a 0 to 100 percent; 0 when total is missing/zero. */
 function percentOf(used: number | undefined, total: number | undefined): number {
   const u = num(used);
   const t = num(total);

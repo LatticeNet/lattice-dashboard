@@ -131,5 +131,5 @@ export const buildCustomPalette = (hex: string): Palette => {
   return { swatch: hex, light: make(hex, fg, hex), dark: make(hex, fg, hex) };
 };
 
-/** Every CSS var a palette may set — cleared before applying a new one. */
+/** Every CSS var a palette may set. Cleared before applying a new one. */
 export const PALETTE_KEYS = Object.keys(make("", "", ""));

@@ -1,4 +1,4 @@
-// usePluginTrust — reads the server's trust posture once per session so the
+// usePluginTrust. Reads the server's trust posture once per session so the
 // console can announce a non-official publisher (TASK-0012).
 //
 // Deliberately quiet on failure: an older server has no such endpoint, and a

@@ -7,7 +7,7 @@ import zhCN from "../locales/zh-CN/frame.ts";
 
 /**
  * Every nav entry renders through `t("nav.items." + name)`. A name with no
- * message in a locale ships the raw dotted key to the sidebar — that is how
+ * message in a locale ships the raw dotted key to the sidebar. That is how
  * "nav.items.network-subscription-shares" reached production. Pin coverage so
  * the gap fails here instead of rendering.
  */

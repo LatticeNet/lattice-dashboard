@@ -149,9 +149,6 @@ export function continentMark(c: Continent): string {
   return CONTINENT_MARK[c];
 }
 
-/** Retained name for callers not yet migrated to {@link continentMark}. */
-export const continentGlyph = continentMark;
-
 /* ------------------------------------------------------------------ */
 /* Grouping                                                            */
 /* ------------------------------------------------------------------ */

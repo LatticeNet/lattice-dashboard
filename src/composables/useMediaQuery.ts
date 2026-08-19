@@ -2,7 +2,7 @@ import { useMediaQuery as vueUseMediaQuery } from "@vueuse/core";
 import type { Ref } from "vue";
 
 /**
- * Reactive CSS media-query primitive — lets views flip table<->card on mobile
+ * Reactive CSS media-query primitive. Lets views flip table<->card on mobile
  * and auto-collapse panels without any inline scripts (CSP-safe). Thin wrapper
  * over VueUse's `useMediaQuery`, which already drives off `matchMedia` with
  * proper `addEventListener`/`removeEventListener` cleanup via `onScopeDispose`
@@ -15,7 +15,7 @@ export function useMediaQuery(query: string): Ref<boolean> {
 }
 
 /**
- * True on viewports below Tailwind's `md` breakpoint (< 768px) — the line at
+ * True on viewports below Tailwind's `md` breakpoint (< 768px). The line at
  * which dense tables and side panels should give way to stacked cards.
  */
 export function useIsMobile(): Ref<boolean> {

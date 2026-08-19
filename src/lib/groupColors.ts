@@ -1,5 +1,5 @@
 /**
- * groupColors — CSP-safe, class-based color tokens for fleet groups.
+ * groupColors. CSP-safe, class-based color tokens for fleet groups.
  *
  * Groups store a *token name* (e.g. "sky", "violet") rather than a raw hex value
  * so the server never has to emit inline styles (CSP forbids them). The mapping
