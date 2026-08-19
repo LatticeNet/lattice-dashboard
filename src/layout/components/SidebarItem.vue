@@ -6,6 +6,7 @@ import { Pin, PinOff } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { NavItem } from "@/router/nav";
+import { formatBadge, type NavSignal } from "../navSignals";
 
 const props = defineProps<{
   item: NavItem;
@@ -16,6 +17,8 @@ const props = defineProps<{
   context?: string;
   pinnable?: boolean;
   pinned?: boolean;
+  /** Live state for this destination: pending work, or something failing. */
+  signal?: NavSignal;
 }>();
 
 const emit = defineEmits<{
@@ -41,12 +44,25 @@ const active = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
         :active-class="item.path === '/' ? '' : active"
         :class="cn(base, idle, 'justify-center px-0')"
       >
-        <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
-        <span class="sr-only">{{ label }}</span>
+        <span class="relative">
+          <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
+          <span
+            v-if="signal"
+            :class="cn(
+              'absolute -right-1 -top-1 size-2 rounded-full ring-2 ring-sidebar',
+              signal.tone === 'attention' ? 'bg-destructive' : 'bg-warning',
+            )"
+            aria-hidden="true"
+          />
+        </span>
+        <span class="sr-only">{{ label }}<template v-if="signal">, {{ signal.label }}</template></span>
       </RouterLink>
     </TooltipTrigger>
     <TooltipContent side="right">
       <div class="font-medium">{{ label }}</div>
+      <div v-if="signal" class="text-[10px]" :class="signal.tone === 'attention' ? 'text-destructive' : 'text-warning'">
+        {{ signal.label }}
+      </div>
       <div v-if="context" class="text-[10px] text-muted-foreground">{{ context }}</div>
     </TooltipContent>
   </Tooltip>
@@ -60,6 +76,18 @@ const active = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
     >
       <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
       <span class="truncate">{{ label }}</span>
+      <span
+        v-if="signal"
+        :class="cn(
+          'ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums',
+          signal.tone === 'attention'
+            ? 'bg-destructive/15 text-destructive'
+            : 'bg-warning/15 text-warning',
+        )"
+        :title="signal.label"
+      >
+        {{ formatBadge(signal.count) }}
+      </span>
     </RouterLink>
     <button
       v-if="pinnable"
