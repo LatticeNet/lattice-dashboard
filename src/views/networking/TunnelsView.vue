@@ -30,6 +30,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import NodePicker from "@/components/common/NodePicker.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -41,13 +42,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   Dialog,
   DialogClose,
@@ -400,19 +394,12 @@ async function openPlan(tunnel: TunnelView) {
               <Label for="tun-name">{{ $t('networking.tunnels.name') }}</Label>
               <Input id="tun-name" v-model="form.name" required placeholder="edge-tunnel" />
             </div>
-            <div class="grid gap-2">
-              <Label for="tun-node">{{ $t('networking.tunnels.nodeLabel') }}</Label>
-              <Select v-model="form.node_id">
-                <SelectTrigger id="tun-node">
-                  <SelectValue :placeholder="$t('networking.tunnels.selectNode')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
-                    {{ node.name || node.id }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <NodePicker
+              id="tun-node"
+              v-model="form.node_id"
+              :label="$t('networking.tunnels.nodeLabel')"
+              :placeholder="$t('networking.tunnels.selectNode')"
+            />
           </div>
 
           <div class="grid gap-2">

@@ -141,6 +141,17 @@ export default {
       created: "创建于",
       keepBlank: "留空则保持原值",
     },
+
+    // 共享节点字段（components/common/NodePicker.vue）。
+    nodePicker: {
+      label: "节点",
+      placeholder: "选择节点",
+      idPlaceholder: "节点 ID",
+      needsScope: "列出节点需要 `node:read` 权限，请直接填写节点 ID。",
+      listFailed: "节点列表加载失败，请直接填写节点 ID。",
+      noNodes: "尚未注册任何节点，请直接填写节点 ID。",
+      unknownNode: "该 ID 不在节点列表中，按已存值显示。",
+    },
   },
 
   nav: {
