@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T">
-import { computed, ref, watch, type HTMLAttributes } from "vue";
+import { computed, getCurrentInstance, ref, watch, type HTMLAttributes } from "vue";
 import { useRouter, type RouteLocationRaw } from "vue-router";
 import { useDebounceFn, useMediaQuery } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
@@ -118,6 +118,16 @@ const props = withDefaults(
 
 const emit = defineEmits<{ retry: []; "row-select": [row: T] }>();
 const router = useRouter();
+const instance = getCurrentInstance();
+
+/**
+ * A row is activatable when it goes somewhere (rowTo) OR when the parent is
+ * listening for the selection. Requiring rowTo alone made every table that
+ * selects in place — an inbox with a detail pane beside it — silently ignore
+ * row clicks: the listener was attached, the handler was never called, and the
+ * page just looked broken.
+ */
+const rowActivatable = computed(() => !!props.rowTo || !!instance?.vnode.props?.onRowSelect);
 
 /**
  * Activate a row (click or keyboard). Suppressed when the interaction
@@ -555,9 +565,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 'cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none': !!rowTo,
               }"
               :role="rowTo ? 'button' : undefined"
-              :tabindex="rowTo ? 0 : undefined"
-              @click="rowTo && onRowActivate(row, $event)"
-              @keydown="rowTo && onRowKeydown(row, $event)"
+              :tabindex="rowActivatable ? 0 : undefined"
+              @click="rowActivatable && onRowActivate(row, $event)"
+              @keydown="rowActivatable && onRowKeydown(row, $event)"
             >
               <td v-if="selectable" class="px-3 py-3 align-top">
                 <Checkbox
@@ -602,9 +612,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             'surface-interactive': !!rowTo,
           }"
           :role="rowTo ? 'button' : undefined"
-          :tabindex="rowTo ? 0 : undefined"
-          @click="rowTo && onRowActivate(row, $event)"
-          @keydown="rowTo && onRowKeydown(row, $event)"
+          :tabindex="rowActivatable ? 0 : undefined"
+          @click="rowActivatable && onRowActivate(row, $event)"
+          @keydown="rowActivatable && onRowKeydown(row, $event)"
         >
           <div v-if="selectable" class="mb-2 flex items-center gap-2">
             <Checkbox
