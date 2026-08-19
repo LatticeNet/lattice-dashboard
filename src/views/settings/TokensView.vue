@@ -23,6 +23,7 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
 import { statusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import ScopePicker from "@/components/settings/ScopePicker.vue";
 import { SCOPE_CATALOG } from "@/lib/scopes";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -157,12 +158,6 @@ function confirmDiscard() {
   discardOpen.value = false;
   formOpen.value = false;
   resetForm();
-}
-
-function toggleScope(scope: string) {
-  const index = form.scopes.indexOf(scope);
-  if (index >= 0) form.scopes.splice(index, 1);
-  else form.scopes.push(scope);
 }
 
 const nameError = computed(() =>
@@ -487,32 +482,18 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
               </template>
             </p>
             <p class="text-xs text-muted-foreground">{{ $t("settings.scopeMigrationHint") }}</p>
-            <div
-              :class="
-                cn(
-                  'grid max-h-72 grid-cols-1 gap-1.5 overflow-auto rounded-md border border-border p-2 sm:grid-cols-2',
-                  scopesError && 'border-destructive',
-                )
-              "
+            <p
+              v-if="grantableScopes.length === 0"
+              class="rounded-md border border-border px-2 py-1.5 text-xs text-muted-foreground"
             >
-              <label
-                v-for="scope in grantableScopes"
-                :key="scope"
-                class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
-              >
-                <Checkbox
-                  :model-value="form.scopes.includes(scope)"
-                  @update:model-value="toggleScope(scope)"
-                />
-                <span class="font-mono text-xs">{{ scope }}</span>
-              </label>
-              <p
-                v-if="grantableScopes.length === 0"
-                class="col-span-full px-2 py-1.5 text-xs text-muted-foreground"
-              >
-                {{ $t("settings.tokens.form.noGrantableScopes") }}
-              </p>
-            </div>
+              {{ $t("settings.tokens.form.noGrantableScopes") }}
+            </p>
+            <ScopePicker
+              v-else
+              v-model="form.scopes"
+              :grantable="grantableScopes"
+              :invalid="!!scopesError"
+            />
             <p v-if="scopesError" class="text-xs text-destructive">{{ scopesError }}</p>
           </div>
 
