@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * NodeCard — the canonical fleet node card.
+ * NodeCard: the canonical fleet node card.
  *
  * Consolidates the two hand-rolled (and divergent) node cards previously inlined
  * in OverviewView and NodesView into one reusable, correctly-typed component:
@@ -13,7 +13,7 @@
  *    no canvas, no echarts, no runtime style/script injection.
  *  - A footer with net rx/tx, uptime, and last-seen.
  *
- * Presentational only — it does NOT fetch and does NOT record samples (a parent
+ * Presentational only. It does NOT fetch and does NOT record samples (a parent
  * owns the poll loop and `record()`s into the shared buffer). User-facing text is
  * exposed as props with plain-English defaults so callers can pass translated
  * strings later; this component never imports the locale files.
@@ -58,7 +58,7 @@ export interface NodeCardGroup {
   name: string;
   /** groupColors design-token name (e.g. "sky"); falls back to slate. */
   color?: string | null;
-  /** True when this node is the group's leader — renders a crown marker. */
+  /** True when this node is the group's leader. Renders a crown marker. */
   leader?: boolean;
 }
 
@@ -126,11 +126,11 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  /** Header / name activated — caller decides what "select" means (open detail, route…). */
+  /** Header / name activated. Caller decides what "select" means (open detail, route…). */
   (e: "select", node: Node): void;
   /** A footer action button was clicked. */
   (e: "action", payload: { id: string; node: Node }): void;
-  /** A group chip was clicked — caller routes to the group (keeps nav ownership). */
+  /** A group chip was clicked. Caller routes to the group (keeps nav ownership). */
   (e: "group-select", id: string): void;
 }>();
 
@@ -152,18 +152,18 @@ const statusBadge = computed(() => {
   };
 });
 
-/** First two tags only — keeps the header from wrapping on dense grids. */
+/** First two tags only. Keeps the header from wrapping on dense grids. */
 const visibleTags = computed(() =>
   [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)).slice(0, 2),
 );
 
 /* ---------------------------------------------------------------- */
-/* Sparkline — tiny inline SVG from the shared client-side ring.     */
+/* Sparkline. Tiny inline SVG from the shared client-side ring.     */
 /* ---------------------------------------------------------------- */
 
 const buffer = useMetricBuffer();
 
-/** net channels are bytes/sec; cpu/memory/disk are 0–100 percent. */
+/** net channels are bytes/sec; cpu/memory/disk are 0 to 100 percent. */
 const isNetMetric = computed(
   () => props.sparklineMetric === "netRx" || props.sparklineMetric === "netTx",
 );
@@ -180,7 +180,7 @@ const hasSpark = computed(() => props.showSparkline && series.value.length >= 2)
 const SPARK_W = 120;
 const SPARK_H = computed(() => (props.compact ? 24 : 32));
 
-/** Polyline points mapped into [pad, H-pad]; percent series clamp to a 0–100 axis. */
+/** Polyline points mapped into [pad, H-pad]; percent series clamp to a 0 to 100 axis. */
 const sparkPoints = computed(() => {
   const vs = series.value;
   if (vs.length < 2) return "";

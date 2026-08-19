@@ -1,5 +1,5 @@
 /**
- * Shared latency-color scale — the single source of truth for how round-trip
+ * Shared latency-color scale. The single source of truth for how round-trip
  * latency is colored across the console (sparklines, heatmap cells, uplot/SVG
  * charts, badges). Mirrors NodeGet's `pingLatencyConfig` ping bands.
  *
@@ -50,7 +50,7 @@ function segmentFor(ms: number | null | undefined): LatencySegment | null {
 }
 
 /**
- * Base token name for a latency value — `null`/`undefined`/non-finite map to
+ * Base token name for a latency value. `null`/`undefined`/non-finite map to
  * {@link TIMEOUT_CLASS}. Prefix it yourself, e.g. `text-${latencyClass(ms)}`.
  */
 export function latencyClass(ms: number | null | undefined): string {
@@ -74,7 +74,7 @@ export function latencyBgClass(ms: number | null | undefined): string {
 }
 
 /**
- * `var(--token)` string for a latency value — use for inline SVG `stroke`/`fill`
+ * `var(--token)` string for a latency value. Use for inline SVG `stroke`/`fill`
  * or uplot series strokes where a raw CSS color is required. Returns the timeout
  * token's var for missing/non-finite values.
  */

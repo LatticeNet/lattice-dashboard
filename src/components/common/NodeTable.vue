@@ -1,14 +1,14 @@
 <script setup lang="ts">
 /**
- * NodeTable — the horizontal, scan-many-nodes counterpart to {@link NodeCard}.
+ * NodeTable: the horizontal, scan-many-nodes counterpart to {@link NodeCard}.
  *
  * A grid-cols header + rows wrapped in `overflow-x-auto` so the dense column
  * set scrolls horizontally on narrow viewports instead of wrapping. The grid
  * template is computed from the visible column set (column manager lives in
- * the caller's toolbar), and sortable headers re-emit `toggle-sort` — state
+ * the caller's toolbar), and sortable headers re-emit `toggle-sort`. State
  * ownership stays with NodesView, which persists it.
  *
- * Presentational only — it does NOT fetch and does NOT mutate. It re-emits the
+ * Presentational only. It does NOT fetch and does NOT mutate. It re-emits the
  * same intents NodesView already wires for NodeCard (`open` / `terminal` /
  * `rotate` / `set-disabled`) so the two view modes share one set of handlers.
  */
@@ -59,15 +59,15 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  /** Row / name activated — caller opens the node detail page. */
+  /** Row / name activated. Caller opens the node detail page. */
   (e: "open", node: Node): void;
   /** Terminal action button. */
   (e: "terminal", node: Node): void;
   /** Rotate-token action button. */
   (e: "rotate", node: Node): void;
-  /** Enable/disable toggle — second arg is the desired `disabled` value. */
+  /** Enable/disable toggle. Second arg is the desired `disabled` value. */
   (e: "set-disabled", node: Node, disabled: boolean): void;
-  /** Sortable header activated — caller advances its sort-state machine. */
+  /** Sortable header activated. Caller advances its sort-state machine. */
   (e: "toggle-sort", columnId: string): void;
 }>();
 
@@ -121,7 +121,7 @@ function statusVariant(node: Node): ReturnType<typeof meta>["badgeVariant"] {
 }
 
 function archOs(node: Node): string {
-  return node.host_facts?.os || node.host_facts?.platform || "—";
+  return node.host_facts?.os || node.host_facts?.platform || t("common.misc.none");
 }
 
 function sortedTags(node: Node): string[] {
@@ -151,10 +151,10 @@ function agentBadges(node: Node): string[] {
 /** Public IPv4 is the primary column; the rest ride along in the cell tooltip. */
 function ipTooltip(node: Node): string {
   const lines = [
-    `${t("fleet.nodes.detail.publicIp")}: ${node.public_ip || "—"}`,
-    `${t("fleet.nodes.detail.publicIpv6")}: ${node.public_ipv6 || "—"}`,
-    `${t("fleet.nodes.detail.internalIp")}: ${node.internal_ip || "—"}`,
-    `${t("fleet.nodes.detail.internalIpv6")}: ${node.internal_ipv6 || "—"}`,
+    `${t("fleet.nodes.detail.publicIp")}: ${node.public_ip || t("common.misc.none")}`,
+    `${t("fleet.nodes.detail.publicIpv6")}: ${node.public_ipv6 || t("common.misc.none")}`,
+    `${t("fleet.nodes.detail.internalIp")}: ${node.internal_ip || t("common.misc.none")}`,
+    `${t("fleet.nodes.detail.internalIpv6")}: ${node.internal_ipv6 || t("common.misc.none")}`,
   ];
   return lines.join("\n");
 }
@@ -232,7 +232,7 @@ function onOpen(node: Node): void {
         <!-- Role -->
         <div v-if="show('role')" class="min-w-0">
           <Badge v-if="node.role" variant="secondary" class="max-w-full truncate">{{ node.role }}</Badge>
-          <span v-else class="text-muted-foreground">—</span>
+          <span v-else class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
 
         <!-- Tags -->
@@ -240,18 +240,18 @@ function onOpen(node: Node): void {
           <Badge v-for="tag in sortedTags(node)" :key="tag" variant="outline" class="max-w-full truncate">
             {{ tag }}
           </Badge>
-          <span v-if="sortedTags(node).length === 0" class="text-muted-foreground">—</span>
+          <span v-if="sortedTags(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
 
         <!-- Public IPv4 (other addresses in the tooltip) -->
         <div v-if="show('publicIp')" class="min-w-0" :title="ipTooltip(node)">
-          <p class="truncate font-mono text-xs">{{ node.public_ip || '—' }}</p>
+          <p class="truncate font-mono text-xs">{{ node.public_ip || $t('common.misc.none') }}</p>
         </div>
 
         <!-- Arch / OS -->
         <div v-if="show('archOs')" class="min-w-0">
           <p class="truncate">{{ archOs(node) }}</p>
-          <p class="truncate text-xs text-muted-foreground">{{ node.host_facts?.arch || '—' }}</p>
+          <p class="truncate text-xs text-muted-foreground">{{ node.host_facts?.arch || $t('common.misc.none') }}</p>
         </div>
 
         <!-- Agent runtime capabilities -->
@@ -265,7 +265,7 @@ function onOpen(node: Node): void {
             {{ badge }}
           </Badge>
           <Badge v-if="agentBadges(node).length > 3" variant="secondary">+{{ agentBadges(node).length - 3 }}</Badge>
-          <span v-if="agentBadges(node).length === 0" class="text-muted-foreground">—</span>
+          <span v-if="agentBadges(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
 
         <!-- CPU / Memory / Disk mini-bars -->

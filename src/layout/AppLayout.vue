@@ -30,7 +30,7 @@ const commandOpen = ref(false);
 
 // Reflect the persisted density preference onto <html data-density> so the
 // opt-in `density-*` utilities in app.css take effect. Runs on mount and on
-// every change without a websocket — pure local UI state.
+// every change without a websocket. Pure local UI state.
 watchEffect(() => {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-density", density.value);
@@ -58,6 +58,7 @@ watchEffect(() => {
         <TrustBanner />
 
         <AppHeader
+          :mobile-open="mobileOpen"
           @toggle-mobile="mobileOpen = !mobileOpen"
           @open-command="commandOpen = true"
         />

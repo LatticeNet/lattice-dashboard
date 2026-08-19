@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useMagicKeys, useActiveElement } from "@vueuse/core";
@@ -19,10 +19,27 @@ import { usePluginContributions } from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
 import AppearanceMenu from "./AppearanceMenu.vue";
 
+const props = defineProps<{ mobileOpen: boolean }>();
+
 const emit = defineEmits<{
   (e: "toggle-mobile"): void;
   (e: "open-command"): void;
 }>();
+
+/**
+ * Closing the drawer with Escape leaves focus on a node that just went inert,
+ * which drops the caret back to the document body. Put it where the operator
+ * left it: on the control that opened the thing.
+ */
+const mobileToggle = ref<InstanceType<typeof Button> | null>(null);
+watch(
+  () => props.mobileOpen,
+  (open, wasOpen) => {
+    if (open || !wasOpen || typeof document === "undefined") return;
+    if (document.activeElement && document.activeElement !== document.body) return;
+    (mobileToggle.value?.$el as HTMLElement | undefined)?.focus();
+  },
+);
 
 const route = useRoute();
 const router = useRouter();
@@ -30,7 +47,7 @@ const auth = useAuthStore();
 const { t } = useI18n();
 
 // Plugin-contributed views (design-10) have a dynamic title/section that no
-// static `nav.items.*` / NAV section owns — resolve them from the live
+// static `nav.items.*` / NAV section owns. Resolve them from the live
 // contribution instead, so the breadcrumb matches the page heading.
 const { findPlugin, findView } = usePluginContributions();
 const pluginCtx = computed(() => {
@@ -121,14 +138,17 @@ function openSecurity() {
 
 <template>
   <header
-    class="sticky top-0 z-10 flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur"
+    class="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-background px-4"
   >
     <!-- Mobile hamburger -->
     <Button
+      ref="mobileToggle"
       variant="ghost"
       size="icon"
       class="md:hidden"
       :aria-label="$t('shell.sidebar.toggle')"
+      :aria-expanded="mobileOpen"
+      aria-controls="app-sidebar"
       @click="$emit('toggle-mobile')"
     >
       <Menu class="size-4" />

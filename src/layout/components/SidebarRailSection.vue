@@ -10,6 +10,7 @@
  * at 64px, and the flyout is where the destinations live.
  */
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { onClickOutside } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { cn } from "@/lib/utils";
 import type { NavItem } from "@/router/nav";
@@ -37,6 +38,16 @@ const emit = defineEmits<{ (e: "navigate"): void }>();
 
 const { t } = useI18n();
 const open = ref(false);
+/**
+ * How the flyout was opened decides how it closes.
+ *
+ * A menu you opened by hovering should get out of the way when you stop
+ * hovering. A menu you deliberately clicked or tabbed open should not: it
+ * disappearing the moment the pointer drifts is the behaviour that makes a
+ * navigation feel like it is fighting you.
+ */
+const openedBy = ref<"hover" | "intent">("hover");
+const root = ref<HTMLElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
 const panel = ref<HTMLElement | null>(null);
 const position = ref<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -66,9 +77,12 @@ function cancelClose() {
   }
 }
 
-function show() {
+function show(via: "hover" | "intent" = "hover") {
   cancelClose();
   measure();
+  // Hovering over an already-deliberately-opened menu must not downgrade it
+  // back to a hover menu that vanishes on the way out.
+  if (!open.value || via === "intent") openedBy.value = via;
   open.value = true;
 }
 
@@ -77,6 +91,7 @@ function show() {
  * does not drop the menu out from under the pointer.
  */
 function scheduleClose() {
+  if (openedBy.value === "intent") return;
   cancelClose();
   closeTimer = setTimeout(() => {
     open.value = false;
@@ -106,7 +121,7 @@ async function onTriggerKeydown(event: KeyboardEvent) {
   }
   if (event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
     event.preventDefault();
-    show();
+    show("intent");
     await nextTick();
     focusItem(0);
   }
@@ -137,6 +152,16 @@ function onFocusOut(event: FocusEvent) {
   if (trigger.value?.contains(to) || panel.value?.contains(to)) return;
   close();
 }
+
+// A click-opened menu stays until something says otherwise; a click elsewhere
+// is that something.
+onClickOutside(
+  root,
+  () => {
+    if (open.value) close();
+  },
+  { ignore: [panel] },
+);
 
 function onNavigate() {
   close();
@@ -169,8 +194,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div
+    ref="root"
     class="relative"
-    @mouseenter="show"
+    @mouseenter="show('hover')"
     @mouseleave="scheduleClose"
     @focusout="onFocusOut"
   >
@@ -190,7 +216,7 @@ onBeforeUnmount(() => {
       :aria-expanded="open"
       :aria-controls="panelId"
       aria-haspopup="menu"
-      @click="open ? close() : show()"
+      @click="open ? close() : show('intent')"
       @keydown="onTriggerKeydown"
     >
       <span class="relative">

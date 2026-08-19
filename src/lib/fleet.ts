@@ -1,11 +1,11 @@
 /**
- * fleet.ts — pure, CSP-safe helpers for fleet grouping, geography, and
+ * fleet.ts. Pure, CSP-safe helpers for fleet grouping, geography, and
  * aggregate roll-ups shared by the Overview, Nodes, and Topology views.
  *
  * Everything here is a pure function over the polled `Node[]` list:
  *  - country/continent helpers turn the server's ISO-3166 alpha-2 `geo.country`
  *    (uppercased + validated server-side) into a flag emoji and a coarse
- *    continent "region cluster" (Asia / Europe / North America …) — which is
+ *    continent "region cluster" (Asia / Europe / North America …). Which is
  *    the grouping operators actually think in ("asia / us-west").
  *  - `groupNodes()` buckets a fleet by region / country / role / status / tag.
  *  - `fleetTotals()` rolls per-node metrics up into one fleet-wide summary.
@@ -26,18 +26,17 @@ function isCountryCode(value?: string): value is string {
 }
 
 /**
- * Flag emoji for an ISO-3166 alpha-2 code via Regional Indicator Symbols.
- * Returns "" for anything that isn't a 2-letter code so callers can fall back
- * to a generic glyph. Pure Unicode — no images, CSP-safe.
+ * The ISO-3166 alpha-2 code itself, as the group's short mark.
+ *
+ * This used to build a flag emoji out of Regional Indicator Symbols. Flags are
+ * the worst possible mark for a fleet console: several of them are visually
+ * identical at 14px, Windows renders them as two letters anyway, and a
+ * grouping header is a place where being exactly right about which country a
+ * machine is in matters. The letters are what an operator was reading off the
+ * flag in the first place.
  */
-export function countryFlag(code?: string): string {
-  if (!isCountryCode(code)) return "";
-  const base = 0x1f1e6; // 🇦
-  const upper = code.toUpperCase();
-  const a = upper.codePointAt(0);
-  const b = upper.codePointAt(1);
-  if (a === undefined || b === undefined) return "";
-  return String.fromCodePoint(base + (a - 65), base + (b - 65));
+export function countryMark(code?: string): string {
+  return isCountryCode(code) ? code.toUpperCase() : "";
 }
 
 /**
@@ -70,15 +69,20 @@ const CONTINENT_LABEL: Record<Continent, string> = {
   "??": "Unknown",
 };
 
-const CONTINENT_GLYPH: Record<Continent, string> = {
-  AS: "🌏",
-  EU: "🌍",
-  NA: "🌎",
-  SA: "🌎",
-  AF: "🌍",
-  OC: "🌏",
-  AN: "🧊",
-  "??": "🌐",
+/**
+ * Region marks are the continent codes, for the same reason country marks are
+ * the country codes: three globe emoji shared across seven continents told an
+ * operator nothing that the header text was not already saying.
+ */
+const CONTINENT_MARK: Record<Continent, string> = {
+  AS: "AS",
+  EU: "EU",
+  NA: "NA",
+  SA: "SA",
+  AF: "AF",
+  OC: "OC",
+  AN: "AN",
+  "??": "",
 };
 
 // ISO-3166 alpha-2 → continent. Compact but complete enough for any real fleet;
@@ -127,7 +131,7 @@ const COUNTRY_CONTINENT: Record<string, Continent> = {
 };
 
 // `NA` collides between Namibia (Africa) and North America's continent code; the
-// table above maps the country code `NA` to Africa (Namibia) which is correct —
+// table above maps the country code `NA` to Africa (Namibia) which is correct,
 // the continent enum value `"NA"` (North America) is only produced via the
 // country→continent lookup of other codes, never from a literal `NA` key clash.
 
@@ -141,9 +145,12 @@ export function continentLabel(c: Continent): string {
   return CONTINENT_LABEL[c];
 }
 
-export function continentGlyph(c: Continent): string {
-  return CONTINENT_GLYPH[c];
+export function continentMark(c: Continent): string {
+  return CONTINENT_MARK[c];
 }
+
+/** Retained name for callers not yet migrated to {@link continentMark}. */
+export const continentGlyph = continentMark;
 
 /* ------------------------------------------------------------------ */
 /* Grouping                                                            */
@@ -170,7 +177,10 @@ export interface NodeGroup {
   label: string;
   /** When set, callers should prefer `$t(i18nKey)` over `label`. */
   i18nKey?: string;
-  /** Leading glyph — flag emoji (country), continent glyph (region), or "". */
+  /**
+   * Leading short mark: the country code (country grouping), the continent
+   * code (region grouping), or "" when the dimension has no such mark.
+   */
   glyph: string;
   /** Sort weight; lower sorts first. Online-heavy / known regions float up. */
   order: number;
@@ -191,12 +201,12 @@ function isLive(node: Node): boolean {
 /**
  * Bucket a fleet into ordered groups by the chosen dimension.
  *
- *  - `region`  — continent derived from `geo.country` (Asia / Europe / …).
- *  - `country` — exact `geo.country` code (flag + localised name).
- *  - `role`    — the operator-assigned role (group-leader / hub / member …).
- *  - `status`  — Online / Offline / Disabled.
- *  - `tag`     — one bucket per tag; a node appears in every tag it carries.
- *  - `none`    — a single bucket holding the whole fleet.
+ *  - `region` . Continent derived from `geo.country` (Asia / Europe / …).
+ *  - `country`. Exact `geo.country` code (flag + localised name).
+ *  - `role`   . The operator-assigned role (group-leader / hub / member …).
+ *  - `status` . Online / Offline / Disabled.
+ *  - `tag`    . One bucket per tag; a node appears in every tag it carries.
+ *  - `none`   . A single bucket holding the whole fleet.
  *
  * Groups are returned sorted by `order` then label; within each group the nodes
  * are sorted live-first, then by name. The ungrouped/unknown bucket sorts last.
@@ -251,14 +261,14 @@ export function groupNodes(
     switch (by) {
       case "region": {
         const c = continentOf(node.geo?.country);
-        if (c === "??") push(UNGROUPED_KEY, continentLabel("??"), continentGlyph("??"), 99, node, CONTINENT_I18N["??"]);
-        else push(`region:${c}`, continentLabel(c), continentGlyph(c), 10, node, CONTINENT_I18N[c]);
+        if (c === "??") push(UNGROUPED_KEY, continentLabel("??"), continentMark("??"), 99, node, CONTINENT_I18N["??"]);
+        else push(`region:${c}`, continentLabel(c), continentMark(c), 10, node, CONTINENT_I18N[c]);
         break;
       }
       case "country": {
         const code = node.geo?.country;
-        if (!isCountryCode(code)) push(UNGROUPED_KEY, continentLabel("??"), "🌐", 99, node, CONTINENT_I18N["??"]);
-        else push(`country:${code.toUpperCase()}`, countryName(code, locale), countryFlag(code), 10, node);
+        if (!isCountryCode(code)) push(UNGROUPED_KEY, continentLabel("??"), "", 99, node, CONTINENT_I18N["??"]);
+        else push(`country:${code.toUpperCase()}`, countryName(code, locale), countryMark(code), 10, node);
         break;
       }
       case "role": {
@@ -352,7 +362,7 @@ function num(value?: number): number {
 
 /**
  * Roll per-node metrics up into one fleet-wide summary. Resource sums and the
- * CPU mean consider only LIVE nodes (online and not disabled) — an offline
+ * CPU mean consider only LIVE nodes (online and not disabled). An offline
  * node's last-known gauges would otherwise inflate "current" fleet load.
  */
 export function fleetTotals(nodes: Node[]): FleetTotals {

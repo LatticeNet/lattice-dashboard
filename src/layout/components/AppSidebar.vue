@@ -468,6 +468,7 @@ function onNavKeydown(event: KeyboardEvent) {
   />
 
   <aside
+    id="app-sidebar"
     ref="aside"
     class="app-sidebar"
     :style="asideStyle"

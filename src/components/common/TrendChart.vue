@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * TrendChart — a zero-dependency inline-SVG line + area trend chart.
+ * TrendChart: a zero-dependency inline-SVG line + area trend chart.
  *
  * A "sparkline that scales up": responsive SVG, themed entirely with Tailwind
  * token classes (text-primary, text-success, …) so it tracks light/dark mode.
- * CSP-safe — no canvas, no runtime style injection, no inline scripts.
+ * CSP-safe. No canvas, no runtime style injection, no inline scripts.
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -155,7 +155,7 @@ const ariaLabel = computed(() => {
 
 // ---------------------------------------------------------------------------
 // Optional hover layer (gated behind `interactive`). All geometry derives from
-// the live SVG bounding box at event time — no scroll/resize listeners, no
+// the live SVG bounding box at event time. No scroll/resize listeners, no
 // stale reactive trackers, no inline scripts. The tooltip is a plain Vue-bound
 // <div> (never a title= attribute, never v-html), so it stays CSP-safe.
 // ---------------------------------------------------------------------------
@@ -186,7 +186,7 @@ function indexToClientX(index: number, width: number): number {
 /**
  * Nearest-index hit test via binary search over the evenly-spaced X domain.
  * Points are uniformly distributed, so we can compute the fractional index
- * directly and then snap to the closer neighbour — O(1), but kept as an
+ * directly and then snap to the closer neighbour. O(1), but kept as an
  * explicit two-neighbour comparison to stay correct for any spacing.
  */
 function nearestIndex(fraction: number): number {
@@ -233,7 +233,7 @@ const focusPoint = computed(() => {
   return { x: projectX(idx), y: projectY(v), value: v };
 });
 
-/** Tooltip content — timestamp (from labels) + formatted value. */
+/** Tooltip content. Timestamp (from labels) + formatted value. */
 const tooltip = computed(() => {
   const idx = focusIndex.value;
   if (idx == null) return null;

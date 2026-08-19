@@ -28,6 +28,7 @@ import {
   Info,
   UserCog,
   SlidersHorizontal,
+  CircleArrowUp,
 } from "lucide-vue-next";
 
 /** A single navigable destination in the sidebar. */
@@ -120,6 +121,10 @@ export const NAV: NavSection[] = [
       { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read", "static:write"] },
       { name: "platform-logs", title: "Logs", path: "/platform/logs", icon: FileText, scopes: ["log:read", "log:admin"] },
       { name: "platform-notifications", title: "Notifications", path: "/platform/notifications", icon: Bell, scopes: ["notify:send"] },
+      // The route and the view have existed since agent rollouts shipped; the
+      // nav entry did not, and NAV is what builds the route table, so the whole
+      // surface was unreachable in a running console.
+      { name: "platform-agent-updates", title: "Agent Updates", path: "/platform/agent-updates", icon: CircleArrowUp, scopes: ["node:admin"] },
     ],
   },
   {

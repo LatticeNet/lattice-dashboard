@@ -31,7 +31,7 @@ import {
  */
 const props = withDefaults(
   defineProps<{
-    /** v-model:open — controls visibility. */
+    /** v-model:open. Controls visibility. */
     open: boolean;
     /** Dialog heading (pass a translated string). */
     title: string;
