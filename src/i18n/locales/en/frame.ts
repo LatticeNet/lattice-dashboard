@@ -83,6 +83,7 @@ export default {
       docs: "Guide",
     },
     status: {
+      neverReported: "never reported",
       active: "active",
       disabled: "disabled",
       revoked: "revoked",

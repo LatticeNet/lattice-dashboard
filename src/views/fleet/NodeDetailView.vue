@@ -65,7 +65,7 @@ import {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
-import { nodeStatusMeta } from "@/lib/status";
+import { hasNeverReported, nodeStatusMeta } from "@/lib/status";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -464,19 +464,12 @@ function touchUpdateDraft() {
 }
 
 /**
- * A node that has never checked in carries the server's zero time
- * ("0001-01-01T00:00:00Z"), which `formatRelativeTime` happily renders as a
- * six-figure number of days ago. Say "never checked in" instead: the whole
- * point of this console is that a node which has never reported must look like
- * one.
+ * Say "never checked in" rather than formatting the server's zero time, which
+ * renders as a six-figure number of days ago. The reading itself lives in
+ * `@/lib/status`; this used to be a private copy of it in each of three views.
  */
-const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
-
 function lastSeenText(node: Node): string {
-  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
-  if (!Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS) {
-    return t("fleet.nodes.list.neverSeen");
-  }
+  if (hasNeverReported(node)) return t("fleet.nodes.list.neverSeen");
   return t("fleet.nodes.list.lastSeen", { time: formatRelativeTime(node.last_seen) });
 }
 

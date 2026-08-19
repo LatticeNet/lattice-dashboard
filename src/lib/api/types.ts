@@ -175,6 +175,13 @@ export interface Node {
   internal_ipv6?: string;
   agent_version?: string;
   online: boolean;
+  /**
+   * What the control plane actually knows about contact: "online" | "offline"
+   * | "never". `online` cannot express the last one, so a node that has never
+   * reported is indistinguishable from one that died. Derive display state
+   * through `nodeHealth` in `@/lib/status` rather than reading either directly.
+   */
+  reachability?: "online" | "offline" | "never";
   disabled?: boolean;
   agent_source_allowlist?: string[];
   token_last_used_at?: string;

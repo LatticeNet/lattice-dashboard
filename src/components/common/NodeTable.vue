@@ -16,7 +16,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
 import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
-import { nodeStatusMeta } from "@/lib/status";
+import { hasNeverReported, nodeStatusMeta } from "@/lib/status";
 import { formatBytes, formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 import {
@@ -142,23 +142,27 @@ function isLive(node: Node): boolean {
  */
 function statusLabel(node: Node): string {
   if (node.disabled) return t("common.status.disabled");
-  const health = meta(node).dotStatus;
-  if (health === "degraded") return t("common.status.degraded");
-  return health === "online" ? t("common.status.online") : t("common.status.offline");
+  switch (meta(node).dotStatus) {
+    case "degraded":
+      return t("common.status.degraded");
+    case "online":
+      return t("common.status.online");
+    // Distinct from offline on purpose: this node was never finished, it did
+    // not break, and the two want different work from the operator.
+    case "never":
+      return t("common.status.neverReported");
+    default:
+      return t("common.status.offline");
+  }
 }
 
 /**
- * A node that has never checked in carries the server's zero time
- * ("0001-01-01T00:00:00Z"), which `formatRelativeTime` renders as a six-figure
- * number of days ago.
+ * Say "never checked in" rather than formatting the server's zero time, which
+ * renders as a six-figure number of days ago. The reading itself lives in
+ * `@/lib/status`; this used to be a private copy of it in each of three views.
  */
-const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
-
 function lastSeenLabel(node: Node): string {
-  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
-  if (!Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS) {
-    return t("fleet.nodes.list.neverSeen");
-  }
+  if (hasNeverReported(node)) return t("fleet.nodes.list.neverSeen");
   return formatRelativeTime(node.last_seen);
 }
 

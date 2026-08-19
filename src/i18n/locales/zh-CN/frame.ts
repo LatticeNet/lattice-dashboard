@@ -82,6 +82,7 @@ export default {
       docs: "指南",
     },
     status: {
+      neverReported: "从未上报",
       active: "活跃",
       disabled: "已停用",
       revoked: "已吊销",

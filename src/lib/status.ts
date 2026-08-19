@@ -15,7 +15,7 @@
 import type { BadgeVariants } from "@/components/ui/badge/badgeVariants";
 
 /** Health states understood by {@link StatusDot} (`src/components/common/StatusDot.vue`). */
-export type NodeHealth = "online" | "offline" | "degraded" | "pending" | "unknown";
+export type NodeHealth = "online" | "offline" | "never" | "degraded" | "pending" | "unknown";
 
 /** Real Badge variants. Mirrors {@link BadgeVariants} so it can never drift. */
 export type BadgeVariant = NonNullable<BadgeVariants["variant"]>;
@@ -78,6 +78,16 @@ const TREATMENT: Record<NodeHealth, StatusMeta> = {
     softBgClass: "bg-info/5 border-info/40",
     iconBgClass: "bg-info/10 text-info",
   },
+  never: {
+    // Deliberately not the destructive treatment offline carries. A node that
+    // has never reported is not a node that broke; it is one that was never
+    // finished. Outline reads as not-yet-established rather than as an alarm.
+    dotStatus: "never",
+    badgeVariant: "outline",
+    textClass: "text-muted-foreground",
+    softBgClass: "bg-muted/30 border-dashed border-border",
+    iconBgClass: "bg-muted text-muted-foreground",
+  },
   unknown: {
     dotStatus: "unknown",
     badgeVariant: "secondary",
@@ -103,6 +113,11 @@ export function statusMeta(health: NodeHealth): StatusMeta {
 export interface NodeHealthInput {
   online?: boolean;
   disabled?: boolean;
+  /**
+   * The control plane's own reading: "online" | "offline" | "never". Preferred
+   * over the `online` boolean, which cannot express "has never reported".
+   */
+  reachability?: string;
   last_seen?: string;
   metrics?: {
     cpu_percent?: number;
@@ -114,10 +129,40 @@ export interface NodeHealthInput {
 }
 
 /**
+ * The instant before which a timestamp cannot be a real contact time. The API
+ * sends `last_seen` unconditionally, so a node that has never beaten arrives
+ * carrying the zero time rather than an absent field, and formatting that
+ * directly renders the year 1.
+ */
+const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
+
+/**
+ * Whether we positively know this node has never reported.
+ *
+ * Only evidence counts. `reachability` is the control plane's own answer and
+ * wins when present; behind it, a `last_seen` that is present but sits at the
+ * zero time says the same thing, and that is the sentinel three views each
+ * carried a private copy of.
+ *
+ * A missing `last_seen` is not evidence. Several callers derive health from a
+ * partial shape that never carried a contact time at all, and treating absence
+ * as proof would relabel every one of them.
+ */
+export function hasNeverReported(node: NodeHealthInput): boolean {
+  if (node.reachability) return node.reachability === "never";
+  if (node.last_seen === undefined) return false;
+  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
+  return !Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS;
+}
+
+/**
  * Derive a node's health.
  *
  * Rules (in order):
  *  - `disabled` -> `"offline"` (an operator-disabled node is treated as down).
+ *  - has never reported -> `"never"`. The control plane says so via
+ *    `reachability`; against an older payload it is read off `last_seen`, which
+ *    arrives as the zero time for a node that has never beaten.
  *  - `online === false` -> `"offline"`.
  *  - `online === true`:
  *      - degraded when any core resource is critically saturated
@@ -132,6 +177,7 @@ export interface NodeHealthInput {
  */
 export function nodeHealth(node: NodeHealthInput): NodeHealth {
   if (node.disabled) return "offline";
+  if (hasNeverReported(node)) return "never";
   if (node.online === false) return "offline";
   if (node.online === true) {
     return isDegraded(node.metrics) ? "degraded" : "online";
