@@ -425,6 +425,27 @@ export default {
           proxyDriftCleared: "代理漂移缓存",
         },
       },
+      bulk: {
+        selectAllVisible: "全选当前列表",
+        selectRow: "选择 {name}",
+        selected: "已选 {count} 个",
+        hiddenByFilter: "其中 {count} 个被当前筛选隐藏",
+        clear: "清除选择",
+        running: "执行中:{done} / {total}",
+        stateDisabled: "停用",
+        stateEnabled: "启用",
+        nothingToDo: "无需操作:所选的 {count} 个节点已经处于{state}状态。",
+        doneDisabled: "已停用 {count} 个节点",
+        doneEnabled: "已启用 {count} 个节点",
+        partialTitle: "{total} 个节点中有 {done} 个已变更",
+        failedTitle: "{total} 个节点全部未变更",
+        failedHint: "下列节点仍保持选中,可直接重试。",
+        unchangedNote: "另有 {count} 个已经处于{state}状态,未做改动。",
+        missingNote: "有 {count} 个所选节点已不在集群中。",
+        confirmDisableTitle: "停用 {count} 个节点",
+        confirmDisableDescription:
+          "要在所选的 {selected} 个节点中停用 {count} 个吗?它们会停止接收任务,直到再次启用。已经停用的节点不会被改动。",
+      },
       confirm: {
         rotateTitle: "轮换接入令牌",
         rotateDescription:

@@ -15,6 +15,8 @@ import {
   Plus,
   Power,
   RefreshCw,
+  CircleAlert,
+  CheckSquare,
   RotateCw,
   Search,
   Server,
@@ -49,6 +51,17 @@ import NodeCard from "@/components/common/NodeCard.vue";
 import NodeTable from "@/components/common/NodeTable.vue";
 import TableColumnManager from "@/components/common/TableColumnManager.vue";
 import {
+  nameList,
+  planBulkDisable,
+  pruneSelection,
+  selectionHeaderState,
+  setSelected,
+  summarizeBulk,
+  toggleSelected,
+  type BulkOutcome,
+} from "./fleetBulkModel";
+import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
+import {
   NODE_TABLE_COLUMNS,
   nextSortState,
   parseHiddenColumns,
@@ -61,6 +74,7 @@ import {
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import { Checkbox } from "@/components/ui/checkbox";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -489,6 +503,23 @@ function nodeGroups(node: Node) {
   });
 }
 
+/**
+ * A node that has never checked in carries the server's zero time
+ * ("0001-01-01T00:00:00Z"), which `formatRelativeTime` happily renders as a
+ * six-figure number of days ago. Say "never checked in" instead: the whole
+ * point of this console is that a node which has never reported must look like
+ * one.
+ */
+const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
+
+function lastSeenText(node: Node): string {
+  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
+  if (!Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS) {
+    return t("fleet.nodes.list.neverSeen");
+  }
+  return t("fleet.nodes.list.lastSeen", { time: formatRelativeTime(node.last_seen) });
+}
+
 function nodeUpdatePolicy(node: Node): AgentUpdatePolicy | undefined {
   return updatePolicies.value.find((p) => p.node_id === node.id);
 }
@@ -693,6 +724,147 @@ async function applyDisabled(node: Node, disabled: boolean) {
   } finally {
     pendingNode.value = undefined;
   }
+}
+
+/* ── Fleet selection and bulk enable/disable ─────────────────────────────── */
+/**
+ * Disabling six nodes was six trips through a per-row menu. Selection spans
+ * both view modes and every group, and survives filtering: narrowing the list
+ * hides rows, it does not silently drop what the operator already picked. The
+ * bar says when part of the selection is out of sight.
+ *
+ * The batch itself is the careful part. It never claims work it did not do,
+ * it runs every item to completion instead of stopping at the first failure,
+ * and what failed stays selected so a retry is one click.
+ */
+const selectedIds = ref<Set<string>>(new Set());
+const bulkRunning = ref(false);
+const bulkProgress = ref({ done: 0, total: 0 });
+
+interface BulkReport extends BulkOutcome<Node> {
+  /** The direction that was asked for; drives the wording. */
+  disabled: boolean;
+  /** Selected nodes already in that state, so no call was made for them. */
+  unchanged: number;
+  /** Selected ids that had left the fleet by the time the batch ran. */
+  missing: number;
+}
+const bulkReport = ref<BulkReport | undefined>(undefined);
+
+/** Ids the current filter actually shows, in display order. */
+const visibleIds = computed(() => sortedNodes.value.map((node) => node.id));
+const selectedCount = computed(() => selectedIds.value.size);
+const allVisibleState = computed(() => selectionHeaderState(selectedIds.value, visibleIds.value));
+/** Part of the selection sits behind the current filter; the bar has to say so. */
+const selectedHiddenCount = computed(() => {
+  const visible = new Set(visibleIds.value);
+  let hidden = 0;
+  for (const id of selectedIds.value) if (!visible.has(id)) hidden += 1;
+  return hidden;
+});
+
+// A node deleted elsewhere must not linger in the selection and be acted on.
+watch(nodes, (list) => {
+  const pruned = pruneSelection(selectedIds.value, list.map((node) => node.id));
+  if (pruned.size !== selectedIds.value.size) selectedIds.value = pruned;
+});
+
+function toggleSelect(nodeId: string) {
+  selectedIds.value = toggleSelected(selectedIds.value, nodeId);
+}
+
+function toggleSelectMany(nodeIds: string[], on: boolean) {
+  selectedIds.value = setSelected(selectedIds.value, nodeIds, on);
+}
+
+function clearSelection() {
+  selectedIds.value = new Set();
+  bulkReport.value = undefined;
+}
+
+const bulkDisableOpen = ref(false);
+
+/**
+ * Disabling is destructive and is confirmed; re-enabling runs straight away.
+ *
+ * A selection that would change nothing skips the dialog: asking an operator
+ * to confirm "disable 0 nodes" is a prompt with no decision in it. runBulk
+ * says what is actually the case instead.
+ */
+function requestBulk(disabled: boolean) {
+  if (!canAdminNodes.value || bulkRunning.value) return;
+  if (disabled && bulkDisableCount.value > 0) {
+    bulkDisableOpen.value = true;
+    return;
+  }
+  void runBulk(disabled);
+}
+
+function confirmBulkDisable() {
+  bulkDisableOpen.value = false;
+  void runBulk(true);
+}
+
+/** How many of the selected nodes the requested change would actually touch. */
+const bulkDisableCount = computed(() => planBulkDisable(nodes.value, selectedIds.value, true).targets.length);
+
+async function runBulk(disabled: boolean) {
+  const plan = planBulkDisable(nodes.value, selectedIds.value, disabled);
+  bulkReport.value = undefined;
+
+  // Nothing to call. Say that plainly rather than flash a success toast for
+  // work that never happened.
+  if (plan.targets.length === 0) {
+    toast.info(
+      t("fleet.nodes.bulk.nothingToDo", {
+        count: plan.unchanged.length,
+        state: disabled ? t("fleet.nodes.bulk.stateDisabled") : t("fleet.nodes.bulk.stateEnabled"),
+      }),
+    );
+    return;
+  }
+
+  bulkRunning.value = true;
+  bulkProgress.value = { done: 0, total: plan.targets.length };
+  try {
+    const results = await runWithConcurrency(
+      plan.targets,
+      4,
+      (node) => api.nodes.disable(node.id, disabled),
+      (done, total) => {
+        bulkProgress.value = { done, total };
+      },
+    );
+    const { succeeded, failed } = partitionBatchResults(plan.targets, results);
+    const outcome = summarizeBulk(succeeded, failed);
+    // Keep only what failed selected, so retry is one click and a clean run
+    // leaves an empty bar rather than a stale one.
+    selectedIds.value = new Set(outcome.retryIds);
+    if (outcome.kind === "all") {
+      toast.success(
+        disabled
+          ? t("fleet.nodes.bulk.doneDisabled", { count: outcome.succeeded.length })
+          : t("fleet.nodes.bulk.doneEnabled", { count: outcome.succeeded.length }),
+      );
+    }
+    // A partial or total failure gets a panel, not a toast that scrolls away.
+    if (outcome.kind !== "all") {
+      bulkReport.value = {
+        ...outcome,
+        disabled,
+        unchanged: plan.unchanged.length,
+        missing: plan.missing.length,
+      };
+    }
+  } finally {
+    bulkRunning.value = false;
+    nodesQuery.refresh();
+  }
+}
+
+/** "fra-edge-01, ams-relay-02 and 3 more" for the failure panel heading. */
+function failedNames(report: BulkReport): { names: string; extra: number } {
+  return nameList(report.failed.map((entry) => entry.item), 3);
 }
 
 function openTerminal(node: Node) {
@@ -1179,10 +1351,101 @@ function openTerminal(node: Node) {
           </div>
 
           <div class="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{{ $t('fleet.nodes.filters.showing', { shown: sortedNodes.length, total: nodes.length }) }}</span>
+            <div class="flex items-center gap-2">
+              <label v-if="canAdminNodes && sortedNodes.length > 0" class="flex items-center gap-2">
+                <Checkbox
+                  :model-value="allVisibleState"
+                  :aria-label="$t('fleet.nodes.bulk.selectAllVisible')"
+                  @update:model-value="(value) => toggleSelectMany(visibleIds, value === true)"
+                />
+                <span>{{ $t('fleet.nodes.bulk.selectAllVisible') }}</span>
+              </label>
+              <span>{{ $t('fleet.nodes.filters.showing', { shown: sortedNodes.length, total: nodes.length }) }}</span>
+            </div>
             <Button v-if="hasFilters" variant="ghost" size="sm" class="h-7 px-2 text-xs" @click="clearFilters">
               <X class="size-3.5" aria-hidden="true" />
               {{ $t('fleet.nodes.filters.clear') }}
+            </Button>
+          </div>
+        </div>
+
+        <!-- Bulk bar. Present only while something is selected, and it names
+             what the next action would really touch, not the selection size. -->
+        <div
+          v-if="canAdminNodes && selectedCount > 0"
+          class="sticky top-0 z-20 mb-3 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm"
+        >
+          <CheckSquare class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span class="font-medium tabular-nums">{{ $t('fleet.nodes.bulk.selected', { count: selectedCount }) }}</span>
+          <span v-if="selectedHiddenCount > 0" class="text-xs text-muted-foreground">
+            {{ $t('fleet.nodes.bulk.hiddenByFilter', { count: selectedHiddenCount }) }}
+          </span>
+          <span v-if="bulkRunning" class="text-xs tabular-nums text-muted-foreground">
+            {{ $t('fleet.nodes.bulk.running', { done: bulkProgress.done, total: bulkProgress.total }) }}
+          </span>
+          <div class="ms-auto flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" :disabled="bulkRunning" @click="requestBulk(false)">
+              <Power class="size-4" aria-hidden="true" />
+              {{ $t('common.actions.enable') }}
+            </Button>
+            <Button size="sm" variant="destructive" :disabled="bulkRunning" @click="requestBulk(true)">
+              <Power class="size-4" aria-hidden="true" />
+              {{ $t('common.actions.disable') }}
+            </Button>
+            <Button size="sm" variant="ghost" :disabled="bulkRunning" @click="clearSelection">
+              <X class="size-4" aria-hidden="true" />
+              {{ $t('fleet.nodes.bulk.clear') }}
+            </Button>
+          </div>
+        </div>
+
+        <!-- What a batch actually did, when it did not all work. Stays on the
+             page rather than scrolling away as a toast, names every node that
+             refused and why, and those nodes are still selected. -->
+        <div
+          v-if="bulkReport"
+          class="mb-3 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm"
+          role="status"
+        >
+          <div class="flex items-start gap-2">
+            <CircleAlert class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
+            <div class="min-w-0 flex-1">
+              <p class="font-medium">
+                {{
+                  bulkReport.kind === 'partial'
+                    ? $t('fleet.nodes.bulk.partialTitle', {
+                        done: bulkReport.succeeded.length,
+                        total: bulkReport.succeeded.length + bulkReport.failed.length,
+                      })
+                    : $t('fleet.nodes.bulk.failedTitle', { total: bulkReport.failed.length })
+                }}
+              </p>
+              <p class="mt-0.5 text-xs text-muted-foreground">
+                {{ $t('fleet.nodes.bulk.failedHint') }}
+                <template v-if="bulkReport.unchanged > 0">
+                  {{ $t('fleet.nodes.bulk.unchangedNote', {
+                    count: bulkReport.unchanged,
+                    state: bulkReport.disabled ? $t('fleet.nodes.bulk.stateDisabled') : $t('fleet.nodes.bulk.stateEnabled'),
+                  }) }}
+                </template>
+                <template v-if="bulkReport.missing > 0">
+                  {{ $t('fleet.nodes.bulk.missingNote', { count: bulkReport.missing }) }}
+                </template>
+              </p>
+              <ul class="mt-2 space-y-1">
+                <li
+                  v-for="entry in bulkReport.failed"
+                  :key="entry.item.id"
+                  class="flex flex-wrap items-baseline gap-x-2 text-xs"
+                >
+                  <span class="font-medium">{{ entry.item.name || entry.item.id }}</span>
+                  <span class="min-w-0 text-muted-foreground">{{ entry.error }}</span>
+                </li>
+              </ul>
+            </div>
+            <Button size="sm" variant="ghost" @click="bulkReport = undefined">
+              <X class="size-4" aria-hidden="true" />
+              <span class="sr-only">{{ $t('common.actions.close') }}</span>
             </Button>
           </div>
         </div>
@@ -1200,7 +1463,7 @@ function openTerminal(node: Node) {
             <EmptyState
               :icon="Server"
               :title="$t('fleet.nodes.list.emptyTitle')"
-              :description="$t('fleet.nodes.list.emptyDescriptionAlt')"
+              :description="$t('fleet.nodes.list.emptyDescription')"
             >
               <Button v-if="canAdminNodes" size="sm" @click="focusEnroll">
                 <Plus class="size-4" aria-hidden="true" />
@@ -1268,8 +1531,12 @@ function openTerminal(node: Node) {
                   :offline-label="t('common.status.offline')"
                   :disabled-label="t('common.status.disabled')"
                   :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"
+                  :checkable="canAdminNodes"
+                  :checked="selectedIds.has(node.id)"
+                  :check-label="t('fleet.nodes.bulk.selectRow', { name: node.name || node.id })"
                   @select="openNode(node)"
                   @group-select="goToGroup"
+                  @toggle-check="toggleSelect(node.id)"
                 >
                   <template #footer="{ node: cardNode }">
                     <div class="mt-3 flex flex-wrap items-center gap-1.5">
@@ -1284,7 +1551,7 @@ function openTerminal(node: Node) {
                       <span v-if="agentBadges(cardNode).length === 0" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
                     </div>
                     <p class="mt-3 font-mono text-xs text-muted-foreground">
-                      {{ shortId(cardNode.id, 16) }} · {{ $t('fleet.nodes.list.lastSeen', { time: formatRelativeTime(cardNode.last_seen) }) }}
+                      {{ shortId(cardNode.id, 16) }} · {{ lastSeenText(cardNode) }}
                     </p>
                     <div v-if="canOpenTerminal || canAdminNodes" class="mt-3 flex flex-wrap gap-2">
                       <Badge :variant="nodeUpdateVariant(cardNode)">
@@ -1327,11 +1594,15 @@ function openTerminal(node: Node) {
                   :can-admin-nodes="canAdminNodes"
                   :pending-node-id="pendingNode"
                   :update-policies="updatePolicies"
+                  :selectable="canAdminNodes"
+                  :selected-ids="selectedIds"
                   @open="openNode"
                   @terminal="openTerminal"
                   @rotate="rotateToken"
                   @set-disabled="setDisabled"
                   @toggle-sort="toggleTableSort"
+                  @toggle-select="toggleSelect"
+                  @toggle-select-all="toggleSelectMany"
                 />
               </div>
             </section>
@@ -1339,6 +1610,18 @@ function openTerminal(node: Node) {
         </DataState>
       </CardContent>
     </Card>
+
+    <!-- The count is what the batch would really change, not the selection
+         size: picking six when two are already off is a four-node change. -->
+    <ConfirmDialog
+      v-model:open="bulkDisableOpen"
+      :title="$t('fleet.nodes.bulk.confirmDisableTitle', { count: bulkDisableCount })"
+      :description="$t('fleet.nodes.bulk.confirmDisableDescription', { count: bulkDisableCount, selected: selectedCount })"
+      :confirm-label="$t('common.actions.disable')"
+      :cancel-label="$t('common.actions.cancel')"
+      variant="destructive"
+      @confirm="confirmBulkDisable"
+    />
 
     <ConfirmDialog
       v-model:open="rotateOpen"

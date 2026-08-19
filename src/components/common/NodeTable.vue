@@ -25,7 +25,9 @@ import {
   type NodeSortState,
   type NodeTableColumn,
 } from "@/views/fleet/nodesTableModel";
+import { selectionHeaderState } from "@/views/fleet/fleetBulkModel";
 
+import { Checkbox } from "@/components/ui/checkbox";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +49,10 @@ const props = withDefaults(
     pendingNodeId?: string;
     /** Optional per-node agent update policies for the compact status column. */
     updatePolicies?: AgentUpdatePolicy[];
+    /** Render the leading selection column. */
+    selectable?: boolean;
+    /** Ids currently selected, across every group the caller renders. */
+    selectedIds?: ReadonlySet<string>;
   }>(),
   {
     hiddenColumns: () => new Set<string>(),
@@ -55,6 +61,8 @@ const props = withDefaults(
     canAdminNodes: false,
     pendingNodeId: undefined,
     updatePolicies: () => [],
+    selectable: false,
+    selectedIds: () => new Set<string>(),
   },
 );
 
@@ -69,12 +77,28 @@ const emit = defineEmits<{
   (e: "set-disabled", node: Node, disabled: boolean): void;
   /** Sortable header activated. Caller advances its sort-state machine. */
   (e: "toggle-sort", columnId: string): void;
+  /** One row's selection checkbox changed. */
+  (e: "toggle-select", nodeId: string): void;
+  /** The header checkbox changed: every row this table renders takes `on`. */
+  (e: "toggle-select-all", nodeIds: string[], on: boolean): void;
 }>();
 
 const { t } = useI18n();
 
 const columns = computed(() => visibleColumns(props.hiddenColumns));
-const gridStyle = computed(() => ({ gridTemplateColumns: gridTemplate(props.hiddenColumns) }));
+/** The selection column is a fixed leading track, so hiding columns still works. */
+const SELECT_TRACK = "36px";
+const gridStyle = computed(() => ({
+  gridTemplateColumns: props.selectable
+    ? `${SELECT_TRACK} ${gridTemplate(props.hiddenColumns)}`
+    : gridTemplate(props.hiddenColumns),
+}));
+
+const rowIds = computed(() => props.nodes.map((node) => node.id));
+const allSelected = computed(() => selectionHeaderState(props.selectedIds, rowIds.value));
+function isSelected(node: Node): boolean {
+  return props.selectedIds.has(node.id);
+}
 /** The min width shrinks as columns are hidden: roughly the sum of fixed
  *  tracks plus room for the flexible ones. */
 const minWidth = computed(() => {
@@ -84,6 +108,7 @@ const minWidth = computed(() => {
     if (fixed) px += Number(fixed[1]);
     else px += 200;
   }
+  if (props.selectable) px += 36 + 12;
   return `${px + (columns.value.length - 1) * 12 + 24}px`;
 });
 
@@ -110,9 +135,31 @@ function isLive(node: Node): boolean {
   return !!node.online && !node.disabled;
 }
 
+/**
+ * The badge text now follows the same health the dot and the badge colour
+ * already follow. A node pinned at 95% disk used to draw a warning-tinted badge
+ * that still read "online".
+ */
 function statusLabel(node: Node): string {
   if (node.disabled) return t("common.status.disabled");
-  return node.online ? t("common.status.online") : t("common.status.offline");
+  const health = meta(node).dotStatus;
+  if (health === "degraded") return t("common.status.degraded");
+  return health === "online" ? t("common.status.online") : t("common.status.offline");
+}
+
+/**
+ * A node that has never checked in carries the server's zero time
+ * ("0001-01-01T00:00:00Z"), which `formatRelativeTime` renders as a six-figure
+ * number of days ago.
+ */
+const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
+
+function lastSeenLabel(node: Node): string {
+  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
+  if (!Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS) {
+    return t("fleet.nodes.list.neverSeen");
+  }
+  return formatRelativeTime(node.last_seen);
 }
 
 function statusVariant(node: Node): ReturnType<typeof meta>["badgeVariant"] {
@@ -162,6 +209,16 @@ function ipTooltip(node: Node): string {
 function onOpen(node: Node): void {
   emit("open", node);
 }
+
+/**
+ * Enter or Space on the row opens the node, but only when the row itself has
+ * focus. Without the guard, keyboard use of the selection checkbox or a
+ * per-row action button would also navigate away.
+ */
+function onRowKey(node: Node, event: KeyboardEvent): void {
+  if (event.target !== event.currentTarget) return;
+  emit("open", node);
+}
 </script>
 
 <template>
@@ -173,6 +230,13 @@ function onOpen(node: Node): void {
         :style="gridStyle"
         role="row"
       >
+        <span v-if="selectable" class="flex items-center">
+          <Checkbox
+            :model-value="allSelected"
+            :aria-label="$t('fleet.nodes.bulk.selectAllVisible')"
+            @update:model-value="(value) => emit('toggle-select-all', rowIds, value === true)"
+          />
+        </span>
         <template v-for="column in columns" :key="column.id">
           <button
             v-if="column.sortKey"
@@ -209,10 +273,21 @@ function onOpen(node: Node): void {
         role="button"
         :tabindex="0"
         :aria-label="node.name || node.id"
+        :aria-selected="selectable ? isSelected(node) : undefined"
         @click="onOpen(node)"
-        @keydown.enter.prevent="onOpen(node)"
-        @keydown.space.prevent="onOpen(node)"
+        @keydown.enter.prevent="onRowKey(node, $event)"
+        @keydown.space.prevent="onRowKey(node, $event)"
       >
+        <!-- Selection. Stops both click and key so the checkbox can be used
+             without the row's open-node handler firing underneath it. -->
+        <span v-if="selectable" class="flex items-center" @click.stop @keydown.stop>
+          <Checkbox
+            :model-value="isSelected(node)"
+            :aria-label="$t('fleet.nodes.bulk.selectRow', { name: node.name || node.id })"
+            @update:model-value="emit('toggle-select', node.id)"
+          />
+        </span>
+
         <!-- Name + status dot -->
         <div class="flex min-w-0 items-center gap-2">
           <StatusDot :online="isLive(node)" :pulse="isLive(node)" />
@@ -301,7 +376,7 @@ function onOpen(node: Node): void {
 
         <!-- Last seen -->
         <span v-if="show('lastSeen')" class="text-xs text-muted-foreground tabular">{{
-          formatRelativeTime(node.last_seen)
+          lastSeenLabel(node)
         }}</span>
 
         <!-- Agent update mode -->

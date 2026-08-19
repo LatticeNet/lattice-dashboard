@@ -49,6 +49,7 @@ import { useMetricBuffer, type MetricKey } from "@/composables/useMetricBuffer";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 /** A group chip shown near the role/tag badges; clicking emits `group-select`. */
 export interface NodeCardGroup {
@@ -94,6 +95,13 @@ const props = withDefaults(
     sparklineMetric?: MetricKey;
     /** Make the name a button that emits `select` (keeps cards keyboard-reachable). */
     selectable?: boolean;
+    /** Render the multi-select checkbox in the header. Distinct from `selectable`,
+     *  which only means "this card is clickable". */
+    checkable?: boolean;
+    /** Whether this card is part of the current multi-selection. */
+    checked?: boolean;
+    /** Accessible label for the multi-select checkbox. */
+    checkLabel?: string;
     /** Labels (English defaults; pass translated strings from a caller). */
     cpuLabel?: string;
     memoryLabel?: string;
@@ -114,6 +122,9 @@ const props = withDefaults(
     showSparkline: false,
     sparklineMetric: "cpu",
     selectable: true,
+    checkable: false,
+    checked: false,
+    checkLabel: "Select node",
     cpuLabel: "CPU",
     memoryLabel: "Memory",
     diskLabel: "Disk",
@@ -132,6 +143,8 @@ const emit = defineEmits<{
   (e: "action", payload: { id: string; node: Node }): void;
   /** A group chip was clicked. Caller routes to the group (keeps nav ownership). */
   (e: "group-select", id: string): void;
+  /** The multi-select checkbox was toggled. */
+  (e: "toggle-check", node: Node): void;
 }>();
 
 /** Real, derived visual treatment (drives the dot colour + the status badge). */
@@ -214,6 +227,15 @@ const sparkPoints = computed(() => {
 /** Colour-track the metric: percent uses node health, net uses a neutral accent. */
 const sparkClass = computed(() => (isNetMetric.value ? "text-primary" : meta.value.textClass));
 
+/**
+ * Enter or Space opens the node, but only when the card itself has focus, so
+ * keyboard use of the selection checkbox does not also navigate away.
+ */
+function onCardKey(event: KeyboardEvent): void {
+  if (event.target !== event.currentTarget) return;
+  onSelect();
+}
+
 function onSelect() {
   emit("select", props.node);
 }
@@ -231,7 +253,10 @@ function onGroup(id: string) {
   <div
     :class="
       cn(
-        'rounded-lg border border-border bg-background/40 transition-colors',
+        // A container, so the header can stack on the card's own width rather
+        // than the viewport's: these cards are narrow in the Overview grid at
+        // 1440 too, not only on a phone.
+        '@container rounded-lg border border-border bg-background/40 transition-colors',
         compact ? 'p-3' : 'p-4',
         isLive ? 'hover:bg-muted/40' : 'opacity-60',
         selectable &&
@@ -242,13 +267,24 @@ function onGroup(id: string) {
     :role="selectable ? 'button' : undefined"
     :tabindex="selectable ? 0 : undefined"
     :aria-label="selectable ? displayName : undefined"
+    :aria-selected="checkable ? checked : undefined"
     @click="selectable && onSelect()"
-    @keydown.enter.prevent="selectable && onSelect()"
-    @keydown.space.prevent="selectable && onSelect()"
+    @keydown.enter.prevent="selectable && onCardKey($event)"
+    @keydown.space.prevent="selectable && onCardKey($event)"
   >
-    <!-- Header -->
-    <div class="flex items-start justify-between gap-2">
-      <div class="min-w-0">
+    <!-- Header. Below ~384px of card width the badges drop under the name
+         instead of squeezing it to an ellipsis and overflowing the card. -->
+    <div class="flex flex-col gap-2 @sm:flex-row @sm:items-start @sm:justify-between">
+      <div class="flex min-w-0 items-start gap-2">
+        <!-- Stops click and key so the checkbox works without opening the node. -->
+        <span v-if="checkable" class="mt-0.5 flex items-center" @click.stop @keydown.stop>
+          <Checkbox
+            :model-value="checked"
+            :aria-label="checkLabel"
+            @update:model-value="emit('toggle-check', node)"
+          />
+        </span>
+        <div class="min-w-0">
         <div class="flex min-w-0 items-center gap-2 font-medium">
           <StatusDot :online="isLive" :pulse="isLive" />
           <span class="truncate">{{ displayName }}</span>
@@ -261,8 +297,9 @@ function onGroup(id: string) {
           <template v-if="node.host_facts.os"> · {{ node.host_facts.os }}</template>
           <template v-if="node.host_facts.arch"> · {{ node.host_facts.arch }}</template>
         </p>
+        </div>
       </div>
-      <div class="flex shrink-0 flex-wrap justify-end gap-1">
+      <div class="flex min-w-0 flex-wrap gap-1 @sm:shrink-0 @sm:justify-end">
         <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
