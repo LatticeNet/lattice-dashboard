@@ -8,6 +8,7 @@ import {
   Play,
   Power,
   RefreshCw,
+  ShieldAlert,
   ShieldCheck,
 } from "lucide-vue-next";
 import {
@@ -39,6 +40,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useRouteTab } from "@/composables/useRouteTab";
 import {
   Dialog,
   DialogDescription,
@@ -58,7 +60,15 @@ const {
   removeCachedPlugin,
 } = usePluginContributions();
 
-const tab = ref<"registered" | "lifecycle">(canAudit.value ? "registered" : "lifecycle");
+/**
+ * Tab lives in the URL so a lifecycle view can be linked to. The allowed set
+ * narrows with the operator's scopes: without audit:read the registered tab is
+ * not rendered, so a link to it resolves to lifecycle instead of a dead panel.
+ */
+const tab = useRouteTab<"registered" | "lifecycle">(
+  () => (canAudit.value ? ["registered", "lifecycle"] : ["lifecycle"]),
+  () => (canAudit.value ? "registered" : "lifecycle"),
+);
 
 // ── Registered plugins (audit:read) ────────────────────────────────────────
 const registeredQuery = useAsyncData(() => api.plugins.list(), {
@@ -294,6 +304,7 @@ async function runVerify() {
           </CardHeader>
           <CardContent>
             <DataTable
+              state-key="registered"
               :columns="registeredColumns"
               :rows="sortedRegistered"
               :row-key="(plugin) => plugin.id"
@@ -349,6 +360,7 @@ async function runVerify() {
           </CardHeader>
           <CardContent>
             <DataTable
+              state-key="lifecycle"
               v-if="canAdmin"
               :columns="lifecycleColumns"
               :rows="sortedLifecycle"
@@ -481,11 +493,31 @@ async function runVerify() {
             <p class="text-xs text-muted-foreground">{{ $t('platform.plugins.verifyBothRequired') }}</p>
           </div>
 
-          <div v-if="verifyResult" class="space-y-4 rounded-md border border-success/40 bg-success/5 p-4">
+          <!--
+            The verify endpoint hard-codes trusted:true on its success path and
+            returns an HTTP error otherwise, so `verifyResult.trusted` says
+            nothing an operator can act on. What it does say is whether a
+            signing key was checked: VerifyManifest only reaches the signature
+            branch when the manifest names a publisher, so a publisher on an
+            accepted manifest means a trusted publisher's signature verified,
+            and no publisher means no key was checked at all.
+          -->
+          <div
+            v-if="verifyResult"
+            :class="cn(
+              'space-y-4 rounded-md border p-4',
+              verifyResult.manifest.publisher ? 'border-success/40 bg-success/5' : 'border-warning/40 bg-warning/5',
+            )"
+          >
             <div class="flex flex-wrap items-center gap-2">
-              <Badge variant="success" class="gap-1.5">
-                <ShieldCheck aria-hidden="true" class="size-3.5" />
-                {{ verifyResult.trusted ? $t('platform.plugins.trusted') : $t('platform.plugins.untrusted') }}
+              <Badge :variant="verifyResult.manifest.publisher ? 'success' : 'warning'" class="gap-1.5">
+                <ShieldCheck v-if="verifyResult.manifest.publisher" aria-hidden="true" class="size-3.5" />
+                <ShieldAlert v-else aria-hidden="true" class="size-3.5" />
+                {{
+                  verifyResult.manifest.publisher
+                    ? $t('platform.plugins.signedBy', { publisher: verifyResult.manifest.publisher })
+                    : $t('platform.plugins.unsigned')
+                }}
               </Badge>
               <Badge variant="outline">{{ verifyResult.manifest.type }}</Badge>
               <span class="text-sm font-medium">{{ verifyResult.manifest.name || verifyResult.manifest.id }}</span>
