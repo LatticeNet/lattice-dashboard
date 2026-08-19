@@ -75,6 +75,10 @@ export const useNavShortcutsStore = defineStore("navShortcuts", () => {
   }
 
   function setCollapsedSections(next: Set<string>) {
+    // Reconciliation runs on every navigation and usually finds nothing to
+    // change. localStorage writes are synchronous, so a no-op stays a no-op.
+    const current = collapsedSections.value;
+    if (current.size === next.size && [...next].every((id) => current.has(id))) return;
     collapsedSections.value = next;
     writeStringList(COLLAPSED_KEY, [...next]);
   }
