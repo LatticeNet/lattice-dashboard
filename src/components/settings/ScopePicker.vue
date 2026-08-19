@@ -186,21 +186,29 @@ const sensitiveChosen = computed(() =>
       </section>
     </div>
 
-    <!-- What the selection can actually do, before it is issued. -->
+    <!--
+      What the selection can actually do, before it is issued. Scope names per
+      resource rather than concatenated descriptions: joining every sentence
+      produced a wall that was harder to check than the checkboxes above it,
+      which defeats the point of a summary.
+    -->
     <div v-if="summary.length" class="rounded-md border border-border bg-muted/30 px-3 py-2">
-      <p class="text-xs font-semibold">This grant allows</p>
-      <ul class="mt-1 grid gap-1">
-        <li v-for="bucket in summary" :key="bucket.label" class="text-xs">
-          <span class="font-medium">{{ bucket.label }}:</span>
-          <span class="text-muted-foreground">
-            {{ bucket.entries.map((entry) => entry.grants).join(" ") }}
+      <p class="text-xs font-semibold">
+        This grant reaches {{ summary.length }} resource{{ summary.length === 1 ? "" : "s" }}
+      </p>
+      <ul class="mt-1.5 grid gap-1">
+        <li v-for="bucket in summary" :key="bucket.label" class="flex flex-wrap items-baseline gap-x-2 text-xs">
+          <span class="font-medium">{{ bucket.label }}</span>
+          <span class="font-mono text-muted-foreground">
+            {{ bucket.entries.map((entry) => entry.scope).join(", ") }}
           </span>
         </li>
       </ul>
-      <p v-if="sensitiveChosen.length" class="mt-2 text-xs">
-        <span class="font-medium">{{ sensitiveChosen.length }} sensitive</span>
-        <span class="text-muted-foreground">
-          scope{{ sensitiveChosen.length === 1 ? "" : "s" }} selected:
+      <p v-if="sensitiveChosen.length" class="mt-2 flex flex-wrap items-baseline gap-x-2 text-xs">
+        <span class="font-medium">
+          {{ sensitiveChosen.length }} sensitive scope{{ sensitiveChosen.length === 1 ? "" : "s" }}
+        </span>
+        <span class="font-mono text-muted-foreground">
           {{ sensitiveChosen.map((entry) => entry?.scope).join(", ") }}
         </span>
       </p>
