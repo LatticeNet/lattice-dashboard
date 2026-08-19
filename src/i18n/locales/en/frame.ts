@@ -85,6 +85,7 @@ export default {
     status: {
       active: "active",
       disabled: "disabled",
+      revoked: "revoked",
       enabled: "enabled",
       degraded: "degraded",
       pending: "pending",

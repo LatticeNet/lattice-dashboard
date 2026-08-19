@@ -84,6 +84,7 @@ export default {
     status: {
       active: "活跃",
       disabled: "已停用",
+      revoked: "已吊销",
       enabled: "已启用",
       degraded: "资源吃紧",
       pending: "待审批",
