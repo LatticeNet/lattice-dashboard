@@ -43,10 +43,14 @@ const recordsQuery = useAsyncData(() => api.publishing.records());
 const records = computed(() => sortRecords(recordsQuery.data.value?.records ?? []));
 const visibleOrigins = computed(() => recordsQuery.data.value?.origins ?? []);
 
-// An empty table means two very different things, and rendering the same empty
-// state for both would tell the operator the product is empty when in fact they
-// were not allowed to look.
-const nothingVisible = computed(() => visibleOrigins.value.length === 0);
+// An empty table means three different things, and only two of them are worth
+// distinguishing to the operator: nothing is published, or they are not allowed
+// to look. The third is that the request failed, and saying "you lack the
+// scopes" then would be a confident wrong answer over a failure. A failed or
+// not-yet-returned load falls through to the table, which owns the error and
+// loading states.
+const loaded = computed(() => recordsQuery.data.value !== undefined && !recordsQuery.error.value);
+const nothingVisible = computed(() => loaded.value && visibleOrigins.value.length === 0);
 
 const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
   { key: "route", label: t("platform.publishing.columnRoute"), searchable: true },
@@ -96,7 +100,7 @@ function stateVariant(record: PublishingRecord) {
       </CardHeader>
       <CardContent class="space-y-4">
         <p
-          v-if="nothingVisible && !recordsQuery.loading.value"
+          v-if="nothingVisible"
           class="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground"
         >
           <ShieldAlert aria-hidden="true" class="mt-0.5 size-4 shrink-0" />
