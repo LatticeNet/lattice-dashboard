@@ -15,6 +15,7 @@ import StorageAdminPanel from "@/components/platform/StorageAdminPanel.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -37,11 +38,11 @@ const auth = useAuthStore();
 const canRead = computed(() => auth.can("static:read"));
 const canWrite = computed(() => auth.can("static:write"));
 
-const bucket = ref("default");
-const activeBucket = ref("default");
+const namespace = ref("default");
+const activeNamespace = ref("default");
 
 const objectsQuery = useAsyncData(
-  () => api.static.list(activeBucket.value || "default"),
+  () => api.static.list(activeNamespace.value || "default"),
   { pollInterval: 0, immediate: canRead.value },
 );
 const objects = computed(() => objectsQuery.data.value ?? []);
@@ -57,8 +58,8 @@ const columns = computed<DataTableColumn<StaticObject>[]>(() => [
   { key: "actions", label: t("platform.static.colActions"), align: "right" },
 ]);
 
-function loadBucket() {
-  activeBucket.value = bucket.value.trim() || "default";
+function loadNamespace() {
+  activeNamespace.value = namespace.value.trim() || "default";
   if (canRead.value) objectsQuery.refresh();
 }
 
@@ -98,7 +99,7 @@ async function submitPut() {
   saving.value = true;
   try {
     await api.static.put({
-      bucket: activeBucket.value || "default",
+      bucket: activeNamespace.value || "default",
       path: putPath.value.trim(),
       content: putContent.value,
       content_type: putContentType.value.trim(),
@@ -121,9 +122,16 @@ async function submitPut() {
       :description="$t('platform.static.description')"
     >
       <template #actions>
-        <Button v-if="canRead" variant="outline" size="sm" :disabled="objectsQuery.refreshing.value" @click="objectsQuery.refresh">
+        <Button
+          v-if="canRead"
+          variant="outline"
+          size="sm"
+          :disabled="objectsQuery.refreshing.value"
+          :title="$t('platform.static.refreshObjectsHint')"
+          @click="objectsQuery.refresh"
+        >
           <RefreshCw aria-hidden="true" :class="cn('size-4', objectsQuery.refreshing.value && 'animate-spin')" />
-          {{ $t('common.actions.refresh') }}
+          {{ $t('platform.static.refreshObjects') }}
         </Button>
         <Button v-if="canWrite" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
@@ -136,11 +144,11 @@ async function submitPut() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <FolderOpen aria-hidden="true" class="size-4 text-muted-foreground" />
-          {{ $t('platform.static.bucketTitle') }}
+          {{ $t('platform.static.objectsTitle') }}
         </CardTitle>
         <CardDescription>
           <i18n-t keypath="platform.static.objectsIn" tag="span" scope="global">
-            <template #bucket><span class="font-mono">{{ activeBucket }}</span></template>
+            <template #namespace><span class="font-mono">{{ activeNamespace }}</span></template>
           </i18n-t>
           <span v-if="!canWrite" class="text-muted-foreground">
             <i18n-t keypath="platform.static.readOnlyHint" tag="span" scope="global">
@@ -148,15 +156,18 @@ async function submitPut() {
             </i18n-t>
           </span>
         </CardDescription>
+        <CardAction>
+          <form class="flex flex-wrap items-center gap-2" @submit.prevent="loadNamespace">
+            <Label for="static-namespace" class="text-xs font-normal text-muted-foreground">
+              {{ $t('platform.static.namespaceLabel') }}
+            </Label>
+            <Input id="static-namespace" v-model="namespace" class="h-8 w-40" placeholder="default" />
+            <Button type="submit" variant="outline" size="sm">{{ $t('platform.static.load') }}</Button>
+          </form>
+        </CardAction>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form class="flex flex-wrap items-end gap-2" @submit.prevent="loadBucket">
-          <div class="grid gap-2">
-            <Label for="static-bucket">{{ $t('platform.static.bucketLabel') }}</Label>
-            <Input id="static-bucket" v-model="bucket" class="w-64" placeholder="default" />
-          </div>
-          <Button type="submit" variant="outline">{{ $t('platform.static.load') }}</Button>
-        </form>
+        <p class="text-xs text-muted-foreground">{{ $t('platform.static.namespaceHint') }}</p>
 
         <DataTable
           v-if="canRead"
@@ -203,7 +214,7 @@ async function submitPut() {
       </CardContent>
     </Card>
 
-    <StorageAdminPanel kind="static" :active-bucket="activeBucket" />
+    <StorageAdminPanel kind="static" :active-namespace="activeNamespace" />
 
     <!-- Content preview dialog -->
     <Dialog :open="!!previewTarget" @update:open="(v) => { if (!v) previewTarget = undefined; }">
@@ -225,8 +236,8 @@ async function submitPut() {
         <DialogHeader>
           <DialogTitle>{{ editing ? $t('platform.static.editObject') : $t('platform.static.newObject') }}</DialogTitle>
           <DialogDescription>
-            <i18n-t keypath="platform.static.writingToBucketHint" tag="span" scope="global">
-              <template #bucket><span class="font-mono">{{ activeBucket }}</span></template>
+            <i18n-t keypath="platform.static.writingToNamespaceHint" tag="span" scope="global">
+              <template #namespace><span class="font-mono">{{ activeNamespace }}</span></template>
             </i18n-t>
           </DialogDescription>
         </DialogHeader>

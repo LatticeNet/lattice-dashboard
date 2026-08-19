@@ -15,6 +15,7 @@ import StorageAdminPanel from "@/components/platform/StorageAdminPanel.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -36,11 +37,11 @@ const auth = useAuthStore();
 const canRead = computed(() => auth.can("kv:read"));
 const canWrite = computed(() => auth.can("kv:write"));
 
-const bucket = ref("default");
-const activeBucket = ref("default");
+const namespace = ref("default");
+const activeNamespace = ref("default");
 
 const entriesQuery = useAsyncData(
-  () => api.kv.list(activeBucket.value || "default"),
+  () => api.kv.list(activeNamespace.value || "default"),
   { pollInterval: 0, immediate: canRead.value },
 );
 const entries = computed(() => entriesQuery.data.value ?? []);
@@ -60,8 +61,8 @@ const columns = computed<DataTableColumn<KVEntry>[]>(() => {
   return cols;
 });
 
-function loadBucket() {
-  activeBucket.value = bucket.value.trim() || "default";
+function loadNamespace() {
+  activeNamespace.value = namespace.value.trim() || "default";
   if (canRead.value) entriesQuery.refresh();
 }
 
@@ -105,7 +106,7 @@ async function submitPut() {
   saving.value = true;
   try {
     await api.kv.put({
-      bucket: activeBucket.value || "default",
+      bucket: activeNamespace.value || "default",
       key: putKey.value.trim(),
       value: putValue.value,
     });
@@ -127,9 +128,16 @@ async function submitPut() {
       :description="$t('platform.kv.description')"
     >
       <template #actions>
-        <Button v-if="canRead" variant="outline" size="sm" :disabled="entriesQuery.refreshing.value" @click="entriesQuery.refresh">
+        <Button
+          v-if="canRead"
+          variant="outline"
+          size="sm"
+          :disabled="entriesQuery.refreshing.value"
+          :title="$t('platform.kv.refreshEntriesHint')"
+          @click="entriesQuery.refresh"
+        >
           <RefreshCw aria-hidden="true" :class="cn('size-4', entriesQuery.refreshing.value && 'animate-spin')" />
-          {{ $t('common.actions.refresh') }}
+          {{ $t('platform.kv.refreshEntries') }}
         </Button>
         <Button v-if="canWrite" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
@@ -142,11 +150,11 @@ async function submitPut() {
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Database aria-hidden="true" class="size-4 text-muted-foreground" />
-          {{ $t('platform.kv.bucketTitle') }}
+          {{ $t('platform.kv.entriesTitle') }}
         </CardTitle>
         <CardDescription>
           <i18n-t keypath="platform.kv.entriesIn" tag="span" scope="global">
-            <template #bucket><span class="font-mono">{{ activeBucket }}</span></template>
+            <template #namespace><span class="font-mono">{{ activeNamespace }}</span></template>
           </i18n-t>
           <span v-if="!canWrite" class="text-muted-foreground">
             <i18n-t keypath="platform.kv.readOnlyHint" tag="span" scope="global">
@@ -154,15 +162,18 @@ async function submitPut() {
             </i18n-t>
           </span>
         </CardDescription>
+        <CardAction>
+          <form class="flex flex-wrap items-center gap-2" @submit.prevent="loadNamespace">
+            <Label for="kv-namespace" class="text-xs font-normal text-muted-foreground">
+              {{ $t('platform.kv.namespaceLabel') }}
+            </Label>
+            <Input id="kv-namespace" v-model="namespace" class="h-8 w-40" placeholder="default" />
+            <Button type="submit" variant="outline" size="sm">{{ $t('platform.kv.load') }}</Button>
+          </form>
+        </CardAction>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form class="flex flex-wrap items-end gap-2" @submit.prevent="loadBucket">
-          <div class="grid gap-2">
-            <Label for="kv-bucket">{{ $t('platform.kv.bucketLabel') }}</Label>
-            <Input id="kv-bucket" v-model="bucket" class="w-64" placeholder="default" />
-          </div>
-          <Button type="submit" variant="outline">{{ $t('platform.kv.load') }}</Button>
-        </form>
+        <p class="text-xs text-muted-foreground">{{ $t('platform.kv.namespaceHint') }}</p>
 
         <DataTable
           v-if="canRead"
@@ -224,7 +235,7 @@ async function submitPut() {
       </CardContent>
     </Card>
 
-    <StorageAdminPanel kind="kv" :active-bucket="activeBucket" />
+    <StorageAdminPanel kind="kv" :active-namespace="activeNamespace" />
 
     <!-- Put dialog -->
     <Dialog v-model:open="putOpen">
@@ -232,8 +243,8 @@ async function submitPut() {
         <DialogHeader>
           <DialogTitle>{{ editing ? $t('platform.kv.editEntry') : $t('platform.kv.newEntry') }}</DialogTitle>
           <DialogDescription>
-            <i18n-t keypath="platform.kv.writingToBucket" tag="span" scope="global">
-              <template #bucket><span class="font-mono">{{ activeBucket }}</span></template>
+            <i18n-t keypath="platform.kv.writingToNamespace" tag="span" scope="global">
+              <template #namespace><span class="font-mono">{{ activeNamespace }}</span></template>
             </i18n-t>
           </DialogDescription>
         </DialogHeader>

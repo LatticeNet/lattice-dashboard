@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -32,11 +32,21 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogScrollContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -49,7 +59,12 @@ import {
 
 const props = defineProps<{
   kind: StorageKind;
-  activeBucket?: string;
+  /**
+   * The namespace the page is currently reading. Used only to seed placeholders:
+   * a namespace and a registered bucket are separate things, so nothing here is
+   * pre-filled with it.
+   */
+  activeNamespace?: string;
 }>();
 
 const { t } = useI18n();
@@ -60,7 +75,11 @@ const canAdmin = computed(() => auth.can(`${props.kind}:admin`));
 const isStatic = computed(() => props.kind === "static");
 const scopeRead = computed(() => `${props.kind}:read`);
 const scopeAdmin = computed(() => `${props.kind}:admin`);
-const currentBucket = computed(() => props.activeBucket?.trim() || "default");
+const currentNamespace = computed(() => props.activeNamespace?.trim() || "default");
+/** "KV" or "Static", so every heading in this panel names the domain it owns. */
+const kindLabel = computed(() =>
+  isStatic.value ? t("platform.storage.kindStatic") : t("platform.storage.kindKv"),
+);
 
 const bucketsQuery = useAsyncData(
   () => {
@@ -105,6 +124,13 @@ const tokens = computed(() =>
   [...(tokensQuery.data.value?.tokens ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
 );
 
+const refreshing = computed(
+  () =>
+    bucketsQuery.refreshing.value ||
+    bindingsQuery.refreshing.value ||
+    tokensQuery.refreshing.value,
+);
+
 function refreshAdminData() {
   if (canRead.value) bucketsQuery.refresh();
   if (canAdmin.value) {
@@ -113,18 +139,23 @@ function refreshAdminData() {
   }
 }
 
-const bucketName = ref(currentBucket.value);
+// ── Bucket dialog ───────────────────────────────────────────────────────────
+const bucketOpen = ref(false);
+const bucketName = ref("");
 const bucketDisplayName = ref("");
 const bucketDescription = ref("");
-const bucketIndexDocument = ref("index.html");
-const bucketNotFoundDocument = ref("404.html");
+const bucketIndexDocument = ref("");
+const bucketNotFoundDocument = ref("");
 const bucketSaving = ref(false);
 
-watch(currentBucket, (bucket) => {
-  if (!bucketName.value || bucketName.value === "default") {
-    bucketName.value = bucket;
-  }
-});
+function openBucketDialog() {
+  bucketName.value = "";
+  bucketDisplayName.value = "";
+  bucketDescription.value = "";
+  bucketIndexDocument.value = "";
+  bucketNotFoundDocument.value = "";
+  bucketOpen.value = true;
+}
 
 const canSubmitBucket = computed(() => canAdmin.value && !!bucketName.value.trim());
 
@@ -136,10 +167,13 @@ async function submitBucket() {
       name: bucketName.value.trim(),
       display_name: bucketDisplayName.value.trim() || undefined,
       description: bucketDescription.value.trim() || undefined,
-      index_document: isStatic.value ? bucketIndexDocument.value.trim() || "index.html" : undefined,
-      not_found_document: isStatic.value ? bucketNotFoundDocument.value.trim() || undefined : undefined,
+      index_document: isStatic.value ? bucketIndexDocument.value.trim() || undefined : undefined,
+      not_found_document: isStatic.value
+        ? bucketNotFoundDocument.value.trim() || undefined
+        : undefined,
     });
     toast.success(t("platform.storage.bucketSaved"));
+    bucketOpen.value = false;
     refreshAdminData();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.bucketSaveFailed"));
@@ -148,18 +182,22 @@ async function submitBucket() {
   }
 }
 
-const bindingBucket = ref(currentBucket.value);
+// ── Binding dialog ──────────────────────────────────────────────────────────
+const bindingOpen = ref(false);
+const bindingBucket = ref("");
 const bindingHostname = ref("");
 const bindingPrefix = ref("");
 const bindingEnabled = ref(true);
 const bindingSaving = ref(false);
 const deletingBindingId = ref("");
 
-watch(currentBucket, (bucket) => {
-  if (!bindingBucket.value || bindingBucket.value === "default") {
-    bindingBucket.value = bucket;
-  }
-});
+function openBindingDialog() {
+  bindingBucket.value = "";
+  bindingHostname.value = "";
+  bindingPrefix.value = "";
+  bindingEnabled.value = true;
+  bindingOpen.value = true;
+}
 
 const canSubmitBinding = computed(
   () => canAdmin.value && !!bindingBucket.value.trim() && !!bindingHostname.value.trim(),
@@ -176,8 +214,7 @@ async function submitBinding() {
       enabled: bindingEnabled.value,
     });
     toast.success(t("platform.storage.bindingSaved"));
-    bindingHostname.value = "";
-    bindingPrefix.value = "";
+    bindingOpen.value = false;
     if (canRead.value) bindingsQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.bindingSaveFailed"));
@@ -199,18 +236,21 @@ async function deleteBinding(binding: StorageBinding) {
   }
 }
 
+// ── Token dialog ────────────────────────────────────────────────────────────
+const tokenOpen = ref(false);
 const tokenName = ref("");
 const tokenAccess = ref<StorageAccess>("read");
-const tokenBucketsText = ref(currentBucket.value);
+const tokenBucketsText = ref("");
 const tokenSaving = ref(false);
 const createdToken = ref<StorageTokenCreateResponse | undefined>();
 const revokingTokenId = ref("");
 
-watch(currentBucket, (bucket) => {
-  if (!tokenBucketsText.value || tokenBucketsText.value === "default") {
-    tokenBucketsText.value = bucket;
-  }
-});
+function openTokenDialog() {
+  tokenName.value = "";
+  tokenAccess.value = "read";
+  tokenBucketsText.value = "";
+  tokenOpen.value = true;
+}
 
 function parseTokenBuckets(input: string): string[] {
   return input
@@ -237,7 +277,7 @@ async function submitToken() {
       access: tokenAccess.value,
       buckets: parsedTokenBuckets.value,
     });
-    tokenName.value = "";
+    tokenOpen.value = false;
     toast.success(t("platform.storage.tokenCreated"));
     tokensQuery.refresh();
   } catch (error) {
@@ -265,7 +305,9 @@ async function revokeToken(token: StorageTokenView) {
   <section class="space-y-4">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h2 class="text-lg font-semibold tracking-normal">{{ $t('platform.storage.title') }}</h2>
+        <h2 class="text-lg font-semibold tracking-normal">
+          {{ $t('platform.storage.title', { kind: kindLabel }) }}
+        </h2>
         <p class="mt-1 text-sm text-muted-foreground">
           {{ isStatic ? $t('platform.storage.staticDescription') : $t('platform.storage.kvDescription') }}
         </p>
@@ -274,14 +316,12 @@ async function revokeToken(token: StorageTokenView) {
         v-if="canRead || canAdmin"
         variant="outline"
         size="sm"
-        :disabled="bucketsQuery.refreshing.value || bindingsQuery.refreshing.value || tokensQuery.refreshing.value"
+        :disabled="refreshing"
+        :title="$t('platform.storage.refreshPublishingHint')"
         @click="refreshAdminData"
       >
-        <RefreshCw
-          aria-hidden="true"
-          :class="cn('size-4', (bucketsQuery.refreshing.value || bindingsQuery.refreshing.value || tokensQuery.refreshing.value) && 'animate-spin')"
-        />
-        {{ $t('common.actions.refresh') }}
+        <RefreshCw aria-hidden="true" :class="cn('size-4', refreshing && 'animate-spin')" />
+        {{ $t('platform.storage.refreshPublishing') }}
       </Button>
     </div>
 
@@ -290,7 +330,7 @@ async function revokeToken(token: StorageTokenView) {
         <CardTitle class="flex items-center gap-2">
           <Database v-if="!isStatic" aria-hidden="true" class="size-4 text-muted-foreground" />
           <FolderOpen v-else aria-hidden="true" class="size-4 text-muted-foreground" />
-          {{ $t('platform.storage.bucketsTitle') }}
+          {{ $t('platform.storage.bucketsTitle', { kind: kindLabel }) }}
         </CardTitle>
         <CardDescription>
           <span v-if="canAdmin">{{ $t('platform.storage.bucketsDescription') }}</span>
@@ -298,40 +338,14 @@ async function revokeToken(token: StorageTokenView) {
             <template #scope><code class="font-mono">{{ scopeAdmin }}</code></template>
           </i18n-t>
         </CardDescription>
+        <CardAction v-if="canAdmin">
+          <Button variant="outline" size="sm" @click="openBucketDialog">
+            <Plus aria-hidden="true" class="size-4" />
+            {{ $t('platform.storage.newBucket') }}
+          </Button>
+        </CardAction>
       </CardHeader>
-      <CardContent class="space-y-4">
-        <form v-if="canAdmin" class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="submitBucket">
-          <div class="grid gap-2">
-            <Label :for="`${kind}-bucket-name`">{{ $t('platform.storage.bucketName') }}</Label>
-            <Input :id="`${kind}-bucket-name`" v-model="bucketName" required placeholder="default" />
-          </div>
-          <div class="grid gap-2">
-            <Label :for="`${kind}-bucket-label`">{{ $t('platform.storage.bucketDisplayName') }}</Label>
-            <Input :id="`${kind}-bucket-label`" v-model="bucketDisplayName" :placeholder="$t('platform.storage.bucketDisplayPlaceholder')" />
-          </div>
-          <div class="flex items-end">
-            <Button type="submit" class="w-full lg:w-auto" :disabled="!canSubmitBucket || bucketSaving">
-              <RefreshCw v-if="bucketSaving" aria-hidden="true" class="size-4 animate-spin" />
-              <Save v-else aria-hidden="true" class="size-4" />
-              {{ $t('common.actions.save') }}
-            </Button>
-          </div>
-          <div class="grid gap-2 lg:col-span-3">
-            <Label :for="`${kind}-bucket-description`">{{ $t('platform.storage.bucketDescription') }}</Label>
-            <Input :id="`${kind}-bucket-description`" v-model="bucketDescription" :placeholder="$t('platform.storage.bucketDescriptionPlaceholder')" />
-          </div>
-          <template v-if="isStatic">
-            <div class="grid gap-2">
-              <Label :for="`${kind}-index-document`">{{ $t('platform.storage.indexDocument') }}</Label>
-              <Input :id="`${kind}-index-document`" v-model="bucketIndexDocument" placeholder="index.html" />
-            </div>
-            <div class="grid gap-2">
-              <Label :for="`${kind}-not-found-document`">{{ $t('platform.storage.notFoundDocument') }}</Label>
-              <Input :id="`${kind}-not-found-document`" v-model="bucketNotFoundDocument" placeholder="404.html" />
-            </div>
-          </template>
-        </form>
-
+      <CardContent>
         <DataState
           v-if="canRead"
           :loading="bucketsQuery.loading.value"
@@ -381,37 +395,19 @@ async function revokeToken(token: StorageTokenView) {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Globe2 aria-hidden="true" class="size-4 text-muted-foreground" />
-            {{ $t('platform.storage.bindingsTitle') }}
+            {{ $t('platform.storage.bindingsTitle', { kind: kindLabel }) }}
           </CardTitle>
-          <CardDescription>{{ $t('platform.storage.bindingsDescription') }}</CardDescription>
+          <CardDescription>
+            {{ isStatic ? $t('platform.storage.bindingsDescriptionStatic') : $t('platform.storage.bindingsDescriptionKv') }}
+          </CardDescription>
+          <CardAction>
+            <Button variant="outline" size="sm" @click="openBindingDialog">
+              <Plus aria-hidden="true" class="size-4" />
+              {{ $t('platform.storage.newBinding') }}
+            </Button>
+          </CardAction>
         </CardHeader>
-        <CardContent class="space-y-4">
-          <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitBinding">
-            <div class="grid gap-2">
-              <Label :for="`${kind}-binding-bucket`">{{ $t('platform.storage.bindingBucket') }}</Label>
-              <Input :id="`${kind}-binding-bucket`" v-model="bindingBucket" required placeholder="default" />
-            </div>
-            <div class="grid gap-2">
-              <Label :for="`${kind}-binding-host`">{{ $t('platform.storage.hostname') }}</Label>
-              <Input :id="`${kind}-binding-host`" v-model="bindingHostname" required placeholder="assets.example.com" />
-            </div>
-            <div class="grid gap-2">
-              <Label :for="`${kind}-binding-prefix`">{{ $t('platform.storage.pathPrefix') }}</Label>
-              <Input :id="`${kind}-binding-prefix`" v-model="bindingPrefix" placeholder="public" />
-            </div>
-            <label class="flex items-end gap-2 pb-2 text-sm">
-              <input v-model="bindingEnabled" type="checkbox" class="size-4 accent-primary" />
-              <span>{{ $t('platform.storage.bindingEnabled') }}</span>
-            </label>
-            <div class="sm:col-span-2">
-              <Button type="submit" :disabled="!canSubmitBinding || bindingSaving">
-                <RefreshCw v-if="bindingSaving" aria-hidden="true" class="size-4 animate-spin" />
-                <Plus v-else aria-hidden="true" class="size-4" />
-                {{ $t('platform.storage.addBinding') }}
-              </Button>
-            </div>
-          </form>
-
+        <CardContent>
           <DataState
             v-if="canRead"
             :loading="bindingsQuery.loading.value"
@@ -474,43 +470,19 @@ async function revokeToken(token: StorageTokenView) {
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <KeyRound aria-hidden="true" class="size-4 text-muted-foreground" />
-            {{ $t('platform.storage.tokensTitle') }}
+            {{ $t('platform.storage.tokensTitle', { kind: kindLabel }) }}
           </CardTitle>
-          <CardDescription>{{ $t('platform.storage.tokensDescription') }}</CardDescription>
+          <CardDescription>
+            {{ isStatic ? $t('platform.storage.tokensDescriptionStatic') : $t('platform.storage.tokensDescriptionKv') }}
+          </CardDescription>
+          <CardAction>
+            <Button variant="outline" size="sm" @click="openTokenDialog">
+              <Plus aria-hidden="true" class="size-4" />
+              {{ $t('platform.storage.newToken') }}
+            </Button>
+          </CardAction>
         </CardHeader>
         <CardContent class="space-y-4">
-          <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitToken">
-            <div class="grid gap-2">
-              <Label :for="`${kind}-token-name`">{{ $t('platform.storage.tokenName') }}</Label>
-              <Input :id="`${kind}-token-name`" v-model="tokenName" required placeholder="deploy-ci" />
-            </div>
-            <div class="grid gap-2">
-              <Label :for="`${kind}-token-access`">{{ $t('platform.storage.tokenAccess') }}</Label>
-              <Select v-model="tokenAccess">
-                <SelectTrigger :id="`${kind}-token-access`" class="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="read">{{ $t('platform.storage.accessRead') }}</SelectItem>
-                  <SelectItem value="write">{{ $t('platform.storage.accessWrite') }}</SelectItem>
-                  <SelectItem value="admin">{{ $t('platform.storage.accessAdmin') }}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div class="grid gap-2 sm:col-span-2">
-              <Label :for="`${kind}-token-buckets`">{{ $t('platform.storage.tokenBuckets') }}</Label>
-              <Input :id="`${kind}-token-buckets`" v-model="tokenBucketsText" required placeholder="default, assets or *" />
-              <p class="text-xs text-muted-foreground">{{ $t('platform.storage.tokenBucketsHint') }}</p>
-            </div>
-            <div class="sm:col-span-2">
-              <Button type="submit" :disabled="!canSubmitToken || tokenSaving">
-                <RefreshCw v-if="tokenSaving" aria-hidden="true" class="size-4 animate-spin" />
-                <ShieldCheck v-else aria-hidden="true" class="size-4" />
-                {{ $t('platform.storage.createToken') }}
-              </Button>
-            </div>
-          </form>
-
           <div v-if="createdToken" class="rounded-md border border-primary/30 bg-primary/5 p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -577,5 +549,142 @@ async function revokeToken(token: StorageTokenView) {
         </CardContent>
       </Card>
     </div>
+
+    <!-- Bucket dialog -->
+    <Dialog v-model:open="bucketOpen">
+      <DialogScrollContent class="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{{ $t('platform.storage.newBucketTitle', { kind: kindLabel }) }}</DialogTitle>
+          <DialogDescription>{{ $t('platform.storage.newBucketHint') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitBucket">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label :for="`${kind}-bucket-name`">{{ $t('platform.storage.bucketName') }}</Label>
+              <Input :id="`${kind}-bucket-name`" v-model="bucketName" required :placeholder="currentNamespace" />
+            </div>
+            <div class="grid gap-2">
+              <Label :for="`${kind}-bucket-label`">{{ $t('platform.storage.bucketDisplayName') }}</Label>
+              <Input :id="`${kind}-bucket-label`" v-model="bucketDisplayName" :placeholder="$t('platform.storage.bucketDisplayPlaceholder')" />
+            </div>
+          </div>
+          <div class="grid gap-2">
+            <Label :for="`${kind}-bucket-description`">{{ $t('platform.storage.bucketDescription') }}</Label>
+            <Input :id="`${kind}-bucket-description`" v-model="bucketDescription" :placeholder="$t('platform.storage.bucketDescriptionPlaceholder')" />
+          </div>
+          <div v-if="isStatic" class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label :for="`${kind}-index-document`">{{ $t('platform.storage.indexDocument') }}</Label>
+              <Input :id="`${kind}-index-document`" v-model="bucketIndexDocument" placeholder="index.html" />
+            </div>
+            <div class="grid gap-2">
+              <Label :for="`${kind}-not-found-document`">{{ $t('platform.storage.notFoundDocument') }}</Label>
+              <Input :id="`${kind}-not-found-document`" v-model="bucketNotFoundDocument" placeholder="404.html" />
+            </div>
+            <p class="text-xs text-muted-foreground sm:col-span-2">{{ $t('platform.storage.documentsHint') }}</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="bucketOpen = false">{{ $t('common.actions.cancel') }}</Button>
+            <Button type="submit" :disabled="!canSubmitBucket || bucketSaving">
+              <RefreshCw v-if="bucketSaving" aria-hidden="true" class="size-4 animate-spin" />
+              <Save v-else aria-hidden="true" class="size-4" />
+              {{ $t('common.actions.save') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Host binding dialog -->
+    <Dialog v-model:open="bindingOpen">
+      <DialogScrollContent class="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{{ $t('platform.storage.newBindingTitle', { kind: kindLabel }) }}</DialogTitle>
+          <DialogDescription>
+            {{ isStatic ? $t('platform.storage.bindingsDescriptionStatic') : $t('platform.storage.bindingsDescriptionKv') }}
+          </DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitBinding">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label :for="`${kind}-binding-bucket`">{{ $t('platform.storage.bindingBucket') }}</Label>
+              <Input :id="`${kind}-binding-bucket`" v-model="bindingBucket" required :placeholder="currentNamespace" />
+              <p class="text-xs text-muted-foreground">{{ $t('platform.storage.bindingBucketHint') }}</p>
+            </div>
+            <div class="grid gap-2">
+              <Label :for="`${kind}-binding-host`">{{ $t('platform.storage.hostname') }}</Label>
+              <Input :id="`${kind}-binding-host`" v-model="bindingHostname" required placeholder="assets.example.com" />
+            </div>
+            <div class="grid gap-2">
+              <Label :for="`${kind}-binding-prefix`">{{ $t('platform.storage.pathPrefix') }}</Label>
+              <Input :id="`${kind}-binding-prefix`" v-model="bindingPrefix" placeholder="public" />
+            </div>
+            <label class="flex cursor-pointer items-end gap-2 pb-2 text-sm">
+              <Checkbox v-model="bindingEnabled" />
+              <span>{{ $t('platform.storage.bindingEnabled') }}</span>
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="bindingOpen = false">{{ $t('common.actions.cancel') }}</Button>
+            <Button type="submit" :disabled="!canSubmitBinding || bindingSaving">
+              <RefreshCw v-if="bindingSaving" aria-hidden="true" class="size-4 animate-spin" />
+              <Plus v-else aria-hidden="true" class="size-4" />
+              {{ $t('platform.storage.addBinding') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Access token dialog -->
+    <Dialog v-model:open="tokenOpen">
+      <DialogScrollContent class="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{{ $t('platform.storage.newTokenTitle', { kind: kindLabel }) }}</DialogTitle>
+          <DialogDescription>
+            {{ isStatic ? $t('platform.storage.tokensDescriptionStatic') : $t('platform.storage.tokensDescriptionKv') }}
+          </DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="submitToken">
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label :for="`${kind}-token-name`">{{ $t('platform.storage.tokenName') }}</Label>
+              <Input :id="`${kind}-token-name`" v-model="tokenName" required placeholder="deploy-ci" />
+            </div>
+            <div class="grid gap-2">
+              <Label :for="`${kind}-token-access`">{{ $t('platform.storage.tokenAccess') }}</Label>
+              <Select v-model="tokenAccess">
+                <SelectTrigger :id="`${kind}-token-access`" class="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="read">{{ $t('platform.storage.accessRead') }}</SelectItem>
+                  <SelectItem value="write">{{ $t('platform.storage.accessWrite') }}</SelectItem>
+                  <SelectItem value="admin">{{ $t('platform.storage.accessAdmin') }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div class="grid gap-2">
+            <Label :for="`${kind}-token-buckets`">{{ $t('platform.storage.tokenBuckets') }}</Label>
+            <Input
+              :id="`${kind}-token-buckets`"
+              v-model="tokenBucketsText"
+              required
+              :placeholder="$t('platform.storage.tokenBucketsPlaceholder')"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('platform.storage.tokenBucketsHint') }}</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="tokenOpen = false">{{ $t('common.actions.cancel') }}</Button>
+            <Button type="submit" :disabled="!canSubmitToken || tokenSaving">
+              <RefreshCw v-if="tokenSaving" aria-hidden="true" class="size-4 animate-spin" />
+              <ShieldCheck v-else aria-hidden="true" class="size-4" />
+              {{ $t('platform.storage.createToken') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
   </section>
 </template>

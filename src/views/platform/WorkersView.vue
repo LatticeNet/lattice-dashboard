@@ -53,6 +53,9 @@ const sortedWorkers = computed(() =>
   [...workers.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
 );
 
+/** Nothing to run until at least one worker is deployed. */
+const hasWorkers = computed(() => workers.value.length > 0);
+
 const columns = computed<DataTableColumn<WorkerScript>[]>(() => [
   { key: "name", label: t("platform.workers.colName"), sortable: true, searchable: true, value: (w) => w.name || w.id },
   { key: "capabilities", label: t("platform.workers.colCapabilities") },
@@ -173,7 +176,14 @@ async function submitRun() {
           <RefreshCw aria-hidden="true" :class="cn('size-4', workersQuery.refreshing.value && 'animate-spin')" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canDeploy" variant="outline" size="sm" @click="openRun()">
+        <Button
+          v-if="canDeploy"
+          variant="outline"
+          size="sm"
+          :disabled="!hasWorkers"
+          :title="!hasWorkers ? $t('platform.workers.runNeedsWorkers') : undefined"
+          @click="openRun()"
+        >
           <Play aria-hidden="true" class="size-4" />
           {{ $t('common.actions.run') }}
         </Button>
