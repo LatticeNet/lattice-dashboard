@@ -1,80 +1,108 @@
 <script setup lang="ts">
+/**
+ * Published subscriptions — the public URLs this server serves.
+ *
+ * This lives in the dashboard rather than in a plugin because shares are
+ * core-owned: the route, the token comparison, the rate limit and the audit
+ * trail belong to the server, and a plugin frame runs with `connect-src 'none'`
+ * and can only reach methods its signed manifest declares. Giving it the share
+ * API would hand token management to plugin code.
+ *
+ * What changed here is the shape, not the ownership. The page used to be a row
+ * of bare inputs asking the operator to type a plugin id and a subscription id
+ * copied from another screen, above a stack of naked URLs. Publishing now picks
+ * the record from the plugin that owns it, and the list is a table like every
+ * other high-cardinality surface in this console.
+ *
+ * The token is shown in full, permanently, and the server returns it
+ * deliberately: the URL is copied out of here repeatedly, and a credential that
+ * is visible only once gets written down somewhere worse.
+ */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import { Copy, KeyRound, Link2, Loader2, MonitorSmartphone, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
+import { toast } from "vue-sonner";
+import {
+  Ban,
+  Copy,
+  ExternalLink,
+  KeyRound,
+  Link2,
+  MonitorSmartphone,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-vue-next";
 
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, unwrap } from "@/lib/api";
 import type {
+  PluginView,
   ShareSource,
   SubscriptionShareCreateRequest,
   SubscriptionShareView,
 } from "@/lib/api";
+import { useAsyncData } from "@/composables/useAsyncData";
+import { useAuthStore } from "@/stores/auth";
+import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { SHARE_SLUG_RE, suggestShareSlug } from "./subscriptionSharesModel";
+import {
+  SHARE_TARGETS,
+  clientUrl,
+  isServing,
+  publishedState,
+  sharePath,
+  sourceLabel,
+  type PublishedState,
+} from "./publishedModel";
 
-/**
- * Subscription shares — the public URLs the server serves.
- *
- * This lives in the dashboard rather than in the Sub-Store plugin on purpose.
- * Shares are core-owned: the route, the token comparison, the rate limit and
- * the audit trail all belong to the server, and the plugin frame runs with
- * `connect-src 'none'` and can only reach methods its signed manifest declares.
- * It has no way to call `/api/subscription-shares`, and giving it one would
- * hand token management to plugin code.
- *
- * The token is shown in full, permanently. The server returns it deliberately
- * for the same reason: the URL is copied out of here repeatedly, and a
- * credential that is only visible once gets written down somewhere worse.
- */
+import PageHeader from "@/components/common/PageHeader.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import CopyButton from "@/components/common/CopyButton.vue";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-const shares = ref<SubscriptionShareView[]>([]);
-const loading = ref(true);
-const loadError = ref("");
-const actionError = ref("");
-const notice = ref("");
-const busyId = ref<string | null>(null);
-const creating = ref(false);
-const confirmingDelete = ref<string | null>(null);
-const rotatingConfirm = ref<string | null>(null);
+const { t } = useI18n();
+const auth = useAuthStore();
+const route = useRoute();
+const router = useRouter();
 
-const form = ref<{ slug: string; kind: ShareSource["kind"]; pluginId: string; subscriptionId: string; proxyUserId: string; defaultFormat: string }>({
-  slug: "",
-  kind: "plugin",
-  pluginId: "latticenet.sub-store",
-  subscriptionId: "",
-  proxyUserId: "",
-  defaultFormat: "",
-});
+const canAdmin = computed(() => auth.can("proxy:admin"));
 
-const SLUG_RE = SHARE_SLUG_RE;
+const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
+  () => api.subscriptionShares.list(),
+  { pollInterval: 20000 },
+);
+const shares = computed(() => sharesQuery.data.value ?? []);
 
-const slugError = computed(() => {
-  const slug = form.value.slug.trim();
-  if (!slug) return "";
-  if (!SLUG_RE.test(slug)) {
-    return "Lowercase letters, digits and hyphens, starting with a letter or digit.";
-  }
-  if (shares.value.some((s) => s.slug === slug)) return "A share with this slug already exists.";
-  return "";
-});
-
-const formValid = computed(() => {
-  if (!form.value.slug.trim() || slugError.value) return false;
-  return form.value.kind === "plugin"
-    ? !!form.value.pluginId.trim() && !!form.value.subscriptionId.trim()
-    : !!form.value.proxyUserId.trim();
-});
+const busyId = ref("");
+const selectedId = ref("");
+const selected = computed(() => shares.value.find((share) => share.id === selectedId.value));
 
 /** The origin the browser is on is the origin the share is served from, so the
  *  displayed URL is the real one rather than a guess at LATTICE_PUBLIC_URL. */
+const origin = computed(() => (typeof window === "undefined" ? "" : window.location.origin));
 function shareUrl(share: SubscriptionShareView): string {
-  const origin = typeof window !== "undefined" ? window.location.origin : "";
-  return `${origin}/sub/${share.slug}/${share.token}`;
-}
-
-function sourceLabel(source: ShareSource): string {
-  return source.kind === "plugin"
-    ? `${source.plugin_id} · ${source.subscription_id}`
-    : `proxy user ${source.proxy_user_id}`;
+  return `${origin.value}${sharePath(share)}`;
 }
 
 function describe(error: unknown, fallback: string): string {
@@ -82,674 +110,602 @@ function describe(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-async function load(): Promise<void> {
-  loading.value = true;
-  loadError.value = "";
+const stateVariant: Record<PublishedState, "default" | "secondary" | "destructive" | "outline"> = {
+  live: "secondary",
+  expiring: "outline",
+  expired: "destructive",
+  paused: "outline",
+};
+
+// ── publish ────────────────────────────────────────────────────────────────
+//
+// The old form asked for a plugin id and a subscription id as free text, with
+// the hint "as listed in the plugin's Subscriptions tab" — an instruction to go
+// to another screen, copy an identifier, and come back. The dialog reads the
+// plugin's own records instead, so publishing is a choice rather than a
+// transcription.
+
+const publishOpen = ref(false);
+const publishing = ref(false);
+const draft = ref<{
+  kind: ShareSource["kind"];
+  pluginId: string;
+  subscriptionId: string;
+  proxyUserId: string;
+  slug: string;
+  defaultFormat: string;
+}>({ kind: "plugin", pluginId: "", subscriptionId: "", proxyUserId: "", slug: "", defaultFormat: "" });
+
+interface PluginRecord {
+  id: string;
+  name?: string;
+  display_name?: string;
+  kind?: string;
+}
+
+const pluginsQuery = useAsyncData<PluginView[] | undefined>(() => api.plugins.list());
+/** Plugins that can actually back a share: the capability is what makes a
+ *  plugin able to produce a subscription body the core serves. */
+const publishablePlugins = computed(() =>
+  (pluginsQuery.data.value ?? []).filter((plugin) =>
+    (plugin.capabilities ?? []).includes("subscription:serve"),
+  ),
+);
+
+const records = ref<PluginRecord[]>([]);
+const recordsLoading = ref(false);
+const recordsError = ref("");
+
+/** Read the chosen plugin's records through the gateway. A plugin that does not
+ *  answer is reported as such rather than leaving an empty picker that looks
+ *  like a plugin with nothing in it. */
+async function loadRecords(): Promise<void> {
+  const pluginId = draft.value.pluginId;
+  records.value = [];
+  recordsError.value = "";
+  if (!pluginId) return;
+  recordsLoading.value = true;
   try {
-    shares.value = await api.subscriptionShares.list();
+    const response = await api.plugins.call<{ subscriptions?: PluginRecord[] } | PluginRecord[]>(
+      pluginId,
+      `${pluginId}/subscription`,
+      "list",
+      {},
+    );
+    const list = Array.isArray(response) ? response : (response.subscriptions ?? []);
+    records.value = list.filter((record) => !!record?.id);
   } catch (error) {
-    loadError.value = describe(error, "Shares could not be loaded");
+    recordsError.value = describe(error, t("networking.shares.recordsFailed"));
   } finally {
-    loading.value = false;
+    recordsLoading.value = false;
   }
 }
 
-async function copy(share: SubscriptionShareView): Promise<void> {
-  actionError.value = "";
-  try {
-    await navigator.clipboard.writeText(shareUrl(share));
-    notice.value = `Copied the URL for ${share.slug}.`;
-  } catch {
-    actionError.value = "The clipboard is unavailable — select the URL and copy it manually.";
-  }
+watch(() => draft.value.pluginId, loadRecords);
+watch(
+  () => draft.value.subscriptionId,
+  (id) => {
+    if (!id || draft.value.slug.trim()) return;
+    const record = records.value.find((entry) => entry.id === id);
+    const name = record?.display_name || record?.name || id;
+    draft.value.slug = suggestShareSlug(name, shares.value.map((share) => share.slug));
+  },
+);
+
+const slugError = computed(() => {
+  const slug = draft.value.slug.trim();
+  if (!slug) return "";
+  if (!SHARE_SLUG_RE.test(slug)) return t("networking.shares.slugRule");
+  if (shares.value.some((share) => share.slug === slug)) return t("networking.shares.slugTaken");
+  return "";
+});
+
+const canPublish = computed(() => {
+  if (!draft.value.slug.trim() || slugError.value || publishing.value) return false;
+  return draft.value.kind === "plugin"
+    ? !!draft.value.pluginId && !!draft.value.subscriptionId
+    : !!draft.value.proxyUserId.trim();
+});
+
+function openPublish(): void {
+  draft.value = {
+    kind: "plugin",
+    pluginId: publishablePlugins.value[0]?.id ?? "",
+    subscriptionId: "",
+    proxyUserId: "",
+    slug: "",
+    defaultFormat: "",
+  };
+  publishOpen.value = true;
+  void loadRecords();
 }
 
-/**
- * The clients a share URL can name with ?target=. This mirrors the server's
- * bounded allowlist (subscriptionShareTargets): a value outside it is refused
- * before any render, because the target is part of the render cache key on an
- * endpoint that answers without authentication.
- */
-const SHARE_TARGETS: ReadonlyArray<{ id: string; label: string }> = [
-  { id: "URI", label: "Universal (URI)" },
-  { id: "Stash", label: "Stash" },
-  { id: "ClashMeta", label: "mihomo" },
-  { id: "Clash", label: "Clash" },
-  { id: "Egern", label: "Egern" },
-  { id: "Surge", label: "Surge" },
-  { id: "SurgeMac", label: "Surge Mac" },
-  { id: "Surfboard", label: "Surfboard" },
-  { id: "Loon", label: "Loon" },
-  { id: "Shadowrocket", label: "Shadowrocket" },
-  { id: "QX", label: "Quantumult X" },
-  { id: "sing-box", label: "sing-box" },
-  { id: "V2Ray", label: "V2Ray" },
-  { id: "JSON", label: "JSON" },
-];
-
-/** Which share's client menu is open, if any. */
-const clientMenuId = ref("");
-
-/**
- * One URL per client. Without ?target= the served bytes depend on the client's
- * User-Agent, which is a guess that fails for anything fetching with curl or a
- * generic downloader; naming the client makes the URL say what it produces.
- */
-function clientUrl(share: SubscriptionShareView, target: string): string {
-  return `${shareUrl(share)}?target=${encodeURIComponent(target)}`;
-}
-
-async function copyClient(share: SubscriptionShareView, target: string): Promise<void> {
-  actionError.value = "";
-  try {
-    await navigator.clipboard.writeText(clientUrl(share, target));
-    notice.value = `Copied the ${target} URL for ${share.slug}.`;
-    clientMenuId.value = "";
-  } catch {
-    actionError.value = "The clipboard is unavailable — select the URL and copy it manually.";
-  }
-}
-
-async function create(): Promise<void> {
-  if (!formValid.value || creating.value) return;
-  creating.value = true;
-  actionError.value = "";
-  notice.value = "";
+async function publish(): Promise<void> {
+  if (!canPublish.value) return;
+  publishing.value = true;
   try {
     const source: ShareSource =
-      form.value.kind === "plugin"
+      draft.value.kind === "plugin"
         ? {
             kind: "plugin",
-            plugin_id: form.value.pluginId.trim(),
-            subscription_id: form.value.subscriptionId.trim(),
+            plugin_id: draft.value.pluginId,
+            subscription_id: draft.value.subscriptionId,
           }
-        : { kind: "core.proxy_user", proxy_user_id: form.value.proxyUserId.trim() };
+        : { kind: "core.proxy_user", proxy_user_id: draft.value.proxyUserId.trim() };
     const body: SubscriptionShareCreateRequest = {
-      slug: form.value.slug.trim(),
+      slug: draft.value.slug.trim(),
       source,
-      default_format: form.value.defaultFormat.trim() || undefined,
+      default_format: draft.value.defaultFormat || undefined,
     };
     const created = await api.subscriptionShares.create(body);
-    shares.value = [...shares.value, created];
-    notice.value = `Published ${created.slug}. The URL below is live now.`;
-    form.value.slug = "";
-    form.value.subscriptionId = "";
-    form.value.proxyUserId = "";
+    toast.success(t("networking.shares.published", { slug: created.slug }));
+    publishOpen.value = false;
+    selectedId.value = created.id;
+    await sharesQuery.refresh();
   } catch (error) {
-    actionError.value = describe(error, "Share could not be created");
+    toast.error(describe(error, t("networking.shares.publishFailed")));
   } finally {
-    creating.value = false;
+    publishing.value = false;
   }
 }
 
-async function rotate(share: SubscriptionShareView): Promise<void> {
+// ── per-share actions ──────────────────────────────────────────────────────
+
+const rotateTarget = ref<SubscriptionShareView | null>(null);
+const deleteTarget = ref<SubscriptionShareView | null>(null);
+/** Rotating and deleting both break every client already using the URL, so the
+ *  confirmation asks for the slug back rather than for a click. */
+const confirmText = ref("");
+const confirmMatches = computed(() => {
+  const target = rotateTarget.value ?? deleteTarget.value;
+  return !!target && confirmText.value.trim() === target.slug;
+});
+
+function askRotate(share: SubscriptionShareView): void {
+  confirmText.value = "";
+  deleteTarget.value = null;
+  rotateTarget.value = share;
+}
+
+function askDelete(share: SubscriptionShareView): void {
+  confirmText.value = "";
+  rotateTarget.value = null;
+  deleteTarget.value = share;
+}
+
+async function rotate(): Promise<void> {
+  const share = rotateTarget.value;
+  if (!share || !confirmMatches.value) return;
   busyId.value = share.id;
-  actionError.value = "";
-  notice.value = "";
   try {
     const rotated = await api.subscriptionShares.rotate(share.id);
-    shares.value = shares.value.map((s) => (s.id === rotated.id ? rotated : s));
-    notice.value = `Rotated ${rotated.slug}. The previous URL now returns 404 like any unknown path — every client using it must be given the new one.`;
-    rotatingConfirm.value = null;
+    toast.success(t("networking.shares.rotated", { slug: rotated.slug }));
+    rotateTarget.value = null;
+    await sharesQuery.refresh();
   } catch (error) {
-    actionError.value = describe(error, "Share could not be rotated");
+    toast.error(describe(error, t("networking.shares.rotateFailed")));
   } finally {
-    busyId.value = null;
+    busyId.value = "";
   }
 }
 
-async function refresh(share: SubscriptionShareView): Promise<void> {
+async function remove(): Promise<void> {
+  const share = deleteTarget.value;
+  if (!share || !confirmMatches.value) return;
   busyId.value = share.id;
-  actionError.value = "";
-  notice.value = "";
+  try {
+    await api.subscriptionShares.remove(share.id);
+    toast.success(t("networking.shares.deleted", { slug: share.slug }));
+    deleteTarget.value = null;
+    if (selectedId.value === share.id) selectedId.value = "";
+    await sharesQuery.refresh();
+  } catch (error) {
+    toast.error(describe(error, t("networking.shares.deleteFailed")));
+  } finally {
+    busyId.value = "";
+  }
+}
+
+async function refreshSource(share: SubscriptionShareView): Promise<void> {
+  busyId.value = share.id;
   try {
     await api.subscriptionShares.refresh(share.id);
-    notice.value = `Refreshed ${share.slug}.`;
+    toast.success(t("networking.shares.refreshed", { slug: share.slug }));
   } catch (error) {
     // A provider that cannot be reached is not a broken share: the last good
     // snapshot keeps being served. Say both halves.
-    actionError.value = `${describe(error, "Refresh failed")} The last good snapshot is still being served.`;
+    toast.error(`${describe(error, t("networking.shares.refreshFailed"))} ${t("networking.shares.lastGoodServed")}`);
   } finally {
-    busyId.value = null;
+    busyId.value = "";
   }
 }
 
-async function remove(share: SubscriptionShareView): Promise<void> {
-  busyId.value = share.id;
-  actionError.value = "";
-  notice.value = "";
+async function copy(text: string, message: string): Promise<void> {
   try {
-    await api.subscriptionShares.remove(share.id);
-    shares.value = shares.value.filter((s) => s.id !== share.id);
-    notice.value = `Deleted ${share.slug}. The URL is no longer served.`;
-    confirmingDelete.value = null;
-  } catch (error) {
-    actionError.value = describe(error, "Share could not be deleted");
-  } finally {
-    busyId.value = null;
+    await navigator.clipboard.writeText(text);
+    toast.success(message);
+  } catch {
+    toast.error(t("networking.shares.clipboardUnavailable"));
   }
 }
 
-const route = useRoute();
-const router = useRouter();
-const createSection = ref<HTMLElement | null>(null);
-const slugInput = ref<HTMLInputElement | null>(null);
+// ── table ──────────────────────────────────────────────────────────────────
 
-/** The identity fields a deep link writes. pluginId keeps its Sub-Store
- *  default and defaultFormat is cosmetic, so neither counts as "typed". */
-function formTouched(): boolean {
-  return !!(form.value.slug.trim() || form.value.subscriptionId.trim() || form.value.proxyUserId.trim());
-}
+const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
+  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true },
+  {
+    key: "state",
+    label: t("networking.shares.columns.state"),
+    sortable: true,
+    filterable: true,
+    class: "w-[7.5rem]",
+    value: (row) => publishedState(row),
+  },
+  {
+    key: "source",
+    label: t("networking.shares.columns.source"),
+    sortable: true,
+    searchable: true,
+    filterAliases: ["plugin", "record"],
+    value: (row) => sourceLabel(row),
+  },
+  {
+    key: "format",
+    label: t("networking.shares.columns.format"),
+    class: "w-[8rem]",
+    value: (row) => row.default_format || "",
+  },
+  {
+    key: "rotated",
+    label: t("networking.shares.columns.rotated"),
+    sortable: true,
+    align: "right",
+    class: "w-[9rem]",
+    value: (row) => row.rotated_at || row.created_at,
+  },
+]);
+
+// ── deep link from a plugin ────────────────────────────────────────────────
 
 /**
- * Consume the subscription → share deep link
- * (/network/subscription-shares?create=1&for=<name>) that the Sub-Store plugin
- * frame asks the host to navigate to. If the operator has already typed into
- * the form, the draft wins: nothing is overwritten and the params are left in
- * the URL, so the link can still be applied after the draft is discarded or
- * published.
+ * The Sub-Store frame asks the host to navigate here with
+ * ?create=1&for=<record>. The dialog opens with that record already chosen, so
+ * the operator lands on a decision instead of a blank form.
  */
-function applyShareDeepLink(): void {
+async function applyDeepLink(): Promise<void> {
   if (route.query.create !== "1") return;
-  const rawFor = route.query.for;
-  const name = (Array.isArray(rawFor) ? rawFor[0] : rawFor)?.trim();
-  if (!name || formTouched()) return;
-  form.value.kind = "plugin";
-  form.value.subscriptionId = name;
-  // "" on a slug collision or an un-slugifiable name — the operator picks one.
-  form.value.slug = suggestShareSlug(name, shares.value.map((share) => share.slug));
-  // Strip the params so a refresh does not re-trigger the prefill.
+  const raw = route.query.for;
+  const name = (Array.isArray(raw) ? raw[0] : raw)?.trim();
   const query = { ...route.query };
   delete query.create;
   delete query.for;
   void router.replace({ query });
-  void nextTick(() => {
-    createSection.value?.scrollIntoView({ behavior: "smooth", block: "start" });
-    slugInput.value?.focus({ preventScroll: true });
-  });
+  openPublish();
+  if (!name) return;
+  await nextTick();
+  // The record may be identified by id or by name depending on the caller.
+  const match = records.value.find((record) => record.id === name || record.name === name);
+  draft.value.subscriptionId = match?.id ?? name;
+  draft.value.slug = suggestShareSlug(match?.display_name || match?.name || name, shares.value.map((s) => s.slug));
 }
 
 onMounted(async () => {
-  // The slug suggestion checks collisions against the loaded shares, so the
-  // deep link applies only after the first load settles.
-  await load();
-  applyShareDeepLink();
+  await sharesQuery.refresh();
+  await applyDeepLink();
 });
-watch(() => route.query, applyShareDeepLink);
+watch(() => route.query, applyDeepLink);
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-head">
-      <div>
-        <h1>Subscription shares</h1>
-        <p class="page-sub">
-          The public URLs this server serves. Anything that is not a valid share returns an empty
-          404 — a prober cannot tell an existing share from a missing one.
-        </p>
-      </div>
-      <button class="btn" type="button" :disabled="loading" @click="load">
-        <RefreshCw :size="15" /> Reload
-      </button>
-    </header>
+  <div class="p-6 space-y-6">
+    <PageHeader
+      :title="$t('networking.shares.title')"
+      :description="$t('networking.shares.description')"
+    >
+      <template #status>
+        <FreshnessLabel :last-updated="sharesQuery.lastUpdated.value" />
+      </template>
+      <template #actions>
+        <Button variant="outline" size="sm" :disabled="sharesQuery.refreshing.value" @click="sharesQuery.refresh">
+          <RefreshCw :class="cn('size-4', sharesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+          {{ $t('common.actions.refresh') }}
+        </Button>
+        <Button v-if="canAdmin" size="sm" @click="openPublish">
+          <Plus class="size-4" aria-hidden="true" />
+          {{ $t('networking.shares.publish') }}
+        </Button>
+      </template>
+    </PageHeader>
 
-    <p v-if="actionError" class="banner banner-error" role="alert">{{ actionError }}</p>
-    <p v-else-if="notice" class="banner banner-ok" role="status">{{ notice }}</p>
-
-    <section ref="createSection" class="card">
-      <h2>Publish a subscription</h2>
-      <div class="grid">
-        <label class="field">
-          <span>Slug</span>
-          <input ref="slugInput" v-model="form.slug" type="text" spellcheck="false" placeholder="share-for-me" />
-          <small v-if="slugError" class="err">{{ slugError }}</small>
-          <small v-else class="hint">
-            Appears in the URL and in reverse-proxy logs, so it is a label rather than a secret.
-          </small>
-        </label>
-
-        <label class="field">
-          <span>Source</span>
-          <select v-model="form.kind">
-            <option value="plugin">Plugin subscription</option>
-            <option value="core.proxy_user">Proxy user</option>
-          </select>
-        </label>
-
-        <template v-if="form.kind === 'plugin'">
-          <label class="field">
-            <span>Plugin id</span>
-            <input v-model="form.pluginId" type="text" spellcheck="false" />
-          </label>
-          <label class="field">
-            <span>Subscription id</span>
-            <input
-              v-model="form.subscriptionId"
-              type="text"
-              spellcheck="false"
-              placeholder="As listed in the plugin's Subscriptions tab"
-            />
-          </label>
+    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
+      <DataTable
+        :columns="columns"
+        :rows="shares"
+        :row-key="(row) => row.id"
+        :loading="sharesQuery.loading.value"
+        :error="sharesQuery.error.value"
+        :page-size="25"
+        searchable
+        :search-placeholder="$t('networking.shares.searchPlaceholder')"
+        :empty-title="$t('networking.shares.emptyTitle')"
+        :empty-description="$t('networking.shares.emptyDescription')"
+        @row-select="selectedId = $event.id"
+        @retry="sharesQuery.refresh"
+      >
+        <template #cell-slug="{ row }">
+          <div class="min-w-0">
+            <p :class="cn('truncate font-medium', selectedId === row.id && 'text-primary')">/{{ row.slug }}</p>
+            <p class="truncate font-mono text-xs text-muted-foreground">{{ sharePath(row).slice(0, 24) }}…</p>
+          </div>
         </template>
-        <label v-else class="field">
-          <span>Proxy user id</span>
-          <input v-model="form.proxyUserId" type="text" spellcheck="false" />
-        </label>
 
-        <label class="field">
-          <span>Default format</span>
-          <input v-model="form.defaultFormat" type="text" spellcheck="false" placeholder="Optional" />
-        </label>
-      </div>
+        <template #cell-state="{ row }">
+          <Badge :variant="stateVariant[publishedState(row)]">
+            {{ $t('networking.shares.state.' + publishedState(row)) }}
+          </Badge>
+        </template>
 
-      <div class="actions">
-        <button class="btn btn-primary" type="button" :disabled="!formValid || creating" @click="create">
-          <Loader2 v-if="creating" :size="15" class="spin" />
-          <Plus v-else :size="15" />
-          Publish
-        </button>
-      </div>
-    </section>
+        <template #cell-source="{ row }">
+          <span class="truncate text-sm">{{ sourceLabel(row) }}</span>
+        </template>
 
-    <section class="card">
-      <h2>Published</h2>
+        <template #cell-format="{ row }">
+          <span class="text-sm text-muted-foreground">
+            {{ row.default_format || $t('networking.shares.formatAuto') }}
+          </span>
+        </template>
 
-      <div v-if="loading" class="share-skeletons" aria-hidden="true">
-        <div v-for="n in 3" :key="n" class="skeleton-block share-skeleton" />
-      </div>
-      <p v-else-if="loadError" class="banner banner-error" role="alert">{{ loadError }}</p>
-      <p v-else-if="!shares.length" class="muted">
-        Nothing is published. A subscription stored in the plugin is not reachable until it has a
-        share here.
-      </p>
+        <template #cell-rotated="{ row }">
+          <span class="text-sm" :title="formatDateTime(row.rotated_at || row.created_at)">
+            {{ formatRelativeTime(row.rotated_at || row.created_at) }}
+          </span>
+        </template>
+      </DataTable>
 
-      <ul v-else class="share-list">
-        <li v-for="share in shares" :key="share.id" class="share">
-          <div class="share-head">
-            <div class="share-id">
-              <Link2 :size="15" />
-              <strong>{{ share.slug }}</strong>
-              <span class="chip" :class="share.enabled ? 'chip-ok' : 'chip-off'">
-                {{ share.enabled ? "live" : "disabled" }}
-              </span>
+      <!-- Detail: one share, its URL, and the client-specific links. -->
+      <div class="space-y-4">
+        <div v-if="!selected" class="rounded-lg border border-dashed border-border p-6 text-center">
+          <Link2 class="mx-auto size-5 text-muted-foreground" aria-hidden="true" />
+          <p class="mt-2 text-sm font-medium">{{ $t('networking.shares.selectTitle') }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ $t('networking.shares.selectHint') }}</p>
+        </div>
+
+        <div v-else class="rounded-lg border border-border">
+          <div class="flex items-start justify-between gap-3 border-b border-border p-4">
+            <div class="min-w-0">
+              <p class="truncate font-medium">/{{ selected.slug }}</p>
+              <p class="truncate text-xs text-muted-foreground">{{ sourceLabel(selected) }}</p>
             </div>
-            <div class="share-actions">
-              <button class="icon" type="button" title="Copy URL" @click="copy(share)">
-                <Copy :size="15" />
-              </button>
-              <button
-                class="icon"
-                type="button"
-                title="Fetch from the provider now"
-                :disabled="busyId === share.id"
-                @click="refresh(share)"
-              >
-                <RefreshCw :size="15" />
-              </button>
-              <button
-                class="icon"
-                type="button"
-                title="Copy a URL pinned to one client"
-                :disabled="busyId === share.id"
-                @click="clientMenuId = clientMenuId === share.id ? '' : share.id"
-              >
-                <MonitorSmartphone :size="15" />
-              </button>
-              <button
-                class="icon"
-                type="button"
-                title="Rotate the token"
-                :disabled="busyId === share.id"
-                @click="rotatingConfirm = rotatingConfirm === share.id ? null : share.id"
-              >
-                <KeyRound :size="15" />
-              </button>
-              <button
-                class="icon danger"
-                type="button"
-                title="Delete the share"
-                :disabled="busyId === share.id"
-                @click="confirmingDelete = confirmingDelete === share.id ? null : share.id"
-              >
-                <Trash2 :size="15" />
-              </button>
-            </div>
+            <Badge :variant="stateVariant[publishedState(selected)]">
+              {{ $t('networking.shares.state.' + publishedState(selected)) }}
+            </Badge>
           </div>
 
-          <!-- Permanently visible, by request and by design. -->
-          <code class="share-url">{{ shareUrl(share) }}</code>
-
-          <div v-if="clientMenuId === share.id" class="client-links">
-            <p class="client-links-hint">
-              Each of these is the same share pinned to one client. Without one, the served
-              configuration is chosen from the fetching client's User-Agent.
-            </p>
-            <div class="client-grid">
-              <button
-                v-for="target in SHARE_TARGETS"
-                :key="target.id"
-                class="btn btn-sm"
-                type="button"
-                :title="clientUrl(share, target.id)"
-                @click="copyClient(share, target.id)"
-              >
-                {{ target.label }}
-              </button>
+          <div class="space-y-3 p-4">
+            <div>
+              <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.url') }}</p>
+              <div class="mt-1 flex items-start gap-2">
+                <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">{{ shareUrl(selected) }}</code>
+                <CopyButton :value="shareUrl(selected)" :label="$t('common.actions.copy')" />
+              </div>
+              <p class="mt-1.5 text-xs text-muted-foreground">{{ $t('networking.shares.tokenNote') }}</p>
             </div>
+
+            <div v-if="!isServing(selected)" class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs">
+              {{ $t('networking.shares.notServing') }}
+            </div>
+
+            <div>
+              <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.clientLinks') }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('networking.shares.clientLinksHint') }}</p>
+              <div class="mt-2 grid grid-cols-2 gap-1.5">
+                <Button
+                  v-for="target in SHARE_TARGETS"
+                  :key="target.id"
+                  variant="outline"
+                  size="sm"
+                  class="justify-between"
+                  :title="clientUrl(origin, selected, target.id)"
+                  @click="copy(clientUrl(origin, selected, target.id), $t('networking.shares.copiedClient', { target: target.label }))"
+                >
+                  <span class="truncate">{{ target.label }}</span>
+                  <MonitorSmartphone class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+
+            <dl class="grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs">
+              <div>
+                <dt class="text-muted-foreground">{{ $t('networking.shares.columns.format') }}</dt>
+                <dd>{{ selected.default_format || $t('networking.shares.formatAuto') }}</dd>
+              </div>
+              <div>
+                <dt class="text-muted-foreground">{{ $t('networking.shares.created') }}</dt>
+                <dd>{{ formatRelativeTime(selected.created_at) }}</dd>
+              </div>
+              <div v-if="selected.rotated_at">
+                <dt class="text-muted-foreground">{{ $t('networking.shares.rotatedAt') }}</dt>
+                <dd>{{ formatRelativeTime(selected.rotated_at) }}</dd>
+              </div>
+              <div v-if="selected.expires_at">
+                <dt class="text-muted-foreground">{{ $t('networking.shares.expires') }}</dt>
+                <dd>{{ formatDateTime(selected.expires_at) }}</dd>
+              </div>
+            </dl>
           </div>
 
-          <p class="share-meta">
-            {{ sourceLabel(share.source) }}
-            <template v-if="share.default_format"> · {{ share.default_format }}</template>
-            <template v-if="share.rotated_at"> · rotated {{ new Date(share.rotated_at).toLocaleString() }}</template>
-          </p>
+          <div v-if="canAdmin" class="flex flex-wrap gap-2 border-t border-border p-4">
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="busyId === selected.id || selected.source.kind !== 'plugin'"
+              :title="$t('networking.shares.refreshHint')"
+              @click="refreshSource(selected)"
+            >
+              <RefreshCw :class="cn('size-4', busyId === selected.id && 'animate-spin')" aria-hidden="true" />
+              {{ $t('networking.shares.refreshSource') }}
+            </Button>
+            <Button variant="outline" size="sm" :disabled="busyId === selected.id" @click="askRotate(selected)">
+              <KeyRound class="size-4" aria-hidden="true" />
+              {{ $t('networking.shares.rotate') }}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              class="ml-auto text-destructive"
+              :disabled="busyId === selected.id"
+              @click="askDelete(selected)"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+              {{ $t('common.actions.delete') }}
+            </Button>
+          </div>
+        </div>
 
-          <p v-if="rotatingConfirm === share.id" class="banner banner-warn">
-            Rotating replaces the token. Every client using the current URL stops working until you
-            give them the new one.
-            <button class="btn btn-sm" type="button" @click="rotatingConfirm = null">Keep</button>
-            <button class="btn btn-sm btn-primary" type="button" @click="rotate(share)">Rotate</button>
-          </p>
+        <!-- The other two ways this server publishes. Naming them here is what
+             keeps an operator from assuming subscriptions are a special case. -->
+        <div class="rounded-lg border border-border p-4">
+          <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.alsoPublishes') }}</p>
+          <div class="mt-2 flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" @click="router.push('/platform/static')">
+              <ExternalLink class="size-3.5" aria-hidden="true" />
+              {{ $t('networking.shares.staticLink') }}
+            </Button>
+            <Button variant="outline" size="sm" @click="router.push('/platform/workers')">
+              <ExternalLink class="size-3.5" aria-hidden="true" />
+              {{ $t('networking.shares.workersLink') }}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-          <p v-if="confirmingDelete === share.id" class="banner banner-warn">
-            Delete <strong>{{ share.slug }}</strong>? The URL stops being served immediately. The
-            subscription itself stays in the plugin.
-            <button class="btn btn-sm" type="button" @click="confirmingDelete = null">Keep</button>
-            <button class="btn btn-sm btn-danger" type="button" @click="remove(share)">Delete</button>
-          </p>
-        </li>
-      </ul>
-    </section>
+    <!-- ── publish dialog ──────────────────────────────────────────────── -->
+    <Dialog v-model:open="publishOpen">
+      <DialogContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.shares.publishTitle') }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.shares.publishDescription') }}</DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4">
+          <div class="grid gap-2">
+            <Label>{{ $t('networking.shares.sourceKind') }}</Label>
+            <Select v-model="draft.kind">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="plugin">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
+                <SelectItem value="core.proxy_user">{{ $t('networking.shares.kindProxyUser') }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <template v-if="draft.kind === 'plugin'">
+            <div class="grid gap-2">
+              <Label>{{ $t('networking.shares.plugin') }}</Label>
+              <Select v-model="draft.pluginId">
+                <SelectTrigger><SelectValue :placeholder="$t('networking.shares.pluginPlaceholder')" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="plugin in publishablePlugins" :key="plugin.id" :value="plugin.id">
+                    {{ plugin.name || plugin.id }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="!publishablePlugins.length" class="text-xs text-muted-foreground">
+                {{ $t('networking.shares.noPublishablePlugins') }}
+              </p>
+            </div>
+
+            <div class="grid gap-2">
+              <Label>{{ $t('networking.shares.record') }}</Label>
+              <Select v-model="draft.subscriptionId" :disabled="recordsLoading || !records.length">
+                <SelectTrigger>
+                  <SelectValue :placeholder="recordsLoading ? $t('common.states.loading') : $t('networking.shares.recordPlaceholder')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="record in records" :key="record.id" :value="record.id">
+                    {{ record.display_name || record.name || record.id }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="recordsError" class="text-xs text-destructive">{{ recordsError }}</p>
+              <p v-else-if="!recordsLoading && !records.length && draft.pluginId" class="text-xs text-muted-foreground">
+                {{ $t('networking.shares.noRecords') }}
+              </p>
+            </div>
+          </template>
+
+          <div v-else class="grid gap-2">
+            <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
+            <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" />
+          </div>
+
+          <div class="grid gap-2">
+            <Label for="share-slug">{{ $t('networking.shares.slug') }}</Label>
+            <Input id="share-slug" v-model="draft.slug" autocomplete="off" spellcheck="false" placeholder="team-nodes" />
+            <p v-if="slugError" class="text-xs text-destructive">{{ slugError }}</p>
+            <p v-else class="text-xs text-muted-foreground">{{ $t('networking.shares.slugHint') }}</p>
+          </div>
+
+          <div class="grid gap-2">
+            <Label>{{ $t('networking.shares.defaultFormat') }}</Label>
+            <Select v-model="draft.defaultFormat">
+              <SelectTrigger><SelectValue :placeholder="$t('networking.shares.formatAuto')" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="plain">plain</SelectItem>
+                <SelectItem value="base64">base64</SelectItem>
+                <SelectItem value="sing-box">sing-box</SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button variant="outline">{{ $t('common.actions.cancel') }}</Button>
+          </DialogClose>
+          <Button :disabled="!canPublish" @click="publish">
+            <RefreshCw v-if="publishing" class="size-4 animate-spin" aria-hidden="true" />
+            <Link2 v-else class="size-4" aria-hidden="true" />
+            {{ $t('networking.shares.publish') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- ── rotate / delete confirmation ────────────────────────────────── -->
+    <Dialog :open="!!rotateTarget || !!deleteTarget" @update:open="(open) => { if (!open) { rotateTarget = null; deleteTarget = null; } }">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {{ rotateTarget ? $t('networking.shares.rotateTitle') : $t('networking.shares.deleteTitle') }}
+          </DialogTitle>
+          <DialogDescription>
+            {{ rotateTarget ? $t('networking.shares.rotateWarning') : $t('networking.shares.deleteWarning') }}
+          </DialogDescription>
+        </DialogHeader>
+        <div class="grid gap-2">
+          <Label for="share-confirm">
+            {{ $t('networking.shares.confirmPrompt', { slug: (rotateTarget ?? deleteTarget)?.slug }) }}
+          </Label>
+          <Input id="share-confirm" v-model="confirmText" autocomplete="off" spellcheck="false" />
+        </div>
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button variant="outline">{{ $t('common.actions.cancel') }}</Button>
+          </DialogClose>
+          <Button
+            :variant="deleteTarget ? 'destructive' : 'default'"
+            :disabled="!confirmMatches"
+            @click="rotateTarget ? rotate() : remove()"
+          >
+            <Ban v-if="deleteTarget" class="size-4" aria-hidden="true" />
+            <KeyRound v-else class="size-4" aria-hidden="true" />
+            {{ rotateTarget ? $t('networking.shares.rotate') : $t('common.actions.delete') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
-
-<style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.page-head h1 {
-  margin: 0 0 6px;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.page-sub {
-  margin: 0;
-  max-width: 70ch;
-  color: var(--text-muted, #8b96a5);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.card {
-  padding: 18px;
-  border: 1px solid var(--border, #242d3a);
-  border-radius: 12px;
-  background: var(--surface, #161c26);
-}
-
-.card h2 {
-  margin: 0 0 14px;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.field span {
-  font-weight: 600;
-}
-
-.field input,
-.field select {
-  padding: 8px 10px;
-  border: 1px solid var(--border, #242d3a);
-  border-radius: 8px;
-  background: var(--surface-2, #0d1117);
-  color: inherit;
-  font-size: 13px;
-}
-
-.hint,
-.err {
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.hint {
-  color: var(--text-muted, #8b96a5);
-}
-
-.err {
-  color: #f87171;
-}
-
-.actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 14px;
-}
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 7px 13px;
-  border: 1px solid var(--border, #242d3a);
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  border-color: transparent;
-  background: var(--accent, #2dd4bf);
-  color: #04211d;
-}
-
-.btn-danger {
-  border-color: #f87171;
-  color: #f87171;
-}
-
-.btn-sm {
-  padding: 4px 9px;
-  font-size: 12px;
-}
-
-.icon {
-  display: inline-flex;
-  padding: 6px;
-  border: 1px solid var(--border, #242d3a);
-  border-radius: 7px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.icon:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.icon.danger {
-  color: #f87171;
-}
-
-.share-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.share {
-  padding: 14px;
-  border: 1px solid var(--border, #242d3a);
-  border-radius: 10px;
-  background: var(--surface-2, #0d1117);
-}
-
-.share-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.share-id {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-}
-
-.share-actions {
-  display: inline-flex;
-  gap: 6px;
-}
-
-.share-url {
-  display: block;
-  padding: 9px 11px;
-  border: 1px solid var(--border, #242d3a);
-  border-radius: 8px;
-  background: var(--surface, #161c26);
-  font-size: 12.5px;
-  /* The token makes this long; wrapping beats a hidden overflow when the whole
-     point is that the operator can read and copy it. */
-  word-break: break-all;
-}
-
-.share-meta {
-  margin: 9px 0 0;
-  color: var(--text-muted, #8b96a5);
-  font-size: 12.5px;
-}
-
-.chip {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.chip-ok {
-  background: rgba(45, 212, 191, 0.15);
-  color: #2dd4bf;
-}
-
-.chip-off {
-  background: rgba(139, 150, 165, 0.18);
-  color: #8b96a5;
-}
-
-.banner {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 10px 0 0;
-  padding: 10px 12px;
-  border-radius: 9px;
-  font-size: 13px;
-  line-height: 1.55;
-}
-
-.banner-error {
-  background: rgba(248, 113, 113, 0.12);
-  color: #f87171;
-}
-
-.banner-ok {
-  background: rgba(45, 212, 191, 0.12);
-  color: #2dd4bf;
-}
-
-.banner-warn {
-  background: rgba(250, 204, 21, 0.12);
-  color: #facc15;
-}
-
-.muted {
-  color: var(--text-muted, #8b96a5);
-  font-size: 13.5px;
-}
-
-/* Skeleton rows share the global .skeleton-block pulse; only their shape and
-   tint are local (this view keeps its own surface tokens — a raw --accent
-   block would glare on the dark card in light themes). */
-.share-skeletons {
-  display: grid;
-  gap: 12px;
-}
-
-.share-skeleton {
-  height: 96px;
-  background: var(--border, #242d3a);
-}
-
-.spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.client-links {
-  margin-top: 8px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--muted) 40%, transparent);
-}
-
-.client-links-hint {
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-
-.client-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 6px;
-}
-</style>
