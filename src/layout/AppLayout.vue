@@ -8,6 +8,7 @@ import AppSidebar from "./components/AppSidebar.vue";
 import AppHeader from "./components/AppHeader.vue";
 import TrustBanner from "./components/TrustBanner.vue";
 import CommandPalette from "@/components/common/CommandPalette.vue";
+import { viewportPaneClaimed } from "./viewportPane";
 
 const ui = useUiStore();
 const { density } = storeToRefs(ui);
@@ -63,11 +64,21 @@ watchEffect(() => {
           @open-command="commandOpen = true"
         />
 
+        <!--
+          Two shapes, one element. A document route scrolls here, which is what
+          every content view expects. A route that claims the viewport pane (a
+          sandboxed plugin frame) stops this element scrolling and becomes the
+          containing block for a pane that fills it: the pane is `absolute
+          inset-0`, so it fills this box no matter how many wrappers sit between
+          them, and the chrome above stays put while the plugin scrolls itself.
+          Both halves of that contract live here and in the claiming view.
+        -->
         <main
           id="main-content"
           role="main"
           tabindex="-1"
-          class="min-h-0 flex-1 overflow-y-auto"
+          class="min-h-0 flex-1"
+          :class="viewportPaneClaimed ? 'relative overflow-hidden' : 'overflow-y-auto'"
         >
           <RouterView v-slot="{ Component, route }">
             <component :is="Component" :key="route.path" class="view-enter" />
