@@ -529,6 +529,16 @@ export default {
     noActionsDescription: "This form view does not declare any actions.",
     emptyTitle: "Nothing to show",
     emptyDescription: "The plugin returned no data for this view.",
+    frame: {
+      loading: "Loading the {plugin} interface",
+      starting: "{plugin} loaded. Waiting for it to start.",
+      unresponsiveTitle: "{plugin} did not start",
+      unresponsiveDescription:
+        "The interface loaded but never answered the host within {seconds} seconds. This is usually the plugin, not your connection.",
+      unavailableTitle: "{plugin} interface unavailable",
+      unavailableDescription:
+        "The interface could not be loaded. Check that the plugin is still active and its assets are reachable.",
+    },
     secretHidden: "Hidden, copy to reveal",
     copy: "Copy",
     formHint: "Run a plugin action. Each action collects its inputs before calling the gateway.",

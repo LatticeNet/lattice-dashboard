@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PluginFrameLifecycle } from "../pluginFrameModel.ts";
+import {
+  PluginFrameLifecycle,
+  pluginFrameIsBusy,
+  pluginFrameIsRetryable,
+  pluginFramePhase,
+} from "../pluginFrameModel.ts";
 
 function lifecycle(options: { now?: () => number; maxRotations?: number; windowMs?: number } = {}) {
   let counter = 0;
@@ -80,4 +85,66 @@ test("the rotation budget refills once the window passes", () => {
 
   clock += 10_001;
   assert.equal(frame.noteLoad().action, "rotate", "a later reload is legitimate again");
+});
+
+
+/* ── boot phase ─────────────────────────────────────────────────────────── */
+
+const BOOTING = {
+  documentLoaded: false,
+  handshakeComplete: false,
+  handshakeExpired: false,
+  frameDown: false,
+  loadError: false,
+};
+
+test("a frame whose document is still arriving is booting, not ready and not broken", () => {
+  assert.equal(pluginFramePhase(BOOTING), "booting");
+  assert.equal(pluginFrameIsBusy("booting"), true);
+  assert.equal(pluginFrameIsRetryable("booting"), false);
+});
+
+test("a loaded document that has not answered the handshake is still busy", () => {
+  const phase = pluginFramePhase({ ...BOOTING, documentLoaded: true });
+
+  assert.equal(phase, "handshaking");
+  assert.equal(pluginFrameIsBusy(phase), true);
+});
+
+test("a plugin that answered owns the surface", () => {
+  const phase = pluginFramePhase({ ...BOOTING, documentLoaded: true, handshakeComplete: true });
+
+  assert.equal(phase, "ready");
+  assert.equal(pluginFrameIsBusy(phase), false);
+  assert.equal(pluginFrameIsRetryable(phase), false);
+});
+
+test("loading but never answering is its own state, not a blank box forever", () => {
+  const phase = pluginFramePhase({ ...BOOTING, documentLoaded: true, handshakeExpired: true });
+
+  assert.equal(phase, "unresponsive");
+  assert.equal(pluginFrameIsBusy(phase), false);
+  assert.equal(pluginFrameIsRetryable(phase), true);
+});
+
+test("a frame that cannot load at all outranks every waiting state", () => {
+  assert.equal(pluginFramePhase({ ...BOOTING, loadError: true }), "unavailable");
+  assert.equal(pluginFramePhase({ ...BOOTING, frameDown: true }), "unavailable");
+  // Even mid-handshake: there is nothing left to wait for.
+  assert.equal(
+    pluginFramePhase({ ...BOOTING, documentLoaded: true, handshakeExpired: true, frameDown: true }),
+    "unavailable",
+  );
+  assert.equal(pluginFrameIsRetryable("unavailable"), true);
+});
+
+test("a late answer after the timer elapsed still wins over the timeout", () => {
+  const phase = pluginFramePhase({
+    ...BOOTING,
+    documentLoaded: true,
+    handshakeComplete: true,
+    handshakeExpired: true,
+  });
+
+  assert.equal(phase, "ready");
 });

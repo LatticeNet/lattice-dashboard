@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { AlertTriangle, LoaderCircle } from "lucide-vue-next";
+import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
 
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PluginBridgeSession, resolvePluginFrameURL, type BridgeHostMessage } from "./pluginBridgeModel";
-import { PluginFrameLifecycle } from "./pluginFrameModel";
+import {
+  PluginFrameLifecycle,
+  pluginFrameIsBusy,
+  pluginFramePhase,
+} from "./pluginFrameModel";
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
 
 const props = defineProps<{
@@ -17,6 +23,9 @@ const props = defineProps<{
   interfaces: PluginInterfaceContract[];
 }>();
 
+/** How long a loaded document gets to answer before the host says so. */
+const HANDSHAKE_TIMEOUT_MS = 8_000;
+
 const lifecycle = new PluginFrameLifecycle({ createNonce });
 const router = useRouter();
 
@@ -24,8 +33,41 @@ const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
 const failed = ref(false);
 const frameDown = ref(false);
-const frameHeight = ref(720);
 const nonce = ref(lifecycle.nonce);
+
+/**
+ * The document has arrived but the plugin has not spoken yet. Tracked
+ * separately from `loaded` (which means the handshake landed) so the host can
+ * say which of the two waits it is in instead of showing one undifferentiated
+ * blank.
+ */
+const documentLoaded = ref(false);
+const handshakeExpired = ref(false);
+
+/**
+ * Frame height, driven by what the plugin reports. The bridge clamps the value
+ * to [320, 2400] and rate-limits the stream, so this cannot be used to thrash
+ * layout. It starts unset: until the plugin reports, the element takes the
+ * min-height below and nothing jumps when the real number arrives.
+ */
+const frameHeight = ref<number | null>(null);
+
+const phase = computed(() =>
+  pluginFramePhase({
+    documentLoaded: documentLoaded.value,
+    handshakeComplete: loaded.value,
+    handshakeExpired: handshakeExpired.value,
+    frameDown: frameDown.value,
+    loadError: failed.value && !handshakeExpired.value,
+  }),
+);
+
+const busy = computed(() => pluginFrameIsBusy(phase.value));
+
+const frameStyle = computed(() => ({
+  ...(frameHeight.value === null ? {} : { height: `${frameHeight.value}px` }),
+  minHeight: "calc(100vh - 3.5rem)",
+}));
 
 // Re-keying the iframe makes Vue discard the element together with its document.
 // Rotation must never be expressed as a bare `src` reassignment: the rotated URL
@@ -59,14 +101,17 @@ function clearHandshakeTimer() {
 function failHandshake() {
   if (handshakeComplete) return;
   teardownSession();
-  failed.value = true;
+  // Deliberately NOT the same state as "could not load": the document is there
+  // and simply never answered, which is the plugin's problem to report, and the
+  // operator needs to be told which of the two happened.
+  handshakeExpired.value = true;
   loaded.value = false;
 }
 
 function startHandshakeTimer() {
   clearHandshakeTimer();
   if (handshakeComplete) return;
-  handshakeTimer = setTimeout(failHandshake, 8_000);
+  handshakeTimer = setTimeout(failHandshake, HANDSHAKE_TIMEOUT_MS);
 }
 
 function markReady() {
@@ -75,6 +120,20 @@ function markReady() {
   clearHandshakeTimer();
   loaded.value = true;
   failed.value = false;
+  handshakeExpired.value = false;
+}
+
+/** Remount the frame under a fresh nonce. Used by the operator-facing retry. */
+function retry() {
+  teardownSession();
+  loaded.value = false;
+  failed.value = false;
+  frameDown.value = false;
+  documentLoaded.value = false;
+  handshakeExpired.value = false;
+  frameHeight.value = null;
+  nonce.value = lifecycle.reset();
+  frameEpoch.value += 1;
 }
 
 function createNonce(): string {
@@ -170,6 +229,7 @@ function onMessage(event: MessageEvent) {
 }
 
 function onLoad() {
+  documentLoaded.value = true;
   const outcome = lifecycle.noteLoad();
   if (outcome.action === "handshake") {
     startHandshakeTimer();
@@ -181,6 +241,7 @@ function onLoad() {
   // document can reach the host.
   teardownSession();
   loaded.value = false;
+  documentLoaded.value = false;
 
   if (outcome.action === "exhausted") {
     frameDown.value = true;
@@ -197,6 +258,7 @@ function onError() {
   clearHandshakeTimer();
   failed.value = true;
   loaded.value = false;
+  documentLoaded.value = false;
 }
 
 // The remounted element is a different iframe, so it must be re-armed before its
@@ -236,24 +298,79 @@ onBeforeUnmount(() => {
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
       class="block w-full border-0 bg-background"
-      :style="{ height: `${frameHeight}px`, minHeight: 'calc(100vh - 3.5rem)' }"
+      :style="frameStyle"
       @load="onLoad"
       @error="onError"
     />
 
+    <!--
+      A plugin frame takes seconds to become useful, and until it does the host
+      owns the surface. The previous state here was one small spinner centred in
+      a full-height box, which on a wide display is indistinguishable from a
+      finished, empty page. This is the same skeleton language the rest of the
+      console uses for a pending list, so the page reads as loading. It is
+      absolutely positioned and therefore adds no height of its own: when the
+      plugin reports its real height, nothing jumps.
+    -->
     <div
-      v-if="!loaded && !failed"
-      class="pointer-events-none absolute inset-0 grid min-h-[24rem] place-items-center bg-background"
+      v-if="busy"
+      class="pointer-events-none absolute inset-0 bg-background p-6"
+      role="status"
       aria-live="polite"
     >
-      <LoaderCircle class="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
-      <span class="sr-only">Loading plugin interface</span>
+      <div class="mx-auto w-full max-w-5xl space-y-6">
+        <div class="space-y-2">
+          <Skeleton class="h-6 w-56 rounded-md" />
+          <Skeleton class="h-4 w-80 rounded-md" />
+        </div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <Skeleton v-for="n in 3" :key="n" class="h-20 rounded-lg" />
+        </div>
+        <div class="space-y-2">
+          <Skeleton v-for="n in 6" :key="n" class="h-10 w-full rounded-md" />
+        </div>
+      </div>
+      <p class="sr-only">
+        {{ phase === 'handshaking'
+          ? $t('pluginViews.frame.starting', { plugin: pluginName })
+          : $t('pluginViews.frame.loading', { plugin: pluginName }) }}
+      </p>
     </div>
 
-    <div v-else-if="failed" class="absolute inset-0 grid min-h-[24rem] place-items-center bg-background p-6">
-      <div class="flex max-w-sm flex-col items-center gap-3 text-center">
-        <AlertTriangle class="size-5 text-destructive" aria-hidden="true" />
-        <p class="text-sm font-medium text-foreground">Plugin interface unavailable</p>
+    <!--
+      Two different failures, said differently. A frame that never loaded is the
+      host's or the network's problem; a frame that loaded and never answered is
+      the plugin's, and it is the case the plugins themselves already model as a
+      expired handshake.
+    -->
+    <div
+      v-else-if="phase === 'unresponsive' || phase === 'unavailable'"
+      class="absolute inset-0 grid place-items-center bg-background p-6"
+      role="status"
+    >
+      <div class="flex max-w-md flex-col items-center gap-3 text-center">
+        <component
+          :is="phase === 'unresponsive' ? PlugZap : AlertTriangle"
+          class="size-5"
+          :class="phase === 'unresponsive' ? 'text-warning' : 'text-destructive'"
+          aria-hidden="true"
+        />
+        <div class="space-y-1">
+          <p class="text-sm font-medium text-foreground">
+            {{ phase === 'unresponsive'
+              ? $t('pluginViews.frame.unresponsiveTitle', { plugin: pluginName })
+              : $t('pluginViews.frame.unavailableTitle', { plugin: pluginName }) }}
+          </p>
+          <p class="text-sm text-muted-foreground">
+            {{ phase === 'unresponsive'
+              ? $t('pluginViews.frame.unresponsiveDescription', { seconds: Math.round(HANDSHAKE_TIMEOUT_MS / 1000) })
+              : $t('pluginViews.frame.unavailableDescription') }}
+          </p>
+        </div>
+        <Button variant="outline" size="sm" @click="retry">
+          <RefreshCw class="size-4" aria-hidden="true" />
+          {{ $t('common.actions.retry') }}
+        </Button>
       </div>
     </div>
   </div>
