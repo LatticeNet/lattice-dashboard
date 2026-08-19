@@ -13,6 +13,7 @@ import {
   pluginFramePhase,
 } from "./pluginFrameModel";
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
+import { claimViewportPane } from "@/layout/viewportPane";
 
 const props = defineProps<{
   pluginId: string;
@@ -45,12 +46,26 @@ const documentLoaded = ref(false);
 const handshakeExpired = ref(false);
 
 /**
- * Frame height, driven by what the plugin reports. The bridge clamps the value
- * to [320, 2400] and rate-limits the stream, so this cannot be used to thrash
- * layout. It starts unset: until the plugin reports, the element takes the
- * min-height below and nothing jumps when the real number arrives.
+ * The frame is a viewport, not a document.
+ *
+ * The host used to size the iframe to the height the plugin reported, clamped
+ * to [320, 2400]. Every page taller than that ceiling (sub-store's subscription
+ * list, vpn-core's Lines table) got a frame shorter than its own content, so the
+ * plugin document scrolled inside a frame that was itself inside a scrolling
+ * page: two nested scrollbars, and the inner one unreachable until the outer one
+ * had been scrolled to the bottom. A frame sized to content also cannot be a
+ * viewport, which is why `position: fixed` and `position: sticky` do not work
+ * inside a plugin and why an overlay has no way to learn how tall the window is.
+ *
+ * So the pane fills the shell's main region exactly and the plugin scrolls
+ * inside it. One scrollbar. `100vh`, `fixed` and `sticky` resolve against the
+ * visible window because the frame now is the visible window. The height never
+ * depends on anything the plugin says, so nothing jumps when the plugin first
+ * reports and no reported number can make the host allocate a larger box: the
+ * bridge still accepts `lattice.plugin.resize` for protocol compatibility, and
+ * the host no longer wires it to layout.
  */
-const frameHeight = ref<number | null>(null);
+let releaseViewportPane: (() => void) | undefined;
 
 const phase = computed(() =>
   pluginFramePhase({
@@ -63,11 +78,6 @@ const phase = computed(() =>
 );
 
 const busy = computed(() => pluginFrameIsBusy(phase.value));
-
-const frameStyle = computed(() => ({
-  ...(frameHeight.value === null ? {} : { height: `${frameHeight.value}px` }),
-  minHeight: "calc(100vh - 3.5rem)",
-}));
 
 // Re-keying the iframe makes Vue discard the element together with its document.
 // Rotation must never be expressed as a bare `src` reassignment: the rotated URL
@@ -131,7 +141,6 @@ function retry() {
   frameDown.value = false;
   documentLoaded.value = false;
   handshakeExpired.value = false;
-  frameHeight.value = null;
   nonce.value = lifecycle.reset();
   frameEpoch.value += 1;
 }
@@ -199,7 +208,6 @@ function armSession() {
     call: (service, method, payload, signal) =>
       api.plugins.call(props.pluginId, service, method, payload, signal),
     post: postToFrame,
-    resize: (height) => { frameHeight.value = height; },
     ready: markReady,
   });
 }
@@ -269,6 +277,10 @@ watch(frameEpoch, async () => {
 });
 
 onMounted(async () => {
+  // Claimed before the early return below: the failure panel is positioned
+  // against this pane too, so it needs the pane to exist even when no frame
+  // does. Released exactly once, on teardown.
+  releaseViewportPane = claimViewportPane();
   if (!frameSource.value) {
     failed.value = true;
     return;
@@ -281,6 +293,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  releaseViewportPane?.();
+  releaseViewportPane = undefined;
   window.removeEventListener("message", onMessage);
   themeObserver?.disconnect();
   teardownSession();
@@ -288,7 +302,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="relative min-h-[calc(100vh-3.5rem)] w-full overflow-hidden bg-background">
+  <!--
+    `absolute inset-0` against the shell's main region, which the claim above
+    turns into the containing block. The pane therefore fills the visible area
+    exactly however many wrappers the shell puts in between, and never adds
+    height of its own for the outer region to scroll.
+  -->
+  <div class="absolute inset-0 overflow-hidden bg-background">
     <iframe
       v-if="frameSource && !frameDown"
       :key="frameEpoch"
@@ -297,8 +317,7 @@ onBeforeUnmount(() => {
       :title="pluginName"
       sandbox="allow-scripts"
       referrerpolicy="no-referrer"
-      class="block w-full border-0 bg-background"
-      :style="frameStyle"
+      class="block h-full w-full border-0 bg-background"
       @load="onLoad"
       @error="onError"
     />
