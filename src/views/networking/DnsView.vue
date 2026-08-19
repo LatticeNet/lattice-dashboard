@@ -25,6 +25,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
+import { fieldNumber } from "@/lib/formValue";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -124,7 +125,8 @@ interface RecordDraft {
   name: string;
   type: string;
   value: string;
-  ttl: string;
+  /** Bound to a numeric input, so Vue hands back a number once edited. */
+  ttl: string | number;
 }
 
 interface ZoneDraft {
@@ -169,7 +171,8 @@ interface DnsForm {
   hostname: string;
   publish_ipv4: boolean;
   publish_ipv6: boolean;
-  record_ttl: string;
+  /** Bound to a numeric input, so Vue hands back a number once edited. */
+  record_ttl: string | number;
   cf_api_token: string;
   ddns_profile_id: string;
 }
@@ -321,7 +324,7 @@ function buildBody(): DNSDeploymentBody {
         name: r.name.trim(),
         type: r.type,
         value: r.value.trim(),
-        ...(r.ttl.trim() ? { ttl: Number(r.ttl) } : {}),
+        ...(fieldNumber(r.ttl) === undefined ? {} : { ttl: fieldNumber(r.ttl) }),
       }));
     }
     return base;
@@ -343,7 +346,8 @@ function buildBody(): DNSDeploymentBody {
     body.hostname = form.hostname.trim();
     body.publish_ipv4 = form.publish_ipv4;
     body.publish_ipv6 = form.publish_ipv6;
-    if (form.record_ttl.trim()) body.record_ttl = Number(form.record_ttl);
+    const recordTtl = fieldNumber(form.record_ttl);
+    if (recordTtl !== undefined) body.record_ttl = recordTtl;
   }
   // Write-only secret: only send when the operator typed a new value.
   if (form.cf_api_token.trim()) body.cf_api_token = form.cf_api_token.trim();
