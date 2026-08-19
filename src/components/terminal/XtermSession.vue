@@ -9,7 +9,9 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
+import { ArrowDown, ArrowUp, X } from "lucide-vue-next";
 import { api, type TerminalSession } from "@/lib/api";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 
 const POLL_MS = 120;
 const POLL_ERROR_MS = 1000; // back off after a failed poll so a bad link isn't hammered
@@ -94,7 +96,7 @@ let reconnectStartedAt = 0;
 let streamInputBuffer = "";
 let streamCloseRequestedFor = "";
 // bytesRendered is the absolute count of output bytes this browser has received.
-// It is sent on every (re)connect so the agent replays only the missing tail —
+// It is sent on every (re)connect so the agent replays only the missing tail
 // no double-render, scrollback preserved. Reset only on a new session.
 let bytesRendered = 0;
 const encoder = new TextEncoder();
@@ -268,10 +270,28 @@ function doPaste(text: string) {
   const multiline = /\n/.test(text.replace(/\n+$/, ""));
   const bracketed = terminal.modes?.bracketedPasteMode === true;
   if (multiline && !bracketed) {
-    if (!window.confirm(t("operations.terminal.multilinePasteConfirm"))) return;
+    // A native confirm freezes the whole tab on the one surface where the
+    // operator is watching output arrive. Hold the text and ask in the app.
+    pendingPaste.value = text;
+    return;
   }
   lastPastedText = text;
   lastPastedAt = now;
+  terminal.paste(text);
+}
+
+/** Text held back until the operator confirms a multiline paste. */
+const pendingPaste = ref<string | null>(null);
+const pendingPasteLines = computed(
+  () => (pendingPaste.value ?? "").replace(/\n+$/, "").split("\n").length,
+);
+
+function confirmPendingPaste() {
+  const text = pendingPaste.value;
+  pendingPaste.value = null;
+  if (!text || !terminal) return;
+  lastPastedText = text;
+  lastPastedAt = Date.now();
   terminal.paste(text);
 }
 
@@ -421,7 +441,7 @@ function connectWs() {
   };
   sock.onmessage = (ev) => {
     if (myGen !== wsGen) return;
-    if (typeof ev.data === "string") return; // reserved control frames — ignore
+    if (typeof ev.data === "string") return; // reserved control frames. Ignore
     const bytes = new Uint8Array(ev.data as ArrayBuffer);
     bytesRendered += bytes.byteLength;
     writeTerminalOutput(bytes);
@@ -611,7 +631,7 @@ function startPolling() {
 /**
  * Single-flight, self-scheduling events poll. At most one events request is
  * ever in flight, and an event whose seq is already applied is never repainted
- * — the two guards that fixed the runaway-repeat bug. (Default transport.)
+ *. The two guards that fixed the runaway-repeat bug. (Default transport.)
  */
 async function pollEvents(): Promise<void> {
   if (disposed) return;
@@ -637,7 +657,7 @@ async function pollEvents(): Promise<void> {
     }
     emit("update:session", res.session);
     for (const event of res.events) {
-      if (event.seq <= cursor) continue; // already applied — never repaint
+      if (event.seq <= cursor) continue; // already applied. Never repaint
       cursor = event.seq;
       if (event.kind === "output" && event.data) writeTerminalOutput(event.data);
     }
@@ -650,7 +670,7 @@ async function pollEvents(): Promise<void> {
     }
     if (ended) {
       if (closedPollsRemaining > 0) closedPollsRemaining -= 1;
-      if (closedPollsRemaining <= 0) keepPolling = false; // session fully drained — stop
+      if (closedPollsRemaining <= 0) keepPolling = false; // session fully drained. Stop
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : t("operations.terminal.eventsFailed");
@@ -812,14 +832,32 @@ onBeforeUnmount(() => {
         :placeholder="$t('operations.terminal.findPlaceholder')"
         @keydown="onFindKeydown"
       />
-      <button class="rounded px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-700" @click="findPrevious">↑</button>
-      <button class="rounded px-1.5 py-0.5 text-xs text-slate-300 hover:bg-slate-700" @click="findNext">↓</button>
       <button
-        class="rounded px-1.5 py-0.5 text-xs text-slate-400 hover:bg-slate-700"
+        type="button"
+        class="rounded px-1.5 py-0.5 text-slate-300 outline-none hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-ring/60"
+        :aria-label="$t('operations.terminal.findPrevious')"
+        :title="$t('operations.terminal.findPrevious')"
+        @click="findPrevious"
+      >
+        <ArrowUp class="size-3.5" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="rounded px-1.5 py-0.5 text-slate-300 outline-none hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-ring/60"
+        :aria-label="$t('operations.terminal.findNext')"
+        :title="$t('operations.terminal.findNext')"
+        @click="findNext"
+      >
+        <ArrowDown class="size-3.5" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="rounded px-1.5 py-0.5 text-slate-400 outline-none hover:bg-slate-700 focus-visible:ring-2 focus-visible:ring-ring/60"
         :aria-label="$t('operations.terminal.findClose')"
+        :title="$t('operations.terminal.findClose')"
         @click="closeFind"
       >
-        ✕
+        <X class="size-3.5" aria-hidden="true" />
       </button>
     </div>
 
@@ -848,7 +886,7 @@ onBeforeUnmount(() => {
       </button>
     </div>
 
-    <!-- Stream: auto-retry gave up — manual reconnect (session may still be resumable) -->
+    <!-- Stream: auto-retry gave up. Manual reconnect (session may still be resumable) -->
     <div
       v-else-if="isStream && connState === 'disconnected'"
       class="absolute inset-x-4 top-4 flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/15 px-3 py-2 text-xs text-destructive-foreground"
@@ -876,6 +914,17 @@ onBeforeUnmount(() => {
     >
       {{ terminalError }}
     </div>
+
+    <ConfirmDialog
+      :open="pendingPaste !== null"
+      :title="$t('operations.terminal.multilinePasteTitle')"
+      :description="$t('operations.terminal.multilinePasteConfirm', { lines: pendingPasteLines })"
+      :confirm-label="$t('operations.terminal.multilinePasteAction')"
+      :cancel-label="$t('common.actions.cancel')"
+      variant="default"
+      @update:open="(value: boolean) => { if (!value) pendingPaste = null; }"
+      @confirm="confirmPendingPaste"
+    />
   </div>
 </template>
 

@@ -65,14 +65,17 @@ const tasks = useAsyncData<TaskView[] | undefined>(
   { pollInterval: 10000 },
 );
 
+const AUDIT_PREVIEW = 6;
+const APPROVALS_PREVIEW = 5;
+
 const audit = useAsyncData<AuditEvent[] | undefined>(
-  () => api.audit.query({ limit: 8 }).then((r) => r.events ?? []),
+  () => api.audit.query({ limit: AUDIT_PREVIEW }).then((r) => r.events ?? []),
   { pollInterval: 15000 },
 );
 
 /** KPI numbers must not report 0 when the truth is "could not read". */
 function statValue(query: { data: Ref<unknown> }, count: number): string | number {
-  return query.data.value === undefined ? "—" : count;
+  return query.data.value === undefined ? t("common.misc.none") : count;
 }
 
 const auth = useAuthStore();
@@ -161,7 +164,7 @@ function groupLabel(g: NodeGroup): string {
   return g.i18nKey ? t(g.i18nKey) : g.label;
 }
 
-const auditEvents = computed(() => (audit.data.value ?? []).slice(0, 6));
+const auditEvents = computed(() => audit.data.value ?? []);
 
 function decisionVariant(d: string): "success" | "destructive" | "secondary" {
   if (d === "allow") return "success";
@@ -232,126 +235,140 @@ function refreshAll() {
 
     <!-- Fleet health: live aggregate resource + bandwidth roll-up across the
          fleet, so the operator sees overall pressure without scanning cards. -->
-    <Card v-if="hasFleet">
+    <Card v-if="hasFleet || fleet.error.value">
       <CardContent class="p-4 sm:p-5">
-        <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
-          <div class="space-y-3">
-            <div class="flex items-center gap-2 text-sm font-medium">
-              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('overview.fleetHealth') }}
-              <span class="ml-auto text-xs font-normal text-muted-foreground">
-                {{ $t('overview.acrossLive', { count: onlineNodes }) }}
-              </span>
+        <DataState
+          :loading="false"
+          :error="fleet.error.value"
+          :has-data="hasFleet"
+          @retry="fleet.refresh"
+        >
+          <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+            <div class="space-y-3">
+              <div class="flex items-center gap-2 text-sm font-medium">
+                <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
+                {{ $t('overview.fleetHealth') }}
+                <span class="ml-auto text-xs font-normal text-muted-foreground">
+                  {{ $t('overview.acrossLive', { count: onlineNodes }) }}
+                </span>
+              </div>
+              <MetricBar
+                :label="$t('overview.metric.cpu')"
+                :icon="Cpu"
+                tone="cpu"
+                :percent="totals.cpuPercent"
+                :value-text="formatPercent(totals.cpuPercent)"
+              />
+              <MetricBar
+                :label="$t('overview.metric.memory')"
+                :icon="MemoryStick"
+                tone="memory"
+                :percent="ratio(totals.memUsed, totals.memTotal)"
+                :used="totals.memUsed"
+                :total="totals.memTotal"
+              />
+              <MetricBar
+                :label="$t('overview.metric.disk')"
+                :icon="HardDrive"
+                tone="disk"
+                :percent="ratio(totals.diskUsed, totals.diskTotal)"
+                :used="totals.diskUsed"
+                :total="totals.diskTotal"
+              />
             </div>
-            <MetricBar
-              :label="$t('overview.metric.cpu')"
-              :icon="Cpu"
-              tone="cpu"
-              :percent="totals.cpuPercent"
-              :value-text="formatPercent(totals.cpuPercent)"
-            />
-            <MetricBar
-              :label="$t('overview.metric.memory')"
-              :icon="MemoryStick"
-              tone="memory"
-              :percent="ratio(totals.memUsed, totals.memTotal)"
-              :used="totals.memUsed"
-              :total="totals.memTotal"
-            />
-            <MetricBar
-              :label="$t('overview.metric.disk')"
-              :icon="HardDrive"
-              tone="disk"
-              :percent="ratio(totals.diskUsed, totals.diskTotal)"
-              :used="totals.diskUsed"
-              :total="totals.diskTotal"
-            />
-          </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div class="rounded-lg border border-border bg-muted/20 p-3">
-              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.download') }}</p>
-              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
-                <ArrowDown class="size-4 text-success" aria-hidden="true" />{{ formatBytesPerSec(totals.netRxSpeed) }}
-              </p>
-            </div>
-            <div class="rounded-lg border border-border bg-muted/20 p-3">
-              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.upload') }}</p>
-              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
-                <ArrowUp class="size-4 text-primary" aria-hidden="true" />{{ formatBytesPerSec(totals.netTxSpeed) }}
-              </p>
-            </div>
-            <div class="rounded-lg border border-border bg-muted/20 p-3">
-              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.regions') }}</p>
-              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
-                <Globe class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.regions }}
-              </p>
-            </div>
-            <div class="rounded-lg border border-border bg-muted/20 p-3">
-              <p class="text-xs text-muted-foreground">{{ $t('overview.summary.countries') }}</p>
-              <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
-                <MapPin class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.countries }}
-              </p>
+            <div class="grid grid-cols-2 gap-3">
+              <div class="rounded-lg border border-border bg-muted/20 p-3">
+                <p class="text-xs text-muted-foreground">{{ $t('overview.summary.download') }}</p>
+                <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                  <ArrowDown class="size-4 text-success" aria-hidden="true" />{{ formatBytesPerSec(totals.netRxSpeed) }}
+                </p>
+              </div>
+              <div class="rounded-lg border border-border bg-muted/20 p-3">
+                <p class="text-xs text-muted-foreground">{{ $t('overview.summary.upload') }}</p>
+                <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                  <ArrowUp class="size-4 text-primary" aria-hidden="true" />{{ formatBytesPerSec(totals.netTxSpeed) }}
+                </p>
+              </div>
+              <div class="rounded-lg border border-border bg-muted/20 p-3">
+                <p class="text-xs text-muted-foreground">{{ $t('overview.summary.regions') }}</p>
+                <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                  <Globe class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.regions }}
+                </p>
+              </div>
+              <div class="rounded-lg border border-border bg-muted/20 p-3">
+                <p class="text-xs text-muted-foreground">{{ $t('overview.summary.countries') }}</p>
+                <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
+                  <MapPin class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.countries }}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        </DataState>
       </CardContent>
     </Card>
 
-    <Card v-if="hasFleet">
+    <Card v-if="hasFleet || fleet.error.value">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <ShieldAlert class="size-4 text-muted-foreground" aria-hidden="true" />
           {{ $t('overview.trustPosture.title') }}
-          <Badge :variant="trustPostureRiskCount > 0 ? 'warning' : 'success'" class="ms-auto">
+          <Badge v-if="hasFleet" :variant="trustPostureRiskCount > 0 ? 'warning' : 'success'" class="ms-auto">
             {{ trustPostureRiskCount > 0 ? $t('overview.trustPosture.review') : $t('overview.trustPosture.clean') }}
           </Badge>
         </CardTitle>
         <CardDescription>{{ $t('overview.trustPosture.description') }}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <RouterLink
-            :to="{ name: 'nodes' }"
-            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
-          >
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.rootExec') }}</p>
-            <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithRootExec.length > 0 ? 'text-destructive' : 'text-foreground')">
-              {{ nodesWithRootExec.length }}
-            </p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.execEnabled', { count: nodesWithExec.length }) }}</p>
-          </RouterLink>
-          <RouterLink
-            :to="{ name: 'nodes' }"
-            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
-          >
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.terminal') }}</p>
-            <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithTerminal.length > 0 ? 'text-warning' : 'text-foreground')">
-              {{ nodesWithTerminal.length }}
-            </p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.terminalHint') }}</p>
-          </RouterLink>
-          <RouterLink
-            :to="{ name: 'nodes' }"
-            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
-          >
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.sourcePolicy') }}</p>
-            <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithoutSourceAllowlist.length > 0 ? 'text-warning' : 'text-foreground')">
-              {{ nodesWithoutSourceAllowlist.length }}
-            </p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.sourcePolicyHint') }}</p>
-          </RouterLink>
-          <RouterLink
-            :to="{ name: 'settings-security' }"
-            class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
-          >
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.accountMfa') }}</p>
-            <p :class="cn('mt-2 text-2xl font-semibold tabular', auth.principal?.totp_enabled ? 'text-success' : 'text-warning')">
-              {{ auth.principal?.totp_enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-            </p>
-            <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.accountMfaHint') }}</p>
-          </RouterLink>
-        </div>
+        <DataState
+          :loading="false"
+          :error="fleet.error.value"
+          :has-data="hasFleet"
+          @retry="fleet.refresh"
+        >
+          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <RouterLink
+              :to="{ name: 'nodes' }"
+              class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+            >
+              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.rootExec') }}</p>
+              <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithRootExec.length > 0 ? 'text-destructive' : 'text-foreground')">
+                {{ nodesWithRootExec.length }}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.execEnabled', { count: nodesWithExec.length }) }}</p>
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'nodes' }"
+              class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+            >
+              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.terminal') }}</p>
+              <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithTerminal.length > 0 ? 'text-warning' : 'text-foreground')">
+                {{ nodesWithTerminal.length }}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.terminalHint') }}</p>
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'nodes' }"
+              class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+            >
+              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.sourcePolicy') }}</p>
+              <p :class="cn('mt-2 text-2xl font-semibold tabular', nodesWithoutSourceAllowlist.length > 0 ? 'text-warning' : 'text-foreground')">
+                {{ nodesWithoutSourceAllowlist.length }}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.sourcePolicyHint') }}</p>
+            </RouterLink>
+            <RouterLink
+              :to="{ name: 'settings-security' }"
+              class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
+            >
+              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('overview.trustPosture.accountMfa') }}</p>
+              <p :class="cn('mt-2 text-2xl font-semibold tabular', auth.principal?.totp_enabled ? 'text-success' : 'text-warning')">
+                {{ auth.principal?.totp_enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('overview.trustPosture.accountMfaHint') }}</p>
+            </RouterLink>
+          </div>
+        </DataState>
       </CardContent>
     </Card>
 
@@ -387,7 +404,10 @@ function refreshAll() {
             <div class="space-y-5">
               <section v-for="group in fleetGroups" :key="group.key">
                 <div class="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <span v-if="group.glyph" class="text-sm leading-none">{{ group.glyph }}</span>
+                  <span
+                    v-if="group.glyph"
+                    class="font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
+                  >{{ group.glyph }}</span>
                   <span class="uppercase tracking-wide">{{ groupLabel(group) }}</span>
                   <span class="tabular">{{ group.online }}/{{ group.total }}</span>
                   <span class="h-px flex-1 bg-border"></span>
@@ -446,18 +466,18 @@ function refreshAll() {
               @retry="approvals.refresh"
             >
               <ul class="divide-y divide-border">
-                <li v-for="a in pendingApprovals.slice(0, 5)" :key="a.id">
+                <li v-for="a in pendingApprovals.slice(0, APPROVALS_PREVIEW)" :key="a.id">
                   <RouterLink
                     :to="{ name: 'approvals' }"
                     class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
                   >
                     <StatusDot status="degraded" pulse />
                     <div class="min-w-0 flex-1">
-                      <p class="truncate text-sm">
+                      <p class="truncate text-sm" :title="a.plugin + ' · ' + a.action">
                         <span class="font-medium">{{ a.plugin }}</span>
                         <span class="text-muted-foreground"> · {{ a.action }}</span>
                       </p>
-                      <p class="truncate font-mono text-xs text-muted-foreground tabular">
+                      <p class="truncate font-mono text-xs text-muted-foreground tabular" :title="a.node_id">
                         {{ a.node_id }}
                       </p>
                     </div>
@@ -467,6 +487,13 @@ function refreshAll() {
                   </RouterLink>
                 </li>
               </ul>
+              <RouterLink
+                v-if="pendingApprovals.length > APPROVALS_PREVIEW"
+                :to="{ name: 'approvals' }"
+                class="mt-2 block rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              >
+                {{ $t('operations.approvals.showingOfTotal', { shown: APPROVALS_PREVIEW, total: pendingApprovals.length }) }}
+              </RouterLink>
             </DataState>
           </CardContent>
         </Card>
@@ -503,8 +530,8 @@ function refreshAll() {
                     class="-mx-2 flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-muted/40"
                   >
                     <div class="min-w-0 flex-1">
-                      <p class="truncate font-mono text-xs tabular">{{ ev.action }}</p>
-                      <p v-if="ev.node_id" class="truncate font-mono text-xs text-muted-foreground tabular">
+                      <p class="truncate font-mono text-xs tabular" :title="ev.action">{{ ev.action }}</p>
+                      <p v-if="ev.node_id" class="truncate font-mono text-xs text-muted-foreground tabular" :title="ev.node_id">
                         {{ ev.node_id }}
                       </p>
                     </div>
@@ -515,6 +542,12 @@ function refreshAll() {
                   </RouterLink>
                 </li>
               </ul>
+              <RouterLink
+                :to="{ name: 'audit' }"
+                class="mt-2 block rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+              >
+                {{ $t('operations.audit.olderEvents') }}
+              </RouterLink>
             </DataState>
           </CardContent>
         </Card>

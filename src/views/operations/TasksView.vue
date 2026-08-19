@@ -34,6 +34,7 @@ import {
 } from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -123,15 +124,13 @@ const timeoutSec = ref(60);
 const outputLimit = ref(16384);
 const taskSearch = ref("");
 const taskExpression = ref("");
-const expandedTasks = ref<Set<string>>(new Set());
 const expandedNodeRows = ref<Set<string>>(new Set());
-const seededPage = Number(route.query.page);
-const historyPage = ref(Number.isFinite(seededPage) && seededPage > 0 ? Math.floor(seededPage) : 1);
-const HISTORY_PAGE_SIZE = 8;
 const creating = ref(false);
 const actionPending = ref<string | null>(null);
 const revealedScripts = ref<Record<string, string>>({});
 const revealingScriptID = ref("");
+const deleteOpen = ref(false);
+const deleteTarget = ref<TaskView | undefined>();
 
 const stepUp = useStepUp({
   required: t("operations.tasks.stepUpRequired"),
@@ -150,8 +149,8 @@ const tasks = computed<TaskView[]>(() => tasksQuery.data.value ?? []);
  * The run that is open in the detail drawer.
  *
  * A run's interesting part is per-node: which target failed, on which attempt,
- * with what output. That never fitted in a list — it used to be an accordion
- * inside a card, so reading one node's failure meant scrolling past every
+ * with what output. That never fitted in a list (it used to be an accordion
+ * inside a card), so reading one node's failure meant scrolling past every
  * other run's summary. The list is now a table that answers "which run" and
  * the drawer answers "what happened", which is the split the job actually has.
  */
@@ -253,7 +252,7 @@ const taskExpressionError = computed(() => {
   const expr = taskExpression.value.trim();
   if (!expr) return "";
   const result = evalFilterExpression(expr, () => true);
-  return result.ok ? "" : result.error ?? "Invalid expression";
+  return result.ok ? "" : result.error ?? t("common.table.expressionInvalid");
 });
 
 function filterTextSlice(value?: string): string {
@@ -392,28 +391,12 @@ const filteredRootTasks = computed(() => {
 const queuedCount = computed(() => tasks.value.filter((task) => task.status === "queued").length);
 const runningCount = computed(() => tasks.value.filter((task) => task.status === "leased").length);
 const failedCount = computed(() => rootTasks.value.filter((task) => groupStatus(task, nodeRows(task)) === "failed").length);
-const historyTotalPages = computed(() => Math.max(1, Math.ceil(filteredRootTasks.value.length / HISTORY_PAGE_SIZE)));
-const pagedRootTasks = computed(() => {
-  const page = Math.min(historyPage.value, historyTotalPages.value);
-  const start = (page - 1) * HISTORY_PAGE_SIZE;
-  return filteredRootTasks.value.slice(start, start + HISTORY_PAGE_SIZE);
-});
-
-watch([taskSearch, taskExpression, statusFilter], () => {
-  historyPage.value = 1;
-});
-
-watch([() => filteredRootTasks.value.length, historyTotalPages], () => {
-  if (historyPage.value > historyTotalPages.value) historyPage.value = historyTotalPages.value;
-  if (historyPage.value < 1) historyPage.value = 1;
-});
 
 watch(
-  [historyPage, statusFilter],
-  ([page, status]) => {
+  statusFilter,
+  (status) => {
     const query = { ...route.query };
-    if (page > 1) query.page = String(page);
-    else delete query.page;
+    delete query.page;
     if (status !== "all") query.status = status;
     else delete query.status;
     router.replace({ query }).catch(() => {});
@@ -528,17 +511,6 @@ function taskCounts(rows: NodeExecutionRow[]) {
   return { done, failed, total: rows.length };
 }
 
-function isExpanded(id: string): boolean {
-  return expandedTasks.value.has(id);
-}
-
-function toggleExpanded(id: string) {
-  const next = new Set(expandedTasks.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  expandedTasks.value = next;
-}
-
 function nodeRowKey(taskId: string, nodeId: string): string {
   return `${taskId}:${nodeId}`;
 }
@@ -576,8 +548,23 @@ function taskLatestSummary(task: TaskView): string {
 
 function taskProgressLabel(task: TaskView): string {
   const counts = taskCounts(nodeRows(task));
-  return `${counts.done}/${counts.total} · ${counts.failed} failed · ${attemptTasks(task).length} attempts`;
+  return t("operations.tasks.progressSummary", {
+    done: counts.done,
+    total: counts.total,
+    failed: counts.failed,
+    attempts: attemptTasks(task).length,
+  });
 }
+
+/** Interpreter + script size, shared by the cell and its truncation title. */
+function scriptMeta(task: TaskView): string {
+  return `${task.interpreter} · ${t("operations.tasks.bytes", { count: task.script_size_bytes ?? 0 })}`;
+}
+
+/** Human-readable target list for the delete confirmation. */
+const deleteTargetNames = computed(
+  () => (deleteTarget.value?.targets ?? []).map((id) => nodeName(id)).join(", ") || t("common.misc.none"),
+);
 
 function nodeAgentBadges(node?: Node): string[] {
   return node ? agentConfigBadges(node) : [];
@@ -666,7 +653,6 @@ async function rerunNode(task: TaskView, nodeId: string) {
     await api.tasks.rerunNode(task.id, nodeId);
     toast.success(t("operations.tasks.toastRerunNode", { node: nodeName(nodeId) }));
     await refreshAll();
-    if (!isExpanded(task.id)) toggleExpanded(task.id);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.tasks.toastRerunFailed"));
   } finally {
@@ -687,12 +673,20 @@ async function cancelTask(task: TaskView) {
   }
 }
 
-async function deleteTask(task: TaskView) {
-  if (!window.confirm(t("operations.tasks.deleteConfirm", { id: shortId(task.id) }))) return;
+function askDeleteTask(task: TaskView) {
+  deleteTarget.value = task;
+  deleteOpen.value = true;
+}
+
+async function confirmDeleteTask() {
+  const task = deleteTarget.value;
+  if (!task || actionPending.value === `task:${task.id}`) return;
   actionPending.value = `task:${task.id}`;
   try {
     await api.tasks.delete(task.id);
     toast.success(t("operations.tasks.toastDeleted"));
+    deleteOpen.value = false;
+    deleteTarget.value = undefined;
     await refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.tasks.toastDeleteFailed"));
@@ -705,7 +699,7 @@ async function deleteTask(task: TaskView) {
 <template>
   <div class="space-y-6 p-6">
     <PageHeader :title="$t('operations.tasks.title')" :description="$t('operations.tasks.description')">
-      <template #meta>
+      <template #status>
         <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value || resultsQuery.lastUpdated.value" />
       </template>
       <template #actions>
@@ -746,7 +740,17 @@ async function deleteTask(task: TaskView) {
       </Card>
     </div>
 
-    <Card v-if="canRunTasks">
+    <Card v-if="!canRunTasks">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <Lock class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('operations.tasks.queueTask') }}
+        </CardTitle>
+        <CardDescription>{{ $t('operations.tasks.requiresRunScope') }}</CardDescription>
+      </CardHeader>
+    </Card>
+
+    <Card v-else>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Play class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -816,7 +820,8 @@ async function deleteTask(task: TaskView) {
             <DataState
               :loading="nodesQuery.loading.value"
               :error="nodesQuery.error.value"
-              :empty="filteredTargetNodes.length === 0"
+              :has-data="nodesQuery.data.value !== undefined"
+              :is-empty="filteredTargetNodes.length === 0"
               :empty-title="$t('operations.tasks.noNodesTitle')"
               :empty-description="$t('operations.tasks.noNodesDescription')"
               @retry="nodesQuery.refresh"
@@ -834,7 +839,7 @@ async function deleteTask(task: TaskView) {
                 >
                   <div class="grid min-w-0 gap-1">
                     <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-                      <span class="truncate text-sm font-medium">{{ node.name || node.id }}</span>
+                      <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
                       <Badge :variant="node.online ? 'default' : 'secondary'">
                         {{ node.online ? $t('operations.tasks.on') : $t('operations.tasks.off') }}
                       </Badge>
@@ -848,9 +853,9 @@ async function deleteTask(task: TaskView) {
                       </Badge>
                     </div>
                     <div class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                      <span class="truncate font-mono">{{ node.id }}</span>
+                      <span class="truncate font-mono" :title="node.id">{{ node.id }}</span>
                       <span aria-hidden="true">·</span>
-                      <span class="truncate">{{ nodeRegion(node) }}</span>
+                      <span class="truncate" :title="nodeRegion(node)">{{ nodeRegion(node) }}</span>
                     </div>
                     <div class="flex max-h-6 flex-wrap gap-1 overflow-hidden">
                       <Badge variant="outline" class="text-[10px]">{{ nodeRegion(node) }}</Badge>
@@ -926,7 +931,12 @@ async function deleteTask(task: TaskView) {
           <div class="flex flex-wrap gap-2">
             <div class="relative">
               <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-              <Input v-model="taskSearch" class="w-72 pl-8" :placeholder="$t('operations.tasks.searchPlaceholder')" />
+              <Input
+                v-model="taskSearch"
+                class="w-72 pl-8"
+                :placeholder="$t('operations.tasks.searchPlaceholder')"
+                :aria-label="$t('operations.tasks.searchLabel')"
+              />
             </div>
             <div class="relative">
               <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
@@ -935,7 +945,7 @@ async function deleteTask(task: TaskView) {
                 class="w-80 pl-8 font-mono text-xs"
                 :class="taskExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
                 :placeholder="$t('operations.tasks.expressionPlaceholder')"
-                aria-label="Task expression"
+                :aria-label="$t('operations.tasks.expressionLabel')"
               />
             </div>
             <Select v-model="statusFilter">
@@ -959,18 +969,12 @@ async function deleteTask(task: TaskView) {
         <DataState
           :loading="tasksQuery.loading.value || resultsQuery.loading.value"
           :error="tasksQuery.error.value || resultsQuery.error.value"
-          :empty="filteredRootTasks.length === 0"
+          :has-data="tasksQuery.data.value !== undefined"
+          :is-empty="filteredRootTasks.length === 0"
           :empty-title="rootTasks.length ? $t('operations.tasks.noMatch') : $t('operations.tasks.emptyTitle')"
           :empty-description="rootTasks.length ? '' : $t('operations.tasks.emptyDescription')"
           @retry="refreshAll"
         >
-          <div class="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <span>{{ $t('operations.tasks.showing', { shown: filteredRootTasks.length, total: rootTasks.length }) }}</span>
-            <span v-if="historyTotalPages > 1" class="font-mono">
-              {{ $t('operations.tasks.pageStatus', { page: historyPage, total: historyTotalPages }) }}
-            </span>
-          </div>
-
           <DataTable
             :columns="taskColumns"
             :rows="filteredRootTasks"
@@ -991,16 +995,22 @@ async function deleteTask(task: TaskView) {
 
             <template #cell-task="{ row }">
               <div class="min-w-0">
-                <p class="truncate font-mono text-sm">{{ shortId(row.id) }}</p>
-                <p class="truncate text-xs text-muted-foreground">
-                  {{ row.interpreter }} · {{ $t('operations.tasks.bytes', { count: row.script_size_bytes ?? 0 }) }}
+                <p class="truncate font-mono text-sm" :title="row.id">{{ shortId(row.id) }}</p>
+                <p class="truncate text-xs text-muted-foreground" :title="scriptMeta(row)">
+                  {{ scriptMeta(row) }}
                 </p>
               </div>
             </template>
 
             <template #cell-targets="{ row }">
               <div class="flex flex-wrap items-center gap-1">
-                <Badge v-for="nodeId in row.targets.slice(0, 2)" :key="nodeId" variant="secondary" class="max-w-40 truncate">
+                <Badge
+                  v-for="nodeId in row.targets.slice(0, 2)"
+                  :key="nodeId"
+                  variant="secondary"
+                  class="max-w-40 truncate"
+                  :title="nodeName(nodeId)"
+                >
                   {{ nodeName(nodeId) }}
                 </Badge>
                 <Badge v-if="row.targets.length > 2" variant="outline">+{{ row.targets.length - 2 }}</Badge>
@@ -1008,11 +1018,11 @@ async function deleteTask(task: TaskView) {
             </template>
 
             <template #cell-progress="{ row }">
-              <span class="font-mono text-sm">
+              <span class="font-mono text-sm tabular">
                 {{ taskCounts(nodeRows(row)).done }} / {{ taskCounts(nodeRows(row)).total }}
               </span>
-              <span v-if="taskCounts(nodeRows(row)).failed" class="ml-2 text-xs text-destructive">
-                {{ taskCounts(nodeRows(row)).failed }} failed
+              <span v-if="taskCounts(nodeRows(row)).failed" class="ml-2 text-xs text-destructive tabular">
+                {{ $t('operations.tasks.failedCount', { count: taskCounts(nodeRows(row)).failed }) }}
               </span>
             </template>
 
@@ -1056,6 +1066,7 @@ async function deleteTask(task: TaskView) {
                         :key="nodeId"
                         variant="secondary"
                         class="max-w-52 truncate"
+                        :title="nodeName(nodeId)"
                       >
                         {{ nodeName(nodeId) }}
                       </Badge>
@@ -1063,7 +1074,7 @@ async function deleteTask(task: TaskView) {
                         +{{ detailTask.targets.length - 4 }}
                       </Badge>
                     </div>
-                    <p class="line-clamp-1 text-xs text-muted-foreground">
+                    <p class="line-clamp-1 text-xs text-muted-foreground" :title="taskLatestSummary(detailTask)">
                       {{ taskLatestSummary(detailTask) }}
                     </p>
                   </div>
@@ -1080,15 +1091,23 @@ async function deleteTask(task: TaskView) {
                       <KeyRound v-else class="size-4" aria-hidden="true" />
                       {{ revealedScripts[detailTask.id] ? $t('operations.tasks.hideScript') : $t('operations.tasks.revealScript') }}
                     </Button>
-                    <Button variant="outline" size="sm" :disabled="taskExecutionDisabled || actionPending === `detailTask:${detailTask.id}`" @click="rerunTask(detailTask)">
+                    <Button variant="outline" size="sm" :disabled="taskExecutionDisabled || actionPending === `task:${detailTask.id}`" @click="rerunTask(detailTask)">
                       <RotateCcw class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.rerun') }}
                     </Button>
-                    <Button v-if="detailTask.status === 'queued'" variant="outline" size="sm" :disabled="actionPending === `detailTask:${detailTask.id}`" @click="cancelTask(detailTask)">
+                    <Button v-if="detailTask.status === 'queued'" variant="outline" size="sm" :disabled="actionPending === `task:${detailTask.id}`" @click="cancelTask(detailTask)">
                       <Ban class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.cancel') }}
                     </Button>
-                    <Button variant="ghost" size="icon" class="text-destructive" :disabled="actionPending === `detailTask:${detailTask.id}`" @click="deleteTask(detailTask)">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="text-destructive"
+                      :disabled="actionPending === `task:${detailTask.id}`"
+                      :aria-label="$t('operations.tasks.actions.delete')"
+                      :title="$t('operations.tasks.actions.delete')"
+                      @click="askDeleteTask(detailTask)"
+                    >
                       <Trash2 class="size-4" aria-hidden="true" />
                     </Button>
                   </div>
@@ -1111,7 +1130,7 @@ async function deleteTask(task: TaskView) {
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.latest') }}</p>
-                    <p class="mt-1 line-clamp-1 text-xs">{{ taskProgressLabel(detailTask) }}</p>
+                    <p class="mt-1 line-clamp-1 text-xs" :title="taskProgressLabel(detailTask)">{{ taskProgressLabel(detailTask) }}</p>
                   </div>
                 </div>
 
@@ -1130,11 +1149,11 @@ async function deleteTask(task: TaskView) {
                   <table class="w-full min-w-[760px] text-sm">
                     <thead class="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
-                        <th class="px-3 py-2 text-left">{{ $t('operations.tasks.colTarget') }}</th>
-                        <th class="px-3 py-2 text-left">{{ $t('operations.tasks.colStatus') }}</th>
-                        <th class="px-3 py-2 text-left">{{ $t('operations.tasks.colLatest') }}</th>
-                        <th class="px-3 py-2 text-left">{{ $t('operations.tasks.colAttempts') }}</th>
-                        <th class="px-3 py-2 text-right">{{ $t('operations.tasks.colActions') }}</th>
+                        <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colTarget') }}</th>
+                        <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colStatus') }}</th>
+                        <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colLatest') }}</th>
+                        <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colAttempts') }}</th>
+                        <th scope="col" class="px-3 py-2 text-right">{{ $t('operations.tasks.colActions') }}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1142,8 +1161,8 @@ async function deleteTask(task: TaskView) {
                         <tr class="border-t border-border">
                           <td class="px-3 py-2">
                             <div class="min-w-0">
-                              <p class="truncate font-medium">{{ nodeName(row.nodeId) }}</p>
-                              <p class="truncate font-mono text-xs text-muted-foreground">{{ row.nodeId }}</p>
+                              <p class="truncate font-medium" :title="nodeName(row.nodeId)">{{ nodeName(row.nodeId) }}</p>
+                              <p class="truncate font-mono text-xs text-muted-foreground" :title="row.nodeId">{{ row.nodeId }}</p>
                             </div>
                           </td>
                           <td class="px-3 py-2">
@@ -1157,7 +1176,7 @@ async function deleteTask(task: TaskView) {
                             <p v-else class="text-xs text-muted-foreground">
                               {{ row.status === 'queued' ? $t('operations.tasks.waitingLease') : $t('operations.tasks.running') }}
                             </p>
-                            <p v-if="row.latestResult?.error" class="mt-1 line-clamp-1 text-xs text-destructive">
+                            <p v-if="row.latestResult?.error" class="mt-1 line-clamp-1 text-xs text-destructive" :title="row.latestResult.error">
                               {{ row.latestResult.error }}
                             </p>
                           </td>
@@ -1221,6 +1240,18 @@ async function deleteTask(task: TaskView) {
         </div>
       </DialogScrollContent>
     </Dialog>
+
+    <ConfirmDialog
+      v-model:open="deleteOpen"
+      :title="$t('operations.tasks.deleteTitle')"
+      :description="deleteTarget
+        ? $t('operations.tasks.deleteDescription', { id: shortId(deleteTarget.id), targets: deleteTargetNames })
+        : ''"
+      :confirm-label="$t('operations.tasks.actions.delete')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!deleteTarget && actionPending === `task:${deleteTarget.id}`"
+      @confirm="confirmDeleteTask"
+    />
 
     <Dialog v-model:open="stepUpOpen">
       <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="stepUp.cancel">

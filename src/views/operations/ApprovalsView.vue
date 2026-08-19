@@ -32,6 +32,7 @@ import {
 } from "./approvalsModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -71,6 +72,7 @@ const approvalBucket = ref<ApprovalBucket>("active");
 const approvalSearch = ref("");
 const approvalExpression = ref("");
 const pendingApproval = ref<string | undefined>();
+const hashingApproval = ref<string | undefined>();
 const dismissingApproval = ref<string | undefined>();
 const replanningApproval = ref<string | undefined>();
 const forceReplanOpen = ref(false);
@@ -103,7 +105,7 @@ const canReplanSelectedAgentUpdate = computed(() => canReplanAgentUpdate(selecte
 const canDismissSelectedApproval = computed(() => canDismissApproval(selected.value, selectedAgentUpdateStale.value));
 
 // The most recent earlier applied plan for the same target (node + plugin +
-// action) — i.e. what is actually live. Approved-but-not-applied plans are not a
+// action), i.e. what is actually live. Approved-but-not-applied plans are not a
 // live baseline and would make the diff lie about the current state.
 const previousPlan = computed(() => {
   const cur = selected.value;
@@ -175,7 +177,7 @@ const approvalExpressionError = computed(() => {
   const expr = approvalExpression.value.trim();
   if (!expr) return "";
   const result = evalFilterExpression(expr, () => true);
-  return result.ok ? "" : result.error ?? "Invalid expression";
+  return result.ok ? "" : result.error ?? t("common.table.expressionInvalid");
 });
 
 function approvalFieldValues(approval: ApprovalView, rawField: string): string[] {
@@ -276,7 +278,7 @@ watch(
 );
 
 watch(approvalBucket, () => {
-  // Re-slicing the inbox is an explicit re-read — drop the batch concealment.
+  // Re-slicing the inbox is an explicit re-read, so drop the batch concealment.
   concealedIds.value = new Set();
 });
 
@@ -356,15 +358,67 @@ function refreshApprovals() {
   void approvalsQuery.refresh();
 }
 
-async function runEventBatch(group: ApprovalEventGroup<ApprovalView>, mode: "approve-queue" | "reject") {
+// Every destructive decision (single reject, event batch reject, bulk reject)
+// routes through one themed ConfirmDialog instead of a native window.confirm,
+// so the operator reads what is about to close before it closes.
+const confirmOpen = ref(false);
+const confirmTitle = ref("");
+const confirmDescription = ref("");
+let confirmAction: (() => Promise<void>) | undefined;
+
+function askConfirm(title: string, description: string, action: () => Promise<void>) {
+  confirmTitle.value = title;
+  confirmDescription.value = description;
+  confirmAction = action;
+  confirmOpen.value = true;
+}
+
+function runConfirmed() {
+  const action = confirmAction;
+  confirmAction = undefined;
+  confirmOpen.value = false;
+  void action?.();
+}
+
+/** "plugin · action", shared by the cells and their truncation titles. */
+function changeLabel(approval: ApprovalView): string {
+  return `${approval.plugin} · ${approval.action}`;
+}
+
+/** Compute the plan digest with a visible pending state. */
+async function computePlanHash(approval: ApprovalView) {
+  if (hashingApproval.value) return;
+  hashingApproval.value = approval.id;
+  try {
+    await digestFor(approval);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("operations.approvals.toastFailed"));
+  } finally {
+    hashingApproval.value = undefined;
+  }
+}
+
+function runEventBatch(group: ApprovalEventGroup<ApprovalView>, mode: "approve-queue" | "reject") {
   // Batch actions target pending items only: approved-not-applied items have
   // already been dispositioned, and the server rejects a second decision.
   const targets = eventPendingItems(group);
   if (targets.length === 0 || eventBatches.value[group.key]?.running) return;
-  const title = eventTitleFor(group);
-  if (mode === "reject" && !window.confirm(t("operations.approvals.events.rejectAllConfirm", { count: targets.length, title }))) {
+  if (mode === "reject") {
+    askConfirm(
+      t("operations.approvals.events.rejectAllTitle", { count: targets.length }),
+      t("operations.approvals.events.rejectAllConfirm", { count: targets.length, title: eventTitleFor(group) }),
+      () => performEventBatch(group, mode, targets),
+    );
     return;
   }
+  void performEventBatch(group, mode, targets);
+}
+
+async function performEventBatch(
+  group: ApprovalEventGroup<ApprovalView>,
+  mode: "approve-queue" | "reject",
+  targets: ApprovalView[],
+) {
   eventBatches.value = { ...eventBatches.value, [group.key]: { running: true, done: 0, total: targets.length, failed: 0, error: "" } };
   // runWithConcurrency never rejects: per-item failures are collected so the
   // batch runs to completion and the card shrinks to exactly the items that
@@ -504,8 +558,19 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
   }
 }
 
-async function rejectApproval(approval: ApprovalView) {
-  if (!window.confirm(t("operations.approvals.rejectConfirm", { id: shortId(approval.id, 12) }))) return;
+function rejectApproval(approval: ApprovalView) {
+  askConfirm(
+    t("operations.approvals.rejectTitle"),
+    t("operations.approvals.rejectConfirm", {
+      plugin: approval.plugin,
+      action: approval.action,
+      node: approval.node_id || t("common.misc.global"),
+    }),
+    () => performReject(approval),
+  );
+}
+
+async function performReject(approval: ApprovalView) {
   pendingApproval.value = approval.id;
   lastApprovalError.value = undefined;
   try {
@@ -604,7 +669,7 @@ function canReplanAgentUpdate(approval?: ApprovalView, staleOverride = false): b
  * A cluster of any size produces approvals faster than a stacked list can be
  * read: forty-five pending decisions in one narrow column can only be scrolled,
  * never sorted, compared, or acted on together. The table is the same data an
- * operator already had, in the shape the job needs — sortable by age and
+ * operator already had, in the shape the job needs: sortable by age and
  * status, and selectable so one decision can cover a whole batch.
  */
 const approvalColumns = computed<DataTableColumn<ApprovalView>[]>(() => [
@@ -650,20 +715,26 @@ const bulkProgress = ref({ done: 0, total: 0 });
 /**
  * Decide every selected approval.
  *
- * Failures do not stop the run — each item is independent, and abandoning the
+ * Failures do not stop the run: each item is independent, and abandoning the
  * rest because one plan went stale would leave the operator worse off than
  * before they clicked. What failed is reported, and the list re-reads so the
  * survivors are exactly what still needs attention.
  */
-async function decideSelected(mode: "approve-queue" | "reject"): Promise<void> {
+function decideSelected(mode: "approve-queue" | "reject"): void {
   const targets = [...decidableSelection.value];
   if (targets.length === 0 || bulkRunning.value) return;
-  if (
-    mode === "reject" &&
-    !window.confirm(t("operations.approvals.bulk.rejectConfirm", { count: targets.length }))
-  ) {
+  if (mode === "reject") {
+    askConfirm(
+      t("operations.approvals.bulk.rejectTitle", { count: targets.length }),
+      t("operations.approvals.bulk.rejectConfirm", { count: targets.length }),
+      () => performDecide(mode, targets),
+    );
     return;
   }
+  void performDecide(mode, targets);
+}
+
+async function performDecide(mode: "approve-queue" | "reject", targets: ApprovalView[]): Promise<void> {
   bulkRunning.value = true;
   bulkProgress.value = { done: 0, total: targets.length };
   const results = await runWithConcurrency(
@@ -788,6 +859,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               v-model="approvalSearch"
               class="pl-8"
               :placeholder="$t('operations.approvals.searchPlaceholder')"
+              :aria-label="$t('operations.approvals.searchLabel')"
             />
           </div>
           <div class="relative">
@@ -800,7 +872,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               class="pl-8 font-mono text-xs"
               :class="approvalExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
               :placeholder="$t('operations.approvals.expressionPlaceholder')"
-              aria-label="Approval expression"
+              :aria-label="$t('operations.approvals.expressionLabel')"
             />
           </div>
           <p class="text-xs" :class="approvalExpressionError ? 'text-destructive' : 'text-muted-foreground'">
@@ -814,6 +886,8 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               type="button"
               :variant="approvalBucket === bucket ? 'secondary' : 'outline'"
               size="sm"
+              :aria-pressed="approvalBucket === bucket"
+              :class="approvalBucket === bucket && 'font-semibold'"
               @click="approvalBucket = bucket"
             >
               {{ $t(`operations.approvals.filters.${bucket}`) }}
@@ -869,6 +943,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                       :key="node"
                       variant="outline"
                       class="max-w-40 truncate font-normal"
+                      :title="node"
                     >
                       {{ node }}
                     </Badge>
@@ -917,7 +992,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                       @click="runEventBatch(group, 'approve-queue')"
                     >
                       <Play class="size-4" aria-hidden="true" />
-                      {{ $t('operations.approvals.events.approveAllQueue') }}
+                      {{ $t('operations.approvals.events.approveAllQueue', { count: eventPendingItems(group).length }) }}
                     </Button>
                     <Button
                       type="button"
@@ -927,7 +1002,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                       @click="runEventBatch(group, 'reject')"
                     >
                       <Ban class="size-4" aria-hidden="true" />
-                      {{ $t('operations.approvals.events.rejectAll') }}
+                      {{ $t('operations.approvals.events.rejectAll', { count: eventPendingItems(group).length }) }}
                     </Button>
                     <Button type="button" variant="ghost" size="sm" class="ml-auto" @click="toggleEventExpanded(group.key)">
                       <ChevronDown v-if="expandedEventKeys.has(group.key)" class="size-4" aria-hidden="true" />
@@ -942,11 +1017,15 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                     v-for="item in group.items"
                     :key="item.id"
                     type="button"
-                    :class="cn('surface-interactive w-full border-t border-border p-3 text-left first:border-t-0', selected?.id === item.id && 'bg-primary/5')"
+                    :class="cn(
+                      'surface-interactive w-full border-t border-border p-3 text-left first:border-t-0',
+                      'outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      selected?.id === item.id && 'bg-primary/5',
+                    )"
                     @click="selectedId = item.id"
                   >
                     <div class="flex items-center justify-between gap-2">
-                      <span class="truncate text-sm font-medium">{{ item.plugin }} · {{ item.action }}</span>
+                      <span class="truncate text-sm font-medium" :title="changeLabel(item)">{{ changeLabel(item) }}</span>
                       <Badge :variant="variantFor(item.status)" class="shrink-0">{{ $t('common.status.' + item.status) }}</Badge>
                     </div>
                     <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -983,15 +1062,17 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
 
               <template #cell-what="{ row }">
                 <div class="min-w-0">
-                  <p :class="cn('truncate text-sm', selected?.id === row.id && 'font-semibold text-primary')">
-                    {{ row.plugin }} · {{ row.action }}
+                  <p :class="cn('truncate text-sm', selected?.id === row.id && 'font-semibold text-primary')" :title="changeLabel(row)">
+                    {{ changeLabel(row) }}
                   </p>
-                  <p class="truncate font-mono text-xs text-muted-foreground">{{ shortId(row.id) }}</p>
+                  <p class="truncate font-mono text-xs text-muted-foreground" :title="row.id">{{ shortId(row.id) }}</p>
                 </div>
               </template>
 
               <template #cell-target="{ row }">
-                <span class="truncate text-sm">{{ row.node_id || $t('common.misc.global') }}</span>
+                <span class="truncate text-sm" :title="row.node_id || $t('common.misc.global')">
+                  {{ row.node_id || $t('common.misc.global') }}
+                </span>
               </template>
 
               <template #cell-created_at="{ row }">
@@ -1018,7 +1099,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                     @click="decideSelected('approve-queue')"
                   >
                     <CheckCircle2 class="size-4" aria-hidden="true" />
-                    {{ $t('operations.approvals.bulk.approve') }}
+                    {{ $t('operations.approvals.bulk.approve', { count: decidableSelection.length }) }}
                   </Button>
                   <Button
                     type="button"
@@ -1028,7 +1109,7 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
                     @click="decideSelected('reject')"
                   >
                     <Ban class="size-4" aria-hidden="true" />
-                    {{ $t('operations.approvals.bulk.reject') }}
+                    {{ $t('operations.approvals.bulk.reject', { count: decidableSelection.length }) }}
                   </Button>
                   <Button type="button" size="sm" variant="ghost" :disabled="bulkRunning" @click="clear">
                     {{ $t('common.actions.clear') }}
@@ -1118,11 +1199,23 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
           <div class="space-y-2">
             <div class="flex flex-wrap items-center justify-between gap-3">
               <div class="flex items-center gap-1">
-                <Button :variant="planView === 'diff' ? 'secondary' : 'ghost'" size="sm" @click="planView = 'diff'">
+                <Button
+                  :variant="planView === 'diff' ? 'secondary' : 'ghost'"
+                  size="sm"
+                  :aria-pressed="planView === 'diff'"
+                  :class="planView === 'diff' && 'font-semibold'"
+                  @click="planView = 'diff'"
+                >
                   <GitCompare class="size-3.5" aria-hidden="true" />
                   {{ $t('operations.approvals.viewDiff') }}
                 </Button>
-                <Button :variant="planView === 'full' ? 'secondary' : 'ghost'" size="sm" @click="planView = 'full'">
+                <Button
+                  :variant="planView === 'full' ? 'secondary' : 'ghost'"
+                  size="sm"
+                  :aria-pressed="planView === 'full'"
+                  :class="planView === 'full' && 'font-semibold'"
+                  @click="planView = 'full'"
+                >
                   {{ $t('operations.approvals.viewFull') }}
                 </Button>
               </div>
@@ -1170,10 +1263,11 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
             <Button
               type="button"
               variant="outline"
-              :disabled="pendingApproval === selected.id"
-              @click="digestFor(selected)"
+              :disabled="pendingApproval === selected.id || hashingApproval === selected.id"
+              @click="computePlanHash(selected)"
             >
-              <GitCompare class="size-4" aria-hidden="true" />
+              <RefreshCw v-if="hashingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+              <GitCompare v-else class="size-4" aria-hidden="true" />
               {{ $t('operations.approvals.computeHash') }}
             </Button>
             <Button
@@ -1214,6 +1308,15 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
         </CardContent>
       </Card>
     </div>
+
+    <ConfirmDialog
+      v-model:open="confirmOpen"
+      :title="confirmTitle"
+      :description="confirmDescription"
+      :confirm-label="$t('operations.approvals.reject')"
+      :cancel-label="$t('common.actions.cancel')"
+      @confirm="runConfirmed"
+    />
 
     <Dialog v-model:open="forceReplanOpen">
       <DialogContent>
