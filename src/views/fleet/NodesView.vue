@@ -63,6 +63,7 @@ import {
 import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
 import {
   NODE_TABLE_COLUMNS,
+  compareNodeIdentity,
   nextSortState,
   parseHiddenColumns,
   parseSortState,
@@ -412,11 +413,13 @@ function toggleAgentCap(cap: AgentCapabilityFilter) {
   activeAgentCaps.value = [...next];
 }
 
+/** Default order with no column sort: live nodes first, then by name, then by
+ *  id so two machines sharing a name cannot trade places between polls. */
 const baseSorted = computed(() =>
   [...nodes.value].sort((a, b) => {
     if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
     if (a.online !== b.online) return a.online ? -1 : 1;
-    return (a.name || a.id).localeCompare(b.name || b.id);
+    return compareNodeIdentity(a, b);
   }),
 );
 

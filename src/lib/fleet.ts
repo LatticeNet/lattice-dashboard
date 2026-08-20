@@ -315,7 +315,9 @@ function finishGroup(g: NodeGroup, preserveOrder = false): NodeGroup {
     g.nodes.sort((a, b) => {
       if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
       if (a.online !== b.online) return a.online ? -1 : 1;
-      return (a.name || a.id).localeCompare(b.name || b.id);
+      // Node id last: names are not unique, so without it two machines sharing
+      // a name are ordered by whatever order the poll delivered them in.
+      return (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id);
     });
   }
   g.total = g.nodes.length;
