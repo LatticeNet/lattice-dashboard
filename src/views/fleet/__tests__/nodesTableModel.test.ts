@@ -103,3 +103,49 @@ test("sort-state persistence round-trips and rejects unknown keys", () => {
   });
   assert.deepEqual(parseSortState("bogus:desc"), { key: "", dir: "asc" });
 });
+
+test("sortNodes does not depend on the order the poll delivered tied rows in", () => {
+  // Two machines can carry one name (the console ships a duplicate-node report
+  // for exactly that), and then the primary key and the name tiebreak are both
+  // equal. Without a tiebreak on the id, the rendered order is whatever order
+  // the last poll happened to return, and the rows swap under the operator.
+  const rows = [
+    node({ id: "node-2", name: "edge-01", metrics: { cpu_percent: 4 } as Node["metrics"] }),
+    node({ id: "node-1", name: "edge-01", metrics: { cpu_percent: 4 } as Node["metrics"] }),
+    node({ id: "node-3", name: "edge-02", metrics: { cpu_percent: 4 } as Node["metrics"] }),
+  ];
+  const asDelivered = sortNodes(rows, { key: "cpu", dir: "desc" }).map((n) => n.id);
+  const reshuffled = sortNodes([...rows].reverse(), { key: "cpu", dir: "desc" }).map((n) => n.id);
+  assert.deepEqual(asDelivered, reshuffled);
+  assert.deepEqual(asDelivered, ["node-1", "node-2", "node-3"]);
+});
+
+test("sortNodes ranks metrics at the precision the cell prints", () => {
+  const poll = (alpha: number, bravo: number) => [
+    node({ id: "node-a", name: "alpha", metrics: { cpu_percent: alpha } as Node["metrics"] }),
+    node({ id: "node-b", name: "bravo", metrics: { cpu_percent: bravo } as Node["metrics"] }),
+  ];
+  // Both rows print "8%" whichever way the jitter lands between two polls, so
+  // neither may move: this is the churn the fleet list actually showed.
+  const first = sortNodes(poll(7.92, 7.51), { key: "cpu", dir: "desc" }).map((n) => n.id);
+  const second = sortNodes(poll(7.51, 7.92), { key: "cpu", dir: "desc" }).map((n) => n.id);
+  assert.deepEqual(first, second);
+  assert.deepEqual(first, ["node-a", "node-b"]);
+  // A change the operator can see still reorders: 7.4 prints "7%", 8.6 prints "9%".
+  assert.deepEqual(
+    sortNodes(poll(7.4, 8.6), { key: "cpu", dir: "desc" }).map((n) => n.id),
+    ["node-b", "node-a"],
+  );
+  // Same for the used/total columns: 63.4% and 63.2% both print "63%", so the
+  // pair falls through to the name tiebreak instead of trading places.
+  const mem = (used: number) =>
+    node({
+      id: `mem-${used}`,
+      name: `mem-${used}`,
+      metrics: { memory_used: used, memory_total: 1000 } as Node["metrics"],
+    });
+  assert.deepEqual(
+    sortNodes([mem(634), mem(632)], { key: "memory", dir: "desc" }).map((n) => n.id),
+    ["mem-632", "mem-634"],
+  );
+});
