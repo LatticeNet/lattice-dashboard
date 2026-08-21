@@ -1,14 +1,20 @@
-// Security audit (audit/uisec). This test is EXPECTED TO FAIL on this branch:
-// it encodes an invariant the host currently documents but does not enforce.
-// It is deliberately kept out of `npm run test:navigation` so the shipped suite
-// stays green; run it directly:
+// Security audit (audit/uisec), UISEC-1.
 //
-//   node --experimental-strip-types --test \
-//     src/views/platform/__tests__/pluginHostPrivilege.audit.test.ts
+// This test was written to FAIL: it encoded an invariant the host documented but
+// did not enforce. The hole has since been closed by PLUGIN_PARAMETERIZED_ROUTES,
+// which default-denies query parameters to any route not listed there, so the
+// test now passes and its job has changed. It is a regression guard: the day
+// someone opens up parameters for a route that acts on arrival, this goes red.
+//
+// It runs in `npm run test:navigation` with the rest of the shipped suite. It was
+// kept out while it was failing; keeping it out now would leave a guard nobody
+// runs, which guards nothing.
 //
 // It grounds itself in the current tree first (asserting that the sink it
 // worries about really is there) so it cannot rot into a claim about code that
-// has moved.
+// has moved. If TerminalView stops acting on its query string, the grounding
+// assertions fail on purpose: that is the signal to re-read this file rather
+// than to delete it.
 //
 // A second test in the first version of this file asserted that the host should
 // pin event.origin on the bridge path as it does on the navigate path. It was
