@@ -64,6 +64,7 @@ import type {
   StorageKind,
   StorageTokenCreateResponse,
   StorageTokenView,
+  PublishingRecordList,
   LogSource,
   LogSourceUpsertRequest,
   LogQueryResponse,
@@ -556,6 +557,15 @@ export const api = {
       ),
     revokeToken: (kind: StorageKind, token_id: string) =>
       http.post<StorageTokenView>("/api/storage/tokens/revoke", { kind, token_id }),
+  },
+
+  publishing: {
+    /**
+     * Every published route the caller may see, across origins. The server
+     * filters per origin on that origin's own read scope, so this cannot show a
+     * route the per-origin API would have refused to list.
+     */
+    records: () => http.get<PublishingRecordList>("/api/publishing/records"),
   },
 
   logs: {

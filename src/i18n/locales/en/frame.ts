@@ -179,6 +179,7 @@ export default {
       "network-subscription-shares": "Subscription Shares",
       "platform-plugins": "Plugins",
       "platform-workers": "Workers",
+      "platform-publishing": "Publishing",
       "platform-kv": "KV Store",
       "platform-static": "Static",
       "platform-logs": "Logs",

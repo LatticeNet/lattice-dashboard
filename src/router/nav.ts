@@ -117,6 +117,10 @@ export const NAV: NavSection[] = [
     items: [
       { name: "platform-plugins", title: "Plugins", path: "/platform/plugins", icon: Blocks, scopes: ["audit:read", "plugin:admin", "plugin:verify"] },
       { name: "platform-workers", title: "Workers", path: "/platform/workers", icon: Cpu, scopes: ["worker:deploy"] },
+      // One page owns what URL content is visible at and who may read it, for
+      // every origin. Each origin still enforces its own admin scope, so this
+      // entry lists all of them rather than inventing a publishing scope.
+      { name: "platform-publishing", title: "Publishing", path: "/platform/publishing", icon: Globe, scopes: ["kv:read", "static:read", "proxy:admin"] },
       { name: "platform-kv", title: "KV Store", path: "/platform/kv", icon: Database, scopes: ["kv:read", "kv:write"] },
       { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read", "static:write"] },
       { name: "platform-logs", title: "Logs", path: "/platform/logs", icon: FileText, scopes: ["log:read", "log:admin"] },

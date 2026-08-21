@@ -178,6 +178,7 @@ export default {
       "network-subscription-shares": "订阅分享",
       "platform-plugins": "插件",
       "platform-workers": "Worker",
+      "platform-publishing": "发布",
       "platform-kv": "KV 存储",
       "platform-static": "静态资源",
       "platform-logs": "日志",

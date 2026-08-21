@@ -29,6 +29,7 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
   "platform-workers": () => import("@/views/platform/WorkersView.vue"),
+  "platform-publishing": () => import("@/views/platform/PublishingView.vue"),
   "platform-kv": () => import("@/views/platform/KvView.vue"),
   "platform-static": () => import("@/views/platform/StaticView.vue"),
   "platform-logs": () => import("@/views/platform/LogsView.vue"),

@@ -34,6 +34,7 @@ import {
 } from "lucide-vue-next";
 
 import { api, ApiError, unwrap } from "@/lib/api";
+import { publishingState, recordsForShare, routeLabel } from "@/views/platform/publishingModel";
 import type {
   PluginView,
   ShareSource,
@@ -94,9 +95,20 @@ const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
 );
 const shares = computed(() => sharesQuery.data.value ?? []);
 
+
 const busyId = ref("");
 const selectedId = ref("");
 const selected = computed(() => shares.value.find((share) => share.id === selectedId.value));
+/**
+ * Where a share is reachable comes from the publishing plane, so this page and
+ * the Publishing page cannot drift into two different answers about the same
+ * URL. The share still owns its token, its default format and its per-client
+ * links, because those belong to the origin rather than to the route.
+ */
+const routesQuery = useAsyncData(() => api.publishing.records(), { pollInterval: 20000 });
+const selectedRoutes = computed(() =>
+  selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
+);
 
 /** The origin the browser is on is the origin the share is served from, so the
  *  displayed URL is the real one rather than a guess at LATTICE_PUBLIC_URL. */
@@ -522,6 +534,26 @@ watch(() => route.query, applyDeepLink);
 
             <div v-if="!isServing(selected)" class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs">
               {{ $t('networking.shares.notServing') }}
+            </div>
+
+            <div v-if="selectedRoutes.length">
+              <p class="text-xs font-medium text-muted-foreground">{{ $t('platform.publishing.shareRouteTitle') }}</p>
+              <p class="mt-1 text-xs text-muted-foreground">{{ $t('platform.publishing.shareRouteDescription') }}</p>
+              <div
+                v-for="record in selectedRoutes"
+                :key="record.id"
+                class="mt-2 flex flex-wrap items-center gap-2 text-xs"
+              >
+                <code class="rounded bg-muted px-2 py-1 font-mono">{{ routeLabel(record, $t('platform.publishing.anyHost')) }}</code>
+                <Badge variant="outline">{{ $t(`platform.publishing.state.${publishingState(record)}`) }}</Badge>
+                <Badge v-if="record.reserved" variant="outline" :title="$t('platform.publishing.reservedHint')">
+                  {{ $t('platform.publishing.reserved') }}
+                </Badge>
+                <RouterLink
+                  to="/platform/publishing"
+                  class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
+              </div>
             </div>
 
             <div>
