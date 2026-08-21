@@ -1076,7 +1076,6 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
               :columns="approvalColumns"
               :rows="filteredApprovals"
               :row-key="(row) => row.id"
-              state-key="approvals"
               :page-size="25"
               :expression-filter="false"
               selectable
