@@ -1339,6 +1339,39 @@ export interface AgentReleaseInfo {
   fetched_at: string;
 }
 
+/**
+ * One agent binary the control plane holds and can serve to nodes itself, so a
+ * node upgrading it does not need egress to the release host. The digest is the
+ * same pin the plan carries and the node re-verifies after downloading.
+ */
+export interface AgentArtifactView {
+  version: string;
+  os: string;
+  arch: string;
+  sha256: string;
+  size_bytes: number;
+  stored_bytes: number;
+  updated_at: string;
+}
+
+export interface AgentArtifactListing {
+  artifacts: AgentArtifactView[];
+  stored_bytes: number;
+  limit_bytes: number;
+  /**
+   * False when the server has no plain HTTPS public URL to hand nodes. Stored
+   * binaries stay stored and plans quietly keep using the release host, so the
+   * console has to say this rather than show a full shelf doing nothing.
+   */
+  serving_enabled: boolean;
+}
+
+export interface AgentArtifactRequest {
+  version: string;
+  os?: string;
+  arch: string;
+}
+
 export interface AgentReleaseCandidate {
   tag_name: string;
   version: string;
