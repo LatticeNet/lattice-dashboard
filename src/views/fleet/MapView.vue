@@ -1106,7 +1106,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             >
               <span class="min-w-0">
                 <span class="flex items-center gap-2">
-                  <StatusDot :online="node.online" :pulse="node.online" />
+                  <StatusDot :status="node.online ? 'online' : 'offline'" :pulse="node.online" />
                   <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
                 </span>
                 <span class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">

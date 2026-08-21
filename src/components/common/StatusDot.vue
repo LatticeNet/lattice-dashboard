@@ -24,7 +24,20 @@ const props = withDefaults(
   defineProps<{
     /** Canonical health state (drives color + pulse). */
     status?: Status;
-    /** Convenience boolean: `true` -> online, `false` -> offline. */
+    /**
+     * Convenience boolean: `true` -> online, `false` -> offline.
+     *
+     * @deprecated Pass `status` instead. This prop is the reason the bug below
+     * was possible, and it has no callers left; it stays only so an external
+     * one does not break silently.
+     *
+     * MUST keep an explicit `undefined` default below. Vue casts an ABSENT
+     * Boolean prop to `false` rather than leaving it undefined, so without that
+     * default `props.online` is `false` for every caller that passes only
+     * `status`, the `online !== undefined` branch always wins, and the dot
+     * renders "offline" no matter what health was asked for. That shipped: the
+     * whole fleet list drew red dots beside green "online" badges.
+     */
     online?: boolean;
     /**
      * Explicit color override. Wins over `status`/`online` so a caller can
@@ -38,6 +51,9 @@ const props = withDefaults(
   {
     status: "unknown",
     pulse: true,
+    // Not cosmetic. A Boolean prop with no default is cast to `false` when the
+    // caller omits it, which silently disables the `status` path entirely.
+    online: undefined,
   },
 );
 
@@ -57,6 +73,10 @@ const TONE_HEALTH: Record<Tone, Status> = {
  */
 const resolved = computed<Status>(() => {
   if (props.tone !== undefined) return TONE_HEALTH[props.tone];
+  // The `online: undefined` default above is what makes this branch correct,
+  // and it is the ONLY thing that does. A type check here would not help: Vue
+  // casts an absent Boolean prop to `false`, and `false` is a boolean, so the
+  // branch would still win. Delete that default and every dot goes red again.
   if (props.online !== undefined) return props.online ? "online" : "offline";
   return props.status;
 });

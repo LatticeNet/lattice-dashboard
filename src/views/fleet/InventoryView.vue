@@ -1351,7 +1351,7 @@ async function runReminders(selectedOnly: boolean) {
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
                   <div class="flex min-w-0 items-center gap-2">
-                    <StatusDot :online="machine.online" :pulse="machine.online" />
+                    <StatusDot :status="machine.online ? 'online' : 'offline'" :pulse="machine.online" />
                     <span class="truncate font-medium" :title="displayName(machine)">{{ displayName(machine) }}</span>
                   </div>
                   <p

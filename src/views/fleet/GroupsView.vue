@@ -601,7 +601,7 @@ watch(
                         :model-value="isMember(n.id)"
                         @update:model-value="(v) => setMember(n.id, v === true)"
                       />
-                      <StatusDot :online="!!n.online && !n.disabled" :label="''" />
+                      <StatusDot :status="!!n.online && !n.disabled ? 'online' : 'offline'" :label="''" />
                       <span class="truncate" :title="n.name || n.id">{{ n.name || n.id }}</span>
                       <span v-if="n.role" class="ml-auto shrink-0 text-xs text-muted-foreground">{{ n.role }}</span>
                     </label>
