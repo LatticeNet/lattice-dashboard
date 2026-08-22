@@ -98,6 +98,7 @@ import type {
   GroupPolicyUpsertRequest,
   GroupPolicyPlanResult,
   SubscriptionShareCreateRequest,
+  SubscriptionShareUpdateRequest,
   SubscriptionShareView,
 } from "./types";
 
@@ -652,6 +653,15 @@ export const api = {
     list: () => http.get<SubscriptionShareView[]>("/api/subscription-shares"),
     create: (body: SubscriptionShareCreateRequest) =>
       http.post<SubscriptionShareView>("/api/subscription-shares", body),
+    // Changes a share without minting a new URL. Expiry used to be settable
+    // only at creation, so extending a share meant deleting it and handing out
+    // a new link -- the one thing a share exists to avoid. Rotation stays a
+    // separate action because it does invalidate the URL.
+    update: (id: string, body: SubscriptionShareUpdateRequest) =>
+      http.patch<SubscriptionShareView>(
+        `/api/subscription-shares/${encodeURIComponent(id)}`,
+        body,
+      ),
     // Rotation invalidates the old URL immediately and drops the cached output
     // for that share, and returns the share carrying its new token. So the
     // caller replaces the row it has rather than refetching the whole list.

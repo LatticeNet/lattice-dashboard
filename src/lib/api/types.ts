@@ -1541,3 +1541,16 @@ export interface SubscriptionShareCreateRequest {
   default_format?: string;
   expires_at?: string;
 }
+
+/**
+ * Every field is optional and omitting one leaves it alone, which is why
+ * clearing an expiry needs its own flag rather than an empty `expires_at`:
+ * the server treats "not mentioned" and "remove it" as different requests, and
+ * conflating them would make any edit silently un-expire the share.
+ */
+export interface SubscriptionShareUpdateRequest {
+  expires_at?: string;
+  clear_expiry?: boolean;
+  default_format?: string;
+  enabled?: boolean;
+}

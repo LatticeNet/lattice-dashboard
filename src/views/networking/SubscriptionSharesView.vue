@@ -25,6 +25,7 @@ import { toast } from "vue-sonner";
 import {
   Copy,
   ExternalLink,
+  CalendarClock,
   KeyRound,
   Link2,
   MonitorSmartphone,
@@ -47,6 +48,14 @@ import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { SHARE_SLUG_RE, suggestShareSlug } from "./subscriptionSharesModel";
 import {
+  emptyExpiryForm,
+  expiryCreateValue,
+  expiryFormError,
+  expiryFormFor,
+  expiryUpdateBody,
+  type ExpiryForm,
+} from "./shareExpiryModel";
+import {
   SHARE_TARGETS,
   clientUrl,
   isServing,
@@ -61,6 +70,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import ShareExpiryFields from "@/components/networking/ShareExpiryFields.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -146,7 +156,21 @@ const draft = ref<{
   proxyUserId: string;
   slug: string;
   defaultFormat: string;
-}>({ kind: "plugin", pluginId: "", subscriptionId: "", proxyUserId: "", slug: "", defaultFormat: "" });
+  expiry: ExpiryForm;
+}>({
+  kind: "plugin",
+  pluginId: "",
+  subscriptionId: "",
+  proxyUserId: "",
+  slug: "",
+  defaultFormat: "",
+  expiry: emptyExpiryForm(),
+});
+
+// The clock the expiry forms validate against, sampled when a dialog opens. A
+// live ticking `now` would let "the last day" flip to invalid mid-edit while the
+// operator is still typing. The server checks the instant again on arrival.
+const now = ref(Date.now());
 
 interface PluginRecord {
   id: string;
@@ -214,6 +238,7 @@ const slugError = computed(() => {
 
 const canPublish = computed(() => {
   if (!draft.value.slug.trim() || slugError.value || publishing.value) return false;
+  if (expiryFormError(draft.value.expiry, now.value)) return false;
   return draft.value.kind === "plugin"
     ? !!draft.value.pluginId && !!draft.value.subscriptionId
     : !!draft.value.proxyUserId.trim();
@@ -227,7 +252,9 @@ function openPublish(): void {
     proxyUserId: "",
     slug: "",
     defaultFormat: "",
+    expiry: emptyExpiryForm(),
   };
+  now.value = Date.now();
   publishOpen.value = true;
   void loadRecords();
 }
@@ -248,6 +275,7 @@ async function publish(): Promise<void> {
       slug: draft.value.slug.trim(),
       source,
       default_format: draft.value.defaultFormat || undefined,
+      expires_at: expiryCreateValue(draft.value.expiry, now.value),
     };
     const created = await api.subscriptionShares.create(body);
     toast.success(t("networking.shares.published", { slug: created.slug }));
@@ -258,6 +286,37 @@ async function publish(): Promise<void> {
     toast.error(describe(error, t("networking.shares.publishFailed")));
   } finally {
     publishing.value = false;
+  }
+}
+
+// Changing the expiry of a share that already exists. Deliberately not part of
+// rotate or delete: rotation mints a new URL and breaks every client holding the
+// old one, while changing when a URL dies does not touch the URL at all.
+const expiryOpen = ref(false);
+const expirySaving = ref(false);
+const expiryTarget = ref<SubscriptionShareView | null>(null);
+const expiryDraft = ref<ExpiryForm>(emptyExpiryForm());
+
+function openExpiry(share: SubscriptionShareView): void {
+  expiryTarget.value = share;
+  expiryDraft.value = expiryFormFor(share);
+  now.value = Date.now();
+  expiryOpen.value = true;
+}
+
+async function saveExpiry(): Promise<void> {
+  const share = expiryTarget.value;
+  if (!share || expiryFormError(expiryDraft.value, now.value)) return;
+  expirySaving.value = true;
+  try {
+    await api.subscriptionShares.update(share.id, expiryUpdateBody(expiryDraft.value, now.value));
+    toast.success(t("networking.shares.expiry.saved"));
+    expiryOpen.value = false;
+    await sharesQuery.refresh();
+  } catch (error) {
+    toast.error(describe(error, t("networking.shares.expiry.saveFailed")));
+  } finally {
+    expirySaving.value = false;
   }
 }
 
@@ -588,9 +647,16 @@ watch(() => route.query, applyDeepLink);
                 <dt class="text-muted-foreground">{{ $t('networking.shares.rotatedAt') }}</dt>
                 <dd>{{ formatRelativeTime(selected.rotated_at) }}</dd>
               </div>
-              <div v-if="selected.expires_at">
+              <!-- Shown even when there is none: "no expiry row" and "expires next
+                   week" look the same to someone scanning the panel, and only one
+                   of them is safe to hand out. -->
+              <div>
                 <dt class="text-muted-foreground">{{ $t('networking.shares.expires') }}</dt>
-                <dd>{{ formatDateTime(selected.expires_at) }}</dd>
+                <dd v-if="selected.expires_at" :title="formatDateTime(selected.expires_at)">
+                  {{ formatDateTime(selected.expires_at) }}
+                  <span class="text-muted-foreground">· {{ formatRelativeTime(selected.expires_at) }}</span>
+                </dd>
+                <dd v-else class="text-muted-foreground">{{ $t('networking.shares.expiry.never') }}</dd>
               </div>
             </dl>
           </div>
@@ -607,6 +673,10 @@ watch(() => route.query, applyDeepLink);
             >
               <RefreshCw :class="cn('size-4', busyId === selected.id && 'animate-spin')" aria-hidden="true" />
               {{ $t('networking.shares.refreshSource') }}
+            </Button>
+            <Button variant="outline" size="sm" :disabled="busyId === selected.id" @click="openExpiry(selected)">
+              <CalendarClock class="size-4" aria-hidden="true" />
+              {{ $t('networking.shares.expiry.change') }}
             </Button>
             <Button variant="outline" size="sm" :disabled="busyId === selected.id" @click="askRotate(selected)">
               <KeyRound class="size-4" aria-hidden="true" />
@@ -726,6 +796,8 @@ watch(() => route.query, applyDeepLink);
             </Select>
             <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
           </div>
+
+          <ShareExpiryFields v-model="draft.expiry" id-prefix="publish" :now="now" />
         </div>
 
         <DialogFooter>
@@ -742,6 +814,31 @@ watch(() => route.query, applyDeepLink);
     </Dialog>
 
     <!-- ── rotate / delete confirmation ────────────────────────────────── -->
+    <!-- Editing the expiry is not destructive, so it does not go through
+         ConfirmDialog: nothing a client holds stops working because of it, and
+         the URL is untouched. -->
+    <Dialog v-model:open="expiryOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.shares.expiry.dialogTitle', { slug: expiryTarget?.slug }) }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.shares.expiry.dialogDescription') }}</DialogDescription>
+        </DialogHeader>
+
+        <ShareExpiryFields v-model="expiryDraft" id-prefix="edit" :now="now" />
+
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button variant="outline">{{ $t('common.actions.cancel') }}</Button>
+          </DialogClose>
+          <Button :disabled="expirySaving || !!expiryFormError(expiryDraft, now)" @click="saveExpiry">
+            <RefreshCw v-if="expirySaving" class="size-4 animate-spin" aria-hidden="true" />
+            <CalendarClock v-else class="size-4" aria-hidden="true" />
+            {{ $t('common.actions.save') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <ConfirmDialog
       :open="!!rotateTarget || !!deleteTarget"
       :title="rotateTarget ? $t('networking.shares.rotateTitle') : $t('networking.shares.deleteTitle')"

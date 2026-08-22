@@ -55,7 +55,7 @@ export function getCsrfToken(): string {
   return csrfToken;
 }
 
-type Method = "GET" | "POST" | "DELETE";
+type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -219,6 +219,12 @@ export const http = {
     request<T>("GET", withQuery(path, query), undefined, opts),
   post: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     request<T>("POST", path, body, opts),
+  // PATCH rather than PUT because the share update endpoint distinguishes "not
+  // supplied" from "cleared": it takes pointers, so omitting expires_at leaves
+  // the expiry alone while clear_expiry removes it. A PUT would invite callers
+  // to send the whole record and silently drop whatever they forgot.
+  patch: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>("PATCH", path, body, opts),
   // First DELETE the dashboard has needed. It goes through the same `request`
   // as the others, so it inherits the CSRF header that every unsafe method
   // requires. Which is the reason this belongs here rather than as a one-off
