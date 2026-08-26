@@ -193,6 +193,7 @@ export default {
       "platform-kv": "KV 存储",
       "platform-static": "静态资源",
       "platform-logs": "日志",
+      "platform-trace": "连接追踪",
       "platform-notifications": "通知",
       "platform-agent-updates": "Agent 更新",
       "settings-security": "安全与 2FA",

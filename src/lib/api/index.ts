@@ -1,4 +1,4 @@
-import { ApiError, http } from "./client";
+import { ApiError, http, type RequestOptions } from "./client";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
 import type {
   Principal,
@@ -100,6 +100,15 @@ import type {
   SubscriptionShareCreateRequest,
   SubscriptionShareUpdateRequest,
   SubscriptionShareView,
+  TraceConnectionsResponse,
+  TraceHopsResponse,
+  TraceLinesResponse,
+  TracePolicy,
+  TracePolicyResponse,
+  TracePolicyUpsertRequest,
+  TraceSession,
+  TraceSessionCreateRequest,
+  TraceSessionsResponse,
 } from "./types";
 
 export * from "./types";
@@ -588,6 +597,36 @@ export const api = {
         "/api/logs/stats",
         source_id ? { source_id } : undefined,
       ),
+  },
+
+  // sing-box connection trace. Reads take log:read, writes take log:admin, and
+  // every node-scoped endpoint is additionally filtered by the caller's node
+  // whitelist on the server.
+  //
+  // Each read takes an optional AbortSignal, and the live tail must pass one:
+  // the client holds a 750ms GET cache keyed on the path, so a 2s poll that
+  // omits the signal would be served the same page it already has and a
+  // running capture would look frozen.
+  trace: {
+    connections: (params: Record<string, string | number>, opts?: RequestOptions) =>
+      http.get<TraceConnectionsResponse>("/api/trace/connections", params, opts),
+    sessions: (opts?: RequestOptions) =>
+      http.get<TraceSessionsResponse>("/api/trace/sessions", undefined, opts),
+    startSession: (input: TraceSessionCreateRequest) =>
+      http.post<TraceSession>("/api/trace/sessions", input),
+    stopSession: (id: string) => http.post<TraceSession>("/api/trace/sessions/stop", { id }),
+    lines: (
+      params: { session_id: string; after_seq?: number; limit?: number },
+      opts?: RequestOptions,
+    ) => http.get<TraceLinesResponse>("/api/trace/lines", params as Record<string, unknown>, opts),
+    policy: (node_id?: string, opts?: RequestOptions) =>
+      http.get<TracePolicyResponse>("/api/trace/policy", node_id ? { node_id } : undefined, opts),
+    setPolicy: (input: TracePolicyUpsertRequest) =>
+      http.post<TracePolicy>("/api/trace/policy", input),
+    hops: (
+      params: { node_id: string; core_generation: number; log_id: number },
+      opts?: RequestOptions,
+    ) => http.get<TraceHopsResponse>("/api/trace/hops", params as Record<string, unknown>, opts),
   },
 
   notify: {

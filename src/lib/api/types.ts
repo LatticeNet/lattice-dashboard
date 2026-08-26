@@ -1554,3 +1554,166 @@ export interface SubscriptionShareUpdateRequest {
   default_format?: string;
   enabled?: boolean;
 }
+
+/* ------------------------------------------------------------------ */
+/* sing-box connection trace                                           */
+/*                                                                     */
+/* Wire shapes for /api/trace/*. Field names mirror the Go json tags in */
+/* lattice-sdk/model/trace.go exactly; the Go side uses `omitzero` on   */
+/* every time.Time, so an absent timestamp is an absent field rather    */
+/* than a year-1 instant, and optional here means "was never known".    */
+/* ------------------------------------------------------------------ */
+
+/** Verbosity of a sing-box log subscription. Not the node's own log.level. */
+export type TraceLevel = "info" | "debug" | "trace";
+
+/** What a capture session selects. An empty field means no constraint. */
+export interface TraceFilter {
+  user_ids?: string[];
+  line_uuids?: string[];
+  node_ids?: string[];
+  /** Case-insensitive substrings matched against the destination host. */
+  dst_patterns?: string[];
+}
+
+/** Per-node collection policy: the always-on floor. */
+export interface TracePolicy {
+  node_id: string;
+  enabled: boolean;
+  level: TraceLevel;
+  budget_lines_per_sec: number;
+  clash_api_addr?: string;
+  secret_path?: string;
+  updated_at?: string;
+}
+
+export interface TraceSession {
+  id: string;
+  name: string;
+  filter: TraceFilter;
+  level: TraceLevel;
+  started_at: string;
+  expires_at: string;
+  ended_at?: string;
+  state: string;
+  started_by: string;
+  correlation_id?: string;
+  lines: number;
+  records: number;
+  /** Lines the agent discarded under budget. Displayed, never hidden. */
+  dropped: number;
+}
+
+/** One sing-box connection as assembled on the node. */
+export interface ConnRecord {
+  node_id: string;
+  line_uuid?: string;
+  line_hash_id?: string;
+  inbound_tag?: string;
+  inbound_type?: string;
+
+  user_name?: string;
+  user_id?: string;
+  user_kind?: string;
+
+  log_id: number;
+  network?: string;
+  src_ip?: string;
+  src_port?: number;
+  dst_host?: string;
+  dst_ip?: string;
+  dst_port?: number;
+
+  sniffed_protocol?: string;
+  sniffed_domain?: string;
+  rule_index?: number;
+  rule_text?: string;
+  outbound_tag?: string;
+  outbound_type?: string;
+  chain_edge_uuid?: string;
+
+  started_at: string;
+  ended_at?: string;
+  duration_ms?: number;
+  /** True for a snapshot of a connection that is still running. */
+  open?: boolean;
+
+  upload?: number;
+  download?: number;
+  /** False means the counters were never sampled. It does not mean zero. */
+  bytes_known?: boolean;
+
+  close_reason?: string;
+  close_error?: string;
+  stalled_at?: string;
+
+  core_generation?: number;
+  session_ids?: string[];
+  hop_path_id?: string;
+}
+
+/** One raw sing-box log line kept because a session asked for it. */
+export interface TraceLine {
+  session_id: string;
+  node_id: string;
+  seq: number;
+  at: string;
+  level: string;
+  log_id?: number;
+  tag?: string;
+  message: string;
+  raw?: string;
+}
+
+/** Identifies one ConnRecord. The log id alone is not unique. */
+export interface ConnRecordKey {
+  node_id: string;
+  core_generation: number;
+  log_id: number;
+}
+
+/** A connection stitched across machines. */
+export interface HopPath {
+  id: string;
+  confidence: string;
+  record_keys: ConnRecordKey[];
+  /** Populated only when confidence is ambiguous. */
+  candidates?: ConnRecordKey[];
+}
+
+export interface TraceConnectionsResponse {
+  records: ConnRecord[];
+  next_cursor?: string;
+}
+
+export interface TraceSessionsResponse {
+  sessions: TraceSession[];
+}
+
+export interface TraceSessionCreateRequest {
+  name: string;
+  filter: TraceFilter;
+  level: TraceLevel;
+  ttl_seconds: number;
+}
+
+export interface TraceLinesResponse {
+  lines: TraceLine[];
+  next_seq?: number;
+}
+
+export interface TracePolicyResponse {
+  policies: TracePolicy[];
+}
+
+export interface TracePolicyUpsertRequest {
+  node_id: string;
+  enabled?: boolean;
+  level?: TraceLevel;
+  budget_lines_per_sec?: number;
+}
+
+export interface TraceHopsResponse {
+  path: HopPath;
+  records: ConnRecord[];
+}
