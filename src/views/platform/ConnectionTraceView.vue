@@ -134,7 +134,7 @@ const tab = useRouteTab<"connections" | "sessions" | "policy">(
 /* ------------------------------------------------------------------ */
 
 const nodesQuery = useAsyncData(
-  (signal) =>
+  () =>
     canReadNodes.value
       ? api.nodes.list().then((r) => unwrap(r, "nodes"))
       : Promise.resolve([] as Node[]),
@@ -257,6 +257,46 @@ let connectionsController: AbortController | undefined;
 const records = computed(() => paging.value.records);
 const coverage = computed(() => traceBytesCoverage(records.value));
 
+interface ConnRowView {
+  user: ReturnType<typeof userCellDisplay>;
+  close: ReturnType<typeof connCloseCell>;
+  upload: ReturnType<typeof traceBytesCell>;
+  download: ReturnType<typeof traceBytesCell>;
+  duration: ReturnType<typeof traceDurationCell>;
+  destination: string;
+  node: string;
+  stalled: boolean;
+}
+
+function buildRowView(row: ConnRecord): ConnRowView {
+  return {
+    user: userCellDisplay(row, userNames.value),
+    close: connCloseCell(row),
+    upload: traceBytesCell(row.upload, row.bytes_known),
+    download: traceBytesCell(row.download, row.bytes_known),
+    duration: traceDurationCell(row.duration_ms),
+    destination: destinationText(row),
+    node: nodeLabel(row.node_id),
+    stalled: isStalled(row),
+  };
+}
+
+/**
+ * One derived view per row, rebuilt when the data changes rather than once per
+ * cell per render. Ten columns each calling the same mappers turns a 200 row
+ * page into thousands of throwaway objects on every keystroke in the search
+ * box, and the search box is debounced precisely because it re-renders.
+ */
+const rowViews = computed(() => {
+  const map = new Map<string, ConnRowView>();
+  for (const row of records.value) map.set(connRecordKey(row), buildRowView(row));
+  return map;
+});
+
+function rowView(row: ConnRecord): ConnRowView {
+  return rowViews.value.get(connRecordKey(row)) ?? buildRowView(row);
+}
+
 /**
  * There is no background poll here on purpose. The list accumulates older
  * keyset pages as the operator walks back through them, and a poll that reset
@@ -288,15 +328,19 @@ async function loadNewest(): Promise<void> {
 
 async function loadOlder(): Promise<void> {
   if (!canRead.value || !paging.value.cursor || loadingOlder.value) return;
+  const cursor = paging.value.cursor;
   loadingOlder.value = true;
   try {
     const res = await api.trace.connections(
       connectionsRequestParams(applied.value, {
         limit: PAGE_LIMIT,
-        cursor: paging.value.cursor,
+        cursor,
         nowMs: Date.now(),
       }),
     );
+    // A reload may have landed while this page was in flight; appending to the
+    // list it replaced would splice an old window into a new one.
+    if (paging.value.cursor !== cursor) return;
     paging.value = appendConnPage(paging.value, res);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.trace.loadOlderFailed"));
@@ -305,7 +349,16 @@ async function loadOlder(): Promise<void> {
   }
 }
 
-watch(applied, () => void loadNewest(), { immediate: canRead.value, deep: true });
+let lastLoaded: ConnTraceFilters | null = null;
+watch(
+  applied,
+  (next) => {
+    if (lastLoaded && connTraceFiltersEqual(lastLoaded, next)) return;
+    lastLoaded = cloneFilters(next);
+    void loadNewest();
+  },
+  { immediate: canRead.value },
+);
 
 const connectionColumns = computed<DataTableColumn<ConnRecord>[]>(() => [
   {
@@ -984,25 +1037,27 @@ onBeforeUnmount(() => {
               <template #cell-user="{ row }">
                 <div class="flex min-w-0 flex-col gap-0.5">
                   <span
-                    v-if="userCellDisplay(row, userNames).primary"
-                    :class="cn('truncate', userCellDisplay(row, userNames).monospace && 'font-mono text-xs')"
+                    v-if="rowView(row).user.primary"
+                    :class="cn('truncate', rowView(row).user.monospace && 'font-mono text-xs')"
                   >
-                    {{ userCellDisplay(row, userNames).primary }}
+                    {{ rowView(row).user.primary }}
                   </span>
                   <span v-else class="text-xs text-muted-foreground">{{ $t('platform.trace.userNoneLogged') }}</span>
+                  <!-- Anything this console could not place gets the marker, so a
+                       row never reads as a resolved user it is not. -->
                   <Badge
-                    v-if="userCellDisplay(row, userNames).marker"
+                    v-if="rowView(row).user.marker"
                     variant="outline"
                     class="w-fit"
                     :title="$t('platform.trace.userUnresolvedHint')"
                   >
-                    {{ $t(`platform.trace.userKind.${userCellDisplay(row, userNames).kind}`) }}
+                    {{ $t(`platform.trace.userKind.${rowView(row).user.kind}`) }}
                   </Badge>
                 </div>
               </template>
 
               <template #cell-node_id="{ row }">
-                <span class="truncate text-xs">{{ nodeLabel(row.node_id) }}</span>
+                <span class="truncate text-xs">{{ rowView(row).node }}</span>
               </template>
 
               <template #cell-line_uuid="{ row }">
@@ -1014,7 +1069,7 @@ onBeforeUnmount(() => {
 
               <template #cell-destination="{ row }">
                 <div class="flex min-w-0 flex-col">
-                  <span class="truncate font-mono text-xs">{{ destinationText(row) || $t('common.misc.none') }}</span>
+                  <span class="truncate font-mono text-xs">{{ rowView(row).destination || $t('common.misc.none') }}</span>
                   <span v-if="row.sniffed_domain && row.sniffed_domain !== row.dst_host" class="truncate text-xs text-muted-foreground">
                     {{ $t('platform.trace.sniffedAs', { domain: row.sniffed_domain }) }}
                   </span>
@@ -1027,8 +1082,8 @@ onBeforeUnmount(() => {
               </template>
 
               <template #cell-duration_ms="{ row }">
-                <span v-if="traceDurationCell(row.duration_ms).known" class="text-xs tabular">
-                  {{ traceDurationCell(row.duration_ms).text }}
+                <span v-if="rowView(row).duration.known" class="text-xs tabular">
+                  {{ rowView(row).duration.text }}
                 </span>
                 <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
               </template>
@@ -1039,8 +1094,8 @@ onBeforeUnmount(() => {
                 be read as "carried nothing", which is a different fact.
               -->
               <template #cell-upload="{ row }">
-                <span v-if="traceBytesCell(row.upload, row.bytes_known).known" class="text-xs tabular">
-                  {{ traceBytesCell(row.upload, row.bytes_known).text }}
+                <span v-if="rowView(row).upload.known" class="text-xs tabular">
+                  {{ rowView(row).upload.text }}
                 </span>
                 <span
                   v-else
@@ -1052,8 +1107,8 @@ onBeforeUnmount(() => {
               </template>
 
               <template #cell-download="{ row }">
-                <span v-if="traceBytesCell(row.download, row.bytes_known).known" class="text-xs tabular">
-                  {{ traceBytesCell(row.download, row.bytes_known).text }}
+                <span v-if="rowView(row).download.known" class="text-xs tabular">
+                  {{ rowView(row).download.text }}
                 </span>
                 <span
                   v-else
@@ -1067,13 +1122,13 @@ onBeforeUnmount(() => {
               <template #cell-close_reason="{ row }">
                 <div class="flex flex-wrap items-center gap-1">
                   <Badge
-                    :variant="connCloseCell(row).tone"
-                    :title="connCloseCell(row).certain ? undefined : $t('platform.trace.closeUnknownHint')"
+                    :variant="rowView(row).close.tone"
+                    :title="rowView(row).close.certain ? undefined : $t('platform.trace.closeUnknownHint')"
                   >
-                    {{ $t(`platform.trace.closeReason.${connCloseCell(row).id}`) }}
+                    {{ $t(`platform.trace.closeReason.${rowView(row).close.id}`) }}
                   </Badge>
                   <Badge
-                    v-if="isStalled(row)"
+                    v-if="rowView(row).stalled"
                     variant="warning"
                     :title="$t('platform.trace.stalledAt', { at: formatDateTime(row.stalled_at) })"
                   >
