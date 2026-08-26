@@ -194,6 +194,7 @@ export default {
       "platform-kv": "KV Store",
       "platform-static": "Static",
       "platform-logs": "Logs",
+      "platform-trace": "Connection Trace",
       "platform-notifications": "Notifications",
       "platform-agent-updates": "Agent Updates",
       "settings-security": "Security & 2FA",

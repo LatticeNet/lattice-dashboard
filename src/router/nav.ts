@@ -20,6 +20,7 @@ import {
   Database,
   FolderOpen,
   FileText,
+  Waypoints,
   Bell,
   KeyRound,
   Fingerprint,
@@ -124,6 +125,10 @@ export const NAV: NavSection[] = [
       { name: "platform-kv", title: "KV Store", path: "/platform/kv", icon: Database, scopes: ["kv:read", "kv:write"] },
       { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read", "static:write"] },
       { name: "platform-logs", title: "Logs", path: "/platform/logs", icon: FileText, scopes: ["log:read", "log:admin"] },
+      // The sing-box connection trace. It reads the same store Logs writes
+      // into and answers the next question after "what did the node log":
+      // which connection, whose, out of which exit, and how it ended.
+      { name: "platform-trace", title: "Connection Trace", path: "/platform/trace", icon: Waypoints, scopes: ["log:read", "log:admin"] },
       { name: "platform-notifications", title: "Notifications", path: "/platform/notifications", icon: Bell, scopes: ["notify:send"] },
       // The route and the view have existed since agent rollouts shipped; the
       // nav entry did not, and NAV is what builds the route table, so the whole
