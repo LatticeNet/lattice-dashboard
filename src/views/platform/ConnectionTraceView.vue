@@ -1180,7 +1180,8 @@ onBeforeUnmount(() => {
               :empty-description="$t('platform.trace.sessionsEmptyDescription')"
               @retry="sessionsQuery.refresh"
             >
-              <div class="overflow-x-auto rounded-md border border-border">
+              <!-- Desktop: the dense table. -->
+              <div class="hidden overflow-x-auto rounded-md border border-border md:block">
                 <table class="w-full min-w-[880px] text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -1255,6 +1256,81 @@ onBeforeUnmount(() => {
                   </tbody>
                 </table>
               </div>
+
+              <!--
+                Narrow: stacked cards, same idiom DataTable uses for its own
+                small-screen view. The table above needs 880px, so inside a
+                375px viewport its last columns sit off screen behind a
+                horizontal scroll, and Dropped is one of them. Dropped is the
+                number that stops a capture which lost lines from reading as a
+                quiet network, so it cannot be the thing an operator has to go
+                looking for.
+              -->
+              <ul class="space-y-3 md:hidden">
+                <li
+                  v-for="session in sessions"
+                  :key="session.id"
+                  class="rounded-lg border border-border p-3"
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="truncate font-medium">{{ session.name || session.id }}</p>
+                      <p class="font-mono text-xs text-muted-foreground">{{ shortId(session.id, 10) }}</p>
+                    </div>
+                    <Badge :variant="session.state === 'running' ? 'success' : 'secondary'">
+                      {{ $t(`platform.trace.sessionState.${session.state}`) }}
+                    </Badge>
+                  </div>
+
+                  <dl class="mt-3 space-y-2 text-xs">
+                    <div class="flex items-start justify-between gap-3">
+                      <dt class="text-muted-foreground">{{ $t('platform.trace.colSessionLevel') }}</dt>
+                      <dd class="font-mono">{{ session.level }}</dd>
+                    </div>
+                    <div class="flex items-start justify-between gap-3">
+                      <dt class="text-muted-foreground">{{ $t('platform.trace.colSessionExpires') }}</dt>
+                      <dd class="text-right">{{ formatDateTime(session.expires_at) }}</dd>
+                    </div>
+                    <div class="flex items-start justify-between gap-3">
+                      <dt class="text-muted-foreground">{{ $t('platform.trace.colSessionLines') }}</dt>
+                      <dd class="tabular">{{ session.lines }}</dd>
+                    </div>
+                    <div class="flex items-start justify-between gap-3">
+                      <dt class="text-muted-foreground">{{ $t('platform.trace.colSessionRecords') }}</dt>
+                      <dd class="tabular">{{ session.records }}</dd>
+                    </div>
+                    <div class="flex items-start justify-between gap-3">
+                      <dt class="text-muted-foreground">{{ $t('platform.trace.colSessionDropped') }}</dt>
+                      <dd :class="session.dropped > 0 ? 'font-medium tabular text-warning' : 'tabular text-muted-foreground'">
+                        {{ session.dropped }}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p v-if="session.dropped > 0" class="mt-2 text-xs text-warning">
+                    {{ $t('platform.trace.droppedHint') }}
+                  </p>
+
+                  <div v-if="session.state === 'running'" class="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      @click="tailSessionId === session.id ? stopTail() : startTail(session.id)"
+                    >
+                      {{ tailSessionId === session.id ? $t('platform.trace.tailStop') : $t('platform.trace.tailStart') }}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      :disabled="!canAdmin || stoppingId === session.id"
+                      :title="adminReason"
+                      @click="stopSession(session)"
+                    >
+                      <Square aria-hidden="true" class="size-4" />
+                      {{ $t('platform.trace.sessionStop') }}
+                    </Button>
+                  </div>
+                </li>
+              </ul>
             </DataState>
           </CardContent>
         </Card>
@@ -1428,7 +1504,8 @@ onBeforeUnmount(() => {
               :empty-description="$t('platform.trace.policyEmptyDescription')"
               @retry="policyQuery.refresh"
             >
-              <div class="overflow-x-auto rounded-md border border-border">
+              <!-- Desktop: the dense table. -->
+              <div class="hidden overflow-x-auto rounded-md border border-border md:block">
                 <table class="w-full min-w-[760px] text-sm">
                   <thead>
                     <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -1503,6 +1580,80 @@ onBeforeUnmount(() => {
                   </tbody>
                 </table>
               </div>
+
+              <!--
+                Narrow: the same rows as cards. The table needs 760px, which put
+                the level, the budget and the Save button off screen at 375, so
+                the policy was readable there but not editable.
+              -->
+              <ul class="space-y-3 md:hidden">
+                <li v-for="row in policies" :key="row.node_id" class="rounded-lg border border-border p-3">
+                  <div class="min-w-0">
+                    <p class="truncate font-medium">{{ nodeLabel(row.node_id) }}</p>
+                    <p class="font-mono text-xs text-muted-foreground">{{ shortId(row.node_id, 10) }}</p>
+                  </div>
+
+                  <div class="mt-3 space-y-3 text-xs">
+                    <label class="flex items-center justify-between gap-3">
+                      <span class="text-muted-foreground">{{ $t('platform.trace.colPolicyEnabled') }}</span>
+                      <Checkbox
+                        :model-value="policyDraft(row).enabled"
+                        :disabled="!canAdmin"
+                        :aria-label="$t('platform.trace.colPolicyEnabled')"
+                        @update:model-value="(v) => setPolicyField(row, 'enabled', v === true)"
+                      />
+                    </label>
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-muted-foreground">{{ $t('platform.trace.colPolicyLevel') }}</span>
+                      <Select
+                        :model-value="policyDraft(row).level"
+                        :disabled="!canAdmin"
+                        @update:model-value="(v) => setPolicyField(row, 'level', String(v) as TraceLevel)"
+                      >
+                        <SelectTrigger class="w-32" :title="adminReason">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem v-for="level in TRACE_LEVELS" :key="level" :value="level">
+                            {{ $t(`platform.trace.level.${level}`) }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-muted-foreground">{{ $t('platform.trace.colPolicyBudget') }}</span>
+                      <Input
+                        class="w-28"
+                        type="number"
+                        min="0"
+                        :model-value="policyDraft(row).budget"
+                        :disabled="!canAdmin"
+                        :title="adminReason"
+                        :aria-label="$t('platform.trace.colPolicyBudget')"
+                        @update:model-value="(v) => setPolicyField(row, 'budget', Number(v) || 0)"
+                      />
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="text-muted-foreground">{{ $t('platform.trace.colPolicyUpdated') }}</span>
+                      <span class="text-muted-foreground">
+                        {{ row.updated_at ? formatDateTime(row.updated_at) : $t('common.misc.none') }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    class="mt-3 w-full"
+                    :disabled="!canAdmin || !policyDirty(row) || savingPolicyNode === row.node_id"
+                    :title="adminReason"
+                    @click="savePolicy(row)"
+                  >
+                    <RefreshCw v-if="savingPolicyNode === row.node_id" aria-hidden="true" class="size-4 animate-spin" />
+                    {{ $t('common.actions.save') }}
+                  </Button>
+                </li>
+              </ul>
               <p v-if="!canAdmin" class="text-xs text-muted-foreground">
                 <i18n-t keypath="platform.trace.needsAdmin" tag="span" scope="global">
                   <template #scope><code class="font-mono">log:admin</code></template>
