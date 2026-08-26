@@ -446,6 +446,7 @@ export default {
         legacy: "Legacy label",
         discovered: "Discovered",
         unnamed: "Unnamed",
+        unobserved: "Not observed",
         unresolved: "Unresolved",
         unknown: "Unknown",
       },

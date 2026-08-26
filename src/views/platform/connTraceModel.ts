@@ -50,7 +50,7 @@ export const CLOSE_REASONS = [
 export type CloseReason = (typeof CLOSE_REASONS)[number];
 
 /** How confidently a user was attributed to a connection. */
-export const USER_KINDS = ["managed", "legacy", "discovered", "unnamed", "unresolved"] as const;
+export const USER_KINDS = ["managed", "legacy", "discovered", "unnamed", "unobserved", "unresolved"] as const;
 export type UserKind = (typeof USER_KINDS)[number];
 
 /** The whole of the linkable filter state for the connections list. */

@@ -432,6 +432,7 @@ export default {
         legacy: "历史标签",
         discovered: "发现的用户",
         unnamed: "只有编号",
+        unobserved: "未观察到",
         unresolved: "无法解析",
         unknown: "未知",
       },
