@@ -590,8 +590,16 @@ export function clampTraceTtlSeconds(value: unknown): number {
  * process lifetime and nowhere else. It identifies a record only together with
  * the node and the core generation, which is why the key is a triple.
  */
+/**
+ * The full identity of a connection record.
+ *
+ * started_at is part of it. sing-box's log id is rand.Uint32, so one core
+ * generation on one node can reuse it, and the server deliberately keeps both
+ * connections. A key without the start time makes the second row replace the
+ * first while paging, so a connection silently disappears from the table.
+ */
 export function connRecordKey(record: ConnRecord): string {
-  return `${record.node_id}:${record.core_generation ?? 0}:${record.log_id}`;
+  return `${record.node_id}:${record.core_generation ?? 0}:${record.log_id}:${record.started_at ?? ""}`;
 }
 
 export interface ConnTracePage {

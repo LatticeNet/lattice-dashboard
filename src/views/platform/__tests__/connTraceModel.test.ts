@@ -339,13 +339,26 @@ test("session TTL clamps at both ends and defaults when nothing usable was given
 
 /* -------------------------------- paging --------------------------------- */
 
-test("the record key is the node, the core generation and the log id together", () => {
-  assert.equal(
-    connRecordKey(record({ node_id: "node-a", core_generation: 7, log_id: 42 })),
-    "node-a:7:42",
-  );
+test("the record key includes the start time, so a reused log id stays two rows", () => {
+  const a = record({ node_id: "node-a", core_generation: 7, log_id: 42, started_at: "2026-08-26T12:00:00Z" });
+  const b = record({ node_id: "node-a", core_generation: 7, log_id: 42, started_at: "2026-08-26T12:10:00Z" });
+  // sing-box's log id is rand.Uint32, so one generation can reuse it. Keying
+  // without the start time makes the second row replace the first and a
+  // connection silently vanishes from the table.
+  assert.notEqual(connRecordKey(a), connRecordKey(b));
+  assert.equal(connRecordKey(a), connRecordKey({ ...a }));
   // A missing generation is generation zero, not a different row every render.
-  assert.equal(connRecordKey(record({ node_id: "node-a", log_id: 42 })), "node-a:0:42");
+  assert.equal(
+    connRecordKey(record({ node_id: "node-a", log_id: 42, started_at: "2026-08-26T12:00:00Z" })),
+    "node-a:0:42:2026-08-26T12:00:00Z",
+  );
+});
+
+test("a reused log id survives paging as two distinct rows", () => {
+  const a = record({ node_id: "node-a", core_generation: 7, log_id: 42, started_at: "2026-08-26T12:00:00Z" });
+  const b = record({ node_id: "node-a", core_generation: 7, log_id: 42, started_at: "2026-08-26T12:10:00Z" });
+  const page = appendConnPage(emptyConnTracePaging(), { records: [a, b] });
+  assert.equal(page.records.length, 2);
 });
 
 test("paging appends a page, dedupes by key, and never loses or duplicates a row", () => {
@@ -373,9 +386,10 @@ test("paging appends a page, dedupes by key, and never loses or duplicates a row
     ],
   });
 
+  const at = "2026-08-26T10:00:00.000Z";
   assert.deepEqual(
     second.records.map(connRecordKey),
-    ["node-a:3:1", "node-a:3:2", "node-a:3:5", "node-b:3:1", "node-a:4:1"],
+    [`node-a:3:1:${at}`, `node-a:3:2:${at}`, `node-a:3:5:${at}`, `node-b:3:1:${at}`, `node-a:4:1:${at}`],
   );
   assert.equal(second.records[1]?.open, undefined);
   assert.equal(second.records[1]?.close_reason, "eof");
@@ -390,7 +404,7 @@ test("an empty page ends the walk without touching what is on screen", () => {
     next_cursor: "c",
   });
   const done = appendConnPage(state, {});
-  assert.deepEqual(done.records.map(connRecordKey), ["node-a:0:1"]);
+  assert.deepEqual(done.records.map(connRecordKey), ["node-a:0:1:2026-08-26T10:00:00.000Z"]);
   assert.equal(done.exhausted, true);
 });
 

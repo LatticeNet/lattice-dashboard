@@ -624,7 +624,7 @@ export const api = {
     setPolicy: (input: TracePolicyUpsertRequest) =>
       http.post<TracePolicy>("/api/trace/policy", input),
     hops: (
-      params: { node_id: string; core_generation: number; log_id: number },
+      params: { node_id: string; core_generation: number; log_id: number; started_at?: string },
       opts?: RequestOptions,
     ) => http.get<TraceHopsResponse>("/api/trace/hops", params as Record<string, unknown>, opts),
   },

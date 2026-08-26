@@ -467,6 +467,10 @@ async function loadHops(row: ConnRecord): Promise<void> {
       node_id: row.node_id,
       core_generation: row.core_generation ?? 0,
       log_id: row.log_id,
+      // Without the start time a reused log id resolves to whichever
+      // connection the server ordered first, so the drawer can show the hops
+      // of a different connection than the row that was opened.
+      started_at: row.started_at,
     });
     hopPath.value = res.path ?? null;
     hopRecords.value = res.records ?? [];
