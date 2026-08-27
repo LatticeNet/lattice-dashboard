@@ -235,10 +235,22 @@ function onFormOpenChange(next: boolean) {
   formOpen.value = false;
 }
 
-function confirmDiscard() {
+/**
+ * The one way the dialog closes.
+ *
+ * Resetting before closing matters: `isDirty` is true for the whole of an edit,
+ * so leaving the form state in place while the open flag flips lets the close
+ * re-enter the discard guard and stay open, with the title flipping back to the
+ * create wording on the way. Clearing first makes the guard a no-op.
+ */
+function closeForm() {
   discardOpen.value = false;
-  formOpen.value = false;
   resetForm();
+  formOpen.value = false;
+}
+
+function confirmDiscard() {
+  closeForm();
 }
 
 const parsedDomains = computed(() =>
@@ -284,8 +296,7 @@ async function submitForm() {
     const editing = isEditing.value;
     await api.ddns.save(req);
     toast.success(t(editing ? "networking.ddns.toastUpdated" : "networking.ddns.toastCreated"));
-    formOpen.value = false;
-    resetForm();
+    closeForm();
     profilesQuery.refresh();
   } catch (error) {
     const fallback = isEditing.value
