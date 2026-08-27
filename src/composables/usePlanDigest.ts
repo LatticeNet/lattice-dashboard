@@ -32,8 +32,9 @@ import { sha256Hex } from "@/lib/crypto";
  *   `.plan` shape. This changes NOTHING about what is hashed.
  *
  * ── Cache semantics (identical to ApprovalsView's `digestCache`) ──────────────
- * Per-key memo keyed by the approval's `id`. A present (truthy) cached value
- * short-circuits. A SHA-256 hex string is never empty, so the truthiness check
+ * Per-key memo keyed by the approval's `id`, and invalidated when the plan bytes
+ * behind that id change. A present cached value short-circuits only while it
+ * still describes the plan in hand. A SHA-256 hex string is never empty, so the truthiness check
  * can never mistake a real digest for a miss. The cache ref is reassigned with a
  * fresh object on write (`{ ...cache.value, [id]: digest }`) so it stays
  * reactive for templates that read `cache[id]` directly, matching the original.
@@ -75,10 +76,27 @@ export function usePlanDigest(): UsePlanDigest {
     return sha256Hex(input || "");
   }
 
+  /**
+   * The bytes each cached digest was computed from, so a plan that changes
+   * under a stable id invalidates its own entry.
+   *
+   * Keying the memo on the id alone was wrong in the one case that matters.
+   * The server mutates a PENDING approval in place: same id, new plan, new
+   * updated_at, whenever the thing it describes is re-rendered. A digest
+   * cached from the earlier plan then gets sent for the newer one, the server
+   * correctly answers "plan changed since review", and because nothing ever
+   * cleared the entry, clicking again produced the same stale digest forever.
+   * The approval kept reappearing and could never be approved without a full
+   * page reload. Twenty-three line metadata approvals sat stuck this way.
+   */
+  const hashedBody = new Map<string, string>();
+
   async function digestFor(plan: PlanLike): Promise<string> {
+    const body = plan.plan || "";
     const cached = cache.value[plan.id];
-    if (cached) return cached;
-    const digest = await digestHex(plan.plan);
+    if (cached && hashedBody.get(plan.id) === body) return cached;
+    const digest = await digestHex(body);
+    hashedBody.set(plan.id, body);
     cache.value = { ...cache.value, [plan.id]: digest };
     return digest;
   }
