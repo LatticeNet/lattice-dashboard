@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Lock,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -127,6 +128,18 @@ const columns = computed<DataTableColumn<DDNSView>[]>(() => [
 const formOpen = ref(false);
 const saving = ref(false);
 
+/**
+ * Id of the profile being edited, or undefined while creating.
+ *
+ * The server treats an id in the body as "edit this one", so this single value
+ * decides create vs update for the whole dialog: title, submit label, whether a
+ * blank credential is allowed, and which toast fires.
+ */
+const editingId = ref<string | undefined>();
+const isEditing = computed(() => !!editingId.value);
+/** Whether the profile being edited already has a stored credential. */
+const editingHasCredential = ref(false);
+
 const form = reactive({
   name: "",
   node_id: "",
@@ -144,6 +157,8 @@ const form = reactive({
 });
 
 function resetForm() {
+  editingId.value = undefined;
+  editingHasCredential.value = false;
   form.name = "";
   form.node_id = "";
   form.provider = "cloudflare";
@@ -166,11 +181,38 @@ function openCreate() {
 }
 
 /**
+ * Load an existing profile into the form.
+ *
+ * Credentials are deliberately not populated: the list view never returns
+ * them, so there is nothing to prefill. A blank field on submit means "keep
+ * what is stored", which is why the token is not required when editing a
+ * profile that already has one.
+ */
+function openEdit(profile: DDNSView) {
+  if (!canAdmin.value) return;
+  resetForm();
+  editingId.value = profile.id;
+  editingHasCredential.value = profile.has_credential;
+  form.name = profile.name;
+  form.node_id = profile.node_id;
+  form.provider = (profile.provider as Provider) || "cloudflare";
+  form.domains = (profile.domains ?? []).join(", ");
+  form.enable_ipv4 = profile.enable_ipv4;
+  form.enable_ipv6 = profile.enable_ipv6;
+  form.ttl = profile.ttl || 60;
+  form.max_retries = profile.max_retries || 3;
+  form.webhook_url = profile.webhook_url ?? "";
+  form.webhook_method = profile.webhook_method || "POST";
+  formOpen.value = true;
+}
+
+/**
  * The form holds a Cloudflare token or a webhook body, so an Escape or an
  * overlay click must not discard typed credentials without asking.
  */
 const isDirty = computed(
   () =>
+    isEditing.value ||
     !!form.name.trim() ||
     !!form.node_id ||
     !!form.domains.trim() ||
@@ -208,7 +250,10 @@ const parsedDomains = computed(() =>
 
 const canSubmit = computed(() => {
   if (!form.name.trim() || !form.node_id || parsedDomains.value.length === 0) return false;
-  if (form.provider === "cloudflare") return !!form.cf_api_token.trim();
+  // A blank credential is only acceptable when editing a profile that already
+  // has one stored, because the client is never given the value to send back.
+  const credentialKept = isEditing.value && editingHasCredential.value;
+  if (form.provider === "cloudflare") return credentialKept || !!form.cf_api_token.trim();
   return !!form.webhook_url.trim();
 });
 
@@ -226,20 +271,27 @@ async function submitForm() {
       ttl: Number(form.ttl),
       max_retries: Number(form.max_retries),
     };
+    if (editingId.value) req.id = editingId.value;
     if (form.provider === "cloudflare") {
-      req.cf_api_token = form.cf_api_token.trim();
+      // Blank means keep; only send the field when the operator typed one.
+      if (form.cf_api_token.trim()) req.cf_api_token = form.cf_api_token.trim();
     } else {
       req.webhook_url = form.webhook_url.trim();
       req.webhook_method = form.webhook_method.trim() || "POST";
       if (form.webhook_body.trim()) req.webhook_body = form.webhook_body;
       if (form.webhook_headers.trim()) req.webhook_headers = form.webhook_headers;
     }
-    await api.ddns.create(req);
-    toast.success(t("networking.ddns.toastCreated"));
+    const editing = isEditing.value;
+    await api.ddns.save(req);
+    toast.success(t(editing ? "networking.ddns.toastUpdated" : "networking.ddns.toastCreated"));
     formOpen.value = false;
+    resetForm();
     profilesQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("networking.ddns.toastCreateFailed"));
+    const fallback = isEditing.value
+      ? "networking.ddns.toastUpdateFailed"
+      : "networking.ddns.toastCreateFailed";
+    toast.error(error instanceof Error ? error.message : t(fallback));
   } finally {
     saving.value = false;
   }
@@ -400,6 +452,16 @@ async function confirmRun() {
                 v-if="canAdmin"
                 variant="ghost"
                 size="sm"
+                :aria-label="$t('networking.ddns.edit')"
+                :title="$t('networking.ddns.edit')"
+                @click="openEdit(profile)"
+              >
+                <Pencil class="size-4" aria-hidden="true" />
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="sm"
                 :disabled="running === profile.id"
                 @click="runTarget = profile"
               >
@@ -426,9 +488,11 @@ async function confirmRun() {
     <Dialog :open="formOpen" @update:open="onFormOpenChange">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{{ $t('networking.ddns.newProfileTitle') }}</DialogTitle>
+          <DialogTitle>
+            {{ isEditing ? $t('networking.ddns.editProfileTitle') : $t('networking.ddns.newProfileTitle') }}
+          </DialogTitle>
           <DialogDescription>
-            {{ $t('networking.ddns.dialogDescription') }}
+            {{ isEditing ? $t('networking.ddns.editDialogDescription') : $t('networking.ddns.dialogDescription') }}
           </DialogDescription>
         </DialogHeader>
 
@@ -496,7 +560,11 @@ async function confirmRun() {
               autocomplete="off"
               :placeholder="$t('networking.ddns.cfTokenPlaceholder')"
             />
-            <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.cfTokenHint') }}</p>
+            <p class="text-xs text-muted-foreground">
+              {{ isEditing && editingHasCredential
+                ? $t('networking.ddns.cfTokenKeepHint')
+                : $t('networking.ddns.cfTokenHint') }}
+            </p>
           </div>
 
           <!-- Webhook -->
@@ -545,8 +613,9 @@ async function confirmRun() {
             </Button>
             <Button type="submit" :disabled="saving || !canSubmit">
               <RefreshCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+              <Pencil v-else-if="isEditing" class="size-4" aria-hidden="true" />
               <Plus v-else class="size-4" aria-hidden="true" />
-              {{ $t('common.actions.create') }}
+              {{ isEditing ? $t('networking.ddns.saveChanges') : $t('common.actions.create') }}
             </Button>
           </DialogFooter>
         </form>

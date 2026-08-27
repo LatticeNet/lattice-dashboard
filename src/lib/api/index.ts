@@ -471,6 +471,9 @@ export const api = {
 
   ddns: {
     list: () => http.get<DDNSView[]>("/api/ddns"),
+    // One endpoint serves both: an id in the body edits that profile, no id
+    // creates one. `create` stays as the explicit no-id spelling.
+    save: (input: DDNSUpsertRequest) => http.post<DDNSView>("/api/ddns", input),
     create: (input: DDNSUpsertRequest) => http.post<DDNSView>("/api/ddns", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/ddns/delete", { id }),
     run: (id: string) => http.post<DDNSView>("/api/ddns/run", { id }),

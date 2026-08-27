@@ -911,6 +911,8 @@ export interface DDNSView {
 }
 
 export interface DDNSUpsertRequest {
+  /** Present to edit an existing profile; omit to create one. */
+  id?: string;
   name: string;
   node_id: string;
   provider: DDNSProvider | string;
