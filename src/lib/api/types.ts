@@ -899,6 +899,8 @@ export interface DDNSView {
   enable_ipv6: boolean;
   max_retries: number;
   ttl: number;
+  /** Seconds between attempts for this profile; 0 means the server default. */
+  interval_seconds?: number;
   has_credential: boolean;
   webhook_url?: string;
   webhook_method?: string;
@@ -913,6 +915,8 @@ export interface DDNSView {
 export interface DDNSUpsertRequest {
   /** Present to edit an existing profile; omit to create one. */
   id?: string;
+  /** Seconds between attempts; omit for the server default. */
+  interval_seconds?: number;
   name: string;
   node_id: string;
   provider: DDNSProvider | string;

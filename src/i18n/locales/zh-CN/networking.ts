@@ -279,6 +279,8 @@ export default {
       provider: "服务商",
       ttlSeconds: "TTL(秒)",
       maxRetries: "最大重试次数",
+      intervalLabel: "检查间隔",
+      intervalHint: "两次尝试之间等多久。住宅地址适合几分钟；常年不换 IP 的机房机器不需要。它同时决定了provider 拒绝写入时的重试节奏。",
       cfApiToken: "Cloudflare API 令牌",
       cfTokenPlaceholder: "只写，需要 Zone:Read + DNS:Edit",
       cfTokenHint: "只写存储;API 永不返回。",

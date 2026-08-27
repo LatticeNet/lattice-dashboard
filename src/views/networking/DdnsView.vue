@@ -149,6 +149,7 @@ const form = reactive({
   enable_ipv6: false,
   ttl: 60,
   max_retries: 3,
+  interval_seconds: 300,
   cf_api_token: "",
   webhook_url: "",
   webhook_method: "POST",
@@ -167,6 +168,7 @@ function resetForm() {
   form.enable_ipv6 = false;
   form.ttl = 60;
   form.max_retries = 3;
+  form.interval_seconds = 300;
   form.cf_api_token = "";
   form.webhook_url = "";
   form.webhook_method = "POST";
@@ -201,6 +203,7 @@ function openEdit(profile: DDNSView) {
   form.enable_ipv6 = profile.enable_ipv6;
   form.ttl = profile.ttl || 60;
   form.max_retries = profile.max_retries || 3;
+  form.interval_seconds = profile.interval_seconds || 300;
   form.webhook_url = profile.webhook_url ?? "";
   form.webhook_method = profile.webhook_method || "POST";
   formOpen.value = true;
@@ -253,6 +256,21 @@ function confirmDiscard() {
   closeForm();
 }
 
+/**
+ * Offered cadences. A residential address is worth a few minutes; a machine
+ * that has held the same IP for a year is not, and the same value spaces out
+ * retries when a provider keeps rejecting the write.
+ */
+const intervalOptions = [
+  { value: 60, label: "1 min" },
+  { value: 300, label: "5 min" },
+  { value: 900, label: "15 min" },
+  { value: 3600, label: "1 h" },
+  { value: 21600, label: "6 h" },
+  { value: 43200, label: "12 h" },
+  { value: 86400, label: "24 h" },
+];
+
 const parsedDomains = computed(() =>
   form.domains
     .split(",")
@@ -282,6 +300,7 @@ async function submitForm() {
       enable_ipv6: form.enable_ipv6,
       ttl: Number(form.ttl),
       max_retries: Number(form.max_retries),
+      interval_seconds: Number(form.interval_seconds),
     };
     if (editingId.value) req.id = editingId.value;
     if (form.provider === "cloudflare") {
@@ -548,6 +567,19 @@ async function confirmRun() {
                 IPv6 (AAAA)
               </label>
             </div>
+          </div>
+
+          <div class="grid gap-2">
+            <Label for="ddns-interval">{{ $t('networking.ddns.intervalLabel') }}</Label>
+            <Select v-model="form.interval_seconds">
+              <SelectTrigger id="ddns-interval" class="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="opt in intervalOptions" :key="opt.value" :value="opt.value">
+                  {{ opt.label }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.intervalHint') }}</p>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-2">

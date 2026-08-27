@@ -300,6 +300,8 @@ export default {
       provider: "Provider",
       ttlSeconds: "TTL (seconds)",
       maxRetries: "Max retries",
+      intervalLabel: "Check every",
+      intervalHint: "How long to wait between attempts. Residential addresses want minutes; a datacenter one that holds the same IP for a year does not, and this also spaces out retries when a provider is rejecting the write.",
       cfApiToken: "Cloudflare API token",
       cfTokenPlaceholder: "write-only, needs Zone:Read + DNS:Edit",
       cfTokenHint: "Stored write-only; never returned by the API.",
