@@ -109,9 +109,15 @@ const degradedReason = computed<string | undefined>(() => {
           <SelectValue :placeholder="selectPlaceholder" />
         </SelectTrigger>
         <SelectContent>
+          <!--
+            The trigger renders the selected option as plain text, so two bare
+            spans arrive concatenated: a name ending in "-NAT" followed by an id
+            read as one word. The separator keeps the collapsed value legible
+            without changing what the open list shows.
+          -->
           <SelectItem v-for="node in nodes" :key="node.id" :value="node.id">
             <span>{{ node.name || node.id }}</span>
-            <span class="font-mono text-xs text-muted-foreground">{{ shortId(node.id, 14) }}</span>
+            <span class="font-mono text-xs text-muted-foreground"> · {{ shortId(node.id, 14) }}</span>
           </SelectItem>
         </SelectContent>
       </Select>
