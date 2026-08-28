@@ -34,6 +34,7 @@ import {
   RefreshCw,
   RotateCw,
   Server,
+  ListOrdered,
   ScrollText,
   ShieldCheck,
   SquareTerminal,
@@ -62,6 +63,7 @@ import {
   groupByDay,
   type TimelineEntry,
 } from "./nodeTimelineModel";
+import { buildNodeQueue } from "./nodeTaskQueueModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -524,6 +526,11 @@ const timeline = computed(() =>
   }),
 );
 const timelineDays = computed(() => groupByDay(timeline.value));
+
+// What has not run yet on this machine. The timeline answers what already
+// happened; when a node has been down, the question is what is stacked up
+// against it and in what order it will be taken.
+const nodeQueue = computed(() => buildNodeQueue(nodeTasksQuery.data.value ?? [], nodeId.value));
 const timelineExpanded = ref(false);
 const timelineHasMore = computed(
   () =>
@@ -1937,6 +1944,62 @@ async function resolveGeo() {
               </p>
             </div>
             <p v-if="nodeDdns.length === 0" class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noDdns') }}</p>
+          </CardContent>
+        </Card>
+
+        <!-- Work still waiting on this node -->
+        <Card>
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <ListOrdered class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.queue') }}
+              <Badge v-if="nodeQueue.entries.length" variant="secondary">{{ nodeQueue.entries.length }}</Badge>
+            </CardTitle>
+            <CardDescription>{{ $t('fleet.nodes.detail.queueDesc') }}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DataState
+              :loading="nodeTasksQuery.loading.value"
+              :error="nodeTasksQuery.error.value"
+              :has-data="nodeTasksQuery.data.value !== undefined"
+              :is-empty="nodeQueue.entries.length === 0"
+              :empty-description="$t('fleet.nodes.detail.queueEmpty')"
+              :skeleton-rows="2"
+              @retry="nodeTasksQuery.refresh"
+            >
+              <ol class="space-y-2">
+                <li
+                  v-for="(entry, index) in nodeQueue.entries"
+                  :key="entry.id"
+                  class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+                >
+                  <div class="flex min-w-0 items-center gap-3">
+                    <span class="w-5 shrink-0 text-xs text-muted-foreground tabular">{{ index + 1 }}</span>
+                    <div class="min-w-0 space-y-0.5">
+                      <RouterLink
+                        class="block truncate font-mono text-xs hover:underline"
+                        :to="{ name: 'tasks', query: { id: entry.id } }"
+                      >{{ entry.id }}</RouterLink>
+                      <p class="text-xs text-muted-foreground">
+                        {{ entry.interpreter }}
+                        <template v-if="entry.targetCount > 1">
+                          · {{ $t('fleet.nodes.detail.queueFanout', { count: entry.targetCount }) }}
+                        </template>
+                        <template v-if="entry.createdAt">
+                          · {{ formatRelativeTime(entry.createdAt) }}
+                        </template>
+                      </p>
+                    </div>
+                  </div>
+                  <Badge :variant="entry.running ? 'warning' : 'secondary'">
+                    {{ entry.running ? $t('fleet.nodes.detail.queueRunning') : $t('fleet.nodes.detail.queueWaiting') }}
+                  </Badge>
+                </li>
+              </ol>
+              <p v-if="!node?.online && nodeQueue.queued > 0" class="mt-3 text-xs text-muted-foreground">
+                {{ $t('fleet.nodes.detail.queueOfflineHint') }}
+              </p>
+            </DataState>
           </CardContent>
         </Card>
 
