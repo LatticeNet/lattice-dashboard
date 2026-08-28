@@ -29,8 +29,11 @@ export default {
       },
       fleet: {
         title: "Nodes",
-        description: "Every node SSH Guard has touched, and where it stopped.",
-        empty: "No node has been armed yet.",
+        description: "The whole fleet, ordered by what needs attention first. Untouched nodes are the work that remains.",
+        empty: "No nodes are enrolled yet.",
+        done: "{n} of {total} confirmed",
+        inFlight: "{n} in progress",
+        open: "{n} still open",
       },
       fields: {
         sshPort: "New SSH port",

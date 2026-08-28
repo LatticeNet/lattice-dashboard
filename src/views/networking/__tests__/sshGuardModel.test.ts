@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  buildFleetStates,
   buildPlanRequest,
   deriveNodeGuardState,
+  guardCoverage,
   hasBlocking,
   nodesAwaitingConfirm,
   parseMgmtSources,
@@ -141,4 +143,54 @@ test("blocking findings sort first, because they decide whether submit works", (
   assert.deepEqual(sorted.map((f) => f.code), ["a_block", "a_warn", "b_warn"]);
   assert.equal(hasBlocking(sorted), true);
   assert.equal(hasBlocking(sorted.slice(1)), false);
+});
+
+test("the fleet view includes nodes nobody has armed, because those are the work", () => {
+  const states = buildFleetStates([arm({ status: "applied" })], [
+    { id: NODE, name: "HK edge" },
+    { id: "untouched-1" },
+    { id: "untouched-2" },
+  ]);
+  assert.equal(states.length, 3);
+  assert.deepEqual(
+    states.filter((s) => s.stage === "idle").map((s) => s.nodeId).sort(),
+    ["untouched-1", "untouched-2"],
+  );
+});
+
+test("a node that left the fleet keeps its history on the page", () => {
+  const states = buildFleetStates([arm({ node_id: "retired", status: "applied" })], [{ id: "still-here" }]);
+  assert.deepEqual(states.map((s) => s.nodeId).sort(), ["retired", "still-here"]);
+});
+
+test("urgent leads, finished sinks, because the list is read to decide what to do next", () => {
+  const states = buildFleetStates(
+    [
+      arm({ id: "a1", node_id: "urgent", status: "applied" }),
+      arm({ id: "a2", node_id: "done", status: "applied", created_at: "2026-08-28T09:00:00Z" }),
+      confirm({ id: "c2", node_id: "done", status: "applied", created_at: "2026-08-28T09:30:00Z" }),
+      arm({ id: "a3", node_id: "planned", status: "pending" }),
+    ],
+    [{ id: "urgent" }, { id: "done" }, { id: "planned" }, { id: "never" }],
+  );
+  assert.deepEqual(states.map((s) => s.nodeId), ["urgent", "planned", "never", "done"]);
+});
+
+test("coverage counts the three things an operator is deciding between", () => {
+  const states = buildFleetStates(
+    [
+      arm({ id: "a1", node_id: "done", status: "applied", created_at: "2026-08-28T09:00:00Z" }),
+      confirm({ id: "c1", node_id: "done", status: "applied", created_at: "2026-08-28T09:30:00Z" }),
+      arm({ id: "a2", node_id: "midway", status: "applied" }),
+      arm({ id: "a3", node_id: "broken", status: "rejected" }),
+    ],
+    [{ id: "done" }, { id: "midway" }, { id: "broken" }, { id: "never" }],
+  );
+  const c = guardCoverage(states);
+  assert.deepEqual(c, { total: 4, done: 1, inFlight: 1, open: 2 });
+});
+
+test("the node name travels with the state so the list can show more than an id", () => {
+  const states = buildFleetStates([], [{ id: "n1", name: "HK edge" }]);
+  assert.equal(states[0].name, "HK edge");
 });

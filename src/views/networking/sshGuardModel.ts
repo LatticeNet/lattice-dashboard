@@ -41,6 +41,8 @@ export type GuardStage =
 
 export interface NodeGuardState {
   nodeId: string;
+  /** Human name, when the node is still in the fleet. */
+  name?: string;
   stage: GuardStage;
   /** True while an applied arm has no applied confirm: a revert is pending. */
   revertArmed: boolean;
@@ -95,6 +97,68 @@ export function deriveNodeGuardState(approvals: ApprovalView[], nodeId: string):
 /** Nodes whose revert timer is running, which is the only urgent state here. */
 export function nodesAwaitingConfirm(states: NodeGuardState[]): NodeGuardState[] {
   return states.filter((s) => s.revertArmed);
+}
+
+/**
+ * Every node, not only the ones this capability has already touched.
+ *
+ * The remaining work on SSH Guard is rolling it across the fleet, and a list of
+ * what has been armed cannot answer the question that work is made of: which
+ * machines are still open. A node with no approvals belongs on this page as
+ * plainly as one mid-sequence; it is just at the start.
+ */
+export function buildFleetStates(
+  approvals: ApprovalView[],
+  nodes: { id: string; name?: string }[],
+): NodeGuardState[] {
+  const ids = new Set(nodes.map((n) => n.id));
+  // A node can be gone from the fleet and still have history worth showing.
+  for (const a of approvals) {
+    if (isSSHGuardApproval(a)) ids.add(a.node_id);
+  }
+  const byId = new Map(nodes.map((n) => [n.id, n.name ?? ""]));
+  return Array.from(ids)
+    .map((id) => ({ ...deriveNodeGuardState(approvals, id), name: byId.get(id) ?? "" }))
+    .sort(compareForRollout);
+}
+
+/**
+ * Urgent first, then work in flight, then untouched, then done.
+ *
+ * Finished nodes sink rather than lead: this list is read to decide what to do
+ * next, and a node that needs nothing is the one thing that never does.
+ */
+const STAGE_ORDER: Record<GuardStage, number> = {
+  awaitingConfirm: 0,
+  confirmPending: 1,
+  confirmApproved: 2,
+  armApproved: 3,
+  armPending: 4,
+  armFailed: 5,
+  idle: 6,
+  confirmed: 7,
+};
+
+function compareForRollout(a: NodeGuardState, b: NodeGuardState): number {
+  const rank = STAGE_ORDER[a.stage] - STAGE_ORDER[b.stage];
+  if (rank !== 0) return rank;
+  return a.nodeId.localeCompare(b.nodeId);
+}
+
+export interface GuardCoverage {
+  total: number;
+  /** Confirmed: hardened and the revert cancelled. */
+  done: number;
+  /** Anywhere between planned and awaiting confirmation. */
+  inFlight: number;
+  /** Never armed, or the last attempt did not survive. */
+  open: number;
+}
+
+export function guardCoverage(states: NodeGuardState[]): GuardCoverage {
+  const done = states.filter((s) => s.stage === "confirmed").length;
+  const open = states.filter((s) => s.stage === "idle" || s.stage === "armFailed").length;
+  return { total: states.length, done, open, inFlight: states.length - done - open };
 }
 
 function newest(list: ApprovalView[]): ApprovalView | undefined {

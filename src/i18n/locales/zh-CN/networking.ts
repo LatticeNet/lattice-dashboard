@@ -28,8 +28,11 @@ export default {
       },
       fleet: {
         title: "节点",
-        description: "SSH 加固动过的所有节点，以及各自停在哪一步。",
-        empty: "还没有节点做过加固。",
+        description: "整个舰队，按需要处理的先后排序。没动过的那些就是剩下的工作。",
+        empty: "还没有注册任何节点。",
+        done: "{total} 台中 {n} 台已确认",
+        inFlight: "{n} 台进行中",
+        open: "{n} 台尚未加固",
       },
       fields: {
         sshPort: "新的 SSH 端口",

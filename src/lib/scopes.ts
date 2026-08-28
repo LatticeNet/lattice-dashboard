@@ -93,6 +93,25 @@ export const SCOPE_GROUPS: readonly ScopeGroup[] = [
     ],
   },
   {
+    id: "sshguard",
+    label: "SSH Guard",
+    summary:
+      "Shrinking a node's SSH exposure: the sshd hardening, its own nftables gate, and the optional port-knock sequence.",
+    scopes: [
+      {
+        scope: "sshguard:read",
+        grants: "Read SSH Guard plans and the approvals they produce.",
+        note: "The arm plan contains the knock sequence in clear, which is a credential drawn per node. Reading it is reading that.",
+      },
+      {
+        scope: "sshguard:admin",
+        grants: "Author an SSH Guard plan for a node and decide it.",
+        sensitive: true,
+        note: "Pair with network:plan, which the endpoint requires as well. A wrong profile takes a node off the network for its operator, which is why the change arms an automatic revert that a second approval has to cancel.",
+      },
+    ],
+  },
+  {
     id: "wireguard",
     label: "WireGuard mesh",
     summary: "The overlay between nodes.",

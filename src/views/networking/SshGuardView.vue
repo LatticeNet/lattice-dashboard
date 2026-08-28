@@ -17,7 +17,7 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { AlertTriangle, KeyRound, ShieldCheck, Timer } from "lucide-vue-next";
 
-import { api, ApiError, unwrap, type ApprovalView, type SSHGuardFinding } from "@/lib/api";
+import { api, ApiError, unwrap, type ApprovalView, type Node, type SSHGuardFinding } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
@@ -40,8 +40,10 @@ import {
 
 import {
   DEFAULT_CONFIRM_WINDOW_SEC,
+  buildFleetStates,
   buildPlanRequest,
   deriveNodeGuardState,
+  guardCoverage,
   hasBlocking,
   isSSHGuardApproval,
   nodesAwaitingConfirm,
@@ -67,12 +69,18 @@ const approvalsQuery = useAsyncData<ApprovalView[] | undefined>(
 
 const approvals = computed(() => (approvalsQuery.data.value ?? []).filter(isSSHGuardApproval));
 
-/** Every node SSH Guard has ever touched, newest activity first. */
-const states = computed<NodeGuardState[]>(() => {
-  const ids = Array.from(new Set(approvals.value.map((a) => a.node_id)));
-  return ids.map((id) => deriveNodeGuardState(approvals.value, id));
-});
+// The fleet, not just the nodes with history: the remaining work here is
+// rolling this out, and that work is made of the machines still open.
+const nodesQuery = useAsyncData<Node[] | undefined>(
+  () => api.nodes.list().then((r) => unwrap(r, "nodes")),
+  { pollInterval: 30000 },
+);
 
+const states = computed<NodeGuardState[]>(() =>
+  buildFleetStates(approvals.value, nodesQuery.data.value ?? []),
+);
+
+const coverage = computed(() => guardCoverage(states.value));
 const urgent = computed(() => nodesAwaitingConfirm(states.value));
 
 const form = reactive<GuardForm>({
@@ -292,13 +300,34 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
             <li v-for="code in shownErrors" :key="code">{{ $t(`networking.sshGuard.errors.${code}`) }}</li>
           </ul>
 
+          <!-- Picking a node that is already mid-sequence makes the form the
+               wrong action. Say where it is, and when a revert is running put
+               the confirmation here rather than making the operator find it. -->
+          <div
+            v-if="selected && selected.stage !== 'idle'"
+            class="rounded-md border p-3 text-sm"
+            :class="selected.revertArmed ? 'border-warning bg-warning/10' : 'border-border'"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span>{{ $t(`networking.sshGuard.stage.${selected.stage}`) }}</span>
+              <Button
+                v-if="selected.stage === 'awaitingConfirm'"
+                size="sm"
+                :disabled="!canAdmin || confirming === selected.nodeId"
+                @click="confirmNode(selected.nodeId)"
+              >
+                {{ $t('networking.sshGuard.confirmAction') }}
+              </Button>
+            </div>
+            <p v-if="selected.revertArmed" class="mt-2 text-xs">
+              {{ $t('networking.sshGuard.awaiting.instruction') }}
+            </p>
+          </div>
+
           <div class="flex items-center gap-3">
             <Button :disabled="!canAdmin || !form.nodeId || errors.length > 0 || planning || blocked" @click="plan">
               {{ $t('networking.sshGuard.planAction') }}
             </Button>
-            <p v-if="selected && selected.stage !== 'idle'" class="text-xs text-muted-foreground">
-              {{ $t(`networking.sshGuard.stage.${selected.stage}`) }}
-            </p>
           </div>
         </CardContent>
       </Card>
@@ -345,10 +374,17 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
               {{ $t('networking.sshGuard.fleet.title') }}
             </CardTitle>
             <CardDescription>{{ $t('networking.sshGuard.fleet.description') }}</CardDescription>
+            <!-- The three numbers an operator is deciding between: what is
+                 finished, what is mid-sequence, and what is still open. -->
+            <div v-if="coverage.total" class="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs text-muted-foreground">
+              <span>{{ $t('networking.sshGuard.fleet.done', { n: coverage.done, total: coverage.total }) }}</span>
+              <span v-if="coverage.inFlight">{{ $t('networking.sshGuard.fleet.inFlight', { n: coverage.inFlight }) }}</span>
+              <span v-if="coverage.open">{{ $t('networking.sshGuard.fleet.open', { n: coverage.open }) }}</span>
+            </div>
           </CardHeader>
           <CardContent>
             <DataState
-              :loading="approvalsQuery.loading.value"
+              :loading="approvalsQuery.loading.value || nodesQuery.loading.value"
               :error="approvalsQuery.error.value"
               :has-data="approvalsQuery.data.value !== undefined"
               :is-empty="states.length === 0"
@@ -364,14 +400,18 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
                 <li
                   v-for="state in states"
                   :key="state.nodeId"
-                  class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                  class="flex items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors"
+                  :class="state.nodeId === form.nodeId ? 'border-primary bg-primary/5' : 'border-border'"
                 >
                   <button
                     type="button"
-                    :title="state.nodeId"
-                    class="min-w-0 flex-1 truncate text-left font-mono text-sm hover:underline"
+                    :title="state.name ? `${state.name} (${state.nodeId})` : state.nodeId"
+                    class="min-w-0 flex-1 truncate text-left hover:underline"
                     @click="form.nodeId = state.nodeId"
-                  >{{ state.nodeId }}</button>
+                  >
+                    <span class="font-mono text-sm">{{ state.nodeId }}</span>
+                    <span v-if="state.name" class="ml-2 text-xs text-muted-foreground">{{ state.name }}</span>
+                  </button>
                   <Badge class="shrink-0" :variant="stageTone[state.stage] ?? 'secondary'">
                     {{ $t(`networking.sshGuard.stage.${state.stage}`) }}
                   </Badge>

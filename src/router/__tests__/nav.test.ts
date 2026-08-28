@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { NAV } from "../nav.ts";
 import { concreteRoutes } from "../routeComponents.ts";
+import { SCOPE_CATALOG } from "@/lib/scopes";
 
 function navNames(): string[] {
   return NAV.flatMap((section) => section.items.map((item) => item.name));
@@ -52,4 +53,28 @@ test("every nav destination carries an icon and a path rooted at /", () => {
       assert.ok(item.path.startsWith("/"), `${item.name} path is not absolute`);
     }
   }
+});
+
+/**
+ * A page gated on a scope that the token picker does not offer is a page nobody
+ * can be granted access to. SSH Guard shipped that way: the server knew
+ * sshguard:admin, the nav required it, and the scope catalog had never heard of
+ * it, so the only way in was a token minted outside the console.
+ *
+ * The server is authoritative on which scopes exist; this pins the far cheaper
+ * invariant, that anything the console gates on can also be handed out by it.
+ */
+test("every scope the nav gates on can be granted from the scope picker", () => {
+  const grantable = new Set(SCOPE_CATALOG);
+  const ungrantable = NAV.flatMap((section) =>
+    section.items.flatMap((item) =>
+      (item.scopes ?? []).filter((scope) => !grantable.has(scope)),
+    ),
+  );
+
+  assert.deepEqual(
+    Array.from(new Set(ungrantable)),
+    [],
+    "these scopes gate a page but cannot be selected when issuing a token",
+  );
 });
