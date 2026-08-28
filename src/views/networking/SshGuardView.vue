@@ -92,6 +92,13 @@ const confirming = ref("");
 
 const sourceParse = computed(() => parseMgmtSources(form.mgmtSources));
 const errors = computed(() => validateForm(form));
+// A form nobody has touched yet is not wrong, it is empty. Listing what is
+// missing before the operator has typed anything makes an untouched page look
+// broken, and it is doubly confusing here because the management-sources
+// placeholder reads as a filled value while the warning says there is none.
+// The button stays disabled either way; the reasons appear once they are news.
+const touched = ref(false);
+const shownErrors = computed(() => (touched.value ? errors.value : []));
 const blocked = computed(() => hasBlocking(findings.value) && !form.acceptFindings);
 const selected = computed(() =>
   form.nodeId ? deriveNodeGuardState(approvals.value, form.nodeId) : undefined,
@@ -107,7 +114,15 @@ watch(
   },
 );
 
+watch(
+  () => [form.nodeId, form.sshPort, form.keepLegacyPort, form.mgmtSources, form.enableKnock, form.outOfBandFallback, form.confirmWindowSec],
+  () => {
+    touched.value = true;
+  },
+);
+
 async function plan() {
+  touched.value = true;
   if (!form.nodeId || errors.value.length || planning.value) return;
   planning.value = true;
   try {
@@ -272,8 +287,8 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
             <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.fields.windowHint') }}</p>
           </div>
 
-          <ul v-if="errors.length" class="space-y-1 text-xs text-destructive">
-            <li v-for="code in errors" :key="code">{{ $t(`networking.sshGuard.errors.${code}`) }}</li>
+          <ul v-if="shownErrors.length" class="space-y-1 text-xs text-destructive">
+            <li v-for="code in shownErrors" :key="code">{{ $t(`networking.sshGuard.errors.${code}`) }}</li>
           </ul>
 
           <div class="flex items-center gap-3">
