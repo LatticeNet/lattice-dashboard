@@ -317,7 +317,7 @@ export const api = {
     // a fleet-wide screen but grows with the fleet, and a node page only ever
     // wants its own rows.
     listForNode: (node_id: string, limit = 50) =>
-      http.get<{ tasks: TaskView[]; total?: number } | TaskView[]>("/api/tasks", { node_id, limit }),
+      http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", { node_id, limit }),
     results: (params?: { task_id?: string; node_id?: string; limit?: number; offset?: number }) =>
       http.get<{ results: TaskResult[] } | TaskResult[]>("/api/task-results", params as Record<string, unknown>),
     revealScript: (id: string, step_up_grant: string) =>
