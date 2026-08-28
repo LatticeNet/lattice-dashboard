@@ -238,6 +238,32 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
         </CardHeader>
         <CardContent class="space-y-4">
           <NodePicker id="sshguard-node" v-model="form.nodeId" :disabled="!canAdmin" />
+          <!-- Where the selected node already stands. It sits here, against
+               the picker, because it is a property of that node rather than a
+               field of this form: picking one that is mid-sequence makes the
+               form below the wrong action, and that should be visible before
+               anyone fills it in. -->
+          <div
+            v-if="selected && selected.stage !== 'idle'"
+            class="rounded-md px-3 py-2 text-sm"
+            :class="selected.revertArmed ? 'border border-warning bg-warning/10' : 'bg-muted/50'"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="font-medium">{{ $t(`networking.sshGuard.stage.${selected.stage}`) }}</span>
+              <Button
+                v-if="selected.stage === 'awaitingConfirm'"
+                size="sm"
+                :disabled="!canAdmin || confirming === selected.nodeId"
+                @click="confirmNode(selected.nodeId)"
+              >
+                {{ $t('networking.sshGuard.confirmAction') }}
+              </Button>
+            </div>
+            <p v-if="selected.revertArmed" class="mt-2 text-xs">
+              {{ $t('networking.sshGuard.awaiting.instruction') }}
+            </p>
+          </div>
+
 
           <div class="grid gap-2">
             <Label for="sshguard-port">{{ $t('networking.sshGuard.fields.sshPort') }}</Label>
@@ -299,30 +325,6 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
           <ul v-if="shownErrors.length" class="space-y-1 text-xs text-destructive">
             <li v-for="code in shownErrors" :key="code">{{ $t(`networking.sshGuard.errors.${code}`) }}</li>
           </ul>
-
-          <!-- Picking a node that is already mid-sequence makes the form the
-               wrong action. Say where it is, and when a revert is running put
-               the confirmation here rather than making the operator find it. -->
-          <div
-            v-if="selected && selected.stage !== 'idle'"
-            class="rounded-md border p-3 text-sm"
-            :class="selected.revertArmed ? 'border-warning bg-warning/10' : 'border-border'"
-          >
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <span>{{ $t(`networking.sshGuard.stage.${selected.stage}`) }}</span>
-              <Button
-                v-if="selected.stage === 'awaitingConfirm'"
-                size="sm"
-                :disabled="!canAdmin || confirming === selected.nodeId"
-                @click="confirmNode(selected.nodeId)"
-              >
-                {{ $t('networking.sshGuard.confirmAction') }}
-              </Button>
-            </div>
-            <p v-if="selected.revertArmed" class="mt-2 text-xs">
-              {{ $t('networking.sshGuard.awaiting.instruction') }}
-            </p>
-          </div>
 
           <div class="flex items-center gap-3">
             <Button :disabled="!canAdmin || !form.nodeId || errors.length > 0 || planning || blocked" @click="plan">
