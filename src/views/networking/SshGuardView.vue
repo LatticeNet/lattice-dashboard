@@ -112,20 +112,26 @@ const selected = computed(() =>
   form.nodeId ? deriveNodeGuardState(approvals.value, form.nodeId) : undefined,
 );
 
-// A fresh node is a fresh decision: findings and the acceptance that went with
-// them belong to the profile they were computed for.
+// Findings and the acceptance that went with them belong to the exact profile
+// they were computed for. Editing any field that shapes the plan invalidates
+// both: a "port already in use" that was verified as a false alarm must not
+// carry an exemption over to a different port, and a finding left on screen
+// after the field it describes has changed is reporting on a plan that no
+// longer exists.
 watch(
-  () => form.nodeId,
-  () => {
-    findings.value = [];
-    form.acceptFindings = false;
-  },
-);
-
-watch(
-  () => [form.nodeId, form.sshPort, form.keepLegacyPort, form.mgmtSources, form.enableKnock, form.outOfBandFallback, form.confirmWindowSec],
+  () => [
+    form.nodeId,
+    form.sshPort,
+    form.keepLegacyPort,
+    form.mgmtSources,
+    form.enableKnock,
+    form.outOfBandFallback,
+    form.confirmWindowSec,
+  ],
   () => {
     touched.value = true;
+    findings.value = [];
+    form.acceptFindings = false;
   },
 );
 
