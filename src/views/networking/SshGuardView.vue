@@ -196,23 +196,24 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
         <div
           v-for="state in urgent"
           :key="state.nodeId"
-          class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+          class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
         >
-          <div class="min-w-0">
-            <p class="truncate font-mono text-sm">{{ state.nodeId }}</p>
+          <div class="min-w-0 flex-1">
+            <p class="truncate font-mono text-sm" :title="state.nodeId">{{ state.nodeId }}</p>
             <p class="text-xs text-muted-foreground">
               {{ $t(`networking.sshGuard.stage.${state.stage}`) }}
             </p>
           </div>
           <Button
             v-if="state.stage === 'awaitingConfirm'"
+            class="shrink-0"
             size="sm"
             :disabled="!canAdmin || confirming === state.nodeId"
             @click="confirmNode(state.nodeId)"
           >
             {{ $t('networking.sshGuard.confirmAction') }}
           </Button>
-          <Badge v-else variant="warning">{{ $t('networking.sshGuard.confirmQueued') }}</Badge>
+          <Badge v-else class="shrink-0" variant="warning">{{ $t('networking.sshGuard.confirmQueued') }}</Badge>
         </div>
       </CardContent>
     </Card>
@@ -356,17 +357,22 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
               @retry="approvalsQuery.refresh"
             >
               <ul class="space-y-2">
+                <!-- One line per node. Node ids run long and the stage labels
+                     are sentences, so letting the row wrap gave a list where
+                     some rows were one line and some were two, which is hard to
+                     scan. The id truncates and the stage keeps its width. -->
                 <li
                   v-for="state in states"
                   :key="state.nodeId"
-                  class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+                  class="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
                 >
                   <button
                     type="button"
-                    class="min-w-0 text-left font-mono text-sm hover:underline"
+                    :title="state.nodeId"
+                    class="min-w-0 flex-1 truncate text-left font-mono text-sm hover:underline"
                     @click="form.nodeId = state.nodeId"
                   >{{ state.nodeId }}</button>
-                  <Badge :variant="stageTone[state.stage] ?? 'secondary'">
+                  <Badge class="shrink-0" :variant="stageTone[state.stage] ?? 'secondary'">
                     {{ $t(`networking.sshGuard.stage.${state.stage}`) }}
                   </Badge>
                 </li>
