@@ -2,6 +2,70 @@
 //   export default { <namespace(s)>: { ... } }
 export default {
   networking: {
+    sshGuard: {
+      title: "SSH 加固",
+      description: "分两步收缩节点的 SSH 暴露面。做错了会自动还原，而不是把你关在门外。",
+      planAction: "生成加固计划",
+      planned: "已生成加固计划 {id}，到运维 / 审批里批准它。",
+      confirmAction: "确认仍能进入",
+      confirmPlanned: "已生成确认计划 {id}，批准后取消自动还原。",
+      confirmQueued: "确认待批准",
+      blockedByLint: "预检拒绝了这份计划，请看下面的检查结论。",
+      awaiting: {
+        title: "等待你确认",
+        description: "这些节点已经应用加固，并同时安排了自动还原。不确认，还原就会执行。",
+        instruction: "先另开一条连接、走新路径拿到 shell，再点确认。如果进不去，什么都别做：不操作本身就是恢复。",
+      },
+      plan: {
+        title: "为节点生成计划",
+        description: "这一步只生成审批。批准并应用之前，节点上不会有任何改动。",
+      },
+      findings: {
+        title: "预检结论",
+        description: "对照节点实际上报的状态检查，而不是对照表单。",
+        accept: "已知有阻断项，仍然继续",
+        acceptHint: "会带你的身份记进审计。用在你已经核实过的误报上，而不是用来让告警消失。",
+      },
+      fleet: {
+        title: "节点",
+        description: "SSH 加固动过的所有节点，以及各自停在哪一步。",
+        empty: "还没有节点做过加固。",
+      },
+      fields: {
+        sshPort: "新的 SSH 端口",
+        sshPortHint: "填 0 表示不改端口，只做其余加固。",
+        keepLegacy: "保留 22 端口监听",
+        keepLegacyHint: "把 22 收缩到管理来源，而不是关闭它。第一次做建议保持开启。",
+        mgmtSources: "管理来源",
+        mgmtSourcesPlaceholder: "203.0.113.5, 198.51.100.0/24",
+        mgmtSourcesHint: "永久放行、不需要敲门的地址或网段。",
+        mgmtSourcesInvalid: "不是地址或网段：{values}",
+        knock: "启用端口敲门",
+        knockHint: "序列由服务端抽取。自己选的序列，安全性只等于你选它的那个地方。",
+        fallback: "允许用 Lattice 终端作为兜底",
+        fallbackHint: "会对照节点上报的能力核实，不是听你说。它让敲门方案在没有固定地址时也成立。",
+        window: "确认窗口（秒）",
+        windowHint: "自动还原执行前，你有多长时间证明自己还进得去。最少 120 秒。",
+      },
+      errors: {
+        node_required: "先选一个节点。",
+        port_range: "端口需要在 0 到 65535 之间。",
+        port_is_legacy: "22 正是要收缩的那个端口，换一个，或者保持 0。",
+        sources_invalid: "有一个管理来源不是地址也不是网段。",
+        window_too_short: "确认窗口至少 120 秒。",
+        single_way_in: "开了敲门又没有管理来源，敲门序列就是唯一入口。加一个来源，或者允许终端兜底。",
+      },
+      stage: {
+        idle: "未加固",
+        armPending: "加固计划待批准",
+        armApproved: "已批准，尚未应用",
+        awaitingConfirm: "已应用。还原已武装，等待确认",
+        confirmPending: "确认待批准，还原仍武装着",
+        confirmApproved: "确认已批准，还原仍武装着",
+        confirmed: "已确认",
+        armFailed: "上一次加固没有成功",
+      },
+    },
     // 各网络视图共用(计划审阅弹窗等)
     shared: {
       plan: "计划",

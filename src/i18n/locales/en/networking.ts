@@ -3,6 +3,70 @@
 // Namespaces here must not collide with frame.ts or other section files.
 export default {
   networking: {
+    sshGuard: {
+      title: "SSH Guard",
+      description: "Shrink a node's SSH exposure in two steps, so a mistake reverts itself instead of locking you out.",
+      planAction: "Create arm plan",
+      planned: "Arm plan {id} created. Approve it under Operations / Approvals.",
+      confirmAction: "Confirm access",
+      confirmPlanned: "Confirm plan {id} created. Approve it to cancel the revert.",
+      confirmQueued: "Confirm awaiting approval",
+      blockedByLint: "The pre-check refused this plan. Read the findings below.",
+      awaiting: {
+        title: "Waiting for you to confirm",
+        description: "These nodes applied the hardening and scheduled an automatic revert. The revert runs unless it is confirmed.",
+        instruction: "Open a new connection over the new path and get a shell first. If you cannot, change nothing: doing nothing is what restores access.",
+      },
+      plan: {
+        title: "Arm a node",
+        description: "This creates an approval. Nothing changes on the node until it is approved and applied.",
+      },
+      findings: {
+        title: "Pre-check findings",
+        description: "Checked against what the node actually reports, not against the form.",
+        accept: "Proceed despite the blocking findings",
+        acceptHint: "Recorded in the audit trail with your identity. Use it when the finding is a false alarm you have verified, not to make a warning go away.",
+      },
+      fleet: {
+        title: "Nodes",
+        description: "Every node SSH Guard has touched, and where it stopped.",
+        empty: "No node has been armed yet.",
+      },
+      fields: {
+        sshPort: "New SSH port",
+        sshPortHint: "0 keeps the current port and applies the rest of the hardening.",
+        keepLegacy: "Keep listening on 22",
+        keepLegacyHint: "Shrinks 22 to the management sources rather than closing it. Leave this on for the first pass.",
+        mgmtSources: "Management sources",
+        mgmtSourcesPlaceholder: "203.0.113.5, 198.51.100.0/24",
+        mgmtSourcesHint: "Addresses or CIDRs allowed in permanently, without knocking.",
+        mgmtSourcesInvalid: "Not an address or CIDR: {values}",
+        knock: "Require port knocking",
+        knockHint: "The sequence is drawn by the server. A sequence you choose is only as secret as wherever you chose it.",
+        fallback: "Allow the Lattice terminal as the fallback",
+        fallbackHint: "Checked against what the node reports, not taken on trust. It lets a knock profile stand without a permanent address.",
+        window: "Confirmation window (seconds)",
+        windowHint: "How long you have to prove you can still get in before the revert runs. Minimum 120.",
+      },
+      errors: {
+        node_required: "Pick a node.",
+        port_range: "Port must be between 0 and 65535.",
+        port_is_legacy: "22 is the port being shrunk; choose a different one or leave this at 0.",
+        sources_invalid: "One of the management sources is not an address or CIDR.",
+        window_too_short: "The confirmation window must be at least 120 seconds.",
+        single_way_in: "With knocking on and no management source, the knock sequence is the only way in. Add a source or allow the terminal fallback.",
+      },
+      stage: {
+        idle: "Not armed",
+        armPending: "Arm plan awaiting approval",
+        armApproved: "Approved, not yet applied",
+        awaitingConfirm: "Applied. Revert armed, waiting for confirmation",
+        confirmPending: "Confirm awaiting approval, revert still armed",
+        confirmApproved: "Confirm approved, revert still armed",
+        confirmed: "Confirmed",
+        armFailed: "Last arm did not go through",
+      },
+    },
     // Shared across the networking views (plan review dialog, etc.)
     shared: {
       plan: "Plan",

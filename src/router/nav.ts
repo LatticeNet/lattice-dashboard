@@ -106,6 +106,9 @@ export const NAV: NavSection[] = [
       { name: "network-geo-routing", title: "Geo-Routing", path: "/network/geo-routing", icon: Route, scopes: ["geo:read", "geo:admin"] },
       { name: "network-ddns", title: "DDNS", path: "/network/ddns", icon: RefreshCw, scopes: ["ddns:admin"] },
       { name: "network-tunnels", title: "Tunnels", path: "/network/tunnels", icon: Cable, scopes: ["tunnel:admin"] },
+      // Shrinking SSH exposure is a two-approval flow, so the page needs the
+      // plan scope as well as the capability's own.
+      { name: "network-ssh-guard", title: "SSH Guard", path: "/network/ssh-guard", icon: ShieldCheck, scopes: ["sshguard:admin"] },
       // Shares are the public subscription URLs. proxy:admin is what the
       // server requires on /api/subscription-shares.
       { name: "network-subscription-shares", title: "Subscription Shares", path: "/network/subscription-shares", icon: Link2, scopes: ["proxy:admin"] },

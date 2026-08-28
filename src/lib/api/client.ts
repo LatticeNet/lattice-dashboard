@@ -17,14 +17,24 @@ export class ApiError extends Error {
   readonly code: string;
   readonly serverMessage: string;
   readonly requestId?: string;
+  /**
+   * The parsed error response, when there was one.
+   *
+   * Some refusals carry the reason as structured data rather than prose: the
+   * SSH Guard pre-check returns the findings that blocked the plan, and those
+   * findings are the operator's next move. Keeping only the message threw that
+   * away and left the screen with nothing to show but "conflict".
+   */
+  readonly body?: unknown;
 
-  constructor(status: number, code: string, message: string, requestId?: string) {
+  constructor(status: number, code: string, message: string, requestId?: string, body?: unknown) {
     super(messageWithRequestId(message, requestId));
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.serverMessage = message;
     this.requestId = requestId;
+    this.body = body;
   }
 
   /** True for auth failures that should bounce the operator to login. */
@@ -164,7 +174,7 @@ async function performRequest<T>(
     const message =
       errBody?.error?.message ||
       (typeof data === "string" && data ? data : res.statusText || "Request failed");
-    throw new ApiError(res.status, code, message, requestId || errBody?.error?.request_id);
+    throw new ApiError(res.status, code, message, requestId || errBody?.error?.request_id, data);
   }
 
   return data as T;

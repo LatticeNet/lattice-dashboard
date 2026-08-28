@@ -390,6 +390,33 @@ export interface ApprovalView {
   updated_at?: string;
 }
 
+/** A lint result from the SSH Guard pre-check. `block` refuses the plan. */
+export interface SSHGuardFinding {
+  code: string;
+  severity: "block" | "warn" | string;
+  message: string;
+}
+
+/**
+ * Fields the caller omits keep the server's verified defaults, so an ordinary
+ * host needs only node_id and ssh_port.
+ */
+export interface SSHGuardPlanRequest {
+  node_id: string;
+  ssh_port?: number;
+  keep_legacy_port?: boolean;
+  mgmt_sources?: string[];
+  enable_knock?: boolean;
+  out_of_band_fallback?: boolean;
+  confirm_window_sec?: number;
+  accept_findings?: boolean;
+}
+
+export interface SSHGuardPlanResponse {
+  approval: ApprovalView;
+  findings?: SSHGuardFinding[];
+}
+
 export interface AuditEvent {
   id: string;
   at: string;

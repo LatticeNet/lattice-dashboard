@@ -109,6 +109,8 @@ import type {
   TraceSession,
   TraceSessionCreateRequest,
   TraceSessionsResponse,
+  SSHGuardPlanRequest,
+  SSHGuardPlanResponse,
 } from "./types";
 
 export * from "./types";
@@ -472,6 +474,17 @@ export const api = {
     upsert: (input: GeoRoutingUpsertRequest) => http.post<GeoRouting>("/api/geo-routing", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/geo-routing/delete", { id }),
     plan: (id: string) => http.post<GeoRoutingPlanView>("/api/geo-routing/plan", { id }),
+  },
+
+  // SSH Guard is two approvals, not one. `plan` arms the hardening together
+  // with an automatic revert; `confirm` cancels that revert and is meant to be
+  // pressed only after a fresh connection over the new path has produced a
+  // shell. Neither call changes a node on its own: both mint an approval.
+  sshGuard: {
+    plan: (input: SSHGuardPlanRequest) =>
+      http.post<SSHGuardPlanResponse>("/api/sshguard/plan", input as unknown as Record<string, unknown>),
+    confirm: (node_id: string) =>
+      http.post<{ approval: ApprovalView }>("/api/sshguard/confirm", { node_id }),
   },
 
   ddns: {
