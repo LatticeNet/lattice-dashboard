@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { Node } from "../../../lib/api/types.ts";
 import {
+  DEFAULT_HIDDEN_COLUMNS,
   NODE_TABLE_COLUMNS,
   gridTemplate,
   nextSortState,
@@ -76,7 +77,25 @@ test("hidden-column persistence round-trips and rejects unknown/required ids", (
   const hidden = parseHiddenColumns("role, update,nonsense,name,");
   assert.deepEqual([...hidden].sort(), ["role", "update"]);
   assert.equal(serializeHiddenColumns(hidden), "role,update");
-  assert.deepEqual(parseHiddenColumns(null).size, 0);
+});
+
+test("a console that has never been configured gets the default column set", () => {
+  const hidden = parseHiddenColumns(null);
+  assert.deepEqual([...hidden].sort(), [...DEFAULT_HIDDEN_COLUMNS].sort());
+  // The default has to leave the triage columns visible, or hiding things by
+  // default would be a worse answer than the wide table it replaced.
+  const visible = visibleColumns(hidden).map((c) => c.id);
+  for (const id of ["name", "status", "role", "cpu", "memory", "disk", "lastSeen", "actions"]) {
+    assert.ok(visible.includes(id), `${id} must be visible by default`);
+  }
+});
+
+test("an empty stored value means the operator wants every column, not the defaults", () => {
+  // `null` (never configured) and `""` (configured, nothing hidden) are
+  // different answers. Collapsing them would push the built-in defaults back
+  // at an operator who has explicitly turned every column on.
+  assert.equal(parseHiddenColumns("").size, 0);
+  assert.ok(parseHiddenColumns(null).size > 0);
 });
 
 test("visibleColumns always keeps required columns and gridTemplate matches", () => {

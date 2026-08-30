@@ -181,6 +181,32 @@ function statusVariant(node: Node): ReturnType<typeof meta>["badgeVariant"] {
   return meta(node).badgeVariant;
 }
 
+/**
+ * The one state that needs no emphasis. Everything else - degraded, offline,
+ * never reported, disabled - is something an operator may have to act on, and
+ * keeps its pill.
+ */
+function isHealthy(node: Node): boolean {
+  return !node.disabled && meta(node).dotStatus === "online";
+}
+
+/**
+ * The identifier printed beside the name, or "" when it would just repeat it.
+ *
+ * The hostname is the useful second value when it differs from the display
+ * name; when it does not (the common case on a fleet named after its hosts)
+ * the node id is what actually disambiguates two machines sharing a name.
+ * Printing a duplicate of the name in every row is what the old two-line cell
+ * did, and it cost 15px of row height to say nothing.
+ */
+function secondaryLabel(node: Node): string {
+  const name = node.name || node.id;
+  const hostname = node.host_facts?.hostname ?? "";
+  if (hostname && hostname !== name) return hostname;
+  const id = shortId(node.id, 16);
+  return id === name ? "" : id;
+}
+
 function archOs(node: Node): string {
   return node.host_facts?.os || node.host_facts?.platform || t("common.misc.none");
 }
@@ -238,9 +264,16 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
 <template>
   <div class="overflow-x-auto rounded-lg border border-border">
     <div :style="{ minWidth }">
-      <!-- Header -->
+      <!-- Header.
+           Not sticky, deliberately. `overflow-x-auto` on the wrapper makes it
+           the nearest scroll container in both axes, so a `position: sticky`
+           header here would stick to a box that never scrolls vertically and
+           do nothing at all. Pinning it needs the table to own its vertical
+           scroll (a bounded height inside the page pane), which is a page-scroll
+           change, not a table change. The column budget below is the fix that
+           actually pays: a table that fits needs no header chase. -->
       <div
-        class="grid gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+        class="grid h-8 items-center gap-3 border-b border-border bg-card px-3 text-xs font-medium text-muted-foreground"
         :style="gridStyle"
         role="row"
       >
@@ -277,11 +310,17 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         </template>
       </div>
 
-      <!-- Rows -->
+      <!-- Rows.
+           One fixed height for every row, taken from --row-h so the density
+           toggle reaches all of them at once. Nothing in a cell may wrap: a
+           row that grows to fit its tag list drags every column beside it out
+           of alignment, and the cost lands on the scan, which is the only
+           thing this view is for. Cells that can overflow truncate and put the
+           full value in a tooltip or on the detail page. -->
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="grid items-center gap-3 border-b border-border px-3 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none density-row"
+        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 px-3 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 focus-visible:bg-foreground/5 focus-visible:outline-none"
         :style="gridStyle"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
@@ -302,20 +341,32 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           />
         </span>
 
-        <!-- Name + status dot -->
-        <div class="flex min-w-0 items-center gap-2">
-          <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" />
-          <div class="min-w-0">
-            <p class="truncate font-medium">{{ node.name || node.id }}</p>
-            <p class="truncate font-mono text-xs text-muted-foreground tabular">
-              {{ node.host_facts?.hostname || shortId(node.id, 16) }}
-            </p>
-          </div>
+        <!-- Name + status dot. One line: the second line was what made every
+             row 55px tall, and it usually repeated the name, because a node's
+             hostname and its display name are the same string on most fleets.
+             The identifier now rides beside the name and disappears when it
+             carries nothing the name did not already say. -->
+        <div class="flex min-w-0 items-baseline gap-2" :title="node.name || node.id">
+          <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" class="self-center shrink-0" />
+          <span class="min-w-0 shrink truncate font-medium">{{ node.name || node.id }}</span>
+          <!-- The identifier yields first. It is the tiebreak for two machines
+               sharing a name, not something anyone reads across 200 rows, so it
+               gives up its width before the name loses a character. -->
+          <span
+            v-if="secondaryLabel(node)"
+            class="hidden min-w-0 shrink-[4] truncate font-mono text-xs text-muted-foreground tabular sm:inline"
+          >{{ secondaryLabel(node) }}</span>
         </div>
 
-        <!-- Status -->
-        <div>
-          <Badge :variant="statusVariant(node)">{{ statusLabel(node) }}</Badge>
+        <!-- Status. A healthy node says so quietly: the dot beside the name
+             already carries the colour, so a filled pill on every row of a
+             33-row fleet is 33 pieces of emphasis competing for none. Only the
+             states that want an operator keep the pill. -->
+        <div class="min-w-0">
+          <Badge v-if="!isHealthy(node)" :variant="statusVariant(node)" class="max-w-full truncate">
+            {{ statusLabel(node) }}
+          </Badge>
+          <span v-else class="text-xs text-muted-foreground">{{ statusLabel(node) }}</span>
         </div>
 
         <!-- Role -->
@@ -324,10 +375,24 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           <span v-else class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
 
-        <!-- Tags -->
-        <div v-if="show('tags')" class="flex min-w-0 flex-wrap gap-1">
-          <Badge v-for="tag in sortedTags(node)" :key="tag" variant="outline" class="max-w-full truncate">
+        <!-- Tags. Capped at two on one line with a count for the rest, and the
+             full list in the cell tooltip. Wrapping this cell is what made row
+             heights uneven across the table. -->
+        <div
+          v-if="show('tags')"
+          class="flex min-w-0 items-center gap-1 overflow-hidden"
+          :title="sortedTags(node).join(', ')"
+        >
+          <Badge
+            v-for="tag in sortedTags(node).slice(0, 2)"
+            :key="tag"
+            variant="outline"
+            class="max-w-full shrink truncate"
+          >
             {{ tag }}
+          </Badge>
+          <Badge v-if="sortedTags(node).length > 2" variant="secondary" class="shrink-0">
+            +{{ sortedTags(node).length - 2 }}
           </Badge>
           <span v-if="sortedTags(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
@@ -344,16 +409,22 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         </div>
 
         <!-- Agent runtime capabilities -->
-        <div v-if="show('agentConfig')" class="flex min-w-0 flex-wrap gap-1">
+        <div
+          v-if="show('agentConfig')"
+          class="flex min-w-0 items-center gap-1 overflow-hidden"
+          :title="agentBadges(node).join(', ')"
+        >
           <Badge
-            v-for="badge in agentBadges(node).slice(0, 3)"
+            v-for="badge in agentBadges(node).slice(0, 2)"
             :key="`${node.id}:${badge}`"
             variant="outline"
-            class="max-w-full truncate"
+            class="max-w-full shrink truncate"
           >
             {{ badge }}
           </Badge>
-          <Badge v-if="agentBadges(node).length > 3" variant="secondary">+{{ agentBadges(node).length - 3 }}</Badge>
+          <Badge v-if="agentBadges(node).length > 2" variant="secondary" class="shrink-0">
+            +{{ agentBadges(node).length - 2 }}
+          </Badge>
           <span v-if="agentBadges(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
 
@@ -393,18 +464,27 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           lastSeenLabel(node)
         }}</span>
 
-        <!-- Agent update mode -->
-        <div v-if="show('update')" class="min-w-0">
+        <!-- Agent update mode. The target version rides in the tooltip rather
+             than on a second line, which the fixed row height has no room for. -->
+        <div
+          v-if="show('update')"
+          class="min-w-0"
+          :title="updatePolicy(node)?.target_version || undefined"
+        >
           <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full truncate">
             {{ updateLabel(updatePolicy(node)) }}
           </Badge>
-          <p v-if="updatePolicy(node)?.target_version" class="mt-1 truncate font-mono text-[11px] text-muted-foreground">
-            {{ updatePolicy(node)?.target_version }}
-          </p>
         </div>
 
-        <!-- Actions (reuse the same intents NodeCard wires) -->
-        <div class="flex items-center justify-end gap-1">
+        <!-- Actions (reuse the same intents NodeCard wires).
+             Revealed on row hover or keyboard focus rather than drawn on every
+             row: three ghost buttons times a 200-node fleet is 600 controls
+             competing with the data for attention, and none of them is the
+             thing an operator came to read. They stay in the DOM and in the tab
+             order, so keyboard and screen-reader users lose nothing. -->
+        <div
+          class="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-within:opacity-100"
+        >
           <Button
             v-if="canOpenTerminal"
             variant="ghost"

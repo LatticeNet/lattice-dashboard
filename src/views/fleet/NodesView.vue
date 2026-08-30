@@ -50,6 +50,8 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import NodeCard from "@/components/common/NodeCard.vue";
 import NodeTable from "@/components/common/NodeTable.vue";
 import TableColumnManager from "@/components/common/TableColumnManager.vue";
+import FilterPanel from "@/components/common/FilterPanel.vue";
+import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import {
   nameList,
   planBulkDisable,
@@ -451,6 +453,84 @@ const hasFilters = computed(
     !!archOsExpr.value.trim() ||
     !!tagsExpr.value.trim(),
 );
+
+/**
+ * How many filters are applied from inside the panel, i.e. everything except
+ * the two the toolbar shows on its face. This is the number on the Filters
+ * badge, and it is what stops a collapsed panel from hiding the reason a list
+ * came back empty.
+ */
+const advancedFilterCount = computed(
+  () =>
+    activeTags.value.length +
+    activeArchOs.value.length +
+    activeAgentCaps.value.length +
+    (agentExpr.value.trim() ? 1 : 0) +
+    (archOsExpr.value.trim() ? 1 : 0) +
+    (tagsExpr.value.trim() ? 1 : 0),
+);
+
+/**
+ * The applied filters, flattened into one removable list.
+ *
+ * Rendering every *available* tag as a button is what made the old filter block
+ * fourteen chips wide on a fleet with fourteen tags, and it scaled with the
+ * fleet rather than with the operator's intent. What belongs on the page is
+ * what is currently on; the full catalog belongs in the panel.
+ */
+type AppliedFilter = { key: string; label: string; clear: () => void };
+
+const appliedFilters = computed<AppliedFilter[]>(() => {
+  const out: AppliedFilter[] = [];
+  for (const cap of activeAgentCaps.value) {
+    out.push({
+      key: `cap:${cap}`,
+      label: t(`fleet.nodes.filters.agentCaps.${cap}`),
+      clear: () => toggleAgentCap(cap),
+    });
+  }
+  for (const tok of activeArchOs.value) {
+    out.push({ key: `os:${tok}`, label: tok, clear: () => toggleArchOs(tok) });
+  }
+  for (const tag of activeTags.value) {
+    out.push({ key: `tag:${tag}`, label: tag, clear: () => toggleTag(tag) });
+  }
+  // The expression fields are one filter each, and their value is the label:
+  // an operator who typed `AND(exec, root)` recognises it faster than any name
+  // this could invent for it.
+  if (agentExpr.value.trim()) {
+    out.push({
+      key: "expr:agent",
+      label: `${t("fleet.nodes.filters.agentExpression")}: ${agentExpr.value.trim()}`,
+      clear: () => (agentExpr.value = ""),
+    });
+  }
+  if (archOsExpr.value.trim()) {
+    out.push({
+      key: "expr:os",
+      label: `${t("fleet.nodes.filters.osExpression")}: ${archOsExpr.value.trim()}`,
+      clear: () => (archOsExpr.value = ""),
+    });
+  }
+  if (tagsExpr.value.trim()) {
+    out.push({
+      key: "expr:tags",
+      label: `${t("fleet.nodes.filters.tagsExpression")}: ${tagsExpr.value.trim()}`,
+      clear: () => (tagsExpr.value = ""),
+    });
+  }
+  return out;
+});
+
+/** Reset only what the panel owns; search and status keep their own controls. */
+function clearAdvancedFilters() {
+  activeTags.value = [];
+  activeArchOs.value = [];
+  activeAgentCaps.value = [];
+  agentExpr.value = "";
+  archOsExpr.value = "";
+  tagsExpr.value = "";
+}
 /** Raw list non-empty but filters hid everything → distinct no-match state. */
 const noMatches = computed(() => nodes.value.length > 0 && sortedNodes.value.length === 0);
 
@@ -480,7 +560,59 @@ function agentBadges(node: Node): string[] {
 /* Grouping: bucket the filtered fleet by region / role / status / …  */
 /* so a 16+ node fleet reads as clusters, not one long wall of cards.  */
 /* ----------------------------------------------------------------- */
-const groupBy = ref<GroupBy>("region");
+/**
+ * The headline band above the fleet table.
+ *
+ * Download and upload are separate segments rather than one two-line cell: they
+ * are two numbers, and pairing them was the reason the old card grid stretched
+ * every sibling to 160px to match its tallest member.
+ */
+const fleetMetrics = computed<Metric[]>(() => [
+  { key: "total", label: t("fleet.nodes.stats.total"), value: nodes.value.length, icon: Server },
+  {
+    key: "online",
+    label: t("fleet.nodes.stats.online"),
+    value: onlineCount.value,
+    hint: `/ ${nodes.value.length}`,
+    tone: "success",
+    icon: Wifi,
+  },
+  {
+    key: "disabled",
+    label: t("fleet.nodes.stats.disabled"),
+    value: disabledCount.value,
+    // A zero here is the good outcome and should not be coloured like a fault.
+    tone: disabledCount.value > 0 ? "warning" : "default",
+    icon: Power,
+  },
+  {
+    key: "rx",
+    label: t("fleet.nodes.stats.download"),
+    value: formatBytesPerSec(totals.value.netRxSpeed),
+    hint: formatBytes(totals.value.netRxBytes),
+    icon: ArrowDown,
+  },
+  {
+    key: "tx",
+    label: t("fleet.nodes.stats.upload"),
+    value: formatBytesPerSec(totals.value.netTxSpeed),
+    hint: formatBytes(totals.value.netTxBytes),
+    icon: ArrowUp,
+  },
+]);
+
+/**
+ * Ungrouped by default.
+ *
+ * The default used to be "region", which is derived from NodeGeo. Geo is
+ * resolved per node and is empty until someone resolves it, so on a fresh or
+ * partly-resolved fleet the console opened on a single collapsible group
+ * labelled "Unknown" holding every node - a header that carried no information
+ * and cost a row of vertical space plus the implication that grouping was doing
+ * something. Grouping is a lens an operator reaches for; the table sorts on
+ * every column already, so it does not need one imposed at load.
+ */
+const groupBy = ref<GroupBy>("none");
 const collapsed = ref<Set<string>>(new Set());
 
 // Group metadata (id -> name/color/leader) for group chips on every card AND the
@@ -920,56 +1052,10 @@ function openTerminal(node: Node) {
       </ul>
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.stats.total') }}</p>
-            <p class="text-2xl font-semibold">{{ nodes.length }}</p>
-          </div>
-          <Server class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.stats.online') }}</p>
-            <p class="text-2xl font-semibold text-success">{{ onlineCount }}</p>
-          </div>
-          <Wifi class="size-5 text-success" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.stats.disabled') }}</p>
-            <p class="text-2xl font-semibold text-muted-foreground">{{ disabledCount }}</p>
-          </div>
-          <Power class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="p-4">
-          <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.stats.bandwidth') }}</p>
-          <div class="mt-1 flex items-center gap-3 text-lg font-semibold tabular">
-            <span class="inline-flex items-center gap-1 text-foreground">
-              <ArrowDown class="size-4 text-success" aria-hidden="true" />{{ formatBytesPerSec(totals.netRxSpeed) }}
-            </span>
-            <span class="inline-flex items-center gap-1 text-foreground">
-              <ArrowUp class="size-4 text-primary" aria-hidden="true" />{{ formatBytesPerSec(totals.netTxSpeed) }}
-            </span>
-          </div>
-          <div class="mt-1 flex items-center gap-3 text-xs text-muted-foreground tabular">
-            <span class="inline-flex items-center gap-1">
-              <ArrowDown class="size-3 text-success" aria-hidden="true" />{{ formatBytes(totals.netRxBytes) }}
-            </span>
-            <span class="inline-flex items-center gap-1">
-              <ArrowUp class="size-3 text-primary" aria-hidden="true" />{{ formatBytes(totals.netTxBytes) }}
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+    <!-- Fleet headline numbers. One band rather than four stretched cards: the
+         answer an operator came for is in the table below, and this used to eat
+         160px above it to carry four integers. -->
+    <MetricStrip :metrics="fleetMetrics" :columns="5" />
 
     <Card v-if="canAdminNodes && enrollOpen" id="enroll-node-section" class="border-primary/30 bg-primary/5">
       <CardHeader>
@@ -1248,6 +1334,112 @@ function openTerminal(node: Node) {
               </button>
             </div>
 
+            <!-- Everything past search / status / grouping lives behind one
+                 button with a count. See FilterPanel for why. -->
+            <FilterPanel
+              :label="$t('fleet.nodes.filters.more')"
+              :active-count="advancedFilterCount"
+              :clear-label="$t('fleet.nodes.filters.clearAdvanced')"
+              @clear="clearAdvancedFilters"
+            >
+              <div v-if="availableAgentCaps.length" class="space-y-1.5">
+                <p class="text-xs font-medium uppercase text-muted-foreground">
+                  {{ $t('fleet.nodes.filters.agentConfig') }}
+                </p>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="cap in availableAgentCaps"
+                    :key="`agent:${cap}`"
+                    type="button"
+                    :class="cn(
+                      'rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors surface-interactive',
+                      activeAgentCaps.includes(cap)
+                        ? 'border-warning bg-warning/10 text-warning-foreground'
+                        : 'border-border text-muted-foreground hover:bg-muted/40',
+                    )"
+                    :aria-pressed="activeAgentCaps.includes(cap)"
+                    @click="toggleAgentCap(cap)"
+                  >
+                    {{ $t(`fleet.nodes.filters.agentCaps.${cap}`) }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="availableArchOs.length" class="space-y-1.5">
+                <p class="text-xs font-medium uppercase text-muted-foreground">
+                  {{ $t('fleet.nodes.filters.osExpression') }}
+                </p>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="tok in availableArchOs"
+                    :key="`archos:${tok}`"
+                    type="button"
+                    :class="cn(
+                      'rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors surface-interactive',
+                      activeArchOs.includes(tok)
+                        ? 'border-info bg-info/10 text-info'
+                        : 'border-border text-muted-foreground hover:bg-muted/40',
+                    )"
+                    :aria-pressed="activeArchOs.includes(tok)"
+                    @click="toggleArchOs(tok)"
+                  >
+                    {{ tok }}
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="allTags.length" class="space-y-1.5">
+                <p class="text-xs font-medium uppercase text-muted-foreground">
+                  {{ $t('fleet.nodes.table.colTags') }}
+                </p>
+                <div class="flex flex-wrap gap-1.5">
+                  <button
+                    v-for="tag in allTags"
+                    :key="tag"
+                    type="button"
+                    :class="cn(
+                      'rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors surface-interactive',
+                      activeTags.includes(tag)
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:bg-muted/40',
+                    )"
+                    :aria-pressed="activeTags.includes(tag)"
+                    @click="toggleTag(tag)"
+                  >
+                    {{ tag }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="grid gap-1.5">
+                <Label for="nodes-agent-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.agentExpression') }}</Label>
+                <Input
+                  id="nodes-agent-expr"
+                  v-model="agentExpr"
+                  class="font-mono text-xs"
+                  :placeholder="$t('fleet.nodes.filters.agentExpressionPlaceholder')"
+                />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="nodes-os-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.osExpression') }}</Label>
+                <Input
+                  id="nodes-os-expr"
+                  v-model="archOsExpr"
+                  class="font-mono text-xs"
+                  :placeholder="$t('fleet.nodes.filters.osExpressionPlaceholder')"
+                />
+              </div>
+              <div class="grid gap-1.5">
+                <Label for="nodes-tags-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.tagsExpression') }}</Label>
+                <Input
+                  id="nodes-tags-expr"
+                  v-model="tagsExpr"
+                  class="font-mono text-xs"
+                  :placeholder="$t('fleet.nodes.filters.tagsExpressionPlaceholder')"
+                />
+              </div>
+            </FilterPanel>
+
             <TableColumnManager
               v-if="viewMode === 'list'"
               :columns="optionalColumns"
@@ -1257,93 +1449,19 @@ function openTerminal(node: Node) {
             />
           </div>
 
-          <div v-if="availableAgentCaps.length" class="flex flex-wrap items-center gap-1.5">
-            <span class="mr-1 text-xs font-medium uppercase text-muted-foreground">
-              {{ $t('fleet.nodes.filters.agentConfig') }}
-            </span>
+          <!-- What is actually on, as removable chips. Only the applied ones:
+               the catalog lives in the panel. -->
+          <div v-if="appliedFilters.length" class="flex flex-wrap items-center gap-1.5">
             <button
-              v-for="cap in availableAgentCaps"
-              :key="`agent:${cap}`"
+              v-for="filter in appliedFilters"
+              :key="filter.key"
               type="button"
-              :class="cn(
-                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
-                activeAgentCaps.includes(cap)
-                  ? 'border-warning bg-warning/10 text-warning-foreground'
-                  : 'border-border text-muted-foreground hover:bg-muted/40',
-              )"
-              :aria-pressed="activeAgentCaps.includes(cap)"
-              @click="toggleAgentCap(cap)"
+              class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20"
+              :aria-label="$t('fleet.nodes.filters.removeFilter', { filter: filter.label })"
+              @click="filter.clear()"
             >
-              {{ $t(`fleet.nodes.filters.agentCaps.${cap}`) }}
-            </button>
-          </div>
-
-          <div class="grid gap-2 lg:grid-cols-3">
-            <div class="grid gap-1.5">
-              <Label for="nodes-agent-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.agentExpression') }}</Label>
-              <Input
-                id="nodes-agent-expr"
-                v-model="agentExpr"
-                class="font-mono text-xs"
-                :placeholder="$t('fleet.nodes.filters.agentExpressionPlaceholder')"
-              />
-            </div>
-            <div class="grid gap-1.5">
-              <Label for="nodes-os-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.osExpression') }}</Label>
-              <Input
-                id="nodes-os-expr"
-                v-model="archOsExpr"
-                class="font-mono text-xs"
-                :placeholder="$t('fleet.nodes.filters.osExpressionPlaceholder')"
-              />
-            </div>
-            <div class="grid gap-1.5">
-              <Label for="nodes-tags-expr" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.filters.tagsExpression') }}</Label>
-              <Input
-                id="nodes-tags-expr"
-                v-model="tagsExpr"
-                class="font-mono text-xs"
-                :placeholder="$t('fleet.nodes.filters.tagsExpressionPlaceholder')"
-              />
-            </div>
-          </div>
-
-          <div v-if="availableArchOs.length || allTags.length" class="flex flex-wrap items-center gap-1.5">
-            <!-- Arch / OS quick filters (computed from the fleet's host facts). -->
-            <button
-              v-for="tok in availableArchOs"
-              :key="`archos:${tok}`"
-              type="button"
-              :class="cn(
-                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
-                activeArchOs.includes(tok)
-                  ? 'border-info bg-info/10 text-info'
-                  : 'border-border text-muted-foreground hover:bg-muted/40',
-              )"
-              :aria-pressed="activeArchOs.includes(tok)"
-              @click="toggleArchOs(tok)"
-            >
-              {{ tok }}
-            </button>
-            <span
-              v-if="availableArchOs.length && allTags.length"
-              class="mx-1 h-4 w-px bg-border"
-              aria-hidden="true"
-            ></span>
-            <button
-              v-for="tag in allTags"
-              :key="tag"
-              type="button"
-              :class="cn(
-                'rounded-full border px-2.5 py-1 text-xs font-medium transition-colors surface-interactive',
-                activeTags.includes(tag)
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border text-muted-foreground hover:bg-muted/40',
-              )"
-              :aria-pressed="activeTags.includes(tag)"
-              @click="toggleTag(tag)"
-            >
-              {{ tag }}
+              <span class="truncate">{{ filter.label }}</span>
+              <X class="size-3 shrink-0" aria-hidden="true" />
             </button>
           </div>
 

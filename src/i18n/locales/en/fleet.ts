@@ -78,6 +78,8 @@ export default {
         online: "Online",
         disabled: "Disabled",
         bandwidth: "Bandwidth (online nodes)",
+        download: "Download",
+        upload: "Upload",
       },
       duplicates: {
         title: "Lattice found {count} group(s) of nodes that look like the same machine",
@@ -116,6 +118,9 @@ export default {
         osExpressionPlaceholder: "OR(linux, darwin, amd64, arm64)",
         tagsExpression: "Tags expression",
         tagsExpressionPlaceholder: "AND(cd)",
+        more: "Filters",
+        clearAdvanced: "Clear these filters",
+        removeFilter: "Remove filter {filter}",
         showing: "Showing {shown} of {total}",
         clear: "Clear filters",
         noMatchTitle: "No matching nodes",

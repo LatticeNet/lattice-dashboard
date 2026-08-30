@@ -11,10 +11,17 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* Corner radius is one of the two things that decide whether a console reads
+     as an operator tool or as a marketing site (the other is row height). The
+     shadcn default scale (6/8/10/14px) rounds every pill, badge and table cell
+     enough to soften a dense grid into a pile of lozenges. This scale is tight
+     enough that a 40px table row still reads as a row.
+     Absolute values, not calc() off --radius: the steps are not evenly spaced,
+     because a 2px control and a 24px dialog do not want the same delta. */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -65,7 +72,22 @@
 }
 
 :root {
-  --radius: 0.625rem;
+  --radius: 6px;
+
+  /* Elevation. A control plane has no depth to communicate: everything is one
+     plane of data, and a drop shadow under every card is decoration that costs
+     contrast. Separation comes from a hairline border and a surface-tone step
+     instead. These two tokens exist so the few surfaces that genuinely float
+     (popover, dialog, dropdown) can say so, and nothing else has to. */
+  --shadow-overlay:
+    0 1px 2px oklch(0 0 0 / 6%), 0 8px 24px -6px oklch(0 0 0 / 14%);
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 5%);
+
+  /* Row rhythm. One number per density, read by the table primitive below and
+     by any view that needs to reserve height before data lands (skeletons,
+     virtualised windows) so a loading table does not resize under the cursor. */
+  --row-h: 40px;
+  --row-h-compact: 32px;
 
   --background: oklch(0.99 0.0015 280);
   --foreground: oklch(0.21 0.02 281);
@@ -146,6 +168,13 @@
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 13%);
   --ring: oklch(0.7 0.12 182);
+
+  /* On a dark ground a shadow is nearly invisible and a light rim is what reads
+     as "in front". Overlays get both: a real shadow for the drop, plus an inset
+     hairline so the panel edge separates from the surface behind it. */
+  --shadow-overlay:
+    0 0 0 1px oklch(1 0 0 / 8%), 0 10px 32px -8px oklch(0 0 0 / 70%);
+  --shadow-raised: 0 1px 2px oklch(0 0 0 / 40%);
 
   --chart-1: oklch(0.81 0.13 180);
   --chart-2: oklch(0.7 0.14 195);
@@ -332,6 +361,12 @@
    shadcn icon-size button (data-slot=button, size-icon variant).
    ------------------------------------------------------------------------- */
 @media (pointer: coarse) {
+  /* Hover-revealed row actions have no trigger on a touch panel. Anything that
+     hides itself until hover shows itself unconditionally here. */
+  .group\/row .opacity-0 {
+    opacity: 1;
+  }
+
   button,
   a[role="button"],
   [role="button"],
@@ -373,31 +408,107 @@
 
 /* ----------------------------------------------------------------------------
    Interactive surface utility.
-   For clickable node cards / list rows: a restrained hover (primary-tinted
-   border + small shadow) and a tactile press state (settle back to baseline,
-   muted wash). Pairs with the existing `transition-colors` on those surfaces.
-   Press feedback is suppressed under reduced-motion (handled above for
-   transitions; the active translate is instantaneous so it stays calm).
+   For clickable node cards / list rows. Hover tints the surface and firms the
+   border; it does not lift. A row that rises 1px under the pointer drags every
+   row below it into a reflow the operator did not ask for, and in a 200-row
+   fleet grid the cumulative effect is a surface that shivers while you scan it.
+   Colour is enough to say "this responds"; movement should be reserved for
+   things that actually move.
    ------------------------------------------------------------------------- */
 @utility surface-interactive {
   cursor: pointer;
   transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease,
-    background-color 0.15s ease,
-    transform 0.1s ease;
+    border-color 0.12s ease,
+    background-color 0.12s ease;
 
   &:hover {
-    transform: translateY(-1px);
-    border-color: color-mix(in oklab, var(--primary) 40%, transparent);
-    box-shadow:
-      0 2px 8px -2px color-mix(in oklab, var(--foreground) 12%, transparent);
+    border-color: color-mix(in oklab, var(--foreground) 18%, var(--border));
+    background-color: color-mix(in oklab, var(--foreground) 3%, transparent);
   }
 
   &:active {
-    /* Settle back to baseline from the hover lift. A tactile press. */
-    transform: translateY(0);
-    background-color: color-mix(in oklab, var(--muted) 60%, transparent);
+    background-color: color-mix(in oklab, var(--foreground) 6%, transparent);
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   Data table primitive.
+   The console's dominant object is a list of things with a state, so the table
+   is the component that decides whether the product feels navigable. Rules:
+   one fixed row height so the eye can track across columns without re-finding
+   the baseline; a sticky header that survives a long scroll; hairline
+   separators rather than boxed cells; and digits that line up in their column.
+   Row height comes from --row-h, so `data-density="compact"` on <html> tightens
+   every table at once without each view opting in.
+   ------------------------------------------------------------------------- */
+@utility data-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+
+  & thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    height: 32px;
+    padding: 0 0.75rem;
+    text-align: left;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--muted-foreground);
+    background-color: var(--card);
+    border-bottom: 1px solid var(--border);
+  }
+
+  & tbody td {
+    height: var(--row-h);
+    padding: 0 0.75rem;
+    /* Rows are a fixed height on purpose: a cell that wraps makes its whole row
+       taller and breaks the scan rhythm for every column beside it. Anything
+       that can overflow (tag lists, long identifiers) truncates here and gets
+       its full value in a tooltip or on the detail page. */
+    max-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    border-bottom: 1px solid
+      color-mix(in oklab, var(--border) 60%, transparent);
+  }
+
+  & tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  & tbody tr {
+    transition: background-color 0.1s ease;
+  }
+
+  & tbody tr:hover td {
+    background-color: color-mix(in oklab, var(--foreground) 3%, transparent);
+  }
+
+  & tbody tr[data-selected="true"] td {
+    background-color: color-mix(in oklab, var(--primary) 8%, transparent);
+  }
+}
+
+/* Sortable column header. The affordance is the whole cell, and the arrow only
+   appears once the column is actually sorting, so an unsorted header row is not
+   a row of decorative chevrons competing with the data underneath. */
+@utility th-sort {
+  cursor: pointer;
+  user-select: none;
+
+  &:hover {
+    color: var(--foreground);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: -2px;
   }
 }
 
@@ -410,6 +521,11 @@
    in compact mode, so comfortable mode is completely unaffected.
    ------------------------------------------------------------------------- */
 html[data-density="compact"] {
+  /* Tables read the row height from a variable rather than a class, so compact
+     mode reaches every `data-grid` on the page at once. Views that predate the
+     primitive still opt in through the `density-*` classes below. */
+  --row-h: var(--row-h-compact);
+
   /* Row padding override. For list rows that opt in via `density-row`. */
   .density-row {
     padding-top: 0.375rem; /* py-1.5 */

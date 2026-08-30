@@ -76,6 +76,8 @@ export default {
         online: "在线",
         disabled: "已停用",
         bandwidth: "在线节点带宽",
+        download: "下行",
+        upload: "上行",
       },
       duplicates: {
         title: "Lattice 发现 {count} 组节点疑似同一台机器",
@@ -114,6 +116,9 @@ export default {
         osExpressionPlaceholder: "OR(linux, darwin, amd64, arm64)",
         tagsExpression: "标签表达式",
         tagsExpressionPlaceholder: "AND(cd)",
+        more: "筛选",
+        clearAdvanced: "清除这些筛选",
+        removeFilter: "移除筛选 {filter}",
         showing: "显示 {shown} / {total}",
         clear: "清除筛选",
         noMatchTitle: "没有匹配的节点",

@@ -24,11 +24,13 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { formatBytesPerSec, formatPercent, formatRelativeTime, ratio } from "@/lib/format";
-import { fleetTotals, groupNodes, type NodeGroup } from "@/lib/fleet";
+import { fleetTotals } from "@/lib/fleet";
+import { nodeStatusMeta } from "@/lib/status";
+import { compareNodeIdentity } from "@/views/fleet/nodesTableModel";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import StatCard from "@/components/common/StatCard.vue";
+import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import DataState from "@/components/common/DataState.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -121,13 +123,6 @@ const queuedTasks = computed(
   () => (tasks.data.value ?? []).filter((t) => t.status === "queued").length,
 );
 
-const sortedNodes = computed(() =>
-  [...nodes.value].sort((a, b) => {
-    if (a.online !== b.online) return a.online ? -1 : 1;
-    return (a.name || a.id).localeCompare(b.name || b.id);
-  }),
-);
-
 /** Fleet-wide aggregate for the health panel (CPU mean, mem/disk sums, BW). */
 const totals = computed(() => fleetTotals(nodes.value));
 /**
@@ -168,12 +163,88 @@ const trustPostureRiskCount = computed(
     (auth.principal?.totp_enabled ? 0 : 1),
 );
 
-/** Region-clustered fleet for the grouped card grid. */
-const fleetGroups = computed<NodeGroup[]>(() => groupNodes(sortedNodes.value, "region", locale.value));
+/**
+ * The four numbers the console opens on. Each drills through to the list that
+ * explains it, so a count that is not zero is one click from being actionable.
+ */
+const kpiMetrics = computed<Metric[]>(() => [
+  {
+    key: "nodes",
+    label: t("overview.kpi.nodes"),
+    value: statValue(fleet, nodes.value.length),
+    icon: Server,
+    to: { name: "nodes" },
+  },
+  {
+    key: "online",
+    label: t("overview.kpi.online"),
+    value: statValue(fleet, onlineNodes.value),
+    hint:
+      offlineNodes.value > 0
+        ? t("overview.offlineCount", { count: offlineNodes.value })
+        : t("overview.allOnline"),
+    tone: "success",
+    icon: Wifi,
+    to: { name: "nodes", query: { status: "online" } },
+  },
+  {
+    key: "approvals",
+    label: t("overview.kpi.approvals"),
+    value: statValue(approvals, pendingApprovals.value.length),
+    tone: pendingApprovals.value.length > 0 ? "warning" : "default",
+    icon: ShieldCheck,
+    to: { name: "approvals" },
+  },
+  {
+    key: "tasks",
+    label: t("nav.items.tasks"),
+    value: statValue(tasks, queuedTasks.value),
+    icon: Terminal,
+    to: { name: "tasks", query: { status: "queued" } },
+  },
+]);
 
-function groupLabel(g: NodeGroup): string {
-  return g.i18nKey ? t(g.i18nKey) : g.label;
-}
+/**
+ * The fleet section on Overview shows what is wrong, not what exists.
+ *
+ * It used to render every enrolled node as a card, two per row, inside the
+ * two-thirds column: a 33-node fleet meant seventeen rows of cards on a page
+ * whose entire promise is "at a glance", and the healthy nodes - which is
+ * almost all of them, almost always - pushed the pending approvals, the task
+ * queue and the audit trail below the fold. The full inventory has a page, it
+ * is one click away, and it is better at being an inventory than this is.
+ *
+ * "Needs attention" is anything that is not plainly healthy: down, degraded,
+ * never finished enrolling, or switched off. Worst first, because the order an
+ * operator wants is the order they would triage in.
+ */
+const ATTENTION_RANK: Record<string, number> = {
+  never: 0,
+  offline: 1,
+  degraded: 2,
+  unknown: 3,
+  pending: 4,
+};
+
+const attentionNodes = computed<Node[]>(() =>
+  nodes.value
+    .filter((node) => node.disabled || nodeStatusMeta(node).dotStatus !== "online")
+    .sort((a, b) => {
+      const ra = a.disabled ? 5 : (ATTENTION_RANK[nodeStatusMeta(a).dotStatus] ?? 9);
+      const rb = b.disabled ? 5 : (ATTENTION_RANK[nodeStatusMeta(b).dotStatus] ?? 9);
+      return ra - rb || compareNodeIdentity(a, b);
+    }),
+);
+
+/**
+ * Cards shown before the section defers to the Nodes page. Eight is two full
+ * rows: enough that a normal bad day is fully visible here, few enough that a
+ * fleet-wide outage does not turn this page back into the card wall it was.
+ */
+const ATTENTION_LIMIT = 8;
+const attentionShown = computed(() => attentionNodes.value.slice(0, ATTENTION_LIMIT));
+const attentionOverflow = computed(() => attentionNodes.value.length - attentionShown.value.length);
+const healthyNodes = computed(() => nodes.value.length - attentionNodes.value.length);
 
 const auditEvents = computed(() => audit.data.value ?? []);
 
@@ -213,36 +284,8 @@ function refreshAll() {
     />
 
     <template v-else>
-    <!-- KPI row -->
-    <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <StatCard
-        :label="$t('overview.kpi.nodes')"
-        :value="statValue(fleet, nodes.length)"
-        :icon="Server"
-        :to="{ name: 'nodes' }"
-      />
-      <StatCard
-        :label="$t('overview.kpi.online')"
-        :value="statValue(fleet, onlineNodes)"
-        tone="success"
-        :icon="Wifi"
-        :hint="offlineNodes > 0 ? $t('overview.offlineCount', { count: offlineNodes }) : $t('overview.allOnline')"
-        :to="{ name: 'nodes', query: { status: 'online' } }"
-      />
-      <StatCard
-        :label="$t('overview.kpi.approvals')"
-        :value="statValue(approvals, pendingApprovals.length)"
-        :tone="pendingApprovals.length > 0 ? 'warning' : 'default'"
-        :icon="ShieldCheck"
-        :to="{ name: 'approvals' }"
-      />
-      <StatCard
-        :label="$t('nav.items.tasks')"
-        :value="statValue(tasks, queuedTasks)"
-        :icon="Terminal"
-        :to="{ name: 'tasks', query: { status: 'queued' } }"
-      />
-    </div>
+    <!-- KPI row. One band: see MetricStrip for why this is not four cards. -->
+    <MetricStrip :metrics="kpiMetrics" :columns="4" />
 
     <!-- Fleet health: live aggregate resource + bandwidth roll-up across the
          fleet, so the operator sees overall pressure without scanning cards. -->
@@ -412,38 +455,56 @@ function refreshAll() {
             :empty-description="$t('overview.noNodesDescription')"
             @retry="fleet.refresh"
           >
-            <div class="space-y-5">
-              <section v-for="group in fleetGroups" :key="group.key">
-                <div class="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <span
-                    v-if="group.glyph"
-                    class="font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
-                  >{{ group.glyph }}</span>
-                  <span class="uppercase tracking-wide">{{ groupLabel(group) }}</span>
-                  <span class="tabular">{{ group.online }}/{{ group.total }}</span>
-                  <span class="h-px flex-1 bg-border"></span>
-                </div>
-                <div class="grid gap-3 sm:grid-cols-2">
-                  <NodeCard
-                    v-for="node in group.nodes"
-                    :key="node.id"
-                    :node="node"
-                    compact
-                    show-sparkline
-                    sparkline-metric="cpu"
-                    selectable
-                    @select="openNodeDetail"
-                    :cpu-label="t('overview.metric.cpu')"
-                    :memory-label="t('overview.metric.memory')"
-                    :disk-label="t('overview.metric.disk')"
-                    :online-label="t('common.status.online')"
-                    :never-label="t('common.status.neverReported')"
-                    :offline-label="t('common.status.offline')"
-                    :disabled-label="t('common.status.disabled')"
-                    :sparkline-label="t('overview.sparklineLabel')"
-                  />
-                </div>
-              </section>
+            <!-- Nothing wrong. Say so plainly and stop: an all-clear that
+                 still prints the whole inventory is not an all-clear. -->
+            <div
+              v-if="attentionNodes.length === 0"
+              class="flex items-center gap-3 rounded-lg border border-success/30 bg-success/5 px-4 py-3"
+            >
+              <ShieldCheck class="size-5 shrink-0 text-success" aria-hidden="true" />
+              <div class="min-w-0">
+                <p class="text-sm font-medium">{{ $t('overview.fleetAllHealthy') }}</p>
+                <p class="text-xs text-muted-foreground">
+                  {{ $t('overview.fleetAllHealthyHint', { count: healthyNodes }) }}
+                </p>
+              </div>
+            </div>
+
+            <div v-else class="space-y-3">
+              <div class="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <ShieldAlert class="size-3.5 text-warning" aria-hidden="true" />
+                <span class="uppercase tracking-wide">{{ $t('overview.fleetNeedsAttention') }}</span>
+                <span class="tabular">{{ attentionNodes.length }}</span>
+                <span class="h-px flex-1 bg-border"></span>
+                <span class="tabular">{{ $t('overview.fleetHealthyCount', { count: healthyNodes }) }}</span>
+              </div>
+              <div class="grid gap-3 sm:grid-cols-2">
+                <NodeCard
+                  v-for="node in attentionShown"
+                  :key="node.id"
+                  :node="node"
+                  compact
+                  show-sparkline
+                  sparkline-metric="cpu"
+                  selectable
+                  @select="openNodeDetail"
+                  :cpu-label="t('overview.metric.cpu')"
+                  :memory-label="t('overview.metric.memory')"
+                  :disk-label="t('overview.metric.disk')"
+                  :online-label="t('common.status.online')"
+                  :never-label="t('common.status.neverReported')"
+                  :offline-label="t('common.status.offline')"
+                  :disabled-label="t('common.status.disabled')"
+                  :sparkline-label="t('overview.sparklineLabel')"
+                />
+              </div>
+              <RouterLink
+                v-if="attentionOverflow > 0"
+                :to="{ name: 'nodes', query: { status: 'offline' } }"
+                class="inline-block text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {{ $t('overview.fleetMoreNeedAttention', { count: attentionOverflow }) }}
+              </RouterLink>
             </div>
           </DataState>
         </CardContent>

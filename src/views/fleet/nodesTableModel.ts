@@ -29,6 +29,18 @@ export interface NodeTableColumn {
   width: string;
   /** Optional columns can be hidden via the column manager. */
   optional: boolean;
+  /**
+   * Hidden until the operator asks for it.
+   *
+   * Every optional column used to start visible, which made the default table
+   * ~1940px wide. On a 1440px display with the sidebar open that puts the
+   * metric columns, last-seen and the row actions off the right edge: the
+   * operator's first view of the fleet was name, status, role, tags and an IP,
+   * and everything worth scanning for needed a horizontal scroll to reach.
+   * The default set is now the columns you triage by; the rest stay one click
+   * away in the column manager.
+   */
+  defaultHidden?: boolean;
   /** Set when the header toggles sorting. */
   sortKey?: NodeSortKey;
   /** First-click direction: asc reads naturally for identity columns, desc
@@ -40,18 +52,32 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   { id: "name", labelKey: "fleet.nodes.table.colName", width: "minmax(180px,1.6fr)", optional: false, sortKey: "name", defaultDir: "asc" },
   { id: "status", labelKey: "fleet.nodes.table.colStatus", width: "90px", optional: false, sortKey: "status", defaultDir: "asc" },
   { id: "role", labelKey: "fleet.nodes.table.colRole", width: "104px", optional: true },
-  { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true },
-  { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true },
-  { id: "archOs", labelKey: "fleet.nodes.table.colArchOs", width: "120px", optional: true },
-  { id: "agentConfig", labelKey: "fleet.nodes.table.colAgentConfig", width: "150px", optional: true },
+  { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true, defaultHidden: true },
+  { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true, defaultHidden: true },
+  { id: "archOs", labelKey: "fleet.nodes.table.colArchOs", width: "120px", optional: true, defaultHidden: true },
+  { id: "agentConfig", labelKey: "fleet.nodes.table.colAgentConfig", width: "150px", optional: true, defaultHidden: true },
   { id: "cpu", labelKey: "fleet.nodes.metric.cpu", width: "84px", optional: true, sortKey: "cpu", defaultDir: "desc" },
   { id: "memory", labelKey: "fleet.nodes.metric.memory", width: "84px", optional: true, sortKey: "memory", defaultDir: "desc" },
   { id: "disk", labelKey: "fleet.nodes.metric.disk", width: "84px", optional: true, sortKey: "disk", defaultDir: "desc" },
-  { id: "network", labelKey: "fleet.nodes.table.colNetwork", width: "170px", optional: true, sortKey: "network", defaultDir: "desc" },
+  { id: "network", labelKey: "fleet.nodes.table.colNetwork", width: "170px", optional: true, sortKey: "network", defaultDir: "desc", defaultHidden: true },
   { id: "lastSeen", labelKey: "fleet.nodes.table.colLastSeen", width: "112px", optional: true, sortKey: "lastSeen", defaultDir: "desc" },
-  { id: "update", labelKey: "fleet.nodes.table.colUpdate", width: "116px", optional: true },
-  { id: "actions", labelKey: "fleet.nodes.table.colActions", width: "148px", optional: false },
+  { id: "update", labelKey: "fleet.nodes.table.colUpdate", width: "116px", optional: true, defaultHidden: true },
+  { id: "actions", labelKey: "fleet.nodes.table.colActions", width: "116px", optional: false },
 ];
+
+/**
+ * Columns hidden on a console that has never been told otherwise.
+ *
+ * What survives is what a fleet is triaged by: which node, is it healthy, what
+ * is it for, is it loaded, when did it last check in. Tags, addresses, arch and
+ * update policy are lookup data - you go to them once you know which node you
+ * care about, and the node page holds all of them. Keeping the default set
+ * inside one screen width is what makes the metric columns visible at all;
+ * before this they were 460px past the right edge.
+ */
+export const DEFAULT_HIDDEN_COLUMNS: ReadonlySet<string> = new Set(
+  NODE_TABLE_COLUMNS.filter((c) => c.defaultHidden).map((c) => c.id),
+);
 
 const columnById = new Map(NODE_TABLE_COLUMNS.map((c) => [c.id, c]));
 
@@ -151,9 +177,17 @@ export function sortNodes(nodes: readonly Node[], state: NodeSortState): Node[] 
   });
 }
 
-/** Visibility persistence: stored as a comma-joined list of HIDDEN optional
- *  column ids, so newly shipped columns default to visible. */
+/**
+ * Visibility persistence: stored as a comma-joined list of HIDDEN optional
+ * column ids, so newly shipped columns default to visible.
+ *
+ * `null` (never configured) and `""` (configured, and the operator wants every
+ * column) are deliberately different answers. Treating both as "nothing hidden"
+ * would mean an operator who has explicitly turned every column on gets the
+ * built-in defaults pushed back at them on the next release.
+ */
 export function parseHiddenColumns(raw: string | null): Set<string> {
+  if (raw === null) return new Set(DEFAULT_HIDDEN_COLUMNS);
   const hidden = new Set<string>();
   if (!raw) return hidden;
   for (const part of raw.split(",")) {
