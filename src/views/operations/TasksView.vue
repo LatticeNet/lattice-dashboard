@@ -34,6 +34,7 @@ import {
 } from "@/lib/nodeFilterExpressions";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -712,6 +713,23 @@ async function confirmDeleteTask() {
     actionPending.value = null;
   }
 }
+
+/**
+ * Queue health. Failed is the only one that earns colour, and only when it is
+ * not zero: a permanently red tile is a tile nobody reads.
+ */
+const taskMetrics = computed<Metric[]>(() => [
+  { key: "queued", label: t("operations.tasks.queued"), value: queuedCount.value, icon: Timer },
+  { key: "running", label: t("operations.tasks.running"), value: runningCount.value, icon: Terminal },
+  {
+    key: "failed",
+    label: t("operations.tasks.failed"),
+    value: failedCount.value,
+    tone: failedCount.value > 0 ? "destructive" : "default",
+    icon: XCircle,
+  },
+]);
+
 </script>
 
 <template>
@@ -728,35 +746,8 @@ async function confirmDeleteTask() {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 md:grid-cols-3">
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('operations.tasks.queued') }}</p>
-            <p class="mt-1 text-2xl font-semibold">{{ queuedCount }}</p>
-          </div>
-          <Timer class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('operations.tasks.running') }}</p>
-            <p class="mt-1 text-2xl font-semibold">{{ runningCount }}</p>
-          </div>
-          <Terminal class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('operations.tasks.failed') }}</p>
-            <p class="mt-1 text-2xl font-semibold">{{ failedCount }}</p>
-          </div>
-          <XCircle class="size-5 text-destructive" aria-hidden="true" />
-        </CardContent>
-      </Card>
-    </div>
+    <!-- One band rather than three stretched cards. See MetricStrip. -->
+    <MetricStrip :metrics="taskMetrics" :columns="3" />
 
     <Card v-if="!canRunTasks">
       <CardHeader>

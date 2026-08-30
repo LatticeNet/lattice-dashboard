@@ -22,7 +22,13 @@ import { computed, type Component } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import { cn } from "@/lib/utils";
 
-export type MetricTone = "default" | "success" | "warning" | "destructive";
+/**
+ * `muted` is not a weaker `default`. It marks a value that is not an assertion:
+ * a check that has not run, a state the server declined to report. Rendering
+ * those at full contrast alongside verified numbers is how a console tells an
+ * operator something it does not actually know.
+ */
+export type MetricTone = "default" | "muted" | "success" | "warning" | "destructive";
 
 export interface Metric {
   /** Stable key for the v-for. */
@@ -48,6 +54,7 @@ const props = withDefaults(
 
 const toneClass: Record<MetricTone, string> = {
   default: "text-foreground",
+  muted: "text-muted-foreground",
   success: "text-success",
   warning: "text-warning",
   destructive: "text-destructive",

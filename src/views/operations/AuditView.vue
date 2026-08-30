@@ -11,6 +11,7 @@ import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import MetricStrip, { type Metric, type MetricTone } from "@/components/common/MetricStrip.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -156,10 +157,15 @@ const chainTileText = computed(() => {
   return result.ok ? t("operations.audit.chainOk") : t("operations.audit.chainBad");
 });
 
-const chainTileClass = computed(() => {
+/**
+ * The chain tile's tone. Unverified and disabled both render muted rather than
+ * as a confident value: neither is a statement that the chain is fine, and this
+ * console exists to avoid exactly that kind of false certainty.
+ */
+const chainMetricTone = computed<MetricTone>(() => {
   const result = verifyResult.value;
-  if (!result || !result.enabled) return "text-muted-foreground";
-  return result.ok ? "text-success" : "text-destructive";
+  if (!result || !result.enabled) return "muted";
+  return result.ok ? "success" : "destructive";
 });
 
 const offBoxAnchorRecord = computed(() => {
@@ -339,6 +345,24 @@ function openTrace(correlationId: string) {
   traceId.value = correlationId;
   traceOpen.value = true;
 }
+
+/**
+ * What this query returned, what it matched, and whether the hash chain still
+ * verifies. The chain is the one that matters: it keeps the tone it already
+ * computed, because a broken chain is the page's most important fact.
+ */
+const auditMetrics = computed<Metric[]>(() => [
+  { key: "returned", label: t("operations.audit.returned"), value: events.value.length, icon: ScrollText },
+  { key: "total", label: t("operations.audit.totalMatch"), value: total.value, icon: ShieldCheck },
+  {
+    key: "chain",
+    label: t("operations.audit.chain"),
+    value: chainTileText.value,
+    tone: chainMetricTone.value,
+    icon: CheckCircle2,
+  },
+]);
+
 </script>
 
 <template>
@@ -375,35 +399,8 @@ function openTrace(correlationId: string) {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 md:grid-cols-3">
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('operations.audit.returned') }}</p>
-            <p class="text-2xl font-semibold tabular">{{ events.length }}</p>
-          </div>
-          <ScrollText class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('operations.audit.totalMatch') }}</p>
-            <p class="text-2xl font-semibold tabular">{{ total }}</p>
-          </div>
-          <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('operations.audit.chain') }}</p>
-            <p class="text-2xl font-semibold" :class="chainTileClass">{{ chainTileText }}</p>
-          </div>
-          <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-    </div>
+    <!-- One band rather than three stretched cards. See MetricStrip. -->
+    <MetricStrip :metrics="auditMetrics" :columns="3" />
 
     <Card>
       <CardHeader>

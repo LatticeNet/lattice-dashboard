@@ -33,6 +33,7 @@ import {
 } from "./approvalsModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -814,6 +815,29 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
     canDecideApproval(approval)
   );
 }
+
+/**
+ * The three numbers this page is judged by. "Can apply" is a capability, not a
+ * count, so it says yes or no and colours only when the answer blocks work.
+ */
+const approvalMetrics = computed<Metric[]>(() => [
+  { key: "total", label: t("operations.approvals.total"), value: approvals.value.length, icon: ShieldCheck },
+  {
+    key: "pending",
+    label: t("operations.approvals.pending"),
+    value: pending.value.length,
+    tone: pending.value.length > 0 ? "warning" : "default",
+    icon: GitCompare,
+  },
+  {
+    key: "canApply",
+    label: t("operations.approvals.canApply"),
+    value: canApply.value ? t("common.misc.yes") : t("common.misc.no"),
+    tone: canApply.value ? "default" : "warning",
+    icon: CheckCircle2,
+  },
+]);
+
 </script>
 
 <template>
@@ -830,35 +854,8 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 md:grid-cols-3">
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('operations.approvals.total') }}</p>
-            <p class="text-2xl font-semibold">{{ approvals.length }}</p>
-          </div>
-          <ShieldCheck class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('operations.approvals.pending') }}</p>
-            <p class="text-2xl font-semibold text-warning">{{ pending.length }}</p>
-          </div>
-          <GitCompare class="size-5 text-warning" aria-hidden="true" />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent class="flex items-center justify-between p-4">
-          <div>
-            <p class="text-sm text-muted-foreground">{{ $t('operations.approvals.canApply') }}</p>
-            <p class="text-2xl font-semibold">{{ canApply ? $t('common.misc.yes') : $t('common.misc.no') }}</p>
-          </div>
-          <CheckCircle2 class="size-5 text-muted-foreground" aria-hidden="true" />
-        </CardContent>
-      </Card>
-    </div>
+    <!-- One band rather than three stretched cards. See MetricStrip. -->
+    <MetricStrip :metrics="approvalMetrics" :columns="3" />
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <Card>
