@@ -1365,9 +1365,12 @@ function openTerminal(node: Node) {
                 </div>
               </div>
 
+              <!-- Named for what these chips are, not for the expression field
+                   further down. Both used to print "OS expression", which read
+                   as the same control appearing twice. -->
               <div v-if="availableArchOs.length" class="space-y-1.5">
                 <p class="text-xs font-medium uppercase text-muted-foreground">
-                  {{ $t('fleet.nodes.filters.osExpression') }}
+                  {{ $t('fleet.nodes.table.colArchOs') }}
                 </p>
                 <div class="flex flex-wrap gap-1.5">
                   <button
