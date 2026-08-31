@@ -170,6 +170,11 @@ export default {
       timeoutSec: "超时(秒)",
       outputLimit: "输出上限",
       interpreter: "解释器",
+      capability: "限定能力范围",
+      capabilityNone: "不限制",
+      capabilityHint:
+        "可选。选定之后,任何不在该能力范围内的目标都会被拒绝,这样针对某一类机器的探测就不会顺带打到其他机器。",
+      capabilityHintOn: "不在 {capability} 范围内的目标会被拒绝。",
       script: "脚本",
       fanoutHint:
         "一个任务会在你选中的每个目标上执行，每个节点各自上报结果。从不回应的节点会一直算作未上报，不会被算成已完成。",

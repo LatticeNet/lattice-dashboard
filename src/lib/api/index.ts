@@ -360,6 +360,9 @@ export const api = {
       script: string;
       timeout_sec?: number;
       output_limit?: number;
+      // Confines the task to nodes in scope for this capability. Narrows only:
+      // it can never reach a node the operator could not already target.
+      capability?: string;
     }) => http.post<TaskView>("/api/tasks", input),
     // Re-queue a stored task by id. The script body stays server-side (task
     // views only expose its SHA), so rerun is a server re-create, not a resubmit.

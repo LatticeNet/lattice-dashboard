@@ -22,7 +22,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-vue-next";
-import { api, unwrap, type Node, type TaskResult, type TaskView } from "@/lib/api";
+import { api, unwrap, type CapabilityImpact, type Node, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
@@ -160,6 +160,15 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
   () => api.nodes.list().then((r) => unwrap(r, "nodes")),
   { pollInterval: 5000 },
 );
+
+/** Capabilities an operator may confine a task to. Only the enforced ones are
+ *  offered: declaring an unenforced one would narrow nothing and read as a
+ *  guarantee it cannot keep. */
+const declarableQuery = useAsyncData<CapabilityImpact[] | undefined>(
+  () => api.capabilities.list().then((r) => (r.capabilities ?? []).filter((c) => c.enforced)),
+  { pollInterval: 60000 },
+);
+const declarableCapabilities = computed(() => declarableQuery.data.value ?? []);
 const statusFilter = ref<StatusFilter>("all");
 {
   const seeded = route.query.status;
@@ -174,6 +183,16 @@ const targetRegion = ref("all");
 const targetExpr = ref("");
 const selectedTargets = ref<string[]>([]);
 const interpreter = ref("sh");
+/**
+ * An optional capability to confine this task to.
+ *
+ * It only ever narrows the target set. Nothing can verify that a script "is" a
+ * sing-box script, so declaring one is a promise about your own intent - safe
+ * to honour as a restriction, worthless as a grant. What it buys is that a
+ * fleet-wide probe aimed at sing-box nodes cannot quietly also hit the machines
+ * that do not run it.
+ */
+const capability = ref("");
 const script = ref("");
 const timeoutSec = ref(60);
 const outputLimit = ref(16384);
@@ -825,6 +844,7 @@ async function createTask() {
   try {
     await api.tasks.create({
       targets: selectedTargets.value,
+      capability: capability.value || undefined,
       interpreter: interpreter.value,
       script: script.value,
       timeout_sec: timeoutSec.value,
@@ -1121,6 +1141,32 @@ const taskMetrics = computed<Metric[]>(() => [
                 <Input v-model.number="outputLimit" type="number" min="256" max="65536" />
               </div>
             </div>
+            <!-- Optional, and only offered when there is something to confine to.
+                 Narrows the targets; never widens them. -->
+            <div v-if="declarableCapabilities.length" class="grid gap-1.5">
+              <Label for="task-capability">{{ $t('operations.tasks.capability') }}</Label>
+              <Select v-model="capability">
+                <SelectTrigger id="task-capability">
+                  <SelectValue :placeholder="$t('operations.tasks.capabilityNone')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{{ $t('operations.tasks.capabilityNone') }}</SelectItem>
+                  <SelectItem
+                    v-for="c in declarableCapabilities"
+                    :key="c.capability"
+                    :value="c.capability"
+                  >
+                    {{ c.capability }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-xs text-muted-foreground">
+                {{ capability
+                  ? $t('operations.tasks.capabilityHintOn', { capability })
+                  : $t('operations.tasks.capabilityHint') }}
+              </p>
+            </div>
+
             <div class="grid gap-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <Label>{{ $t('operations.tasks.script') }}</Label>

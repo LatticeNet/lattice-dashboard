@@ -172,6 +172,12 @@ export default {
       timeoutSec: "Timeout sec",
       outputLimit: "Output limit",
       interpreter: "Interpreter",
+      capability: "Confine to capability",
+      capabilityNone: "No restriction",
+      capabilityHint:
+        "Optional. Picking one refuses any selected target that is out of scope for it, so a probe aimed at one kind of node cannot quietly hit the rest.",
+      capabilityHintOn:
+        "This task will be refused for any selected target not in scope for {capability}.",
       script: "Script",
       fanoutHint:
         "One task runs on every target you select, and each node reports its own result. A node that never answers stays unreported rather than counting as done.",
