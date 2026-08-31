@@ -18,6 +18,7 @@ import {
   Terminal,
   Timer,
   Trash2,
+  TriangleAlert,
   XCircle,
 } from "lucide-vue-next";
 import { api, unwrap, type Node, type TaskResult, type TaskView } from "@/lib/api";
@@ -486,6 +487,88 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
     };
   });
 }
+
+/**
+ * What is already true about the selected targets, before anything is queued.
+ *
+ * The picker states each node's condition on its own row - on/off, exec, root -
+ * and that is enough when you are choosing three. It stops working at fleet
+ * size: selecting 33 nodes means scrolling a list, and nobody tallies while
+ * scrolling. The run this was built for went out to 33 targets, one of which
+ * refused exec and one of which had been offline for a day, and neither was
+ * noticed until the results came back.
+ *
+ * So this counts rather than re-states, and it advises rather than blocks.
+ * Queueing for a node you know is coming back is legitimate - the queue is
+ * store-and-forward by design - and a refusal here would only teach people to
+ * route around it.
+ */
+interface TargetPreflight {
+  offline: string[];
+  execDisabled: string[];
+  unprivileged: string[];
+}
+
+const targetPreflight = computed<TargetPreflight>(() => {
+  const out: TargetPreflight = { offline: [], execDisabled: [], unprivileged: [] };
+  for (const id of selectedTargets.value) {
+    const node = nodesById.value[id];
+    if (!node) continue;
+    const name = node.name || id;
+    if (node.disabled || !node.online) out.offline.push(name);
+    const runtime = node.agent_runtime;
+    if (!runtime?.reported_at) continue;
+    if (runtime.no_exec || runtime.allow_exec === false) out.execDisabled.push(name);
+    else if (runtime.task_sandbox_features?.includes("non-root-agent")) out.unprivileged.push(name);
+  }
+  return out;
+});
+
+/**
+ * Name the first few and count the rest.
+ *
+ * The messages are written label-first and carry no count of their own, so they
+ * read correctly for one node and for forty without needing plural forms. This
+ * codebase has no pluralization convention and Chinese has no plural, so
+ * introducing `|` message forms here would add one for no reader benefit.
+ */
+const PREFLIGHT_NAMES_SHOWN = 3;
+
+function preflightNames(names: string[]): string {
+  if (names.length <= PREFLIGHT_NAMES_SHOWN) return names.join(", ");
+  const shown = names.slice(0, PREFLIGHT_NAMES_SHOWN).join(", ");
+  return t("operations.tasks.preflight.andMore", {
+    names: shown,
+    count: names.length - PREFLIGHT_NAMES_SHOWN,
+  });
+}
+
+const preflightNotes = computed(() => {
+  const p = targetPreflight.value;
+  const notes: { key: string; text: string; tone: "warning" | "muted" }[] = [];
+  // Ordered by how badly each one wastes the operator's time: a refusal is a
+  // guaranteed failed row, an offline node is an indefinite wait, and an
+  // unprivileged agent is a result that looks fine and is not.
+  if (p.execDisabled.length)
+    notes.push({
+      key: "exec",
+      tone: "warning",
+      text: t("operations.tasks.preflight.execDisabled", { names: preflightNames(p.execDisabled) }),
+    });
+  if (p.offline.length)
+    notes.push({
+      key: "offline",
+      tone: "warning",
+      text: t("operations.tasks.preflight.offline", { names: preflightNames(p.offline) }),
+    });
+  if (p.unprivileged.length)
+    notes.push({
+      key: "unpriv",
+      tone: "muted",
+      text: t("operations.tasks.preflight.unprivileged", { names: preflightNames(p.unprivileged) }),
+    });
+  return notes;
+});
 
 /**
  * Whether a target's agent could have measured anything privileged.
@@ -972,6 +1055,22 @@ const taskMetrics = computed<Metric[]>(() => [
                 placeholder="uname -a"
               />
             </div>
+            <!-- What is already known about the selection. Advisory, never a
+                 block: see targetPreflight. -->
+            <ul v-if="preflightNotes.length" class="grid gap-1">
+              <li
+                v-for="note in preflightNotes"
+                :key="note.key"
+                :class="cn(
+                  'flex items-start gap-1.5 text-xs',
+                  note.tone === 'warning' ? 'text-warning' : 'text-muted-foreground',
+                )"
+              >
+                <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>{{ note.text }}</span>
+              </li>
+            </ul>
+
             <div class="flex flex-wrap items-center justify-between gap-2">
               <p class="text-xs text-muted-foreground">
                 {{ $t('operations.tasks.fanoutHint') }}

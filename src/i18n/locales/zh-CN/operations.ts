@@ -180,6 +180,12 @@ export default {
       expressionLabel: "任务表达式",
       expressionPlaceholder: "AND(status:failed, node:gomami, interpreter:sh)",
       expressionHelp: "字段:id、attempt、status、interpreter、node、target、actor、approval、script、result、error、exit。支持 AND(...)、OR(...)、NOT(...) 或 field:value。",
+      preflight: {
+        andMore: "{names} 等 {count} 台",
+        execDisabled: "会立即失败,agent 拒绝执行任务:{names}",
+        offline: "离线:任务留在队列里等 agent 回来,在那之前不会有结果:{names}",
+        unprivileged: "agent 非特权运行:脚本里需要 root 的部分在这些机器上读不到东西:{names}",
+      },
       execContext: {
         root: "以 root 运行",
         rootHint: "该 agent 以 uid 0 执行任务脚本,本次运行中需要特权的探测可以正常读取。",

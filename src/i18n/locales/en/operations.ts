@@ -182,6 +182,14 @@ export default {
       expressionLabel: "Task expression",
       expressionPlaceholder: "AND(status:failed, node:gomami, interpreter:sh)",
       expressionHelp: "Fields: id, attempt, status, interpreter, node, target, actor, approval, script, result, error, exit. Use AND(...), OR(...), NOT(...), or field:value.",
+      preflight: {
+        andMore: "{names} and {count} more",
+        execDisabled: "Will fail immediately, task execution refused: {names}",
+        offline:
+          "Offline: queued until the agent returns, reporting nothing until then: {names}",
+        unprivileged:
+          "Unprivileged agent: anything in the script that needs root reads nothing there: {names}",
+      },
       execContext: {
         root: "runs as root",
         rootHint: "This agent executes task scripts as uid 0, so privileged probes in this run could read what they needed.",
