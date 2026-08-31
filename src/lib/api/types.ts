@@ -158,6 +158,14 @@ export interface AgentLaunchConfig {
  * exists. `enforced` says whether the decision currently bites, so a capability
  * that is declared but not yet live cannot be mistaken for a guarantee.
  */
+/** One declared capability. `enforced` says whether a decision about it
+ *  currently bites; `mutates` is why it is opt-in (it changes the machine). */
+export interface KnownCapability {
+  id: string;
+  enforced: boolean;
+  mutates: boolean;
+}
+
 export interface NodeCapability {
   node_id: string;
   capability: string;

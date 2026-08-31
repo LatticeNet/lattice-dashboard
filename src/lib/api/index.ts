@@ -47,6 +47,7 @@ import type {
   NetPolicyUpsertRequest,
   NetPolicyView,
   Node,
+  KnownCapability,
   NodeCapability,
   NodeDeletePlanView,
   NodeGeoInput,
@@ -284,7 +285,7 @@ export const api = {
     // (what the agent can do right now): a node can be perfectly capable and
     // still be one you have decided to leave alone.
     capabilities: () =>
-      http.get<{ capabilities: NodeCapability[]; known: string[] }>("/api/nodes/capabilities"),
+      http.get<{ capabilities: NodeCapability[]; known: KnownCapability[] }>("/api/nodes/capabilities"),
     // An empty state clears the record, returning the node to the capability's
     // default. A reason is required to exclude.
     setCapability: (input: {

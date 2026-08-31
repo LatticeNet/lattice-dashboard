@@ -57,6 +57,8 @@ import {
   type TaskResult,
   type TaskView,
   type NodeDeletePlanView,
+  type NodeCapability,
+  type KnownCapability,
 } from "@/lib/api";
 import {
   buildNodeTimeline,
@@ -153,6 +155,101 @@ const groupsQuery = useAsyncData<GroupView[] | undefined>(
 );
 
 const ddnsQuery = useAsyncData<DDNSView[] | undefined>(soften(() => api.ddns.list()));
+
+/**
+ * Capability enrolment: which capabilities are allowed to act on this node.
+ *
+ * This is the page that owns the decision, because it is a decision about the
+ * node and not about whatever form happens to be open elsewhere. Excluding in
+ * particular belongs here: it needs a reason, and a reason typed into a
+ * capability's own screen tends to describe that screen rather than the machine.
+ */
+const capabilitiesQuery = useAsyncData<NodeCapability[] | undefined>(
+  soften(() => api.nodes.capabilities().then((r) => r.capabilities ?? [])),
+);
+const knownCapabilitiesQuery = useAsyncData<KnownCapability[] | undefined>(
+  soften(() => api.nodes.capabilities().then((r) => r.known ?? [])),
+);
+
+/** Only the capabilities whose gate is live are worth an operator's attention
+ *  here; a declared-but-inert one would promise a guarantee it cannot keep. */
+const nodeCapabilities = computed(() =>
+  (capabilitiesQuery.data.value ?? []).filter((c) => c.node_id === nodeId.value),
+);
+
+function capabilityState(capability: string): NodeCapability | undefined {
+  return nodeCapabilities.value.find((c) => c.capability === capability);
+}
+
+interface CapabilityRow {
+  capability: string;
+  record?: NodeCapability;
+  enforced: boolean;
+}
+
+const allCapabilityRows = computed<CapabilityRow[]>(() => {
+  const known = knownCapabilitiesQuery.data.value ?? [];
+  const enforcedById = new Map(known.map((k) => [k.id, k.enforced]));
+  // Anything already decided is shown even if it is not in the known list, so a
+  // record written before a capability was renamed never becomes invisible.
+  const ids = new Set([...known.map((k) => k.id), ...nodeCapabilities.value.map((c) => c.capability)]);
+  return [...ids].sort().map((capability) => ({
+    capability,
+    record: capabilityState(capability),
+    enforced: enforcedById.get(capability) ?? false,
+  }));
+});
+
+/**
+ * What is worth an operator's attention: the capabilities whose gate is live,
+ * plus anything already decided.
+ *
+ * Listing all fifteen would put fourteen inert rows beside the one that
+ * currently decides anything, each offering Enrol and Exclude buttons that
+ * change nothing observable. That reads as fifteen equal decisions and it is
+ * not one - it is one decision and fourteen placeholders. The rest stay one
+ * click away for whoever is preparing the next capability's rollout.
+ */
+const capabilityRows = computed(() =>
+  allCapabilityRows.value.filter((row) => row.enforced || row.record),
+);
+const dormantCapabilityRows = computed(() =>
+  allCapabilityRows.value.filter((row) => !row.enforced && !row.record),
+);
+const showDormantCapabilities = ref(false);
+
+const capabilityPending = ref("");
+const excludeOpen = ref(false);
+const excludeCapability = ref("");
+const excludeReason = ref("");
+
+async function setCapability(capability: string, state: "enrolled" | "excluded" | "", reason?: string) {
+  if (capabilityPending.value) return;
+  capabilityPending.value = capability;
+  try {
+    await api.nodes.setCapability({ node_id: nodeId.value, capability, state, reason });
+    toast.success(t("fleet.nodes.detail.capabilities.saved"));
+    capabilitiesQuery.refresh();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    capabilityPending.value = "";
+  }
+}
+
+function openExclude(capability: string) {
+  excludeCapability.value = capability;
+  excludeReason.value = capabilityState(capability)?.reason ?? "";
+  excludeOpen.value = true;
+}
+
+async function confirmExclude() {
+  if (!excludeReason.value.trim()) return;
+  const capability = excludeCapability.value;
+  excludeOpen.value = false;
+  await setCapability(capability, "excluded", excludeReason.value.trim());
+  excludeReason.value = "";
+}
 
 const agentUpdatesQuery = useAsyncData<AgentUpdatePolicy[] | undefined>(
   soften(() => api.agentUpdates.list().then((r) => unwrap(r, "policies"))),
@@ -1182,6 +1279,99 @@ async function resolveGeo() {
     <div class="grid gap-6 p-6 lg:grid-cols-3">
       <!-- ── Main column ──────────────────────────────────────────── -->
       <div class="space-y-6 lg:col-span-2">
+        <!-- Capability enrolment. What is allowed to act on this node, as
+             opposed to what this node is (identity, above) or what its agent
+             can currently do (runtime, further down). Those are three different
+             questions and dispatch needs all three. -->
+        <Card v-if="canAdminNodes">
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.capabilities.title') }}
+            </CardTitle>
+            <CardDescription>{{ $t('fleet.nodes.detail.capabilities.description') }}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div class="divide-y divide-border/60">
+              <div
+                v-for="row in (showDormantCapabilities ? allCapabilityRows : capabilityRows)"
+                :key="row.capability"
+                class="flex flex-wrap items-center gap-3 py-2 first:pt-0 last:pb-0"
+              >
+                <div class="min-w-0 flex-1">
+                  <p class="truncate font-mono text-sm">{{ row.capability }}</p>
+                  <p v-if="row.record?.reason" class="truncate text-xs text-muted-foreground" :title="row.record.reason">
+                    {{ row.record.reason }}
+                  </p>
+                  <!-- A capability whose gate is not live yet records the
+                       decision but does not act on it. Saying so here stops a
+                       recorded intent being read as a guarantee. -->
+                  <p v-else-if="row.record && !row.record.enforced" class="text-xs text-muted-foreground">
+                    {{ $t('fleet.nodes.detail.capabilities.notEnforced') }}
+                  </p>
+                </div>
+                <Badge
+                  :variant="row.record?.state === 'enrolled'
+                    ? 'success'
+                    : row.record?.state === 'excluded'
+                      ? 'destructive'
+                      : 'outline'"
+                >
+                  {{ row.record
+                    ? $t(`fleet.nodes.detail.capabilities.state.${row.record.state}`)
+                    : $t('fleet.nodes.detail.capabilities.state.undecided') }}
+                </Badge>
+                <div class="flex shrink-0 items-center gap-1">
+                  <Button
+                    v-if="row.record?.state !== 'enrolled'"
+                    size="sm"
+                    variant="outline"
+                    :disabled="capabilityPending === row.capability"
+                    @click="setCapability(row.capability, 'enrolled')"
+                  >
+                    {{ $t('fleet.nodes.detail.capabilities.enrol') }}
+                  </Button>
+                  <Button
+                    v-if="row.record?.state !== 'excluded'"
+                    size="sm"
+                    variant="ghost"
+                    :disabled="capabilityPending === row.capability"
+                    @click="openExclude(row.capability)"
+                  >
+                    {{ $t('fleet.nodes.detail.capabilities.exclude') }}
+                  </Button>
+                  <!-- Clearing is not the same as excluding: it removes the
+                       decision so the capability's own default applies again. -->
+                  <Button
+                    v-if="row.record"
+                    size="sm"
+                    variant="ghost"
+                    :disabled="capabilityPending === row.capability"
+                    :title="$t('fleet.nodes.detail.capabilities.clearHint')"
+                    @click="setCapability(row.capability, '')"
+                  >
+                    {{ $t('fleet.nodes.detail.capabilities.clear') }}
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <!-- The capabilities that are declared but not yet gated. Kept out
+                 of the way rather than out of reach: a decision recorded now
+                 will apply the moment that capability goes live. -->
+            <Button
+              v-if="dormantCapabilityRows.length"
+              variant="ghost"
+              size="sm"
+              class="mt-2 text-muted-foreground"
+              @click="showDormantCapabilities = !showDormantCapabilities"
+            >
+              {{ showDormantCapabilities
+                ? $t('fleet.nodes.detail.capabilities.hideDormant')
+                : $t('fleet.nodes.detail.capabilities.showDormant', { count: dormantCapabilityRows.length }) }}
+            </Button>
+          </CardContent>
+        </Card>
+
         <!-- Identity (operator-owned: name / role / tags). node:admin only. -->
         <Card v-if="canAdminNodes">
           <CardHeader>
@@ -2171,6 +2361,36 @@ async function resolveGeo() {
     </div>
 
     <!-- Agent update no-op: node already reports target version. -->
+    <!-- Excluding needs a reason, and the API refuses without one. The reason
+         is the whole point of the state: "not this one" tells the next reader
+         nothing, and six months later nobody re-derives why a machine was left
+         out. -->
+    <Dialog v-model:open="excludeOpen">
+      <DialogScrollContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{{ $t('fleet.nodes.detail.capabilities.excludeTitle', { capability: excludeCapability }) }}</DialogTitle>
+          <DialogDescription>{{ $t('fleet.nodes.detail.capabilities.excludeDescription') }}</DialogDescription>
+        </DialogHeader>
+        <div class="grid gap-1.5">
+          <Label for="exclude-reason">{{ $t('fleet.nodes.detail.capabilities.excludeReason') }}</Label>
+          <Input
+            id="exclude-reason"
+            v-model="excludeReason"
+            :placeholder="$t('fleet.nodes.detail.capabilities.excludeReasonPlaceholder')"
+            @keydown.enter.prevent="confirmExclude"
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" @click="excludeOpen = false">
+            {{ $t('common.actions.cancel') }}
+          </Button>
+          <Button type="button" variant="destructive" :disabled="!excludeReason.trim()" @click="confirmExclude">
+            {{ $t('fleet.nodes.detail.capabilities.exclude') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
+
     <Dialog v-model:open="updateNoopOpen">
       <DialogScrollContent class="sm:max-w-md">
         <DialogHeader>

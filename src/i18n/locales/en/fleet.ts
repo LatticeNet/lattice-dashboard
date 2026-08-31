@@ -208,6 +208,25 @@ export default {
         noUpdatePolicy: "no update policy",
       },
       detail: {
+        capabilities: {
+          title: "Capabilities",
+          description:
+            "What is allowed to act on this node. Separate from what the node is, and from what its agent can currently do. Anything that changes the node is opt-in.",
+          state: { enrolled: "Enrolled", excluded: "Excluded", undecided: "Not decided" },
+          enrol: "Enrol",
+          exclude: "Exclude",
+          clear: "Clear",
+          clearHint: "Remove the decision so this capability's own default applies again.",
+          notEnforced: "Recorded, but this capability is not gated yet.",
+          showDormant: "Show {count} capabilities that are not gated yet",
+          hideDormant: "Hide the capabilities that are not gated yet",
+          excludeTitle: "Exclude this node from {capability}",
+          excludeDescription:
+            "The node stays out of scope until someone enrols it. Say why, so the next person reading this does not have to guess.",
+          excludeReason: "Reason",
+          excludeReasonPlaceholder: "No exposed port until port forwarding is configured",
+          saved: "Capability updated",
+        },
         agent: "Agent",
         lastSeen: "Last seen",
         publicIp: "Public IP",
