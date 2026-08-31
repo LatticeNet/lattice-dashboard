@@ -180,6 +180,16 @@ export default {
       expressionLabel: "任务表达式",
       expressionPlaceholder: "AND(status:failed, node:gomami, interpreter:sh)",
       expressionHelp: "字段:id、attempt、status、interpreter、node、target、actor、approval、script、result、error、exit。支持 AND(...)、OR(...)、NOT(...) 或 field:value。",
+      execContext: {
+        root: "以 root 运行",
+        rootHint: "该 agent 以 uid 0 执行任务脚本,本次运行中需要特权的探测可以正常读取。",
+        unprivileged: "非特权",
+        unprivilegedHint:
+          "该 agent 以非 root 用户执行任务脚本。脚本里任何需要 root 的部分(sshd -T、nft、大部分 /proc/1)都读不到东西,而隐藏了 stderr 的脚本会把这种情况报成正常退出。这份输出里的空字段应当视为未测量,而不是不存在。",
+        disabled: "已禁用执行",
+        disabledHint: "该 agent 拒绝执行任务,本次运行没有任何内容到达主机。",
+        drift: "反映的是 agent 当前的启动参数,不一定是任务运行时的参数。",
+      },
       targetProgress: "已上报的目标数",
       failedTargets: "失败目标",
       attempts: "尝试次数",

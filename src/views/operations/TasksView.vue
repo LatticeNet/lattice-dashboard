@@ -487,6 +487,63 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
   });
 }
 
+/**
+ * Whether a target's agent could have measured anything privileged.
+ *
+ * A survey script that probes root-only state (`sshd -T` needs to read host
+ * keys, `nft list table` needs CAP_NET_ADMIN) returns nothing at all on an
+ * unprivileged agent. If that script swallows stderr - and shell scripts
+ * written as `echo "k=$(cmd 2>/dev/null)"` almost always do - the node reports
+ * empty fields and exit 0, which is indistinguishable from "measured, and the
+ * answer is nothing". A whole fleet audit can be read off a wall of green
+ * "Finished" rows that measured none of what it claims.
+ *
+ * The agent already reports this: SandboxProfile appends `non-root-agent` when
+ * its euid is not 0, and warns "task scripts run as root" when it is. The fact
+ * existed on the node record and was rendered on the node page, one click away
+ * from the results it qualifies. This puts it next to the output.
+ *
+ * Caveat, and the reason this is not the whole fix: `agent_runtime` is the
+ * agent's CURRENT state, not its state when the task ran. An agent restarted
+ * with different flags since then will describe the wrong run. Pinning the
+ * context onto TaskResult is what makes this audit-grade; this makes it useful
+ * today, including for tasks that already ran.
+ */
+type ExecContext = { kind: "root" | "unprivileged" | "exec-disabled"; label: string; hint: string };
+
+function execContext(node?: Node): ExecContext | undefined {
+  const runtime = node?.agent_runtime;
+  if (!runtime || !runtime.reported_at) return undefined;
+  if (runtime.no_exec || runtime.allow_exec === false) {
+    return {
+      kind: "exec-disabled",
+      label: t("operations.tasks.execContext.disabled"),
+      hint: t("operations.tasks.execContext.disabledHint"),
+    };
+  }
+  if (runtime.task_sandbox_features?.includes("non-root-agent")) {
+    return {
+      kind: "unprivileged",
+      label: t("operations.tasks.execContext.unprivileged"),
+      hint: t("operations.tasks.execContext.unprivilegedHint"),
+    };
+  }
+  if (runtime.allow_root_exec) {
+    return {
+      kind: "root",
+      label: t("operations.tasks.execContext.root"),
+      hint: t("operations.tasks.execContext.rootHint"),
+    };
+  }
+  return undefined;
+}
+
+function execContextVariant(kind: ExecContext["kind"]): BadgeVariant {
+  // Unprivileged is the one that silently invalidates results, so it is the one
+  // that gets attention. Running as root is worth stating but is not a fault.
+  return kind === "unprivileged" ? "destructive" : "outline";
+}
+
 function groupStatus(root: TaskView, rows: NodeExecutionRow[]): TaskView["status"] {
   if (rows.some((row) => row.status === "leased")) return "leased";
   if (rows.some((row) => row.status === "queued")) return root.status === "cancelled" ? "cancelled" : "queued";
@@ -1173,6 +1230,18 @@ const taskMetrics = computed<Metric[]>(() => [
                             <div class="min-w-0">
                               <p class="truncate font-medium" :title="nodeName(row.nodeId)">{{ nodeName(row.nodeId) }}</p>
                               <p class="truncate font-mono text-xs text-muted-foreground" :title="row.nodeId">{{ row.nodeId }}</p>
+                              <!-- Could this agent have measured privileged state?
+                                   See execContext: an unprivileged agent returns
+                                   nothing for root-only probes, and a script that
+                                   hides stderr reports that as exit 0. -->
+                              <Badge
+                                v-if="execContext(row.node)"
+                                :variant="execContextVariant(execContext(row.node)!.kind)"
+                                class="mt-1"
+                                :title="execContext(row.node)!.hint"
+                              >
+                                {{ execContext(row.node)!.label }}
+                              </Badge>
                             </div>
                           </td>
                           <td class="px-3 py-2">

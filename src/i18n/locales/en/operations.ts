@@ -182,6 +182,16 @@ export default {
       expressionLabel: "Task expression",
       expressionPlaceholder: "AND(status:failed, node:gomami, interpreter:sh)",
       expressionHelp: "Fields: id, attempt, status, interpreter, node, target, actor, approval, script, result, error, exit. Use AND(...), OR(...), NOT(...), or field:value.",
+      execContext: {
+        root: "runs as root",
+        rootHint: "This agent executes task scripts as uid 0, so privileged probes in this run could read what they needed.",
+        unprivileged: "unprivileged",
+        unprivilegedHint:
+          "This agent executes task scripts as a non-root user. Anything in the script that needs root - sshd -T, nft, most of /proc/1 - returned nothing, and a script that hides stderr reports that as a clean exit. Treat empty fields in this output as unmeasured, not as absent.",
+        disabled: "exec disabled",
+        disabledHint: "This agent refuses task execution, so nothing in this run reached the host.",
+        drift: "Reflects the agent's current flags, not necessarily its flags when this task ran.",
+      },
       targetProgress: "Targets reported",
       failedTargets: "Failed targets",
       attempts: "Attempts",
