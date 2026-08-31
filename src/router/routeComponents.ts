@@ -39,6 +39,7 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "platform-agent-updates": () => import("@/views/platform/AgentUpdatesView.vue"),
   // Settings
   "settings-security": () => import("@/views/settings/SecurityView.vue"),
+  "settings-capabilities": () => import("@/views/settings/CapabilitiesView.vue"),
   "settings-sso": () => import("@/views/settings/SsoView.vue"),
   "settings-users": () => import("@/views/settings/UsersView.vue"),
   "settings-tokens": () => import("@/views/settings/TokensView.vue"),

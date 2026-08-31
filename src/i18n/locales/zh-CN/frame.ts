@@ -198,6 +198,7 @@ export default {
       "platform-notifications": "通知",
       "platform-agent-updates": "Agent 更新",
       "settings-security": "安全与 2FA",
+      "settings-capabilities": "能力准入开关",
       "settings-sso": "单点登录",
       "settings-users": "用户",
       "settings-tokens": "访问令牌",

@@ -199,6 +199,7 @@ export default {
       "platform-notifications": "Notifications",
       "platform-agent-updates": "Agent Updates",
       "settings-security": "Security & 2FA",
+      "settings-capabilities": "Capability Gates",
       "settings-sso": "Single Sign-On",
       "settings-users": "Users",
       "settings-tokens": "Access Tokens",

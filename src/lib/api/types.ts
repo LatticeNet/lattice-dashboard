@@ -175,6 +175,25 @@ export interface KnownCapability {
  * discovery switched on is in scope for sing-box management without anyone
  * enrolling it. Showing that as "not decided" would read as blocked.
  */
+/**
+ * One capability's gate, and what it would do to this fleet.
+ *
+ * `allow_count` / `refuse_count` are resolved as if the gate were live, whether
+ * or not it is. Enforcing a capability that cannot derive an answer refuses
+ * every node with no explicit enrolment, which on a fresh table is the whole
+ * fleet, so the number has to be visible before the switch rather than
+ * discovered after it.
+ */
+export interface CapabilityImpact {
+  capability: string;
+  enforced: boolean;
+  mutates: boolean;
+  derived: boolean;
+  allow_count: number;
+  refuse_count: number;
+  refused?: Array<{ node_id: string; name?: string; reason?: string }>;
+}
+
 export interface NodeCapabilityEffective {
   capability: string;
   enforced: boolean;

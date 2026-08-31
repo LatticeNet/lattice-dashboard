@@ -49,6 +49,7 @@ import type {
   Node,
   KnownCapability,
   NodeCapability,
+  CapabilityImpact,
   NodeCapabilityEffective,
   NodeDeletePlanView,
   NodeGeoInput,
@@ -229,6 +230,13 @@ export const api = {
     },
   },
 
+  // Fleet-wide capability policy: which gates are live, and what turning one
+  // on would refuse right now.
+  capabilities: {
+    list: () => http.get<{ capabilities: CapabilityImpact[] }>("/api/capabilities"),
+    setEnforced: (capability: string, enforced: boolean) =>
+      http.post<CapabilityImpact>("/api/capabilities", { capability, enforced }),
+  },
   nodes: {
     list: () => http.get<{ nodes: Node[] } | Node[]>("/api/nodes"),
     enrollToken: (input: {

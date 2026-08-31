@@ -2,6 +2,30 @@
 // 外观文案在 frame.ts。命名空间:settings。复用 frame.ts 中的 common.*。
 export default {
   settings: {
+    capabilities: {
+      title: "能力准入开关",
+      description:
+        "哪些能力可以作用于这个舰队的节点。会改变节点的能力一律显式准入;单台机器的决定在节点页上。",
+      gatesTitle: "开关",
+      gatesDescription: "开关关闭时行为和以前完全一样。打开之后,所有不在范围内的节点都会被拒绝。",
+      empty: "没有声明任何能力。",
+      metrics: { live: "已生效", ungated: "会改机器但未生效", total: "已声明" },
+      mutates: "会改变节点,因此需要显式准入",
+      reads: "只读取节点",
+      noDerivation: "没有可推导的来源,每台机器都需要单独准入",
+      impact: "{allow} 台在范围内 · {refuse} 台会被拒绝",
+      state: { enforced: "已生效", open: "未生效" },
+      turnOn: "打开",
+      turnOff: "关闭",
+      saved: "已更新 {capability}",
+      confirm: {
+        enableTitle: "打开这个开关?",
+        enableBody:
+          "{capability} 会立即拒绝 {refuse} 台机器,放行 {allow} 台。正在针对被拒绝节点运行的操作会失败,直到把它们准入为止。",
+        disableTitle: "关闭这个开关?",
+        disableBody: "{capability} 将重新可以作用于所有节点,包括你排除掉的那些。这次改动会记入审计日志。",
+      },
+    },
     scopeMigrationHint:
       "迁移期间，proxy:* 覆盖两个插件，并可委派同等强度的 canonical 权限。vpncore:* 与 substore:* 更窄，不能委派 proxy 权限或相互委派。",
     security: {

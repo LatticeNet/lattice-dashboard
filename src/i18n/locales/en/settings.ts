@@ -3,6 +3,32 @@
 // Reuses common.* (actions/status/state/misc) from frame.ts for shared verbs.
 export default {
   settings: {
+    capabilities: {
+      title: "Capability gates",
+      description:
+        "Which capabilities are allowed to act on this fleet's nodes. Anything that changes a node is opt-in; per-node decisions live on the node.",
+      gatesTitle: "Gates",
+      gatesDescription:
+        "A gate that is open behaves the way it always has. Turning one on starts refusing every node that is not in scope for it.",
+      empty: "No capabilities are declared.",
+      metrics: { live: "Gates live", ungated: "Changing, not gated", total: "Declared" },
+      mutates: "Changes nodes, so it is opt-in",
+      reads: "Reads nodes",
+      noDerivation: "nothing to infer scope from, so every node needs enrolling",
+      impact: "{allow} in scope · {refuse} would be refused",
+      state: { enforced: "Enforced", open: "Open" },
+      turnOn: "Turn on",
+      turnOff: "Turn off",
+      saved: "Gate updated for {capability}",
+      confirm: {
+        enableTitle: "Turn this gate on?",
+        enableBody:
+          "{capability} will refuse {refuse} of your nodes immediately and allow {allow}. Anything already running against a refused node stops working until it is enrolled.",
+        disableTitle: "Turn this gate off?",
+        disableBody:
+          "{capability} will be able to act on every node again, including ones you excluded. The change is recorded in the audit log.",
+      },
+    },
     scopeMigrationHint:
       "During migration, proxy:* covers both plugins and may delegate equal-strength canonical scopes. vpncore:* and substore:* are narrower and cannot delegate proxy scopes or each other.",
     security: {

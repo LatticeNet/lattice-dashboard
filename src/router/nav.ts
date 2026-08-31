@@ -145,6 +145,10 @@ export const NAV: NavSection[] = [
     icon: SlidersHorizontal,
     items: [
       { name: "settings-security", title: "Security & 2FA", path: "/settings/security", icon: KeyRound, scopes: [] },
+      // Fleet policy: which capabilities may act on nodes at all. node:read to
+      // look, node:admin to change, so the entry appears for anyone who can see
+      // the fleet and the page itself gates the switches.
+      { name: "settings-capabilities", title: "Capability Gates", path: "/settings/capabilities", icon: ShieldCheck, scopes: ["node:read"] },
       { name: "settings-sso", title: "Single Sign-On", path: "/settings/sso", icon: Fingerprint, scopes: ["oidc:admin"] },
       { name: "settings-users", title: "Users", path: "/settings/users", icon: UserCog, scopes: ["user:admin"] },
       { name: "settings-tokens", title: "Access Tokens", path: "/settings/tokens", icon: Ticket, scopes: ["token:admin"] },
