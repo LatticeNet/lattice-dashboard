@@ -69,7 +69,7 @@ import {
 
 type StatusFilter = "all" | TaskView["status"];
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-type NodeRunStatus = "queued" | "leased" | "finished" | "failed" | "cancelled";
+type NodeRunStatus = "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired";
 
 interface Attempt {
   task: TaskView;
@@ -110,7 +110,7 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
 const statusFilter = ref<StatusFilter>("all");
 {
   const seeded = route.query.status;
-  if (seeded === "queued" || seeded === "leased" || seeded === "finished" || seeded === "failed" || seeded === "cancelled") {
+  if (seeded === "queued" || seeded === "leased" || seeded === "finished" || seeded === "failed" || seeded === "cancelled" || seeded === "expired") {
     statusFilter.value = seeded;
   }
 }
@@ -469,6 +469,10 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
       ? failed
         ? "failed"
         : "finished"
+      // The task was withdrawn before this target ever answered. Saying
+      // "queued" here would promise a run that is no longer coming.
+      : root.status === "expired"
+        ? "expired"
       : latestTask?.status === "failed"
         ? "failed"
         : latestTask?.status === "cancelled"
@@ -594,8 +598,20 @@ const preflightNotes = computed(() => {
  */
 type ExecContext = { kind: "root" | "unprivileged" | "exec-disabled"; label: string; hint: string };
 
-function execContext(node?: Node): ExecContext | undefined {
-  const runtime = node?.agent_runtime;
+function execContext(node?: Node, result?: TaskResult): ExecContext | undefined {
+  // Prefer what the server pinned when this result landed. The node's live
+  // runtime is a fallback for results recorded before the pin existed, and it
+  // describes the agent as it is now, which is not necessarily how it was.
+  const pinned = result?.exec_context;
+  const runtime = pinned
+    ? {
+        no_exec: pinned.exec_disabled,
+        allow_exec: !pinned.exec_disabled,
+        allow_root_exec: pinned.root_exec,
+        task_sandbox_features: pinned.non_root ? ["non-root-agent"] : [],
+        reported_at: pinned.reported_at ?? "pinned",
+      }
+    : node?.agent_runtime;
   if (!runtime || !runtime.reported_at) return undefined;
   if (runtime.no_exec || runtime.allow_exec === false) {
     return {
@@ -628,6 +644,9 @@ function execContextVariant(kind: ExecContext["kind"]): BadgeVariant {
 }
 
 function groupStatus(root: TaskView, rows: NodeExecutionRow[]): TaskView["status"] {
+  // The server owns expiry: it is the side that withdrew delivery, and it knows
+  // the deadline. Re-deriving "queued" from the rows here would contradict it.
+  if (root.status === "expired") return "expired";
   if (rows.some((row) => row.status === "leased")) return "leased";
   if (rows.some((row) => row.status === "queued")) return root.status === "cancelled" ? "cancelled" : "queued";
   if (rows.some((row) => row.status === "failed")) return "failed";
@@ -645,6 +664,9 @@ function statusLabel(status: NodeRunStatus | TaskView["status"]): string {
 
 function statusVariant(status: NodeRunStatus | TaskView["status"]): BadgeVariant {
   if (status === "failed") return "destructive";
+  // Expired is not a failure and must not read like one: nothing went wrong,
+  // the control plane stopped waiting. Secondary, the same weight as cancelled.
+  if (status === "expired") return "secondary";
   if (status === "finished") return "default";
   if (status === "leased") return "secondary";
   return "outline";
@@ -1122,6 +1144,7 @@ const taskMetrics = computed<Metric[]>(() => [
                 <SelectItem value="finished">{{ $t('operations.tasks.status.finished') }}</SelectItem>
                 <SelectItem value="failed">{{ $t('operations.tasks.status.failed') }}</SelectItem>
                 <SelectItem value="cancelled">{{ $t('operations.tasks.status.cancelled') }}</SelectItem>
+                <SelectItem value="expired">{{ $t('operations.tasks.status.expired') }}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1334,12 +1357,12 @@ const taskMetrics = computed<Metric[]>(() => [
                                    nothing for root-only probes, and a script that
                                    hides stderr reports that as exit 0. -->
                               <Badge
-                                v-if="execContext(row.node)"
-                                :variant="execContextVariant(execContext(row.node)!.kind)"
+                                v-if="execContext(row.node, row.latestResult)"
+                                :variant="execContextVariant(execContext(row.node, row.latestResult)!.kind)"
                                 class="mt-1"
-                                :title="execContext(row.node)!.hint"
+                                :title="execContext(row.node, row.latestResult)!.hint"
                               >
-                                {{ execContext(row.node)!.label }}
+                                {{ execContext(row.node, row.latestResult)!.label }}
                               </Badge>
                             </div>
                           </td>

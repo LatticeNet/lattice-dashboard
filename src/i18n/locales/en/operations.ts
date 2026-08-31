@@ -143,6 +143,7 @@ export default {
         finished: "Finished",
         failed: "Failed",
         cancelled: "Cancelled",
+        expired: "Expired",
       },
       queueTask: "Queue Task",
       queueTaskHint: "Tasks run only on selected nodes and within server-enforced limits.",

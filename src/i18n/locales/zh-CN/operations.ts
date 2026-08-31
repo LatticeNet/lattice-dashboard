@@ -141,6 +141,7 @@ export default {
         finished: "已完成",
         failed: "失败",
         cancelled: "已取消",
+        expired: "已过期",
       },
       queueTask: "排队任务",
       queueTaskHint: "任务仅在所选节点上、并在服务端强制的限制内运行。",

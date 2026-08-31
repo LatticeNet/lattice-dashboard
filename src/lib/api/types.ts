@@ -312,7 +312,10 @@ export interface TaskView {
   script_size_bytes?: number;
   timeout_sec?: number;
   output_limit?: number;
-  status: "queued" | "leased" | "finished" | "failed" | "cancelled";
+  // "expired" is derived by the server: the queue deadline passed, so the
+  // task was withdrawn and will not be handed to its agent. Distinct from
+  // "failed" on purpose - an offline node is not a script that went wrong.
+  status: "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired";
   leased_by?: string;
   rerun_of_task_id?: string;
   rerun_of_node_id?: string;
@@ -340,6 +343,19 @@ export interface TaskResult {
   error?: string;
   started_at?: string;
   finished_at?: string;
+
+  /**
+   * How the agent was configured when this result was recorded, pinned by the
+   * server at that moment. Absent for results predating the pin, and for nodes
+   * that had never reported a posture - absence means unknown, not "root".
+   */
+  exec_context?: {
+    sandbox?: string;
+    non_root?: boolean;
+    root_exec?: boolean;
+    exec_disabled?: boolean;
+    reported_at?: string;
+  };
 }
 
 export interface TerminalSession {
