@@ -58,7 +58,7 @@ import {
   type TaskView,
   type NodeDeletePlanView,
   type NodeCapability,
-  type KnownCapability,
+  type NodeCapabilityEffective,
 } from "@/lib/api";
 import {
   buildNodeTimeline,
@@ -164,41 +164,36 @@ const ddnsQuery = useAsyncData<DDNSView[] | undefined>(soften(() => api.ddns.lis
  * particular belongs here: it needs a reason, and a reason typed into a
  * capability's own screen tends to describe that screen rather than the machine.
  */
-const capabilitiesQuery = useAsyncData<NodeCapability[] | undefined>(
-  soften(() => api.nodes.capabilities().then((r) => r.capabilities ?? [])),
-);
-const knownCapabilitiesQuery = useAsyncData<KnownCapability[] | undefined>(
-  soften(() => api.nodes.capabilities().then((r) => r.known ?? [])),
-);
-
-/** Only the capabilities whose gate is live are worth an operator's attention
- *  here; a declared-but-inert one would promise a guarantee it cannot keep. */
-const nodeCapabilities = computed(() =>
-  (capabilitiesQuery.data.value ?? []).filter((c) => c.node_id === nodeId.value),
+/**
+ * The effective answer per capability for this node, not just the stored
+ * records. A node can be allowed with no record at all, because its own older
+ * configuration already says so - sing-box discovery switched on puts a node in
+ * scope for sing-box management without anyone enrolling it. Listing only
+ * records would show that as "not decided", which reads as blocked.
+ */
+const capabilitiesQuery = useAsyncData<NodeCapabilityEffective[] | undefined>(
+  soften(() => api.nodes.nodeCapabilities(nodeId.value).then((r) => r.effective ?? [])),
 );
 
-function capabilityState(capability: string): NodeCapability | undefined {
+const nodeCapabilities = computed(() => capabilitiesQuery.data.value ?? []);
+
+function capabilityState(capability: string): NodeCapabilityEffective | undefined {
   return nodeCapabilities.value.find((c) => c.capability === capability);
 }
 
 interface CapabilityRow {
   capability: string;
-  record?: NodeCapability;
+  record?: NodeCapabilityEffective;
   enforced: boolean;
 }
 
-const allCapabilityRows = computed<CapabilityRow[]>(() => {
-  const known = knownCapabilitiesQuery.data.value ?? [];
-  const enforcedById = new Map(known.map((k) => [k.id, k.enforced]));
-  // Anything already decided is shown even if it is not in the known list, so a
-  // record written before a capability was renamed never becomes invisible.
-  const ids = new Set([...known.map((k) => k.id), ...nodeCapabilities.value.map((c) => c.capability)]);
-  return [...ids].sort().map((capability) => ({
-    capability,
-    record: capabilityState(capability),
-    enforced: enforcedById.get(capability) ?? false,
-  }));
-});
+const allCapabilityRows = computed<CapabilityRow[]>(() =>
+  nodeCapabilities.value.map((c) => ({
+    capability: c.capability,
+    record: c,
+    enforced: c.enforced,
+  })),
+);
 
 /**
  * What is worth an operator's attention: the capabilities whose gate is live,
@@ -211,12 +206,50 @@ const allCapabilityRows = computed<CapabilityRow[]>(() => {
  * click away for whoever is preparing the next capability's rollout.
  */
 const capabilityRows = computed(() =>
-  allCapabilityRows.value.filter((row) => row.enforced || row.record),
+  allCapabilityRows.value.filter((row) => row.enforced || row.record?.state),
 );
 const dormantCapabilityRows = computed(() =>
-  allCapabilityRows.value.filter((row) => !row.enforced && !row.record),
+  allCapabilityRows.value.filter((row) => !row.enforced && !row.record?.state),
 );
 const showDormantCapabilities = ref(false);
+
+/**
+ * How one capability's answer reads. Four cases, and they are genuinely
+ * different work: explicitly excluded (someone decided against it), explicitly
+ * enrolled, allowed because the node is already configured for it, and nobody
+ * has decided. Collapsing the third into the fourth is what made a working
+ * sing-box node look blocked.
+ */
+function capabilityBadge(record?: NodeCapabilityEffective): {
+  variant: "success" | "destructive" | "outline" | "secondary";
+  label: string;
+} {
+  if (record?.state === "excluded") {
+    return { variant: "destructive", label: t("fleet.nodes.detail.capabilities.state.excluded") };
+  }
+  if (record?.state === "enrolled") {
+    return { variant: "success", label: t("fleet.nodes.detail.capabilities.state.enrolled") };
+  }
+  if (record?.allowed && record.source === "derived") {
+    return { variant: "secondary", label: t("fleet.nodes.detail.capabilities.state.fromConfig") };
+  }
+  return { variant: "outline", label: t("fleet.nodes.detail.capabilities.state.undecided") };
+}
+
+/** The sentence under the capability name: the operator's own reason when they
+ *  recorded one, otherwise why the gate would answer the way it does. */
+function capabilityNote(record?: NodeCapabilityEffective): string {
+  if (!record) return "";
+  if (record.record_reason) return record.record_reason;
+  if (record.source === "derived") {
+    return record.allowed
+      ? t("fleet.nodes.detail.capabilities.derivedAllowed")
+      : t("fleet.nodes.detail.capabilities.derivedDenied");
+  }
+  if (record.state) return "";
+  if (!record.enforced) return t("fleet.nodes.detail.capabilities.notEnforced");
+  return "";
+}
 
 const capabilityPending = ref("");
 const excludeOpen = ref(false);
@@ -1300,26 +1333,19 @@ async function resolveGeo() {
               >
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-mono text-sm">{{ row.capability }}</p>
-                  <p v-if="row.record?.reason" class="truncate text-xs text-muted-foreground" :title="row.record.reason">
-                    {{ row.record.reason }}
-                  </p>
-                  <!-- A capability whose gate is not live yet records the
-                       decision but does not act on it. Saying so here stops a
-                       recorded intent being read as a guarantee. -->
-                  <p v-else-if="row.record && !row.record.enforced" class="text-xs text-muted-foreground">
-                    {{ $t('fleet.nodes.detail.capabilities.notEnforced') }}
+                  <p
+                    v-if="capabilityNote(row.record)"
+                    class="truncate text-xs text-muted-foreground"
+                    :title="capabilityNote(row.record)"
+                  >
+                    {{ capabilityNote(row.record) }}
                   </p>
                 </div>
-                <Badge
-                  :variant="row.record?.state === 'enrolled'
-                    ? 'success'
-                    : row.record?.state === 'excluded'
-                      ? 'destructive'
-                      : 'outline'"
-                >
-                  {{ row.record
-                    ? $t(`fleet.nodes.detail.capabilities.state.${row.record.state}`)
-                    : $t('fleet.nodes.detail.capabilities.state.undecided') }}
+                <!-- The effective answer, not just the stored record. A node
+                     allowed because of its own configuration is in scope, and
+                     labelling that "not decided" would read as blocked. -->
+                <Badge :variant="capabilityBadge(row.record).variant">
+                  {{ capabilityBadge(row.record).label }}
                 </Badge>
                 <div class="flex shrink-0 items-center gap-1">
                   <Button

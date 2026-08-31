@@ -166,6 +166,28 @@ export interface KnownCapability {
   mutates: boolean;
 }
 
+/**
+ * One capability's effective answer for one node: what the gate would decide
+ * right now, and where that answer came from.
+ *
+ * `source` matters. A node can be allowed with no explicit record at all,
+ * because its own older configuration already says so - a machine with sing-box
+ * discovery switched on is in scope for sing-box management without anyone
+ * enrolling it. Showing that as "not decided" would read as blocked.
+ */
+export interface NodeCapabilityEffective {
+  capability: string;
+  enforced: boolean;
+  mutates: boolean;
+  allowed: boolean;
+  source: "record" | "derived" | "default";
+  reason?: string;
+  state?: "enrolled" | "excluded";
+  record_reason?: string;
+  actor_id?: string;
+  updated_at?: string;
+}
+
 export interface NodeCapability {
   node_id: string;
   capability: string;

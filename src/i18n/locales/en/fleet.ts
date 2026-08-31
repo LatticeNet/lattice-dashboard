@@ -212,7 +212,9 @@ export default {
           title: "Capabilities",
           description:
             "What is allowed to act on this node. Separate from what the node is, and from what its agent can currently do. Anything that changes the node is opt-in.",
-          state: { enrolled: "Enrolled", excluded: "Excluded", undecided: "Not decided" },
+          state: { enrolled: "Enrolled", excluded: "Excluded", undecided: "Not decided", fromConfig: "In scope" },
+          derivedAllowed: "In scope because this node is already configured for it.",
+          derivedDenied: "Out of scope: this node is not configured for it. Enable it on the node, or enrol the node here.",
           enrol: "Enrol",
           exclude: "Exclude",
           clear: "Clear",

@@ -49,6 +49,7 @@ import type {
   Node,
   KnownCapability,
   NodeCapability,
+  NodeCapabilityEffective,
   NodeDeletePlanView,
   NodeGeoInput,
   NodeGeoResolveResponse,
@@ -286,6 +287,13 @@ export const api = {
     // still be one you have decided to leave alone.
     capabilities: () =>
       http.get<{ capabilities: NodeCapability[]; known: KnownCapability[] }>("/api/nodes/capabilities"),
+    // For one node: the effective answer per capability, including the ones
+    // allowed by the node's own configuration rather than by an explicit
+    // enrolment. That distinction is invisible in the record list above.
+    nodeCapabilities: (node_id: string) =>
+      http.get<{ node_id: string; effective: NodeCapabilityEffective[] }>(
+        `/api/nodes/capabilities?node_id=${encodeURIComponent(node_id)}`,
+      ),
     // An empty state clears the record, returning the node to the capability's
     // default. A reason is required to exclude.
     setCapability: (input: {

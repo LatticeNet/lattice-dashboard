@@ -209,7 +209,9 @@ export default {
           title: "能力准入",
           description:
             "允许哪些能力作用于这台机器。与“这台机器是什么”和“它的 agent 此刻能做什么”是三个不同的问题。会改变机器的能力一律显式准入。",
-          state: { enrolled: "已准入", excluded: "已排除", undecided: "未决定" },
+          state: { enrolled: "已准入", excluded: "已排除", undecided: "未决定", fromConfig: "在范围内" },
+          derivedAllowed: "这台机器本身已经配置了该能力,因此在范围内。",
+          derivedDenied: "不在范围内:这台机器没有配置该能力。可以在节点上打开它,或者在这里显式准入。",
           enrol: "准入",
           exclude: "排除",
           clear: "清除",
