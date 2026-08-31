@@ -14,10 +14,11 @@
  */
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { AlertTriangle, KeyRound, ShieldCheck, Timer } from "lucide-vue-next";
 
-import { api, ApiError, unwrap, type ApprovalView, type Node, type SSHGuardFinding } from "@/lib/api";
+import { api, ApiError, unwrap, type ApprovalView, type Node, type NodeCapability, type SSHGuardFinding } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
@@ -55,6 +56,7 @@ import {
 } from "./sshGuardModel";
 
 const { t } = useI18n();
+const route = useRoute();
 const auth = useAuthStore();
 
 // Both scopes are required server-side: the capability's own and the plan
@@ -76,6 +78,53 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
   { pollInterval: 30000 },
 );
 
+/**
+ * Enrolment: whether SSH Guard is allowed to act on a node at all.
+ *
+ * Hardening decides who can reach a machine over SSH, so it is opt-in per node
+ * rather than available to whichever node the picker happens to be showing.
+ * That makes "is this node even in scope" a precondition of the whole form, and
+ * the operator should learn it when they pick the node, not after they have
+ * composed a plan and the server refuses it.
+ */
+const capabilitiesQuery = useAsyncData<NodeCapability[] | undefined>(
+  () => api.nodes.capabilities().then((r) => r.capabilities ?? []),
+  { pollInterval: 60000 },
+);
+
+const selectedEnrolment = computed<NodeCapability | undefined>(() =>
+  (capabilitiesQuery.data.value ?? []).find(
+    (c) => c.node_id === form.nodeId && c.capability === "sshguard",
+  ),
+);
+
+/**
+ * No record is not a decision: nobody has said anything about this node, and
+ * SSH Guard is opt-in, so it is out of scope until someone says otherwise.
+ * Distinct from excluded, which is somebody having looked and said no.
+ */
+const selectedInScope = computed(() => selectedEnrolment.value?.state === "enrolled");
+
+const enrolling = ref(false);
+
+async function enrolSelected() {
+  if (!form.nodeId || enrolling.value) return;
+  enrolling.value = true;
+  try {
+    await api.nodes.setCapability({
+      node_id: form.nodeId,
+      capability: "sshguard",
+      state: "enrolled",
+    });
+    toast.success(t("networking.sshGuard.enrolment.enrolled"));
+    capabilitiesQuery.refresh();
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err));
+  } finally {
+    enrolling.value = false;
+  }
+}
+
 const states = computed<NodeGuardState[]>(() =>
   buildFleetStates(approvals.value, nodesQuery.data.value ?? []),
 );
@@ -93,6 +142,18 @@ const form = reactive<GuardForm>({
   confirmWindowSec: DEFAULT_CONFIRM_WINDOW_SEC,
   acceptFindings: false,
 });
+
+/**
+ * Seed the node from ?node_id=, so a node page can link straight to "harden
+ * this one" instead of making the operator find it again in a 33-entry picker.
+ * Only a seed: it does not follow later route changes, because that would
+ * fight the picker once someone starts choosing.
+ */
+{
+  const seeded = route.query.node_id;
+  if (typeof seeded === "string" && seeded) form.nodeId = seeded;
+}
+
 
 const findings = ref<SSHGuardFinding[]>([]);
 const planning = ref(false);
@@ -244,6 +305,46 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
         </CardHeader>
         <CardContent class="space-y-4">
           <NodePicker id="sshguard-node" v-model="form.nodeId" :disabled="!canAdmin" />
+
+          <!-- Whether this node is in scope at all. Same reasoning as the stage
+               block below: it is a property of the node, not a field of the
+               form, and it decides whether the form is the right action. The
+               server refuses an out-of-scope plan regardless; showing it here
+               means the operator finds out before composing one. -->
+          <div
+            v-if="form.nodeId && !selectedInScope"
+            class="rounded-md border px-3 py-2 text-sm"
+            :class="selectedEnrolment?.state === 'excluded'
+              ? 'border-destructive/40 bg-destructive/5'
+              : 'border-warning/40 bg-warning/5'"
+          >
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="min-w-0">
+                <p class="font-medium">
+                  {{ selectedEnrolment?.state === 'excluded'
+                    ? $t('networking.sshGuard.enrolment.excluded')
+                    : $t('networking.sshGuard.enrolment.notEnrolled') }}
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  {{ selectedEnrolment?.reason || $t('networking.sshGuard.enrolment.notEnrolledHint') }}
+                </p>
+              </div>
+              <!-- Enrolling is offered here because it is the block the operator
+                   is standing in front of. Excluding, which needs a reason and
+                   is a decision about the node rather than about this form,
+                   lives on the node page. -->
+              <Button
+                size="sm"
+                variant="outline"
+                :disabled="!canAdmin || enrolling"
+                @click="enrolSelected"
+              >
+                {{ selectedEnrolment?.state === 'excluded'
+                  ? $t('networking.sshGuard.enrolment.enrolAnyway')
+                  : $t('networking.sshGuard.enrolment.enrol') }}
+              </Button>
+            </div>
+          </div>
           <!-- Where the selected node already stands. It sits here, against
                the picker, because it is a property of that node rather than a
                field of this form: picking one that is mid-sequence makes the

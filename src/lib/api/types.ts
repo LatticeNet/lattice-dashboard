@@ -148,6 +148,26 @@ export interface AgentLaunchConfig {
   updated_at?: string;
 }
 
+/**
+ * One enrolment decision: may this capability act on this node.
+ *
+ * Three states, and the third one carries its weight. No record means nobody
+ * has decided, and the capability's own default applies. "excluded" means
+ * somebody looked and said no, and `reason` is why - a NAT box with no exposed
+ * port is not waiting its turn, it is deliberately out until port forwarding
+ * exists. `enforced` says whether the decision currently bites, so a capability
+ * that is declared but not yet live cannot be mistaken for a guarantee.
+ */
+export interface NodeCapability {
+  node_id: string;
+  capability: string;
+  state: "enrolled" | "excluded";
+  reason?: string;
+  actor_id?: string;
+  updated_at: string;
+  enforced: boolean;
+}
+
 export interface AgentRuntimeConfig {
   allow_exec?: boolean;
   allow_root_exec?: boolean;

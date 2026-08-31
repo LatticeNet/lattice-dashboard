@@ -3,6 +3,14 @@
 export default {
   networking: {
     sshGuard: {
+      enrolment: {
+        notEnrolled: "这台机器不在 SSH Guard 的范围内",
+        notEnrolledHint: "加固会改变谁能通过 SSH 连上这台机器,所以按节点显式准入。这台还没有人做过决定。",
+        excluded: "这台机器被明确排除在 SSH Guard 之外",
+        enrol: "准入这台机器",
+        enrolAnyway: "仍然准入",
+        enrolled: "已准入 SSH Guard",
+      },
       title: "SSH 加固",
       description: "分两步收缩节点的 SSH 暴露面。做错了会自动还原，而不是把你关在门外。",
       planAction: "生成加固计划",

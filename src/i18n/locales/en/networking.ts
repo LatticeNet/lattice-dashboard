@@ -4,6 +4,15 @@
 export default {
   networking: {
     sshGuard: {
+      enrolment: {
+        notEnrolled: "This node is not in scope for SSH Guard",
+        notEnrolledHint:
+          "Hardening changes who can reach a machine over SSH, so it is opt-in per node. Nobody has decided about this one yet.",
+        excluded: "This node is deliberately excluded from SSH Guard",
+        enrol: "Enrol this node",
+        enrolAnyway: "Enrol anyway",
+        enrolled: "Node enrolled in SSH Guard",
+      },
       title: "SSH Guard",
       description: "Shrink a node's SSH exposure in two steps, so a mistake reverts itself instead of locking you out.",
       planAction: "Create arm plan",
