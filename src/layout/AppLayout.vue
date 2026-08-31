@@ -80,9 +80,14 @@ watchEffect(() => {
           class="min-h-0 flex-1"
           :class="viewportPaneClaimed ? 'relative overflow-hidden' : 'overflow-y-auto'"
         >
-          <RouterView v-slot="{ Component, route }">
-            <component :is="Component" :key="route.path" class="view-enter" />
-          </RouterView>
+          <!-- One measure for the whole console, centred. A view that claims the
+               viewport pane (terminal, map) is exempt: it positions itself
+               absolute inset-0 against this box and must stay full bleed. -->
+          <div :class="viewportPaneClaimed ? 'contents' : 'mx-auto w-full max-w-(--content-max)'">
+            <RouterView v-slot="{ Component, route }">
+              <component :is="Component" :key="route.path" class="view-enter" />
+            </RouterView>
+          </div>
         </main>
       </div>
     </div>

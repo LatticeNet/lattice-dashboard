@@ -83,6 +83,18 @@
     0 1px 2px oklch(0 0 0 / 6%), 0 8px 24px -6px oklch(0 0 0 / 14%);
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 5%);
 
+  /* Content measure.
+     Nothing was capped, so on a wide display every page ran edge to edge and a
+     settings row put its label at x=220 and its button at x=1900 with a
+     thousand pixels of nothing between them. Your eye has to cross the whole
+     screen to connect a name to its control, which is not density, it is just
+     distance.
+     Two measures because the right width follows the content: a dense grid
+     earns the space, a list of settings does not. Cloudflare's console sits at
+     roughly these numbers for the same two cases. */
+  --content-max: 1600px;
+  --content-narrow: 1024px;
+
   /* Row rhythm. One number per density, read by the table primitive below and
      by any view that needs to reserve height before data lands (skeletons,
      virtualised windows) so a loading table does not resize under the cursor. */
@@ -493,6 +505,18 @@
   & tbody tr[data-selected="true"] td {
     background-color: color-mix(in oklab, var(--primary) 8%, transparent);
   }
+}
+
+/* A cell that holds a control rather than text.
+   data-grid truncates every cell by design, because a wrapping cell breaks the
+   row rhythm for every column beside it. That rule is right for text and wrong
+   for a button: clipping an action to an ellipsis makes it unreadable and, at
+   narrow widths, unclickable. Cells opt out here rather than the primitive
+   guessing from its contents. */
+@utility cell-control {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 /* Sortable column header. The affordance is the whole cell, and the arrow only

@@ -122,7 +122,11 @@ async function applyToggle() {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <!-- Settings measure, not the full console width. A list of seventeen short
+       rows does not earn 1600px: at that width the name sits at one edge and its
+       control at the other with a thousand pixels of nothing between, and the
+       eye has to cross the screen to connect them. -->
+  <div class="mx-auto w-full max-w-(--content-narrow) space-y-6">
     <PageHeader
       :title="$t('settings.capabilities.title')"
       :description="$t('settings.capabilities.description')"
@@ -145,61 +149,76 @@ async function applyToggle() {
           :skeleton-rows="4"
           @retry="query.refresh"
         >
-          <div class="divide-y divide-border/60">
-            <div
-              v-for="capability in ordered"
-              :key="capability.capability"
-              class="flex flex-wrap items-center gap-3 py-2.5 first:pt-0 last:pb-0"
-            >
-              <div class="min-w-0 flex-1">
-                <p class="truncate font-mono text-sm">{{ capability.capability }}</p>
-                <p class="text-xs text-muted-foreground">
-                  {{ capability.mutates
-                    ? $t('settings.capabilities.mutates')
-                    : $t('settings.capabilities.reads') }}
-                  <!-- Only meaningful for a capability that defaults to
-                       refusing. A read defaults to allowing, so having nothing
-                       to infer from costs it nothing. -->
-                  <template v-if="capability.mutates && !capability.derived">
-                    · {{ $t('settings.capabilities.noDerivation') }}
-                  </template>
-                </p>
-              </div>
-
-              <!-- The impact, on the row. A capability that would refuse the
-                   whole fleet says so here rather than after the switch. -->
-              <p
-                :class="cn(
-                  'shrink-0 text-xs tabular',
-                  !capability.enforced && capability.refuse_count > 0 && capability.allow_count === 0
-                    ? 'text-warning'
-                    : 'text-muted-foreground',
-                )"
-              >
-                {{ $t('settings.capabilities.impact', {
-                  allow: capability.allow_count,
-                  refuse: capability.refuse_count,
-                }) }}
-              </p>
-
-              <Badge class="shrink-0" :variant="capability.enforced ? 'success' : 'outline'">
-                {{ capability.enforced
-                  ? $t('settings.capabilities.state.enforced')
-                  : $t('settings.capabilities.state.open') }}
-              </Badge>
-
-              <Button
-                class="shrink-0"
-                size="sm"
-                :variant="capability.enforced ? 'ghost' : 'outline'"
-                :disabled="!canAdmin || pending === capability.capability"
-                @click="requestToggle(capability)"
-              >
-                {{ capability.enforced
-                  ? $t('settings.capabilities.turnOff')
-                  : $t('settings.capabilities.turnOn') }}
-              </Button>
-            </div>
+          <!-- A real table, so the four things an operator compares across rows
+               line up in columns instead of being flung to opposite edges. -->
+          <div class="overflow-x-auto">
+            <table class="data-grid min-w-[40rem]">
+              <thead>
+                <tr>
+                  <th scope="col">{{ $t('settings.capabilities.colCapability') }}</th>
+                  <th scope="col" class="w-[9rem]">{{ $t('settings.capabilities.colKind') }}</th>
+                  <!-- Two numbers, two columns. One sentence per row put the
+                       counts mid-row where they cannot be compared; as columns
+                       they read straight down. -->
+                  <th scope="col" class="w-[6.5rem] text-right!">{{ $t('settings.capabilities.colInScope') }}</th>
+                  <th scope="col" class="w-[6.5rem] text-right!">{{ $t('settings.capabilities.colRefused') }}</th>
+                  <th scope="col" class="w-[7rem]">{{ $t('settings.capabilities.colState') }}</th>
+                  <th scope="col" class="w-[7.5rem] text-right!"><span class="sr-only">{{ $t('settings.capabilities.colAction') }}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="capability in ordered" :key="capability.capability">
+                  <td>
+                    <span class="font-mono text-sm">{{ capability.capability }}</span>
+                  </td>
+                  <td class="text-xs text-muted-foreground">
+                    {{ capability.mutates
+                      ? $t('settings.capabilities.kindMutates')
+                      : $t('settings.capabilities.kindReads') }}
+                  </td>
+                  <td class="text-right text-sm tabular text-muted-foreground">
+                    {{ capability.allow_count }}
+                  </td>
+                  <!-- The number that decides whether turning this on is safe.
+                       Amber only when it would refuse everything, which is the
+                       state that means "this gate has no scope yet". -->
+                  <td
+                    :class="cn(
+                      'text-right text-sm tabular',
+                      capability.refuse_count === 0
+                        ? 'text-muted-foreground'
+                        : !capability.enforced && capability.allow_count === 0
+                          ? 'text-warning'
+                          : 'text-foreground',
+                    )"
+                    :title="capability.mutates && !capability.derived
+                      ? $t('settings.capabilities.noDerivation')
+                      : undefined"
+                  >
+                    {{ capability.refuse_count }}
+                  </td>
+                  <td>
+                    <Badge :variant="capability.enforced ? 'success' : 'outline'">
+                      {{ capability.enforced
+                        ? $t('settings.capabilities.state.enforced')
+                        : $t('settings.capabilities.state.open') }}
+                    </Badge>
+                  </td>
+                  <td class="cell-control text-right">
+                    <Button
+                      size="sm"
+                      :variant="capability.enforced ? 'ghost' : 'outline'"
+                      :disabled="!canAdmin || pending === capability.capability"
+                      @click="requestToggle(capability)"
+                    >
+                      {{ capability.enforced
+                        ? $t('settings.capabilities.turnOff')
+                        : $t('settings.capabilities.turnOn') }}
+                    </Button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </DataState>
       </CardContent>

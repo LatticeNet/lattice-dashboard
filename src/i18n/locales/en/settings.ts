@@ -7,6 +7,15 @@ export default {
       title: "Capability gates",
       description:
         "Which capabilities are allowed to act on this fleet's nodes. Anything that changes a node is opt-in; per-node decisions live on the node.",
+      colCapability: "Capability",
+      colKind: "Kind",
+      colImpact: "Scope",
+      colInScope: "In scope",
+      colRefused: "Refused",
+      colState: "Gate",
+      colAction: "Action",
+      kindMutates: "Changes nodes",
+      kindReads: "Reads nodes",
       gatesTitle: "Gates",
       gatesDescription:
         "A gate that is open behaves the way it always has. Turning one on starts refusing every node that is not in scope for it.",
