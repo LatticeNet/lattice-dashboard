@@ -183,7 +183,9 @@ export default {
       expressionLabel: "Task expression",
       expressionPlaceholder: "AND(status:failed, node:gomami, interpreter:sh)",
       expressionHelp: "Fields: id, attempt, status, interpreter, node, target, actor, approval, script, result, error, exit. Use AND(...), OR(...), NOT(...), or field:value.",
-      preflight: {
+       surveyTemplate: "Insert probe template",
+      surveyTemplateHint: "Fills the empty script box with a probe that reports what it could not measure and fails when it measured nothing.",
+     preflight: {
         andMore: "{names} and {count} more",
         execDisabled: "Will fail immediately, task execution refused: {names}",
         offline:

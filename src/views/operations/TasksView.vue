@@ -7,6 +7,7 @@ import {
   Ban,
   CheckCircle2,
   ChevronDown,
+  ClipboardList,
   Funnel,
   KeyRound,
   ListChecks,
@@ -85,6 +86,58 @@ interface NodeExecutionRow {
   status: NodeRunStatus;
   failed: boolean;
 }
+
+/**
+ * A starting point for a probe script, offered rather than imposed.
+ *
+ * The obvious systemic fix for the failure this console kept producing - a
+ * survey that measured nothing and reported exit 0 - is to inject `set -eu`
+ * into every script. It does not work: `echo "k=$(cmd)"` succeeds whatever cmd
+ * does, because errexit only fires when the substitution's status becomes the
+ * command's, and every line of a probe script has that shape. It would break
+ * the semantics of scripts already written and tested while catching nothing.
+ *
+ * So the pattern is offered as text the operator can read, edit, or delete:
+ * resolve the binary rather than assume its path, capture once rather than
+ * re-run per field, say what could not be measured, and exit non-zero when
+ * nothing was, so the task's own failed count means something.
+ */
+const SURVEY_TEMPLATE = `# Probe template. Edit freely - this is a starting point, not a contract.
+probe=ok
+note=
+
+# Resolve rather than assume: the same tool sits in different places across
+# distributions, and a hardcoded path fails into an empty field.
+BIN=
+for c in /usr/sbin/sshd /usr/bin/sshd; do [ -x "$c" ] && BIN="$c" && break; done
+[ -z "$BIN" ] && probe=missing-binary && note="sshd not found"
+
+# Capture ONCE. Re-running a probe per field costs a re-parse each time and
+# lets the fields describe different moments.
+OUT=
+if [ -n "$BIN" ]; then
+  if OUT=$("$BIN" -T 2>&1) && [ -n "$OUT" ]; then :; else
+    probe=probe-failed
+    note=$(printf '%s' "$OUT" | head -1)
+    OUT=
+  fi
+fi
+# Most privileged probes read nothing as a non-root user and say so only on
+# stderr, which a $(... 2>/dev/null) swallows.
+[ "$(id -u)" != 0 ] && note="\${note:+$note; }not root (uid $(id -u))"
+
+field() { [ -n "$OUT" ] && printf '%s\n' "$OUT" | sed -n "s/^$1 //p" | sort -u | tr '\n' ','; }
+
+echo "host=$(hostname)"
+echo "probe=$probe"
+echo "note=$note"
+echo "uid=$(id -u)"
+echo "port=$(field port)"
+
+# Make an unmeasured run count as one. Without this the task reports exit 0 and
+# reads exactly like a run that measured everything.
+[ "$probe" = ok ] || exit 3
+`;
 
 const { t } = useI18n();
 const route = useRoute();
@@ -1069,7 +1122,24 @@ const taskMetrics = computed<Metric[]>(() => [
               </div>
             </div>
             <div class="grid gap-2">
-              <Label>{{ $t('operations.tasks.script') }}</Label>
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <Label>{{ $t('operations.tasks.script') }}</Label>
+                <!-- The good shape as a starting point, not as enforcement.
+                     See SURVEY_TEMPLATE for why this is a template rather than
+                     an injected preamble. -->
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  class="h-7 px-2 text-xs"
+                  :disabled="!!script.trim()"
+                  :title="$t('operations.tasks.surveyTemplateHint')"
+                  @click="script = SURVEY_TEMPLATE"
+                >
+                  <ClipboardList class="size-3.5" aria-hidden="true" />
+                  {{ $t('operations.tasks.surveyTemplate') }}
+                </Button>
+              </div>
               <textarea
                 v-model="script"
                 rows="12"
