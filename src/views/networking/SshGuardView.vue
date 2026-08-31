@@ -22,6 +22,7 @@ import { api, ApiError, unwrap, type ApprovalView, type Node, type NodeCapabilit
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -31,6 +32,14 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogScrollContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Card,
   CardContent,
@@ -124,6 +133,171 @@ async function enrolSelected() {
     enrolling.value = false;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Fleet scope: who SSH Guard is allowed to touch.                      */
+/*                                                                      */
+/* The operator's job on this page is not "arm one node", it is         */
+/* "decide the whole fleet's scope, then arm what is in it". Scope was  */
+/* only settable one node at a time on each node's own page, so getting */
+/* a 33-node fleet right meant 33 page visits. This panel is where the  */
+/* fleet is already on screen, so it is where the partition belongs.    */
+/* ------------------------------------------------------------------ */
+
+type Scope = "enrolled" | "excluded" | "undecided";
+type ScopeFilter = "all" | Scope;
+
+function scopeOf(nodeId: string): Scope {
+  const record = (capabilitiesQuery.data.value ?? []).find(
+    (c) => c.node_id === nodeId && c.capability === "sshguard",
+  );
+  if (record?.state === "enrolled") return "enrolled";
+  if (record?.state === "excluded") return "excluded";
+  return "undecided";
+}
+
+const scopeFilter = ref<ScopeFilter>("all");
+
+/** Live counts, which double as the filter. The page previously printed three
+ *  numbers about arming progress and nothing about scope, so "how much of this
+ *  fleet have I even decided about" had no answer on screen. */
+const scopeCounts = computed(() => {
+  const counts = { all: states.value.length, enrolled: 0, excluded: 0, undecided: 0 };
+  for (const state of states.value) counts[scopeOf(state.nodeId)] += 1;
+  return counts;
+});
+
+const visibleStates = computed(() =>
+  scopeFilter.value === "all"
+    ? states.value
+    : states.value.filter((state) => scopeOf(state.nodeId) === scopeFilter.value),
+);
+
+const selectedNodes = ref<Set<string>>(new Set());
+/** Anchor for shift-click range selection. */
+let selectionAnchor = "";
+
+const selectedVisible = computed(() =>
+  visibleStates.value.filter((state) => selectedNodes.value.has(state.nodeId)),
+);
+
+function toggleRow(nodeId: string, event?: MouseEvent) {
+  const next = new Set(selectedNodes.value);
+  // Shift-click selects the run between the anchor and here, which is what
+  // makes partitioning a sorted fleet quick instead of 33 individual clicks.
+  if (event?.shiftKey && selectionAnchor) {
+    const ids = visibleStates.value.map((s) => s.nodeId);
+    const from = ids.indexOf(selectionAnchor);
+    const to = ids.indexOf(nodeId);
+    if (from !== -1 && to !== -1) {
+      const [lo, hi] = from < to ? [from, to] : [to, from];
+      for (const id of ids.slice(lo, hi + 1)) next.add(id);
+      selectedNodes.value = next;
+      return;
+    }
+  }
+  if (next.has(nodeId)) next.delete(nodeId);
+  else next.add(nodeId);
+  selectionAnchor = nodeId;
+  selectedNodes.value = next;
+}
+
+/** Select-all acts on what is on screen, never on the whole fleet behind a
+ *  filter. The bulk bar then says how many, so the two can never disagree. */
+function toggleSelectAllVisible(on: boolean) {
+  const next = new Set(selectedNodes.value);
+  for (const state of visibleStates.value) {
+    if (on) next.add(state.nodeId);
+    else next.delete(state.nodeId);
+  }
+  selectedNodes.value = next;
+}
+
+const allVisibleSelected = computed(
+  () => visibleStates.value.length > 0 && selectedVisible.value.length === visibleStates.value.length,
+);
+
+function clearSelection() {
+  selectedNodes.value = new Set();
+  selectionAnchor = "";
+}
+
+const bulkRunning = ref(false);
+/** How far a bulk apply has got. The API is one call per node, so a 33-node
+ *  change is 33 round trips; without this the button simply sits disabled for
+ *  several seconds and the operator cannot tell it from a hang. */
+const bulkProgress = reactive({ done: 0, total: 0 });
+const bulkExcludeOpen = ref(false);
+const bulkExcludeReason = ref("");
+
+/**
+ * Enrolling and excluding are both cheap and both reversible: neither touches
+ * the machine. Enrolment only permits a plan to be written, exclusion only
+ * withdraws that permission, and the actual hardening still goes through arm,
+ * approve and confirm. So these run without a confirmation step - guarding a
+ * reversible bookkeeping change would only teach people to click through
+ * dialogs, which is what makes the guard on the destructive step worth less.
+ */
+async function applyScope(nodeIds: string[], state: "enrolled" | "excluded" | "", reason?: string) {
+  if (!nodeIds.length || bulkRunning.value) return;
+  bulkRunning.value = true;
+  bulkProgress.done = 0;
+  bulkProgress.total = nodeIds.length;
+  const failures: string[] = [];
+  try {
+    for (const nodeId of nodeIds) {
+      try {
+        await api.nodes.setCapability({ node_id: nodeId, capability: "sshguard", state, reason });
+      } catch {
+        failures.push(nodeId);
+      }
+      bulkProgress.done += 1;
+      // Refresh as it goes rather than only at the end, so the counts and the
+      // rows move while the work happens instead of jumping when it finishes.
+      if (bulkProgress.done % 5 === 0) capabilitiesQuery.refresh();
+    }
+    const failed = failures.length;
+    // Report what actually happened rather than a flat success. A partial
+    // failure that toasts "done" is how a fleet ends up half-configured with
+    // nobody aware of it.
+    if (failed) {
+      // Name the ones that failed. "3 failed" on a 33-node change leaves the
+      // operator to find them by hand, which is how a fleet ends up in a state
+      // nobody can describe.
+      toast.error(
+        t("networking.sshGuard.scope.bulkPartial", {
+          done: nodeIds.length - failed,
+          failed,
+          nodes: failures.slice(0, 3).join(", "),
+        }),
+      );
+      // Keep the failures selected so the retry is one click, and drop the rest.
+      selectedNodes.value = new Set(failures);
+    } else {
+      toast.success(t("networking.sshGuard.scope.bulkDone", { count: nodeIds.length }));
+      clearSelection();
+    }
+    capabilitiesQuery.refresh();
+  } finally {
+    bulkRunning.value = false;
+    bulkProgress.done = 0;
+    bulkProgress.total = 0;
+  }
+}
+
+async function confirmBulkExclude() {
+  const reason = bulkExcludeReason.value.trim();
+  if (!reason) return;
+  bulkExcludeOpen.value = false;
+  await applyScope(selectedVisible.value.map((s) => s.nodeId), "excluded", reason);
+  bulkExcludeReason.value = "";
+}
+
+const scopeTone: Record<Scope, "success" | "destructive" | "outline"> = {
+  enrolled: "success",
+  excluded: "destructive",
+  undecided: "outline",
+};
 
 const states = computed<NodeGuardState[]>(() =>
   buildFleetStates(approvals.value, nodesQuery.data.value ?? []),
@@ -490,6 +664,29 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
               <span v-if="coverage.inFlight">{{ $t('networking.sshGuard.fleet.inFlight', { n: coverage.inFlight }) }}</span>
               <span v-if="coverage.open">{{ $t('networking.sshGuard.fleet.open', { n: coverage.open }) }}</span>
             </div>
+
+            <!-- Scope, as a filter rather than a caption. The page used to
+                 print progress numbers you could not act on; these answer the
+                 prior question - how much of this fleet have I decided about -
+                 and clicking one narrows the list to it. -->
+            <div v-if="states.length" class="flex flex-wrap gap-1 pt-2" role="group" :aria-label="$t('networking.sshGuard.scope.filterLabel')">
+              <button
+                v-for="key in (['all', 'enrolled', 'undecided', 'excluded'] as const)"
+                :key="key"
+                type="button"
+                :aria-pressed="scopeFilter === key"
+                :class="cn(
+                  'inline-flex items-center gap-1.5 rounded-sm border px-2 py-1 text-xs font-medium transition-colors',
+                  scopeFilter === key
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:bg-muted/40',
+                )"
+                @click="scopeFilter = key"
+              >
+                {{ $t(`networking.sshGuard.scope.filter.${key}`) }}
+                <span class="tabular">{{ scopeCounts[key] }}</span>
+              </button>
+            </div>
           </CardHeader>
           <CardContent>
             <DataState
@@ -501,26 +698,92 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
               :skeleton-rows="3"
               @retry="approvalsQuery.refresh"
             >
-              <ul class="space-y-2">
+              <!-- Bulk bar. Present only while something is selected, and it
+                   names what the action would do rather than how many rows are
+                   ticked, so the sentence and the effect cannot disagree. -->
+              <div
+                v-if="selectedVisible.length"
+                class="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm"
+              >
+                <span class="font-medium tabular">
+                  {{ $t('networking.sshGuard.scope.selected', { count: selectedVisible.length }) }}
+                </span>
+                <span v-if="bulkRunning" class="text-xs tabular text-muted-foreground">
+                  {{ $t('networking.sshGuard.scope.bulkProgress', { done: bulkProgress.done, total: bulkProgress.total }) }}
+                </span>
+                <div class="ms-auto flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="outline" :disabled="!canAdmin || bulkRunning"
+                    @click="applyScope(selectedVisible.map((s) => s.nodeId), 'enrolled')">
+                    {{ $t('networking.sshGuard.scope.bulkEnrol') }}
+                  </Button>
+                  <Button size="sm" variant="outline" :disabled="!canAdmin || bulkRunning"
+                    @click="bulkExcludeOpen = true">
+                    {{ $t('networking.sshGuard.scope.bulkExclude') }}
+                  </Button>
+                  <Button size="sm" variant="ghost" :disabled="bulkRunning" @click="clearSelection">
+                    {{ $t('networking.sshGuard.scope.clearSelection') }}
+                  </Button>
+                </div>
+              </div>
+
+              <label
+                v-if="visibleStates.length"
+                class="mb-2 flex items-center gap-2 text-xs text-muted-foreground"
+              >
+                <Checkbox
+                  :model-value="allVisibleSelected"
+                  :aria-label="$t('networking.sshGuard.scope.selectAll')"
+                  @update:model-value="(v) => toggleSelectAllVisible(v === true)"
+                />
+                <span>{{ $t('networking.sshGuard.scope.selectAll') }}</span>
+              </label>
+
+              <ul class="space-y-1">
                 <!-- One line per node. Node ids run long and the stage labels
                      are sentences, so letting the row wrap gave a list where
                      some rows were one line and some were two, which is hard to
                      scan. The id truncates and the stage keeps its width. -->
                 <li
-                  v-for="state in states"
+                  v-for="state in visibleStates"
                   :key="state.nodeId"
-                  class="flex items-center justify-between gap-3 rounded-md border px-3 py-2 transition-colors"
-                  :class="state.nodeId === form.nodeId ? 'border-primary bg-primary/5' : 'border-border'"
+                  :tabindex="0"
+                  :aria-selected="selectedNodes.has(state.nodeId)"
+                  class="group/row flex items-center gap-2 rounded-md border px-2 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  @keydown.space.prevent="toggleRow(state.nodeId, $event as unknown as MouseEvent)"
+                  @keydown.enter.prevent="form.nodeId = state.nodeId"
+                  :class="state.nodeId === form.nodeId
+                    ? 'border-primary bg-primary/5'
+                    : selectedNodes.has(state.nodeId)
+                      ? 'border-primary/40 bg-primary/5'
+                      : 'border-border hover:bg-muted/40'"
                 >
+                  <span class="shrink-0" @click.stop>
+                    <Checkbox
+                      :model-value="selectedNodes.has(state.nodeId)"
+                      :aria-label="$t('networking.sshGuard.scope.selectRow', { node: state.name || state.nodeId })"
+                      @click="(e: MouseEvent) => toggleRow(state.nodeId, e)"
+                      @update:model-value="() => {}"
+                    />
+                  </span>
                   <button
                     type="button"
                     :title="state.name ? `${state.name} (${state.nodeId})` : state.nodeId"
-                    class="min-w-0 flex-1 truncate text-left hover:underline"
+                    class="min-w-0 flex-1 truncate text-left"
                     @click="form.nodeId = state.nodeId"
                   >
-                    <span class="font-mono text-sm">{{ state.nodeId }}</span>
-                    <span v-if="state.name" class="ml-2 text-xs text-muted-foreground">{{ state.name }}</span>
+                    <span class="text-sm font-medium">{{ state.name || state.nodeId }}</span>
+                    <span v-if="state.name" class="ml-2 font-mono text-xs text-muted-foreground">{{ state.nodeId }}</span>
                   </button>
+                  <!-- The scope chip is dropped while a scope filter is active:
+                       every row already carries that value, and repeating what
+                       you just asked for is noise. -->
+                  <Badge
+                    v-if="scopeFilter === 'all'"
+                    class="shrink-0"
+                    :variant="scopeTone[scopeOf(state.nodeId)]"
+                  >
+                    {{ $t(`networking.sshGuard.scope.state.${scopeOf(state.nodeId)}`) }}
+                  </Badge>
                   <Badge class="shrink-0" :variant="stageTone[state.stage] ?? 'secondary'">
                     {{ $t(`networking.sshGuard.stage.${state.stage}`) }}
                   </Badge>
@@ -531,5 +794,42 @@ const stageTone: Record<string, "default" | "secondary" | "warning" | "destructi
         </Card>
       </div>
     </div>
+
+    <!-- Bulk exclude. One reason for the whole selection, because that is how
+         these decisions are actually made: "the NAT boxes, because no exposed
+         port". Asking per node would either get the same sentence typed ten
+         times or get it abandoned. -->
+    <Dialog v-model:open="bulkExcludeOpen">
+      <DialogScrollContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>
+            {{ $t('networking.sshGuard.scope.bulkExcludeTitle', { count: selectedVisible.length }) }}
+          </DialogTitle>
+          <DialogDescription>{{ $t('networking.sshGuard.scope.bulkExcludeDescription') }}</DialogDescription>
+        </DialogHeader>
+        <div class="grid gap-1.5">
+          <Label for="bulk-exclude-reason">{{ $t('networking.sshGuard.scope.reason') }}</Label>
+          <Input
+            id="bulk-exclude-reason"
+            v-model="bulkExcludeReason"
+            :placeholder="$t('networking.sshGuard.scope.reasonPlaceholder')"
+            @keydown.enter.prevent="confirmBulkExclude"
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" @click="bulkExcludeOpen = false">
+            {{ $t('common.actions.cancel') }}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            :disabled="!bulkExcludeReason.trim() || bulkRunning"
+            @click="confirmBulkExclude"
+          >
+            {{ $t('networking.sshGuard.scope.bulkExclude') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
   </div>
 </template>

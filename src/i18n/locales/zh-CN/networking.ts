@@ -3,6 +3,24 @@
 export default {
   networking: {
     sshGuard: {
+      scope: {
+        filterLabel: "按 SSH Guard 准入状态筛选",
+        filter: { all: "全部", enrolled: "在范围内", undecided: "未决定", excluded: "已排除" },
+        state: { enrolled: "在范围内", undecided: "未决定", excluded: "已排除" },
+        selectAll: "选中当前列出的全部节点",
+        selectRow: "选中 {node}",
+        selected: "已选 {count} 台",
+        clearSelection: "清除",
+        bulkEnrol: "纳入范围",
+        bulkExclude: "排除",
+        bulkExcludeTitle: "把 {count} 台机器排除在 SSH Guard 之外",
+        bulkExcludeDescription: "在有人重新纳入之前,它们都不在范围内。一条原因覆盖整批,这也是这类决定实际的做法。",
+        reason: "原因",
+        reasonPlaceholder: "无暴露端口,等端口转发配置完成",
+        bulkDone: "已更新 {count} 台的准入状态",
+        bulkPartial: "成功 {done} 台,失败 {failed} 台({nodes})。失败的仍处于选中状态。",
+        bulkProgress: "{done} / {total}",
+      },
       enrolment: {
         notEnrolled: "这台机器不在 SSH Guard 的范围内",
         notEnrolledHint: "加固会改变谁能通过 SSH 连上这台机器,所以按节点显式准入。这台还没有人做过决定。",

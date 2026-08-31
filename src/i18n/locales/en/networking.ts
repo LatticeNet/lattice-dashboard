@@ -4,6 +4,25 @@
 export default {
   networking: {
     sshGuard: {
+      scope: {
+        filterLabel: "Filter the fleet by SSH Guard scope",
+        filter: { all: "All", enrolled: "In scope", undecided: "Not decided", excluded: "Excluded" },
+        state: { enrolled: "In scope", undecided: "Not decided", excluded: "Excluded" },
+        selectAll: "Select every node shown",
+        selectRow: "Select {node}",
+        selected: "{count} selected",
+        clearSelection: "Clear",
+        bulkEnrol: "Bring into scope",
+        bulkExclude: "Exclude",
+        bulkExcludeTitle: "Exclude {count} nodes from SSH Guard",
+        bulkExcludeDescription:
+          "They stay out of scope until someone brings them back in. One reason covers the selection, which is how these decisions are usually made.",
+        reason: "Reason",
+        reasonPlaceholder: "No exposed port until port forwarding is configured",
+        bulkDone: "Scope updated for {count} nodes",
+        bulkPartial: "{done} updated, {failed} failed ({nodes}). The failures are still selected.",
+        bulkProgress: "{done} of {total}",
+      },
       enrolment: {
         notEnrolled: "This node is not in scope for SSH Guard",
         notEnrolledHint:
