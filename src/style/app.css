@@ -507,6 +507,17 @@
   }
 }
 
+/* The narrower of the two measures, for a page made of forms and settings.
+   A settings page is read one control at a time, so the space a dense grid
+   earns is a liability here: it puts a field's label and its input at opposite
+   ends of the screen. Applied at the view root, because which measure a page
+   wants is a property of its content and not of its route. */
+@utility page-narrow {
+  margin-inline: auto;
+  width: 100%;
+  max-width: var(--content-narrow);
+}
+
 /* A cell that holds a control rather than text.
    data-grid truncates every cell by design, because a wrapping cell breaks the
    row rhythm for every column beside it. That rule is right for text and wrong

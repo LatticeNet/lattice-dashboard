@@ -285,7 +285,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="page-narrow p-6 space-y-6">
     <PageHeader
       :title="$t('settings.sso.title')"
       :description="$t('settings.sso.description')"

@@ -132,7 +132,7 @@ function onSegmentKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="p-6 space-y-6" :style="swatchVars">
+  <div class="page-narrow p-6 space-y-6" :style="swatchVars">
     <PageHeader
       :title="$t('appearance.title')"
       :description="$t('appearance.description')"

@@ -49,7 +49,7 @@ function displayDate(value?: string): string {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="page-narrow p-6 space-y-6">
     <PageHeader
       :title="$t('settings.about.title')"
       :description="$t('settings.about.description')"

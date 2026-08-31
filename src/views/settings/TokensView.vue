@@ -311,7 +311,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="page-narrow p-6 space-y-6">
     <PageHeader
       :title="$t('settings.tokens.title')"
       :description="$t('settings.tokens.description')"
