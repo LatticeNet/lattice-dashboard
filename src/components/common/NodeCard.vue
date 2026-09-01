@@ -110,6 +110,8 @@ const props = withDefaults(
     onlineLabel?: string;
     offlineLabel?: string;
     neverLabel?: string;
+    degradedLabel?: string;
+    unknownLabel?: string;
     disabledLabel?: string;
     /** Accessible label for the sparkline. */
     sparklineLabel?: string;
@@ -132,6 +134,8 @@ const props = withDefaults(
     onlineLabel: "Online",
     offlineLabel: "Offline",
     neverLabel: "Never reported",
+    degradedLabel: "Degraded",
+    unknownLabel: "Unknown",
     disabledLabel: "Disabled",
     sparklineLabel: "Recent trend",
     class: undefined,
@@ -176,6 +180,11 @@ const statusBadge = computed(() => {
   const labels: Partial<Record<string, string>> = {
     online: props.onlineLabel,
     never: props.neverLabel,
+    // Naming only two states made a degraded node wear the warning colour
+    // with the text "Offline": one page said offline, another said degraded,
+    // about the same machine at the same moment.
+    degraded: props.degradedLabel,
+    unknown: props.unknownLabel,
   };
   return {
     variant: meta.value.badgeVariant,

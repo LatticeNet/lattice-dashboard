@@ -161,6 +161,8 @@ function statusLabel(node: Node): string {
     // not break, and the two want different work from the operator.
     case "never":
       return t("common.status.neverReported");
+    case "unknown":
+      return t("common.status.unknown");
     default:
       return t("common.status.offline");
   }
@@ -371,8 +373,9 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
 
         <!-- Role -->
         <div v-if="show('role')" class="min-w-0">
+          <!-- An unset role renders as nothing, matching every other role
+               surface; a column of "none" was noise wearing a label. -->
           <Badge v-if="node.role" variant="secondary" class="max-w-full truncate">{{ node.role }}</Badge>
-          <span v-else class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
         </div>
 
         <!-- Tags. Capped at two on one line with a count for the rest, and the

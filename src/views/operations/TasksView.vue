@@ -22,6 +22,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-vue-next";
+import CopyButton from "@/components/common/CopyButton.vue";
 import { api, unwrap, type CapabilityImpact, type Node, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
@@ -69,8 +70,8 @@ import {
 } from "@/components/ui/select";
 
 type StatusFilter = "all" | TaskView["status"];
-type BadgeVariant = "default" | "secondary" | "destructive" | "outline";
-type NodeRunStatus = "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired";
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "warning";
+type NodeRunStatus = "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled";
 
 interface Attempt {
   task: TaskView;
@@ -198,7 +199,7 @@ watch(detailChainIds, (ids, old) => {
 const statusFilter = ref<StatusFilter>("all");
 {
   const seeded = route.query.status;
-  if (seeded === "queued" || seeded === "leased" || seeded === "finished" || seeded === "failed" || seeded === "cancelled" || seeded === "expired") {
+  if (seeded === "queued" || seeded === "leased" || seeded === "finished" || seeded === "failed" || seeded === "cancelled" || seeded === "expired" || seeded === "stalled") {
     statusFilter.value = seeded;
   }
 }
@@ -584,9 +585,11 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
         ? "failed"
         : latestTask?.status === "cancelled"
           ? "cancelled"
-          : latestTask?.status === "leased"
-            ? "leased"
-            : "queued";
+          : latestTask?.status === "stalled"
+            ? "stalled"
+            : latestTask?.status === "leased"
+              ? "leased"
+              : "queued";
     return {
       nodeId,
       node: nodesById.value[nodeId],
@@ -755,6 +758,10 @@ function groupStatus(root: TaskView, rows: NodeExecutionRow[]): TaskView["status
   // the deadline. Re-deriving "queued" from the rows here would contradict it.
   if (root.status === "expired") return "expired";
   if (rows.some((row) => row.status === "leased")) return "leased";
+  // Stalled is the server saying "nothing is running and nothing answered";
+  // a row that is genuinely leased outranks it above, exactly as the server
+  // only derives stalled when no live lease exists.
+  if (rows.some((row) => row.status === "stalled")) return "stalled";
   if (rows.some((row) => row.status === "queued")) return root.status === "cancelled" ? "cancelled" : "queued";
   if (rows.some((row) => row.status === "failed")) return "failed";
   if (rows.length > 0 && rows.every((row) => row.status === "cancelled")) return "cancelled";
@@ -771,6 +778,9 @@ function statusLabel(status: NodeRunStatus | TaskView["status"]): string {
 
 function statusVariant(status: NodeRunStatus | TaskView["status"]): BadgeVariant {
   if (status === "failed") return "destructive";
+  // Stalled is the state that wants an operator: nothing is running, nothing
+  // answered, and the result will not arrive on its own.
+  if (status === "stalled") return "warning";
   // Expired is not a failure and must not read like one: nothing went wrong,
   // the control plane stopped waiting. Secondary, the same weight as cancelled.
   if (status === "expired") return "secondary";
@@ -811,6 +821,7 @@ function toggleNodeExpanded(taskId: string, nodeId: string) {
 function resultlessText(row: NodeExecutionRow): string {
   if (row.status === "queued") return t("operations.tasks.waitingLease");
   if (row.status === "leased") return t("operations.tasks.running");
+  if (row.status === "stalled") return t("operations.tasks.stalledNoLease");
   if (row.status === "cancelled") return t("operations.tasks.cancelledNoResult");
   return t("operations.tasks.failedNoResult");
 }
@@ -826,7 +837,7 @@ function taskLatestSummary(task: TaskView): string {
   const rows = nodeRows(task);
   const failed = rows.find((row) => row.failed);
   if (failed) return `${nodeName(failed.nodeId)} · ${rowLatestText(failed)}`;
-  const active = rows.find((row) => row.status === "leased" || row.status === "queued");
+  const active = rows.find((row) => row.status === "leased" || row.status === "stalled" || row.status === "queued");
   if (active) return `${nodeName(active.nodeId)} · ${rowLatestText(active)}`;
   const latest = [...rows]
     .filter((row) => row.latestResult)
@@ -1292,6 +1303,7 @@ const taskMetrics = computed<Metric[]>(() => [
                 <SelectItem value="all">{{ $t('operations.tasks.allStatuses') }}</SelectItem>
                 <SelectItem value="queued">{{ $t('operations.tasks.status.queued') }}</SelectItem>
                 <SelectItem value="leased">{{ $t('operations.tasks.status.leased') }}</SelectItem>
+                <SelectItem value="stalled">{{ $t('operations.tasks.status.stalled') }}</SelectItem>
                 <SelectItem value="finished">{{ $t('operations.tasks.status.finished') }}</SelectItem>
                 <SelectItem value="failed">{{ $t('operations.tasks.status.failed') }}</SelectItem>
                 <SelectItem value="cancelled">{{ $t('operations.tasks.status.cancelled') }}</SelectItem>
@@ -1435,7 +1447,7 @@ const taskMetrics = computed<Metric[]>(() => [
                       <RotateCcw class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.rerun') }}
                     </Button>
-                    <Button v-if="detailTask.status === 'queued'" variant="outline" size="sm" :disabled="actionPending === `task:${detailTask.id}`" @click="cancelTask(detailTask)">
+                    <Button v-if="detailTask.status === 'queued' || detailTask.status === 'leased' || detailTask.status === 'stalled'" variant="outline" size="sm" :disabled="actionPending === `task:${detailTask.id}`" @click="cancelTask(detailTask)">
                       <Ban class="size-4" aria-hidden="true" />
                       {{ $t('operations.tasks.actions.cancel') }}
                     </Button>
@@ -1480,7 +1492,8 @@ const taskMetrics = computed<Metric[]>(() => [
                       <Lock class="size-3.5" aria-hidden="true" />
                       {{ $t('operations.tasks.scriptRevealed') }}
                     </span>
-                    <span class="font-mono">{{ detailTask.script_sha256 }}</span>
+                    <span class="font-mono" :title="detailTask.script_sha256">{{ shortId(detailTask.script_sha256 ?? "", 16) }}</span>
+                    <CopyButton :value="detailTask.script_sha256 ?? ''" />
                   </div>
                   <pre class="max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[detailTask.id] }}</pre>
                 </div>

@@ -494,6 +494,8 @@ function refreshAll() {
                   :online-label="t('common.status.online')"
                   :never-label="t('common.status.neverReported')"
                   :offline-label="t('common.status.offline')"
+                  :degraded-label="t('common.status.degraded')"
+                  :unknown-label="t('common.status.unknown')"
                   :disabled-label="t('common.status.disabled')"
                   :sparkline-label="t('overview.sparklineLabel')"
                 />

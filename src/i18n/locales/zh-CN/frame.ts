@@ -88,6 +88,7 @@ export default {
       revoked: "已吊销",
       enabled: "已启用",
       degraded: "资源吃紧",
+      unknown: "未知",
       pending: "待审批",
       approved: "已批准",
       applied: "已应用",
