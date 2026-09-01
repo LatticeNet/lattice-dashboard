@@ -109,10 +109,10 @@ const hasAccess = computed(() => auth.canAll(requiredScopes.value));
 const hasSource = computed(() => !!view.value?.source?.interface && !!view.value?.source?.method);
 
 const sourceQuery = useAsyncData(
-  async () => {
+  async (signal) => {
     const v = view.value;
     if (!v?.source?.interface || !v.source.method) return undefined;
-    return api.plugins.call<unknown>(pluginId.value, v.source.interface, v.source.method);
+    return api.plugins.call<unknown>(pluginId.value, v.source.interface, v.source.method, undefined, signal);
   },
   { immediate: false },
 );

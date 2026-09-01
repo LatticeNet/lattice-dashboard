@@ -53,7 +53,7 @@ const grantableScopes = computed(() =>
   isSuperuser.value ? [...SCOPE_CATALOG] : SCOPE_CATALOG.filter((scope) => auth.canGrant(scope)),
 );
 
-const usersQuery = useAsyncData(() => api.users.list().then((r) => unwrap(r, "users")), {
+const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")), {
   pollInterval: 15000,
 });
 const users = computed(() => usersQuery.data.value ?? []);

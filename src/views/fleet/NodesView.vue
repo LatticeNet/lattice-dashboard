@@ -104,10 +104,10 @@ const auth = useAuthStore();
 const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
 });
-const agentUpdatesQuery = useAsyncData(() => api.agentUpdates.list().then((r) => unwrap(r, "policies")), {
+const agentUpdatesQuery = useAsyncData((signal) => api.agentUpdates.list({ signal }).then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
 });
 // Client-side ring buffer: record each poll so NodeCard sparklines have history.
@@ -254,7 +254,7 @@ const optionalColumns = computed(() =>
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
-const duplicatesQuery = useAsyncData(() => api.nodes.duplicates().then((r) => r.groups), {
+const duplicatesQuery = useAsyncData((signal) => api.nodes.duplicates({ signal }).then((r) => r.groups), {
   pollInterval: 30000,
 });
 const duplicateGroups = computed(() => duplicatesQuery.data.value ?? []);
@@ -619,7 +619,7 @@ const collapsed = ref<Set<string>>(new Set());
 // "Group" grouping mode. Fetched EAGERLY so chips render on first paint (it used
 // to be lazy, only on groupBy==='group'); degrades to no chips / a single
 // Ungrouped bucket if the request fails (e.g. the token lacks group:read).
-const fleetGroupsQuery = useAsyncData(() => api.groups.list().then((r) => r.groups), {
+const fleetGroupsQuery = useAsyncData((signal) => api.groups.list({ signal }).then((r) => r.groups), {
   immediate: true,
 });
 

@@ -104,24 +104,24 @@ const canAdmin = computed(() => auth.can("netpolicy:admin"));
 const POLICY_TABS = ["matrix", "policies", "graph"] as const;
 const tab = useRouteTab<(typeof POLICY_TABS)[number]>(() => POLICY_TABS, () => "matrix");
 
-const policiesQuery = useAsyncData(() => api.netpolicy.list().then((r) => unwrap(r, "policies")), {
+const policiesQuery = useAsyncData((signal) => api.netpolicy.list({ signal }).then((r) => unwrap(r, "policies")), {
   pollInterval: 15000,
 });
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 0,
 });
-const graphQuery = useAsyncData(() => api.netpolicy.graph(), { immediate: false });
+const graphQuery = useAsyncData((signal) => api.netpolicy.graph({ signal }), { immediate: false });
 
 const policies = computed(() => policiesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
 // ── Reachability matrix (default tab) ─────────────────────────────────────
 const matrixDirection = ref<NetRuleDirection>("egress");
-const matrixQuery = useAsyncData(() => api.netpolicy.matrix(matrixDirection.value), {
+const matrixQuery = useAsyncData((signal) => api.netpolicy.matrix(matrixDirection.value, { signal }), {
   pollInterval: 0,
 });
 const groupPoliciesQuery = useAsyncData(
-  () => api.groupPolicy.list().then((r) => unwrap(r, "policies")),
+  (signal) => api.groupPolicy.list({ signal }).then((r) => unwrap(r, "policies")),
   { pollInterval: 0 },
 );
 const matrix = computed<NetPolicyMatrix | undefined>(() => matrixQuery.data.value);
@@ -586,7 +586,7 @@ function isLeaderRole(role?: string): boolean {
 // Real, operator-assigned group leaders: a node is a leader when it is the
 // leader_id of any group. Fetched alongside the graph; degrades to the role
 // heuristic if unavailable (e.g. the token lacks group:read).
-const fleetGroupsQuery = useAsyncData(() => api.groups.list().then((r) => r.groups), {
+const fleetGroupsQuery = useAsyncData((signal) => api.groups.list({ signal }).then((r) => r.groups), {
   pollInterval: 0,
 });
 const fleetGroups = computed<GroupView[]>(() => fleetGroupsQuery.data.value ?? []);

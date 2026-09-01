@@ -131,10 +131,10 @@ const canPlanUpdates = computed(() => auth.can("node:admin") && auth.can("networ
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
 
 /** Treat 403 as "section not visible" rather than a hard error (per OverviewView). */
-function soften<T>(fetcher: () => Promise<T>) {
-  return async (): Promise<T | undefined> => {
+function soften<T>(fetcher: (signal: AbortSignal) => Promise<T>) {
+  return async (signal: AbortSignal): Promise<T | undefined> => {
     try {
-      return await fetcher();
+      return await fetcher(signal);
     } catch (e) {
       if (e instanceof ApiError && e.isForbidden) return undefined;
       throw e;
@@ -146,15 +146,15 @@ function soften<T>(fetcher: () => Promise<T>) {
 /* Data sources: node list is the spine; the rest are softened side   */
 /* panels keyed off this node's id.                                    */
 /* ----------------------------------------------------------------- */
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
 });
 
 const groupsQuery = useAsyncData<GroupView[] | undefined>(
-  soften(() => api.groups.list().then((r) => r.groups)),
+  soften((signal) => api.groups.list({ signal }).then((r) => r.groups)),
 );
 
-const ddnsQuery = useAsyncData<DDNSView[] | undefined>(soften(() => api.ddns.list()));
+const ddnsQuery = useAsyncData<DDNSView[] | undefined>(soften((signal) => api.ddns.list({ signal })));
 
 /**
  * Capability enrolment: which capabilities are allowed to act on this node.
@@ -172,7 +172,7 @@ const ddnsQuery = useAsyncData<DDNSView[] | undefined>(soften(() => api.ddns.lis
  * records would show that as "not decided", which reads as blocked.
  */
 const capabilitiesQuery = useAsyncData<NodeCapabilityEffective[] | undefined>(
-  soften(() => api.nodes.nodeCapabilities(nodeId.value).then((r) => r.effective ?? [])),
+  soften((signal) => api.nodes.nodeCapabilities(nodeId.value, { signal }).then((r) => r.effective ?? [])),
 );
 
 const nodeCapabilities = computed(() => capabilitiesQuery.data.value ?? []);
@@ -285,11 +285,11 @@ async function confirmExclude() {
 }
 
 const agentUpdatesQuery = useAsyncData<AgentUpdatePolicy[] | undefined>(
-  soften(() => api.agentUpdates.list().then((r) => unwrap(r, "policies"))),
+  soften((signal) => api.agentUpdates.list({ signal }).then((r) => unwrap(r, "policies"))),
 );
 
 const auditQuery = useAsyncData<AuditEvent[] | undefined>(
-  soften(() => api.audit.query({ node_id: nodeId.value, limit: 40 }).then((r) => r.events ?? [])),
+  soften((signal) => api.audit.query({ node_id: nodeId.value, limit: 40 }, { signal }).then((r) => r.events ?? [])),
   { pollInterval: 15000 },
 );
 
@@ -300,15 +300,15 @@ const auditQuery = useAsyncData<AuditEvent[] | undefined>(
 // run and it grows without bound: measured at 3.2s on this fleet, on a page that
 // polls it every twenty seconds and then throws away all but one node's rows.
 const nodeTasksQuery = useAsyncData<TaskView[] | undefined>(
-  soften(() => api.tasks.listForNode(nodeId.value, 100).then((r) => unwrap(r, "tasks"))),
+  soften((signal) => api.tasks.listForNode(nodeId.value, 100, { signal }).then((r) => unwrap(r, "tasks"))),
   { pollInterval: 20000 },
 );
 const nodeResultsQuery = useAsyncData<TaskResult[] | undefined>(
-  soften(() => api.tasks.results({ node_id: nodeId.value, limit: 40 }).then((r) => unwrap(r, "results"))),
+  soften((signal) => api.tasks.results({ node_id: nodeId.value, limit: 40 }, { signal }).then((r) => unwrap(r, "results"))),
   { pollInterval: 20000 },
 );
 const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
-  soften(() => api.approvals.list().then((r) => unwrap(r, "approvals"))),
+  soften((signal) => api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals"))),
   { pollInterval: 20000 },
 );
 

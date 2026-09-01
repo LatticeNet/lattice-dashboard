@@ -64,7 +64,7 @@ const MAP_HEIGHT = 500;
 
 const auth = useAuthStore();
 const { t } = useI18n();
-const geoQuery = useAsyncData(() => api.nodes.geo().then((r) => unwrap(r, "nodes")), {
+const geoQuery = useAsyncData((signal) => api.nodes.geo({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 10000,
 });
 

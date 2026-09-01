@@ -59,8 +59,8 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("tunnel:admin"));
 
 // BARE ARRAY endpoint: do NOT unwrap.
-const tunnelsQuery = useAsyncData(() => api.tunnels.list(), { pollInterval: 15000 });
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const tunnelsQuery = useAsyncData((signal) => api.tunnels.list({ signal }), { pollInterval: 15000 });
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
 

@@ -53,17 +53,17 @@ import { Badge } from "@/components/ui/badge";
 // disappearing. Softening 403 to undefined here used to make forbidden and
 // absent indistinguishable on the operator's most-viewed screen.
 const fleet = useAsyncData<Node[] | undefined>(
-  () => api.nodes.list().then((r) => unwrap(r, "nodes")),
+  (signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")),
   { pollInterval: 5000 },
 );
 
 const approvals = useAsyncData<ApprovalView[] | undefined>(
-  () => api.approvals.list().then((r) => unwrap(r, "approvals")),
+  (signal) => api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals")),
   { pollInterval: 10000 },
 );
 
 const tasks = useAsyncData<TaskView[] | undefined>(
-  () => api.tasks.list().then((r) => unwrap(r, "tasks")),
+  (signal) => api.tasks.list({ signal }).then((r) => unwrap(r, "tasks")),
   { pollInterval: 10000 },
 );
 
@@ -71,7 +71,7 @@ const AUDIT_PREVIEW = 6;
 const APPROVALS_PREVIEW = 5;
 
 const audit = useAsyncData<AuditEvent[] | undefined>(
-  () => api.audit.query({ limit: AUDIT_PREVIEW }).then((r) => r.events ?? []),
+  (signal) => api.audit.query({ limit: AUDIT_PREVIEW }, { signal }).then((r) => r.events ?? []),
   { pollInterval: 15000 },
 );
 

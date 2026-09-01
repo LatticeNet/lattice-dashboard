@@ -59,7 +59,7 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("token:admin"));
 
 // BARE ARRAY endpoint: do NOT unwrap.
-const tokensQuery = useAsyncData(() => api.tokens.list(), { pollInterval: 15000 });
+const tokensQuery = useAsyncData((signal) => api.tokens.list({ signal }), { pollInterval: 15000 });
 const tokens = computed(() => tokensQuery.data.value ?? []);
 
 // A token is revoked only if revoked_at is a REAL timestamp. Go's `omitempty`

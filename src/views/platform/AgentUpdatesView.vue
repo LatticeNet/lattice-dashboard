@@ -83,15 +83,15 @@ const canAdmin = computed(() => auth.can("node:admin"));
 const canPlan = computed(() => auth.can("node:admin") && auth.can("network:plan"));
 
 const policiesQuery = useAsyncData(
-  () => api.agentUpdates.list().then((r) => unwrap(r, "policies")),
+  (signal) => api.agentUpdates.list({ signal }).then((r) => unwrap(r, "policies")),
   { pollInterval: 15000 },
 );
-const releaseQuery = useAsyncData<AgentReleaseInfo>(() => api.agentUpdates.releases());
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const releaseQuery = useAsyncData<AgentReleaseInfo>((signal) => api.agentUpdates.releases({ signal }));
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
 const approvalsQuery = useAsyncData(
-  () => (canPlan.value ? api.approvals.list().then((r) => unwrap(r, "approvals")) : Promise.resolve([] as ApprovalView[])),
+  (signal) => (canPlan.value ? api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals")) : Promise.resolve([] as ApprovalView[])),
   { pollInterval: 15000 },
 );
 
@@ -123,7 +123,7 @@ const sortedPolicies = computed(() =>
 // what stranded slow and badly-resolving nodes before.
 const AGENT_ARCHES = ["amd64", "arm64"] as const;
 
-const artifactsQuery = useAsyncData<AgentArtifactListing>(() => api.agentUpdates.artifacts(), {
+const artifactsQuery = useAsyncData<AgentArtifactListing>((signal) => api.agentUpdates.artifacts({ signal }), {
   pollInterval: 30000,
 });
 const artifacts = computed(() => artifactsQuery.data.value?.artifacts ?? []);

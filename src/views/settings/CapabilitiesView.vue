@@ -36,7 +36,7 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("node:admin"));
 
 const query = useAsyncData<CapabilityImpact[] | undefined>(
-  () => api.capabilities.list().then((r) => r.capabilities ?? []),
+  (signal) => api.capabilities.list({ signal }).then((r) => r.capabilities ?? []),
   { pollInterval: 30000 },
 );
 

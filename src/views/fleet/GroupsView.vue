@@ -63,8 +63,8 @@ const canAdmin = computed(() => auth.can("group:admin"));
 const ROOT_VALUE = "__root__";
 const LEADER_NONE = "__none__";
 
-const groupsQuery = useAsyncData(() => api.groups.list(), { pollInterval: 0 });
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const groupsQuery = useAsyncData((signal) => api.groups.list({ signal }), { pollInterval: 0 });
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 0,
 });
 

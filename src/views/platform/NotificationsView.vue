@@ -127,9 +127,9 @@ const auth = useAuthStore();
 const canSend = computed(() => auth.can("notify:send"));
 
 // BARE ARRAY endpoint: do NOT unwrap.
-const channelsQuery = useAsyncData(() => api.notify.channels(), { pollInterval: 12000 });
+const channelsQuery = useAsyncData((signal) => api.notify.channels({ signal }), { pollInterval: 12000 });
 const channels = computed(() => channelsQuery.data.value ?? []);
-const rulesQuery = useAsyncData(() => api.notify.rules(), { pollInterval: 12000 });
+const rulesQuery = useAsyncData((signal) => api.notify.rules({ signal }), { pollInterval: 12000 });
 const rules = computed(() => rulesQuery.data.value?.rules ?? []);
 
 const sortedChannels = computed(() =>

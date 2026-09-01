@@ -117,25 +117,25 @@ const FX_RATES_KEY = "lattice:inventory:fx-rates";
 const warningPanelClass =
   "rounded-md border border-amber-400/60 bg-amber-500/15 p-3 text-xs text-foreground shadow-sm dark:border-amber-300/40 dark:bg-amber-400/15";
 
-const machinesQuery = useAsyncData(() => api.machines.list().then((r) => unwrap(r, "machines")), {
+const machinesQuery = useAsyncData((signal) => api.machines.list({ signal }).then((r) => unwrap(r, "machines")), {
   pollInterval: 12000,
 });
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
 const vendorsQuery = useAsyncData(
-  () => api.machineVendors.list().then((r) => (Array.isArray(r) ? r : (r.vendors ?? []))),
+  (signal) => api.machineVendors.list({ signal }).then((r) => (Array.isArray(r) ? r : (r.vendors ?? []))),
   { pollInterval: 60000 },
 );
 const canManageNotifications = computed(() => auth.can("notify:send"));
 const notifyChannelsQuery = useAsyncData(
-  () => (canManageNotifications.value ? api.notify.channels() : Promise.resolve([] as NotifyChannelView[])),
+  (signal) => (canManageNotifications.value ? api.notify.channels({ signal }) : Promise.resolve([] as NotifyChannelView[])),
   { pollInterval: 30000 },
 );
 const notifyRulesQuery = useAsyncData(
-  () =>
+  (signal) =>
     canManageNotifications.value
-      ? api.notify.rules().then((r) => unwrap(r, "rules"))
+      ? api.notify.rules({ signal }).then((r) => unwrap(r, "rules"))
       : Promise.resolve([] as NotifyRuleView[]),
   { pollInterval: 30000 },
 );

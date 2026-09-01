@@ -41,7 +41,7 @@ const bucket = ref("default");
 const activeBucket = ref("default");
 
 const entriesQuery = useAsyncData(
-  () => api.kv.list(activeBucket.value || "default"),
+  (signal) => api.kv.list(activeBucket.value || "default", { signal }),
   { pollInterval: 0, immediate: canRead.value },
 );
 const entries = computed(() => entriesQuery.data.value ?? []);

@@ -100,7 +100,7 @@ const router = useRouter();
 const canAdmin = computed(() => auth.can("proxy:admin"));
 
 const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
-  () => api.subscriptionShares.list(),
+  (signal) => api.subscriptionShares.list({ signal }),
   { pollInterval: 20000 },
 );
 const shares = computed(() => sharesQuery.data.value ?? []);
@@ -115,7 +115,7 @@ const selected = computed(() => shares.value.find((share) => share.id === select
  * URL. The share still owns its token, its default format and its per-client
  * links, because those belong to the origin rather than to the route.
  */
-const routesQuery = useAsyncData(() => api.publishing.records(), { pollInterval: 20000 });
+const routesQuery = useAsyncData((signal) => api.publishing.records({ signal }), { pollInterval: 20000 });
 const selectedRoutes = computed(() =>
   selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
 );
@@ -179,7 +179,7 @@ interface PluginRecord {
   kind?: string;
 }
 
-const pluginsQuery = useAsyncData<PluginView[] | undefined>(() => api.plugins.list());
+const pluginsQuery = useAsyncData<PluginView[] | undefined>((signal) => api.plugins.list({ signal }));
 /** Plugins that can actually back a share: the capability is what makes a
  *  plugin able to produce a subscription body the core serves. */
 const publishablePlugins = computed(() =>

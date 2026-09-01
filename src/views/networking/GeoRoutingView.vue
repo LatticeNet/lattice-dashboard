@@ -77,16 +77,16 @@ const canAdmin = computed(() => auth.can("geo:admin"));
 const canReadNodes = computed(() => auth.can("node:read"));
 
 const routesQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canRead.value) return Promise.resolve([] as GeoRouting[]);
-    return api.geoRouting.list().then((r) => unwrap(r, "geo_routings"));
+    return api.geoRouting.list({ signal }).then((r) => unwrap(r, "geo_routings"));
   },
   { pollInterval: 15000, immediate: canRead.value },
 );
 const nodesQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canReadNodes.value) return Promise.resolve([] as Node[]);
-    return api.nodes.list().then((r) => unwrap(r, "nodes"));
+    return api.nodes.list({ signal }).then((r) => unwrap(r, "nodes"));
   },
   {
     pollInterval: 15000,

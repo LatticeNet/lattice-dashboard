@@ -42,7 +42,7 @@ const bucket = ref("default");
 const activeBucket = ref("default");
 
 const objectsQuery = useAsyncData(
-  () => api.static.list(activeBucket.value || "default"),
+  (signal) => api.static.list(activeBucket.value || "default", { signal }),
   { pollInterval: 0, immediate: canRead.value },
 );
 const objects = computed(() => objectsQuery.data.value ?? []);

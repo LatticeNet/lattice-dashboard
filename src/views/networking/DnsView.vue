@@ -67,10 +67,10 @@ const canAdmin = computed(() => auth.can("dns:admin"));
 const canPlan = computed(() => auth.can("dns:admin") && auth.can("network:plan"));
 
 const deploymentsQuery = useAsyncData(
-  () => api.dns.deployments().then((r) => unwrap(r, "deployments")),
+  (signal) => api.dns.deployments({ signal }).then((r) => unwrap(r, "deployments")),
   { pollInterval: 15000 },
 );
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 0,
 });
 

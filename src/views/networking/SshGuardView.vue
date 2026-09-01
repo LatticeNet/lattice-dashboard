@@ -74,7 +74,7 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.canAll(["sshguard:admin", "network:plan"]));
 
 const approvalsQuery = useAsyncData<ApprovalView[] | undefined>(
-  () => api.approvals.list().then((r) => unwrap(r, "approvals")),
+  (signal) => api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals")),
   { pollInterval: 15000 },
 );
 
@@ -83,7 +83,7 @@ const approvals = computed(() => (approvalsQuery.data.value ?? []).filter(isSSHG
 // The fleet, not just the nodes with history: the remaining work here is
 // rolling this out, and that work is made of the machines still open.
 const nodesQuery = useAsyncData<Node[] | undefined>(
-  () => api.nodes.list().then((r) => unwrap(r, "nodes")),
+  (signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")),
   { pollInterval: 30000 },
 );
 
@@ -97,7 +97,7 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
  * composed a plan and the server refuses it.
  */
 const capabilitiesQuery = useAsyncData<NodeCapability[] | undefined>(
-  () => api.nodes.capabilities().then((r) => r.capabilities ?? []),
+  (signal) => api.nodes.capabilities({ signal }).then((r) => r.capabilities ?? []),
   { pollInterval: 60000 },
 );
 
