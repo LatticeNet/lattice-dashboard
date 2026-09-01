@@ -220,6 +220,7 @@ export default {
       colAttempts: "尝试",
       colActions: "操作",
       latest: "最近一次",
+      capabilityRefused: "{count} 个目标被能力准入拒绝",
       waitingLease: "还没有 agent 领走",
       stalledNoLease: "没有存活的执行租约,结果不会自己到来;可以取消或重跑",
       failedNoResult: "被标记为失败，没有上报任何输出",

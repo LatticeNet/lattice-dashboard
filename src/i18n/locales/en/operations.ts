@@ -225,6 +225,7 @@ export default {
       colAttempts: "Attempts",
       colActions: "Actions",
       latest: "Latest",
+      capabilityRefused: "{count} target(s) refused by the capability gate",
       waitingLease: "No agent has picked this up yet",
       stalledNoLease: "Nothing is running this and no result arrived; cancel it or rerun",
       failedNoResult: "Marked failed with no output reported",

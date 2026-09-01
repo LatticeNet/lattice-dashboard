@@ -23,7 +23,7 @@ import {
   XCircle,
 } from "lucide-vue-next";
 import CopyButton from "@/components/common/CopyButton.vue";
-import { api, unwrap, type CapabilityImpact, type Node, type TaskResult, type TaskView } from "@/lib/api";
+import { api, ApiError, unwrap, type CapabilityImpact, type Node, type TaskResult, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
@@ -141,6 +141,24 @@ echo "port=$(field port)"
 `;
 
 const { t } = useI18n();
+
+/**
+ * A capability refusal names every refused node joined with "; ". One flat
+ * toast line hides all but the first from a glance, so it becomes a titled
+ * list: the admission gate saying no is information, not noise.
+ */
+function toastDispatchError(error: unknown, fallback: string) {
+  if (error instanceof ApiError && error.code === "capability_denied") {
+    const refusals = error.message.split("; ").filter(Boolean);
+    toast.error(t("operations.tasks.capabilityRefused", { count: refusals.length }), {
+      description: refusals.join("\n"),
+      duration: 10000,
+      descriptionClass: "whitespace-pre-line",
+    });
+    return;
+  }
+  toast.error(error instanceof Error ? error.message : fallback);
+}
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
@@ -900,7 +918,7 @@ async function createTask() {
     script.value = "";
     await refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastFailed"));
+    toastDispatchError(error, t("operations.tasks.toastFailed"));
   } finally {
     creating.value = false;
   }
@@ -917,7 +935,7 @@ async function rerunTask(task: TaskView) {
     toast.success(t("operations.tasks.toastRerun"));
     await refreshAll();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastRerunFailed"));
+    toastDispatchError(error, t("operations.tasks.toastRerunFailed"));
   } finally {
     actionPending.value = null;
   }
