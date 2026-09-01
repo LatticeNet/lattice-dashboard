@@ -233,10 +233,10 @@ onMounted(async () => {
 
         <div class="max-w-md space-y-6">
           <h1 class="text-3xl font-semibold leading-tight tracking-tight">
-            Self-hosted control plane for your fleet.
+            The sovereign control plane.
           </h1>
           <p class="text-sm text-muted-foreground">
-            One pane of glass for every node. Secure by default, auditable by design.
+            Agents do the work; you keep the judgment. Every change is a plan you saw, hash-bound, and proven.
           </p>
           <ul class="space-y-3 text-sm">
             <li class="flex items-center gap-3 text-muted-foreground">
