@@ -384,7 +384,7 @@ export interface TaskView {
   // "expired" is derived by the server: the queue deadline passed, so the
   // task was withdrawn and will not be handed to its agent. Distinct from
   // "failed" on purpose - an offline node is not a script that went wrong.
-  status: "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired";
+  status: "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled";
   leased_by?: string;
   rerun_of_task_id?: string;
   rerun_of_node_id?: string;

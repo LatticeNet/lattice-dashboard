@@ -1704,8 +1704,8 @@ async function resolveGeo() {
               <div v-if="ipMode === 'script'" class="grid gap-2">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <Label>{{ $t('fleet.nodes.detail.ipConfig.script') }}</Label>
-                  <Badge v-if="node.ip_config?.script_sha256" variant="outline" class="font-mono">
-                    {{ node.ip_config.script_sha256 }}
+                  <Badge v-if="node.ip_config?.script_sha256" variant="outline" class="font-mono" :title="node.ip_config.script_sha256">
+                    {{ shortId(node.ip_config.script_sha256, 16) }}
                   </Badge>
                 </div>
                 <Textarea

@@ -89,6 +89,7 @@ export default {
       revoked: "revoked",
       enabled: "enabled",
       degraded: "degraded",
+      unknown: "unknown",
       pending: "pending",
       approved: "approved",
       applied: "applied",
