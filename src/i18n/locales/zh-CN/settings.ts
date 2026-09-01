@@ -24,7 +24,8 @@ export default {
       noDerivation: "没有可推导的来源,每台机器都需要单独准入",
       impact: "{allow} 台在范围内 · {refuse} 台会被拒绝",
       state: { enforced: "已生效", open: "未生效" },
-      turnOn: "打开",
+      confinedNotice: "全舰队策略:你的令牌被限定在特定节点,无法更改能力准入的启用状态。",
+    turnOn: "打开",
       turnOff: "关闭",
       saved: "已更新 {capability}",
       confirm: {

@@ -26,7 +26,8 @@ export default {
       noDerivation: "nothing to infer scope from, so every node needs enrolling",
       impact: "{allow} in scope · {refuse} would be refused",
       state: { enforced: "Enforced", open: "Open" },
-      turnOn: "Turn on",
+      confinedNotice: "Fleet-wide policy: your token is restricted to specific nodes, so it cannot change capability enforcement.",
+    turnOn: "Turn on",
       turnOff: "Turn off",
       saved: "Gate updated for {capability}",
       confirm: {
