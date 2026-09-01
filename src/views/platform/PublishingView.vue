@@ -38,7 +38,7 @@ const activeOrigin = computed<StorageKind | undefined>(() =>
   editableOrigins.value.includes(selectedOrigin.value) ? selectedOrigin.value : editableOrigins.value[0],
 );
 
-const recordsQuery = useAsyncData(() => api.publishing.records());
+const recordsQuery = useAsyncData((signal) => api.publishing.records({ signal }));
 
 const records = computed(() => sortRecords(recordsQuery.data.value?.records ?? []));
 const visibleOrigins = computed(() => recordsQuery.data.value?.origins ?? []);

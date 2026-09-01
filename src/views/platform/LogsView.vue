@@ -70,16 +70,16 @@ const canRead = computed(() => auth.can("log:read"));
 const canReadNodes = computed(() => auth.can("node:read"));
 
 const sourcesQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canRead.value) return Promise.resolve([] as LogSource[]);
-    return api.logs.sources().then((r) => unwrap(r, "sources"));
+    return api.logs.sources({ signal }).then((r) => unwrap(r, "sources"));
   },
   { pollInterval: 15000, immediate: canRead.value },
 );
 const nodesQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canReadNodes.value) return Promise.resolve([] as Node[]);
-    return api.nodes.list().then((r) => unwrap(r, "nodes"));
+    return api.nodes.list({ signal }).then((r) => unwrap(r, "nodes"));
   },
   {
     pollInterval: 15000,
@@ -242,9 +242,9 @@ function applyFilter(): void {
 
 // ── Stats ────────────────────────────────────────────────────────────────────
 const statsQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canRead.value || !selectedSourceId.value) return Promise.resolve([] as LogSourceStatsView[]);
-    return api.logs.stats(selectedSourceId.value).then((r) => unwrap(r, "stats"));
+    return api.logs.stats(selectedSourceId.value, { signal }).then((r) => unwrap(r, "stats"));
   },
   { pollInterval: 15000, immediate: canRead.value },
 );

@@ -63,7 +63,7 @@ const redirectUri = computed(() => `${window.location.origin}/api/auth/oidc/call
 
 // Wrapped object endpoint: unwrap "providers".
 const providersQuery = useAsyncData(
-  () => api.oidc.providers().then((r) => unwrap(r, "providers")),
+  (signal) => api.oidc.providers({ signal }).then((r) => unwrap(r, "providers")),
   { pollInterval: 15000 },
 );
 const providers = computed(() => providersQuery.data.value ?? []);

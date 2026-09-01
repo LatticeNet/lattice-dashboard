@@ -55,10 +55,10 @@ const DEFAULT_ROWS = 34;
 const route = useRoute();
 const { t } = useI18n();
 
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
 });
-const sessionsQuery = useAsyncData(() => api.terminal.list().then((r) => r.sessions), {
+const sessionsQuery = useAsyncData((signal) => api.terminal.list({ signal }).then((r) => r.sessions), {
   pollInterval: 5000,
 });
 

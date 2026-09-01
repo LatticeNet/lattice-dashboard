@@ -134,9 +134,9 @@ const tab = useRouteTab<"connections" | "sessions" | "policy">(
 /* ------------------------------------------------------------------ */
 
 const nodesQuery = useAsyncData(
-  () =>
+  (signal) =>
     canReadNodes.value
-      ? api.nodes.list().then((r) => unwrap(r, "nodes"))
+      ? api.nodes.list({ signal }).then((r) => unwrap(r, "nodes"))
       : Promise.resolve([] as Node[]),
   { immediate: canReadNodes.value },
 );
@@ -153,9 +153,9 @@ function nodeLabel(id: string): string {
  * instead, which is real evidence; the uuid is never shown as a user.
  */
 const usersQuery = useAsyncData(
-  () =>
+  (signal) =>
     canReadUsers.value
-      ? api.users.list().then((r) => unwrap(r, "users"))
+      ? api.users.list({ signal }).then((r) => unwrap(r, "users"))
       : Promise.resolve([]),
   { immediate: canReadUsers.value },
 );

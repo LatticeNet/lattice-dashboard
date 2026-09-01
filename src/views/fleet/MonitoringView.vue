@@ -64,9 +64,9 @@ const canReadNodes = computed(() => auth.can("node:read"));
 const canAdminMonitors = computed(() => auth.can("monitor:admin"));
 
 const monitorsQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canReadMonitors.value) return Promise.resolve([] as MonitorView[]);
-    return api.monitors.list().then((r) => unwrap(r, "monitors"));
+    return api.monitors.list({ signal }).then((r) => unwrap(r, "monitors"));
   },
   {
     pollInterval: 10000,
@@ -74,9 +74,9 @@ const monitorsQuery = useAsyncData(
   },
 );
 const nodesQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canReadNodes.value) return Promise.resolve([] as Node[]);
-    return api.nodes.list().then((r) => unwrap(r, "nodes"));
+    return api.nodes.list({ signal }).then((r) => unwrap(r, "nodes"));
   },
   {
     pollInterval: 15000,
@@ -117,9 +117,9 @@ function toggleAssignedNode(id: string, on: boolean) {
 }
 
 const resultsQuery = useAsyncData(
-  () => {
+  (signal) => {
     if (!canReadMonitors.value || !selectedMonitorId.value) return Promise.resolve([] as MonitorResult[]);
-    return api.monitors.results(selectedMonitorId.value).then((r) => unwrap(r, "results"));
+    return api.monitors.results(selectedMonitorId.value, { signal }).then((r) => unwrap(r, "results"));
   },
   { pollInterval: 8000, immediate: canReadMonitors.value },
 );

@@ -23,7 +23,7 @@ import {
 
 const { t } = useI18n();
 
-const versionQuery = useAsyncData(() => api.version(), { pollInterval: 60000 });
+const versionQuery = useAsyncData((signal) => api.version({ signal }), { pollInterval: 60000 });
 const version = computed(() => versionQuery.data.value);
 
 // The build stamps these at compile time; "unknown" is the raw sentinel the

@@ -72,7 +72,7 @@ const tab = useRouteTab<"registered" | "lifecycle">(
 );
 
 // ── Registered plugins (audit:read) ────────────────────────────────────────
-const registeredQuery = useAsyncData(() => api.plugins.list(), {
+const registeredQuery = useAsyncData((signal) => api.plugins.list({ signal }), {
   pollInterval: 15000,
   immediate: canAudit.value,
 });
@@ -82,7 +82,7 @@ const sortedRegistered = computed(() =>
 );
 
 // ── Lifecycle (plugin:admin) ────────────────────────────────────────────────
-const lifecycleQuery = useAsyncData(() => api.plugins.lifecycle(), {
+const lifecycleQuery = useAsyncData((signal) => api.plugins.lifecycle({ signal }), {
   pollInterval: 15000,
   immediate: canAdmin.value,
 });

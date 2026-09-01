@@ -293,14 +293,16 @@ export const api = {
     // Separate from role/tags/groups (what a node is) and from agent_runtime
     // (what the agent can do right now): a node can be perfectly capable and
     // still be one you have decided to leave alone.
-    capabilities: () =>
-      http.get<{ capabilities: NodeCapability[]; known: KnownCapability[] }>("/api/nodes/capabilities"),
+    capabilities: (opts?: RequestOptions) =>
+      http.get<{ capabilities: NodeCapability[]; known: KnownCapability[] }>("/api/nodes/capabilities", undefined, opts),
     // For one node: the effective answer per capability, including the ones
     // allowed by the node's own configuration rather than by an explicit
     // enrolment. That distinction is invisible in the record list above.
-    nodeCapabilities: (node_id: string) =>
+    nodeCapabilities: (node_id: string, opts?: RequestOptions) =>
       http.get<{ node_id: string; effective: NodeCapabilityEffective[] }>(
         `/api/nodes/capabilities?node_id=${encodeURIComponent(node_id)}`,
+        undefined,
+        opts,
       ),
     // An empty state clears the record, returning the node to the capability's
     // default. A reason is required to exclude.
@@ -310,10 +312,10 @@ export const api = {
       state: "enrolled" | "excluded" | "";
       reason?: string;
     }) => http.post<NodeCapability>("/api/nodes/capabilities", input),
-    duplicates: () =>
+    duplicates: (opts?: RequestOptions) =>
       http.get<{
         groups: Array<{ reason: string; confidence: string; signal: string; node_ids: string[] }>;
-      }>("/api/nodes/duplicates"),
+      }>("/api/nodes/duplicates", undefined, opts),
     // Dry-run preview of a hard-delete: returns the cascade counts (monitors,
     // ddns, groups, …) without mutating anything (mutated=false).
     deletePlan: (node_id: string) =>
@@ -324,7 +326,8 @@ export const api = {
       http.post<NodeDeletePlanView>("/api/nodes/delete", { node_id }),
     setDebug: (node_id: string, enabled: boolean, collect?: boolean) =>
       http.post<Node>("/api/nodes/debug", { node_id, enabled, collect }),
-    geo: () => http.get<{ nodes: NodeGeoView[] } | NodeGeoView[]>("/api/nodes/geo"),
+    geo: (opts?: RequestOptions) =>
+      http.get<{ nodes: NodeGeoView[] } | NodeGeoView[]>("/api/nodes/geo", undefined, opts),
     updateGeo: (node_id: string, geo: NodeGeoInput) =>
       http.post<NodeGeoView>("/api/nodes/geo", { node_id, geo }),
     clearGeo: (node_id: string) =>
@@ -348,8 +351,8 @@ export const api = {
     // One node's tasks, filtered by the server. The unfiltered list is fine for
     // a fleet-wide screen but grows with the fleet, and a node page only ever
     // wants its own rows.
-    listForNode: (node_id: string, limit = 50) =>
-      http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", { node_id, limit }),
+    listForNode: (node_id: string, limit = 50, opts?: RequestOptions) =>
+      http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", { node_id, limit }, opts),
     // omit_output asks the server for result rows without stdout/stderr
     // bodies (byte counts instead): the shape a poll wants. Full bodies are a
     // per-task fetch, not a fleet-wide subscription.
@@ -376,7 +379,8 @@ export const api = {
   },
 
   terminal: {
-    list: () => http.get<{ sessions: TerminalSession[] }>("/api/terminal/sessions"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ sessions: TerminalSession[] }>("/api/terminal/sessions", undefined, opts),
     create: (input: { node_id: string; shell?: string; cols?: number; rows?: number }) =>
       http.post<TerminalSession>("/api/terminal/sessions", input),
     events: (session_id: string, cursor = 0) =>
@@ -418,17 +422,21 @@ export const api = {
   },
 
   monitors: {
-    list: () => http.get<{ monitors: MonitorView[] } | MonitorView[]>("/api/monitors"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ monitors: MonitorView[] } | MonitorView[]>("/api/monitors", undefined, opts),
     create: (input: MonitorCreateInput) => http.post<MonitorView>("/api/monitors", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/monitors/delete", { id }),
-    results: (monitor_id: string) =>
-      http.get<{ results: MonitorResult[] } | MonitorResult[]>("/api/monitors/results", {
-        monitor_id,
-      }),
+    results: (monitor_id: string, opts?: RequestOptions) =>
+      http.get<{ results: MonitorResult[] } | MonitorResult[]>(
+        "/api/monitors/results",
+        { monitor_id },
+        opts,
+      ),
   },
 
   machines: {
-    list: () => http.get<{ machines: MachineView[] } | MachineView[]>("/api/machines"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ machines: MachineView[] } | MachineView[]>("/api/machines", undefined, opts),
     create: (input: MachineProfileInput) => http.post<MachineView>("/api/machines", input),
     update: (input: MachineProfileInput & { id: string }) =>
       http.post<MachineView>("/api/machines/update", input),
@@ -442,7 +450,8 @@ export const api = {
   },
 
   machineVendors: {
-    list: () => http.get<{ vendors: MachineVendorView[] } | MachineVendorView[]>("/api/machine-vendors"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ vendors: MachineVendorView[] } | MachineVendorView[]>("/api/machine-vendors", undefined, opts),
     upsert: (input: MachineVendorInput) =>
       http.post<{ vendor: MachineVendorView }>("/api/machine-vendors", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/machine-vendors/delete", { id }),
@@ -462,23 +471,26 @@ export const api = {
       at_to?: string;
       limit?: number;
       offset?: number;
-    }) => http.get<AuditQueryResponse>("/api/audit", params as Record<string, unknown>),
+    }, opts?: RequestOptions) =>
+      http.get<AuditQueryResponse>("/api/audit", params as Record<string, unknown>, opts),
     verify: () => http.get<AuditVerifyResponse>("/api/audit/verify"),
   },
 
   netpolicy: {
-    list: () => http.get<{ policies: NetPolicyView[] }>("/api/netpolicy"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ policies: NetPolicyView[] }>("/api/netpolicy", undefined, opts),
     upsert: (input: NetPolicyUpsertRequest) => http.post<NetPolicyView>("/api/netpolicy", input),
     delete: (target_node_id: string) =>
       http.post<{ ok: boolean }>("/api/netpolicy/delete", { target_node_id }),
     plan: (node_id: string) => http.post<ApprovalView>("/api/netpolicy/plan", { node_id }),
-    graph: () => http.get<NetPolicyGraph>("/api/netpolicy/graph"),
-    matrix: (direction: "egress" | "ingress" = "egress") =>
-      http.get<NetPolicyMatrix>("/api/netpolicy/matrix", { direction }),
+    graph: (opts?: RequestOptions) =>
+      http.get<NetPolicyGraph>("/api/netpolicy/graph", undefined, opts),
+    matrix: (direction: "egress" | "ingress" = "egress", opts?: RequestOptions) =>
+      http.get<NetPolicyMatrix>("/api/netpolicy/matrix", { direction }, opts),
   },
 
   groups: {
-    list: () => http.get<GroupsListResponse>("/api/groups"),
+    list: (opts?: RequestOptions) => http.get<GroupsListResponse>("/api/groups", undefined, opts),
     upsert: (input: GroupUpsertRequest) => http.post<GroupView>("/api/groups", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/groups/delete", { id }),
     reorder: (items: { id: string; parent_id?: string; order: number }[]) =>
@@ -491,7 +503,8 @@ export const api = {
   },
 
   groupPolicy: {
-    list: () => http.get<{ policies: GroupPolicyView[] }>("/api/group-policies"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ policies: GroupPolicyView[] }>("/api/group-policies", undefined, opts),
     upsert: (input: GroupPolicyUpsertRequest) =>
       http.post<GroupPolicyView>("/api/group-policies", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/group-policies/delete", { id }),
@@ -499,7 +512,8 @@ export const api = {
   },
 
   dns: {
-    deployments: () => http.get<{ deployments: DNSDeploymentView[] }>("/api/dns/deployments"),
+    deployments: (opts?: RequestOptions) =>
+      http.get<{ deployments: DNSDeploymentView[] }>("/api/dns/deployments", undefined, opts),
     upsert: (input: DNSDeploymentBody) =>
       http.post<DNSDeploymentView>("/api/dns/deployments", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/dns/deployments/delete", { id }),
@@ -508,7 +522,8 @@ export const api = {
   },
 
   geoRouting: {
-    list: () => http.get<{ geo_routings: GeoRouting[] }>("/api/geo-routing"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ geo_routings: GeoRouting[] }>("/api/geo-routing", undefined, opts),
     upsert: (input: GeoRoutingUpsertRequest) => http.post<GeoRouting>("/api/geo-routing", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/geo-routing/delete", { id }),
     plan: (id: string) => http.post<GeoRoutingPlanView>("/api/geo-routing/plan", { id }),
@@ -526,7 +541,7 @@ export const api = {
   },
 
   ddns: {
-    list: () => http.get<DDNSView[]>("/api/ddns"),
+    list: (opts?: RequestOptions) => http.get<DDNSView[]>("/api/ddns", undefined, opts),
     // One endpoint serves both: an id in the body edits that profile, no id
     // creates one. `create` stays as the explicit no-id spelling.
     save: (input: DDNSUpsertRequest) => http.post<DDNSView>("/api/ddns", input),
@@ -536,19 +551,20 @@ export const api = {
   },
 
   tunnels: {
-    list: () => http.get<TunnelView[]>("/api/tunnels"),
+    list: (opts?: RequestOptions) => http.get<TunnelView[]>("/api/tunnels", undefined, opts),
     create: (input: TunnelUpsertRequest) => http.post<TunnelView>("/api/tunnels", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/tunnels/delete", { id }),
     plan: (id: string) => http.post<ApprovalView>("/api/tunnels/plan", { id }),
   },
 
   plugins: {
-    list: () => http.get<PluginView[]>("/api/plugins"),
+    list: (opts?: RequestOptions) => http.get<PluginView[]>("/api/plugins", undefined, opts),
     contributions: (signal?: AbortSignal) =>
       http.get<PluginView[]>("/api/plugin-contributions", undefined, { signal }),
     trust: (signal?: AbortSignal) =>
       http.get<PluginTrustView>("/api/plugin-trust", undefined, { signal }),
-    lifecycle: () => http.get<PluginInstallationView[]>("/api/plugins/lifecycle"),
+    lifecycle: (opts?: RequestOptions) =>
+      http.get<PluginInstallationView[]>("/api/plugins/lifecycle", undefined, opts),
     setLifecycle: (id: string, status: PluginLifecycleStatus) =>
       http.post<PluginInstallationView>("/api/plugins/lifecycle", { id, status }),
     verify: (manifest: unknown, artifact_base64: string) =>
@@ -567,7 +583,7 @@ export const api = {
   },
 
   workers: {
-    list: () => http.get<WorkerScript[]>("/api/workers"),
+    list: (opts?: RequestOptions) => http.get<WorkerScript[]>("/api/workers", undefined, opts),
     deploy: (input: { name: string; source: string; capabilities?: string[]; public?: boolean }) =>
       http.post<WorkerScript>("/api/workers", input),
     run: (worker_id: string, path: string) =>
@@ -575,14 +591,15 @@ export const api = {
   },
 
   kv: {
-    list: (bucket?: string) => http.get<KVEntry[]>("/api/kv", bucket ? { bucket } : undefined),
+    list: (bucket?: string, opts?: RequestOptions) =>
+      http.get<KVEntry[]>("/api/kv", bucket ? { bucket } : undefined, opts),
     put: (input: { bucket?: string; key: string; value: string }) =>
       http.post<KVEntry>("/api/kv", input),
   },
 
   static: {
-    list: (bucket?: string) =>
-      http.get<StaticObject[]>("/api/static", bucket ? { bucket } : undefined),
+    list: (bucket?: string, opts?: RequestOptions) =>
+      http.get<StaticObject[]>("/api/static", bucket ? { bucket } : undefined, opts),
     put: (input: { bucket?: string; path: string; content: string; content_type: string }) =>
       http.post<StaticObject>("/api/static", input),
   },
@@ -634,11 +651,13 @@ export const api = {
      * filters per origin on that origin's own read scope, so this cannot show a
      * route the per-origin API would have refused to list.
      */
-    records: () => http.get<PublishingRecordList>("/api/publishing/records"),
+    records: (opts?: RequestOptions) =>
+      http.get<PublishingRecordList>("/api/publishing/records", undefined, opts),
   },
 
   logs: {
-    sources: () => http.get<{ sources: LogSource[] }>("/api/logs/sources"),
+    sources: (opts?: RequestOptions) =>
+      http.get<{ sources: LogSource[] }>("/api/logs/sources", undefined, opts),
     upsertSource: (input: LogSourceUpsertRequest) =>
       http.post<LogSource>("/api/logs/sources", input),
     deleteSource: (id: string) =>
@@ -651,10 +670,11 @@ export const api = {
       limit?: number;
       before_seq?: number;
     }) => http.get<LogQueryResponse>("/api/logs/query", params as Record<string, unknown>),
-    stats: (source_id?: string) =>
+    stats: (source_id?: string, opts?: RequestOptions) =>
       http.get<{ stats: LogSourceStatsView[] }>(
         "/api/logs/stats",
         source_id ? { source_id } : undefined,
+        opts,
       ),
   },
 
@@ -689,14 +709,16 @@ export const api = {
   },
 
   notify: {
-    channels: () => http.get<NotifyChannelView[]>("/api/notify/channels"),
+    channels: (opts?: RequestOptions) =>
+      http.get<NotifyChannelView[]>("/api/notify/channels", undefined, opts),
     upsertChannel: (input: NotifyChannelUpsertRequest) =>
       http.post<NotifyChannelView>("/api/notify/channels", input),
     deleteChannel: (id: string) =>
       http.post<{ ok: boolean }>("/api/notify/channels/delete", { id }),
     test: (input: NotifyTestRequest) =>
       http.post<{ ok: boolean; channel: string }>("/api/notify/test", input),
-    rules: () => http.get<{ rules: NotifyRuleView[] }>("/api/notify/rules"),
+    rules: (opts?: RequestOptions) =>
+      http.get<{ rules: NotifyRuleView[] }>("/api/notify/rules", undefined, opts),
     upsertRule: (input: NotifyRuleUpsertRequest) =>
       http.post<NotifyRuleView>("/api/notify/rules", input),
     deleteRule: (id: string) =>
@@ -704,16 +726,18 @@ export const api = {
   },
 
   agentUpdates: {
-    list: () => http.get<{ policies: AgentUpdatePolicy[] }>("/api/nodes/agent-updates"),
-    releases: () => http.get<AgentReleaseInfo>("/api/nodes/agent-updates/releases"),
+    list: (opts?: RequestOptions) =>
+      http.get<{ policies: AgentUpdatePolicy[] }>("/api/nodes/agent-updates", undefined, opts),
+    releases: (opts?: RequestOptions) =>
+      http.get<AgentReleaseInfo>("/api/nodes/agent-updates/releases", undefined, opts),
     upsert: (input: AgentUpdatePolicyUpsertRequest) =>
       http.post<AgentUpdatePolicy>("/api/nodes/agent-updates", input),
     delete: (node_id: string) =>
       http.post<{ ok: boolean }>("/api/nodes/agent-updates/delete", { node_id }),
     plan: (node_id: string, force?: boolean) =>
       http.post<ApprovalView>("/api/nodes/agent-updates/plan", { node_id, force }),
-    artifacts: () =>
-      http.get<AgentArtifactListing>("/api/nodes/agent-updates/artifacts"),
+    artifacts: (opts?: RequestOptions) =>
+      http.get<AgentArtifactListing>("/api/nodes/agent-updates/artifacts", undefined, opts),
     importArtifact: (input: AgentArtifactRequest) =>
       http.post<AgentArtifactView>("/api/nodes/agent-updates/artifacts/import", input),
     deleteArtifact: (input: AgentArtifactRequest) =>
@@ -724,7 +748,8 @@ export const api = {
   },
 
   oidc: {
-    providers: () => http.get<{ providers: OIDCProviderView[] }>("/api/auth/oidc/providers"),
+    providers: (opts?: RequestOptions) =>
+      http.get<{ providers: OIDCProviderView[] }>("/api/auth/oidc/providers", undefined, opts),
     upsertProvider: (input: OIDCProviderUpsertRequest) =>
       http.post<OIDCProviderView>("/api/auth/oidc/providers", input),
     deleteProvider: (id: string) =>
@@ -734,21 +759,22 @@ export const api = {
   },
 
   users: {
-    list: () => http.get<{ users: UserView[] }>("/api/users"),
+    list: (opts?: RequestOptions) => http.get<{ users: UserView[] }>("/api/users", undefined, opts),
     create: (input: UserCreateRequest) => http.post<UserView>("/api/users", input),
     update: (input: UserUpdateRequest) => http.post<UserView>("/api/users/update", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/users/delete", { id }),
   },
 
   tokens: {
-    list: () => http.get<TokenView[]>("/api/tokens"),
+    list: (opts?: RequestOptions) => http.get<TokenView[]>("/api/tokens", undefined, opts),
     create: (input: TokenCreateRequest) => http.post<TokenCreateResponse>("/api/tokens", input),
     revoke: (token_id: string) => http.post<TokenView>("/api/tokens/revoke", { token_id }),
     delete: (token_id: string) => http.post<{ ok: boolean }>("/api/tokens/delete", { token_id }),
   },
 
   subscriptionShares: {
-    list: () => http.get<SubscriptionShareView[]>("/api/subscription-shares"),
+    list: (opts?: RequestOptions) =>
+      http.get<SubscriptionShareView[]>("/api/subscription-shares", undefined, opts),
     create: (body: SubscriptionShareCreateRequest) =>
       http.post<SubscriptionShareView>("/api/subscription-shares", body),
     // Changes a share without minting a new URL. Expiry used to be settable

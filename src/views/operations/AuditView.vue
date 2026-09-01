@@ -84,7 +84,7 @@ const verifyResult = ref<AuditVerifyResponse | undefined>();
 const verifyCheckedAt = ref("");
 
 const auditQuery = useAsyncData(
-  () =>
+  (signal) =>
     api.audit.query({
       action: action.value.trim() || undefined,
       decision: decision.value === "any" ? undefined : decision.value,
@@ -94,7 +94,7 @@ const auditQuery = useAsyncData(
       at_from: rangeFrom(),
       limit: pageSize.value,
       offset: offset.value,
-    }),
+    }, { signal }),
   { pollInterval: 12000 },
 );
 

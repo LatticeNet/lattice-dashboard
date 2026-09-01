@@ -64,8 +64,8 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("ddns:admin"));
 
 // BARE ARRAY endpoint: do NOT unwrap.
-const profilesQuery = useAsyncData(() => api.ddns.list(), { pollInterval: 15000 });
-const nodesQuery = useAsyncData(() => api.nodes.list().then((r) => unwrap(r, "nodes")), {
+const profilesQuery = useAsyncData((signal) => api.ddns.list({ signal }), { pollInterval: 15000 });
+const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 15000,
 });
 

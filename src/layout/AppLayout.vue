@@ -8,6 +8,7 @@ import AppSidebar from "./components/AppSidebar.vue";
 import AppHeader from "./components/AppHeader.vue";
 import TrustBanner from "./components/TrustBanner.vue";
 import CommandPalette from "@/components/common/CommandPalette.vue";
+import RouteProgress from "@/components/common/RouteProgress.vue";
 import { viewportPaneClaimed } from "./viewportPane";
 
 const ui = useUiStore();
@@ -41,6 +42,7 @@ watchEffect(() => {
 
 <template>
   <TooltipProvider :delay-duration="200">
+    <RouteProgress />
     <a
       href="#main-content"
       class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-md focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-foreground focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-ring"

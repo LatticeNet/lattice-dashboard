@@ -45,7 +45,7 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const canDeploy = computed(() => auth.can("worker:deploy"));
 
-const workersQuery = useAsyncData(() => api.workers.list(), {
+const workersQuery = useAsyncData((signal) => api.workers.list({ signal }), {
   pollInterval: 15000,
   immediate: canDeploy.value,
 });
