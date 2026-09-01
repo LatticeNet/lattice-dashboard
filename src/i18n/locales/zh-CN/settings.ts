@@ -25,7 +25,7 @@ export default {
       impact: "{allow} 台在范围内 · {refuse} 台会被拒绝",
       state: { enforced: "已生效", open: "未生效" },
       confinedNotice: "全舰队策略:你的令牌被限定在特定节点,无法更改能力准入的启用状态。",
-    turnOn: "打开",
+      turnOn: "打开",
       turnOff: "关闭",
       saved: "已更新 {capability}",
       confirm: {

@@ -27,7 +27,7 @@ export default {
       impact: "{allow} in scope · {refuse} would be refused",
       state: { enforced: "Enforced", open: "Open" },
       confinedNotice: "Fleet-wide policy: your token is restricted to specific nodes, so it cannot change capability enforcement.",
-    turnOn: "Turn on",
+      turnOn: "Turn on",
       turnOff: "Turn off",
       saved: "Gate updated for {capability}",
       confirm: {
