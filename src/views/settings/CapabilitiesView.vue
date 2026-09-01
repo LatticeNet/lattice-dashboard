@@ -34,6 +34,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("node:admin"));
+// Capability enforcement is a fleet-wide policy with no node to confine it to,
+// so the server refuses a node-restricted token outright (Finding A,
+// 2026-09-01 multi-operator audit). Reflect that here rather than letting a
+// confined operator click into a 403.
+const isConfined = computed(() => auth.serverAllowlist.length > 0 && !auth.serverAllowlist.includes("*"));
+const canSetEnforcement = computed(() => canAdmin.value && !isConfined.value);
 
 const query = useAsyncData<CapabilityImpact[] | undefined>(
   (signal) => api.capabilities.list({ signal }).then((r) => r.capabilities ?? []),
@@ -208,7 +214,8 @@ async function applyToggle() {
                     <Button
                       size="sm"
                       :variant="capability.enforced ? 'ghost' : 'outline'"
-                      :disabled="!canAdmin || pending === capability.capability"
+                      :disabled="!canSetEnforcement || pending === capability.capability"
+                      :title="isConfined ? $t('settings.capabilities.confinedNotice') : undefined"
                       @click="requestToggle(capability)"
                     >
                       {{ capability.enforced
