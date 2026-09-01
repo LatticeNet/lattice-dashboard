@@ -403,6 +403,9 @@ export interface TaskScriptRevealResponse {
 }
 
 export interface TaskResult {
+  /** Present on omit_output rows: the size of the body that was not sent. */
+  stdout_bytes?: number;
+  stderr_bytes?: number;
   task_id: string;
   lease_id?: string;
   node_id: string;

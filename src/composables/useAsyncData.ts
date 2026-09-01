@@ -43,21 +43,29 @@ export function useAsyncData<T>(
 
   async function run(): Promise<void> {
     controller?.abort();
-    controller = new AbortController();
+    const mine = new AbortController();
+    controller = mine;
     if (data.value === undefined) loading.value = true;
     else refreshing.value = true;
 
     try {
-      const res = await fetcher(controller.signal);
+      const res = await fetcher(mine.signal);
+      // A fetcher that ignores its signal still resolves after being
+      // superseded; without this guard its stale payload would overwrite the
+      // newer run's state.
+      if (controller !== mine) return;
       data.value = res;
       error.value = undefined;
       lastUpdated.value = Date.now();
     } catch (e) {
+      if (controller !== mine) return;
       if ((e as Error)?.name === "AbortError") return;
       error.value = e as Error;
     } finally {
-      loading.value = false;
-      refreshing.value = false;
+      if (controller === mine) {
+        loading.value = false;
+        refreshing.value = false;
+      }
     }
   }
 

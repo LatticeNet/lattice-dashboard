@@ -67,7 +67,7 @@ const { t } = useI18n();
 const route = useRoute();
 const auth = useAuthStore();
 const includeDismissed = ref(false);
-const approvalsQuery = useAsyncData(() => api.approvals.list({ include_dismissed: includeDismissed.value }).then((r) => unwrap(r, "approvals")), {
+const approvalsQuery = useAsyncData((signal) => api.approvals.list({ include_dismissed: includeDismissed.value }, { signal }).then((r) => unwrap(r, "approvals")), {
   pollInterval: 8000,
 });
 
