@@ -287,6 +287,7 @@ export default {
       upload: "上传",
       regions: "地区",
       countries: "国家/地区",
+      unlocated: "{count} 台未定位",
     },
     trustPosture: {
       title: "信任姿态",

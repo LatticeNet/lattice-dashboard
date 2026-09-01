@@ -349,11 +349,17 @@ function refreshAll() {
                 <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
                   <Globe class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.regions }}
                 </p>
+                <p v-if="totals.geoMissing > 0" class="mt-0.5 text-[11px] text-muted-foreground">
+                  {{ $t('overview.summary.unlocated', { count: totals.geoMissing }) }}
+                </p>
               </div>
               <div class="rounded-lg border border-border bg-muted/20 p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('overview.summary.countries') }}</p>
                 <p class="mt-1 flex items-center gap-1.5 text-lg font-semibold tabular">
                   <MapPin class="size-4 text-muted-foreground" aria-hidden="true" />{{ totals.countries }}
+                </p>
+                <p v-if="totals.geoMissing > 0" class="mt-0.5 text-[11px] text-muted-foreground">
+                  {{ $t('overview.summary.unlocated', { count: totals.geoMissing }) }}
                 </p>
               </div>
             </div>

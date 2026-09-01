@@ -201,6 +201,23 @@ function isHealthy(node: Node): boolean {
  * Printing a duplicate of the name in every row is what the old two-line cell
  * did, and it cost 15px of row height to say nothing.
  */
+/**
+ * Fleet names carry grouping prefixes like "[cd]-" and "[Metix]-". As plain
+ * text they eat the narrow name column before the actual machine name starts;
+ * as a small badge the group survives at a glance and the name keeps the
+ * width. Display only: search, sort, and tooltips still see the full string.
+ */
+const NAME_PREFIX_RE = /^\[([^\]]{1,12})\]-(.+)$/;
+function namePrefix(node: Node): string {
+  const m = (node.name || "").match(NAME_PREFIX_RE);
+  return m?.[1] ?? "";
+}
+function nameBody(node: Node): string {
+  const raw = node.name || node.id;
+  const m = raw.match(NAME_PREFIX_RE);
+  return m?.[2] ?? raw;
+}
+
 function secondaryLabel(node: Node): string {
   const name = node.name || node.id;
   const hostname = node.host_facts?.hostname ?? "";
@@ -350,7 +367,8 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
              carries nothing the name did not already say. -->
         <div class="flex min-w-0 items-baseline gap-2" :title="node.name || node.id">
           <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" class="self-center shrink-0" />
-          <span class="min-w-0 shrink truncate font-medium">{{ node.name || node.id }}</span>
+          <Badge v-if="namePrefix(node)" variant="outline" class="shrink-0 self-center px-1 py-0 text-[10px] leading-4">{{ namePrefix(node) }}</Badge>
+          <span class="min-w-0 shrink truncate font-medium">{{ nameBody(node) }}</span>
           <!-- The identifier yields first. It is the tiebreak for two machines
                sharing a name, not something anyone reads across 200 rows, so it
                gives up its width before the name loses a character. -->

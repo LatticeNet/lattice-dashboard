@@ -340,6 +340,10 @@ export interface FleetTotals {
   regions: number;
   /** Distinct countries with at least one node. */
   countries: number;
+  /** Nodes carrying no usable country code. Regions/countries counts only
+   *  cover the located part of the fleet; a card that hides this number
+   *  presents partial data as fleet truth. */
+  geoMissing: number;
   /** Mean CPU% across live nodes that report it (0 when none). */
   cpuPercent: number;
   /** Summed memory across live nodes. */
@@ -373,6 +377,7 @@ export function fleetTotals(nodes: Node[]): FleetTotals {
     disabled: 0,
     regions: 0,
     countries: 0,
+    geoMissing: 0,
     cpuPercent: 0,
     memUsed: 0,
     memTotal: 0,
@@ -399,6 +404,8 @@ export function fleetTotals(nodes: Node[]): FleetTotals {
       countries.add(c.toUpperCase());
       const cont = continentOf(c);
       if (cont !== "??") continents.add(cont);
+    } else {
+      t.geoMissing += 1;
     }
 
     if (!isLive(node)) continue;

@@ -288,6 +288,7 @@ export default {
       upload: "Upload",
       regions: "Regions",
       countries: "Countries",
+      unlocated: "{count} unlocated",
     },
     trustPosture: {
       title: "Trust posture",
