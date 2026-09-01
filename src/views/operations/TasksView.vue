@@ -145,19 +145,23 @@ const router = useRouter();
 const auth = useAuthStore();
 const canRunTasks = computed(() => auth.can("task:run"));
 
-const versionQuery = useAsyncData(() => api.version(), { pollInterval: 60000 });
+const versionQuery = useAsyncData((signal) => api.version({ signal }), { pollInterval: 60000 });
 const taskExecutionDisabled = computed(() => !!versionQuery.data.value?.task_execution_disabled);
 
 const tasksQuery = useAsyncData<TaskView[] | undefined>(
-  () => api.tasks.list().then((r) => unwrap(r, "tasks")),
+  (signal) => api.tasks.list({ signal }).then((r) => unwrap(r, "tasks")),
   { pollInterval: 5000 },
 );
+/** The fleet-wide poll carries no stdout/stderr bodies; the server sends byte
+ *  counts instead. Full output rides the detail-chain fetch below, so a page
+ *  of probe history is a few hundred kilobytes, not megabytes parsed on the
+ *  main thread every five seconds. */
 const resultsQuery = useAsyncData<TaskResult[] | undefined>(
-  () => api.tasks.results().then((r) => unwrap(r, "results")),
+  (signal) => api.tasks.results({ omit_output: 1 }, { signal }).then((r) => unwrap(r, "results")),
   { pollInterval: 5000 },
 );
 const nodesQuery = useAsyncData<Node[] | undefined>(
-  () => api.nodes.list().then((r) => unwrap(r, "nodes")),
+  (signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")),
   { pollInterval: 5000 },
 );
 
@@ -165,10 +169,32 @@ const nodesQuery = useAsyncData<Node[] | undefined>(
  *  offered: declaring an unenforced one would narrow nothing and read as a
  *  guarantee it cannot keep. */
 const declarableQuery = useAsyncData<CapabilityImpact[] | undefined>(
-  () => api.capabilities.list().then((r) => (r.capabilities ?? []).filter((c) => c.enforced)),
+  (signal) => api.capabilities.list({ signal }).then((r) => (r.capabilities ?? []).filter((c) => c.enforced)),
   { pollInterval: 60000 },
 );
 const declarableCapabilities = computed(() => declarableQuery.data.value ?? []);
+/** Task ids of the run open in the drawer plus its reruns. Their results are
+ *  fetched with full bodies; everything else stays on the light poll. */
+const detailChainIds = computed<string[]>(() => {
+  const root = detailTaskId.value ? tasksById.value[detailTaskId.value] : undefined;
+  if (!root) return [];
+  const children = (childTasksByRoot.value[root.id] ?? []).map((task) => task.id);
+  return [root.id, ...children];
+});
+const detailResultsQuery = useAsyncData<TaskResult[] | undefined>(
+  async (signal) => {
+    const ids = detailChainIds.value;
+    if (!ids.length) return [];
+    const chunks = await Promise.all(
+      ids.map((id) => api.tasks.results({ task_id: id, limit: 500 }, { signal }).then((r) => unwrap(r, "results"))),
+    );
+    return chunks.flat();
+  },
+  { pollInterval: 5000 },
+);
+watch(detailChainIds, (ids, old) => {
+  if (ids.join("\n") !== (old ?? []).join("\n")) detailResultsQuery.refresh();
+});
 const statusFilter = ref<StatusFilter>("all");
 {
   const seeded = route.query.status;
@@ -297,6 +323,15 @@ const resultsByTask = computed<Record<string, TaskResult[]>>(() => {
   const grouped: Record<string, TaskResult[]> = {};
   for (const result of results.value) {
     (grouped[result.task_id] ||= []).push(result);
+  }
+  // The detail-chain fetch is authoritative for the run open in the drawer:
+  // its rows carry the stdout/stderr bodies the light poll deliberately lacks.
+  const detailed: Record<string, TaskResult[]> = {};
+  for (const result of detailResultsQuery.data.value ?? []) {
+    (detailed[result.task_id] ||= []).push(result);
+  }
+  for (const [taskId, list] of Object.entries(detailed)) {
+    grouped[taskId] = list;
   }
   for (const list of Object.values(grouped)) {
     list.sort((a, b) => timeValue(b.finished_at) - timeValue(a.finished_at));

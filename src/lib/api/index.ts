@@ -233,12 +233,12 @@ export const api = {
   // Fleet-wide capability policy: which gates are live, and what turning one
   // on would refuse right now.
   capabilities: {
-    list: () => http.get<{ capabilities: CapabilityImpact[] }>("/api/capabilities"),
+    list: (opts?: RequestOptions) => http.get<{ capabilities: CapabilityImpact[] }>("/api/capabilities", undefined, opts),
     setEnforced: (capability: string, enforced: boolean) =>
       http.post<CapabilityImpact>("/api/capabilities", { capability, enforced }),
   },
   nodes: {
-    list: () => http.get<{ nodes: Node[] } | Node[]>("/api/nodes"),
+    list: (opts?: RequestOptions) => http.get<{ nodes: Node[] } | Node[]>("/api/nodes", undefined, opts),
     enrollToken: (input: {
       node_id?: string;
       name: string;
@@ -344,14 +344,17 @@ export const api = {
   },
 
   tasks: {
-    list: () => http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks"),
+    list: (opts?: RequestOptions) => http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", undefined, opts),
     // One node's tasks, filtered by the server. The unfiltered list is fine for
     // a fleet-wide screen but grows with the fleet, and a node page only ever
     // wants its own rows.
     listForNode: (node_id: string, limit = 50) =>
       http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", { node_id, limit }),
-    results: (params?: { task_id?: string; node_id?: string; limit?: number; offset?: number }) =>
-      http.get<{ results: TaskResult[] } | TaskResult[]>("/api/task-results", params as Record<string, unknown>),
+    // omit_output asks the server for result rows without stdout/stderr
+    // bodies (byte counts instead): the shape a poll wants. Full bodies are a
+    // per-task fetch, not a fleet-wide subscription.
+    results: (params?: { task_id?: string; node_id?: string; limit?: number; offset?: number; omit_output?: number }, opts?: RequestOptions) =>
+      http.get<{ results: TaskResult[] } | TaskResult[]>("/api/task-results", params as Record<string, unknown>, opts),
     revealScript: (id: string, step_up_grant: string) =>
       http.post<TaskScriptRevealResponse>("/api/tasks/reveal-script", { id, step_up_grant }),
     create: (input: {
@@ -396,8 +399,8 @@ export const api = {
   },
 
   approvals: {
-    list: (options?: { include_dismissed?: boolean }) =>
-      http.get<{ approvals: ApprovalView[] } | ApprovalView[]>("/api/network/approvals", options),
+    list: (options?: { include_dismissed?: boolean }, opts?: RequestOptions) =>
+      http.get<{ approvals: ApprovalView[] } | ApprovalView[]>("/api/network/approvals", options, opts),
     approve: (approval_id: string, queue_apply: boolean, plan_sha256?: string) =>
       http.post<void>("/api/network/approvals/approve", {
         approval_id,
@@ -771,7 +774,7 @@ export const api = {
   },
 
   health: () => http.get<{ status: string }>("/api/health"),
-  version: () => http.get<BuildInfo>("/api/version"),
+  version: (opts?: RequestOptions) => http.get<BuildInfo>("/api/version", undefined, opts),
 };
 
 /** Normalize list endpoints that may return either a bare array or {key:[]}. */
