@@ -40,8 +40,13 @@ const props = withDefaults(
     // "poll" (default) is the HTTP store-and-forward relay; "stream" attaches a
     // WebSocket and is only usable when the node's agent runs in stream mode.
     transport?: "poll" | "stream";
+    // Whether the shell takes keyboard focus when it mounts or first opens.
+    // The page turns this on for an operator's own action (Connect, a tab
+    // click) and leaves it off on load, so a keyboard-only operator is never
+    // dropped into the PTY before reaching a control.
+    autofocus?: boolean;
   }>(),
-  { transport: "poll" },
+  { transport: "poll", autofocus: true },
 );
 
 const emit = defineEmits<{
@@ -432,6 +437,7 @@ function connectWs() {
 
   sock.onopen = () => {
     if (myGen !== wsGen) return;
+    const firstOpen = !hasConnectedOnce;
     hasConnectedOnce = true;
     wsBackoff = WS_BACKOFF_START_MS;
     reconnectStartedAt = 0;
@@ -442,7 +448,8 @@ function connectWs() {
     wsSendResume();
     sendResizeWs(true);
     flushStreamInputBuffer();
-    terminal?.focus();
+    // A reconnect must not steal focus from whatever the operator is typing in.
+    if (props.autofocus && firstOpen) terminal?.focus();
   };
   sock.onmessage = (ev) => {
     if (myGen !== wsGen) return;
@@ -824,7 +831,7 @@ onMounted(async () => {
   await nextTick();
   refit();
   startTransport();
-  terminal?.focus();
+  if (props.autofocus) terminal?.focus();
 });
 
 watch(
@@ -835,7 +842,7 @@ watch(
     await nextTick();
     scheduleResize();
     startTransport();
-    terminal?.focus();
+    if (props.autofocus) terminal?.focus();
   },
 );
 
@@ -859,8 +866,11 @@ watch(visibility, (value) => {
   // Poll: nudge an immediate poll on return. Stream: keep the socket live on a
   // backgrounded tab (a real terminal keeps receiving), just refocus.
   if (value !== "visible" || disposed) return;
-  if (isStream.value) terminal?.focus();
-  else if (!polling) scheduleNextPoll(0);
+  if (isStream.value) {
+    if (props.autofocus) terminal?.focus();
+  } else if (!polling) {
+    scheduleNextPoll(0);
+  }
 });
 
 onBeforeUnmount(() => {

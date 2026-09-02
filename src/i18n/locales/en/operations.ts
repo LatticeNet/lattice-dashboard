@@ -293,6 +293,7 @@ export default {
         connect: "Connect",
         connecting: "Opening…",
         liveShort: "{count} live",
+        nodeMissing: "The linked node {id} is not in your node list, so nothing was chosen.",
       },
       proof: {
         agent: "agent {version}",
@@ -326,6 +327,7 @@ export default {
         actorUnknown: "actor not recorded",
         opened: "opened {time}",
         pending: "waiting for the agent to attach",
+        releaseHint: "Shift+Escape leaves the shell",
       },
       ended: {
         title: "Session ended",
@@ -356,6 +358,7 @@ export default {
       emptyConsoleTitle: "No session attached",
       emptyConsoleDescription: "Choose a node above and connect. Your live sessions on any node appear as tabs here.",
       close: "Close",
+      closeSession: "Close session",
       closeTitle: "Close this session?",
       closeDescription:
         "Lattice asks the agent on {node} to end session {id}. The shell and everything running in it is killed, and the session cannot be resumed. Method: POST /api/terminal/sessions/{id}/close.",

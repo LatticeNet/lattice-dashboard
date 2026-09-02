@@ -26,7 +26,7 @@ import {
   ComboboxViewport,
   FocusScope,
 } from "reka-ui";
-import { ChevronsUpDown, Maximize2, Minimize2, Power, RefreshCw, Search, ShieldOff, SquareTerminal, X } from "lucide-vue-next";
+import { ChevronRight, ChevronsUpDown, Maximize2, Minimize2, Power, RefreshCw, Search, ShieldOff, SquareTerminal, X } from "lucide-vue-next";
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -136,6 +136,12 @@ watch(
 watch(routeNodeId, () => {
   routeConnectAttempted = false;
 });
+// A link naming a node this token cannot see, or that no longer exists, says
+// so instead of leaving Connect off without a reason.
+const routeNodeMissing = computed(() => {
+  const id = routeNodeId.value;
+  return id && nodesQuery.data.value !== undefined && !nodes.value.some((node) => node.id === id) ? id : "";
+});
 
 // --- shell and transport ----------------------------------------------------
 
@@ -233,6 +239,10 @@ const closing = ref(false);
 const closeTarget = ref<SessionTab | undefined>();
 const deniedSessionId = ref("");
 const xtermRef = ref<{ refit: () => void; requestClose?: () => void; focusTerminal?: () => void } | null>(null);
+// The PTY takes focus only on the operator's own action (Connect, a tab
+// click, fullscreen), never on load: a page that lands the caret in the shell
+// traps a keyboard-only operator there before they reach a single control.
+const wantTerminalFocus = ref(false);
 
 const tabs = computed(() => buildSessionTabs(sessions.value, pinned.value, nodes.value, dismissed.value));
 const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabId.value));
@@ -294,6 +304,7 @@ function dismissTab(id: string) {
 }
 
 function selectTab(id: string) {
+  wantTerminalFocus.value = true;
   activeTabId.value = id;
   void nextTick(() => xtermRef.value?.focusTerminal?.());
 }
@@ -357,6 +368,7 @@ async function connect() {
   try {
     const created = await api.terminal.create(request);
     upsertPinned(created);
+    wantTerminalFocus.value = true;
     activeTabId.value = created.id;
     toast.success(t("operations.terminal.toastStarted"));
     void sessionsQuery.refresh();
@@ -468,6 +480,7 @@ function settlePane() {
 
 function enterFullscreen() {
   returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  wantTerminalFocus.value = true;
   fullscreen.value = true;
   settlePane();
   void nextTick(() => xtermRef.value?.focusTerminal?.());
@@ -489,15 +502,30 @@ function toggleFullscreen() {
 
 // Escape leaves fullscreen from the pane's chrome. Inside the shell itself
 // Escape belongs to the program running there (vim, less), so from the
-// terminal it takes Shift+Escape; the button title says so. Bound in the
-// capture phase because xterm stops propagation of the keys it consumes.
+// terminal it takes Shift+Escape: in fullscreen that leaves fullscreen, in
+// normal mode it moves focus to the pane chrome so Tab reaches every control
+// again. Bound in the capture phase because xterm stops propagation of the
+// keys it consumes.
 function onPaneKeydown(event: KeyboardEvent) {
-  if (!fullscreen.value || event.key !== "Escape") return;
+  if (event.key !== "Escape") return;
   const inTerminal = event.target instanceof HTMLElement && event.target.closest(".xterm") !== null;
-  if (inTerminal && !event.shiftKey) return;
+  if (inTerminal) {
+    if (!event.shiftKey) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (fullscreen.value) exitFullscreen();
+    else focusPaneChrome();
+    return;
+  }
+  if (!fullscreen.value) return;
   event.preventDefault();
   event.stopPropagation();
   exitFullscreen();
+}
+
+function focusPaneChrome() {
+  const el = fullscreenTrigger.value?.$el;
+  if (el instanceof HTMLElement) el.focus();
 }
 
 watch(activeTabId, () => settlePane());
@@ -513,8 +541,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="absolute inset-0 flex min-h-0 flex-col gap-4 overflow-hidden bg-background p-4 sm:p-6">
-    <PageHeader :title="$t('operations.terminal.title')" class="shrink-0">
+  <div class="absolute inset-0 flex min-h-0 flex-col gap-4 overflow-hidden bg-background py-4 sm:p-6">
+    <PageHeader :title="$t('operations.terminal.title')" class="shrink-0 px-4 sm:px-0">
       <template #description>
         <!-- The proof line: what a session would run over, before anything opens. -->
         <p class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs leading-5 tabular text-muted-foreground" :title="limitsTitle">
@@ -531,7 +559,7 @@ onMounted(() => {
     <!-- Denied: the page says what is missing instead of showing an empty list. -->
     <section
       v-if="denied"
-      class="flex flex-1 items-center justify-center rounded-md border border-border bg-card"
+      class="mx-4 flex flex-1 items-center justify-center rounded-md border border-border bg-card sm:mx-0"
       role="status"
     >
       <EmptyState :icon="ShieldOff" :title="$t('operations.terminal.denied.title')" :description="denied === 'no-scope' ? $t('operations.terminal.denied.noScope') : $t('operations.terminal.denied.forbidden')">
@@ -541,7 +569,7 @@ onMounted(() => {
 
     <template v-else>
       <!-- Toolbar: the node is a command, Connect is the one primary action. -->
-      <div class="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
+      <div class="flex shrink-0 flex-col gap-2 px-4 sm:flex-row sm:items-start sm:px-0">
         <ComboboxRoot
           v-model="selectedNodeId"
           :ignore-filter="true"
@@ -549,7 +577,7 @@ onMounted(() => {
           class="relative min-w-0 flex-1 sm:max-w-md"
         >
           <ComboboxAnchor
-            class="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm transition-[border-color,box-shadow] duration-100 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
+            class="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
           >
             <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <ComboboxInput
@@ -585,11 +613,11 @@ onMounted(() => {
                   :key="node.id"
                   :value="node.id"
                   :text-value="node.name || node.id"
-                  class="flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm outline-none transition-colors duration-100 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary"
+                  class="flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm outline-none transition-colors data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary"
                 >
                   <StatusDot :status="node.disabled ? 'unknown' : node.online ? 'online' : 'offline'" :pulse="false" />
                   <span class="truncate">{{ node.name || node.id }}</span>
-                  <span class="ml-auto shrink-0 font-mono text-[11px] tabular text-muted-foreground">{{ shortId(node.id, 10) }}</span>
+                  <span class="ml-auto min-w-0 max-w-[45%] truncate font-mono text-[11px] tabular text-muted-foreground" :title="node.id">{{ node.id }}</span>
                   <span v-if="sessionCounts(sessions, node.id).liveOnNode" class="shrink-0 font-mono text-[11px] tabular text-primary">
                     {{ $t('operations.terminal.toolbar.liveShort', { count: sessionCounts(sessions, node.id).liveOnNode }) }}
                   </span>
@@ -621,11 +649,15 @@ onMounted(() => {
         </div>
       </div>
 
-      <p v-if="connectError" class="shrink-0 text-sm text-destructive" role="alert">{{ connectError }}</p>
+      <p v-if="connectError" class="shrink-0 px-4 text-sm text-destructive sm:px-0" role="alert">{{ connectError }}</p>
+      <p v-if="routeNodeMissing" class="shrink-0 px-4 font-mono text-xs text-warning sm:px-0" role="status">
+        {{ $t('operations.terminal.toolbar.nodeMissing', { id: routeNodeMissing }) }}
+      </p>
 
       <!-- Limits and transport: the caps the server enforces, as static facts. -->
-      <details class="group shrink-0 text-xs text-muted-foreground">
-        <summary class="inline-flex cursor-pointer select-none items-center gap-1 font-mono transition-colors duration-100 hover:text-foreground">
+      <details class="group shrink-0 px-4 text-xs text-muted-foreground sm:px-0">
+        <summary class="inline-flex min-h-6 cursor-pointer list-none select-none items-center gap-1 font-mono transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronRight class="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
           {{ $t('operations.terminal.limits.summary') }}
         </summary>
         <div class="mt-2 grid gap-3 rounded-md border border-border bg-card p-3 sm:grid-cols-[1fr_auto]">
@@ -661,14 +693,14 @@ onMounted(() => {
         v-if="tabs.length"
         role="tablist"
         :aria-label="$t('operations.terminal.tabs.label')"
-        class="-mb-4 flex shrink-0 items-end gap-1 overflow-x-auto"
+        class="-mb-4 flex shrink-0 items-end gap-1 overflow-x-auto px-4 sm:px-0"
       >
         <div
           v-for="(tab, index) in tabs"
           :key="tab.id"
           :class="
             cn(
-              'group flex shrink-0 items-center rounded-t-md border border-b-0 border-border transition-colors duration-100',
+              'group flex shrink-0 items-center rounded-t-md border border-b-0 border-border transition-colors',
               tab.id === activeTabId ? 'bg-card text-foreground' : 'bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground',
               !tab.live && 'border-dashed',
             )
@@ -692,7 +724,8 @@ onMounted(() => {
           </button>
           <button
             type="button"
-            class="mr-1 inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+            class="mr-1 inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+            :tabindex="tab.id === activeTabId ? 0 : -1"
             :aria-label="tab.live ? $t('operations.terminal.tabs.closeTab', { node: tab.nodeName }) : $t('operations.terminal.tabs.dismissTab', { node: tab.nodeName })"
             :title="tab.live ? $t('operations.terminal.tabs.closeTab', { node: tab.nodeName }) : $t('operations.terminal.tabs.dismissTab', { node: tab.nodeName })"
             @click.stop="askClose(tab)"
@@ -703,7 +736,16 @@ onMounted(() => {
       </div>
 
       <!-- The pane. In fullscreen it becomes a modal region with a focus trap. -->
-      <FocusScope as-child :trapped="fullscreen" :loop="fullscreen">
+      <!-- FocusScope would move focus into the pane on mount and on unmount;
+           both are ours to do: fullscreen focuses the shell, leaving it
+           returns focus to the trigger, and on load focus stays put. -->
+      <FocusScope
+        as-child
+        :trapped="fullscreen"
+        :loop="fullscreen"
+        @mount-auto-focus="(event: Event) => event.preventDefault()"
+        @unmount-auto-focus="(event: Event) => event.preventDefault()"
+      >
         <section
           ref="paneEl"
           :role="fullscreen ? 'dialog' : undefined"
@@ -712,32 +754,33 @@ onMounted(() => {
           :class="
             cn(
               'pane-card flex min-h-0 flex-col overflow-hidden border border-border bg-card',
-              fullscreen ? 'fixed inset-0 z-50 rounded-none' : 'relative flex-1 rounded-md',
-              tabs.length && !fullscreen && 'rounded-tl-none',
+              fullscreen ? 'fixed inset-0 z-50 rounded-none' : 'relative flex-1 rounded-none border-x-0 sm:rounded-md sm:border-x',
+              tabs.length && !fullscreen && 'sm:rounded-tl-none',
             )
           "
           @keydown.capture="onPaneKeydown"
         >
           <header class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
-            <!-- One line, ellipsised on a phone; the full identity rides on the tab's title. -->
-            <p class="min-w-0 flex-1 truncate font-mono text-xs leading-5 tabular text-muted-foreground" :title="activeTab ? tabTitle(activeTab) : undefined">
-              <template v-if="activeTab">
+            <!-- Identity on two wrapping rows: nothing is clipped at any width. -->
+            <div v-if="activeTab" class="min-w-0 flex-1 font-mono text-xs leading-5 tabular text-muted-foreground">
+              <p class="flex flex-wrap items-center gap-x-2 break-all">
                 <span class="text-foreground">{{ activeTab.id }}</span>
-                <span aria-hidden="true"> · </span>
+                <span aria-hidden="true">·</span>
                 <span>{{ activeTab.nodeName }}</span>
-                <span aria-hidden="true"> · </span>
+              </p>
+              <p class="flex flex-wrap items-center gap-x-2">
                 <span>{{ activeTab.shell }}</span>
-                <span aria-hidden="true"> · </span>
+                <span aria-hidden="true">·</span>
                 <span>{{ activeTab.actorId ? $t('operations.terminal.pane.actor', { actor: activeTab.actorId }) : $t('operations.terminal.pane.actorUnknown') }}</span>
-                <span aria-hidden="true"> · </span>
+                <span aria-hidden="true">·</span>
                 <span v-if="activeTab.openedAt">{{ $t('operations.terminal.pane.opened', { time: formatDateTime(activeTab.openedAt) }) }}</span>
                 <span v-else-if="activeTab.live" class="text-warning">{{ $t('operations.terminal.pane.pending') }}</span>
                 <span v-else>{{ $t('operations.terminal.tabs.ended') }}</span>
-              </template>
-              <span v-else class="inline-flex items-center gap-2">
-                <SquareTerminal class="size-3.5" aria-hidden="true" />
-                {{ $t('operations.terminal.consoleHint') }}
-              </span>
+              </p>
+            </div>
+            <p v-else class="inline-flex min-w-0 flex-1 items-center gap-2 font-mono text-xs leading-5 text-muted-foreground">
+              <SquareTerminal class="size-3.5" aria-hidden="true" />
+              {{ $t('operations.terminal.consoleHint') }}
             </p>
             <div class="flex items-center gap-2">
               <Button
@@ -768,6 +811,7 @@ onMounted(() => {
                 :session="activeTab.session as TerminalSession"
                 :disabled="terminalDisabled"
                 :transport="activeTransport"
+                :autofocus="wantTerminalFocus"
                 class="h-full"
                 @update:session="onSessionUpdate"
                 @closed="onSessionClosed"
@@ -819,13 +863,17 @@ onMounted(() => {
       </FocusScope>
 
       <!-- Recent line: where the operator's sessions are, in absolute time. -->
-      <p class="flex shrink-0 flex-wrap items-center gap-x-2 font-mono text-xs leading-5 tabular text-muted-foreground">
+      <p class="flex shrink-0 flex-wrap items-center gap-x-2 px-4 font-mono text-xs leading-5 tabular text-muted-foreground sm:px-0">
         <template v-if="selectedNode">
           <span>{{ $t('operations.terminal.recent.onNode', { count: counts.liveOnNode }) }}</span>
           <span aria-hidden="true">·</span>
           <span>{{ $t('operations.terminal.recent.elsewhere', { count: counts.liveOwn - counts.liveOnNode }) }}</span>
         </template>
         <span v-else>{{ $t('operations.terminal.proof.liveOwn', { count: counts.liveOwn }) }}</span>
+        <template v-if="activeTab?.live">
+          <span aria-hidden="true">·</span>
+          <span>{{ $t('operations.terminal.pane.releaseHint') }}</span>
+        </template>
         <template v-if="recentEnded">
           <span aria-hidden="true">·</span>
           <span>{{ $t('operations.terminal.recent.lastEnded', { node: nodeById(recentEnded.node_id)?.name ?? shortId(recentEnded.node_id, 10), time: formatDateTime(recentEnded.closed_at || recentEnded.created_at) }) }}</span>
@@ -837,7 +885,7 @@ onMounted(() => {
       :open="closeTarget !== undefined"
       :title="$t('operations.terminal.closeTitle')"
       :description="closeTarget ? $t('operations.terminal.closeDescription', { node: closeTarget.nodeName, id: closeTarget.id }) : ''"
-      :confirm-label="$t('operations.terminal.close')"
+      :confirm-label="$t('operations.terminal.closeSession')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="closing"
       @update:open="(value: boolean) => { if (!value && !closing) closeTarget = undefined; }"
@@ -847,14 +895,13 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* Motion tokens from the 2026-09-02 direction, written as literals until the
-   chassis ships them: --duration-fast 100ms, --duration-base 200ms, --ease-out
-   cubic-bezier(0.19, 1, 0.22, 1). The pane fills in over the base duration and
-   nothing else on this page moves on its own. */
+/* The pane fills in over the base duration on a tab switch and on a
+   fullscreen enter or leave; nothing else on this page moves on its own.
+   Reduced motion zeroes the tokens at the root. */
 .pane-card {
   transition:
-    opacity 200ms cubic-bezier(0.19, 1, 0.22, 1),
-    transform 200ms cubic-bezier(0.19, 1, 0.22, 1);
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
 }
 .pane-card.pane-prime {
   transition: none;
@@ -862,7 +909,7 @@ onMounted(() => {
   transform: translateY(4px);
 }
 .pane-fill-enter-active {
-  transition: opacity 200ms cubic-bezier(0.19, 1, 0.22, 1);
+  transition: opacity var(--duration-base) var(--ease-out);
 }
 .pane-fill-leave-active {
   transition: opacity 0ms;
@@ -870,12 +917,5 @@ onMounted(() => {
 .pane-fill-enter-from,
 .pane-fill-leave-to {
   opacity: 0;
-}
-@media (prefers-reduced-motion: reduce) {
-  .pane-card,
-  .pane-fill-enter-active,
-  .pane-fill-leave-active {
-    transition-duration: 0ms;
-  }
 }
 </style>

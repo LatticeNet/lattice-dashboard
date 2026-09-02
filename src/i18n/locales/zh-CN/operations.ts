@@ -287,6 +287,7 @@ export default {
         connect: "连接",
         connecting: "打开中…",
         liveShort: "{count} 个在线",
+        nodeMissing: "链接中的节点 {id} 不在你的节点列表里，因此未选择任何节点。",
       },
       proof: {
         agent: "agent {version}",
@@ -320,6 +321,7 @@ export default {
         actorUnknown: "未记录操作者",
         opened: "打开于 {time}",
         pending: "等待 agent 接入",
+        releaseHint: "Shift+Escape 可离开 Shell",
       },
       ended: {
         title: "会话已结束",
@@ -348,6 +350,7 @@ export default {
       emptyConsoleTitle: "尚未接入会话",
       emptyConsoleDescription: "在上方选择节点后连接。你在任意节点上的在线会话都会以标签显示在这里。",
       close: "关闭",
+      closeSession: "关闭会话",
       closeTitle: "关闭该会话？",
       closeDescription:
         "Lattice 会让 {node} 上的 agent 结束会话 {id}。Shell 和里面运行的一切都会被杀掉，会话无法恢复。方法：POST /api/terminal/sessions/{id}/close。",
