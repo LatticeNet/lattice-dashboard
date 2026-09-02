@@ -421,6 +421,7 @@ export default {
         queueEmpty: "Nothing is waiting to run on this node.",
         queueRunning: "Running",
         queueWaiting: "Queued",
+        queueStalled: "Stalled",
         queueFanout: "1 of {count} targets",
         queueOfflineHint: "This node is not reporting. Queued work stays here and runs when it comes back.",
         noActivity: "No audit decision has touched this node recently.",

@@ -228,6 +228,8 @@ export default {
       capabilityRefused: "{count} target(s) refused by the capability gate",
       waitingLease: "No agent has picked this up yet",
       stalledNoLease: "Nothing is running this and no result arrived; cancel it or rerun",
+      leasedFor: "leased {age}",
+      attemptOf: "attempt {attempt} of {max}",
       failedNoResult: "Marked failed with no output reported",
       cancelledNoResult: "Cancelled before any agent ran it",
       nodeRerunBadge: "node rerun",

@@ -65,7 +65,8 @@ import {
   groupByDay,
   type TimelineEntry,
 } from "./nodeTimelineModel";
-import { buildNodeQueue } from "./nodeTaskQueueModel";
+import { buildNodeQueue, type NodeQueueEntry } from "./nodeTaskQueueModel";
+import { leaseAttemptLabel } from "@/lib/taskLease";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -664,6 +665,20 @@ const timelineDays = computed(() => groupByDay(timeline.value));
 // happened; when a node has been down, the question is what is stacked up
 // against it and in what order it will be taken.
 const nodeQueue = computed(() => buildNodeQueue(nodeTasksQuery.data.value ?? [], nodeId.value));
+
+/** "leased 41 min, attempt 2 of 3", or the reason the store gave up; empty on an older server. */
+function queueLeaseLabel(entry: NodeQueueEntry): string {
+  return leaseAttemptLabel(entry.lease, {
+    leasedFor: (age) => t("operations.tasks.leasedFor", { age }),
+    attemptOf: (attempt, max) => t("operations.tasks.attemptOf", { attempt, max }),
+  });
+}
+
+function queueBadge(entry: NodeQueueEntry): { variant: "warning" | "destructive" | "secondary"; label: string } {
+  if (entry.stalled) return { variant: "destructive", label: t("fleet.nodes.detail.queueStalled") };
+  if (entry.running) return { variant: "warning", label: t("fleet.nodes.detail.queueRunning") };
+  return { variant: "secondary", label: t("fleet.nodes.detail.queueWaiting") };
+}
 const timelineExpanded = ref(false);
 const timelineHasMore = computed(
   () =>
@@ -2208,10 +2223,19 @@ async function resolveGeo() {
                           · {{ formatRelativeTime(entry.createdAt) }}
                         </template>
                       </p>
+                      <!-- The lease line is what turns "Running" into evidence: how
+                           long, which attempt, and why the store stopped if it did. -->
+                      <p
+                        v-if="queueLeaseLabel(entry)"
+                        :class="cn('text-xs', entry.stalled ? 'text-destructive' : 'text-muted-foreground')"
+                        :title="queueLeaseLabel(entry)"
+                      >
+                        {{ queueLeaseLabel(entry) }}
+                      </p>
                     </div>
                   </div>
-                  <Badge :variant="entry.running ? 'warning' : 'secondary'">
-                    {{ entry.running ? $t('fleet.nodes.detail.queueRunning') : $t('fleet.nodes.detail.queueWaiting') }}
+                  <Badge :variant="queueBadge(entry).variant">
+                    {{ queueBadge(entry).label }}
                   </Badge>
                 </li>
               </ol>
