@@ -11,6 +11,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, X } from "lucide-vue-next";
 import { api, type TerminalSession } from "@/lib/api";
+import { isForbidden } from "@/views/operations/terminalModel";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 
 const POLL_MS = 120;
@@ -47,6 +48,10 @@ const emit = defineEmits<{
   "update:session": [session: TerminalSession];
   error: [message: string];
   closed: [session: TerminalSession];
+  // The server answered 403 on a per-session route: the session belongs to
+  // another operator. The owner of the tab decides what to show; this
+  // component only stops.
+  denied: [session: TerminalSession];
   state: [state: ConnState];
 }>();
 
@@ -466,12 +471,45 @@ function connectWs() {
       emit("closed", { ...props.session, status: "closed" });
       return;
     }
+    // A handshake that never opened hides its HTTP status behind a generic
+    // close code. One events probe tells a 403 (another operator's session)
+    // apart from a network blip before the retry loop starts.
+    if (!hasConnectedOnce) {
+      void probeBeforeReconnect(myGen);
+      return;
+    }
     // Unexpected drop (network blip, nginx reload, agent redial): keep the
     // terminal intact and reconnect with backoff. The server holds the session
     // alive within its detach window and the agent keeps the shell running, so
     // the reconnect resumes seamlessly via the rendered-offset replay.
     scheduleWsReconnect();
   };
+}
+
+async function probeBeforeReconnect(gen: number) {
+  const sessionId = props.session.id;
+  try {
+    // A cursor past any seq returns the session without replaying output.
+    const res = await api.terminal.events(sessionId, Number.MAX_SAFE_INTEGER);
+    if (gen !== wsGen || disposed) return;
+    emit("update:session", res.session);
+    if (res.session.status === "closed" || res.session.status === "failed") {
+      setConnState(res.session.status);
+      if (closedEmittedFor !== res.session.id) {
+        closedEmittedFor = res.session.id;
+        emit("closed", res.session);
+      }
+      return;
+    }
+  } catch (error) {
+    if (gen !== wsGen || disposed) return;
+    if (isForbidden(error)) {
+      setConnState("failed");
+      emit("denied", props.session);
+      return;
+    }
+  }
+  scheduleWsReconnect();
 }
 
 function scheduleWsReconnect() {
@@ -673,6 +711,12 @@ async function pollEvents(): Promise<void> {
       if (closedPollsRemaining <= 0) keepPolling = false; // session fully drained. Stop
     }
   } catch (error) {
+    if (isForbidden(error)) {
+      keepPolling = false;
+      setConnState("failed");
+      emit("denied", session);
+      return;
+    }
     const message = error instanceof Error ? error.message : t("operations.terminal.eventsFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;
@@ -705,6 +749,10 @@ async function flushInput() {
     if (props.session.id !== sessionID) return;
     emit("update:session", session);
   } catch (error) {
+    if (isForbidden(error)) {
+      emit("denied", props.session);
+      return;
+    }
     const message = error instanceof Error ? error.message : t("operations.terminal.toastSendFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;
@@ -745,6 +793,10 @@ async function fitAndSendResize() {
     if (props.session.id !== sessionID) return;
     emit("update:session", session);
   } catch (error) {
+    if (isForbidden(error)) {
+      emit("denied", props.session);
+      return;
+    }
     const message = error instanceof Error ? error.message : t("operations.terminal.resizeFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;

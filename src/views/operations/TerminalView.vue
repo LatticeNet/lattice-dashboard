@@ -1,82 +1,147 @@
 <script setup lang="ts">
+/**
+ * Terminal: the session pane first, the node as a command.
+ *
+ * The page claims the viewport pane, so the shell's main region stops
+ * scrolling and this view fills it exactly: title and proof line, the node
+ * combobox with Connect, the tab strip of live sessions, and the pane that
+ * takes every remaining pixel. Nothing here adds document height, which is
+ * what keeps one scroller per document and lets the pane track `100dvh` when
+ * a phone keyboard resizes the viewport.
+ *
+ * Every decision that does not need the DOM lives in ./terminalModel.ts.
+ */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
-  Activity,
-  BookOpen,
-  CircleStop,
-  Clock,
-  ExternalLink,
-  Maximize2,
-  Minimize2,
-  Power,
-  RefreshCw,
-  Search,
-  Server,
-  SquareTerminal,
-  Wifi,
-  Zap,
-} from "lucide-vue-next";
+  ComboboxAnchor,
+  ComboboxContent,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxPortal,
+  ComboboxRoot,
+  ComboboxTrigger,
+  ComboboxViewport,
+  FocusScope,
+} from "reka-ui";
+import { ChevronsUpDown, Maximize2, Minimize2, Power, RefreshCw, Search, ShieldOff, SquareTerminal, X } from "lucide-vue-next";
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
-import { formatBytes, formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { useAuthStore } from "@/stores/auth";
+import { claimViewportPane } from "@/layout/viewportPane";
+import { formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  TERMINAL_LIMITS,
+  TERMINAL_SCOPE,
+  buildSessionTabs,
+  connectReadiness,
+  createRequest,
+  deniedState,
+  filterNodes,
+  isForbidden,
+  latestEnded,
+  nextActiveTab,
+  proofLabels,
+  queryFlag,
+  queryString,
+  resolveTransport,
+  sessionCounts,
+  type BlockedReason,
+  type CloseReasonKind,
+  type ProofLabel,
+  type SessionTab,
+  type TransportMode,
+} from "./terminalModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
-import DataState from "@/components/common/DataState.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import StatusDot from "@/components/common/StatusDot.vue";
 import XtermSession from "@/components/terminal/XtermSession.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 34;
+const TRANSPORT_STORAGE_KEY = "lattice.terminal.transport";
+const SHELLS = ["bash", "sh", "/bin/zsh"] as const;
 
 const route = useRoute();
 const { t } = useI18n();
+const auth = useAuthStore();
 
-const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
-  pollInterval: 5000,
-});
+// The pane is claimed for the view's lifetime; the shell's main region is the
+// containing block for the `absolute inset-0` root below.
+const releaseViewportPane = claimViewportPane();
+onBeforeUnmount(() => releaseViewportPane());
+
+const hasScope = computed(() => auth.can(TERMINAL_SCOPE));
+const canListNodes = computed(() => auth.can("node:read"));
+
+const nodesQuery = useAsyncData(
+  (signal) => (canListNodes.value ? api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")) : Promise.resolve([] as Node[])),
+  { pollInterval: 5000, immediate: hasScope.value },
+);
 const sessionsQuery = useAsyncData((signal) => api.terminal.list({ signal }).then((r) => r.sessions), {
   pollInterval: 5000,
+  immediate: hasScope.value,
 });
+
+const nodes = computed(() => nodesQuery.data.value ?? []);
+const sessions = computed(() => sessionsQuery.data.value ?? []);
+
+const denied = computed(() => deniedState({ hasScope: hasScope.value, listError: sessionsQuery.error.value }));
+// A refused list is a scope problem, not a blip; polling it every five seconds
+// would only fill the audit log with denies.
+watch(denied, (state) => {
+  if (state === "forbidden") sessionsQuery.stop();
+});
+
+// --- node choice ------------------------------------------------------------
 
 const selectedNodeId = ref("");
 const nodeSearch = ref("");
-const shell = ref("bash");
-const activeSession = ref<TerminalSession | undefined>();
-const starting = ref(false);
-const closing = ref(false);
-const closeRequested = ref(false);
-const autoConnectAttempted = ref(false);
-type TerminalTransportMode = "auto" | "stream" | "poll";
-const TRANSPORT_STORAGE_KEY = "lattice.terminal.transport";
+const nodeInput = ref<InstanceType<typeof ComboboxInput> | null>(null);
 
-// Storage can throw (private mode, blocked third-party storage, quota). An
-// unhandled throw here happens at module scope and takes the whole view down,
-// so both reads and writes stay best-effort.
-function readStoredTransport(): TerminalTransportMode {
+function nodeById(id: string): Node | undefined {
+  return nodes.value.find((node) => node.id === id);
+}
+const selectedNode = computed(() => nodeById(selectedNodeId.value));
+const filteredNodes = computed(() => filterNodes(nodes.value, nodeSearch.value));
+
+function displayNode(id: unknown): string {
+  if (typeof id !== "string" || !id) return "";
+  return nodeById(id)?.name ?? id;
+}
+
+// A deep link (`?node_id=`) chooses the node the way a click would, once per
+// route change. It is not a default: without the query nothing is chosen.
+const routeNodeId = computed(() => queryString(route.query.node_id));
+const routeConnect = computed(() => queryFlag(route.query.connect));
+const routeSessionId = computed(() => queryString(route.query.session_id));
+let appliedRouteNodeId = "";
+let routeConnectAttempted = false;
+watch(
+  [nodes, routeNodeId],
+  ([list, id]) => {
+    if (!id || id === appliedRouteNodeId || !list.some((node) => node.id === id)) return;
+    appliedRouteNodeId = id;
+    selectedNodeId.value = id;
+  },
+  { immediate: true },
+);
+watch(routeNodeId, () => {
+  routeConnectAttempted = false;
+});
+
+// --- shell and transport ----------------------------------------------------
+
+const shell = ref<string>("bash");
+
+function readStoredTransport(): TransportMode {
   try {
     const stored = localStorage.getItem(TRANSPORT_STORAGE_KEY);
     return stored === "stream" || stored === "poll" ? stored : "auto";
@@ -84,661 +149,733 @@ function readStoredTransport(): TerminalTransportMode {
     return "auto";
   }
 }
-
-const transportMode = ref<TerminalTransportMode>(readStoredTransport());
+const transportMode = ref<TransportMode>(readStoredTransport());
 watch(transportMode, (mode) => {
   try {
     localStorage.setItem(TRANSPORT_STORAGE_KEY, mode);
   } catch {
-    /* preference is not persisted; the session still works */
+    /* the preference is not persisted; the session still works */
   }
 });
 
-const closeConfirmOpen = ref(false);
+const readiness = computed(() => connectReadiness(selectedNode.value, transportMode.value));
+const counts = computed(() => sessionCounts(sessions.value, selectedNodeId.value));
 
-// --- Console sizing + fullscreen ---
-// The console fits the viewport without forcing the page to scroll: its height is
-// measured from where the box actually starts (getBoundingClientRect().top, which
-// already includes the app header + page header + card header above it) down to
-// the viewport bottom, minus a small reserve for the status row + page padding.
-// It never shrinks below MIN_CONSOLE_H; below that the page scrolls instead of
-// squashing the terminal into uselessness.
-const MIN_CONSOLE_H = 360;
-const CONSOLE_BOTTOM_RESERVE = 88;
-const consoleEl = ref<HTMLElement | null>(null);
-const consoleHeight = ref(560);
-const fullscreen = ref(false);
-const xtermRef = ref<{ refit: () => void; requestClose?: () => void } | null>(null);
+// --- proof line -------------------------------------------------------------
 
-// settleConsole re-measures (no-op in fullscreen) and forces the terminal to
-// refit after the DOM updates. Used on the discrete layout changes (fullscreen
-// toggle, session appearing) so the terminal never renders against a stale size:
-// that stale fit is what left the bottom row clipped until a manual resize.
-function settleConsole() {
-  void nextTick(() => {
-    recomputeConsoleHeight();
-    xtermRef.value?.refit?.();
-  });
-}
+const BLOCKED_KEY: Record<BlockedReason, string> = {
+  "no-node": "operations.terminal.proof.blockedNoNode",
+  disabled: "operations.terminal.proof.blockedDisabled",
+  offline: "operations.terminal.proof.blockedOffline",
+  "terminal-off": "operations.terminal.proof.blockedTerminalOff",
+  "exec-off": "operations.terminal.proof.blockedExecOff",
+};
 
-function recomputeConsoleHeight() {
-  if (fullscreen.value) return; // fullscreen fills the viewport via flex, not a fixed px height
-  const el = consoleEl.value;
-  if (!el) return;
-  const top = el.getBoundingClientRect().top;
-  const avail = window.innerHeight - top - CONSOLE_BOTTOM_RESERVE;
-  consoleHeight.value = Math.max(MIN_CONSOLE_H, Math.floor(avail));
-}
-
-function toggleFullscreen() {
-  fullscreen.value = !fullscreen.value;
-  settleConsole();
-}
-
-function onWindowKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape" && fullscreen.value) {
-    fullscreen.value = false;
-    settleConsole();
+function proofText(label: ProofLabel): string {
+  switch (label.key) {
+    case "transport":
+      return label.transport;
+    case "shell":
+      return label.shell;
+    case "agent":
+      return t("operations.terminal.proof.agent", { version: label.version });
+    case "agentUnknown":
+      return t("operations.terminal.proof.agentUnknown");
+    case "liveOnNode":
+      return t("operations.terminal.proof.liveOnNode", { count: label.count });
+    case "liveOwn":
+      return t("operations.terminal.proof.liveOwn", { count: label.count });
+    case "blocked":
+      return t(BLOCKED_KEY[label.reason]);
+    case "audited":
+      return t("operations.terminal.proof.audited");
   }
 }
 
-onMounted(() => {
-  void nextTick(recomputeConsoleHeight);
-  window.addEventListener("resize", recomputeConsoleHeight);
-  window.addEventListener("keydown", onWindowKeydown);
-});
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", recomputeConsoleHeight);
-  window.removeEventListener("keydown", onWindowKeydown);
-});
-// A session appearing/disappearing shifts the layout (header description, status
-// row), so re-measure and refit after the DOM settles.
-watch(activeSession, () => settleConsole());
-
-const routeNodeId = computed(() => {
-  const raw = route.query.node_id;
-  if (Array.isArray(raw)) return raw[0] ?? "";
-  return typeof raw === "string" ? raw : "";
-});
-const routeAutoConnect = computed(() => route.query.connect === "1" || route.query.connect === "true");
-
-const nodes = computed(() => nodesQuery.data.value ?? []);
-const sessions = computed(() => sessionsQuery.data.value ?? []);
-const activeSessions = computed(() =>
-  sessions.value.filter((session) => session.status !== "closed" && session.status !== "failed"),
+const proofSegments = computed(() =>
+  proofLabels({
+    node: selectedNode.value,
+    readiness: readiness.value,
+    shell: shell.value,
+    liveOwn: counts.value.liveOwn,
+    liveOnNode: counts.value.liveOnNode,
+  }).map((label) => ({ key: label.key, text: proofText(label), tone: label.key === "blocked" ? "warning" : "neutral" })),
 );
 
-const selectedNode = computed(() =>
-  nodes.value.find((node) => node.id === selectedNodeId.value),
-);
+const limitLines = computed(() => [
+  t("operations.terminal.limits.sessions", { count: TERMINAL_LIMITS.maxSessions }),
+  t("operations.terminal.limits.perNode", { count: TERMINAL_LIMITS.maxPerNode }),
+  t("operations.terminal.limits.pending", { minutes: TERMINAL_LIMITS.pendingMinutes }),
+  t("operations.terminal.limits.idle", { minutes: TERMINAL_LIMITS.idleMinutes }),
+  t("operations.terminal.limits.absolute", { hours: TERMINAL_LIMITS.absoluteHours }),
+]);
+const limitsTitle = computed(() => limitLines.value.join(" · "));
 
-const selectedNodeRuntime = computed(() => selectedNode.value?.agent_runtime ?? undefined);
-const selectedNodeTransport = computed<"stream" | "poll">(() => {
-  if (transportMode.value === "stream" || transportMode.value === "poll") return transportMode.value;
-  const runtime = selectedNodeRuntime.value;
-  if (runtime?.allow_terminal && !runtime?.no_exec && runtime?.terminal_transport === "stream") return "stream";
-  return "poll";
-});
-const selectedNodeTransportLabel = computed(() =>
-  selectedNodeTransport.value === "stream"
-    ? t("operations.terminal.transportStream")
-    : t("operations.terminal.transportPoll"),
-);
-const selectedNodeTransportHint = computed(() => {
+const transportHint = computed(() => {
   if (transportMode.value === "stream") return t("operations.terminal.transportForcedStreamHint");
   if (transportMode.value === "poll") return t("operations.terminal.transportForcedPollHint");
-  return selectedNodeTransport.value === "stream"
+  return resolveTransport(selectedNode.value, "auto") === "stream"
     ? t("operations.terminal.transportAutoStreamHint")
     : t("operations.terminal.transportAutoPollHint");
 });
 
-const filteredNodes = computed(() => {
-  const needle = nodeSearch.value.trim().toLowerCase();
-  const list = [...nodes.value].sort((a, b) => {
-    if (isTerminalReady(a) !== isTerminalReady(b)) return isTerminalReady(a) ? -1 : 1;
-    return (a.name || a.id).localeCompare(b.name || b.id);
-  });
-  if (!needle) return list;
-  return list.filter((node) =>
-    [
-      node.name,
-      node.id,
-      node.role,
-      node.public_ip,
-      node.public_ipv6,
-      node.agent_version,
-      ...(node.tags ?? []),
-    ]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(needle)),
-  );
-});
+// --- sessions and tabs ------------------------------------------------------
 
-const isNodeNoMatch = computed(
-  () => nodes.value.length > 0 && filteredNodes.value.length === 0,
-);
+// Every session this page has shown. The list poll drops a session the moment
+// it ends; the pinned copy keeps its tab, with the server's reason, until the
+// operator dismisses it.
+const pinned = ref<TerminalSession[]>([]);
+const dismissed = ref<ReadonlySet<string>>(new Set());
+const activeTabId = ref("");
+const starting = ref(false);
+const connectError = ref("");
+const closing = ref(false);
+const closeTarget = ref<SessionTab | undefined>();
+const deniedSessionId = ref("");
+const xtermRef = ref<{ refit: () => void; requestClose?: () => void; focusTerminal?: () => void } | null>(null);
 
-const selectedSessionCount = computed(() =>
-  selectedNodeId.value
-    ? activeSessions.value.filter((session) => session.node_id === selectedNodeId.value).length
-    : 0,
-);
+const tabs = computed(() => buildSessionTabs(sessions.value, pinned.value, nodes.value, dismissed.value));
+const activeTab = computed(() => tabs.value.find((tab) => tab.id === activeTabId.value));
+const activeTransport = computed(() => resolveTransport(activeTab.value ? nodeById(activeTab.value.nodeId) : undefined, transportMode.value));
+const recentEnded = computed(() => latestEnded(sessions.value));
 
-const terminalDisabled = computed(
-  () =>
-    closeRequested.value ||
-    closing.value ||
-    !activeSession.value ||
-    activeSession.value.status === "closed" ||
-    activeSession.value.status === "failed",
-);
-
-/** Name shown in the console header, reused as its truncation title. */
-const consoleTitle = computed(() =>
-  activeSession.value
-    ? nodeName(activeSession.value.node_id)
-    : selectedNode.value?.name || t("operations.terminal.console"),
-);
-
-const SESSION_STATUS_KEYS: readonly string[] = ["idle", "open", "pending", "closed", "failed"];
-
-/** Translate a session status, falling back to the raw API value. */
-function sessionStatusLabel(status?: string): string {
-  const key = status || "idle";
-  return SESSION_STATUS_KEYS.includes(key) ? t(`operations.terminal.status.${key}`) : key;
-}
-
-const selectedNodeSubtitle = computed(() => {
-  const node = selectedNode.value;
-  if (!node) return "";
-  return [node.public_ip || node.public_ipv6, node.agent_version].filter(Boolean).join(" · ");
-});
-
-watch(
-  [nodes, routeNodeId],
-  ([list, queryNodeId]) => {
-    if (queryNodeId && list.some((node) => node.id === queryNodeId)) {
-      selectedNodeId.value = queryNodeId;
-      return;
-    }
-    if (selectedNodeId.value && list.some((node) => node.id === selectedNodeId.value)) return;
-    selectedNodeId.value = list[0]?.id ?? "";
-  },
-  { immediate: true },
-);
-
-watch(routeNodeId, () => {
-  autoConnectAttempted.value = false;
-});
-
-watch(
-  [selectedNode, routeAutoConnect, routeNodeId],
-  async ([node, shouldConnect, queryNodeId]) => {
-    if (!shouldConnect || autoConnectAttempted.value || !node || node.id !== queryNodeId) return;
-    autoConnectAttempted.value = true;
-    await connectSelected({ preferExisting: true });
-  },
-  { immediate: true },
-);
-
-function isTerminalReady(node: Node): boolean {
-  if (!node.online || node.disabled) return false;
-  const runtime = node.agent_runtime;
-  return !!runtime?.allow_terminal && !runtime.no_exec;
-}
-
-function nodeName(id: string): string {
-  const node = nodes.value.find((candidate) => candidate.id === id);
-  return node?.name || shortId(id, 14);
-}
-
-function latestNodeSession(nodeId: string): TerminalSession | undefined {
-  return activeSessions.value
-    .filter((session) => session.node_id === nodeId)
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-}
-
-function activeCount(nodeId: string): number {
-  return activeSessions.value.filter((session) => session.node_id === nodeId).length;
-}
-
-const SESSION_HEALTH: Record<string, NodeHealth> = {
-  open: "online",
-  pending: "pending",
-  failed: "offline",
-};
-
-function statusVariant(status: string): BadgeVariant {
-  return statusMeta(SESSION_HEALTH[status] ?? "unknown").badgeVariant;
-}
-
-function selectNode(node: Node) {
-  selectedNodeId.value = node.id;
-  closeRequested.value = false;
-  const latest = latestNodeSession(node.id);
-  activeSession.value = latest;
-}
-
-function refreshAll() {
-  nodesQuery.refresh();
-  sessionsQuery.refresh();
-}
-
-function attachLatestForSelected() {
-  if (!selectedNodeId.value) return;
-  const latest = latestNodeSession(selectedNodeId.value);
-  if (latest) {
-    activeSession.value = latest;
-    closeRequested.value = false;
-  }
-}
-
-let pendingHintTimer: ReturnType<typeof setTimeout> | undefined;
-
-async function connectSelected(options?: { preferExisting?: boolean }) {
-  const node = selectedNode.value;
-  if (!node) return;
-  if (!isTerminalReady(node)) {
-    toast.error(t("operations.terminal.nodeUnavailable"));
+function upsertPinned(session: TerminalSession) {
+  const index = pinned.value.findIndex((candidate) => candidate.id === session.id);
+  if (index === -1) {
+    pinned.value = [...pinned.value, session];
     return;
   }
-  if (options?.preferExisting) {
-    const latest = latestNodeSession(node.id);
-    if (latest) {
-      activeSession.value = latest;
-      closeRequested.value = false;
-      return;
-    }
+  const current = pinned.value[index];
+  if (
+    current &&
+    current.status === session.status &&
+    current.error === session.error &&
+    current.last_seen === session.last_seen &&
+    current.bytes_out === session.bytes_out
+  ) {
+    return;
   }
-  await startSession(node);
+  const next = pinned.value.slice();
+  next[index] = session;
+  pinned.value = next;
 }
 
-async function startSession(node: Node) {
-  if (starting.value) return;
+// A live session the server lists becomes a tab; pin it so its end is shown
+// here with the reason rather than the tab silently vanishing.
+watch(sessions, (list) => {
+  for (const session of list) {
+    if (session.status !== "closed" && session.status !== "failed" && !dismissed.value.has(session.id)) upsertPinned(session);
+  }
+});
+
+watch(tabs, (list) => {
+  if (!list.some((tab) => tab.id === activeTabId.value)) activeTabId.value = list[list.length - 1]?.id ?? "";
+});
+
+// `?session_id=` attaches to one session by id (an audit link, a handoff). The
+// placeholder is replaced by the server's copy on the first poll, or dropped
+// with a notice when the server answers 403.
+watch(
+  routeSessionId,
+  (id) => {
+    if (!id || tabs.value.some((tab) => tab.id === id) || dismissed.value.has(id)) return;
+    upsertPinned({ id, node_id: "", status: "open", created_at: new Date().toISOString() });
+    activeTabId.value = id;
+  },
+  { immediate: true },
+);
+
+function dismissTab(id: string) {
+  const next = new Set(dismissed.value);
+  next.add(id);
+  dismissed.value = next;
+  pinned.value = pinned.value.filter((session) => session.id !== id);
+  activeTabId.value = nextActiveTab(tabs.value, id, activeTabId.value);
+}
+
+function selectTab(id: string) {
+  activeTabId.value = id;
+  void nextTick(() => xtermRef.value?.focusTerminal?.());
+}
+
+/** Roving focus on the tab strip: arrows move and select, Home and End jump. */
+function onTabKeydown(event: KeyboardEvent, index: number) {
+  const keys: Record<string, number> = { ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: tabs.value.length - 1 };
+  const target = keys[event.key];
+  if (target === undefined) return;
+  event.preventDefault();
+  const tab = tabs.value[Math.max(0, Math.min(tabs.value.length - 1, target))];
+  if (!tab) return;
+  activeTabId.value = tab.id;
+  void nextTick(() => {
+    const el = document.querySelector<HTMLElement>(`[data-terminal-tab="${tab.id}"]`);
+    el?.focus();
+  });
+}
+
+function tabTitle(tab: SessionTab): string {
+  const actor = tab.actorId ? t("operations.terminal.pane.actor", { actor: tab.actorId }) : t("operations.terminal.pane.actorUnknown");
+  return `${tab.id} · ${tab.nodeName} · ${tab.shell} · ${actor}`;
+}
+
+const TAB_TONE: Record<string, "success" | "warning" | "destructive" | "neutral"> = {
+  open: "success",
+  pending: "warning",
+  failed: "destructive",
+  closed: "neutral",
+};
+
+function tabTone(tab: SessionTab) {
+  return TAB_TONE[tab.status] ?? "neutral";
+}
+
+const REASON_KEY: Record<CloseReasonKind, string> = {
+  "pending-expired": "operations.terminal.ended.pendingExpired",
+  "max-duration": "operations.terminal.ended.maxDuration",
+  idle: "operations.terminal.ended.idle",
+  "node-offline": "operations.terminal.ended.nodeOffline",
+  closed: "operations.terminal.ended.closed",
+  failed: "operations.terminal.ended.failed",
+};
+
+function endedText(tab: SessionTab): string {
+  if (!tab.reason) return "";
+  const base = t(REASON_KEY[tab.reason.kind]);
+  return tab.reason.detail ? `${base} (${tab.reason.detail})` : base;
+}
+
+// --- connect ----------------------------------------------------------------
+
+async function connect() {
+  // Bound at click time: the id the operator saw, not whatever the list holds
+  // by the time the request leaves.
+  const chosen = selectedNodeId.value;
+  const request = createRequest(nodes.value, chosen, shell.value, { cols: DEFAULT_COLS, rows: DEFAULT_ROWS });
+  if (!request || !readiness.value.ready || starting.value) return;
   starting.value = true;
-  closeRequested.value = false;
+  connectError.value = "";
   try {
-    const session = await api.terminal.create({
-      node_id: node.id,
-      shell: shell.value,
-      cols: DEFAULT_COLS,
-      rows: DEFAULT_ROWS,
-    });
-    activeSession.value = session;
+    const created = await api.terminal.create(request);
+    upsertPinned(created);
+    activeTabId.value = created.id;
     toast.success(t("operations.terminal.toastStarted"));
-    sessionsQuery.refresh();
-    // If the agent never attaches (e.g. the node was deployed without
-    // -allow-terminal), the session stays pending forever. Surface a clear
-    // hint instead of a silent hang.
-    if (pendingHintTimer) clearTimeout(pendingHintTimer);
-    pendingHintTimer = setTimeout(() => {
-      const current = activeSession.value;
-      if (current && current.status !== "open" && current.status !== "closed" && current.status !== "failed") {
-        toast.info(t("operations.terminal.pendingHint"));
-      }
-    }, 12000);
+    void sessionsQuery.refresh();
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("operations.terminal.toastStartFailed"));
+    connectError.value = error instanceof Error ? error.message : t("operations.terminal.toastStartFailed");
   } finally {
     starting.value = false;
   }
 }
 
-function askCloseSession() {
-  if (!activeSession.value || closing.value) return;
-  closeConfirmOpen.value = true;
+// `?connect=1` opens once, and prefers a live session on that node if one
+// already exists, the way the Nodes page link expects.
+watch(
+  [selectedNode, routeConnect, readiness],
+  ([node, shouldConnect, ready]) => {
+    if (!shouldConnect || routeConnectAttempted || !node || node.id !== routeNodeId.value || !ready.ready) return;
+    routeConnectAttempted = true;
+    const existing = tabs.value.find((tab) => tab.live && tab.nodeId === node.id);
+    if (existing) activeTabId.value = existing.id;
+    else void connect();
+  },
+  { immediate: true },
+);
+
+function reconnectOn(tab: SessionTab) {
+  selectedNodeId.value = tab.nodeId;
+  dismissTab(tab.id);
+  void nextTick(() => void connect());
+}
+
+// --- close ------------------------------------------------------------------
+
+function askClose(tab: SessionTab) {
+  if (!tab.live) {
+    dismissTab(tab.id);
+    return;
+  }
+  if (closing.value) return;
+  closeTarget.value = tab;
 }
 
 async function closeSession() {
-  const session = activeSession.value;
-  if (!session || closing.value) return;
-  closeConfirmOpen.value = false;
+  const tab = closeTarget.value;
+  if (!tab || closing.value) return;
   closing.value = true;
-  closeRequested.value = true;
   try {
-    xtermRef.value?.requestClose?.();
-    const updated = await api.terminal.close(session.id);
-    activeSession.value = updated;
-    if (updated.status === "closed" || updated.status === "failed") {
-      closeRequested.value = false;
-      toast.success(t("operations.terminal.toastClosed"));
-    } else {
-      toast.success(t("operations.terminal.toastCloseRequested"));
-    }
-    sessionsQuery.refresh();
+    if (tab.id === activeTabId.value) xtermRef.value?.requestClose?.();
+    const updated = await api.terminal.close(tab.id);
+    upsertPinned(updated);
+    toast.success(
+      updated.status === "closed" || updated.status === "failed"
+        ? t("operations.terminal.toastClosed")
+        : t("operations.terminal.toastCloseRequested"),
+    );
+    void sessionsQuery.refresh();
   } catch (error) {
-    closeRequested.value = false;
-    toast.error(error instanceof Error ? error.message : t("operations.terminal.toastCloseFailed"));
+    if (isForbidden(error)) onDenied(tab.session as TerminalSession);
+    else toast.error(error instanceof Error ? error.message : t("operations.terminal.toastCloseFailed"));
   } finally {
     closing.value = false;
+    closeTarget.value = undefined;
   }
 }
 
+// --- terminal events --------------------------------------------------------
+
 function onSessionUpdate(session: TerminalSession) {
-  activeSession.value = session;
-  if (session.status === "open" || session.status === "closed" || session.status === "failed") {
-    if (pendingHintTimer) clearTimeout(pendingHintTimer);
-  }
-  if (session.status === "closed" || session.status === "failed") {
-    closeRequested.value = false;
-  }
+  upsertPinned(session);
 }
 
 function onSessionClosed(session: TerminalSession) {
-  activeSession.value = session;
-  closeRequested.value = false;
-  sessionsQuery.refresh();
+  upsertPinned(session);
+  // The stream close carries no reason; the list copy does.
+  void sessionsQuery.refresh();
 }
 
 function onTerminalError(message: string) {
   if (message) toast.error(message);
 }
 
-function openSelectedInNewTab() {
-  if (!selectedNodeId.value) return;
-  const url = `/terminal?node_id=${encodeURIComponent(selectedNodeId.value)}&connect=1`;
-  window.open(url, "_blank", "noopener");
+/** The server said this session is another operator's: drop the tab and say so. */
+function onDenied(session: TerminalSession) {
+  deniedSessionId.value = session.id;
+  dismissTab(session.id);
 }
 
-function openTerminalDocs() {
-  window.open("https://latticenet.github.io/guide/node-agent#browser-terminal", "_blank", "noopener,noreferrer");
+const terminalDisabled = computed(() => closing.value || !activeTab.value?.live);
+
+// --- fullscreen -------------------------------------------------------------
+
+const fullscreen = ref(false);
+const fullscreenTrigger = ref<InstanceType<typeof Button> | null>(null);
+let returnFocusTo: HTMLElement | null = null;
+const paneEl = ref<HTMLElement | null>(null);
+
+// settlePane refits the terminal after a discrete layout change (fullscreen,
+// tab switch) so it never renders against a stale size, and replays the
+// 200ms fill on the pane. The fill is a transition from a primed state, so a
+// toggle mid-way restarts it from the current frame rather than queueing.
+function settlePane() {
+  const el = paneEl.value;
+  if (el) {
+    el.classList.add("pane-prime");
+    void el.offsetHeight; // commit the primed state before the transition starts
+    el.classList.remove("pane-prime");
+  }
+  void nextTick(() => xtermRef.value?.refit?.());
 }
+
+function enterFullscreen() {
+  returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  fullscreen.value = true;
+  settlePane();
+  void nextTick(() => xtermRef.value?.focusTerminal?.());
+}
+
+function exitFullscreen() {
+  if (!fullscreen.value) return;
+  fullscreen.value = false;
+  settlePane();
+  const target = returnFocusTo;
+  returnFocusTo = null;
+  void nextTick(() => target?.focus());
+}
+
+function toggleFullscreen() {
+  if (fullscreen.value) exitFullscreen();
+  else enterFullscreen();
+}
+
+// Escape leaves fullscreen from the pane's chrome. Inside the shell itself
+// Escape belongs to the program running there (vim, less), so from the
+// terminal it takes Shift+Escape; the button title says so. Bound in the
+// capture phase because xterm stops propagation of the keys it consumes.
+function onPaneKeydown(event: KeyboardEvent) {
+  if (!fullscreen.value || event.key !== "Escape") return;
+  const inTerminal = event.target instanceof HTMLElement && event.target.closest(".xterm") !== null;
+  if (inTerminal && !event.shiftKey) return;
+  event.preventDefault();
+  event.stopPropagation();
+  exitFullscreen();
+}
+
+watch(activeTabId, () => settlePane());
+
+onMounted(() => {
+  // The first job on this page is choosing a node; on a pointer device the
+  // combobox takes focus so typing starts the search. On touch it would only
+  // raise the keyboard over the page.
+  if (window.matchMedia?.("(pointer: fine)").matches) {
+    void nextTick(() => nodeInput.value?.$el?.focus?.());
+  }
+});
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
-    <PageHeader :title="$t('operations.terminal.title')" :description="$t('operations.terminal.description')">
-      <template #status>
-        <FreshnessLabel :last-updated="sessionsQuery.lastUpdated.value" />
-      </template>
-      <template #actions>
-        <div class="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value || sessionsQuery.refreshing.value" @click="refreshAll">
-            <RefreshCw :class="cn('size-4', (nodesQuery.refreshing.value || sessionsQuery.refreshing.value) && 'animate-spin')" aria-hidden="true" />
-            {{ $t('common.actions.refresh') }}
-          </Button>
-          <Button v-if="selectedNode" variant="outline" size="sm" @click="openSelectedInNewTab">
-            <ExternalLink class="size-4" aria-hidden="true" />
-            {{ $t('operations.terminal.openNewTab') }}
-          </Button>
-          <Button variant="outline" size="sm" @click="openTerminalDocs">
-            <BookOpen class="size-4" aria-hidden="true" />
-            {{ $t('operations.terminal.docs') }}
-          </Button>
-        </div>
+  <div class="absolute inset-0 flex min-h-0 flex-col gap-4 overflow-hidden bg-background p-4 sm:p-6">
+    <PageHeader :title="$t('operations.terminal.title')" class="shrink-0">
+      <template #description>
+        <!-- The proof line: what a session would run over, before anything opens. -->
+        <p class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs leading-5 tabular text-muted-foreground" :title="limitsTitle">
+          <template v-for="(segment, index) in proofSegments" :key="segment.key">
+            <span v-if="index > 0" aria-hidden="true" class="text-muted-foreground/50">·</span>
+            <span :class="segment.tone === 'warning' ? 'text-warning' : segment.key === 'transport' || segment.key === 'shell' ? 'text-foreground' : undefined">
+              {{ segment.text }}
+            </span>
+          </template>
+        </p>
       </template>
     </PageHeader>
 
-    <div class="grid gap-5 xl:grid-cols-[320px_minmax(0,1fr)]">
-      <aside class="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Server class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('operations.terminal.targets') }}
-            </CardTitle>
-            <CardDescription>{{ $t('operations.terminal.targetsHint') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-3">
-            <div class="relative">
-              <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-              <Input
-                v-model="nodeSearch"
-                class="pl-8"
-                :placeholder="$t('operations.terminal.searchNodes')"
-                :aria-label="$t('operations.terminal.searchNodes')"
-              />
-            </div>
+    <!-- Denied: the page says what is missing instead of showing an empty list. -->
+    <section
+      v-if="denied"
+      class="flex flex-1 items-center justify-center rounded-md border border-border bg-card"
+      role="status"
+    >
+      <EmptyState :icon="ShieldOff" :title="$t('operations.terminal.denied.title')" :description="denied === 'no-scope' ? $t('operations.terminal.denied.noScope') : $t('operations.terminal.denied.forbidden')">
+        <p class="font-mono text-xs text-muted-foreground">{{ TERMINAL_SCOPE }}</p>
+      </EmptyState>
+    </section>
 
-            <DataState
-              :loading="nodesQuery.loading.value"
-              :error="nodesQuery.error.value"
-              :has-data="nodesQuery.data.value !== undefined"
-              :is-empty="filteredNodes.length === 0"
-              :empty-title="isNodeNoMatch ? $t('operations.terminal.noMatchTitle') : $t('operations.terminal.noNodesTitle')"
-              :empty-description="isNodeNoMatch ? $t('operations.terminal.noMatchDescription') : $t('operations.terminal.noNodesDescription')"
-              @retry="nodesQuery.refresh"
+    <template v-else>
+      <!-- Toolbar: the node is a command, Connect is the one primary action. -->
+      <div class="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
+        <ComboboxRoot
+          v-model="selectedNodeId"
+          :ignore-filter="true"
+          :reset-search-term-on-blur="true"
+          class="relative min-w-0 flex-1 sm:max-w-md"
+        >
+          <ComboboxAnchor
+            class="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm transition-[border-color,box-shadow] duration-100 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
+          >
+            <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <ComboboxInput
+              ref="nodeInput"
+              v-model="nodeSearch"
+              :display-value="displayNode"
+              :placeholder="$t('operations.terminal.toolbar.nodePlaceholder')"
+              :aria-label="$t('operations.terminal.toolbar.nodeLabel')"
+              class="h-full min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+            />
+            <ComboboxTrigger class="shrink-0 text-muted-foreground" :aria-label="$t('operations.terminal.toolbar.nodeOpen')">
+              <ChevronsUpDown class="size-4" aria-hidden="true" />
+            </ComboboxTrigger>
+          </ComboboxAnchor>
+          <ComboboxPortal>
+            <ComboboxContent
+              position="popper"
+              :side-offset="4"
+              class="z-50 max-h-80 min-w-(--reka-combobox-trigger-width) overflow-y-auto overscroll-contain rounded-md border border-border bg-popover text-popover-foreground shadow-md"
             >
-              <div class="max-h-[58vh] space-y-2 overflow-auto pr-1">
-                <button
+              <ComboboxViewport class="p-1">
+                <p v-if="!canListNodes" class="px-2 py-4 text-center text-sm text-muted-foreground">
+                  {{ $t('operations.terminal.toolbar.nodeNeedsScope') }}
+                </p>
+                <p v-else-if="nodesQuery.loading.value" class="px-2 py-4 text-center text-sm text-muted-foreground">
+                  {{ $t('operations.terminal.toolbar.nodesLoading') }}
+                </p>
+                <p v-else-if="filteredNodes.length === 0" class="px-2 py-4 text-center text-sm text-muted-foreground">
+                  {{ $t('operations.terminal.toolbar.nodeEmpty') }}
+                </p>
+                <ComboboxItem
                   v-for="node in filteredNodes"
                   :key="node.id"
-                  type="button"
-                  class="surface-interactive w-full rounded-md border border-border p-3 text-left text-sm"
-                  :class="selectedNodeId === node.id && 'border-primary bg-primary/5'"
-                  @click="selectNode(node)"
+                  :value="node.id"
+                  :text-value="node.name || node.id"
+                  class="flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm outline-none transition-colors duration-100 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary"
                 >
-                  <span class="flex items-start justify-between gap-2">
-                    <span class="min-w-0">
-                      <span class="block truncate font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
-                      <span class="mt-1 block truncate font-mono text-xs text-muted-foreground" :title="node.id">
-                        {{ shortId(node.id, 14) }}
-                      </span>
-                    </span>
-                    <Badge v-if="node.disabled" variant="secondary">{{ $t('common.status.disabled') }}</Badge>
-                    <Badge v-else :variant="node.online ? 'success' : 'destructive'">
-                      {{ node.online ? $t('common.status.online') : $t('common.status.offline') }}
-                    </Badge>
+                  <StatusDot :status="node.disabled ? 'unknown' : node.online ? 'online' : 'offline'" :pulse="false" />
+                  <span class="truncate">{{ node.name || node.id }}</span>
+                  <span class="ml-auto shrink-0 font-mono text-[11px] tabular text-muted-foreground">{{ shortId(node.id, 10) }}</span>
+                  <span v-if="sessionCounts(sessions, node.id).liveOnNode" class="shrink-0 font-mono text-[11px] tabular text-primary">
+                    {{ $t('operations.terminal.toolbar.liveShort', { count: sessionCounts(sessions, node.id).liveOnNode }) }}
                   </span>
-                  <span class="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span v-if="node.public_ip || node.public_ipv6">{{ node.public_ip || node.public_ipv6 }}</span>
-                    <span v-if="activeCount(node.id)" class="inline-flex items-center gap-1 text-primary">
-                      <SquareTerminal class="size-3" aria-hidden="true" />
-                      {{ $t('operations.terminal.activeSessions', { count: activeCount(node.id) }) }}
-                    </span>
-                  </span>
-                </button>
-              </div>
-            </DataState>
-          </CardContent>
-        </Card>
+                </ComboboxItem>
+              </ComboboxViewport>
+            </ComboboxContent>
+          </ComboboxPortal>
+        </ComboboxRoot>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{{ $t('operations.terminal.connection') }}</CardTitle>
-            <CardDescription>{{ $t('operations.terminal.connectionHint') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <div class="grid gap-2">
-              <label class="text-xs font-medium text-muted-foreground" for="terminal-shell">{{ $t('operations.terminal.shell') }}</label>
-              <Select
-                v-model="shell"
-                :disabled="!!activeSession && activeSession.status !== 'closed' && activeSession.status !== 'failed'"
-              >
-                <SelectTrigger id="terminal-shell" class="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="sh">/bin/sh</SelectItem>
-                  <SelectItem value="bash">bash</SelectItem>
-                  <SelectItem value="/bin/zsh">zsh</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        <div class="flex items-center gap-2">
+          <Select v-model="shell">
+            <SelectTrigger class="w-28 shrink-0" :aria-label="$t('operations.terminal.toolbar.shell')">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="option in SHELLS" :key="option" :value="option">{{ option }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            class="flex-1 sm:flex-none"
+            :disabled="!readiness.ready || starting"
+            :title="readiness.ready ? undefined : proofText({ key: 'blocked', reason: readiness.reason })"
+            @click="connect"
+          >
+            <RefreshCw v-if="starting" class="size-4 animate-spin" aria-hidden="true" />
+            <Power v-else class="size-4" aria-hidden="true" />
+            {{ starting ? $t('operations.terminal.toolbar.connecting') : $t('operations.terminal.toolbar.connect') }}
+          </Button>
+        </div>
+      </div>
 
-            <div class="grid gap-2 rounded-md border border-border p-3 text-sm">
-              <div class="flex items-center justify-between gap-3">
-                <span class="text-muted-foreground">{{ $t('operations.terminal.selectedNode') }}</span>
-                <Badge v-if="selectedNode" :variant="isTerminalReady(selectedNode) ? 'success' : 'secondary'">
-                  {{ isTerminalReady(selectedNode) ? $t('operations.terminal.ready') : $t('operations.terminal.unavailable') }}
-                </Badge>
-              </div>
-              <div v-if="selectedNode" class="min-w-0">
-                <p class="truncate font-medium" :title="selectedNode.name || selectedNode.id">
-                  {{ selectedNode.name || selectedNode.id }}
-                </p>
-                <p class="truncate text-xs text-muted-foreground" :title="selectedNodeSubtitle || selectedNode.id">
-                  {{ selectedNodeSubtitle || selectedNode.id }}
-                </p>
-              </div>
-              <p v-else class="text-xs text-muted-foreground">{{ $t('operations.terminal.selectPrompt') }}</p>
-            </div>
+      <p v-if="connectError" class="shrink-0 text-sm text-destructive" role="alert">{{ connectError }}</p>
 
-            <div class="grid gap-2 rounded-md border border-border bg-muted/20 p-3 text-sm">
-              <div class="flex items-center justify-between gap-3">
-                <span class="text-muted-foreground">{{ $t('operations.terminal.transport') }}</span>
-                <Badge :variant="selectedNodeTransport === 'stream' ? 'success' : 'secondary'">
-                  {{ selectedNodeTransportLabel }}
-                </Badge>
-              </div>
-              <Select v-model="transportMode">
-                <SelectTrigger class="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="auto">{{ $t('operations.terminal.transportAuto') }}</SelectItem>
-                  <SelectItem value="stream">{{ $t('operations.terminal.transportStream') }}</SelectItem>
-                  <SelectItem value="poll">{{ $t('operations.terminal.transportPoll') }}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p class="text-xs text-muted-foreground">{{ selectedNodeTransportHint }}</p>
-            </div>
+      <!-- Limits and transport: the caps the server enforces, as static facts. -->
+      <details class="group shrink-0 text-xs text-muted-foreground">
+        <summary class="inline-flex cursor-pointer select-none items-center gap-1 font-mono transition-colors duration-100 hover:text-foreground">
+          {{ $t('operations.terminal.limits.summary') }}
+        </summary>
+        <div class="mt-2 grid gap-3 rounded-md border border-border bg-card p-3 sm:grid-cols-[1fr_auto]">
+          <div class="space-y-1">
+            <p class="font-mono text-foreground">{{ limitLines.join(' · ') }}</p>
+            <p>{{ $t('operations.terminal.limits.source') }}</p>
+            <a
+              class="text-primary underline-offset-4 hover:underline"
+              href="https://latticenet.github.io/guide/node-agent#browser-terminal"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ $t('operations.terminal.docs') }}</a>
+          </div>
+          <div class="grid gap-1">
+            <label class="font-medium" for="terminal-transport">{{ $t('operations.terminal.transport') }}</label>
+            <Select id="terminal-transport" v-model="transportMode">
+              <SelectTrigger class="w-full sm:w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="auto">{{ $t('operations.terminal.transportAuto') }}</SelectItem>
+                <SelectItem value="stream">{{ $t('operations.terminal.transportStream') }}</SelectItem>
+                <SelectItem value="poll">{{ $t('operations.terminal.transportPoll') }}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="max-w-xs">{{ transportHint }}</p>
+          </div>
+        </div>
+      </details>
 
-            <Button class="w-full" :disabled="starting || !selectedNode || !isTerminalReady(selectedNode)" @click="connectSelected({ preferExisting: false })">
-              <RefreshCw v-if="starting" class="size-4 animate-spin" aria-hidden="true" />
-              <Power v-else class="size-4" aria-hidden="true" />
-              {{ $t('operations.terminal.connect') }}
-            </Button>
-            <DataState
-              :loading="sessionsQuery.loading.value"
-              :error="sessionsQuery.error.value"
-              :has-data="sessionsQuery.data.value !== undefined"
-              :skeleton-rows="1"
-              class="space-y-2"
-              @retry="sessionsQuery.refresh"
-            >
-              <p class="text-xs text-muted-foreground">
-                {{ $t('operations.terminal.activeSessions', { count: selectedSessionCount }) }}
-              </p>
-              <Button
-                v-if="selectedSessionCount > 0"
-                class="w-full"
-                variant="outline"
-                :disabled="starting"
-                @click="attachLatestForSelected"
-              >
-                <SquareTerminal class="size-4" aria-hidden="true" />
-                {{ $t('operations.terminal.resumeLatest') }}
-              </Button>
-            </DataState>
-          </CardContent>
-        </Card>
-      </aside>
+      <!-- Tab strip: one tab per live session, on any node. -->
+      <div
+        v-if="tabs.length"
+        role="tablist"
+        :aria-label="$t('operations.terminal.tabs.label')"
+        class="-mb-4 flex shrink-0 items-end gap-1 overflow-x-auto"
+      >
+        <div
+          v-for="(tab, index) in tabs"
+          :key="tab.id"
+          :class="
+            cn(
+              'group flex shrink-0 items-center rounded-t-md border border-b-0 border-border transition-colors duration-100',
+              tab.id === activeTabId ? 'bg-card text-foreground' : 'bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground',
+              !tab.live && 'border-dashed',
+            )
+          "
+        >
+          <button
+            type="button"
+            role="tab"
+            :data-terminal-tab="tab.id"
+            :aria-selected="tab.id === activeTabId"
+            :tabindex="tab.id === activeTabId ? 0 : -1"
+            :title="tabTitle(tab)"
+            class="flex h-8 max-w-64 items-center gap-2 pl-3 pr-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            @click="selectTab(tab.id)"
+            @keydown="onTabKeydown($event, index)"
+          >
+            <StatusDot :tone="tabTone(tab)" :pulse="tab.status === 'pending'" />
+            <span class="truncate">{{ tab.nodeName }}</span>
+            <span class="shrink-0 font-mono text-[11px] tabular">{{ shortId(tab.id, 10) }}</span>
+            <span v-if="!tab.live" class="shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{{ $t('operations.terminal.tabs.ended') }}</span>
+          </button>
+          <button
+            type="button"
+            class="mr-1 inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors duration-100 hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+            :aria-label="tab.live ? $t('operations.terminal.tabs.closeTab', { node: tab.nodeName }) : $t('operations.terminal.tabs.dismissTab', { node: tab.nodeName })"
+            :title="tab.live ? $t('operations.terminal.tabs.closeTab', { node: tab.nodeName }) : $t('operations.terminal.tabs.dismissTab', { node: tab.nodeName })"
+            @click.stop="askClose(tab)"
+          >
+            <X class="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
 
-      <section class="min-w-0 space-y-4">
-        <Card
+      <!-- The pane. In fullscreen it becomes a modal region with a focus trap. -->
+      <FocusScope as-child :trapped="fullscreen" :loop="fullscreen">
+        <section
+          ref="paneEl"
           :role="fullscreen ? 'dialog' : undefined"
           :aria-modal="fullscreen ? 'true' : undefined"
           :aria-label="fullscreen ? $t('operations.terminal.fullscreenRegion') : undefined"
-          :class="cn(
-            'overflow-hidden',
-            fullscreen && 'fixed inset-0 z-50 flex flex-col rounded-none border-0 shadow-2xl',
-          )"
+          :class="
+            cn(
+              'pane-card flex min-h-0 flex-col overflow-hidden border border-border bg-card',
+              fullscreen ? 'fixed inset-0 z-50 rounded-none' : 'relative flex-1 rounded-md',
+              tabs.length && !fullscreen && 'rounded-tl-none',
+            )
+          "
+          @keydown.capture="onPaneKeydown"
         >
-          <CardHeader class="border-b border-border" :class="fullscreen && 'shrink-0'">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="min-w-0">
-                <CardTitle class="flex min-w-0 items-center gap-2">
-                  <SquareTerminal class="size-4 text-muted-foreground" aria-hidden="true" />
-                  <span class="truncate" :title="consoleTitle">{{ consoleTitle }}</span>
-                </CardTitle>
-                <CardDescription class="mt-1">
-                  <template v-if="activeSession">
-                    {{ shortId(activeSession.id, 16) }} · {{ activeSession.shell || "/bin/sh" }}
-                  </template>
-                  <template v-else>{{ $t('operations.terminal.consoleHint') }}</template>
-                </CardDescription>
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <Badge :variant="statusVariant(activeSession?.status ?? 'idle')">
-                  {{ closeRequested ? $t('operations.terminal.closing') : sessionStatusLabel(activeSession?.status) }}
-                </Badge>
-                <Badge v-if="activeSession" :variant="selectedNodeTransport === 'stream' ? 'success' : 'secondary'">
-                  <Zap class="size-3" aria-hidden="true" />
-                  {{ selectedNodeTransportLabel }}
-                </Badge>
-                <Badge v-if="activeSession?.bytes_out" variant="outline">{{ formatBytes(activeSession.bytes_out) }}</Badge>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :title="fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen')"
-                  :aria-pressed="fullscreen"
-                  @click="toggleFullscreen"
-                >
-                  <Minimize2 v-if="fullscreen" class="size-4" aria-hidden="true" />
-                  <Maximize2 v-else class="size-4" aria-hidden="true" />
-                  <span class="sr-only sm:not-sr-only">{{ fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen') }}</span>
-                </Button>
-                <Button v-if="activeSession" variant="outline" size="sm" :disabled="closing || activeSession.status === 'closed' || activeSession.status === 'failed'" @click="askCloseSession">
-                  <CircleStop class="size-4" aria-hidden="true" />
-                  {{ $t('operations.terminal.close') }}
-                </Button>
-              </div>
+          <header class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3 py-2">
+            <!-- One line, ellipsised on a phone; the full identity rides on the tab's title. -->
+            <p class="min-w-0 flex-1 truncate font-mono text-xs leading-5 tabular text-muted-foreground" :title="activeTab ? tabTitle(activeTab) : undefined">
+              <template v-if="activeTab">
+                <span class="text-foreground">{{ activeTab.id }}</span>
+                <span aria-hidden="true"> · </span>
+                <span>{{ activeTab.nodeName }}</span>
+                <span aria-hidden="true"> · </span>
+                <span>{{ activeTab.shell }}</span>
+                <span aria-hidden="true"> · </span>
+                <span>{{ activeTab.actorId ? $t('operations.terminal.pane.actor', { actor: activeTab.actorId }) : $t('operations.terminal.pane.actorUnknown') }}</span>
+                <span aria-hidden="true"> · </span>
+                <span v-if="activeTab.openedAt">{{ $t('operations.terminal.pane.opened', { time: formatDateTime(activeTab.openedAt) }) }}</span>
+                <span v-else-if="activeTab.live" class="text-warning">{{ $t('operations.terminal.pane.pending') }}</span>
+                <span v-else>{{ $t('operations.terminal.tabs.ended') }}</span>
+              </template>
+              <span v-else class="inline-flex items-center gap-2">
+                <SquareTerminal class="size-3.5" aria-hidden="true" />
+                {{ $t('operations.terminal.consoleHint') }}
+              </span>
+            </p>
+            <div class="flex items-center gap-2">
+              <Button
+                ref="fullscreenTrigger"
+                variant="outline"
+                size="sm"
+                :title="fullscreen ? $t('operations.terminal.exitFullscreenHint') : $t('operations.terminal.fullscreen')"
+                :aria-pressed="fullscreen"
+                @click="toggleFullscreen"
+              >
+                <Minimize2 v-if="fullscreen" class="size-4" aria-hidden="true" />
+                <Maximize2 v-else class="size-4" aria-hidden="true" />
+                <span class="sr-only sm:not-sr-only">{{ fullscreen ? $t('operations.terminal.exitFullscreen') : $t('operations.terminal.fullscreen') }}</span>
+              </Button>
+              <Button v-if="activeTab" variant="outline" size="sm" :disabled="closing" @click="askClose(activeTab)">
+                <X class="size-4" aria-hidden="true" />
+                {{ activeTab.live ? $t('operations.terminal.close') : $t('operations.terminal.ended.dismiss') }}
+              </Button>
             </div>
-          </CardHeader>
+          </header>
 
-          <CardContent class="p-0" :class="fullscreen && 'flex-1 min-h-0'">
-            <div
-              ref="consoleEl"
-              class="bg-background"
-              :class="fullscreen ? 'h-full' : 'min-h-[360px]'"
-              :style="fullscreen ? undefined : { height: consoleHeight + 'px' }"
-            >
+          <div class="relative min-h-0 flex-1 bg-background">
+            <Transition name="pane-fill" mode="out-in">
               <XtermSession
-                v-if="activeSession"
+                v-if="activeTab"
                 ref="xtermRef"
-                :key="activeSession.id + ':' + selectedNodeTransport"
-                :session="activeSession"
+                :key="activeTab.id + ':' + activeTransport"
+                :session="activeTab.session as TerminalSession"
                 :disabled="terminalDisabled"
-                :transport="selectedNodeTransport"
+                :transport="activeTransport"
+                class="h-full"
                 @update:session="onSessionUpdate"
                 @closed="onSessionClosed"
+                @denied="onDenied"
                 @error="onTerminalError"
               />
-              <div v-else class="flex h-full items-center justify-center bg-muted/20 p-8">
+              <div v-else class="flex h-full items-center justify-center p-8">
                 <EmptyState
                   :icon="SquareTerminal"
                   :title="$t('operations.terminal.emptyConsoleTitle')"
                   :description="$t('operations.terminal.emptyConsoleDescription')"
-                >
-                  <Button v-if="selectedNode && isTerminalReady(selectedNode)" :disabled="starting" @click="connectSelected({ preferExisting: true })">
-                    <RefreshCw v-if="starting" class="size-4 animate-spin" aria-hidden="true" />
-                    <Power v-else class="size-4" aria-hidden="true" />
-                    {{ $t('operations.terminal.connect') }}
-                  </Button>
-                </EmptyState>
+                />
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </Transition>
 
-        <div v-if="activeSession && !fullscreen" class="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-          <span class="inline-flex items-center gap-1">
-            <Wifi class="size-3" aria-hidden="true" />
-            {{ sessionStatusLabel(activeSession.status) }}
-          </span>
-          <span class="inline-flex items-center gap-1">
-            <Clock class="size-3" aria-hidden="true" />
-            {{ $t('common.misc.created') }} {{ formatDateTime(activeSession.created_at) }}
-          </span>
-          <span v-if="activeSession.last_seen" class="inline-flex items-center gap-1">
-            <Activity class="size-3" aria-hidden="true" />
-            {{ $t('common.misc.updated') }} {{ formatRelativeTime(activeSession.last_seen) }}
-          </span>
-        </div>
-      </section>
-    </div>
+            <!-- The session ended: the server's reason, inside the pane. -->
+            <div
+              v-if="activeTab && !activeTab.live"
+              class="absolute inset-x-4 bottom-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-sm shadow-(--shadow-overlay)"
+              role="status"
+            >
+              <span class="min-w-0">
+                <span class="font-medium">{{ $t('operations.terminal.ended.title') }}</span>
+                <span class="text-muted-foreground"> · {{ endedText(activeTab) }}</span>
+                <span v-if="activeTab.closedAt" class="ml-1 font-mono text-xs tabular text-muted-foreground">{{ formatDateTime(activeTab.closedAt) }}</span>
+              </span>
+              <span class="flex shrink-0 items-center gap-2">
+                <Button v-if="activeTab.nodeId" size="sm" variant="outline" @click="reconnectOn(activeTab)">
+                  {{ $t('operations.terminal.ended.reconnect', { node: activeTab.nodeName }) }}
+                </Button>
+                <Button size="sm" variant="ghost" @click="dismissTab(activeTab.id)">{{ $t('operations.terminal.ended.dismiss') }}</Button>
+              </span>
+            </div>
+
+            <!-- Another operator's session: the tab is gone, the reason stays until read. -->
+            <div
+              v-if="deniedSessionId"
+              class="absolute inset-x-4 top-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-card px-3 py-2 text-sm shadow-(--shadow-overlay)"
+              role="alert"
+            >
+              <span class="min-w-0">
+                <ShieldOff class="mr-1 inline size-4 text-destructive" aria-hidden="true" />
+                {{ $t('operations.terminal.denied.session', { id: deniedSessionId }) }}
+              </span>
+              <Button size="sm" variant="ghost" @click="deniedSessionId = ''">{{ $t('operations.terminal.denied.dismiss') }}</Button>
+            </div>
+          </div>
+        </section>
+      </FocusScope>
+
+      <!-- Recent line: where the operator's sessions are, in absolute time. -->
+      <p class="flex shrink-0 flex-wrap items-center gap-x-2 font-mono text-xs leading-5 tabular text-muted-foreground">
+        <template v-if="selectedNode">
+          <span>{{ $t('operations.terminal.recent.onNode', { count: counts.liveOnNode }) }}</span>
+          <span aria-hidden="true">·</span>
+          <span>{{ $t('operations.terminal.recent.elsewhere', { count: counts.liveOwn - counts.liveOnNode }) }}</span>
+        </template>
+        <span v-else>{{ $t('operations.terminal.proof.liveOwn', { count: counts.liveOwn }) }}</span>
+        <template v-if="recentEnded">
+          <span aria-hidden="true">·</span>
+          <span>{{ $t('operations.terminal.recent.lastEnded', { node: nodeById(recentEnded.node_id)?.name ?? shortId(recentEnded.node_id, 10), time: formatDateTime(recentEnded.closed_at || recentEnded.created_at) }) }}</span>
+        </template>
+      </p>
+    </template>
 
     <ConfirmDialog
-      v-model:open="closeConfirmOpen"
+      :open="closeTarget !== undefined"
       :title="$t('operations.terminal.closeTitle')"
-      :description="activeSession
-        ? $t('operations.terminal.closeDescription', { node: nodeName(activeSession.node_id) })
-        : ''"
+      :description="closeTarget ? $t('operations.terminal.closeDescription', { node: closeTarget.nodeName, id: closeTarget.id }) : ''"
       :confirm-label="$t('operations.terminal.close')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="closing"
+      @update:open="(value: boolean) => { if (!value && !closing) closeTarget = undefined; }"
       @confirm="closeSession"
     />
   </div>
 </template>
+
+<style scoped>
+/* Motion tokens from the 2026-09-02 direction, written as literals until the
+   chassis ships them: --duration-fast 100ms, --duration-base 200ms, --ease-out
+   cubic-bezier(0.19, 1, 0.22, 1). The pane fills in over the base duration and
+   nothing else on this page moves on its own. */
+.pane-card {
+  transition:
+    opacity 200ms cubic-bezier(0.19, 1, 0.22, 1),
+    transform 200ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+.pane-card.pane-prime {
+  transition: none;
+  opacity: 0.4;
+  transform: translateY(4px);
+}
+.pane-fill-enter-active {
+  transition: opacity 200ms cubic-bezier(0.19, 1, 0.22, 1);
+}
+.pane-fill-leave-active {
+  transition: opacity 0ms;
+}
+.pane-fill-enter-from,
+.pane-fill-leave-to {
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-card,
+  .pane-fill-enter-active,
+  .pane-fill-leave-active {
+    transition-duration: 0ms;
+  }
+}
+</style>
