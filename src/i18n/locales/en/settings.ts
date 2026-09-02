@@ -150,6 +150,7 @@ export default {
       previewInertNote:
         "This panel is a styling sample. Its buttons and badges are inert and do nothing.",
       palettes: {
+        claude: "Claude",
         lattice: "Lattice",
         teal: "Teal",
         blue: "Blue",
