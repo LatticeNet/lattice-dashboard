@@ -145,6 +145,8 @@ export interface AgentLaunchConfig {
   allow_terminal?: boolean;
   terminal_transport?: "poll" | "stream" | string;
   ssh_alerts?: boolean;
+  singbox_discover?: boolean;
+  singbox_bin?: string;
   updated_at?: string;
 }
 
@@ -227,6 +229,8 @@ export interface AgentRuntimeConfig {
   task_sandbox_features?: string[];
   task_sandbox_warning?: string;
   ssh_alerts?: boolean;
+  singbox_discover?: boolean;
+  singbox_bin?: string;
   reported_at?: string;
 }
 

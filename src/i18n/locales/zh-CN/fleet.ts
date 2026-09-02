@@ -109,6 +109,7 @@ export default {
           terminal: "terminal",
           stream: "stream",
           poll: "poll",
+          singbox: "sing-box",
         },
         agentExpression: "Agent 表达式",
         agentExpressionPlaceholder: "AND(exec, root, terminal)",
