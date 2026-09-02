@@ -184,7 +184,10 @@
   --accent: oklch(0.31 0.012 55);
   --accent-foreground: oklch(0.95 0.006 80);
   --destructive: oklch(0.64 0.22 12);
-  --destructive-foreground: oklch(0.97 0.01 20);
+  /* Dark text on the danger red, the way the accent and the warning carry
+     dark text here: the light text read 3.4:1 on the button that kills a
+     shell. */
+  --destructive-foreground: oklch(0.16 0.02 15);
 
   --success: oklch(0.706 0.15 156);
   --success-foreground: oklch(0.16 0.02 156);
