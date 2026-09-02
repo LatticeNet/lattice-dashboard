@@ -1,7 +1,8 @@
 /**
  * A realistic SSH Guard fleet for the harness: 33 nodes, 12 confirmed, three
  * failed arms with the server's real failure shapes, two nodes sitting on a
- * revert timer a few minutes from expiry, one arm awaiting approval, and a
+ * revert timer a few minutes from expiry, one whose window closed a few
+ * minutes ago with nobody confirming, one arm awaiting approval, and a
  * guard-reality snapshot per node except one that has never reported and one
  * that went stale.
  *
@@ -27,7 +28,7 @@ export interface FixtureNode {
   /** Seconds since the snapshot was collected; undefined means never reported. */
   observedAgoSec?: number;
   failure?: string;
-  /** Seconds left on the revert timer, for awaitingConfirm. */
+  /** Seconds left on the revert timer, for awaitingConfirm. Negative: the window closed that long ago. */
   revertInSec?: number;
 }
 
@@ -122,6 +123,12 @@ export function buildFixtureNodes(): FixtureNode[] {
   revert2.stage = "awaitingConfirm";
   revert2.revertInSec = 3 * 60 + 12;
   revert2.sshd = [22, 58394];
+  // 1 whose window closed 4m18s ago: the approvals still say "applied, no
+  // confirm", the box has reverted, and sshd is back on 22 alone.
+  const reverted = out[29] as FixtureNode;
+  reverted.stage = "awaitingConfirm";
+  reverted.revertInSec = -(4 * 60 + 18);
+  reverted.sshd = [22];
   // 1 arm awaiting approval.
   (out[11] as FixtureNode).stage = "armPending";
   // The home server is the control-plane host: it reports the address the
