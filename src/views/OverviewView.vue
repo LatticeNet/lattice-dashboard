@@ -6,17 +6,21 @@ import {
   Activity,
   ArrowDown,
   ArrowUp,
+  CircleDashed,
   Cpu,
   Globe,
   HardDrive,
   MapPin,
   MemoryStick,
+  Power,
   RotateCw,
   Server,
   ShieldAlert,
   ShieldCheck,
   Terminal,
+  TriangleAlert,
   Wifi,
+  WifiOff,
 } from "lucide-vue-next";
 import { api, unwrap, isActionablePendingApproval } from "@/lib/api";
 import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
@@ -25,7 +29,7 @@ import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { formatBytesPerSec, formatPercent, formatRelativeTime, ratio } from "@/lib/format";
 import { fleetTotals } from "@/lib/fleet";
-import { nodeStatusMeta } from "@/lib/status";
+import { compareByAttention, countNodeStatuses, isReporting, needsAttention } from "@/lib/nodeStatus";
 import { compareNodeIdentity } from "@/views/fleet/nodesTableModel";
 import { cn } from "@/lib/utils";
 
@@ -103,8 +107,13 @@ watch(
 );
 
 const nodes = computed<Node[]>(() => fleet.data.value ?? []);
-const onlineNodes = computed(() => nodes.value.filter((n) => n.online).length);
-const offlineNodes = computed(() => nodes.value.length - onlineNodes.value);
+/**
+ * The six numbers this page prints, from one pass over one array. The KPI
+ * band, the fleet health caption, the attention list and its "healthy" count
+ * all read this, so they cannot disagree the way "32/33 reporting", "6 needs
+ * attention" and "27 healthy" did when each was its own arithmetic.
+ */
+const statusCounts = computed(() => countNodeStatuses(nodes.value));
 const canReadFleet = computed(() => auth.can("node:read"));
 
 /** First-run state: no nodes enrolled yet and the fleet query has settled. */
@@ -126,12 +135,13 @@ const queuedTasks = computed(
 /** Fleet-wide aggregate for the health panel (CPU mean, mem/disk sums, BW). */
 const totals = computed(() => fleetTotals(nodes.value));
 /**
- * Exactly the set `fleetTotals` averages and sums over: online, not disabled,
- * and carrying a metrics object. The health bars used to be labelled with the
- * plain online count, which overstates the contributing set on both counts.
+ * Exactly the set `fleetTotals` averages and sums over: reporting (online or
+ * degraded) and carrying a metrics object. The health bars used to be
+ * labelled with the plain online count, which overstates the contributing
+ * set.
  */
 const reportingNodes = computed(
-  () => nodes.value.filter((n) => n.online && !n.disabled && !!n.metrics).length,
+  () => nodes.value.filter((n) => isReporting(n) && !!n.metrics).length,
 );
 const hasFleet = computed(() => nodes.value.length > 0);
 const nodesWithRootExec = computed(() =>
@@ -164,29 +174,67 @@ const trustPostureRiskCount = computed(
 );
 
 /**
- * The four numbers the console opens on. Each drills through to the list that
- * explains it, so a count that is not zero is one click from being actionable.
+ * The fleet band: total and the five status words, one caliber. Each drills
+ * through to the Nodes page pre-filtered on that word, so a count that is not
+ * zero is one click from being actionable. A zero in an attention column is
+ * the good outcome and stays uncoloured.
  */
+const fleetMetrics = computed<Metric[]>(() => {
+  const c = statusCounts.value;
+  return [
+    {
+      key: "nodes",
+      label: t("overview.kpi.nodes"),
+      value: statValue(fleet, c.total),
+      icon: Server,
+      to: { name: "nodes" },
+    },
+    {
+      key: "online",
+      label: t("overview.kpi.online"),
+      value: statValue(fleet, c.online),
+      hint: c.attention === 0 && c.total > 0 ? t("overview.allOnline") : undefined,
+      tone: "success",
+      icon: Wifi,
+      to: { name: "nodes", query: { status: "online" } },
+    },
+    {
+      key: "degraded",
+      label: t("overview.kpi.degraded"),
+      value: statValue(fleet, c.degraded),
+      tone: c.degraded > 0 ? "warning" : "default",
+      icon: TriangleAlert,
+      to: { name: "nodes", query: { status: "degraded" } },
+    },
+    {
+      key: "offline",
+      label: t("overview.kpi.offline"),
+      value: statValue(fleet, c.offline),
+      tone: c.offline > 0 ? "destructive" : "default",
+      icon: WifiOff,
+      to: { name: "nodes", query: { status: "offline" } },
+    },
+    {
+      key: "never_reported",
+      label: t("overview.kpi.neverReported"),
+      value: statValue(fleet, c.never_reported),
+      tone: c.never_reported > 0 ? "muted" : "default",
+      icon: CircleDashed,
+      to: { name: "nodes", query: { status: "never_reported" } },
+    },
+    {
+      key: "disabled",
+      label: t("overview.kpi.disabled"),
+      value: statValue(fleet, c.disabled),
+      tone: c.disabled > 0 ? "muted" : "default",
+      icon: Power,
+      to: { name: "nodes", query: { status: "disabled" } },
+    },
+  ];
+});
+
+/** The operator's own queue: what waits on a decision, what waits on a node. */
 const kpiMetrics = computed<Metric[]>(() => [
-  {
-    key: "nodes",
-    label: t("overview.kpi.nodes"),
-    value: statValue(fleet, nodes.value.length),
-    icon: Server,
-    to: { name: "nodes" },
-  },
-  {
-    key: "online",
-    label: t("overview.kpi.online"),
-    value: statValue(fleet, onlineNodes.value),
-    hint:
-      offlineNodes.value > 0
-        ? t("overview.offlineCount", { count: offlineNodes.value })
-        : t("overview.allOnline"),
-    tone: "success",
-    icon: Wifi,
-    to: { name: "nodes", query: { status: "online" } },
-  },
   {
     key: "approvals",
     label: t("overview.kpi.approvals"),
@@ -218,22 +266,8 @@ const kpiMetrics = computed<Metric[]>(() => [
  * never finished enrolling, or switched off. Worst first, because the order an
  * operator wants is the order they would triage in.
  */
-const ATTENTION_RANK: Record<string, number> = {
-  never: 0,
-  offline: 1,
-  degraded: 2,
-  unknown: 3,
-  pending: 4,
-};
-
 const attentionNodes = computed<Node[]>(() =>
-  nodes.value
-    .filter((node) => node.disabled || nodeStatusMeta(node).dotStatus !== "online")
-    .sort((a, b) => {
-      const ra = a.disabled ? 5 : (ATTENTION_RANK[nodeStatusMeta(a).dotStatus] ?? 9);
-      const rb = b.disabled ? 5 : (ATTENTION_RANK[nodeStatusMeta(b).dotStatus] ?? 9);
-      return ra - rb || compareNodeIdentity(a, b);
-    }),
+  nodes.value.filter(needsAttention).sort((a, b) => compareByAttention(a, b) || compareNodeIdentity(a, b)),
 );
 
 /**
@@ -244,7 +278,8 @@ const attentionNodes = computed<Node[]>(() =>
 const ATTENTION_LIMIT = 8;
 const attentionShown = computed(() => attentionNodes.value.slice(0, ATTENTION_LIMIT));
 const attentionOverflow = computed(() => attentionNodes.value.length - attentionShown.value.length);
-const healthyNodes = computed(() => nodes.value.length - attentionNodes.value.length);
+/** The same number the Online tile prints: attention is everything but online. */
+const healthyNodes = computed(() => statusCounts.value.online);
 
 const auditEvents = computed(() => audit.data.value ?? []);
 
@@ -284,8 +319,10 @@ function refreshAll() {
     />
 
     <template v-else>
-    <!-- KPI row. One band: see MetricStrip for why this is not four cards. -->
-    <MetricStrip :metrics="kpiMetrics" :columns="4" />
+    <!-- Fleet band: total and the five status words, one caliber, then the
+         operator's own queue. See MetricStrip for why these are not cards. -->
+    <MetricStrip :metrics="fleetMetrics" :columns="6" />
+    <MetricStrip :metrics="kpiMetrics" :columns="2" />
 
     <!-- Fleet health: live aggregate resource + bandwidth roll-up across the
          fleet, so the operator sees overall pressure without scanning cards. -->
@@ -448,7 +485,7 @@ function refreshAll() {
             </RouterLink>
           </CardTitle>
           <CardDescription>
-            {{ $t('overview.fleetOnline', { online: onlineNodes, total: nodes.length }) }}
+            {{ $t('overview.fleetOnline', { online: statusCounts.online, total: statusCounts.total }) }}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -497,12 +534,11 @@ function refreshAll() {
                   :cpu-label="t('overview.metric.cpu')"
                   :memory-label="t('overview.metric.memory')"
                   :disk-label="t('overview.metric.disk')"
-                  :online-label="t('common.status.online')"
-                  :never-label="t('common.status.neverReported')"
-                  :offline-label="t('common.status.offline')"
-                  :degraded-label="t('common.status.degraded')"
-                  :unknown-label="t('common.status.unknown')"
-                  :disabled-label="t('common.status.disabled')"
+                  :online-label="t('common.nodeStatus.online')"
+                  :never-label="t('common.nodeStatus.neverReported')"
+                  :offline-label="t('common.nodeStatus.offline')"
+                  :degraded-label="t('common.nodeStatus.degraded')"
+                  :disabled-label="t('common.nodeStatus.disabled')"
                   :sparkline-label="t('overview.sparklineLabel')"
                 />
               </div>

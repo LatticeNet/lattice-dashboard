@@ -21,6 +21,7 @@ import {
   type GroupView,
   type Node,
 } from "@/lib/api";
+import { describeNodeStatus } from "@/lib/nodeStatus";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
@@ -608,7 +609,7 @@ watch(
                         :model-value="isMember(n.id)"
                         @update:model-value="(v) => setMember(n.id, v === true)"
                       />
-                      <StatusDot :status="!!n.online && !n.disabled ? 'online' : 'offline'" :label="''" />
+                      <StatusDot :status="describeNodeStatus(n).health" :label="''" />
                       <span class="truncate" :title="n.name || n.id">{{ n.name || n.id }}</span>
                       <span v-if="n.role" class="ml-auto shrink-0 text-xs text-muted-foreground">{{ n.role }}</span>
                     </label>

@@ -76,6 +76,9 @@ export default {
       stats: {
         total: "Total",
         online: "Online",
+        degraded: "Degraded",
+        offline: "Offline",
+        neverReported: "Never reported",
         disabled: "Disabled",
         bandwidth: "Bandwidth (online nodes)",
         download: "Download",
@@ -209,6 +212,7 @@ export default {
         noUpdatePolicy: "no update policy",
       },
       detail: {
+        statusSince: "since {time}",
         capabilities: {
           title: "Capabilities",
           description:
@@ -569,6 +573,8 @@ export default {
         coverage: "Coverage",
         online: "Online",
         offline: "{count} offline",
+        degraded: "{count} degraded",
+        notReporting: "{count} not reporting",
         regions: "Regions",
         countries: "countries",
         sources: "Auto-located",

@@ -8,6 +8,8 @@
  * contract in lattice-server/internal/server/server_terminal.go.
  */
 
+import { isReporting, nodeStatus } from "@/lib/nodeStatus";
+
 export type TerminalTransport = "stream" | "poll";
 export type TransportMode = "auto" | TerminalTransport;
 
@@ -43,6 +45,8 @@ export interface NodeLike {
   id: string;
   name: string;
   online: boolean;
+  /** The control plane's status word; see `@/lib/nodeStatus`. */
+  status?: string;
   disabled?: boolean;
   agent_version?: string;
   public_ip?: string;
@@ -229,8 +233,11 @@ export function resolveTransport(node: NodeLike | undefined, mode: TransportMode
 
 export function connectReadiness(node: NodeLike | undefined, mode: TransportMode): ConnectReadiness {
   if (!node) return { ready: false, reason: "no-node" };
-  if (node.disabled) return { ready: false, reason: "disabled" };
-  if (!node.online) return { ready: false, reason: "offline" };
+  // The same status word every page prints: disabled outranks a live agent,
+  // never reported and offline both mean nobody is there to open a shell,
+  // degraded still answers.
+  if (nodeStatus(node) === "disabled") return { ready: false, reason: "disabled" };
+  if (!isReporting(node)) return { ready: false, reason: "offline" };
   const runtime = node.agent_runtime;
   if (!runtime?.allow_terminal) return { ready: false, reason: "terminal-off" };
   if (runtime.no_exec) return { ready: false, reason: "exec-off" };

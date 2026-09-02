@@ -234,6 +234,9 @@ export interface AgentRuntimeConfig {
   reported_at?: string;
 }
 
+/** The node status vocabulary the control plane derives; see `Node.status`. */
+export type NodeStatus = "never_reported" | "online" | "degraded" | "offline" | "disabled";
+
 export interface Node {
   id: string;
   lattice_identity_uuid?: string;
@@ -255,6 +258,17 @@ export interface Node {
    * through `nodeHealth` in `@/lib/status` rather than reading either directly.
    */
   reachability?: "online" | "offline" | "never";
+  /**
+   * The one word the control plane derives for this node (lattice-server
+   * node_status.go): never_reported, online, degraded, offline, disabled.
+   * Every renderer reads it through `@/lib/nodeStatus`; `online` and
+   * `reachability` stay for older servers and say less, never otherwise.
+   */
+  status?: NodeStatus;
+  /** When the node entered `status`; absent when the server does not know. */
+  status_since?: string;
+  /** One sentence naming the evidence behind `status`. */
+  status_reason?: string;
   disabled?: boolean;
   agent_source_allowlist?: string[];
   token_last_used_at?: string;
@@ -330,6 +344,10 @@ export interface NodeGeoView {
   tags?: string[];
   role?: string;
   online: boolean;
+  /** The same derived status the node view carries; see `Node.status`. */
+  status?: NodeStatus;
+  status_since?: string;
+  status_reason?: string;
   disabled?: boolean;
   public_ip?: string;
   public_ipv6?: string;

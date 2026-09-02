@@ -16,7 +16,9 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
 import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
-import { hasNeverReported, nodeStatusMeta } from "@/lib/status";
+import { hasNeverReported, statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
+import { describeNodeStatus, nodeStatusReason } from "@/lib/nodeStatus";
+import { splitNamePrefix } from "@/lib/fleet";
 import { formatBytes, formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 import {
@@ -125,47 +127,28 @@ function ariaSort(column: NodeTableColumn): "ascending" | "descending" | "none" 
   return props.sort.dir === "asc" ? "ascending" : "descending";
 }
 
-/** Real, derived treatment (drives the dot colour). */
-function meta(node: Node) {
-  return nodeStatusMeta(node);
+/** One reading per row: the control plane's status word, from the status module. */
+function info(node: Node) {
+  return describeNodeStatus(node);
 }
 
-/** A disabled node is operationally down even if the agent last reported online. */
+/** The agent is in contact: online or degraded. Disabled outranks a live agent. */
 function isLive(node: Node): boolean {
-  return !!node.online && !node.disabled;
+  return info(node).reporting;
 }
 
-/**
- * The badge text now follows the same health the dot and the badge colour
- * already follow. A node pinned at 95% disk used to draw a warning-tinted badge
- * that still read "online".
- */
-/**
- * The dot reads the same derivation the badge does. Passing a boolean here
- * capped it at two colors, so a node that never reported drew the red dot that
- * means something broke.
- */
-function dotStatus(node: Node): ReturnType<typeof meta>["dotStatus"] {
-  if (node.disabled) return "offline";
-  return meta(node).dotStatus;
+/** The dot, the badge colour and the badge text all read the same word. */
+function dotStatus(node: Node): NodeHealth {
+  return info(node).health;
 }
 
 function statusLabel(node: Node): string {
-  if (node.disabled) return t("common.status.disabled");
-  switch (meta(node).dotStatus) {
-    case "degraded":
-      return t("common.status.degraded");
-    case "online":
-      return t("common.status.online");
-    // Distinct from offline on purpose: this node was never finished, it did
-    // not break, and the two want different work from the operator.
-    case "never":
-      return t("common.status.neverReported");
-    case "unknown":
-      return t("common.status.unknown");
-    default:
-      return t("common.status.offline");
-  }
+  return t(info(node).labelKey);
+}
+
+/** The server's one-sentence account, shown on hover so the word can be checked. */
+function statusTitle(node: Node): string {
+  return nodeStatusReason(node) || t(info(node).hintKey);
 }
 
 /**
@@ -178,9 +161,8 @@ function lastSeenLabel(node: Node): string {
   return formatRelativeTime(node.last_seen);
 }
 
-function statusVariant(node: Node): ReturnType<typeof meta>["badgeVariant"] {
-  if (node.disabled) return "secondary";
-  return meta(node).badgeVariant;
+function statusVariant(node: Node): BadgeVariant {
+  return statusMeta(dotStatus(node)).badgeVariant;
 }
 
 /**
@@ -189,7 +171,7 @@ function statusVariant(node: Node): ReturnType<typeof meta>["badgeVariant"] {
  * keeps its pill.
  */
 function isHealthy(node: Node): boolean {
-  return !node.disabled && meta(node).dotStatus === "online";
+  return !info(node).attention;
 }
 
 /**
@@ -201,21 +183,11 @@ function isHealthy(node: Node): boolean {
  * Printing a duplicate of the name in every row is what the old two-line cell
  * did, and it cost 15px of row height to say nothing.
  */
-/**
- * Fleet names carry grouping prefixes like "[cd]-" and "[Metix]-". As plain
- * text they eat the narrow name column before the actual machine name starts;
- * as a small badge the group survives at a glance and the name keeps the
- * width. Display only: search, sort, and tooltips still see the full string.
- */
-const NAME_PREFIX_RE = /^\[([^\]]{1,12})\]-(.+)$/;
 function namePrefix(node: Node): string {
-  const m = (node.name || "").match(NAME_PREFIX_RE);
-  return m?.[1] ?? "";
+  return splitNamePrefix(node).prefix;
 }
 function nameBody(node: Node): string {
-  const raw = node.name || node.id;
-  const m = raw.match(NAME_PREFIX_RE);
-  return m?.[2] ?? raw;
+  return splitNamePrefix(node).body;
 }
 
 function secondaryLabel(node: Node): string {
@@ -383,10 +355,10 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
              33-row fleet is 33 pieces of emphasis competing for none. Only the
              states that want an operator keep the pill. -->
         <div class="min-w-0">
-          <Badge v-if="!isHealthy(node)" :variant="statusVariant(node)" class="max-w-full truncate">
+          <Badge v-if="!isHealthy(node)" :variant="statusVariant(node)" class="max-w-full truncate" :title="statusTitle(node)">
             {{ statusLabel(node) }}
           </Badge>
-          <span v-else class="text-xs text-muted-foreground">{{ statusLabel(node) }}</span>
+          <span v-else class="text-xs text-muted-foreground" :title="statusTitle(node)">{{ statusLabel(node) }}</span>
         </div>
 
         <!-- Role -->

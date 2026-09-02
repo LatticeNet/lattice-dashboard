@@ -13,9 +13,10 @@
  */
 
 import type { BadgeVariants } from "@/components/ui/badge/badgeVariants";
+import { describeNodeStatus, nodeStatus, type NodeStatusInput } from "@/lib/nodeStatus";
 
 /** Health states understood by {@link StatusDot} (`src/components/common/StatusDot.vue`). */
-export type NodeHealth = "online" | "offline" | "never" | "degraded" | "pending" | "unknown";
+export type NodeHealth = "online" | "offline" | "never" | "degraded" | "disabled" | "pending" | "unknown";
 
 /** Real Badge variants. Mirrors {@link BadgeVariants} so it can never drift. */
 export type BadgeVariant = NonNullable<BadgeVariants["variant"]>;
@@ -88,6 +89,15 @@ const TREATMENT: Record<NodeHealth, StatusMeta> = {
     softBgClass: "bg-muted/30 border-dashed border-border",
     iconBgClass: "bg-muted text-muted-foreground",
   },
+  disabled: {
+    // Switched off by an operator on purpose. Quiet like never: the console
+    // must not paint an operator's own decision as an outage.
+    dotStatus: "disabled",
+    badgeVariant: "secondary",
+    textClass: "text-muted-foreground",
+    softBgClass: "bg-muted/40 border-border",
+    iconBgClass: "bg-muted text-muted-foreground",
+  },
   unknown: {
     dotStatus: "unknown",
     badgeVariant: "secondary",
@@ -109,96 +119,31 @@ export function statusMeta(health: NodeHealth): StatusMeta {
 /* Node health.                                                        */
 /* ------------------------------------------------------------------ */
 
-/** Minimal shape needed to derive node health. Structurally matches `Node`. */
-export interface NodeHealthInput {
-  online?: boolean;
-  disabled?: boolean;
-  /**
-   * The control plane's own reading: "online" | "offline" | "never". Preferred
-   * over the `online` boolean, which cannot express "has never reported".
-   */
-  reachability?: string;
-  last_seen?: string;
-  metrics?: {
-    cpu_percent?: number;
-    memory_used?: number;
-    memory_total?: number;
-    disk_used?: number;
-    disk_total?: number;
-  };
-}
-
 /**
- * The instant before which a timestamp cannot be a real contact time. The API
- * sends `last_seen` unconditionally, so a node that has never beaten arrives
- * carrying the zero time rather than an absent field, and formatting that
- * directly renders the year 1.
+ * Minimal shape needed to derive node health. Structurally matches `Node`.
+ * Kept as an alias of the status module's input so old call sites type-check.
  */
-const NEVER_SEEN_BEFORE_MS = Date.UTC(2000, 0, 1);
+export type NodeHealthInput = NodeStatusInput;
 
 /**
- * Whether we positively know this node has never reported.
- *
- * Only evidence counts. `reachability` is the control plane's own answer and
- * wins when present; behind it, a `last_seen` that is present but sits at the
- * zero time says the same thing, and that is the sentinel three views each
- * carried a private copy of.
- *
- * A missing `last_seen` is not evidence. Several callers derive health from a
- * partial shape that never carried a contact time at all, and treating absence
- * as proof would relabel every one of them.
+ * A node that has never reported. Reads the control plane's status word, and
+ * against an older server the reachability field or the zero last_seen.
  */
 export function hasNeverReported(node: NodeHealthInput): boolean {
-  if (node.reachability) return node.reachability === "never";
-  if (node.last_seen === undefined) return false;
-  const ms = node.last_seen ? new Date(node.last_seen).getTime() : Number.NaN;
-  return !Number.isFinite(ms) || ms < NEVER_SEEN_BEFORE_MS;
+  return nodeStatus(node) === "never_reported";
 }
 
 /**
- * Derive a node's health.
+ * Health for a node is the status the control plane derived, mapped onto the
+ * treatment buckets above. The derivation itself lives in `@/lib/nodeStatus`;
+ * this used to be a second copy that also folded in resource saturation, which
+ * is how one page called a busy node degraded while another called it online.
  *
- * Rules (in order):
- *  - `disabled` -> `"offline"` (an operator-disabled node is treated as down).
- *  - has never reported -> `"never"`. The control plane says so via
- *    `reachability`; against an older payload it is read off `last_seen`, which
- *    arrives as the zero time for a node that has never beaten.
- *  - `online === false` -> `"offline"`.
- *  - `online === true`:
- *      - degraded when any core resource is critically saturated
- *        (CPU >= 90%, memory >= 90%, or disk >= 95%). This derivation is
- *        OPTIONAL/heuristic. Pass a node without metrics and it stays
- *        `"online"`. Tweak {@link DEGRADED_THRESHOLDS} to adjust.
- *      - otherwise `"online"`.
- *  - `online === undefined` (no signal at all) -> `"unknown"`.
- *
- * `"pending"` is never produced here. It is reserved for enrollment/approval
- * flows that call {@link statusMeta}/{@link approvalStatusMeta} directly.
+ * `"pending"` and `"unknown"` are never produced for a node. They stay in the
+ * union for the enrollment, approval and lifecycle helpers below.
  */
 export function nodeHealth(node: NodeHealthInput): NodeHealth {
-  if (node.disabled) return "offline";
-  if (hasNeverReported(node)) return "never";
-  if (node.online === false) return "offline";
-  if (node.online === true) {
-    return isDegraded(node.metrics) ? "degraded" : "online";
-  }
-  return "unknown";
-}
-
-/** Saturation thresholds (percent) above which a node is considered degraded. */
-const DEGRADED_THRESHOLDS = { cpu: 90, memory: 90, disk: 95 } as const;
-
-function pct(used?: number, total?: number): number {
-  if (!used || !total || total <= 0) return 0;
-  return (used / total) * 100;
-}
-
-function isDegraded(metrics?: NodeHealthInput["metrics"]): boolean {
-  if (!metrics) return false;
-  if ((metrics.cpu_percent ?? 0) >= DEGRADED_THRESHOLDS.cpu) return true;
-  if (pct(metrics.memory_used, metrics.memory_total) >= DEGRADED_THRESHOLDS.memory) return true;
-  if (pct(metrics.disk_used, metrics.disk_total) >= DEGRADED_THRESHOLDS.disk) return true;
-  return false;
+  return describeNodeStatus(node).health;
 }
 
 /** Visual treatment for a node, derived from {@link nodeHealth}. */

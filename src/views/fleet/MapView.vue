@@ -23,6 +23,8 @@ import {
   type NodeGeoResolveResult,
   type NodeGeoView,
 } from "@/lib/api";
+import { NODE_STATUSES, compareByAttention, countNodeStatuses, describeNodeStatus, nodeStatus, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
+import { statusMeta } from "@/lib/status";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
@@ -87,7 +89,7 @@ const panStart = ref({ pointerId: -1, clientX: 0, clientY: 0, x: 0, y: 0, moved:
 const suppressMarkerClickUntil = ref(0);
 const locationEditorOpen = ref(false);
 
-type MapStatusFilter = "all" | "online" | "offline" | "disabled";
+type MapStatusFilter = "all" | NodeStatus;
 type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll";
 
 const ARCH_OS_TOKENS = ["linux", "darwin", "amd64", "arm64"] as const;
@@ -105,8 +107,9 @@ const filteredNodes = computed(() => {
     .sort((a, b) => {
       const aNode = nodeForFilter(a);
       const bNode = nodeForFilter(b);
-      if (!!aNode.disabled !== !!bNode.disabled) return aNode.disabled ? 1 : -1;
-      if (a.online !== b.online) return a.online ? -1 : 1;
+      // Worst first, the same triage order the Nodes page and Overview use.
+      const byStatus = compareByAttention(aNode, bNode);
+      if (byStatus !== 0) return byStatus;
       return (a.name || a.id).localeCompare(b.name || b.id);
     })
     .filter(
@@ -127,8 +130,10 @@ const UNLOCATED_SHOWN = 8;
 const unlocatedShown = computed(() => withoutGeo.value.slice(0, UNLOCATED_SHOWN));
 const unlocatedHidden = computed(() => Math.max(0, withoutGeo.value.length - UNLOCATED_SHOWN));
 const withLookupIP = computed(() => nodes.value.filter((n) => lookupIP(n) && !hasCoordinates(n)));
-const onlineCount = computed(() => nodes.value.filter((n) => n.online).length);
-const offlineCount = computed(() => Math.max(0, nodes.value.length - onlineCount.value));
+/** The same six numbers every fleet surface prints, from one pass. */
+const statusCounts = computed(() => countNodeStatuses(nodes.value));
+const onlineCount = computed(() => statusCounts.value.online);
+const notReportingCount = computed(() => statusCounts.value.offline + statusCounts.value.never_reported);
 const countryCount = computed(() => new Set(withGeo.value.map((n) => n.geo?.country).filter(Boolean)).size);
 const autoCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "auto").length);
 const manualCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "operator" || !n.geo?.source).length);
@@ -222,7 +227,7 @@ const regions = computed(() => {
     const label = [node.geo?.country, node.geo?.region].filter(Boolean).join(" · ") || t("fleet.map.unknownRegion");
     const group = groups.get(key) ?? { key, label, nodes: [], online: 0 };
     group.nodes.push(node);
-    if (node.online) group.online += 1;
+    if (nodeStatus(node) === "online") group.online += 1;
     groups.set(key, group);
   }
   return Array.from(groups.values()).sort((a, b) => b.nodes.length - a.nodes.length || a.label.localeCompare(b.label));
@@ -234,22 +239,41 @@ function nodeForFilter(node: NodeGeoView): Node {
   return node as unknown as Node;
 }
 
+/** The status word the geo view carries, read the same way the Nodes page reads it. */
+function markerStatus(node: NodeGeoView) {
+  return describeNodeStatus(node);
+}
+
+/**
+ * Marker colour by status word: success green for online, warning amber for
+ * degraded, destructive red for offline, and the muted ground for never
+ * reported and disabled, which are not failures. The literal oklch values
+ * mirror the success / warning / destructive tokens in app.css; SVG fill
+ * cannot read a utility class.
+ */
+function markerFill(node: NodeGeoView): string {
+  switch (markerStatus(node).tone) {
+    case "success":
+      return "oklch(0.74 0.15 162)";
+    case "warning":
+      return "oklch(0.8 0.15 80)";
+    case "destructive":
+      return "oklch(0.6 0.16 25)";
+    default:
+      return "oklch(0.6 0.02 260)";
+  }
+}
+
 function mapNodeHasAgentCapability(node: NodeGeoView, cap: AgentCapabilityFilter): boolean {
   return nodeHasAgentCapability(nodeForFilter(node), cap);
 }
 
 function matchesMapStatus(node: NodeGeoView): boolean {
-  const n = nodeForFilter(node);
-  switch (mapStatusFilter.value) {
-    case "online":
-      return !!node.online && !n.disabled;
-    case "offline":
-      return !node.online && !n.disabled;
-    case "disabled":
-      return !!n.disabled;
-    default:
-      return true;
-  }
+  // The filter values are the status words themselves; "all" and the empty
+  // string mean no filter.
+  const want = mapStatusFilter.value;
+  if (!want || want === "all") return true;
+  return nodeStatus(nodeForFilter(node)) === want;
 }
 
 function mapSearchFields(node: NodeGeoView): string[] {
@@ -699,7 +723,9 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
         <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.online') }}</p>
         <div class="mt-1.5 flex items-baseline gap-2">
           <p class="text-xl font-semibold">{{ onlineCount }}</p>
-          <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.offline', { count: offlineCount }) }}</p>
+          <p class="text-xs text-muted-foreground">
+            {{ $t('fleet.map.stats.degraded', { count: statusCounts.degraded }) }} · {{ $t('fleet.map.stats.notReporting', { count: notReportingCount }) }}
+          </p>
         </div>
       </div>
       <div class="rounded-lg border border-border bg-card p-3">
@@ -736,9 +762,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{{ $t('fleet.map.filters.statusAll') }}</SelectItem>
-            <SelectItem value="online">{{ $t('common.status.online') }}</SelectItem>
-            <SelectItem value="offline">{{ $t('common.status.offline') }}</SelectItem>
-            <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+            <SelectItem v-for="status in NODE_STATUSES" :key="status" :value="status">{{ $t(describeNodeStatus(status).labelKey) }}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -905,7 +929,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
 
                 <g v-for="point in plotted" :key="point.node.id">
                   <circle
-                    v-if="point.node.online"
+                    v-if="markerStatus(point.node).reporting"
                     :cx="markerScreenX(point.x)"
                     :cy="markerScreenY(point.y)"
                     class="map-ping"
@@ -935,7 +959,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                       fill="transparent"
                     />
                     <circle
-                      v-if="point.node.online"
+                      v-if="markerStatus(point.node).reporting"
                       :cx="markerScreenX(point.x)"
                       :cy="markerScreenY(point.y)"
                       :r="point.selected || hoveredNodeId === point.node.id ? 5.8 : 4"
@@ -945,10 +969,10 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                       :cx="markerScreenX(point.x)"
                       :cy="markerScreenY(point.y)"
                       :r="point.selected || hoveredNodeId === point.node.id ? 3.5 : 2.2"
-                      :fill="point.node.online ? 'oklch(0.74 0.15 162)' : 'oklch(0.6 0.16 25)'"
+                      :fill="markerFill(point.node)"
                       :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
                       :stroke-width="point.selected ? 1.35 : 0.9"
-                      :opacity="point.node.online ? 1 : 0.82"
+                      :opacity="markerStatus(point.node).reporting ? 1 : 0.82"
                     />
                   </g>
                 </g>
@@ -1019,8 +1043,8 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     </p>
                     <p class="mt-1 text-muted-foreground">{{ hoveredPoint.label }}</p>
                   </div>
-                  <Badge variant="secondary" class="shrink-0">
-                    {{ hoveredPoint.node.online ? $t('common.status.online') : $t('common.status.offline') }}
+                  <Badge :variant="statusMeta(markerStatus(hoveredPoint.node).health).badgeVariant" class="shrink-0" :title="nodeStatusReason(hoveredPoint.node)">
+                    {{ $t(markerStatus(hoveredPoint.node).labelKey) }}
                   </Badge>
                 </div>
                 <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
@@ -1106,7 +1130,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
             >
               <span class="min-w-0">
                 <span class="flex items-center gap-2">
-                  <StatusDot :status="node.online ? 'online' : 'offline'" :pulse="node.online" />
+                  <StatusDot :status="markerStatus(node).health" :pulse="markerStatus(node).reporting" />
                   <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
                 </span>
                 <span class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">

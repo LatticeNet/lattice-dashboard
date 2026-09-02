@@ -47,7 +47,7 @@ const props = withDefaults(
   defineProps<{
     metrics: Metric[];
     /** Columns at the widest breakpoint. Below it the strip halves, then stacks. */
-    columns?: 2 | 3 | 4 | 5;
+    columns?: 2 | 3 | 4 | 5 | 6;
   }>(),
   { columns: 4 },
 );
@@ -73,6 +73,8 @@ const gridClass = computed(
       3: "grid-cols-2 lg:grid-cols-3",
       4: "grid-cols-2 lg:grid-cols-4",
       5: "grid-cols-2 md:grid-cols-3 xl:grid-cols-5",
+      // Six is the fleet status band: three pairs on a phone, one row on a desktop.
+      6: "grid-cols-2 md:grid-cols-3 xl:grid-cols-6",
     })[props.columns],
 );
 </script>
