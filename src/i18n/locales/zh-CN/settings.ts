@@ -279,7 +279,7 @@ export default {
       },
       form: {
         serverAllowlist: "节点白名单",
-        serverAllowlistHint: "逗号分隔的节点 ID。留空表示该操作员可以访问所有节点。收窄权限会让该账号当前的会话立即失效。",
+        serverAllowlistHint: "逗号分隔的节点 ID。留空表示该操作员可以访问所有节点。收窄权限会让该账号当前的会话立即失效。允许列表只约束按节点划分的操作:KV、Static 与存储类 scope 是全舰队级的、不受它约束;全舰队级的管理写入(能力门、SSO、通知路由、组策略)会直接拒绝受限令牌。",
         createTitle: "新增用户",
         editTitle: "编辑用户",
         description: "运维账号。使用 Google/OIDC 登录时,用户名必须等于对方已验证的邮箱。",
@@ -343,7 +343,7 @@ export default {
         scopedHint: "仅提供你当前持有的权限范围。",
         noGrantableScopes: "你在目录中没有可授予的权限范围。",
         serverAllowlist: "节点允许列表",
-        serverAllowlistHint: "以逗号分隔的节点 ID。必须是你自身允许列表的子集。留空则适用于所有节点。",
+        serverAllowlistHint: "以逗号分隔的节点 ID。必须是你自身允许列表的子集。留空则适用于所有节点。允许列表只约束按节点划分的操作:KV、Static 与存储类 scope 是全舰队级的、不受它约束;全舰队级的管理写入(能力门、SSO、通知路由、组策略)会直接拒绝受限令牌。",
         serverAllowlistRestrictedHint: "以逗号分隔的节点 ID。必须是你当前节点允许列表的非空子集。",
         yourServerAllowlist: "你当前的节点允许列表:",
         moreNodes: "另有 {count} 个",
