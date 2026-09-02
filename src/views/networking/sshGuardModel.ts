@@ -16,6 +16,7 @@
  * part worth testing, and they are testable without a browser.
  */
 import type { ApprovalView } from "@/lib/api";
+import { fieldNumber, fieldText, hasFieldText } from "@/lib/formValue";
 
 export const SSHGUARD_PLUGIN = "sshguard";
 export const SSHGUARD_ARM_ACTION = "sshguard-arm:v1";
@@ -236,6 +237,62 @@ export interface GuardForm {
   outOfBandFallback: boolean;
   confirmWindowSec: number;
   acceptFindings: boolean;
+  /** The eight overrides under the Advanced disclosure. Absent means none set. */
+  advanced?: GuardAdvancedForm;
+}
+
+/**
+ * The overrides the server accepts for an unusual host.
+ *
+ * Every field is a string, including the numeric ones, because "not set" has
+ * to be distinguishable from zero: a zero here would be sent, and the server
+ * treats a sent zero as "use the default" for some fields and as a range error
+ * for others. Numbers are read through `fieldNumber`, which also absorbs the
+ * number-typed input handing back a number where the form said string.
+ */
+export interface GuardAdvancedForm {
+  /** Ports the gate covers, replacing what sshd reports. */
+  gatePorts: string;
+  /** Exactly three ports in 20000..60000, replacing the drawn sequence. */
+  knockPorts: string;
+  /** nftables timeout literal from KNOCK_OPEN_FOR_VALUES. */
+  knockOpenFor: string;
+  knockSeqTimeoutSec: string;
+  loginGraceTimeSec: string;
+  maxAuthTries: string;
+  /** sshd "start:rate:full" or bare "start". */
+  maxStartups: string;
+  permitRootLogin: string;
+}
+
+/** What the server fills in when a field is omitted. Shown as placeholders, never sent. */
+export const ADVANCED_DEFAULTS = {
+  knockOpenFor: "12h",
+  knockSeqTimeoutSec: 15,
+  loginGraceTimeSec: 20,
+  maxAuthTries: 3,
+  maxStartups: "100:30:200",
+  permitRootLogin: "prohibit-password",
+} as const;
+
+/** The literals the server's validateNFTTimeout accepts, in duration order. */
+export const KNOCK_OPEN_FOR_VALUES = ["15m", "30m", "1h", "2h", "4h", "8h", "12h", "24h"] as const;
+export const PERMIT_ROOT_LOGIN_VALUES = ["prohibit-password", "no", "yes", "forced-commands-only"] as const;
+export const KNOCK_SEQUENCE_LEN = 3;
+export const KNOCK_PORT_MIN = 20000;
+export const KNOCK_PORT_MAX = 60000;
+
+export function emptyAdvancedForm(): GuardAdvancedForm {
+  return {
+    gatePorts: "",
+    knockPorts: "",
+    knockOpenFor: "",
+    knockSeqTimeoutSec: "",
+    loginGraceTimeSec: "",
+    maxAuthTries: "",
+    maxStartups: "",
+    permitRootLogin: "",
+  };
 }
 
 export const MIN_CONFIRM_WINDOW_SEC = 120;
@@ -250,6 +307,14 @@ export interface PlanRequest {
   out_of_band_fallback?: boolean;
   confirm_window_sec?: number;
   accept_findings?: boolean;
+  gate_ports?: number[];
+  knock_ports?: number[];
+  knock_open_for?: string;
+  knock_seq_timeout_sec?: number;
+  login_grace_time_sec?: number;
+  max_auth_tries?: number;
+  max_startups?: string;
+  permit_root_login?: string;
 }
 
 /**
@@ -274,7 +339,86 @@ export function buildPlanRequest(form: GuardForm): PlanRequest {
     req.confirm_window_sec = form.confirmWindowSec;
   }
   if (form.acceptFindings) req.accept_findings = true;
+  if (form.advanced) Object.assign(req, buildAdvancedRequest(form.advanced));
   return req;
+}
+
+/** A comma or space separated port list, split and checked, order kept. */
+export function parsePortList(raw: string): { values: number[]; invalid: string[] } {
+  const values: number[] = [];
+  const invalid: string[] = [];
+  for (const token of fieldText(raw).split(/[\s,;]+/)) {
+    if (!token) continue;
+    const n = /^\d{1,5}$/.test(token) ? Number(token) : NaN;
+    if (Number.isInteger(n) && n >= 1 && n <= 65535) values.push(n);
+    else invalid.push(token);
+  }
+  return { values, invalid };
+}
+
+/**
+ * Only the fields the operator set. A blank stays absent so the server's
+ * verified default stands; the request never carries an empty string or a
+ * zero on the operator's behalf.
+ */
+export function buildAdvancedRequest(adv: GuardAdvancedForm): Partial<PlanRequest> {
+  const req: Partial<PlanRequest> = {};
+  const gate = parsePortList(adv.gatePorts).values;
+  if (gate.length) req.gate_ports = gate;
+  const knock = parsePortList(adv.knockPorts).values;
+  if (knock.length) req.knock_ports = knock;
+  const openFor = fieldText(adv.knockOpenFor);
+  if (openFor) req.knock_open_for = openFor;
+  const seqTimeout = fieldNumber(adv.knockSeqTimeoutSec);
+  if (seqTimeout !== undefined) req.knock_seq_timeout_sec = seqTimeout;
+  const grace = fieldNumber(adv.loginGraceTimeSec);
+  if (grace !== undefined) req.login_grace_time_sec = grace;
+  const tries = fieldNumber(adv.maxAuthTries);
+  if (tries !== undefined) req.max_auth_tries = tries;
+  const startups = fieldText(adv.maxStartups);
+  if (startups) req.max_startups = startups;
+  const root = fieldText(adv.permitRootLogin);
+  if (root) req.permit_root_login = root;
+  return req;
+}
+
+/**
+ * The server's own ranges, checked here so a typo is caught before it costs a
+ * round trip. Codes, not copy: the view maps them.
+ */
+export function validateAdvanced(adv: GuardAdvancedForm): string[] {
+  const errors: string[] = [];
+  if (parsePortList(adv.gatePorts).invalid.length) errors.push("gate_ports_invalid");
+  const knock = parsePortList(adv.knockPorts);
+  if (knock.invalid.length) errors.push("knock_ports_invalid");
+  else if (knock.values.length) {
+    const inRange = knock.values.every((p) => p >= KNOCK_PORT_MIN && p <= KNOCK_PORT_MAX);
+    const distinct = new Set(knock.values).size === knock.values.length;
+    if (knock.values.length !== KNOCK_SEQUENCE_LEN || !inRange || !distinct) errors.push("knock_ports_invalid");
+  }
+  const openFor = fieldText(adv.knockOpenFor);
+  if (openFor && !(KNOCK_OPEN_FOR_VALUES as readonly string[]).includes(openFor)) errors.push("knock_open_for_invalid");
+  if (outOfRange(adv.knockSeqTimeoutSec, 3, 120)) errors.push("knock_seq_timeout_range");
+  if (outOfRange(adv.loginGraceTimeSec, 5, 600)) errors.push("login_grace_range");
+  if (outOfRange(adv.maxAuthTries, 1, 10)) errors.push("max_auth_tries_range");
+  const startups = fieldText(adv.maxStartups);
+  if (startups && !isMaxStartups(startups)) errors.push("max_startups_invalid");
+  const root = fieldText(adv.permitRootLogin);
+  if (root && !(PERMIT_ROOT_LOGIN_VALUES as readonly string[]).includes(root)) errors.push("permit_root_login_invalid");
+  return errors;
+}
+
+/** Set and outside [lo, hi], or set and not a whole number. Blank is never wrong. */
+function outOfRange(value: unknown, lo: number, hi: number): boolean {
+  if (!hasFieldText(value)) return false;
+  const n = fieldNumber(value);
+  return n === undefined || !Number.isInteger(n) || n < lo || n > hi;
+}
+
+function isMaxStartups(value: string): boolean {
+  const parts = value.split(":");
+  if (parts.length !== 1 && parts.length !== 3) return false;
+  return parts.every((p) => /^\d{1,6}$/.test(p) && Number(p) <= 100000);
 }
 
 /** Form problems worth blocking submit on, as stable codes the view maps to copy. */
@@ -291,7 +435,59 @@ export function validateForm(form: GuardForm): string[] {
   if (form.enableKnock && !parseMgmtSources(form.mgmtSources).values.length && !form.outOfBandFallback) {
     errors.push("single_way_in");
   }
+  if (form.advanced) errors.push(...validateAdvanced(form.advanced));
   return errors;
+}
+
+// ── evidence carried by the approvals ───────────────────────────────────────
+
+/**
+ * Why the last arm did not survive, in the server's words.
+ *
+ * A rejected arm carries the refusal or the failed task's summary in
+ * `reason`. The summary can run to several lines; the last non-empty one is
+ * the line the task died on and the one an operator reads first. The full
+ * text travels alongside for the tooltip.
+ */
+export function armFailureText(state: NodeGuardState): { line: string; full: string } | undefined {
+  if (state.stage !== "armFailed") return undefined;
+  const full = (state.arm?.reason ?? "").trim();
+  if (!full) return undefined;
+  const lines = full.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return { line: lines[lines.length - 1] ?? full, full };
+}
+
+/** The confirm window the arm plan was rendered with, read back from its text. */
+export function parseConfirmWindow(plan: string | undefined): number | undefined {
+  const m = /^confirm_window_sec:\s*(\d+)\s*$/m.exec(plan ?? "");
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export interface RevertDeadline {
+  /** Epoch milliseconds when the node reverts on its own. */
+  at: number;
+  windowSec: number;
+  /** Epoch milliseconds when the arm was recorded as applied. */
+  startedAt: number;
+}
+
+/**
+ * When a node reverts unless confirmed.
+ *
+ * The server has no deadline field. What it has is the moment the arm was
+ * recorded as applied (`updated_at`, set when the task result arrived) and the
+ * window the plan was rendered with. The timer on the box started a little
+ * before the record did, so this deadline is the latest it can be, never
+ * earlier: an operator who trusts it has slightly less time than it says.
+ */
+export function revertDeadline(state: NodeGuardState): RevertDeadline | undefined {
+  if (!state.revertArmed || !state.arm) return undefined;
+  const startedAt = Date.parse(state.arm.updated_at || state.arm.created_at || "");
+  if (Number.isNaN(startedAt)) return undefined;
+  const windowSec = parseConfirmWindow(state.arm.plan) ?? DEFAULT_CONFIRM_WINDOW_SEC;
+  return { at: startedAt + windowSec * 1000, windowSec, startedAt };
 }
 
 // ── findings ────────────────────────────────────────────────────────────────

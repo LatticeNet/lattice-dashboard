@@ -2,14 +2,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  armFailureText,
+  buildAdvancedRequest,
   buildFleetStates,
   buildPlanRequest,
   deriveNodeGuardState,
+  emptyAdvancedForm,
   guardCoverage,
   hasBlocking,
   nodesAwaitingConfirm,
+  parseConfirmWindow,
   parseMgmtSources,
+  parsePortList,
+  revertDeadline,
   sortFindings,
+  validateAdvanced,
   validateForm,
   type GuardForm,
 } from "../sshGuardModel.ts";
@@ -193,4 +200,114 @@ test("coverage counts the three things an operator is deciding between", () => {
 test("the node name travels with the state so the list can show more than an id", () => {
   const states = buildFleetStates([], [{ id: "n1", name: "HK edge" }]);
   assert.equal(states[0].name, "HK edge");
+});
+
+// ── advanced overrides ──────────────────────────────────────────────────────
+
+test("advanced fields left blank send nothing, so verified defaults stand", () => {
+  const req = buildPlanRequest(form({ advanced: emptyAdvancedForm() }));
+  assert.deepEqual(req, { node_id: NODE, ssh_port: 58394, mgmt_sources: ["203.0.113.5"], enable_knock: true });
+});
+
+test("an advanced field that is set travels, in the server's shape", () => {
+  const req = buildPlanRequest(form({
+    advanced: {
+      ...emptyAdvancedForm(),
+      gatePorts: "22, 3434",
+      knockPorts: "20001 30002 40003",
+      knockOpenFor: "1h",
+      knockSeqTimeoutSec: "30",
+      loginGraceTimeSec: "10",
+      maxAuthTries: "2",
+      maxStartups: "10:30:60",
+      permitRootLogin: "no",
+    },
+  }));
+  assert.deepEqual(req.gate_ports, [22, 3434]);
+  assert.deepEqual(req.knock_ports, [20001, 30002, 40003]);
+  assert.equal(req.knock_open_for, "1h");
+  assert.equal(req.knock_seq_timeout_sec, 30);
+  assert.equal(req.login_grace_time_sec, 10);
+  assert.equal(req.max_auth_tries, 2);
+  assert.equal(req.max_startups, "10:30:60");
+  assert.equal(req.permit_root_login, "no");
+});
+
+test("a number-typed input handing back a number is read the same as its text", () => {
+  const adv = { ...emptyAdvancedForm(), maxAuthTries: 4 as unknown as string };
+  assert.equal(buildAdvancedRequest(adv).max_auth_tries, 4);
+  assert.deepEqual(validateAdvanced(adv), []);
+});
+
+test("advanced values are checked against the server's own ranges before a round trip", () => {
+  const bad = validateAdvanced({
+    gatePorts: "22, http",
+    knockPorts: "20001, 20001, 40003",
+    knockOpenFor: "3h",
+    knockSeqTimeoutSec: "2",
+    loginGraceTimeSec: "601",
+    maxAuthTries: "0",
+    maxStartups: "10:30",
+    permitRootLogin: "maybe",
+  });
+  assert.deepEqual(bad.sort(), [
+    "gate_ports_invalid",
+    "knock_open_for_invalid",
+    "knock_ports_invalid",
+    "knock_seq_timeout_range",
+    "login_grace_range",
+    "max_auth_tries_range",
+    "max_startups_invalid",
+    "permit_root_login_invalid",
+  ].sort());
+  assert.deepEqual(validateAdvanced(emptyAdvancedForm()), []);
+  assert.deepEqual(validateAdvanced({ ...emptyAdvancedForm(), knockPorts: "20001 30002" }), ["knock_ports_invalid"], "a knock sequence is exactly three ports");
+  assert.deepEqual(validateAdvanced({ ...emptyAdvancedForm(), knockPorts: "1000 30002 40003" }), ["knock_ports_invalid"], "knock ports live in 20000..60000");
+  assert.deepEqual(validateAdvanced({ ...emptyAdvancedForm(), maxStartups: "10" }), [], "a bare start is an sshd value");
+});
+
+test("advanced errors surface through the form validator so one list blocks submit", () => {
+  const errors = validateForm(form({ advanced: { ...emptyAdvancedForm(), maxAuthTries: "99" } }));
+  assert.ok(errors.includes("max_auth_tries_range"));
+});
+
+test("port lists split on commas or spaces and keep what could not be a port", () => {
+  assert.deepEqual(parsePortList("22, 3434 65535"), { values: [22, 3434, 65535], invalid: [] });
+  assert.deepEqual(parsePortList("0 70000 ssh"), { values: [], invalid: ["0", "70000", "ssh"] });
+  assert.deepEqual(parsePortList(""), { values: [], invalid: [] });
+});
+
+// ── evidence carried by the approvals ───────────────────────────────────────
+
+test("a failed arm prints the line the task died on, with the full reason alongside", () => {
+  const s = deriveNodeGuardState([arm({ status: "rejected", reason: "apply: step 3/5\nsshd -t: /etc/ssh/sshd_config.d/lattice.conf line 4: Bad configuration option" })], NODE);
+  const text = armFailureText(s);
+  assert.equal(text?.line, "sshd -t: /etc/ssh/sshd_config.d/lattice.conf line 4: Bad configuration option");
+  assert.ok(text?.full.startsWith("apply: step 3/5"));
+});
+
+test("a failed arm with no reason, and a node that did not fail, print nothing", () => {
+  assert.equal(armFailureText(deriveNodeGuardState([arm({ status: "rejected" })], NODE)), undefined);
+  assert.equal(armFailureText(deriveNodeGuardState([arm({ status: "applied" })], NODE)), undefined);
+});
+
+test("the confirm window is read back from the plan the arm was rendered with", () => {
+  assert.equal(parseConfirmWindow("stage: arm\nnode_id: x\nconfirm_window_sec: 300\n"), 300);
+  assert.equal(parseConfirmWindow("no such line"), undefined);
+  assert.equal(parseConfirmWindow(undefined), undefined);
+});
+
+test("the revert deadline is the applied moment plus the plan's window", () => {
+  const applied = arm({ status: "applied", updated_at: "2026-09-02T03:00:00Z", plan: "confirm_window_sec: 300\n" });
+  const d = revertDeadline(deriveNodeGuardState([applied], NODE));
+  assert.equal(d?.windowSec, 300);
+  assert.equal(d?.startedAt, Date.parse("2026-09-02T03:00:00Z"));
+  assert.equal(d?.at, Date.parse("2026-09-02T03:05:00Z"));
+});
+
+test("a plan with no window line falls back to the server default, and no timer means no deadline", () => {
+  const applied = arm({ status: "applied", updated_at: "2026-09-02T03:00:00Z" });
+  assert.equal(revertDeadline(deriveNodeGuardState([applied], NODE))?.windowSec, 900);
+  assert.equal(revertDeadline(deriveNodeGuardState([arm({ status: "pending" })], NODE)), undefined);
+  assert.equal(revertDeadline(deriveNodeGuardState([arm({ status: "applied", created_at: "not a date" })], NODE)), undefined);
 });
