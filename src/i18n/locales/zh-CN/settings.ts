@@ -144,6 +144,7 @@ export default {
         "动画会遵循系统的“减弱动态效果”设置,开启后会自动减少过渡与动效。",
       previewInertNote: "该面板只是样式示例,其中的按钮与徽标均不可交互,点击不会有任何效果。",
       palettes: {
+        claude: "Claude",
         lattice: "Lattice",
         teal: "青色",
         blue: "蓝色",

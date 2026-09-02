@@ -452,6 +452,7 @@ function onSegmentKeydown(event: KeyboardEvent): void {
 .swatch-active {
   background-color: var(--swatch-active);
 }
+.swatch-fill[data-palette="claude"] { --swatch-current: var(--swatch-claude); }
 .swatch-fill[data-palette="lattice"] { --swatch-current: var(--swatch-lattice); }
 .swatch-fill[data-palette="teal"] { --swatch-current: var(--swatch-teal); }
 .swatch-fill[data-palette="blue"] { --swatch-current: var(--swatch-blue); }
