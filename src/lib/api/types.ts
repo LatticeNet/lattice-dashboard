@@ -502,11 +502,94 @@ export interface SSHGuardPlanRequest {
   out_of_band_fallback?: boolean;
   confirm_window_sec?: number;
   accept_findings?: boolean;
+  // Advanced. Each one overrides a verified default on the server rather than
+  // merging with it, and each is omitted unless the operator set it.
+  gate_ports?: number[];
+  knock_ports?: number[];
+  /** An nftables timeout literal the server accepts: 15m, 30m, 1h ... 24h. */
+  knock_open_for?: string;
+  knock_seq_timeout_sec?: number;
+  login_grace_time_sec?: number;
+  max_auth_tries?: number;
+  /** sshd's own "start:rate:full" triple, or a bare "start". */
+  max_startups?: string;
+  permit_root_login?: string;
 }
 
 export interface SSHGuardPlanResponse {
   approval: ApprovalView;
   findings?: SSHGuardFinding[];
+}
+
+// ── guard reality ───────────────────────────────────────────────────────────
+//
+// What a node reports about its own firewall and listeners. The agent posts
+// it; the server keeps the newest snapshot per node and serves it in two
+// shapes: a fleet summary (counts and timestamps, one call) and a per-node
+// detail carrying the listeners themselves. SSH Guard reads both: the summary
+// says when a node was last observed, the detail says what sshd listens on.
+
+export interface GuardListener {
+  /** tcp | udp */
+  protocol: string;
+  port: number;
+  address?: string;
+  process?: string;
+}
+
+export interface GuardInterface {
+  name: string;
+  addresses?: string[];
+}
+
+export interface GuardNodeReality {
+  node_id: string;
+  listeners?: GuardListener[];
+  interfaces?: GuardInterface[];
+  managed_sha?: string;
+  foreign_tables?: string[];
+  nft_version?: string;
+  collected_at: string;
+}
+
+/** One row of GET /api/netguard/reality. Timestamps are absent until the node has reported. */
+export interface GuardRealitySummary {
+  node_id: string;
+  node_name?: string;
+  /** unknown (never reported) | fresh | stale */
+  snapshot_status: "unknown" | "fresh" | "stale" | string;
+  /** unknown | in_sync | drift */
+  drift_state: string;
+  managed: boolean;
+  has_binding: boolean;
+  collected_at?: string;
+  received_at?: string;
+  stale_after?: string;
+  managed_sha?: string;
+  applied_table_sha?: string;
+  last_applied_at?: string;
+  last_error?: string;
+  listener_count?: number;
+  interface_count?: number;
+  foreign_table_count?: number;
+}
+
+export interface GuardRealityListResponse {
+  nodes: GuardRealitySummary[];
+  next_cursor?: string;
+}
+
+/** GET /api/netguard/reality?node_id=: the snapshot itself, or nulls when the node never reported. */
+export interface GuardRealityDetail {
+  node_id: string;
+  snapshot_status: "unknown" | "fresh" | "stale" | string;
+  reality: GuardNodeReality | null;
+  received_at: string | null;
+  stale_after: string | null;
+}
+
+export interface GuardRealityDetailResponse {
+  node: GuardRealityDetail;
 }
 
 export interface AuditEvent {

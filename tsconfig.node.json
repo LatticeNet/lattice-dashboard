@@ -7,5 +7,5 @@
     "moduleResolution": "Bundler",
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "vite.harness.config.ts"]
+  "include": ["vite.config.ts", "vite.harness.config.ts", "vite.harness.ssh-guard.config.ts"]
 }
