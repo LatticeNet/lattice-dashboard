@@ -44,8 +44,8 @@ function source(relative: string): string {
 test("a plugin navigate request cannot reach a route that acts on its query string", () => {
   // Ground the claim: the sink is in this tree, right now, with no confirm step.
   const terminal = source("../../operations/TerminalView.vue");
-  assert.match(terminal, /route\.query\.connect === "1"/, "TerminalView no longer reads connect= from the query");
-  assert.match(terminal, /await connectSelected\(\{ preferExisting: true \}\)/, "TerminalView no longer auto-connects");
+  assert.match(terminal, /queryFlag\(route\.query\.connect\)/, "TerminalView no longer reads connect= from the query");
+  assert.match(terminal, /routeConnectAttempted = true;\s+[^]*?void connect\(\);/, "TerminalView no longer auto-connects");
   assert.match(terminal, /api\.terminal\.create\(/, "TerminalView no longer creates a session");
 
   const verdict = classifyPluginNavigateMessage({
