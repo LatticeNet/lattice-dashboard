@@ -111,6 +111,7 @@ export default {
           terminal: "terminal",
           stream: "stream",
           poll: "poll",
+          singbox: "sing-box",
         },
         agentExpression: "Agent expression",
         agentExpressionPlaceholder: "AND(exec, root, terminal)",

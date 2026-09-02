@@ -151,7 +151,7 @@ const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
 /** arch/os quick-filter tokens currently engaged (every selected must match). */
 const activeArchOs = ref<string[]>([]);
-type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll";
+type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll" | "singbox";
 const activeAgentCaps = ref<AgentCapabilityFilter[]>([]);
 const agentExpr = ref("");
 const archOsExpr = ref("");
@@ -393,7 +393,7 @@ function toggleArchOs(tok: string) {
   activeArchOs.value = [...next];
 }
 
-const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll"];
+const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll", "singbox"];
 
 const availableAgentCaps = computed(() =>
   AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => nodeMatchesAgentCap(node, cap))),

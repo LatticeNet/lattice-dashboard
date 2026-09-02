@@ -20,9 +20,32 @@ export function nodeHasAgentCapability(node: Node, token: string): boolean {
       return !!profile?.allow_terminal && profile.terminal_transport === "stream" && !profile.no_exec;
     case "poll":
       return !!profile?.allow_terminal && profile.terminal_transport !== "stream" && !profile.no_exec;
+    // sing-box management is what the agent reports it is doing, not what the
+    // enrolment asked for: the runtime flag is the truth the fleet filter
+    // sorts by, and drift between the two is its own, filterable, fact.
+    case "singbox":
+    case "sing-box":
+      return !!profile?.singbox_discover;
+    case "singbox-drift":
+    case "sing-box-drift":
+      return singboxDrift(node);
     default:
       return false;
   }
+}
+
+/**
+ * True when the launch record and the runtime report disagree about sing-box
+ * discovery. Either side missing is not drift: an agent that predates the
+ * flag reports nothing, and a node enrolled before the flag existed has no
+ * launch record for it.
+ */
+export function singboxDrift(node: Node): boolean {
+  const launch = node.agent_launch ?? undefined;
+  const runtime = node.agent_runtime ?? undefined;
+  if (!launch || !runtime) return false;
+  if (launch.singbox_discover === undefined || runtime.singbox_discover === undefined) return false;
+  return !!launch.singbox_discover !== !!runtime.singbox_discover;
 }
 
 export function agentConfigBadges(node: Node): string[] {
@@ -31,6 +54,9 @@ export function agentConfigBadges(node: Node): string[] {
   if (nodeHasAgentCapability(node, "root")) badges.push("root");
   if (nodeHasAgentCapability(node, "terminal")) {
     badges.push(nodeHasAgentCapability(node, "stream") ? "terminal:stream" : "terminal:poll");
+  }
+  if (nodeHasAgentCapability(node, "singbox")) {
+    badges.push(singboxDrift(node) ? "sing-box:drift" : "sing-box");
   }
   return badges;
 }
