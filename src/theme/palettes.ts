@@ -36,7 +36,9 @@ export interface Palette {
 const CHART_ACCENTS = {
   "--chart-2": "oklch(0.62 0.16 195)",
   "--chart-3": "oklch(0.66 0.18 142)",
-  "--chart-4": "oklch(0.74 0.17 60)",
+  // Violet rather than amber: amber sat 17 degrees from the terracotta lead
+  // series and the two were one colour at chart size.
+  "--chart-4": "oklch(0.58 0.17 300)",
   "--chart-5": "oklch(0.64 0.22 12)",
 } as const;
 
@@ -59,8 +61,8 @@ export const PALETTES: Record<Exclude<ColorThemeName, "custom">, Palette> = {
     // Claude orange that keeps white text at AA (oklch 0.58 reads 4.55:1; the
     // brand's own #D97757 reads 3.1:1 and is kept for the swatch only).
     swatch: "oklch(0.686 0.129 40.5)",
-    light: make("oklch(0.58 0.14 40)", "oklch(0.99 0.005 80)", "oklch(0.58 0.14 40)"),
-    dark: make("oklch(0.74 0.12 42)", "oklch(0.22 0.01 60)", "oklch(0.66 0.11 42)"),
+    light: make("oklch(0.54 0.14 48)", "oklch(1 0 0)", "oklch(0.54 0.14 48)"),
+    dark: make("oklch(0.76 0.12 48)", "oklch(0.22 0.01 60)", "oklch(0.68 0.11 48)"),
   },
   lattice: {
     swatch: "oklch(0.6 0.2 278)",
