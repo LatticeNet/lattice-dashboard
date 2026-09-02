@@ -236,7 +236,7 @@ onMounted(async () => {
             The sovereign control plane.
           </h1>
           <p class="text-sm text-muted-foreground">
-            Agents do the work; you keep the judgment. Every change is a plan you saw, hash-bound, and proven.
+            Amplify one operator's judgment, safely, across all of their infrastructure.
           </p>
           <ul class="space-y-3 text-sm">
             <li class="flex items-center gap-3 text-muted-foreground">
