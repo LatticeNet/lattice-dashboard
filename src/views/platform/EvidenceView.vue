@@ -17,8 +17,8 @@ import { useRouteTab } from "@/composables/useRouteTab";
 import ConnectionTraceView from "./ConnectionTraceView.vue";
 import LogsView from "./LogsView.vue";
 
-export const EVIDENCE_LENSES = ["connections", "log"] as const;
-export type EvidenceLens = (typeof EVIDENCE_LENSES)[number];
+const EVIDENCE_LENSES = ["connections", "log"] as const;
+type EvidenceLens = (typeof EVIDENCE_LENSES)[number];
 
 const lens = useRouteTab<EvidenceLens>(() => EVIDENCE_LENSES, () => "connections", "lens");
 </script>
