@@ -74,6 +74,9 @@ export default {
       stats: {
         total: "总数",
         online: "在线",
+        degraded: "降级",
+        offline: "离线",
+        neverReported: "从未上报",
         disabled: "已停用",
         bandwidth: "在线节点带宽",
         download: "下行",
@@ -206,6 +209,7 @@ export default {
         noUpdatePolicy: "无更新策略",
       },
       detail: {
+        statusSince: "自 {time}",
         capabilities: {
           title: "能力准入",
           description:
@@ -559,6 +563,8 @@ export default {
         coverage: "覆盖率",
         online: "在线",
         offline: "{count} 个离线",
+        degraded: "{count} 个降级",
+        notReporting: "{count} 个未上报",
         regions: "区域",
         countries: "国家/地区",
         sources: "自动定位",

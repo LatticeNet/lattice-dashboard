@@ -97,9 +97,11 @@ const dotClass = computed(() => {
       return "bg-warning ring-warning/25";
     case "pending":
       return "bg-info ring-info/25";
-    // Never reported is muted on purpose, like unknown and unlike offline: it
-    // is an unfinished setup, not a failure.
+    // Never reported and disabled are muted on purpose, like unknown and
+    // unlike offline: unfinished setup and an operator's own switch are not
+    // failures.
     case "never":
+    case "disabled":
     default:
       return "bg-muted-foreground ring-muted-foreground/25";
   }
