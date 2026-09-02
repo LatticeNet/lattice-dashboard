@@ -69,13 +69,13 @@ export function buildNodeQueue(tasks: TaskView[], nodeId: string): NodeQueue {
   if (!id) return { entries: [], queued: 0, running: 0, stalled: 0 };
 
   const entries = tasks
-    .filter((task) => PENDING_STATUSES.has(task.status))
     .filter((task) => (task.targets ?? []).includes(id))
     .map<NodeQueueEntry>((task) => {
       // A fan-out is "leased" while any node still runs it, so this node's own
-      // record decides between running and stalled when the server sends one.
+      // record, when the server sends one, is what says whether it is running,
+      // stalled, still waiting, or already done here.
       const lease = taskLeaseProgress(task, id);
-      const status = lease?.status === "stalled" || lease?.status === "leased" ? lease.status : task.status;
+      const status = (lease?.status as TaskView["status"] | undefined) ?? task.status;
       return {
         id: task.id,
         status,
@@ -91,6 +91,7 @@ export function buildNodeQueue(tasks: TaskView[], nodeId: string): NodeQueue {
         timeoutSec: task.timeout_sec,
       };
     })
+    .filter((entry) => PENDING_STATUSES.has(entry.status))
     .sort(compareByRunThenAge);
 
   return {

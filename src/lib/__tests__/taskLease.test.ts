@@ -61,3 +61,16 @@ test("lease age uses at most two units and never goes negative", () => {
     assert.equal(formatLeaseAge(seconds), want, `${seconds}s`);
   }
 });
+
+test("a never-leased target of a fan-out keeps its own status and has no label", () => {
+  const fanout = task({
+    targets: ["hk-edge-01", "sg-edge-02"],
+    target_states: {
+      "hk-edge-01": { status: "queued" },
+      "sg-edge-02": { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 60 },
+    },
+  });
+  const progress = taskLeaseProgress(fanout, "hk-edge-01");
+  assert.equal(progress?.status, "queued");
+  assert.equal(leaseAttemptLabel(progress, text), "");
+});

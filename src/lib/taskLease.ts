@@ -42,7 +42,9 @@ export interface TaskLeaseProgress {
 export function taskLeaseProgress(task: TaskView, nodeId?: string): TaskLeaseProgress | undefined {
   const perTarget = nodeId ? task.target_states?.[nodeId] : undefined;
   if (perTarget) {
-    if (!perTarget.attempts && !perTarget.stalled_reason) return undefined;
+    // A record with no attempts still carries this node's own status, which
+    // is what tells a never-leased or already-finished target apart from the
+    // fan-out's "leased"; the label just has nothing to say for it.
     return {
       status: perTarget.status,
       attempts: perTarget.attempts ?? 0,

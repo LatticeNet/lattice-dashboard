@@ -114,3 +114,29 @@ test("a fan-out that is running elsewhere but stalled here reads as stalled for 
   assert.equal(q.entries[0].lease?.attempts, 3);
   assert.equal(q.stalled, 1);
 });
+
+test("a fan-out target that already answered here is not this node's queue, whatever the task says", () => {
+  const q = buildNodeQueue(
+    [
+      task({
+        id: "fanout", status: "leased", targets: [NODE, "somewhere-else"],
+        target_states: {
+          [NODE]: { status: "finished", attempts: 1, max_attempts: 3, lease_age_seconds: 300 },
+          "somewhere-else": { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 60 },
+        },
+      }),
+      task({
+        id: "not-yet-here", status: "leased", targets: [NODE, "somewhere-else"],
+        target_states: {
+          [NODE]: { status: "queued" },
+          "somewhere-else": { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 60 },
+        },
+      }),
+    ],
+    NODE,
+  );
+  assert.deepEqual(q.entries.map((e) => e.id), ["not-yet-here"]);
+  assert.equal(q.entries[0].running, false);
+  assert.equal(q.queued, 1);
+  assert.equal(q.running, 0);
+});

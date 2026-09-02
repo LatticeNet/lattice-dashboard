@@ -596,10 +596,11 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
     const failed = !!latestResult && resultFailed(latestResult);
     const lease = latestTask ? taskLeaseProgress(latestTask, nodeId) : undefined;
     // A fan-out stays "leased" while any node still runs it, so this node's
-    // own record, when the server sends one, decides between running and
-    // stalled for the row; the task status is the fallback.
-    const leaseStatus = lease?.status === "stalled" || lease?.status === "leased" ? lease.status : latestTask?.status;
-    const status = latestResult
+    // own record, when the server sends one, is what the row reads (running,
+    // stalled, still waiting, or answered with the result row already gone);
+    // the task status is the fallback for servers that send none.
+    const leaseStatus = lease?.status ?? latestTask?.status;
+    const status: NodeRunStatus = latestResult
       ? failed
         ? "failed"
         : "finished"
@@ -611,11 +612,9 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
         ? "failed"
         : latestTask?.status === "cancelled"
           ? "cancelled"
-          : leaseStatus === "stalled"
-            ? "stalled"
-            : leaseStatus === "leased"
-              ? "leased"
-              : "queued";
+          : leaseStatus === "stalled" || leaseStatus === "leased" || leaseStatus === "failed" || leaseStatus === "finished"
+            ? leaseStatus
+            : "queued";
     return {
       nodeId,
       node: nodesById.value[nodeId],
