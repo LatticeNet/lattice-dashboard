@@ -4,9 +4,10 @@
  *
  * Consolidates the two hand-rolled (and divergent) node cards previously inlined
  * in OverviewView and NodesView into one reusable, correctly-typed component:
- *  - StatusDot is bound to REAL health via `nodeStatusMeta(node).dotStatus`
- *    (NOT a non-existent `:active` prop) so a disabled / degraded / offline node
- *    renders the right colour, and the pulse only animates when truly online.
+ *  - StatusDot, the badge colour and the badge text all read the control
+ *    plane's status word through `@/lib/nodeStatus`, so a disabled / degraded /
+ *    offline / never-reported node renders the same word as every other page,
+ *    and the pulse only animates when the agent is in contact.
  *  - Three {@link MetricBar}s (CPU / Memory / Disk).
  *  - An optional compact per-node trend sparkline (CPU or net), drawn as a tiny
  *    inline SVG fed by {@link useMetricBuffer}'s shared ring buffer. CSP-safe:
@@ -33,7 +34,9 @@ import {
   MemoryStick,
 } from "lucide-vue-next";
 import type { Node } from "@/lib/api/types";
-import { nodeStatusMeta } from "@/lib/status";
+import { statusMeta } from "@/lib/status";
+import { describeNodeStatus, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
+import { splitNamePrefix } from "@/lib/fleet";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -111,7 +114,6 @@ const props = withDefaults(
     offlineLabel?: string;
     neverLabel?: string;
     degradedLabel?: string;
-    unknownLabel?: string;
     disabledLabel?: string;
     /** Accessible label for the sparkline. */
     sparklineLabel?: string;
@@ -135,7 +137,6 @@ const props = withDefaults(
     offlineLabel: "Offline",
     neverLabel: "Never reported",
     degradedLabel: "Degraded",
-    unknownLabel: "Unknown",
     disabledLabel: "Disabled",
     sparklineLabel: "Recent trend",
     class: undefined,
@@ -153,44 +154,31 @@ const emit = defineEmits<{
   (e: "toggle-check", node: Node): void;
 }>();
 
-/** Real, derived visual treatment (drives the dot colour + the status badge). */
-const meta = computed(() => nodeStatusMeta(props.node));
+/** One reading for the dot, the badge colour and the badge text: the status word. */
+const info = computed(() => describeNodeStatus(props.node));
+const meta = computed(() => statusMeta(info.value.health));
 
-/** A disabled node is operationally down even if the agent last reported online. */
-const isLive = computed(() => props.node.online && !props.node.disabled);
+/** The agent is in contact: online or degraded. Disabled outranks a live agent. */
+const isLive = computed(() => info.value.reporting);
 
-const displayName = computed(() => props.node.name || props.node.id);
+const displayName = computed(() => splitNamePrefix(props.node));
 
-/**
- * The dot reads the same derivation the badge does. Passing a boolean here
- * capped it at two colors, so a node that never reported drew the red dot that
- * means something broke.
- */
-const dotStatus = computed(() =>
-  props.node.disabled ? ("offline" as const) : meta.value.dotStatus,
-);
+const dotStatus = computed(() => info.value.health);
 
+/** The badge prints the label the caller passed for the node's status word. */
 const statusBadge = computed(() => {
-  if (props.node.disabled) {
-    return { variant: "secondary" as const, label: props.disabledLabel };
-  }
-  // Read the label off the same derivation the variant comes from. Choosing it
-  // from the online boolean instead let the badge render its outline
-  // never-reported treatment while the text next to it still said "offline".
-  const labels: Partial<Record<string, string>> = {
+  const labels: Record<NodeStatus, string> = {
     online: props.onlineLabel,
-    never: props.neverLabel,
-    // Naming only two states made a degraded node wear the warning colour
-    // with the text "Offline": one page said offline, another said degraded,
-    // about the same machine at the same moment.
     degraded: props.degradedLabel,
-    unknown: props.unknownLabel,
+    offline: props.offlineLabel,
+    never_reported: props.neverLabel,
+    disabled: props.disabledLabel,
   };
-  return {
-    variant: meta.value.badgeVariant,
-    label: labels[meta.value.dotStatus] ?? props.offlineLabel,
-  };
+  return { variant: meta.value.badgeVariant, label: labels[info.value.status] };
 });
+
+/** The server's one-sentence account, on hover, so the word can be checked. */
+const statusTitle = computed(() => nodeStatusReason(props.node));
 
 /** First two tags only. Keeps the header from wrapping on dense grids. */
 const visibleTags = computed(() =>
@@ -293,7 +281,7 @@ function onGroup(id: string) {
     "
     :role="selectable ? 'button' : undefined"
     :tabindex="selectable ? 0 : undefined"
-    :aria-label="selectable ? displayName : undefined"
+    :aria-label="selectable ? node.name || node.id : undefined"
     :aria-selected="checkable ? checked : undefined"
     @click="selectable && onSelect()"
     @keydown.enter.prevent="selectable && onCardKey($event)"
@@ -312,9 +300,12 @@ function onGroup(id: string) {
           />
         </span>
         <div class="min-w-0">
-        <div class="flex min-w-0 items-center gap-2 font-medium">
+        <div class="flex min-w-0 items-center gap-2 font-medium" :title="node.name || node.id">
           <StatusDot :status="dotStatus" :pulse="isLive" />
-          <span class="truncate">{{ displayName }}</span>
+          <!-- The bracketed fleet prefix as a small badge, so it stops eating
+               the name's width; the full name stays in the title. -->
+          <Badge v-if="displayName.prefix" variant="outline" class="shrink-0 px-1 py-0 text-[10px] leading-4">{{ displayName.prefix }}</Badge>
+          <span class="truncate">{{ displayName.body }}</span>
         </div>
         <p
           v-if="node.host_facts"
@@ -327,7 +318,7 @@ function onGroup(id: string) {
         </div>
       </div>
       <div class="flex min-w-0 flex-wrap gap-1 @sm:shrink-0 @sm:justify-end">
-        <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
+        <Badge :variant="statusBadge.variant" :title="statusTitle">{{ statusBadge.label }}</Badge>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
         <button
@@ -417,9 +408,11 @@ function onGroup(id: string) {
         <Activity class="size-3" aria-hidden="true" />
         {{ formatDuration(node.metrics?.uptime_seconds) }}
       </span>
+      <!-- A node that never reported carries the zero time as last_seen;
+           formatting it printed "739,861 days ago" under the card. -->
       <span class="inline-flex items-center gap-1">
         <Clock class="size-3" aria-hidden="true" />
-        {{ formatRelativeTime(node.last_seen) }}
+        {{ info.status === "never_reported" ? neverLabel : formatRelativeTime(node.last_seen) }}
       </span>
     </div>
 

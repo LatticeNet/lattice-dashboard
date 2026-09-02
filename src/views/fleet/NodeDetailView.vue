@@ -69,7 +69,8 @@ import { buildNodeQueue } from "./nodeTaskQueueModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
-import { hasNeverReported, nodeStatusMeta } from "@/lib/status";
+import { hasNeverReported, statusMeta } from "@/lib/status";
+import { describeNodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -462,25 +463,24 @@ const notFound = computed(
   () => nodesQuery.data.value !== undefined && !nodesQuery.loading.value && !node.value,
 );
 
-/** A disabled node is operationally down even if the agent last reported online. */
-const isLive = computed(() => !!node.value?.online && !node.value?.disabled);
-const meta = computed(() => nodeStatusMeta(node.value ?? { online: false }));
+/** One reading for the badge, the sparkline colour and the terminal gate: the status word. */
+const statusInfo = computed(() => describeNodeStatus(node.value ?? {}));
+const meta = computed(() => statusMeta(statusInfo.value.health));
+/** The agent is in contact: online or degraded. Disabled outranks a live agent. */
+const isLive = computed(() => statusInfo.value.reporting);
 
-const statusBadge = computed(() => {
-  if (node.value?.disabled) return { variant: "secondary" as const, label: t("common.status.disabled") };
-  // The text follows the same health as the badge colour. A node saturated on
-  // CPU, memory or disk drew a warning-tinted badge that still read "online".
-  const health = meta.value.dotStatus;
-  return {
-    variant: meta.value.badgeVariant,
-    label:
-      health === "degraded"
-        ? t("common.status.degraded")
-        : health === "online"
-          ? t("common.status.online")
-          : t("common.status.offline"),
-  };
-});
+const statusBadge = computed(() => ({
+  variant: meta.value.badgeVariant,
+  label: t(statusInfo.value.labelKey),
+}));
+
+/**
+ * The server's account of the word: since when, and the one sentence naming
+ * the evidence. A node offline since 2026-08-27 and one that never reported
+ * used to print the same badge with nothing to tell them apart.
+ */
+const statusSince = computed(() => (node.value ? nodeStatusSince(node.value) : undefined));
+const statusReason = computed(() => (node.value ? nodeStatusReason(node.value) : ""));
 
 /* Feed each poll into the shared ring so the sparkline accrues history. */
 const metricBuffer = useMetricBuffer();
@@ -1259,7 +1259,10 @@ async function resolveGeo() {
 
       <!-- Identity row: status / role / tags / groups, last-seen. -->
       <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-        <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
+        <Badge :variant="statusBadge.variant" :title="statusReason || $t(statusInfo.hintKey)">{{ statusBadge.label }}</Badge>
+        <span v-if="statusSince" class="text-xs text-muted-foreground" :title="statusSince">
+          {{ $t('fleet.nodes.detail.statusSince', { time: formatRelativeTime(statusSince) }) }}
+        </span>
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in displayTags" :key="tag" variant="outline">{{ tag }}</Badge>
         <button

@@ -47,15 +47,25 @@ test("sortNodes orders by cpu desc with name tiebreak and tolerates missing metr
   );
 });
 
-test("sortNodes by status ranks online < offline < disabled", () => {
+test("sortNodes by status follows the ontology's display order", () => {
+  // The server's word decides; the legacy fields are set to contradict it on
+  // purpose so a regression to reading `online` would reorder the rows.
   const rows = [
-    node({ id: "a", name: "down" }),
-    node({ id: "b", name: "dead", disabled: true, online: true }),
-    node({ id: "c", name: "up", online: true }),
+    node({ id: "a", name: "down", status: "offline", online: true }),
+    node({ id: "b", name: "dead", status: "disabled", online: true }),
+    node({ id: "c", name: "up", status: "online", online: false }),
+    node({ id: "d", name: "never", status: "never_reported", online: true }),
+    node({ id: "e", name: "limping", status: "degraded", online: false }),
   ];
   const sorted = sortNodes(rows, { key: "status", dir: "asc" });
   assert.deepEqual(
     sorted.map((n) => n.name),
+    ["up", "limping", "down", "never", "dead"],
+  );
+  // Older servers without the word: the same order rebuilt from the flags.
+  const legacy = [node({ id: "a", name: "down" }), node({ id: "b", name: "dead", disabled: true, online: true }), node({ id: "c", name: "up", online: true })];
+  assert.deepEqual(
+    sortNodes(legacy, { key: "status", dir: "asc" }).map((n) => n.name),
     ["up", "down", "dead"],
   );
 });

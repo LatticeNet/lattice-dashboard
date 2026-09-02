@@ -28,6 +28,7 @@ import {
 } from "reka-ui";
 import { ChevronRight, ChevronsUpDown, Maximize2, Minimize2, Power, RefreshCw, Search, ShieldOff, SquareTerminal, X } from "lucide-vue-next";
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
+import { describeNodeStatus } from "@/lib/nodeStatus";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { claimViewportPane } from "@/layout/viewportPane";
@@ -615,7 +616,7 @@ onMounted(() => {
                   :text-value="node.name || node.id"
                   class="flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm outline-none transition-colors data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary"
                 >
-                  <StatusDot :status="node.disabled ? 'unknown' : node.online ? 'online' : 'offline'" :pulse="false" />
+                  <StatusDot :status="describeNodeStatus(node).health" :pulse="false" />
                   <span class="truncate">{{ node.name || node.id }}</span>
                   <span class="ml-auto min-w-0 max-w-[45%] truncate font-mono text-[11px] tabular text-muted-foreground" :title="node.id">{{ node.id }}</span>
                   <span v-if="sessionCounts(sessions, node.id).liveOnNode" class="shrink-0 font-mono text-[11px] tabular text-primary">

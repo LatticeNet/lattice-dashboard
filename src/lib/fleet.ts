@@ -16,6 +16,7 @@
  * cost) so they localise for free; callers pass the active locale.
  */
 import type { Metrics, Node } from "@/lib/api/types";
+import { countNodeStatuses, isReporting, nodeStatus, type NodeStatusCounts } from "@/lib/nodeStatus";
 
 /* ------------------------------------------------------------------ */
 /* Geography                                                           */
@@ -192,8 +193,13 @@ export interface NodeGroup {
 const UNGROUPED_KEY = "__ungrouped__";
 
 /** A node counts as "live" only when its agent is online AND it isn't disabled. */
+/**
+ * A node whose metrics are current: online or degraded. Disabled outranks a
+ * live agent, and a node that went quiet keeps stale gauges the sums must
+ * not count. One reading, from the status module.
+ */
 function isLive(node: Node): boolean {
-  return !!node.online && !node.disabled;
+  return isReporting(node);
 }
 
 /**
@@ -202,7 +208,7 @@ function isLive(node: Node): boolean {
  *  - `region` . Continent derived from `geo.country` (Asia / Europe / …).
  *  - `country`. Exact `geo.country` code (flag + localised name).
  *  - `role`   . The operator-assigned role (group-leader / hub / member …).
- *  - `status` . Online / Offline / Disabled.
+ *  - `status` . Online / Degraded / Offline / Never reported / Disabled.
  *  - `tag`    . One bucket per tag; a node appears in every tag it carries.
  *  - `none`   . A single bucket holding the whole fleet.
  *
@@ -288,9 +294,25 @@ export function groupNodes(
         break;
       }
       case "status": {
-        if (node.disabled) push("status:disabled", "Disabled", "", 30, node, "common.groups.disabled");
-        else if (node.online) push("status:online", "Online", "", 10, node, "common.groups.online");
-        else push("status:offline", "Offline", "", 20, node, "common.groups.offline");
+        // The five words of the status ontology, in triage order after the
+        // good state, each bucket keyed by the wire value.
+        switch (nodeStatus(node)) {
+          case "online":
+            push("status:online", "Online", "", 10, node, "common.groups.online");
+            break;
+          case "degraded":
+            push("status:degraded", "Degraded", "", 20, node, "common.groups.degraded");
+            break;
+          case "offline":
+            push("status:offline", "Offline", "", 30, node, "common.groups.offline");
+            break;
+          case "never_reported":
+            push("status:never_reported", "Never reported", "", 40, node, "common.groups.neverReported");
+            break;
+          case "disabled":
+            push("status:disabled", "Disabled", "", 50, node, "common.groups.disabled");
+            break;
+        }
         break;
       }
       case "tag": {
@@ -314,28 +336,52 @@ function finishGroup(g: NodeGroup, preserveOrder = false): NodeGroup {
   if (!preserveOrder) {
     g.nodes.sort((a, b) => {
       if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
-      if (a.online !== b.online) return a.online ? -1 : 1;
+      if (isLive(a) !== isLive(b)) return isLive(a) ? -1 : 1;
       // Node id last: names are not unique, so without it two machines sharing
       // a name are ordered by whatever order the poll delivered them in.
       return (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id);
     });
   }
   g.total = g.nodes.length;
-  g.online = g.nodes.filter(isLive).length;
+  // The header prints "online/total": the status word, not the reporting
+  // set, so a degraded node counts the same here as in every KPI.
+  g.online = g.nodes.filter((n) => nodeStatus(n) === "online").length;
   // The ungrouped bucket always sinks to the bottom regardless of size.
   if (g.key === UNGROUPED_KEY) g.order = 999;
   return g;
 }
 
 /* ------------------------------------------------------------------ */
+/* Display name                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fleet names carry grouping prefixes like "[cd]-" and "[Metix]-". As plain
+ * text they eat the narrow name column before the actual machine name starts;
+ * as a small badge the group survives at a glance and the name keeps the
+ * width. Display only: search, sort, and tooltips still see the full string.
+ */
+// Up to 20 characters: "[OpenJobs-Data]" is 13 and is the longest in the fleet.
+const NAME_PREFIX_RE = /^\[([^\]]{1,20})\]-(.+)$/;
+
+export interface SplitName {
+  /** The bracketed group, without brackets; "" when the name has none. */
+  prefix: string;
+  /** The name with the prefix removed, or the id when the name is empty. */
+  body: string;
+}
+
+export function splitNamePrefix(node: Pick<Node, "id" | "name">): SplitName {
+  const raw = node.name || node.id;
+  const m = raw.match(NAME_PREFIX_RE);
+  return m ? { prefix: m[1] ?? "", body: m[2] ?? raw } : { prefix: "", body: raw };
+}
+
+/* ------------------------------------------------------------------ */
 /* Aggregate roll-up                                                   */
 /* ------------------------------------------------------------------ */
 
-export interface FleetTotals {
-  total: number;
-  online: number;
-  offline: number;
-  disabled: number;
+export interface FleetTotals extends NodeStatusCounts {
   /** Distinct continents with at least one node. */
   regions: number;
   /** Distinct countries with at least one node. */
@@ -365,16 +411,15 @@ function num(value?: number): number {
 }
 
 /**
- * Roll per-node metrics up into one fleet-wide summary. Resource sums and the
- * CPU mean consider only LIVE nodes (online and not disabled). An offline
- * node's last-known gauges would otherwise inflate "current" fleet load.
+ * Roll per-node metrics up into one fleet-wide summary. The status counts come
+ * from `countNodeStatuses`, so this and every KPI print the same six numbers.
+ * Resource sums and the CPU mean consider only reporting nodes (online or
+ * degraded): an offline node's last-known gauges would otherwise inflate
+ * "current" fleet load.
  */
 export function fleetTotals(nodes: Node[]): FleetTotals {
   const t: FleetTotals = {
-    total: nodes.length,
-    online: 0,
-    offline: 0,
-    disabled: 0,
+    ...countNodeStatuses(nodes),
     regions: 0,
     countries: 0,
     geoMissing: 0,
@@ -395,10 +440,6 @@ export function fleetTotals(nodes: Node[]): FleetTotals {
   let cpuCount = 0;
 
   for (const node of nodes) {
-    if (node.disabled) t.disabled += 1;
-    else if (node.online) t.online += 1;
-    else t.offline += 1;
-
     const c = node.geo?.country;
     if (isCountryCode(c)) {
       countries.add(c.toUpperCase());

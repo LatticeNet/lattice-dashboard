@@ -4,6 +4,7 @@
  * `node --test` covers it directly (house *Model.ts pattern).
  */
 import type { Node } from "@/lib/api/types";
+import { NODE_STATUSES, nodeStatus } from "@/lib/nodeStatus";
 
 export type NodeSortKey =
   | "name"
@@ -91,9 +92,13 @@ export function nextSortState(current: NodeSortState, columnId: string): NodeSor
   return { key: "", dir: "asc" };
 }
 
+/**
+ * The status column sorts in the ontology's display order: online first, then
+ * degraded, offline, never reported, disabled. Descending puts the states that
+ * want work at the top.
+ */
 function statusRank(node: Node): number {
-  if (node.disabled) return 2;
-  return node.online ? 0 : 1;
+  return NODE_STATUSES.indexOf(nodeStatus(node));
 }
 
 /**

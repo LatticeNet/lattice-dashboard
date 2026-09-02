@@ -16,12 +16,15 @@ import {
   Power,
   RefreshCw,
   CircleAlert,
+  CircleDashed,
   CheckSquare,
   RotateCw,
   Search,
   Server,
   SquareTerminal,
+  TriangleAlert,
   Wifi,
+  WifiOff,
   X,
 } from "lucide-vue-next";
 import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type EnrollTokenResponse, type Node } from "@/lib/api";
@@ -93,6 +96,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { hasNeverReported } from "@/lib/status";
 import {
+  NODE_STATUSES,
+  compareByAttention,
+  countNodeStatuses,
+  describeNodeStatus,
+  isNodeStatus,
+  isReporting,
+  nodeStatus,
+  type NodeStatus,
+} from "@/lib/nodeStatus";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -145,7 +158,7 @@ const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
 /* ----------------------------------------------------------------- */
 /* Client-side search / status / tag filtering over the polled list.  */
 /* ----------------------------------------------------------------- */
-type StatusFilter = "all" | "online" | "offline" | "disabled";
+type StatusFilter = "all" | NodeStatus;
 const search = ref("");
 const statusFilter = ref<StatusFilter>("all");
 const activeTags = ref<string[]>([]);
@@ -161,7 +174,7 @@ const tagsExpr = ref("");
 // links to /nodes?status=online), so drill-through lands pre-filtered.
 {
   const seeded = route.query.status;
-  if (seeded === "online" || seeded === "offline" || seeded === "disabled") {
+  if (isNodeStatus(seeded)) {
     statusFilter.value = seeded;
   }
 }
@@ -259,8 +272,8 @@ const duplicatesQuery = useAsyncData((signal) => api.nodes.duplicates({ signal }
 });
 const duplicateGroups = computed(() => duplicatesQuery.data.value ?? []);
 const nodeName = (id: string) => nodes.value.find((n) => n.id === id)?.name || id;
-const onlineCount = computed(() => nodes.value.filter((n) => n.online && !n.disabled).length);
-const disabledCount = computed(() => nodes.value.filter((n) => n.disabled).length);
+/** The same six numbers Overview prints, from the same pass over the same array. */
+const statusCounts = computed(() => countNodeStatuses(nodes.value));
 const canAdminNodes = computed(() => auth.can("node:admin"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
 
@@ -275,16 +288,10 @@ const allTags = computed(() => {
 });
 
 function matchesStatus(node: Node): boolean {
-  switch (statusFilter.value) {
-    case "online":
-      return !!node.online && !node.disabled;
-    case "offline":
-      return !node.online && !node.disabled;
-    case "disabled":
-      return !!node.disabled;
-    default:
-      return true;
-  }
+  // The filter values are the status words themselves; "all" means no filter.
+  const want = statusFilter.value;
+  if (!want || want === "all") return true;
+  return nodeStatus(node) === want;
 }
 
 /**
@@ -420,9 +427,8 @@ function toggleAgentCap(cap: AgentCapabilityFilter) {
  *  id so two machines sharing a name cannot trade places between polls. */
 const baseSorted = computed(() =>
   [...nodes.value].sort((a, b) => {
-    if (!!a.disabled !== !!b.disabled) return a.disabled ? 1 : -1;
-    if (a.online !== b.online) return a.online ? -1 : 1;
-    return compareNodeIdentity(a, b);
+    // Good first, then by how much work each wants, then a stable identity.
+    return compareByAttention(a, b) || compareNodeIdentity(a, b);
   }),
 );
 
@@ -569,20 +575,42 @@ function agentBadges(node: Node): string[] {
  */
 const fleetMetrics = computed<Metric[]>(() => [
   { key: "total", label: t("fleet.nodes.stats.total"), value: nodes.value.length, icon: Server },
+  // One caliber: the five status words, the same six numbers Overview prints.
+  // A zero in an attention column is the good outcome and stays uncoloured.
   {
     key: "online",
     label: t("fleet.nodes.stats.online"),
-    value: onlineCount.value,
-    hint: `/ ${nodes.value.length}`,
+    value: statusCounts.value.online,
+    hint: `/ ${statusCounts.value.total}`,
     tone: "success",
     icon: Wifi,
   },
   {
+    key: "degraded",
+    label: t("fleet.nodes.stats.degraded"),
+    value: statusCounts.value.degraded,
+    tone: statusCounts.value.degraded > 0 ? "warning" : "default",
+    icon: TriangleAlert,
+  },
+  {
+    key: "offline",
+    label: t("fleet.nodes.stats.offline"),
+    value: statusCounts.value.offline,
+    tone: statusCounts.value.offline > 0 ? "destructive" : "default",
+    icon: WifiOff,
+  },
+  {
+    key: "never_reported",
+    label: t("fleet.nodes.stats.neverReported"),
+    value: statusCounts.value.never_reported,
+    tone: statusCounts.value.never_reported > 0 ? "muted" : "default",
+    icon: CircleDashed,
+  },
+  {
     key: "disabled",
     label: t("fleet.nodes.stats.disabled"),
-    value: disabledCount.value,
-    // A zero here is the good outcome and should not be coloured like a fault.
-    tone: disabledCount.value > 0 ? "warning" : "default",
+    value: statusCounts.value.disabled,
+    tone: statusCounts.value.disabled > 0 ? "muted" : "default",
     icon: Power,
   },
   {
@@ -998,7 +1026,7 @@ function failedNames(report: BulkReport): { names: string; extra: number } {
 }
 
 function openTerminal(node: Node) {
-  if (!canOpenTerminal.value || !node.online || node.disabled) return;
+  if (!canOpenTerminal.value || !isReporting(node)) return;
   window.open(`/terminal?node_id=${encodeURIComponent(node.id)}&connect=1`, "_blank", "noopener");
 }
 </script>
@@ -1055,7 +1083,9 @@ function openTerminal(node: Node) {
     <!-- Fleet headline numbers. One band rather than four stretched cards: the
          answer an operator came for is in the table below, and this used to eat
          160px above it to carry four integers. -->
-    <MetricStrip :metrics="fleetMetrics" :columns="5" />
+    <!-- Eight numbers: the five status words plus total, then bandwidth. Four
+         columns wraps them into two even rows instead of one row of ellipses. -->
+    <MetricStrip :metrics="fleetMetrics" :columns="4" />
 
     <Card v-if="canAdminNodes && enrollOpen" id="enroll-node-section" class="border-primary/30 bg-primary/5">
       <CardHeader>
@@ -1259,7 +1289,7 @@ function openTerminal(node: Node) {
     <Card>
       <CardHeader>
         <CardTitle>{{ $t('fleet.nodes.list.title') }}</CardTitle>
-        <CardDescription>{{ $t('fleet.nodes.list.description', { online: onlineCount, total: nodes.length }) }}</CardDescription>
+        <CardDescription>{{ $t('fleet.nodes.list.description', { online: statusCounts.online, total: statusCounts.total }) }}</CardDescription>
       </CardHeader>
       <CardContent>
         <!-- Search / status / tag filters over the polled list (client-side). -->
@@ -1280,9 +1310,7 @@ function openTerminal(node: Node) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{{ $t('fleet.nodes.filters.statusAll') }}</SelectItem>
-                <SelectItem value="online">{{ $t('common.status.online') }}</SelectItem>
-                <SelectItem value="offline">{{ $t('common.status.offline') }}</SelectItem>
-                <SelectItem value="disabled">{{ $t('common.status.disabled') }}</SelectItem>
+                <SelectItem v-for="status in NODE_STATUSES" :key="status" :value="status">{{ $t(describeNodeStatus(status).labelKey) }}</SelectItem>
               </SelectContent>
             </Select>
             <Select v-model="groupBy">
@@ -1645,12 +1673,11 @@ function openTerminal(node: Node) {
                   :cpu-label="t('fleet.nodes.metric.cpu')"
                   :memory-label="t('fleet.nodes.metric.memory')"
                   :disk-label="t('fleet.nodes.metric.disk')"
-                  :online-label="t('common.status.online')"
-                  :never-label="t('common.status.neverReported')"
-                  :offline-label="t('common.status.offline')"
-                  :degraded-label="t('common.status.degraded')"
-                  :unknown-label="t('common.status.unknown')"
-                  :disabled-label="t('common.status.disabled')"
+                  :online-label="t('common.nodeStatus.online')"
+                  :never-label="t('common.nodeStatus.neverReported')"
+                  :offline-label="t('common.nodeStatus.offline')"
+                  :degraded-label="t('common.nodeStatus.degraded')"
+                  :disabled-label="t('common.nodeStatus.disabled')"
                   :sparkline-label="t('fleet.nodes.metric.sparklineLabel')"
                   :checkable="canAdminNodes"
                   :checked="selectedIds.has(node.id)"
@@ -1682,7 +1709,7 @@ function openTerminal(node: Node) {
                         v-if="canOpenTerminal"
                         size="sm"
                         variant="outline"
-                        :disabled="!cardNode.online || cardNode.disabled"
+                        :disabled="!isReporting(cardNode)"
                         @click.stop="openTerminal(cardNode)"
                       >
                         <SquareTerminal class="size-4" aria-hidden="true" />
