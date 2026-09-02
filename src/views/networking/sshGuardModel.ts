@@ -129,7 +129,7 @@ export function buildFleetStates(
  * Finished nodes sink rather than lead: this list is read to decide what to do
  * next, and a node that needs nothing is the one thing that never does.
  */
-const STAGE_ORDER: Record<GuardStage, number> = {
+export const STAGE_ORDER: Record<GuardStage, number> = {
   awaitingConfirm: 0,
   confirmPending: 1,
   confirmApproved: 2,
@@ -297,6 +297,27 @@ export function emptyAdvancedForm(): GuardAdvancedForm {
 
 export const MIN_CONFIRM_WINDOW_SEC = 120;
 export const DEFAULT_CONFIRM_WINDOW_SEC = 900;
+
+/**
+ * The policy the sheet opens with. Knock on, no management source and no
+ * fallback is refused by validateForm on purpose: a fleet whose only way in
+ * is the knock sequence is one typo from unreachable, so the operator has to
+ * add a source or allow the fallback before anything is filed. The sheet lists
+ * that refusal from the moment it opens, not after the first keystroke.
+ */
+export function defaultGuardForm(nodeId = ""): GuardForm {
+  return {
+    nodeId,
+    sshPort: 0,
+    keepLegacyPort: true,
+    mgmtSources: "",
+    enableKnock: true,
+    outOfBandFallback: false,
+    confirmWindowSec: DEFAULT_CONFIRM_WINDOW_SEC,
+    acceptFindings: false,
+    advanced: emptyAdvancedForm(),
+  };
+}
 
 export interface PlanRequest {
   node_id: string;
@@ -488,6 +509,20 @@ export function revertDeadline(state: NodeGuardState): RevertDeadline | undefine
   if (Number.isNaN(startedAt)) return undefined;
   const windowSec = parseConfirmWindow(state.arm.plan) ?? DEFAULT_CONFIRM_WINDOW_SEC;
   return { at: startedAt + windowSec * 1000, windowSec, startedAt };
+}
+
+/**
+ * Whether the window on an applied arm has closed with no confirm applied.
+ *
+ * The approvals still read "applied arm, no confirm", which is why the stage
+ * machine keeps saying the revert is armed. The box does not: its timer fired
+ * at or before the deadline above, so past it the node has reverted and a
+ * confirm would cancel a revert that already ran. Callers pass the clock in
+ * so the answer is recomputed on every render, not once at load.
+ */
+export function revertWindowPassed(state: NodeGuardState, now: number): boolean {
+  const deadline = revertDeadline(state);
+  return deadline !== undefined && deadline.at <= now;
 }
 
 // ── findings ────────────────────────────────────────────────────────────────

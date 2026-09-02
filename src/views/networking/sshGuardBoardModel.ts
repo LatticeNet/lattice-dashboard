@@ -3,7 +3,7 @@
  * about, beyond the per-node state machine in sshGuardModel.
  *
  * Three things live here. The coverage buckets, which turn the stage machine
- * plus the scope decision into the six chips an operator filters by. The
+ * plus the scope decision into the seven chips an operator filters by. The
  * evidence fold, which reads the node's own guard-reality report so the table
  * can say what sshd listens on and when that was seen, instead of what a plan
  * intended. And the batch rules: which nodes may share one plan sheet, and
@@ -13,14 +13,35 @@
  */
 import type { GuardNodeReality, GuardRealitySummary, Node } from "@/lib/api";
 
-import type { Finding, GuardStage, NodeGuardState } from "./sshGuardModel";
+// Through the alias, not "./": the node test runner resolves only `@/`, and this
+// module now pulls values from its sibling, not only types.
+import { STAGE_ORDER, revertWindowPassed, type Finding, type GuardStage, type NodeGuardState } from "@/views/networking/sshGuardModel";
 
 // ── coverage ────────────────────────────────────────────────────────────────
 
 export type ScopeState = "enrolled" | "excluded" | "undecided";
 
-export type CoverageFilter = "all" | "confirmed" | "inFlight" | "open" | "failed" | "excluded";
-export const COVERAGE_FILTERS: readonly CoverageFilter[] = ["all", "confirmed", "inFlight", "open", "failed", "excluded"];
+/**
+ * The stage the board shows, which is the approval stage plus one thing the
+ * approvals cannot say: an applied arm whose confirmation window has closed.
+ * The server still records "applied, no confirm", but the box reverted on its
+ * own when its timer fired, so the row reads "reverted" rather than counting
+ * down past zero. Recomputed from the clock on every render.
+ */
+export type BoardStage = GuardStage | "reverted";
+
+export function boardStage(state: NodeGuardState, now: number): BoardStage {
+  return revertWindowPassed(state, now) ? "reverted" : state.stage;
+}
+
+/**
+ * The seven chips. The words are the row words: a chip and the badge under it
+ * name one state with one word, so "Reverting 2" above the table means two
+ * rows read "reverting" (or a confirm stage of it, listed in the chip's
+ * title), and "Not armed 16" means sixteen rows read "not armed".
+ */
+export type CoverageFilter = "all" | "confirmed" | "reverting" | "armPending" | "open" | "failed" | "excluded";
+export const COVERAGE_FILTERS: readonly CoverageFilter[] = ["all", "confirmed", "reverting", "armPending", "open", "failed", "excluded"];
 
 export function isCoverageFilter(value: unknown): value is CoverageFilter {
   return typeof value === "string" && (COVERAGE_FILTERS as readonly string[]).includes(value);
@@ -33,22 +54,30 @@ export function isCoverageFilter(value: unknown): value is CoverageFilter {
  * Exclusion wins only while nothing is live on the box. A node someone
  * excluded after it was confirmed is still hardened, and hiding it under
  * "excluded" would take a real firewall change off the board; a node excluded
- * while idle or after a failed arm has nothing running and is simply out.
+ * while idle, after a failed arm or after a revert has nothing running and is
+ * simply out.
+ *
+ * A reverted node counts as a failed arm: the arm was applied and did not
+ * survive, which is what "failed" means on this board, and the operator's
+ * next move (read why, arm again) is the same.
  */
-export function coverageBucket(stage: GuardStage, scope: ScopeState): Exclude<CoverageFilter, "all"> {
+export function coverageBucket(stage: BoardStage, scope: ScopeState): Exclude<CoverageFilter, "all"> {
   if (stage === "confirmed") return "confirmed";
-  if (scope === "excluded" && (stage === "idle" || stage === "armFailed")) return "excluded";
-  if (stage === "armFailed") return "failed";
+  const nothingLive = stage === "idle" || stage === "armFailed" || stage === "reverted";
+  if (scope === "excluded" && nothingLive) return "excluded";
+  if (stage === "armFailed" || stage === "reverted") return "failed";
   if (stage === "idle") return "open";
-  return "inFlight";
+  if (stage === "armPending" || stage === "armApproved") return "armPending";
+  return "reverting";
 }
 
 export function coverageCounts(
   states: readonly NodeGuardState[],
   scopeOf: (nodeId: string) => ScopeState,
+  now: number,
 ): Record<CoverageFilter, number> {
-  const counts: Record<CoverageFilter, number> = { all: states.length, confirmed: 0, inFlight: 0, open: 0, failed: 0, excluded: 0 };
-  for (const state of states) counts[coverageBucket(state.stage, scopeOf(state.nodeId))] += 1;
+  const counts: Record<CoverageFilter, number> = { all: states.length, confirmed: 0, reverting: 0, armPending: 0, open: 0, failed: 0, excluded: 0 };
+  for (const state of states) counts[coverageBucket(boardStage(state, now), scopeOf(state.nodeId))] += 1;
   return counts;
 }
 
@@ -56,27 +85,49 @@ export function filterByCoverage(
   states: readonly NodeGuardState[],
   filter: CoverageFilter,
   scopeOf: (nodeId: string) => ScopeState,
+  now: number,
 ): NodeGuardState[] {
   if (filter === "all") return [...states];
-  return states.filter((s) => coverageBucket(s.stage, scopeOf(s.nodeId)) === filter);
+  return states.filter((s) => coverageBucket(boardStage(s, now), scopeOf(s.nodeId)) === filter);
+}
+
+/** Nodes whose revert timer is still running: the urgent card's list. */
+export function revertingNodes(states: readonly NodeGuardState[], now: number): NodeGuardState[] {
+  return states.filter((s) => s.revertArmed && !revertWindowPassed(s, now));
+}
+
+/**
+ * The rollout order with the board stage applied: a reverted node no longer
+ * leads the table as if it were urgent; it sits with the failed arms, which is
+ * what it is. Ties break by id, like the model's own order.
+ */
+export function orderForBoard(states: readonly NodeGuardState[], now: number): NodeGuardState[] {
+  const rank = (s: NodeGuardState) => {
+    const stage = boardStage(s, now);
+    return stage === "reverted" ? STAGE_ORDER.armFailed : STAGE_ORDER[stage];
+  };
+  return [...states].sort((a, b) => rank(a) - rank(b) || a.nodeId.localeCompare(b.nodeId));
 }
 
 /** The numbers the proof line states. */
 export interface ProofCounts {
   total: number;
   confirmed: number;
+  /** Rejected, dismissed, failed, or applied and then reverted unconfirmed. */
   failedArms: number;
+  /** Revert timers still running. A closed window is a failed arm, not a timer. */
   reverting: number;
 }
 
-export function proofCounts(states: readonly NodeGuardState[]): ProofCounts {
+export function proofCounts(states: readonly NodeGuardState[], now: number): ProofCounts {
   let confirmed = 0;
   let failedArms = 0;
   let reverting = 0;
   for (const s of states) {
-    if (s.stage === "confirmed") confirmed += 1;
-    if (s.stage === "armFailed") failedArms += 1;
-    if (s.revertArmed) reverting += 1;
+    const stage = boardStage(s, now);
+    if (stage === "confirmed") confirmed += 1;
+    if (stage === "armFailed" || stage === "reverted") failedArms += 1;
+    if (s.revertArmed && stage !== "reverted") reverting += 1;
   }
   return { total: states.length, confirmed, failedArms, reverting };
 }

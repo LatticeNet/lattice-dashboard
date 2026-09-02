@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { buildFleetStates, type NodeGuardState } from "../sshGuardModel.ts";
 import {
   batchRefusal,
+  boardStage,
   controlPlaneNodeIds,
   coverageBucket,
   coverageCounts,
@@ -15,8 +16,10 @@ import {
   isCoverageFilter,
   membersToFile,
   newestObservation,
+  orderForBoard,
   proofCounts,
   realityDetailsToFetch,
+  revertingNodes,
   sshdPorts,
   summarizeBatch,
   type BatchMember,
@@ -42,26 +45,60 @@ const FLEET = buildFleetStates(
 const SCOPES: Record<string, ScopeState> = { "left-out": "excluded", "broken-excluded": "excluded", done: "enrolled" };
 const scopeOf = (id: string): ScopeState => SCOPES[id] ?? "undecided";
 
+// The reverting node's arm was applied at 03:00 with the default 900s window,
+// so its deadline is 03:15. NOW is inside the window; LATER is past it.
+const NOW = Date.parse("2026-09-02T03:05:00Z");
+const LATER = Date.parse("2026-09-02T03:20:00Z");
+
 test("every node lands in exactly one coverage bucket, so the chips add up to the fleet", () => {
-  const counts = coverageCounts(FLEET, scopeOf);
-  assert.deepEqual(counts, { all: 7, confirmed: 1, inFlight: 2, open: 1, failed: 1, excluded: 2 });
-  const sum = counts.confirmed + counts.inFlight + counts.open + counts.failed + counts.excluded;
+  const counts = coverageCounts(FLEET, scopeOf, NOW);
+  assert.deepEqual(counts, { all: 7, confirmed: 1, reverting: 1, armPending: 1, open: 1, failed: 1, excluded: 2 });
+  const sum = counts.confirmed + counts.reverting + counts.armPending + counts.open + counts.failed + counts.excluded;
   assert.equal(sum, counts.all);
+});
+
+test("chips use the row words: each stage lands under the chip that names it", () => {
+  assert.equal(coverageBucket("idle", "enrolled"), "open");
+  assert.equal(coverageBucket("armPending", "enrolled"), "armPending");
+  assert.equal(coverageBucket("armApproved", "enrolled"), "armPending");
+  assert.equal(coverageBucket("awaitingConfirm", "enrolled"), "reverting");
+  assert.equal(coverageBucket("confirmPending", "enrolled"), "reverting");
+  assert.equal(coverageBucket("confirmApproved", "enrolled"), "reverting");
+  assert.equal(coverageBucket("reverted", "enrolled"), "failed", "an arm that reverted unconfirmed did not survive");
 });
 
 test("exclusion hides only what is not live on the box", () => {
   assert.equal(coverageBucket("idle", "excluded"), "excluded");
   assert.equal(coverageBucket("armFailed", "excluded"), "excluded");
+  assert.equal(coverageBucket("reverted", "excluded"), "excluded", "nothing is live after a revert either");
   assert.equal(coverageBucket("confirmed", "excluded"), "confirmed", "a hardened node stays on the board");
-  assert.equal(coverageBucket("awaitingConfirm", "excluded"), "inFlight", "a running revert timer is never hidden");
+  assert.equal(coverageBucket("awaitingConfirm", "excluded"), "reverting", "a running revert timer is never hidden");
 });
 
 test("filtering by a chip returns that chip's nodes and 'all' returns a copy", () => {
-  assert.deepEqual(filterByCoverage(FLEET, "failed", scopeOf).map((s) => s.nodeId), ["broken"]);
-  assert.deepEqual(filterByCoverage(FLEET, "excluded", scopeOf).map((s) => s.nodeId).sort(), ["broken-excluded", "left-out"]);
-  const all = filterByCoverage(FLEET, "all", scopeOf);
+  assert.deepEqual(filterByCoverage(FLEET, "failed", scopeOf, NOW).map((s) => s.nodeId), ["broken"]);
+  assert.deepEqual(filterByCoverage(FLEET, "excluded", scopeOf, NOW).map((s) => s.nodeId).sort(), ["broken-excluded", "left-out"]);
+  const all = filterByCoverage(FLEET, "all", scopeOf, NOW);
   assert.equal(all.length, FLEET.length);
   assert.notEqual(all, FLEET);
+});
+
+test("a closed window turns a reverting row into a reverted one, everywhere at once", () => {
+  const reverting = FLEET.find((s) => s.nodeId === "reverting") as NodeGuardState;
+  assert.equal(boardStage(reverting, NOW), "awaitingConfirm");
+  assert.equal(boardStage(reverting, LATER), "reverted");
+  assert.deepEqual(revertingNodes(FLEET, NOW).map((s) => s.nodeId), ["reverting"]);
+  assert.deepEqual(revertingNodes(FLEET, LATER), [], "the urgent card empties: there is no timer left to beat");
+  const counts = coverageCounts(FLEET, scopeOf, LATER);
+  assert.equal(counts.reverting, 0);
+  assert.equal(counts.failed, 2);
+  assert.deepEqual(filterByCoverage(FLEET, "failed", scopeOf, LATER).map((s) => s.nodeId).sort(), ["broken", "reverting"]);
+  assert.deepEqual(proofCounts(FLEET, LATER), { total: 7, confirmed: 1, failedArms: 3, reverting: 0 });
+});
+
+test("a reverted node sinks to the failed arms instead of leading the table", () => {
+  assert.deepEqual(orderForBoard(FLEET, NOW).map((s) => s.nodeId), ["reverting", "planned", "broken", "broken-excluded", "left-out", "never", "done"]);
+  assert.deepEqual(orderForBoard(FLEET, LATER).map((s) => s.nodeId), ["planned", "broken", "broken-excluded", "reverting", "left-out", "never", "done"]);
 });
 
 test("a coverage filter from the address bar is accepted only when it names a chip", () => {
@@ -71,7 +108,7 @@ test("a coverage filter from the address bar is accepted only when it names a ch
 });
 
 test("the proof line counts confirmed, failed arms and running revert timers", () => {
-  assert.deepEqual(proofCounts(FLEET), { total: 7, confirmed: 1, failedArms: 2, reverting: 1 });
+  assert.deepEqual(proofCounts(FLEET, NOW), { total: 7, confirmed: 1, failedArms: 2, reverting: 1 });
 });
 
 // ── evidence ────────────────────────────────────────────────────────────────

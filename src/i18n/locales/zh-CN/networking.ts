@@ -27,7 +27,6 @@ export default {
         title: "{count} 台节点不确认就会自动还原 | {count} 台节点不确认就会自动还原",
         revertsIn: "还原倒计时",
         deadlineAt: "截止 {time}",
-        overdue: "已过截止时间：节点已经还原，或马上还原",
         windowNote: "{window} 的窗口，从加固被记为已应用的那一刻起算。节点自己的计时器起得略早，把这里当作最晚的时刻。",
       },
       coverage: {
@@ -35,10 +34,15 @@ export default {
         filter: {
           all: "全部",
           confirmed: "已确认",
-          inFlight: "进行中",
+          reverting: "等待确认",
+          armPending: "加固待批",
           open: "未加固",
           failed: "失败",
           excluded: "已排除",
+        },
+        covers: {
+          reverting: "阶段为等待确认、确认待批或确认已批的节点：还原计时器正在走。",
+          armPending: "阶段为加固待批或加固已批的节点：计划还没有落到机器上。",
         },
         emptyFilter: "这个筛选下没有节点。",
       },
@@ -66,7 +70,10 @@ export default {
         awaitingApproval: "待审批",
         scopeUndecided: "不在范围内",
         scopeExcluded: "已排除",
-        failureTitle: "服务端给出的上一次加固失败的完整原因",
+        reasonExpand: "展开完整原因",
+        reasonCollapse: "收起为一行",
+        windowPassedAt: "窗口已于 {time} 关闭",
+        confirmReverted: "窗口已于 {time} 关闭，节点已自行还原。没有可确认的内容了，请重新加固。",
       },
       stageShort: {
         idle: "未加固",
@@ -77,6 +84,7 @@ export default {
         confirmApproved: "确认已批",
         confirmed: "已确认",
         armFailed: "加固失败",
+        reverted: "已还原",
       },
       sheet: {
         titleOne: "加固 {name}",
@@ -186,7 +194,8 @@ export default {
       },
       fields: {
         sshPort: "新的 SSH 端口",
-        sshPortHint: "填 0 表示不改端口，只做其余加固。",
+        sshPortKeep: "保持当前端口",
+        sshPortHint: "留空表示不改端口，只做其余加固。",
         keepLegacy: "保留 22 端口监听",
         keepLegacyHint: "把 22 收缩到管理来源，而不是关闭它。第一次做建议保持开启。",
         mgmtSources: "管理来源",
@@ -203,7 +212,7 @@ export default {
       errors: {
         node_required: "先选一个节点。",
         port_range: "端口需要在 0 到 65535 之间。",
-        port_is_legacy: "22 正是要收缩的那个端口，换一个，或者保持 0。",
+        port_is_legacy: "22 正是要收缩的那个端口，换一个，或者留空。",
         sources_invalid: "有一个管理来源不是地址也不是网段。",
         window_too_short: "确认窗口至少 120 秒。",
         single_way_in: "开了敲门又没有管理来源，敲门序列就是唯一入口。加一个来源，或者允许终端兜底。",
@@ -225,6 +234,7 @@ export default {
         confirmApproved: "确认已批准，还原仍武装着",
         confirmed: "已确认",
         armFailed: "上一次加固没有成功",
+        reverted: "已应用，随后自行还原：确认窗口关闭时没有任何确认落地",
       },
     },
     // 各网络视图共用(计划审阅弹窗等)

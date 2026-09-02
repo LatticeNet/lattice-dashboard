@@ -6,6 +6,7 @@ import {
   buildAdvancedRequest,
   buildFleetStates,
   buildPlanRequest,
+  defaultGuardForm,
   deriveNodeGuardState,
   emptyAdvancedForm,
   guardCoverage,
@@ -15,6 +16,7 @@ import {
   parseMgmtSources,
   parsePortList,
   revertDeadline,
+  revertWindowPassed,
   sortFindings,
   validateAdvanced,
   validateForm,
@@ -310,4 +312,20 @@ test("a plan with no window line falls back to the server default, and no timer 
   assert.equal(revertDeadline(deriveNodeGuardState([applied], NODE))?.windowSec, 900);
   assert.equal(revertDeadline(deriveNodeGuardState([arm({ status: "pending" })], NODE)), undefined);
   assert.equal(revertDeadline(deriveNodeGuardState([arm({ status: "applied", created_at: "not a date" })], NODE)), undefined);
+});
+
+test("the window is closed once the clock reaches the deadline, and never before", () => {
+  const applied = arm({ status: "applied", updated_at: "2026-09-02T03:00:00Z", plan: "confirm_window_sec: 300\n" });
+  const s = deriveNodeGuardState([applied], NODE);
+  assert.equal(revertWindowPassed(s, Date.parse("2026-09-02T03:04:59Z")), false);
+  assert.equal(revertWindowPassed(s, Date.parse("2026-09-02T03:05:00Z")), true);
+  assert.equal(revertWindowPassed(deriveNodeGuardState([arm({ status: "pending" })], NODE), Date.parse("2030-01-01T00:00:00Z")), false, "no timer, no window to close");
+});
+
+test("the sheet's default policy is refused before anything is typed, so the refusal must show from the start", () => {
+  const form = defaultGuardForm(NODE);
+  assert.deepEqual(validateForm(form), ["single_way_in"]);
+  assert.deepEqual(validateForm({ ...form, mgmtSources: "203.0.113.5" }), []);
+  assert.deepEqual(validateForm({ ...form, outOfBandFallback: true }), []);
+  assert.deepEqual(validateForm(defaultGuardForm()), ["node_required", "single_way_in"], "with no member left, the missing node is listed too");
 });

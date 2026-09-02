@@ -28,7 +28,6 @@ export default {
         title: "{count} node reverts unless confirmed | {count} nodes revert unless confirmed",
         revertsIn: "reverts in",
         deadlineAt: "at {time}",
-        overdue: "past its deadline: the node has reverted, or is about to",
         windowNote: "{window} window, counted from when the arm was recorded as applied. The node's own timer started a little earlier, so treat this as the latest it can be.",
       },
       coverage: {
@@ -36,10 +35,15 @@ export default {
         filter: {
           all: "All",
           confirmed: "Confirmed",
-          inFlight: "In flight",
-          open: "Open",
+          reverting: "Reverting",
+          armPending: "Arm pending",
+          open: "Not armed",
           failed: "Failed",
           excluded: "Excluded",
+        },
+        covers: {
+          reverting: "Rows reading reverting, confirm pending or confirm approved: the revert timer is running.",
+          armPending: "Rows reading arm pending or arm approved: the plan is not on the box yet.",
         },
         emptyFilter: "No nodes under this filter.",
       },
@@ -67,7 +71,10 @@ export default {
         awaitingApproval: "awaiting approval",
         scopeUndecided: "not in scope",
         scopeExcluded: "excluded",
-        failureTitle: "The server's full reason for the last failed arm",
+        reasonExpand: "Show the full reason",
+        reasonCollapse: "Show one line",
+        windowPassedAt: "window passed at {time}",
+        confirmReverted: "The window passed at {time} and the node reverted on its own. There is nothing left to confirm; arm it again.",
       },
       stageShort: {
         idle: "not armed",
@@ -78,6 +85,7 @@ export default {
         confirmApproved: "confirm approved",
         confirmed: "confirmed",
         armFailed: "arm failed",
+        reverted: "reverted",
       },
       sheet: {
         titleOne: "Arm {name}",
@@ -189,7 +197,8 @@ export default {
       },
       fields: {
         sshPort: "New SSH port",
-        sshPortHint: "0 keeps the current port and applies the rest of the hardening.",
+        sshPortKeep: "keep current",
+        sshPortHint: "Blank keeps the current port and applies the rest of the hardening.",
         keepLegacy: "Keep listening on 22",
         keepLegacyHint: "Shrinks 22 to the management sources rather than closing it. Leave this on for the first pass.",
         mgmtSources: "Management sources",
@@ -206,7 +215,7 @@ export default {
       errors: {
         node_required: "Pick a node.",
         port_range: "Port must be between 0 and 65535.",
-        port_is_legacy: "22 is the port being shrunk; choose a different one or leave this at 0.",
+        port_is_legacy: "22 is the port being shrunk; choose a different one or leave this blank.",
         sources_invalid: "One of the management sources is not an address or CIDR.",
         window_too_short: "The confirmation window must be at least 120 seconds.",
         single_way_in: "With knocking on and no management source, the knock sequence is the only way in. Add a source or allow the terminal fallback.",
@@ -228,6 +237,7 @@ export default {
         confirmApproved: "Confirm approved, revert still armed",
         confirmed: "Confirmed",
         armFailed: "Last arm did not go through",
+        reverted: "Applied, then reverted on its own: the confirmation window closed with no confirm applied",
       },
     },
     // Shared across the networking views (plan review dialog, etc.)
