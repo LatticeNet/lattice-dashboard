@@ -1,0 +1,306 @@
+/**
+ * The SSH Guard board: what the coverage table and the batch sheet reason
+ * about, beyond the per-node state machine in sshGuardModel.
+ *
+ * Three things live here. The coverage buckets, which turn the stage machine
+ * plus the scope decision into the six chips an operator filters by. The
+ * evidence fold, which reads the node's own guard-reality report so the table
+ * can say what sshd listens on and when that was seen, instead of what a plan
+ * intended. And the batch rules: which nodes may share one plan sheet, and
+ * how the per-node outcomes of that sheet add up.
+ *
+ * Pure functions only, like the sibling model: no i18n, no colours, no HTTP.
+ */
+import type { GuardNodeReality, GuardRealitySummary, Node } from "@/lib/api";
+
+import type { Finding, GuardStage, NodeGuardState } from "./sshGuardModel";
+
+// ── coverage ────────────────────────────────────────────────────────────────
+
+export type ScopeState = "enrolled" | "excluded" | "undecided";
+
+export type CoverageFilter = "all" | "confirmed" | "inFlight" | "open" | "failed" | "excluded";
+export const COVERAGE_FILTERS: readonly CoverageFilter[] = ["all", "confirmed", "inFlight", "open", "failed", "excluded"];
+
+export function isCoverageFilter(value: unknown): value is CoverageFilter {
+  return typeof value === "string" && (COVERAGE_FILTERS as readonly string[]).includes(value);
+}
+
+/**
+ * Which chip a node counts under. Every node lands in exactly one, so the
+ * chips add up to the fleet.
+ *
+ * Exclusion wins only while nothing is live on the box. A node someone
+ * excluded after it was confirmed is still hardened, and hiding it under
+ * "excluded" would take a real firewall change off the board; a node excluded
+ * while idle or after a failed arm has nothing running and is simply out.
+ */
+export function coverageBucket(stage: GuardStage, scope: ScopeState): Exclude<CoverageFilter, "all"> {
+  if (stage === "confirmed") return "confirmed";
+  if (scope === "excluded" && (stage === "idle" || stage === "armFailed")) return "excluded";
+  if (stage === "armFailed") return "failed";
+  if (stage === "idle") return "open";
+  return "inFlight";
+}
+
+export function coverageCounts(
+  states: readonly NodeGuardState[],
+  scopeOf: (nodeId: string) => ScopeState,
+): Record<CoverageFilter, number> {
+  const counts: Record<CoverageFilter, number> = { all: states.length, confirmed: 0, inFlight: 0, open: 0, failed: 0, excluded: 0 };
+  for (const state of states) counts[coverageBucket(state.stage, scopeOf(state.nodeId))] += 1;
+  return counts;
+}
+
+export function filterByCoverage(
+  states: readonly NodeGuardState[],
+  filter: CoverageFilter,
+  scopeOf: (nodeId: string) => ScopeState,
+): NodeGuardState[] {
+  if (filter === "all") return [...states];
+  return states.filter((s) => coverageBucket(s.stage, scopeOf(s.nodeId)) === filter);
+}
+
+/** The numbers the proof line states. */
+export interface ProofCounts {
+  total: number;
+  confirmed: number;
+  failedArms: number;
+  reverting: number;
+}
+
+export function proofCounts(states: readonly NodeGuardState[]): ProofCounts {
+  let confirmed = 0;
+  let failedArms = 0;
+  let reverting = 0;
+  for (const s of states) {
+    if (s.stage === "confirmed") confirmed += 1;
+    if (s.stage === "armFailed") failedArms += 1;
+    if (s.revertArmed) reverting += 1;
+  }
+  return { total: states.length, confirmed, failedArms, reverting };
+}
+
+// ── evidence from the guard-reality report ──────────────────────────────────
+
+/**
+ * The ports a shell daemon is bound to, read the way the server's lint reads
+ * them: tcp only, sshd or dropbear by process name, loopback skipped because a
+ * loopback binding guards nothing reachable. Mirroring the server matters:
+ * this is the same list the plan's gate is derived from, so what the table
+ * calls "SSHD NOW" is what an arm would act on.
+ */
+export function sshdPorts(reality: GuardNodeReality | undefined): number[] {
+  const seen = new Set<number>();
+  for (const l of reality?.listeners ?? []) {
+    if (l.protocol !== "tcp" || !(l.port > 0)) continue;
+    const name = (l.process ?? "").trim().toLowerCase();
+    if (!name.startsWith("sshd") && !name.startsWith("dropbear")) continue;
+    const address = l.address ?? "";
+    if (address.startsWith("127.") || address === "::1") continue;
+    seen.add(l.port);
+  }
+  return [...seen].sort((a, b) => a - b);
+}
+
+export type SshdNowKind =
+  /** No snapshot, or a snapshot without listeners: nothing to say. */
+  | "unknown"
+  /** Snapshot present, no shell daemon bound on a reachable address. */
+  | "none"
+  /** Bound on the legacy port only. */
+  | "legacy"
+  /** Bound on one port that is not the legacy one. */
+  | "only"
+  /** Bound on more than one port. */
+  | "several";
+
+export interface SshdNow {
+  kind: SshdNowKind;
+  ports: number[];
+  /** ":58394 only", ":22 + :58394", ":22". Empty for unknown and none. */
+  text: string;
+}
+
+export function describeSshdNow(ports: number[] | undefined, legacyPort = 22): SshdNow {
+  if (ports === undefined) return { kind: "unknown", ports: [], text: "" };
+  if (ports.length === 0) return { kind: "none", ports: [], text: "" };
+  const list = ports.map((p) => `:${p}`).join(" + ");
+  if (ports.length === 1) {
+    const only = ports[0] as number;
+    return only === legacyPort
+      ? { kind: "legacy", ports, text: list }
+      : { kind: "only", ports, text: `${list} only` };
+  }
+  return { kind: "several", ports, text: list };
+}
+
+export interface RealityEvidence {
+  /** unknown (never reported) | fresh | stale, from the server, never derived here. */
+  status: "unknown" | "fresh" | "stale" | string;
+  /** When the agent collected the snapshot. Absent until it has reported. */
+  collectedAt?: string;
+  /** Undefined until the per-node detail has been read. */
+  sshd?: SshdNow;
+}
+
+/**
+ * Fold the fleet summary and, when it has been read, the per-node detail
+ * onto one node. The summary alone can say when a node was observed; only
+ * the detail can say what it was observed doing.
+ */
+export function foldReality(
+  nodeId: string,
+  summaries: ReadonlyMap<string, GuardRealitySummary>,
+  details: ReadonlyMap<string, GuardNodeReality>,
+): RealityEvidence {
+  const summary = summaries.get(nodeId);
+  const detail = details.get(nodeId);
+  const out: RealityEvidence = { status: summary?.snapshot_status ?? "unknown" };
+  if (summary?.collected_at) out.collectedAt = summary.collected_at;
+  else if (detail?.collected_at) out.collectedAt = detail.collected_at;
+  if (detail) out.sshd = describeSshdNow(sshdPorts(detail));
+  return out;
+}
+
+/**
+ * Which per-node details are worth another request.
+ *
+ * The listeners live only on the detail endpoint, and reading 33 details on
+ * every poll is 33 requests a minute for a fleet that changes a few times a
+ * day. The summary carries `collected_at`, so a detail is re-read only when
+ * the summary says the snapshot it holds is newer than the one cached.
+ */
+export function realityDetailsToFetch(
+  summaries: readonly GuardRealitySummary[],
+  cachedCollectedAt: ReadonlyMap<string, string>,
+): string[] {
+  const out: string[] = [];
+  for (const s of summaries) {
+    if (!s.collected_at) continue;
+    if (cachedCollectedAt.get(s.node_id) === s.collected_at) continue;
+    out.push(s.node_id);
+  }
+  return out;
+}
+
+/** The newest observation across the fleet, for the proof line. */
+export function newestObservation(summaries: readonly GuardRealitySummary[]): string | undefined {
+  let best: string | undefined;
+  for (const s of summaries) {
+    if (s.collected_at && (!best || s.collected_at > best)) best = s.collected_at;
+  }
+  return best;
+}
+
+// ── time on screen ──────────────────────────────────────────────────────────
+
+/** "43s", "2m", "3h", "2d". The floor is zero: an age is never negative. */
+export function formatAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+/** "07:41", "1:02:03". Past deadlines read 00:00 rather than counting up. */
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = String(m).padStart(2, "0");
+  const ss = String(s).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+// ── batch ───────────────────────────────────────────────────────────────────
+
+/**
+ * The control-plane host, as far as the console can tell.
+ *
+ * Nothing in the node record marks it, so this uses the one fact both sides
+ * share: the address the browser reached the console on. A node whose
+ * reported address is that host is the machine serving this page, and a batch
+ * that hardens it alongside others has no operator left to confirm the rest
+ * if it goes wrong. This only matches when the console is reached by an
+ * address the node reports (an IP, or a hostname the agent reports as its
+ * address); a console reached through a DNS name that no node reports
+ * matches nothing, and the refusal then rests on the operator ordering the
+ * fleet by hand, as the design says they do. A server-side marker would make
+ * this exact and is the right fix.
+ */
+export type ControlPlaneCandidate = Pick<Node, "id"> & Partial<Pick<Node, "public_ip" | "public_ipv6" | "internal_ip">>;
+
+export function controlPlaneNodeIds(nodes: readonly ControlPlaneCandidate[], originHost: string): Set<string> {
+  const host = normalizeHost(originHost);
+  const out = new Set<string>();
+  if (!host) return out;
+  for (const n of nodes) {
+    const candidates = [n.public_ip, n.public_ipv6, n.internal_ip].map((v) => normalizeHost(v ?? ""));
+    if (candidates.includes(host)) out.add(n.id);
+  }
+  return out;
+}
+
+/** Lower-cased, port and IPv6 brackets stripped, so "[::1]:5273" and "::1" agree. */
+function normalizeHost(value: string): string {
+  let v = value.trim().toLowerCase();
+  if (!v) return "";
+  if (v.startsWith("[")) {
+    const end = v.indexOf("]");
+    return end > 0 ? v.slice(1, end) : v;
+  }
+  // A single colon is host:port; more than one is a bare IPv6 literal.
+  const colons = v.split(":").length - 1;
+  if (colons === 1) v = v.slice(0, v.indexOf(":"));
+  return v;
+}
+
+export type BatchRefusal = "empty" | "control_plane_in_batch";
+
+/**
+ * Whether a set of nodes may share one plan sheet. The control-plane host may
+ * be armed, on its own, after everything else has been confirmed; it may not
+ * be one member of a larger batch.
+ */
+export function batchRefusal(nodeIds: readonly string[], controlPlane: ReadonlySet<string>): BatchRefusal | undefined {
+  if (nodeIds.length === 0) return "empty";
+  if (nodeIds.length > 1 && nodeIds.some((id) => controlPlane.has(id))) return "control_plane_in_batch";
+  return undefined;
+}
+
+export type BatchOutcome =
+  | { kind: "filed"; approvalId: string; findings: Finding[] }
+  | { kind: "blocked"; findings: Finding[] }
+  | { kind: "failed"; error: string };
+
+export interface BatchMember {
+  nodeId: string;
+  name: string;
+  outcome?: BatchOutcome;
+}
+
+export interface BatchSummary {
+  filed: number;
+  blocked: number;
+  failed: number;
+  pending: number;
+}
+
+export function summarizeBatch(members: readonly BatchMember[]): BatchSummary {
+  const out: BatchSummary = { filed: 0, blocked: 0, failed: 0, pending: 0 };
+  for (const m of members) {
+    if (!m.outcome) out.pending += 1;
+    else out[m.outcome.kind] += 1;
+  }
+  return out;
+}
+
+/** Members a file pass should still send: never one that already has an approval. */
+export function membersToFile(members: readonly BatchMember[], retryBlocked: boolean): BatchMember[] {
+  return members.filter((m) => !m.outcome || (retryBlocked && m.outcome.kind === "blocked"));
+}
