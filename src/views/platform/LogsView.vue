@@ -455,7 +455,12 @@ function refreshAll(): void {
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">{{ nodeName(source.node_id) }}</p>
                 </button>
-                <div v-if="canAdmin" class="mt-2 flex justify-end gap-1">
+                <!-- The server owns its synthetic sources and refuses to edit or
+                     delete them; drawing the controls only produced a failing click. -->
+                <p v-if="source.managed" class="mt-2 text-right text-xs text-muted-foreground" :title="$t('platform.logs.managedSourceHint')">
+                  {{ $t('platform.logs.managedSource') }}
+                </p>
+                <div v-else-if="canAdmin" class="mt-2 flex justify-end gap-1">
                   <Button variant="ghost" size="icon-sm" :aria-label="$t('platform.logs.editSourceAria')" @click="openEdit(source)">
                     <Pencil class="size-4" />
                   </Button>
