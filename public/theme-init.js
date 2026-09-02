@@ -16,7 +16,7 @@
     root.style.colorScheme = dark ? "dark" : "light";
 
     var meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", dark ? "#1b1b29" : "#ffffff");
+    if (meta) meta.setAttribute("content", dark ? "#181513" : "#fbfaf7");
 
     window.__LATTICE_THEME__ = { mode: mode, dark: dark };
   } catch (e) {

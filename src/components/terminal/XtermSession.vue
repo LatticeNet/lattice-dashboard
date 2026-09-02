@@ -11,6 +11,7 @@ import "@xterm/xterm/css/xterm.css";
 import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, X } from "lucide-vue-next";
 import { api, type TerminalSession } from "@/lib/api";
+import { isForbidden } from "@/views/operations/terminalModel";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 
 const POLL_MS = 120;
@@ -39,14 +40,23 @@ const props = withDefaults(
     // "poll" (default) is the HTTP store-and-forward relay; "stream" attaches a
     // WebSocket and is only usable when the node's agent runs in stream mode.
     transport?: "poll" | "stream";
+    // Whether the shell takes keyboard focus when it mounts or first opens.
+    // The page turns this on for an operator's own action (Connect, a tab
+    // click) and leaves it off on load, so a keyboard-only operator is never
+    // dropped into the PTY before reaching a control.
+    autofocus?: boolean;
   }>(),
-  { transport: "poll" },
+  { transport: "poll", autofocus: true },
 );
 
 const emit = defineEmits<{
   "update:session": [session: TerminalSession];
   error: [message: string];
   closed: [session: TerminalSession];
+  // The server answered 403 on a per-session route: the session belongs to
+  // another operator. The owner of the tab decides what to show; this
+  // component only stops.
+  denied: [session: TerminalSession];
   state: [state: ConnState];
 }>();
 
@@ -427,6 +437,7 @@ function connectWs() {
 
   sock.onopen = () => {
     if (myGen !== wsGen) return;
+    const firstOpen = !hasConnectedOnce;
     hasConnectedOnce = true;
     wsBackoff = WS_BACKOFF_START_MS;
     reconnectStartedAt = 0;
@@ -437,7 +448,8 @@ function connectWs() {
     wsSendResume();
     sendResizeWs(true);
     flushStreamInputBuffer();
-    terminal?.focus();
+    // A reconnect must not steal focus from whatever the operator is typing in.
+    if (props.autofocus && firstOpen) terminal?.focus();
   };
   sock.onmessage = (ev) => {
     if (myGen !== wsGen) return;
@@ -466,12 +478,45 @@ function connectWs() {
       emit("closed", { ...props.session, status: "closed" });
       return;
     }
+    // A handshake that never opened hides its HTTP status behind a generic
+    // close code. One events probe tells a 403 (another operator's session)
+    // apart from a network blip before the retry loop starts.
+    if (!hasConnectedOnce) {
+      void probeBeforeReconnect(myGen);
+      return;
+    }
     // Unexpected drop (network blip, nginx reload, agent redial): keep the
     // terminal intact and reconnect with backoff. The server holds the session
     // alive within its detach window and the agent keeps the shell running, so
     // the reconnect resumes seamlessly via the rendered-offset replay.
     scheduleWsReconnect();
   };
+}
+
+async function probeBeforeReconnect(gen: number) {
+  const sessionId = props.session.id;
+  try {
+    // A cursor past any seq returns the session without replaying output.
+    const res = await api.terminal.events(sessionId, Number.MAX_SAFE_INTEGER);
+    if (gen !== wsGen || disposed) return;
+    emit("update:session", res.session);
+    if (res.session.status === "closed" || res.session.status === "failed") {
+      setConnState(res.session.status);
+      if (closedEmittedFor !== res.session.id) {
+        closedEmittedFor = res.session.id;
+        emit("closed", res.session);
+      }
+      return;
+    }
+  } catch (error) {
+    if (gen !== wsGen || disposed) return;
+    if (isForbidden(error)) {
+      setConnState("failed");
+      emit("denied", props.session);
+      return;
+    }
+  }
+  scheduleWsReconnect();
 }
 
 function scheduleWsReconnect() {
@@ -673,6 +718,12 @@ async function pollEvents(): Promise<void> {
       if (closedPollsRemaining <= 0) keepPolling = false; // session fully drained. Stop
     }
   } catch (error) {
+    if (isForbidden(error)) {
+      keepPolling = false;
+      setConnState("failed");
+      emit("denied", session);
+      return;
+    }
     const message = error instanceof Error ? error.message : t("operations.terminal.eventsFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;
@@ -705,6 +756,10 @@ async function flushInput() {
     if (props.session.id !== sessionID) return;
     emit("update:session", session);
   } catch (error) {
+    if (isForbidden(error)) {
+      emit("denied", props.session);
+      return;
+    }
     const message = error instanceof Error ? error.message : t("operations.terminal.toastSendFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;
@@ -745,6 +800,10 @@ async function fitAndSendResize() {
     if (props.session.id !== sessionID) return;
     emit("update:session", session);
   } catch (error) {
+    if (isForbidden(error)) {
+      emit("denied", props.session);
+      return;
+    }
     const message = error instanceof Error ? error.message : t("operations.terminal.resizeFailed");
     const changed = terminalError.value !== message;
     terminalError.value = message;
@@ -772,7 +831,7 @@ onMounted(async () => {
   await nextTick();
   refit();
   startTransport();
-  terminal?.focus();
+  if (props.autofocus) terminal?.focus();
 });
 
 watch(
@@ -783,7 +842,7 @@ watch(
     await nextTick();
     scheduleResize();
     startTransport();
-    terminal?.focus();
+    if (props.autofocus) terminal?.focus();
   },
 );
 
@@ -807,8 +866,11 @@ watch(visibility, (value) => {
   // Poll: nudge an immediate poll on return. Stream: keep the socket live on a
   // backgrounded tab (a real terminal keeps receiving), just refocus.
   if (value !== "visible" || disposed) return;
-  if (isStream.value) terminal?.focus();
-  else if (!polling) scheduleNextPoll(0);
+  if (isStream.value) {
+    if (props.autofocus) terminal?.focus();
+  } else if (!polling) {
+    scheduleNextPoll(0);
+  }
 });
 
 onBeforeUnmount(() => {

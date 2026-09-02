@@ -290,6 +290,8 @@ export default {
       sourcesEmptyDescription:
         "还没有注册日志源，因此没有任何节点往这里推送日志。注册一个之后，该节点的 agent 会在下一次轮询时接手。",
       editSourceAria: "编辑日志源",
+      managedSource: "服务端托管",
+      managedSourceHint: "该来源由服务端自行创建和维护，不能编辑或删除。",
       deleteSourceAria: "删除日志源",
       statLines: "当前保留行数",
       statStoredBytes: "当前占用字节",

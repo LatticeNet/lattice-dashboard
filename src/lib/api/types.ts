@@ -1444,6 +1444,8 @@ export interface LogSource {
   max_batch_lines: number;
   created_at: string;
   updated_at: string;
+  /** Minted and repaired by the server (agent debug, sing-box); it refuses edits and deletes. */
+  managed?: boolean;
 }
 
 export interface LogSourceUpsertRequest {

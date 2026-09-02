@@ -39,9 +39,14 @@ const slots = useSlots();
         </span>
         {{ title }}
       </component>
-      <p v-if="description" class="text-sm text-muted-foreground">
-        {{ description }}
-      </p>
+      <!-- A view whose line under the title is structured (Terminal's proof
+           line) renders it through the slot; the string prop stays the
+           common case. -->
+      <slot name="description">
+        <p v-if="description" class="text-sm text-muted-foreground">
+          {{ description }}
+        </p>
+      </slot>
     </div>
     <div
       v-if="slots.status || slots.actions"

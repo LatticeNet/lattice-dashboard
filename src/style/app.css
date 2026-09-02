@@ -2,8 +2,10 @@
 @import "tw-animate-css";
 
 /* Lattice operator console. Design tokens.
-   Built on the shadcn-vue OKLCH token system, re-skinned with Lattice's own
-   identity: a deep slate-indigo surface set and an indigo brand accent.
+   Built on the shadcn-vue OKLCH token system. The static tokens below are
+   the cool slate fallback; the default palette ("claude", warm neutrals and
+   a terracotta accent, src/theme/palettes.ts) paints over the surface and
+   accent families at mount, and the other palettes change the accent only.
    Two-axis theming: (1) light/dark via the .dark class (pre-painted by
    /theme-init.js before mount, no FOUC); (2) brand palette via inline CSS
    vars set on :root by the theme store (src/theme/palettes.ts). */
@@ -69,10 +71,24 @@
 
   --font-mono:
     ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+
+  /* Motion. Two durations and one curve for the whole console: 100ms for a
+     hover, focus or pressed state, 200ms for anything that changes shape
+     (expand, collapse, sheet, tab). The curve is expo-out: it starts fast so
+     the response is felt at once and settles without a bounce. Tailwind's
+     transition utilities inherit the pair, so an existing `transition-colors`
+     picks it up without a class change. */
+  --default-transition-duration: var(--duration-fast);
+  --default-transition-timing-function: var(--ease-out);
 }
 
 :root {
-  --radius: 6px;
+  /* 4px: a control, not a pill. Badges keep their own radius. */
+  --radius: 4px;
+
+  --duration-fast: 100ms;
+  --duration-base: 200ms;
+  --ease-out: cubic-bezier(0.19, 1, 0.22, 1);
 
   /* Elevation. A control plane has no depth to communicate: everything is one
      plane of data, and a drop shadow under every card is decoration that costs
@@ -80,7 +96,9 @@
      instead. These two tokens exist so the few surfaces that genuinely float
      (popover, dialog, dropdown) can say so, and nothing else has to. */
   --shadow-overlay:
-    0 1px 2px oklch(0 0 0 / 6%), 0 8px 24px -6px oklch(0 0 0 / 14%);
+    0 1px 2px oklch(0 0 0 / 6%),
+    0 8px 24px -6px oklch(0 0 0 / 12%),
+    0 4px 40px -4px color-mix(in oklab, var(--primary) 8%, transparent);
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 5%);
 
   /* Content measure.
@@ -101,22 +119,22 @@
   --row-h: 40px;
   --row-h-compact: 32px;
 
-  --background: oklch(0.99 0.0015 280);
-  --foreground: oklch(0.21 0.02 281);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.02 281);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.02 281);
+  --background: oklch(0.985 0.004 85);
+  --foreground: oklch(0.24 0.012 60);
+  --card: oklch(0.995 0.002 85);
+  --card-foreground: oklch(0.24 0.012 60);
+  --popover: oklch(0.995 0.002 85);
+  --popover-foreground: oklch(0.24 0.012 60);
 
-  --primary: oklch(0.541 0.205 278.5);
-  --primary-foreground: oklch(0.985 0.005 280);
-  --secondary: oklch(0.965 0.006 280);
-  --secondary-foreground: oklch(0.27 0.025 281);
-  --muted: oklch(0.965 0.006 280);
-  --muted-foreground: oklch(0.524 0.022 281);
-  --accent: oklch(0.95 0.014 279);
-  --accent-foreground: oklch(0.30 0.05 279);
-  --destructive: oklch(0.583 0.231 27.5);
+  --primary: oklch(0.54 0.14 48);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.955 0.006 80);
+  --secondary-foreground: oklch(0.30 0.014 60);
+  --muted: oklch(0.955 0.006 80);
+  --muted-foreground: oklch(0.52 0.016 65);
+  --accent: oklch(0.945 0.012 65);
+  --accent-foreground: oklch(0.32 0.04 45);
+  --destructive: oklch(0.52 0.22 15);
   --destructive-foreground: oklch(0.985 0.01 20);
 
   --success: oklch(0.62 0.16 150);
@@ -126,60 +144,61 @@
   --info: oklch(0.6 0.14 240);
   --info-foreground: oklch(0.985 0.01 240);
 
-  --border: oklch(0.91 0.006 281);
-  --input: oklch(0.91 0.006 281);
-  --ring: oklch(0.541 0.205 278.5);
+  --border: oklch(0.90 0.008 75);
+  --input: oklch(0.90 0.008 75);
+  --ring: oklch(0.54 0.14 48);
 
-  --chart-1: oklch(0.541 0.205 278.5);
+  --chart-1: oklch(0.54 0.14 48);
   --chart-2: oklch(0.62 0.16 195);
   --chart-3: oklch(0.66 0.18 142);
-  --chart-4: oklch(0.74 0.17 60);
+  --chart-4: oklch(0.55 0.18 300);
   --chart-5: oklch(0.64 0.22 12);
 
-  --sidebar: oklch(0.985 0.004 280);
-  --sidebar-foreground: oklch(0.30 0.02 281);
-  --sidebar-primary: oklch(0.541 0.205 278.5);
-  --sidebar-primary-foreground: oklch(0.985 0.005 280);
-  --sidebar-accent: oklch(0.95 0.014 279);
-  --sidebar-accent-foreground: oklch(0.30 0.05 279);
-  --sidebar-border: oklch(0.91 0.006 281);
-  --sidebar-ring: oklch(0.541 0.205 278.5);
+  --sidebar: oklch(0.975 0.005 85);
+  --sidebar-foreground: oklch(0.28 0.012 60);
+  --sidebar-primary: oklch(0.54 0.14 48);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.94 0.012 70);
+  --sidebar-accent-foreground: oklch(0.24 0.012 60);
+  --sidebar-border: oklch(0.90 0.008 75);
+  --sidebar-ring: oklch(0.54 0.14 48);
 }
 
 .dark {
-  /* Refined cool blue-slate surfaces (hue ~240) with a bright teal accent.
-     Lightness values are preserved from the prior indigo dark theme so contrast
-     ratios are unchanged; only hue shifts (281 → 240) and bg/card deepen a touch.
-     The teal --primary family here is a no-flash fallback before the theme store
-     paints the (also teal) palette vars. */
-  --background: oklch(0.155 0.012 240);
-  --foreground: oklch(0.97 0.004 240);
-  --card: oklch(0.195 0.014 240);
-  --card-foreground: oklch(0.97 0.004 240);
-  --popover: oklch(0.195 0.014 240);
-  --popover-foreground: oklch(0.97 0.004 240);
+  /* Warm near-black ground (hue ~60) with a lightened terracotta accent that
+     carries a dark on-accent text at 7:1. Lightness steps match the light
+     theme's so contrast holds; the store repaints the same accent at mount. */
+  --background: oklch(0.20 0.006 60);
+  --foreground: oklch(0.95 0.006 80);
+  --card: oklch(0.235 0.007 60);
+  --card-foreground: oklch(0.95 0.006 80);
+  --popover: oklch(0.235 0.007 60);
+  --popover-foreground: oklch(0.95 0.006 80);
 
-  --primary: oklch(0.81 0.13 180);
-  --primary-foreground: oklch(0.17 0.012 240);
-  --secondary: oklch(0.255 0.014 240);
-  --secondary-foreground: oklch(0.97 0.004 240);
-  --muted: oklch(0.255 0.014 240);
-  --muted-foreground: oklch(0.705 0.012 240);
-  --accent: oklch(0.285 0.02 235);
-  --accent-foreground: oklch(0.97 0.004 240);
-  --destructive: oklch(0.704 0.191 22.2);
-  --destructive-foreground: oklch(0.97 0.01 20);
+  --primary: oklch(0.76 0.12 48);
+  --primary-foreground: oklch(0.22 0.01 60);
+  --secondary: oklch(0.28 0.008 60);
+  --secondary-foreground: oklch(0.95 0.006 80);
+  --muted: oklch(0.28 0.008 60);
+  --muted-foreground: oklch(0.70 0.012 70);
+  --accent: oklch(0.31 0.012 55);
+  --accent-foreground: oklch(0.95 0.006 80);
+  --destructive: oklch(0.64 0.22 12);
+  /* Dark text on the danger red, the way the accent and the warning carry
+     dark text here: the light text read 3.4:1 on the button that kills a
+     shell. */
+  --destructive-foreground: oklch(0.16 0.02 15);
 
   --success: oklch(0.706 0.15 156);
   --success-foreground: oklch(0.16 0.02 156);
-  --warning: oklch(0.8 0.16 80);
+  --warning: oklch(0.83 0.16 88);
   --warning-foreground: oklch(0.2 0.04 75);
   --info: oklch(0.7 0.12 210);
   --info-foreground: oklch(0.16 0.02 210);
 
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 13%);
-  --ring: oklch(0.7 0.12 182);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.68 0.11 48);
 
   /* On a dark ground a shadow is nearly invisible and a light rim is what reads
      as "in front". Overlays get both: a real shadow for the drop, plus an inset
@@ -188,20 +207,20 @@
     0 0 0 1px oklch(1 0 0 / 8%), 0 10px 32px -8px oklch(0 0 0 / 70%);
   --shadow-raised: 0 1px 2px oklch(0 0 0 / 40%);
 
-  --chart-1: oklch(0.81 0.13 180);
+  --chart-1: oklch(0.76 0.12 48);
   --chart-2: oklch(0.7 0.14 195);
   --chart-3: oklch(0.72 0.17 145);
-  --chart-4: oklch(0.79 0.16 65);
+  --chart-4: oklch(0.72 0.15 300);
   --chart-5: oklch(0.7 0.2 13);
 
-  --sidebar: oklch(0.175 0.012 240);
-  --sidebar-foreground: oklch(0.9 0.006 240);
-  --sidebar-primary: oklch(0.81 0.13 180);
-  --sidebar-primary-foreground: oklch(0.17 0.012 240);
-  --sidebar-accent: oklch(0.285 0.02 235);
-  --sidebar-accent-foreground: oklch(0.97 0.004 240);
-  --sidebar-border: oklch(1 0 0 / 9%);
-  --sidebar-ring: oklch(0.7 0.12 182);
+  --sidebar: oklch(0.215 0.006 60);
+  --sidebar-foreground: oklch(0.90 0.008 75);
+  --sidebar-primary: oklch(0.76 0.12 48);
+  --sidebar-primary-foreground: oklch(0.22 0.01 60);
+  --sidebar-accent: oklch(0.28 0.01 55);
+  --sidebar-accent-foreground: oklch(0.95 0.006 80);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.68 0.11 48);
 }
 
 @layer base {
@@ -257,7 +276,9 @@
 .list-move,
 .list-enter-active,
 .list-leave-active {
-  transition: all 0.35s ease;
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
 }
 .list-enter-from,
 .list-leave-to {
@@ -270,7 +291,7 @@
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-base) var(--ease-out);
 }
 .fade-enter-from,
 .fade-leave-to {
@@ -293,7 +314,14 @@
   }
 }
 .view-enter {
-  animation: view-enter 160ms ease-out;
+  animation: view-enter var(--duration-base) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-base: 0ms;
+  }
 }
 
 /* Shared skeleton placeholder block. The one loading-state look across

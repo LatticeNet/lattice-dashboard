@@ -203,6 +203,7 @@ const locale = computed<LocaleCode>({
 .swatch-custom {
   background-color: var(--swatch-custom);
 }
+.swatch-fill[data-palette="claude"] { --swatch-current: var(--swatch-claude); }
 .swatch-fill[data-palette="lattice"] { --swatch-current: var(--swatch-lattice); }
 .swatch-fill[data-palette="teal"] { --swatch-current: var(--swatch-teal); }
 .swatch-fill[data-palette="blue"] { --swatch-current: var(--swatch-blue); }
