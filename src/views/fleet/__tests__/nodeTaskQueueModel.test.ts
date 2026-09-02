@@ -78,3 +78,65 @@ test("a task with no targets array does not crash the panel", () => {
   const q = buildNodeQueue([{ id: "x", status: "queued", interpreter: "sh" } as never], NODE);
   assert.deepEqual(q.entries, []);
 });
+
+test("a stalled task stays visible on the node page, marked and counted apart", () => {
+  const q = buildNodeQueue(
+    [
+      task({ id: "given-up", status: "stalled", attempts: 3, max_attempts: 3, lease_age_seconds: 6 * 86400, stalled_reason: "agent lost during run three times" }),
+      task({ id: "waiting", status: "queued" }),
+    ],
+    NODE,
+  );
+  assert.deepEqual(q.entries.map((e) => e.id), ["given-up", "waiting"]);
+  const stalled = q.entries[0];
+  assert.equal(stalled.stalled, true);
+  assert.equal(stalled.running, false);
+  assert.equal(stalled.lease?.stalledReason, "agent lost during run three times");
+  assert.equal(q.stalled, 1);
+  assert.equal(q.queued, 1);
+  assert.equal(q.running, 0);
+});
+
+test("a fan-out that is running elsewhere but stalled here reads as stalled for this node", () => {
+  const q = buildNodeQueue(
+    [
+      task({
+        id: "fanout", status: "leased", targets: [NODE, "somewhere-else"],
+        target_states: {
+          [NODE]: { status: "stalled", attempts: 3, max_attempts: 3, stalled_reason: "agent lost during run three times" },
+          "somewhere-else": { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 60 },
+        },
+      }),
+    ],
+    NODE,
+  );
+  assert.equal(q.entries[0].status, "stalled");
+  assert.equal(q.entries[0].lease?.attempts, 3);
+  assert.equal(q.stalled, 1);
+});
+
+test("a fan-out target that already answered here is not this node's queue, whatever the task says", () => {
+  const q = buildNodeQueue(
+    [
+      task({
+        id: "fanout", status: "leased", targets: [NODE, "somewhere-else"],
+        target_states: {
+          [NODE]: { status: "finished", attempts: 1, max_attempts: 3, lease_age_seconds: 300 },
+          "somewhere-else": { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 60 },
+        },
+      }),
+      task({
+        id: "not-yet-here", status: "leased", targets: [NODE, "somewhere-else"],
+        target_states: {
+          [NODE]: { status: "queued" },
+          "somewhere-else": { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 60 },
+        },
+      }),
+    ],
+    NODE,
+  );
+  assert.deepEqual(q.entries.map((e) => e.id), ["not-yet-here"]);
+  assert.equal(q.entries[0].running, false);
+  assert.equal(q.queued, 1);
+  assert.equal(q.running, 0);
+});

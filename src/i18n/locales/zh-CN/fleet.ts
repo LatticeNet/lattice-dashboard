@@ -414,6 +414,7 @@ export default {
         queueEmpty: "该节点没有待执行的任务。",
         queueRunning: "执行中",
         queueWaiting: "排队中",
+        queueStalled: "已停滞",
         queueFanout: "{count} 台中的一台",
         queueOfflineHint: "该节点当前没有上报。排队的任务会留在这里，等它回来后依次执行。",
         noActivity: "近期没有涉及该节点的审计决策。",

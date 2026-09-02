@@ -20,15 +20,25 @@
  * No formatting, no colors, no i18n: the rules are testable without a browser.
  */
 import type { TaskView } from "@/lib/api";
+import { taskLeaseProgress, type TaskLeaseProgress } from "@/lib/taskLease";
 
-/** Statuses that mean the task has not finished on this node yet. */
-const PENDING_STATUSES = new Set(["queued", "leased"]);
+/**
+ * Statuses that mean the task has not finished on this node yet. Stalled is
+ * in the set on purpose: a task the store gave up re-leasing is not going to
+ * run, but hiding it from the node page is exactly how six days of agent
+ * restarts went unseen (KI-20). It is shown, marked, and counted separately.
+ */
+const PENDING_STATUSES = new Set(["queued", "leased", "stalled"]);
 
 export interface NodeQueueEntry {
   id: string;
   status: TaskView["status"];
   /** True once an agent holds the lease, i.e. it is running rather than waiting. */
   running: boolean;
+  /** True when the store stopped waiting on this node: nothing runs, nothing will. */
+  stalled: boolean;
+  /** Attempt count, lease age and stall reason for this node, when the server sends them. */
+  lease?: TaskLeaseProgress;
   interpreter: string;
   createdAt: string;
   startedAt?: string;
@@ -44,6 +54,7 @@ export interface NodeQueue {
   entries: NodeQueueEntry[];
   queued: number;
   running: number;
+  stalled: number;
 }
 
 /**
@@ -55,29 +66,39 @@ export interface NodeQueue {
  */
 export function buildNodeQueue(tasks: TaskView[], nodeId: string): NodeQueue {
   const id = (nodeId ?? "").trim();
-  if (!id) return { entries: [], queued: 0, running: 0 };
+  if (!id) return { entries: [], queued: 0, running: 0, stalled: 0 };
 
   const entries = tasks
-    .filter((task) => PENDING_STATUSES.has(task.status))
     .filter((task) => (task.targets ?? []).includes(id))
-    .map<NodeQueueEntry>((task) => ({
-      id: task.id,
-      status: task.status,
-      running: task.status === "leased",
-      interpreter: task.interpreter ?? "",
-      createdAt: task.created_at ?? "",
-      startedAt: task.started_at,
-      targetCount: (task.targets ?? []).length,
-      approvalId: task.approval_id,
-      scriptSizeBytes: task.script_size_bytes,
-      timeoutSec: task.timeout_sec,
-    }))
+    .map<NodeQueueEntry>((task) => {
+      // A fan-out is "leased" while any node still runs it, so this node's own
+      // record, when the server sends one, is what says whether it is running,
+      // stalled, still waiting, or already done here.
+      const lease = taskLeaseProgress(task, id);
+      const status = (lease?.status as TaskView["status"] | undefined) ?? task.status;
+      return {
+        id: task.id,
+        status,
+        running: status === "leased",
+        stalled: status === "stalled",
+        lease,
+        interpreter: task.interpreter ?? "",
+        createdAt: task.created_at ?? "",
+        startedAt: task.started_at,
+        targetCount: (task.targets ?? []).length,
+        approvalId: task.approval_id,
+        scriptSizeBytes: task.script_size_bytes,
+        timeoutSec: task.timeout_sec,
+      };
+    })
+    .filter((entry) => PENDING_STATUSES.has(entry.status))
     .sort(compareByRunThenAge);
 
   return {
     entries,
-    queued: entries.filter((entry) => !entry.running).length,
+    queued: entries.filter((entry) => !entry.running && !entry.stalled).length,
     running: entries.filter((entry) => entry.running).length,
+    stalled: entries.filter((entry) => entry.stalled).length,
   };
 }
 

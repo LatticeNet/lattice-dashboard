@@ -223,6 +223,8 @@ export default {
       capabilityRefused: "{count} 个目标被能力准入拒绝",
       waitingLease: "还没有 agent 领走",
       stalledNoLease: "没有存活的执行租约,结果不会自己到来;可以取消或重跑",
+      leasedFor: "已租出 {age}",
+      attemptOf: "第 {attempt} 次尝试,共 {max} 次",
       failedNoResult: "被标记为失败，没有上报任何输出",
       cancelledNoResult: "在任何 agent 执行前就被取消",
       nodeRerunBadge: "节点重跑",

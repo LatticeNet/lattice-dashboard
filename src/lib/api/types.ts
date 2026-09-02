@@ -395,6 +395,23 @@ export interface TaskView {
   created_at?: string;
   started_at?: string;
   finished_at?: string;
+  // Lease progress, sent only for leased tasks by servers that count
+  // attempts. The three scalars summarise a single-target task; target_states
+  // carries the same per node for a fan-out. All optional so an older server
+  // renders exactly as before.
+  attempts?: number;
+  max_attempts?: number;
+  lease_age_seconds?: number;
+  stalled_reason?: string;
+  target_states?: Record<string, TaskTargetStateView>;
+}
+
+export interface TaskTargetStateView {
+  status: "queued" | "leased" | "finished" | "failed" | "stalled";
+  attempts?: number;
+  max_attempts?: number;
+  lease_age_seconds?: number;
+  stalled_reason?: string;
 }
 
 export interface TaskScriptRevealResponse {

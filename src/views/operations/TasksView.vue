@@ -28,6 +28,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { leaseAttemptLabel, taskLeaseProgress, type TaskLeaseProgress } from "@/lib/taskLease";
 import { tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 import {
@@ -86,6 +87,8 @@ interface NodeExecutionRow {
   latestResult?: TaskResult;
   status: NodeRunStatus;
   failed: boolean;
+  /** This node's attempt count, lease age and stall reason, when the server sends them. */
+  lease?: TaskLeaseProgress;
 }
 
 /**
@@ -591,7 +594,13 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
     const latestResult = latest?.result;
     const latestTask = latest?.task;
     const failed = !!latestResult && resultFailed(latestResult);
-    const status = latestResult
+    const lease = latestTask ? taskLeaseProgress(latestTask, nodeId) : undefined;
+    // A fan-out stays "leased" while any node still runs it, so this node's
+    // own record, when the server sends one, is what the row reads (running,
+    // stalled, still waiting, or answered with the result row already gone);
+    // the task status is the fallback for servers that send none.
+    const leaseStatus = lease?.status ?? latestTask?.status;
+    const status: NodeRunStatus = latestResult
       ? failed
         ? "failed"
         : "finished"
@@ -603,11 +612,9 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
         ? "failed"
         : latestTask?.status === "cancelled"
           ? "cancelled"
-          : latestTask?.status === "stalled"
-            ? "stalled"
-            : latestTask?.status === "leased"
-              ? "leased"
-              : "queued";
+          : leaseStatus === "stalled" || leaseStatus === "leased" || leaseStatus === "failed" || leaseStatus === "finished"
+            ? leaseStatus
+            : "queued";
     return {
       nodeId,
       node: nodesById.value[nodeId],
@@ -616,6 +623,7 @@ function nodeRows(root: TaskView): NodeExecutionRow[] {
       latestResult,
       status,
       failed: status === "failed",
+      lease,
     };
   });
 }
@@ -838,8 +846,15 @@ function toggleNodeExpanded(taskId: string, nodeId: string) {
  */
 function resultlessText(row: NodeExecutionRow): string {
   if (row.status === "queued") return t("operations.tasks.waitingLease");
-  if (row.status === "leased") return t("operations.tasks.running");
-  if (row.status === "stalled") return t("operations.tasks.stalledNoLease");
+  // "Running" alone is what hid six days of agent restarts (KI-20): the
+  // lease age and attempt count are the evidence that it is still running,
+  // and on a stalled row the reason comes first because it is the finding.
+  const lease = leaseAttemptLabel(row.lease, {
+    leasedFor: (age) => t("operations.tasks.leasedFor", { age }),
+    attemptOf: (attempt, max) => t("operations.tasks.attemptOf", { attempt, max }),
+  });
+  if (row.status === "leased") return lease ? `${t("operations.tasks.running")} · ${lease}` : t("operations.tasks.running");
+  if (row.status === "stalled") return lease ? `${lease} · ${t("operations.tasks.stalledNoLease")}` : t("operations.tasks.stalledNoLease");
   if (row.status === "cancelled") return t("operations.tasks.cancelledNoResult");
   return t("operations.tasks.failedNoResult");
 }
