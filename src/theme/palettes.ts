@@ -1,8 +1,10 @@
 // Brand (accent) palettes. Each overrides only the --primary / --ring family
-// on top of the slate-indigo neutral surfaces defined in style/app.css.
-// "lattice" (indigo) is the default identity; the rest mirror shadcn-vue v3.
+// on top of the warm neutral surfaces defined in style/app.css.
+// "claude" (terracotta) is the default identity; "lattice" is the former
+// indigo; the rest mirror shadcn-vue v3.
 
 export type ColorThemeName =
+  | "claude"
   | "lattice"
   | "teal"
   | "blue"
@@ -15,7 +17,7 @@ export type ColorThemeName =
   | "stone"
   | "custom";
 
-export const DEFAULT_COLOR: ColorThemeName = "teal";
+export const DEFAULT_COLOR: ColorThemeName = "claude";
 export const DEFAULT_CUSTOM_COLOR = "#6d5cf5";
 
 type Variant = Record<string, string>;
@@ -50,6 +52,16 @@ const make = (primary: string, foreground: string, ring: string): Variant => ({
 });
 
 export const PALETTES: Record<Exclude<ColorThemeName, "custom">, Palette> = {
+  claude: {
+    // The console's own identity: the warm ground lives in app.css as the
+    // static default (painted before Vue mounts, so no flash), and this entry
+    // carries the terracotta accent. The accent is the first step of the
+    // Claude orange that keeps white text at AA (oklch 0.58 reads 4.55:1; the
+    // brand's own #D97757 reads 3.1:1 and is kept for the swatch only).
+    swatch: "oklch(0.686 0.129 40.5)",
+    light: make("oklch(0.58 0.14 40)", "oklch(0.99 0.005 80)", "oklch(0.58 0.14 40)"),
+    dark: make("oklch(0.74 0.12 42)", "oklch(0.22 0.01 60)", "oklch(0.66 0.11 42)"),
+  },
   lattice: {
     swatch: "oklch(0.6 0.2 278)",
     light: make("oklch(0.541 0.205 278.5)", "oklch(0.985 0.005 280)", "oklch(0.541 0.205 278.5)"),
