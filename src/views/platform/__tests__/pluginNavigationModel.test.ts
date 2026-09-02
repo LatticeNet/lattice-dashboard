@@ -90,7 +90,8 @@ test("the hosted frame's origin is its opaque sandbox origin or the host origin"
 test("the evidence area is navigable from a plugin with its lens and filter keys only", () => {
   assert.equal(isPluginNavigableRoute("/platform/evidence"), true);
   assert.equal(isPluginNavigableRoute("/platform/evidence?lens=log&node_id=node_ob46mh4ltshdpkhc"), true);
-  assert.equal(isPluginNavigableRoute("/platform/evidence?lens=connections&node_id=n&line=VLESS-REALITY-17893.json&tab=policy"), true);
+  assert.equal(isPluginNavigableRoute("/platform/evidence?lens=connections&node_id=n&line_uuid=0000abcd-0000-4000-8000-000000000001&tab=policy"), true);
+  assert.equal(isPluginNavigableRoute("/platform/evidence?line=VLESS-REALITY-17893.json"), false);
   assert.equal(isPluginNavigableRoute("/platform/evidence?apply=1"), false);
   assert.equal(isPluginNavigableRoute("/platform/logs?node_id=n"), false);
 });
