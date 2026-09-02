@@ -287,7 +287,7 @@ export default {
       form: {
         serverAllowlist: "Node allowlist",
         serverAllowlistHint:
-          "Comma-separated node IDs. Leave empty to let this operator reach every node. Narrowing an account signs it out of its current sessions.",
+          "Comma-separated node IDs. Leave empty to let this operator reach every node. Narrowing an account signs it out of its current sessions. The allowlist confines node-scoped actions only: KV, Static, and storage scopes are fleet-wide and ignore it, and fleet-wide admin writes (capability gates, SSO providers, notification routing, group policies) refuse restricted tokens outright.",
         createTitle: "New user",
         editTitle: "Edit user",
         description:
@@ -355,7 +355,7 @@ export default {
         scopedHint: "Only the scopes you currently hold are offered.",
         noGrantableScopes: "You hold no grantable scopes from the catalog.",
         serverAllowlist: "Node allowlist",
-        serverAllowlistHint: "Comma-separated node IDs. Must be a subset of your own allowlist. Leave empty for all nodes.",
+        serverAllowlistHint: "Comma-separated node IDs. Must be a subset of your own allowlist. Leave empty for all nodes. The allowlist confines node-scoped actions only: KV, Static, and storage scopes are fleet-wide and ignore it, and fleet-wide admin writes (capability gates, SSO providers, notification routing, group policies) refuse restricted tokens outright.",
         serverAllowlistRestrictedHint: "Comma-separated node IDs. Must be a non-empty subset of your current node allowlist.",
         yourServerAllowlist: "Your current node allowlist:",
         moreNodes: "+{count} more",
