@@ -7,6 +7,12 @@ const props = defineProps<{
   description?: string;
   /** Optional breadcrumb context shown muted before the title ("Section / Title"). */
   section?: string;
+  /**
+   * "page" is the view's own heading. "section" is the same header inside a
+   * page that already has one, as when Logs renders as a lens of Evidence:
+   * an h2 at section size, the actions kept, nothing else changed.
+   */
+  level?: "page" | "section";
   class?: HTMLAttributes["class"];
 }>();
 
@@ -23,13 +29,16 @@ const slots = useSlots();
     "
   >
     <div class="min-w-0 space-y-1">
-      <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+      <component
+        :is="level === 'section' ? 'h2' : 'h1'"
+        :class="level === 'section' ? 'text-lg font-semibold tracking-tight text-foreground' : 'text-2xl font-semibold tracking-tight text-foreground'"
+      >
         <span v-if="section" class="font-normal text-muted-foreground">
           {{ section }}
           <span class="px-1 text-muted-foreground/60">/</span>
         </span>
         {{ title }}
-      </h1>
+      </component>
       <p v-if="description" class="text-sm text-muted-foreground">
         {{ description }}
       </p>

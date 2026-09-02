@@ -274,6 +274,12 @@ export default {
       colBuckets: "Buckets",
       colLastUsed: "最后使用",
     },
+    evidence: {
+      title: "证据",
+      description: "节点真实发生了什么:从日志存储拼出的 sing-box 连接,以及它们来自的原始日志行",
+      lensConnections: "连接",
+      lensLog: "原始日志",
+    },
     logs: {
       title: "日志",
       description: "可 tail 的节点日志源,带有界查询历史",

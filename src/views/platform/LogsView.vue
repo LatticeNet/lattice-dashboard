@@ -1,4 +1,9 @@
 <script setup lang="ts">
+/**
+ * Embedded: rendered as one lens of the Evidence area, which owns the page
+ * heading and padding. The view keeps its own actions and state.
+ */
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
@@ -24,6 +29,8 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatBytes, formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+import { useRoute } from "vue-router";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
@@ -97,6 +104,7 @@ const sortedSources = computed(() =>
   }),
 );
 
+const route = useRoute();
 const selectedSourceId = ref("");
 const selectedSource = computed(() =>
   sources.value.find((source) => source.id === selectedSourceId.value),
@@ -114,7 +122,11 @@ watch(
       return;
     }
     if (!selectedSourceId.value || !list.some((s) => s.id === selectedSourceId.value)) {
-      selectedSourceId.value = list[0]?.id ?? "";
+      // A link from a line or a node names the node; land on its source
+      // rather than on whichever source sorts first.
+      const wantedNode = typeof route.query.node_id === "string" ? route.query.node_id : "";
+      const preferred = wantedNode ? list.find((s) => s.node_id === wantedNode) : undefined;
+      selectedSourceId.value = preferred?.id ?? list[0]?.id ?? "";
     }
   },
   { immediate: true },
@@ -373,8 +385,8 @@ function refreshAll(): void {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
-    <PageHeader :title="$t('platform.logs.title')" :description="$t('platform.logs.description')">
+  <div :class="embedded ? 'space-y-6' : 'p-6 space-y-6'">
+    <PageHeader :level="embedded ? 'section' : 'page'" :title="$t('platform.logs.title')" :description="$t('platform.logs.description')">
       <template #actions>
         <Button
           v-if="canRead"

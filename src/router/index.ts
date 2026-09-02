@@ -54,6 +54,16 @@ const manualChildRoutes: RouteRecordRaw[] = [
     meta: { title: "Monitoring", section: "Fleet", scopes: ["monitor:read"] },
   },
   {
+    // Logs and Trace became two lenses of one Evidence area. Old links and
+    // bookmarks land on the right lens with their query intact.
+    path: "platform/logs",
+    redirect: (to) => ({ path: "/platform/evidence", query: { ...to.query, lens: "log" } }),
+  },
+  {
+    path: "platform/trace",
+    redirect: (to) => ({ path: "/platform/evidence", query: to.query }),
+  },
+  {
     // Plugin-contributed view (design-10). The route stays open (scopes: []) so a
     // wrong/insufficient scope renders a friendly "no access" panel inside the
     // page rather than a redirect; PluginView enforces the contribution's own

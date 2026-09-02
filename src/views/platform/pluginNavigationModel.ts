@@ -55,6 +55,10 @@ export function isInternalDashboardRoute(route: string): boolean {
  */
 const PLUGIN_PARAMETERIZED_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["/network/subscription-shares", new Set(["create", "for"])],
+  // vpn-core's "show me the evidence for this line": the Evidence area opened
+  // on a lens with a node and a line pre-filtered. It opens a read view; it
+  // changes nothing.
+  ["/platform/evidence", new Set(["lens", "node_id", "line", "tab"])],
 ]);
 
 /**

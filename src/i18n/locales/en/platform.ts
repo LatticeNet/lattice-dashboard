@@ -280,6 +280,12 @@ export default {
       colBuckets: "Buckets",
       colLastUsed: "Last used",
     },
+    evidence: {
+      title: "Evidence",
+      description: "What the nodes actually did: sing-box connections assembled from the log store, and the raw log lines they came from",
+      lensConnections: "Connections",
+      lensLog: "Raw log",
+    },
     logs: {
       title: "Logs",
       description: "Tailable node log sources with bounded query history",

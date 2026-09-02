@@ -1,5 +1,10 @@
 <script setup lang="ts">
 /**
+ * Embedded: rendered as one lens of the Evidence area, which owns the page
+ * heading and padding. The view keeps its own actions and state.
+ */
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
+/**
  * Connection Trace: the screen an operator opens to answer "why did this
  * user's connection fail, stall, or leave by the wrong exit".
  *
@@ -769,8 +774,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
-    <PageHeader :title="$t('platform.trace.title')" :description="$t('platform.trace.description')">
+  <div :class="embedded ? 'space-y-6' : 'p-6 space-y-6'">
+    <PageHeader :level="embedded ? 'section' : 'page'" :title="$t('platform.trace.title')" :description="$t('platform.trace.description')">
       <template #actions>
         <Button
           v-if="canRead"
