@@ -296,6 +296,8 @@ export default {
       sourcesEmptyDescription:
         "No source is registered, so no node is shipping lines here. Register one and the node's agent picks it up on its next poll.",
       editSourceAria: "Edit source",
+      managedSource: "server-owned",
+      managedSourceHint: "The server creates and repairs this source itself and refuses to edit or delete it.",
       deleteSourceAria: "Delete source",
       statLines: "Lines held",
       statStoredBytes: "Bytes held",
