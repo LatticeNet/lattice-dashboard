@@ -1663,12 +1663,15 @@ function openTerminal(node: Node) {
                 :class="cn(groupBy !== 'none' && 'mt-3')"
               >
                 <!-- The card grid stopped at two columns, so on a wide screen each card was
-                     half the viewport and the view read as oversized. Cards carry a fixed
-                     amount of content, so the column count follows the width and the card
-                     renders in its compact density. -->
+                     half the viewport and the view read as oversized. Column counts are
+                     chosen so a card never drops below 408px, which is where NodeCard's own
+                     container query stacks its header and the card gets TALLER as it gets
+                     narrower: three columns at 1440 measured 359px wide and 62px taller than
+                     the two-column card it replaced. Past 1840 the content is capped at
+                     1600, so a fourth column only makes cards worse, and there is none. -->
                 <div
                   v-if="viewMode === 'card'"
-                  class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 [@media(min-width:1800px)]:grid-cols-4"
+                  class="grid gap-3 md:grid-cols-2 [@media(min-width:1560px)]:grid-cols-3"
                 >
                 <NodeCard
                   v-for="node in group.nodes"
