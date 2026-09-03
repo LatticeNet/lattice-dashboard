@@ -59,3 +59,63 @@ test("a plugin navigate request cannot reach a route that acts on its query stri
     "the host accepts a plugin-supplied deep link that opens a terminal session on an arbitrary node",
   );
 });
+
+// UISEC-2 (added with the clipboard privilege). The host now performs one more
+// action on a frame's word: it writes the operator's clipboard. The privilege
+// was granted in preference to `allow="clipboard-write"` on the iframe
+// precisely because the host keeps the decision, so what has to stay true is
+// that the decision is still the host's. These assertions are the shape of that
+// claim, and they are here to go red if a later edit hands the frame the
+// permission directly and quietly re-opens the ambient-authority path.
+test("the plugin iframe is never granted the clipboard permission directly", () => {
+  const host = source("../PluginFrameHost.vue");
+
+  // Ground the claim: the frame really is the opaque-origin sandbox this rests on.
+  assert.match(host, /sandbox="allow-scripts"/, "the plugin frame is no longer sandboxed as assumed");
+  assert.doesNotMatch(
+    host,
+    /allow-same-origin/,
+    "the plugin frame gained allow-same-origin, which would give it a real origin",
+  );
+
+  // The actual invariant: no Permissions Policy delegation on the frame.
+  assert.doesNotMatch(
+    host,
+    /\ballow\s*=\s*"[^"]*clipboard/i,
+    "the iframe delegates clipboard permission to the frame, so the host no longer sees or bounds the copies",
+  );
+});
+
+// The privilege is only worth its cost if the host can actually refuse and the
+// plugin can hear the refusal. A host that answered nothing would leave the
+// plugin's manual-copy fallback unreachable, which is the failure the operator
+// originally reported: a copy that neither works nor tells you what to do.
+test("the host answers every clipboard request it can address", async () => {
+  const { PluginBridgeSession } = await import("../pluginBridgeModel.ts");
+  const posted: Array<Record<string, unknown>> = [];
+  const sourceWindow = {};
+  const session = new PluginBridgeSession({
+    pluginId: "test.plugin",
+    pluginVersion: "0.1.0",
+    pluginRoute: "items",
+    bridgeVersion: "1",
+    nonce: "n".repeat(16),
+    sourceWindow,
+    interfaces: [],
+    call: async () => null,
+    post: (message) => posted.push(message as unknown as Record<string, unknown>),
+    locale: "en",
+    colorScheme: "light",
+    designTokens: {},
+    // No clipboard handler: the host grants nothing.
+  });
+
+  await session.handle({
+    source: sourceWindow,
+    data: { type: "lattice.plugin.clipboard", nonce: "n".repeat(16), id: "c1", text: "secret" },
+  });
+
+  const ack = posted.at(-1);
+  assert.equal(ack?.type, "lattice.host.clipboard");
+  assert.equal(ack?.ok, false, "a host granting no clipboard must say so rather than stay silent");
+});

@@ -803,6 +803,7 @@ export default {
       unresponsiveDescription: "界面已加载,但在 {seconds} 秒内没有响应主机。这通常是插件本身的问题,而非你的网络。",
       unavailableTitle: "{plugin} 界面不可用",
       unavailableDescription: "界面无法加载。请确认该插件仍处于激活状态,且其静态资源可以访问。",
+      copyRefused: "浏览器拒绝了这次复制,扩展已把内容显示出来,请手动复制。",
     },
     secretHidden: "已隐藏,复制以查看",
     copy: "复制",

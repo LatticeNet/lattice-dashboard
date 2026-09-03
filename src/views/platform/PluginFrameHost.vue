@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
+import { toast } from "vue-sonner";
 import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
 
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";
@@ -14,6 +16,7 @@ import {
 } from "./pluginFrameModel";
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
 import { claimViewportPane } from "@/layout/viewportPane";
+import { copyForFrame as hostCopy } from "./pluginClipboard";
 
 const props = defineProps<{
   pluginId: string;
@@ -29,6 +32,7 @@ const HANDSHAKE_TIMEOUT_MS = 8_000;
 
 const lifecycle = new PluginFrameLifecycle({ createNonce });
 const router = useRouter();
+const { t } = useI18n();
 
 const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
@@ -179,6 +183,20 @@ function postToFrame(message: BridgeHostMessage) {
   sourceWindow?.postMessage(message, "*");
 }
 
+/**
+ * The toast is the point of the host doing this rather than the frame: a copy
+ * performed on a plugin's word is an action the operator should see the host
+ * take, in the host's own words, in the host's own notification lane. The copy
+ * itself lives in pluginClipboard.ts, where it can be exercised without
+ * mounting a view.
+ */
+async function copyForFrame(text: string): Promise<boolean> {
+  const copied = await hostCopy(text);
+  if (copied) toast.success(t("common.actions.copied"));
+  else toast.error(t("pluginViews.frame.copyRefused"));
+  return copied;
+}
+
 function teardownSession() {
   session?.dispose();
   session = undefined;
@@ -209,6 +227,7 @@ function armSession() {
       api.plugins.call(props.pluginId, service, method, payload, signal),
     post: postToFrame,
     ready: markReady,
+    clipboard: copyForFrame,
   });
 }
 

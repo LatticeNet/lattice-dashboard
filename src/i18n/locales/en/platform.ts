@@ -842,6 +842,7 @@ export default {
       unavailableTitle: "{plugin} interface unavailable",
       unavailableDescription:
         "The interface could not be loaded. Check that the plugin is still active and its assets are reachable.",
+      copyRefused: "The browser refused the copy. The extension is showing you the value to copy by hand.",
     },
     secretHidden: "Hidden, copy to reveal",
     copy: "Copy",

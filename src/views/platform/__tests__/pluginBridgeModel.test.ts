@@ -269,3 +269,174 @@ test("resize is rate limited so a frame cannot thrash layout", async () => {
 
   assert.deepEqual(heights, [500, 501], "resizes past the ceiling are dropped");
 });
+
+// ── clipboard (the host copies on the frame's behalf) ───────────────────────
+//
+// The frame is sandboxed into an opaque origin and Permissions Policy denies it
+// the async Clipboard API, which is the bug these tests exist for: a Sub-Store
+// share link could not be copied at all. The host holds the permission and does
+// the copy, so what has to hold is that the host stays in charge of it and that
+// the frame always learns the outcome. The plugin's manual-copy fallback is only
+// reachable from a "no", so a dropped answer is a silently broken feature.
+
+test("a clipboard request reaches the host handler and is acknowledged", async () => {
+  const copied: string[] = [];
+  const { session, source, posted } = makeSession({
+    clipboard: async (text) => { copied.push(text); return true; },
+  });
+
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "https://example.test/sub" },
+  });
+
+  assert.deepEqual(copied, ["https://example.test/sub"]);
+  assert.deepEqual(posted.at(-1), {
+    type: "lattice.host.clipboard", nonce: "nonce-123", id: "c1", ok: true,
+  });
+});
+
+test("a host that grants no clipboard still answers, so the plugin can fall back", async () => {
+  const { session, source, posted } = makeSession();
+
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "value" },
+  });
+
+  assert.deepEqual(posted.at(-1), {
+    type: "lattice.host.clipboard", nonce: "nonce-123", id: "c1", ok: false, code: "clipboard_refused",
+  });
+});
+
+test("a copy the browser refuses is reported as a refusal, not a success", async () => {
+  const { session, source, posted } = makeSession({ clipboard: async () => false });
+
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "value" },
+  });
+
+  assert.equal(posted.at(-1)?.ok, false);
+  assert.equal(posted.at(-1)?.code, "clipboard_refused");
+});
+
+test("a clipboard handler that throws is a refusal, not an unhandled rejection", async () => {
+  const { session, source, posted } = makeSession({
+    clipboard: async () => { throw new Error("boom"); },
+  });
+
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "value" },
+  });
+
+  assert.equal(posted.at(-1)?.ok, false);
+  assert.equal(posted.at(-1)?.code, "clipboard_refused");
+});
+
+test("clipboard text is bounded, and the frame is told which limit it hit", async () => {
+  const calls: string[] = [];
+  const { session, source, posted } = makeSession({
+    maxClipboardBytes: 16,
+    clipboard: async (text) => { calls.push(text); return true; },
+  });
+
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "x".repeat(17) },
+  });
+
+  assert.deepEqual(calls, [], "an oversized copy never reaches the host clipboard");
+  assert.equal(posted.at(-1)?.code, "text_too_large");
+});
+
+test("clipboard size is measured in bytes, not code units", async () => {
+  const calls: string[] = [];
+  const { session, source, posted } = makeSession({
+    maxClipboardBytes: 8,
+    clipboard: async (text) => { calls.push(text); return true; },
+  });
+
+  // Nine bytes of UTF-8, three characters. A length check would have let it through.
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "字字字" },
+  });
+
+  assert.deepEqual(calls, []);
+  assert.equal(posted.at(-1)?.code, "text_too_large");
+});
+
+test("a malformed clipboard request is refused without touching the clipboard", async () => {
+  const calls: string[] = [];
+  const { session, source, posted } = makeSession({
+    clipboard: async (text) => { calls.push(text); return true; },
+  });
+
+  // No text.
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1" },
+  });
+  assert.equal(posted.at(-1)?.code, "invalid_request");
+
+  // Text that is not a string. A frame must not be able to hand the host an object.
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c2", text: { toString: () => "x" } },
+  });
+  assert.equal(posted.at(-1)?.code, "invalid_request");
+
+  assert.deepEqual(calls, []);
+});
+
+test("a clipboard request with no id is dropped silently, having nobody to answer", async () => {
+  const { session, source, posted } = makeSession({ clipboard: async () => true });
+
+  await session.handle({
+    source,
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", text: "value" },
+  });
+
+  assert.deepEqual(posted, []);
+});
+
+test("clipboard requests are rate limited, and the refusal is still answered", async () => {
+  const copied: string[] = [];
+  const { session, source, posted } = makeSession({
+    maxClipboardPerMinute: 2,
+    clipboard: async (text) => { copied.push(text); return true; },
+  });
+
+  for (let i = 0; i < 4; i += 1) {
+    await session.handle({
+      source,
+      data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: `c${i}`, text: `v${i}` },
+    });
+  }
+
+  assert.deepEqual(copied, ["v0", "v1"], "copies past the ceiling never reach the clipboard");
+  // Unlike resize, the frame is told: it needs the "no" to offer a manual copy.
+  assert.equal(posted.at(-1)?.code, "rate_limited");
+  assert.equal(posted.length, 4, "every request got exactly one answer");
+});
+
+test("a clipboard request from another window or another nonce is ignored", async () => {
+  const copied: string[] = [];
+  const { session, posted } = makeSession({
+    clipboard: async (text) => { copied.push(text); return true; },
+  });
+
+  await session.handle({
+    source: {},
+    data: { type: "lattice.plugin.clipboard", nonce: "nonce-123", id: "c1", text: "value" },
+  });
+  await session.handle({
+    source: {},
+    data: { type: "lattice.plugin.clipboard", nonce: "wrong", id: "c2", text: "value" },
+  });
+
+  assert.deepEqual(copied, []);
+  assert.deepEqual(posted, []);
+});
