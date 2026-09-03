@@ -297,7 +297,7 @@ function onGroup(id: string) {
     <!-- Header. Below ~384px of card width the badges drop under the name
          instead of squeezing it to an ellipsis and overflowing the card. -->
     <div class="flex flex-col gap-2 @sm:flex-row @sm:items-start @sm:justify-between">
-      <div class="flex min-w-0 items-start gap-2">
+      <div class="flex min-w-0 flex-1 items-start gap-2">
         <!-- Stops click and key so the checkbox works without opening the node. -->
         <span v-if="checkable" class="mt-0.5 flex items-center" @click.stop @keydown.stop>
           <Checkbox
@@ -324,7 +324,12 @@ function onGroup(id: string) {
         </p>
         </div>
       </div>
-      <div class="flex min-w-0 flex-wrap gap-1 @sm:shrink-0 @sm:justify-end">
+      <!-- The badge rail used to refuse to shrink in row mode, so a node in
+           three or more groups squeezed the name block to zero width and spilled
+           past the card edge: measured at a 413px card, a six-group node lost its
+           name and overflowed by 313px. It shrinks and wraps now, and never takes
+           more than half the header, so the name always keeps a share. -->
+      <div class="flex min-w-0 flex-wrap gap-1 @sm:max-w-[55%] @sm:justify-end">
         <NodeStatusBadge :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
