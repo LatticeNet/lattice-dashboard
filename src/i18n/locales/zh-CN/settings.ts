@@ -71,7 +71,7 @@ export default {
         actor: "主体",
         unknown: "未知",
         scopes: "权限范围",
-        superuserHelp: "* 是首个管理员的超级用户权限。它包含所有 dashboard 与 API 权限，包括 worker:deploy。",
+        superuserHelp: "* 是首个管理员的超级用户权限。它包含所有 dashboard 与 API 权限，包括 node:admin。",
         scopedHelp: "这次登录只持有下面这些权限范围。侧边栏少了哪个页面，通常就是这里缺少它需要的权限。",
         noScopes: "无权限范围",
       },

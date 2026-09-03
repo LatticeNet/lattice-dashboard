@@ -80,6 +80,7 @@ import type {
   StorageAccess,
   StorageBinding,
   StorageBucket,
+  StorageBucketInventoryEntry,
   StorageKind,
   StorageTokenCreateResponse,
   StorageTokenView,
@@ -113,8 +114,6 @@ import type {
   WebAuthnCredentialsResponse,
   WebAuthnLoginBeginResponse,
   WebAuthnRegisterBeginResponse,
-  WorkerRunResponse,
-  WorkerScript,
 } from "./types";
 
 export * from "./types";
@@ -582,14 +581,6 @@ export const api = {
     ) => http.post<T>("/api/plugins/call", { id, service, method, payload }, { signal }),
   },
 
-  workers: {
-    list: (opts?: RequestOptions) => http.get<WorkerScript[]>("/api/workers", undefined, opts),
-    deploy: (input: { name: string; source: string; capabilities?: string[]; public?: boolean }) =>
-      http.post<WorkerScript>("/api/workers", input),
-    run: (worker_id: string, path: string) =>
-      http.post<WorkerRunResponse>("/api/workers/run", { worker_id, path }),
-  },
-
   kv: {
     list: (bucket?: string, opts?: RequestOptions) =>
       http.get<KVEntry[]>("/api/kv", bucket ? { bucket } : undefined, opts),
@@ -605,8 +596,15 @@ export const api = {
   },
 
   storage: {
-    buckets: (kind: StorageKind) =>
-      http.get<{ buckets: StorageBucket[] }>("/api/storage/buckets", { kind }),
+    // `inventory` is optional so the console still renders against a server
+    // that predates bucket enumeration; the store page falls back to
+    // projecting the registered records when it is absent.
+    buckets: (kind: StorageKind, opts?: RequestOptions) =>
+      http.get<{ buckets: StorageBucket[]; inventory?: StorageBucketInventoryEntry[] }>(
+        "/api/storage/buckets",
+        { kind },
+        opts,
+      ),
     upsertBucket: (
       kind: StorageKind,
       input: {

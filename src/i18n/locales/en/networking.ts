@@ -442,7 +442,19 @@ export default {
       apexRecord: "{count} geo-aware apex record",
       emptyTitle: "No geo-routings configured",
       emptyDescription:
-        "Create a geo-aware DNS apex to steer clients to the nearest healthy node. This list also shows only what your token can read.",
+        "A geo-routing renders a CoreDNS zone that answers one DNS apex with the nearest healthy node. This page renders that config and checksums it; nothing here reaches a node, and the list shows only what your token can read.",
+      prereqNodesTitle: "Enrol the nodes that will answer",
+      prereqNodesDetail:
+        "Each participating node needs a running agent reporting it online with a public IP. A node missing either is dropped from the render with a warning, and a routing whose nodes are all missing fails to render at all.",
+      prereqGeoTitle: "Give those nodes coordinates",
+      prereqGeoDetail:
+        "The geoip strategy steers by the latitude and longitude set on each node, which needs node:admin to write. With no coordinates on any participating node the render falls back to all-healthy round-robin and says so in its warnings.",
+      prereqDnsNodeTitle: "Name an authoritative DNS node",
+      prereqDnsNodeDetail:
+        "The node that serves the rendered zone. It is stored as given and never checked against a DNS deployment, so it has to be a node you know runs self-host DNS.",
+      prereqDatabaseTitle: "Put a GeoLite2 database on that node",
+      prereqDatabaseDetail:
+        "The rendered config points CoreDNS at an mmdb path, /etc/coredns/GeoLite2-City.mmdb unless you set another. Nothing here checks the file exists; a wrong path fails when CoreDNS loads it.",
       colName: "Name",
       colHostname: "Hostname",
       colStrategy: "Strategy",
@@ -675,7 +687,6 @@ export default {
       clipboardUnavailable: "The clipboard is unavailable, select the URL and copy it manually.",
       alsoPublishes: "This server also publishes",
       staticLink: "Static objects",
-      workersLink: "Worker routes",
     },
 
     tunnels: {
@@ -688,7 +699,20 @@ export default {
       tunnelCountOne: "{count} tunnel",
       credentialsNote: "credentials are node-local and never stored by the server",
       emptyTitle: "No tunnels configured",
-      emptyDescription: "Create a cloudflared tunnel to expose node-local services.",
+      emptyDescription:
+        "A tunnel maps a public hostname to a service that only listens on one node, through cloudflared. This server stores the topology and renders the config; the node runs it.",
+      prereqCloudflareTitle: "Create the tunnel at Cloudflare",
+      prereqCloudflareDetail:
+        "This server never calls the Cloudflare API. Create the tunnel there and put its credentials JSON on the node, at /etc/cloudflared/<tunnel id>.json unless you set another path. Nothing here checks that file exists; a missing one fails when the config is applied.",
+      prereqNodeTitle: "Bind it to a node",
+      prereqNodeDetail:
+        "The node that runs cloudflared and can reach the service. The node id is not checked against the fleet at save time, so a profile bound to a node that does not exist saves and plans cleanly and only fails on dispatch.",
+      prereqIngressTitle: "Add at least one ingress rule",
+      prereqIngressDetail:
+        "A hostname carrying at least one dot, and a service using http, https, ssh, rdp, tcp or unix. A catch-all 404 rule is appended for you.",
+      prereqApproveTitle: "Plan it, then approve the plan",
+      prereqApproveDetail:
+        "Saving changes nothing on the node. Plan renders config.yml and opens a pending approval; approving it writes /etc/cloudflared/config.yml on that node, validates the ingress, and reloads cloudflared.",
       colName: "Name",
       colNode: "Node",
       colTunnelId: "Tunnel ID",
