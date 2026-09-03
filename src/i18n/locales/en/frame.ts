@@ -221,6 +221,7 @@ export default {
       "platform-store": "Store",
       "platform-evidence": "Evidence",
       "platform-notifications": "Notifications",
+      "platform-webhooks": "Webhooks",
       "platform-agent-updates": "Agent Updates",
       "settings-security": "Security & 2FA",
       "settings-capabilities": "Capability Gates",

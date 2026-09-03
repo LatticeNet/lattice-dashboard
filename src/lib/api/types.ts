@@ -1602,6 +1602,72 @@ export interface NotifyRuleView {
   updated_at: string;
 }
 
+/**
+ * An inbound webhook: an operator-authored entry point that turns an HTTP POST
+ * from an outside caller into a notification event the existing rules route.
+ *
+ * There is no `secret` field here on purpose. The server stores a one-way hash,
+ * so the plaintext exists only in the response to create and to rotate
+ * (NotifyWebhookSecretResponse). A secret the operator loses is rotated, never
+ * recovered, which is the same contract as an access token.
+ */
+export interface NotifyWebhookView {
+  id: string;
+  name: string;
+  event_type: string;
+  title_template: string;
+  body_template?: string;
+  enabled: boolean;
+  /** Server-relative endpoint; join it to the current origin to get the URL. */
+  path: string;
+  last_used_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Create when `id` is absent; edit when present. An edit never rotates the secret. */
+export interface NotifyWebhookUpsertRequest {
+  id?: string;
+  name: string;
+  event_type: string;
+  title_template: string;
+  body_template?: string;
+  enabled?: boolean;
+}
+
+/** The one and only look at a plaintext secret, from create and from rotate. */
+export interface NotifyWebhookSecretResponse extends NotifyWebhookView {
+  secret: string;
+}
+
+export type NotifyWebhookOutcome =
+  | "accepted"
+  | "no_route"
+  | "rejected"
+  | "failed"
+  | "partial";
+
+/**
+ * One attempt against one webhook. The server keeps a bounded ring per webhook;
+ * the durable security record is the audit stream, not this.
+ */
+export interface NotifyWebhookDelivery {
+  id: string;
+  webhook_id: string;
+  event_type?: string;
+  outcome: NotifyWebhookOutcome | string;
+  reason?: string;
+  title?: string;
+  body?: string;
+  source_ip?: string;
+  fields: number;
+  bytes: number;
+  channels: number;
+  delivered: number;
+  test?: boolean;
+  created_at: string;
+}
+
 export interface NotifyRuleUpsertRequest {
   id?: string;
   name: string;
