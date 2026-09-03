@@ -1662,10 +1662,22 @@ function openTerminal(node: Node) {
                 v-show="!collapsed.has(group.key)"
                 :class="cn(groupBy !== 'none' && 'mt-3')"
               >
-                <div v-if="viewMode === 'card'" class="grid gap-3 xl:grid-cols-2">
+                <!-- The card grid stopped at two columns, so on a wide screen each card
+                     was half the viewport and read as oversized. The column count follows
+                     the space the grid actually has rather than the viewport, because the
+                     sidebar is resizable from 224 to 360 and every fixed breakpoint is
+                     wrong for some width of it: measured, a 1560px step gave a 405px card
+                     at a 224 sidebar and a 373px card at 360. 410px is where NodeCard's own
+                     container query stacks its header, and a card below it gets taller as
+                     it gets narrower. min() keeps a single column intact below 410. -->
+                <div
+                  v-if="viewMode === 'card'"
+                  class="grid grid-cols-[repeat(auto-fill,minmax(min(410px,100%),1fr))] gap-3"
+                >
                 <NodeCard
                   v-for="node in group.nodes"
                   :key="node.id"
+                  compact
                   :node="node"
                   :groups="nodeGroups(node)"
                   show-sparkline

@@ -22,7 +22,8 @@
  * Emits `select` (header / name activated) and `action` (a footer action button)
  * so call sites keep ownership of navigation, dialogs, and mutations.
  */
-import { computed, type HTMLAttributes } from "vue";
+import { computed, ref, type HTMLAttributes } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   Activity,
   ArrowDown,
@@ -185,12 +186,45 @@ const statusTitle = computed(() => nodeStatusReason(props.node));
  * and its footer says when the last beat arrived.
  */
 const freshness = computed(() => metricFreshness(props.node, !!props.node.metrics));
+const { t } = useI18n();
+
 const noSample = computed(() => freshness.value === "none");
 
-/** First two tags only. Keeps the header from wrapping on dense grids. */
-const visibleTags = computed(() =>
-  [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)).slice(0, 2),
-);
+/** The header shows at most two of each badge kind and counts the rest, the
+ *  same cap and the same +N the table uses. This card used to drop the extra
+ *  tags with no sign they existed, and group chips were not capped at all: a
+ *  node in six groups gave a five-row rail and a card 80px taller than the two
+ *  beside it. The overflow badge carries the full list in its title, so the
+ *  cap hides nothing. */
+const BADGE_CAP = 2;
+
+/** The hostname line truncates once the name block narrows, and had no title,
+ *  so the dropped tail was unrecoverable. */
+const hostFactsLine = computed(() => {
+  const f = props.node.host_facts;
+  if (!f) return "";
+  return [f.hostname || props.node.id, f.os, f.arch].filter(Boolean).join(" · ");
+});
+
+const sortedTags = computed(() => [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)));
+const visibleTags = computed(() => (badgesExpanded.value ? sortedTags.value : sortedTags.value.slice(0, BADGE_CAP)));
+const overflowTags = computed(() => sortedTags.value.slice(BADGE_CAP));
+const hiddenTags = computed(() => (badgesExpanded.value ? [] : overflowTags.value));
+
+const visibleGroups = computed(() => (badgesExpanded.value ? props.groups : props.groups.slice(0, BADGE_CAP)));
+/** What the cap holds back, whether or not it is currently revealed. The
+ *  button stays mounted and toggles: unmounting it on expand left no way to
+ *  collapse, made aria-expanded="true" unobservable because the element
+ *  carrying it disappeared in the same tick, dropped focus to the body, and
+ *  left that one card permanently taller than its neighbours. */
+const overflowGroups = computed(() => props.groups.slice(BADGE_CAP));
+const hiddenGroups = computed(() => (badgesExpanded.value ? [] : overflowGroups.value));
+
+/** The overflow badges were spans carrying their contents only in a title, so
+ *  a keyboard or screen-reader user had no route to the hidden names, and a
+ *  hidden group lost the chip that navigated to it. They are buttons that
+ *  reveal the rest in place, so nothing is reachable by pointer alone. */
+const badgesExpanded = ref(false);
 
 /* ---------------------------------------------------------------- */
 /* Sparkline. Tiny inline SVG from the shared client-side ring.     */
@@ -253,8 +287,14 @@ const sparkClass = computed(() => (isNetMetric.value ? "text-primary" : meta.val
  * Enter or Space opens the node, but only when the card itself has focus, so
  * keyboard use of the selection checkbox does not also navigate away.
  */
+// The .prevent modifiers this used to carry ran before the target guard
+// below, so every Enter and Space bubbling out of the card had its default
+// cancelled: a focused group chip, or the overflow disclosure, could be
+// reached by Tab and then did nothing when pressed. preventDefault belongs
+// after the guard, where it applies to the card itself and nothing inside it.
 function onCardKey(event: KeyboardEvent): void {
   if (event.target !== event.currentTarget) return;
+  event.preventDefault();
   onSelect();
 }
 
@@ -291,13 +331,13 @@ function onGroup(id: string) {
     :aria-label="selectable ? node.name || node.id : undefined"
     :aria-selected="checkable ? checked : undefined"
     @click="selectable && onSelect()"
-    @keydown.enter.prevent="selectable && onCardKey($event)"
-    @keydown.space.prevent="selectable && onCardKey($event)"
+    @keydown.enter="selectable && onCardKey($event)"
+    @keydown.space="selectable && onCardKey($event)"
   >
     <!-- Header. Below ~384px of card width the badges drop under the name
          instead of squeezing it to an ellipsis and overflowing the card. -->
     <div class="flex flex-col gap-2 @sm:flex-row @sm:items-start @sm:justify-between">
-      <div class="flex min-w-0 items-start gap-2">
+      <div class="flex min-w-0 flex-1 items-start gap-2">
         <!-- Stops click and key so the checkbox works without opening the node. -->
         <span v-if="checkable" class="mt-0.5 flex items-center" @click.stop @keydown.stop>
           <Checkbox
@@ -317,6 +357,7 @@ function onGroup(id: string) {
         <p
           v-if="node.host_facts"
           class="mt-1 truncate font-mono text-xs text-muted-foreground tabular"
+          :title="hostFactsLine"
         >
           {{ node.host_facts.hostname || node.id }}
           <template v-if="node.host_facts.os"> · {{ node.host_facts.os }}</template>
@@ -324,12 +365,34 @@ function onGroup(id: string) {
         </p>
         </div>
       </div>
-      <div class="flex min-w-0 flex-wrap gap-1 @sm:shrink-0 @sm:justify-end">
+      <!-- The badge rail used to refuse to shrink in row mode, so a node in
+           three or more groups squeezed the name block to zero width and spilled
+           past the card edge: measured at a 413px card, a six-group node lost its
+           name and overflowed by 313px. It shrinks and wraps now, and never takes
+           more than half the header, so the name always keeps a share. -->
+      <div class="flex min-w-0 flex-wrap gap-1 @sm:max-w-[55%] @sm:justify-end">
         <NodeStatusBadge :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
-        <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
+        <Badge v-for="tag in visibleTags" :key="tag" variant="outline" class="max-w-full shrink truncate">{{ tag }}</Badge>
+        <!-- Styled as the kind it counts, so two overflow badges on a wrapped
+             rail cannot be mistaken for each other. -->
         <button
-          v-for="g in groups"
+          v-if="overflowTags.length"
+          type="button"
+          class="shrink-0 rounded-md border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          :aria-label="
+            badgesExpanded
+              ? t('fleet.nodes.card.showFewer')
+              : t('fleet.nodes.card.showMoreTags', { names: overflowTags.join(', ') })
+          "
+          :aria-expanded="badgesExpanded"
+          :title="overflowTags.join(', ')"
+          @click.stop="badgesExpanded = !badgesExpanded"
+        >
+          {{ badgesExpanded ? "&minus;" : `+${overflowTags.length}` }}
+        </button>
+        <button
+          v-for="g in visibleGroups"
           :key="g.id"
           type="button"
           :class="
@@ -345,6 +408,21 @@ function onGroup(id: string) {
           <span :class="cn('size-1.5 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
           <span class="truncate">{{ g.name }}</span>
           <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+        </button>
+        <button
+          v-if="overflowGroups.length"
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          :aria-label="
+            badgesExpanded
+              ? t('fleet.nodes.card.showFewer')
+              : t('fleet.nodes.card.showMoreGroups', { names: overflowGroups.map((g) => g.name).join(', ') })
+          "
+          :aria-expanded="badgesExpanded"
+          :title="overflowGroups.map((g) => g.name).join(', ')"
+          @click.stop="badgesExpanded = !badgesExpanded"
+        >
+          {{ badgesExpanded ? "&minus;" : `+${overflowGroups.length}` }}
         </button>
       </div>
     </div>
