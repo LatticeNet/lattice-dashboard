@@ -1662,10 +1662,18 @@ function openTerminal(node: Node) {
                 v-show="!collapsed.has(group.key)"
                 :class="cn(groupBy !== 'none' && 'mt-3')"
               >
-                <div v-if="viewMode === 'card'" class="grid gap-3 xl:grid-cols-2">
+                <!-- The card grid stopped at two columns, so on a wide screen each card was
+                     half the viewport and the view read as oversized. Cards carry a fixed
+                     amount of content, so the column count follows the width and the card
+                     renders in its compact density. -->
+                <div
+                  v-if="viewMode === 'card'"
+                  class="grid gap-3 md:grid-cols-2 xl:grid-cols-3 [@media(min-width:1800px)]:grid-cols-4"
+                >
                 <NodeCard
                   v-for="node in group.nodes"
                   :key="node.id"
+                  compact
                   :node="node"
                   :groups="nodeGroups(node)"
                   show-sparkline
