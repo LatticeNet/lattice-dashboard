@@ -141,6 +141,10 @@ export default {
         card: "Cards",
         list: "List",
       },
+      card: {
+        showMoreTags: "Show {names}",
+        showMoreGroups: "Show groups {names}",
+      },
       table: {
         colName: "Node",
         colStatus: "Status",

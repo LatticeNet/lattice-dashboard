@@ -22,7 +22,8 @@
  * Emits `select` (header / name activated) and `action` (a footer action button)
  * so call sites keep ownership of navigation, dialogs, and mutations.
  */
-import { computed, type HTMLAttributes } from "vue";
+import { computed, ref, type HTMLAttributes } from "vue";
+import { useI18n } from "vue-i18n";
 import {
   Activity,
   ArrowDown,
@@ -185,6 +186,8 @@ const statusTitle = computed(() => nodeStatusReason(props.node));
  * and its footer says when the last beat arrived.
  */
 const freshness = computed(() => metricFreshness(props.node, !!props.node.metrics));
+const { t } = useI18n();
+
 const noSample = computed(() => freshness.value === "none");
 
 /** The header shows at most two of each badge kind and counts the rest, the
@@ -204,11 +207,17 @@ const hostFactsLine = computed(() => {
 });
 
 const sortedTags = computed(() => [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)));
-const visibleTags = computed(() => sortedTags.value.slice(0, BADGE_CAP));
-const hiddenTags = computed(() => sortedTags.value.slice(BADGE_CAP));
+const visibleTags = computed(() => (badgesExpanded.value ? sortedTags.value : sortedTags.value.slice(0, BADGE_CAP)));
+const hiddenTags = computed(() => (badgesExpanded.value ? [] : sortedTags.value.slice(BADGE_CAP)));
 
-const visibleGroups = computed(() => props.groups.slice(0, BADGE_CAP));
-const hiddenGroups = computed(() => props.groups.slice(BADGE_CAP));
+const visibleGroups = computed(() => (badgesExpanded.value ? props.groups : props.groups.slice(0, BADGE_CAP)));
+const hiddenGroups = computed(() => (badgesExpanded.value ? [] : props.groups.slice(BADGE_CAP)));
+
+/** The overflow badges were spans carrying their contents only in a title, so
+ *  a keyboard or screen-reader user had no route to the hidden names, and a
+ *  hidden group lost the chip that navigated to it. They are buttons that
+ *  reveal the rest in place, so nothing is reachable by pointer alone. */
+const badgesExpanded = ref(false);
 
 /* ---------------------------------------------------------------- */
 /* Sparkline. Tiny inline SVG from the shared client-side ring.     */
@@ -352,14 +361,19 @@ function onGroup(id: string) {
         <NodeStatusBadge :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in visibleTags" :key="tag" variant="outline" class="max-w-full shrink truncate">{{ tag }}</Badge>
-        <Badge
+        <!-- Styled as the kind it counts, so two overflow badges on a wrapped
+             rail cannot be mistaken for each other. -->
+        <button
           v-if="hiddenTags.length"
-          variant="secondary"
-          class="shrink-0"
+          type="button"
+          class="shrink-0 rounded-md border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          :aria-label="t('fleet.nodes.card.showMoreTags', { names: hiddenTags.join(', ') })"
+          :aria-expanded="badgesExpanded"
           :title="hiddenTags.join(', ')"
+          @click.stop="badgesExpanded = true"
         >
           +{{ hiddenTags.length }}
-        </Badge>
+        </button>
         <button
           v-for="g in visibleGroups"
           :key="g.id"
@@ -378,14 +392,17 @@ function onGroup(id: string) {
           <span class="truncate">{{ g.name }}</span>
           <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
         </button>
-        <Badge
+        <button
           v-if="hiddenGroups.length"
-          variant="secondary"
-          class="shrink-0"
+          type="button"
+          class="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          :aria-label="t('fleet.nodes.card.showMoreGroups', { names: hiddenGroups.map((g) => g.name).join(', ') })"
+          :aria-expanded="badgesExpanded"
           :title="hiddenGroups.map((g) => g.name).join(', ')"
+          @click.stop="badgesExpanded = true"
         >
           +{{ hiddenGroups.length }}
-        </Badge>
+        </button>
       </div>
     </div>
 
