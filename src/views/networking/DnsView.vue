@@ -20,7 +20,9 @@ import {
   type DNSDeploymentView,
   type DNSRecord,
   type DNSZone,
+  type GuardLintFinding,
 } from "@/lib/api";
+import { ApiError } from "@/lib/api/client";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -428,18 +430,60 @@ const planning = ref<string | undefined>(undefined);
 const planApproval = ref<ApprovalView | undefined>(undefined);
 const planSha = ref("");
 
-async function plan(dep: DNSDeploymentView) {
+/** Lint findings the server returned with the plan, blocking ones first. */
+const planFindings = ref<GuardLintFinding[]>([]);
+
+/**
+ * A DNS plan replaces the node's whole lattice_guard input chain, and that
+ * chain is default-drop. When the server can see that the composed ruleset
+ * would leave no way back into the node it refuses the plan with 409 and the
+ * findings, and the operator has to accept the risk on purpose. This holds the
+ * refused deployment until they do or back out.
+ */
+const blockedDep = ref<DNSDeploymentView | undefined>(undefined);
+const blockedFindings = ref<GuardLintFinding[]>([]);
+const acceptLockoutRisk = ref(false);
+
+/** Blocking findings first: they decide whether the plan can be filed at all. */
+function sortFindings(findings: GuardLintFinding[]): GuardLintFinding[] {
+  const rank = (f: GuardLintFinding) => (f.severity === "block" ? 0 : f.severity === "warn" ? 1 : 2);
+  return [...findings].sort((a, b) => rank(a) - rank(b) || a.code.localeCompare(b.code));
+}
+
+async function plan(dep: DNSDeploymentView, acceptRisk = false) {
   if (!canPlan.value) return;
   planning.value = dep.id;
   try {
-    const approval = await api.dns.plan(dep.id);
-    planApproval.value = approval;
-    planSha.value = await planDigest.digestFor(approval);
+    const res = await api.dns.plan(dep.id, acceptRisk);
+    planApproval.value = res.approval;
+    planFindings.value = sortFindings(res.findings ?? []);
+    planSha.value = await planDigest.digestFor(res.approval);
+    blockedDep.value = undefined;
+    blockedFindings.value = [];
+    acceptLockoutRisk.value = false;
     toast.success(t("networking.shared.toastPlanCreated"));
   } catch (error) {
+    const findings =
+      error instanceof ApiError && error.status === 409
+        ? ((error.body as { findings?: GuardLintFinding[] } | undefined)?.findings ?? [])
+        : [];
+    if (findings.length) {
+      blockedDep.value = dep;
+      blockedFindings.value = sortFindings(findings);
+      acceptLockoutRisk.value = false;
+      return;
+    }
     toast.error(error instanceof Error ? error.message : t("networking.shared.toastPlanFailed"));
   } finally {
     planning.value = undefined;
+  }
+}
+
+function closeBlocked(open: boolean) {
+  if (!open) {
+    blockedDep.value = undefined;
+    blockedFindings.value = [];
+    acceptLockoutRisk.value = false;
   }
 }
 
@@ -457,6 +501,7 @@ function closePlan(open: boolean) {
   if (!open) {
     planApproval.value = undefined;
     planSha.value = "";
+    planFindings.value = [];
   }
 }
 </script>
@@ -873,6 +918,87 @@ function closePlan(open: boolean) {
       :approvals-label="$t('networking.shared.goToApprovals')"
       approvals-to="/approvals"
       @update:open="closePlan"
-    />
+    >
+      <!--
+        The badges slot carries the findings too. A filed plan can still hold
+        warnings (an assumed management port, an unverifiable apply), and the
+        reviewer needs them next to the plan text rather than lost in a toast.
+      -->
+      <template #badges>
+        <div class="flex w-full flex-col gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <Badge v-for="(badge, index) in planBadges" :key="index" :variant="badge.variant">
+              {{ badge.label }}
+            </Badge>
+          </div>
+          <ul v-if="planFindings.length" class="space-y-1">
+            <li v-for="finding in planFindings" :key="finding.code" class="flex items-start gap-2 text-xs">
+              <Badge class="mt-px shrink-0" :variant="finding.severity === 'block' ? 'destructive' : 'warning'">
+                {{ finding.severity }}
+              </Badge>
+              <span class="min-w-0">
+                <code class="font-mono">{{ finding.code }}</code>
+                <span class="ml-1 text-muted-foreground">{{ finding.message }}</span>
+              </span>
+            </li>
+          </ul>
+        </div>
+      </template>
+    </PlanReviewDialog>
+
+    <!--
+      Refused plan. The node-side apply cannot catch this class on its own: its
+      post-commit selfcheck is an outbound call, which a default-drop input
+      ruleset still lets through. So the refusal is the last line, and getting
+      past it is a deliberate, audited act.
+    -->
+    <Dialog :open="!!blockedDep" @update:open="closeBlocked">
+      <DialogScrollContent class="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.dns.lockout.title') }}</DialogTitle>
+          <DialogDescription>
+            {{ $t('networking.dns.lockout.description', { name: blockedDep?.name ?? '', node: blockedDep?.node_name || blockedDep?.node_id || '' }) }}
+          </DialogDescription>
+        </DialogHeader>
+
+        <ul class="space-y-2">
+          <li v-for="finding in blockedFindings" :key="finding.code" class="flex items-start gap-2 text-sm">
+            <Badge class="mt-px shrink-0" :variant="finding.severity === 'block' ? 'destructive' : 'warning'">
+              {{ finding.severity }}
+            </Badge>
+            <span class="min-w-0">
+              <code class="font-mono text-xs">{{ finding.code }}</code>
+              <span class="ml-1 text-muted-foreground">{{ finding.message }}</span>
+            </span>
+          </li>
+        </ul>
+
+        <p class="text-sm text-muted-foreground">{{ $t('networking.dns.lockout.remedy') }}</p>
+
+        <label class="flex items-start gap-3 text-sm">
+          <Checkbox
+            class="mt-0.5"
+            :model-value="acceptLockoutRisk"
+            @update:model-value="(v) => (acceptLockoutRisk = v === true)"
+          />
+          <span class="space-y-1">
+            <span class="block font-medium">{{ $t('networking.dns.lockout.accept') }}</span>
+            <span class="block text-muted-foreground">{{ $t('networking.dns.lockout.acceptHint') }}</span>
+          </span>
+        </label>
+
+        <DialogFooter>
+          <Button variant="outline" @click="closeBlocked(false)">{{ $t('common.actions.cancel') }}</Button>
+          <Button
+            variant="destructive"
+            :disabled="!acceptLockoutRisk || planning === blockedDep?.id"
+            @click="blockedDep && plan(blockedDep, true)"
+          >
+            <RefreshCw v-if="planning === blockedDep?.id" class="size-4 animate-spin" aria-hidden="true" />
+            {{ $t('networking.dns.lockout.planAnyway') }}
+          </Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
   </div>
 </template>

@@ -371,6 +371,17 @@ export default {
       colCredential: "Credential",
       colPublished: "Last publish attempt",
       colActions: "Actions",
+      lockout: {
+        title: "This plan would cut off the node",
+        description:
+          "Planning {name} on {node} was refused. A DNS plan replaces that node's whole packet filter, and the new one drops everything it does not name.",
+        remedy:
+          "Give the node a Network Guard baseline that keeps its management port and existing services open, then plan again. The node cannot catch this itself: it checks its own health with an outbound call, which the new filter still allows.",
+        accept: "I accept the lockout risk",
+        acceptHint:
+          "Only if you have another way into this node. The override is recorded against your account.",
+        planAnyway: "Plan anyway",
+      },
       editTitle: "Edit deployment",
       newTitle: "New deployment",
       dialogDescription: "CoreDNS engine. A public hostname requires a Cloudflare credential.",
