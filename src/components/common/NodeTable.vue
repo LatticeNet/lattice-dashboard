@@ -460,19 +460,23 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         <!-- Net rx / tx -->
         <div
           v-if="show('network')"
-          class="space-y-0.5 text-xs text-muted-foreground tabular"
+          class="grid grid-cols-2 gap-x-2 text-xs text-muted-foreground tabular"
           :title="`RX total: ${formatBytes(node.metrics?.net_rx_bytes)}\nTX total: ${formatBytes(node.metrics?.net_tx_bytes)}`"
         >
-          <p class="inline-flex items-center gap-1">
-            <ArrowDown class="size-3 text-success" aria-hidden="true" />
+          <p class="flex items-center gap-1 whitespace-nowrap">
+            <ArrowDown class="size-3 shrink-0 text-success" aria-hidden="true" />
             <span>{{ formatBytesPerSec(node.metrics?.net_rx_speed) }}</span>
-            <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_rx_bytes) }})</span>
           </p>
-          <p class="inline-flex items-center gap-1">
-            <ArrowUp class="size-3 text-primary" aria-hidden="true" />
+          <p class="flex items-center gap-1 whitespace-nowrap">
+            <ArrowUp class="size-3 shrink-0 text-primary" aria-hidden="true" />
             <span>{{ formatBytesPerSec(node.metrics?.net_tx_speed) }}</span>
-            <span class="text-[10px] text-muted-foreground/80">({{ formatBytes(node.metrics?.net_tx_bytes) }})</span>
           </p>
+          <span class="whitespace-nowrap text-[10px] text-muted-foreground/80">{{
+            formatBytes(node.metrics?.net_rx_bytes)
+          }}</span>
+          <span class="whitespace-nowrap text-[10px] text-muted-foreground/80">{{
+            formatBytes(node.metrics?.net_tx_bytes)
+          }}</span>
         </div>
 
         <!-- Last seen -->
