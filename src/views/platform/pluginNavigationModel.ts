@@ -1,6 +1,8 @@
 /**
- * Plugin-frame navigation requests. The one host-side privilege a plugin
- * frame is granted beyond the bridge protocol.
+ * Plugin-frame navigation requests. One of the two host-side privileges a
+ * plugin frame is granted beyond the bridge protocol; the other is the
+ * clipboard write in pluginBridgeModel.ts, which follows the same shape (the
+ * frame asks, the host validates and acts).
  *
  * The hosted iframe runs with `connect-src 'none'`, so postMessage is its
  * only outbound channel. A plugin that wants to send the operator somewhere
