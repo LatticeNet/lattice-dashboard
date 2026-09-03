@@ -566,6 +566,50 @@ export interface GuardLintFinding {
   message: string;
 }
 
+/**
+ * What the control plane knows about a node's knock sequence, without the
+ * sequence. Safe to hold in the page and safe for an agent to read.
+ */
+export interface SSHGuardKnockStateResponse {
+  ok: boolean;
+  node_id: string;
+  knowledge: "installed" | "planned" | "no_knock" | "unknown";
+  /** The server's own sentence for this state. Rendered verbatim. */
+  note: string;
+  /** Whether a reveal would return anything. */
+  revealable: boolean;
+  requires_step_up: boolean;
+  interactive_only: boolean;
+  approval_id?: string;
+  applied_at?: string;
+  /** Only on `installed`: whether a confirm approval also applied. */
+  confirmed?: boolean;
+  /** Present when the plan could not be parsed. */
+  plan_unreadable?: string;
+  port_count?: number;
+  seq_timeout_sec?: number;
+  open_for?: string;
+  ssh_port?: number;
+}
+
+/**
+ * The sequence itself. Returned once, to an interactive session that has
+ * satisfied a second factor, and never written anywhere but the response.
+ */
+export interface SSHGuardKnockRevealResponse {
+  ok: boolean;
+  node_id: string;
+  knowledge: string;
+  approval_id: string;
+  ports: number[];
+  seq_timeout_sec: number;
+  open_for: string;
+  ssh_port: number;
+  address: string;
+  /** The shell that opens the gate, identical to the arm plan's. */
+  command: string;
+}
+
 /** @deprecated Use GuardLintFinding; the findings are not SSH-specific. */
 export type SSHGuardFinding = GuardLintFinding;
 

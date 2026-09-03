@@ -152,8 +152,18 @@ export function buildFixtureNodes(): FixtureNode[] {
 
 const ARM_PLAN_HEADER = "# Lattice SSH Guard plan\n\nstage: arm\n";
 
+/**
+ * One host is hardened without port knocking, which is a legitimate profile
+ * (the gate narrows SSH to the management sources instead). It exists in the
+ * fixture so the page's "there is no sequence" state has somewhere to render:
+ * that state and "there is one and we will not show you" must never look the
+ * same, and only a fixture that contains both proves they do not.
+ */
+export const NO_KNOCK_NODE = "[cd]-BWH-DC9";
+
 function armPlan(n: FixtureNode): string {
-  return `${ARM_PLAN_HEADER}node_id: ${n.id}\nnode_name: ${n.name}\nssh_port: 58394\nkeep_legacy_port: true\nknock: true\ngated_ports: 22, 58394\nconfirm_window_sec: 900\n`;
+  const knock = n.name !== NO_KNOCK_NODE;
+  return `${ARM_PLAN_HEADER}node_id: ${n.id}\nnode_name: ${n.name}\nssh_port: 58394\nkeep_legacy_port: true\nknock: ${knock}\ngated_ports: 22, 58394\nconfirm_window_sec: 900\n`;
 }
 
 export interface FixtureState {
