@@ -16,6 +16,7 @@ import type {
   DDNSView,
   DNSDeploymentBody,
   DNSDeploymentView,
+  DNSPlanResponse,
   DNSPublishResponse,
   EnrollTokenResponse,
   GeoRouting,
@@ -78,6 +79,8 @@ import type {
   RenewalReminderFire,
   SSHGuardPlanRequest,
   SSHGuardPlanResponse,
+  SSHGuardKnockStateResponse,
+  SSHGuardKnockRevealResponse,
   SSOProvider,
   StaticObject,
   StepUpResponse,
@@ -520,7 +523,11 @@ export const api = {
     upsert: (input: DNSDeploymentBody) =>
       http.post<DNSDeploymentView>("/api/dns/deployments", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/dns/deployments/delete", { id }),
-    plan: (id: string) => http.post<ApprovalView>("/api/dns/plan", { id }),
+    // acceptLockoutRisk overrides a blocking lint finding. The server refuses
+    // the plan with 409 and the findings until it is set, and audits the
+    // override when it is.
+    plan: (id: string, acceptLockoutRisk = false) =>
+      http.post<DNSPlanResponse>("/api/dns/plan", { id, accept_lockout_risk: acceptLockoutRisk }),
     publish: (id: string) => http.post<DNSPublishResponse>("/api/dns/publish", { id }),
   },
 
@@ -541,6 +548,14 @@ export const api = {
       http.post<SSHGuardPlanResponse>("/api/sshguard/plan", input as unknown as Record<string, unknown>),
     confirm: (node_id: string) =>
       http.post<{ approval: ApprovalView }>("/api/sshguard/confirm", { node_id }),
+    // `knock` says whether the control plane knows a node's sequence and
+    // carries no ports, so the page can stop being silent about it without
+    // disclosing anything. `revealKnock` is the disclosure, and takes the same
+    // step-up grant the task-script reveal does.
+    knockState: (node_id: string) =>
+      http.post<SSHGuardKnockStateResponse>("/api/sshguard/knock", { node_id }),
+    revealKnock: (node_id: string, step_up_grant: string) =>
+      http.post<SSHGuardKnockRevealResponse>("/api/sshguard/knock/reveal", { node_id, step_up_grant }),
   },
 
   ddns: {
