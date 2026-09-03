@@ -171,7 +171,20 @@ const canSubmit = computed(
   () => !!formName.value.trim() && !formEventError.value && !!formTitle.value.trim() && !saving.value,
 );
 
+/**
+ * Once the create request is in flight the webhook is created whatever the
+ * operator does next, so every path that would close this dialog is refused
+ * until it settles. Otherwise Cancel dismisses the form, the request lands
+ * anyway, and the reveal-once dialog appears on top of whatever they moved on
+ * to, for something they believe they cancelled.
+ */
+function onFormOpenChange(next: boolean): void {
+  if (!next && saving.value) return;
+  formOpen.value = next;
+}
+
 function openCreate(): void {
+  if (!canSend.value) return;
   editingId.value = undefined;
   formName.value = "";
   formEvent.value = "";
@@ -182,6 +195,7 @@ function openCreate(): void {
 }
 
 function openEdit(hook: NotifyWebhookView): void {
+  if (!canSend.value) return;
   editingId.value = hook.id;
   formName.value = hook.name;
   formEvent.value = hook.event_type;
@@ -267,16 +281,25 @@ const confirmMatches = computed(
 );
 
 function openRotate(hook: NotifyWebhookView): void {
+  if (!canSend.value) return;
   rotateTarget.value = hook;
   confirmText.value = "";
   confirmError.value = false;
 }
 
 function openDelete(hook: NotifyWebhookView): void {
+  if (!canSend.value) return;
   deleteTarget.value = hook;
   confirmText.value = "";
   confirmError.value = false;
 }
+
+// The mismatch message must clear itself the moment the operator types the right
+// name; leaving it up until the next click reads as though the correct name is
+// also wrong.
+watch(confirmText, () => {
+  if (confirmMatches.value) confirmError.value = false;
+});
 
 function closeConfirm(): void {
   rotateTarget.value = undefined;
@@ -296,6 +319,7 @@ function runConfirm(): void {
 }
 
 async function doRotate(): Promise<void> {
+  if (!canSend.value) return;
   const target = rotateTarget.value;
   if (!target) return;
   pending.value = true;
@@ -313,6 +337,7 @@ async function doRotate(): Promise<void> {
 }
 
 async function doDelete(): Promise<void> {
+  if (!canSend.value) return;
   const target = deleteTarget.value;
   if (!target) return;
   pending.value = true;
@@ -337,6 +362,7 @@ const testing = ref(false);
 const testParsed = computed(() => parseFieldLines(testInput.value));
 
 function openTest(): void {
+  if (!canSend.value) return;
   if (!selected.value) return;
   // Prefill the fields the templates ask for, so the operator fills in values
   // rather than guessing the field names back out of the template.
@@ -345,6 +371,7 @@ function openTest(): void {
 }
 
 async function runTest(): Promise<void> {
+  if (!canSend.value) return;
   if (!selected.value || testParsed.value.error) return;
   testing.value = true;
   try {
@@ -366,7 +393,7 @@ async function runTest(): Promise<void> {
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-6 p-6">
     <PageHeader
       :title="$t('platform.webhooks.title')"
       :description="$t('platform.webhooks.description')"
@@ -529,6 +556,7 @@ async function runTest(): Promise<void> {
                 $t("platform.webhooks.fieldLimits", {
                   fields: WEBHOOK_LIMITS.maxFields,
                   chars: WEBHOOK_LIMITS.maxValueChars,
+                  bytes: WEBHOOK_LIMITS.maxBodyBytes,
                 })
               }}
             </p>
@@ -605,7 +633,7 @@ async function runTest(): Promise<void> {
     </div>
 
     <!-- Create and edit. -->
-    <Dialog v-model:open="formOpen">
+    <Dialog :open="formOpen" @update:open="onFormOpenChange">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{
@@ -682,9 +710,9 @@ async function runTest(): Promise<void> {
         </div>
 
         <DialogFooter>
-          <DialogClose as-child>
-            <Button variant="outline" type="button">{{ $t("common.actions.cancel") }}</Button>
-          </DialogClose>
+          <Button variant="outline" type="button" :disabled="saving" @click="onFormOpenChange(false)">
+            {{ $t("common.actions.cancel") }}
+          </Button>
           <Button type="button" :disabled="!canSubmit" @click="submitForm">
             {{ editingId ? $t("common.actions.save") : $t("platform.webhooks.createAction") }}
           </Button>
@@ -784,6 +812,7 @@ async function runTest(): Promise<void> {
       :confirm-label="rotateTarget ? $t('platform.webhooks.rotate') : $t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="pending"
+      :confirm-disabled="!confirmMatches"
       @update:open="(v: boolean) => { if (!v) closeConfirm(); }"
       @confirm="runConfirm"
     >

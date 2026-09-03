@@ -585,7 +585,7 @@ export default {
         "The URL is not a credential. Anyone holding it without the secret gets a refusal, a rate limit, and an audit record.",
       callerFields: "Fields the caller must send",
       noFields: "None. This webhook fires on an empty request body.",
-      fieldLimits: "At most {fields} fields, {chars} characters each.",
+      fieldLimits: "At most {fields} fields, {chars} characters each, {bytes} bytes of body.",
       example: "Request to send",
       sendTest: "Send test",
       rotate: "Rotate secret",
@@ -649,6 +649,7 @@ export default {
         error: {
           syntax: "Each line must be key=value.",
           key: "Field names may use letters, digits, underscore and hyphen only.",
+          keyLength: "A field name is at most 64 characters.",
           value: "A value is at most 512 characters.",
           count: "At most 16 fields.",
         },

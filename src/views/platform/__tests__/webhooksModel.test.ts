@@ -46,6 +46,21 @@ test("unknownTemplateVars flags placeholders neither the platform nor data suppl
   assert.deepEqual(unknownTemplateVars("{{dupe}} {{dupe}}", ""), ["dupe"]);
 });
 
+/**
+ * A malformed data placeholder was invisible to both functions: requiredDataFields
+ * dropped it for not matching the field charset, and unknownTemplateVars waved it
+ * through on the "data." prefix alone. The server leaves it standing in the
+ * delivered message, so it is exactly the typo the warning exists to catch.
+ */
+test("unknownTemplateVars flags a malformed data placeholder the caller cannot satisfy", () => {
+  for (const bad of ["{{data.}}", "{{data. }}", "{{data.$foo}}", "{{data.foo bar}}", "{{data.a.b}}"]) {
+    assert.deepEqual(requiredDataFields({ title_template: bad, body_template: "" }), [], `${bad} names no field`);
+    assert.ok(unknownTemplateVars(bad, "").length > 0, `${bad} must be flagged`);
+  }
+  // A well-formed one is still known, with or without surrounding whitespace.
+  assert.deepEqual(unknownTemplateVars("{{data.ok}} {{ data.also-ok }}", ""), []);
+});
+
 test("eventTypeError mirrors the server rules, including the wildcard refusal", () => {
   assert.equal(eventTypeError("backup.finished"), undefined);
   assert.equal(eventTypeError("  Backup.Finished  "), undefined);
@@ -66,6 +81,10 @@ test("parseFieldLines reads key=value lines and refuses what the server would", 
   assert.equal(parseFieldLines("novalue").error, "syntax");
   assert.equal(parseFieldLines("=novalue").error, "syntax");
   assert.equal(parseFieldLines("bad key=v").error, "key");
+  // The server caps a field name at 64 characters; the console used to accept
+  // longer ones and only find out from the 400.
+  assert.equal(parseFieldLines(`${"k".repeat(WEBHOOK_LIMITS.maxKeyChars)}=v`).error, undefined);
+  assert.equal(parseFieldLines(`${"k".repeat(WEBHOOK_LIMITS.maxKeyChars + 1)}=v`).error, "keyLength");
   assert.equal(parseFieldLines(`k=${"x".repeat(WEBHOOK_LIMITS.maxValueChars + 1)}`).error, "value");
   const tooMany = Array.from({ length: WEBHOOK_LIMITS.maxFields + 1 }, (_, i) => `k${i}=v`).join("\n");
   assert.equal(parseFieldLines(tooMany).error, "count");

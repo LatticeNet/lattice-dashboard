@@ -551,7 +551,7 @@ export default {
       urlIsNotSecret: "地址本身不是凭据。只拿到地址而没有密钥的调用会被拒绝、限流并记入审计。",
       callerFields: "调用方需要提供的字段",
       noFields: "无。该 Webhook 可以用空请求体触发。",
-      fieldLimits: "最多 {fields} 个字段，每个不超过 {chars} 个字符。",
+      fieldLimits: "最多 {fields} 个字段，每个不超过 {chars} 个字符，请求体不超过 {bytes} 字节。",
       example: "请求示例",
       sendTest: "发送测试",
       rotate: "轮换密钥",
@@ -608,6 +608,7 @@ export default {
         error: {
           syntax: "每行都必须是 key=value 的形式。",
           key: "字段名只能包含字母、数字、下划线和连字符。",
+          keyLength: "字段名最长 64 个字符。",
           value: "字段值最长 512 个字符。",
           count: "最多 16 个字段。",
         },

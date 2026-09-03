@@ -71,6 +71,9 @@ export function placeholderLabel(name: string): string {
   return `{{${name}}}`;
 }
 
+/** A data placeholder the caller can actually satisfy: the field-name charset the server accepts. */
+const VALID_DATA_PLACEHOLDER = /^data\.[A-Za-z0-9_-]+$/;
+
 /** Placeholders the platform fills in, so the form can list them as available. */
 export const PLATFORM_TEMPLATE_VARS = [
   "event_type",
@@ -90,7 +93,12 @@ export function unknownTemplateVars(titleTemplate: string, bodyTemplate: string)
   const source = `${titleTemplate}\n${bodyTemplate}`;
   for (const match of source.matchAll(/\{\{\s*([^{}]*?)\s*\}\}/g)) {
     const name = match[1];
-    if (!name || name.startsWith("data.")) continue;
+    if (!name) continue;
+    // Only a *well-formed* data placeholder is known. "{{data.}}" and
+    // "{{data.$x}}" name no field the caller can send, so the server leaves them
+    // standing in the delivered message; treating any "data." prefix as known
+    // let exactly the typo this function exists to catch through.
+    if (VALID_DATA_PLACEHOLDER.test(name)) continue;
     if ((PLATFORM_TEMPLATE_VARS as readonly string[]).includes(name)) continue;
     if (!out.includes(name)) out.push(name);
   }
@@ -114,6 +122,7 @@ export function eventTypeError(value: string): string | undefined {
 /** Caps the server enforces, restated so the form can show them. */
 export const WEBHOOK_LIMITS = {
   maxFields: 16,
+  maxKeyChars: 64,
   maxValueChars: 512,
   maxBodyBytes: 8192,
 } as const;
@@ -133,6 +142,7 @@ export function parseFieldLines(input: string): { data: Record<string, string>; 
     const key = line.slice(0, eq).trim();
     const value = line.slice(eq + 1).trim();
     if (!/^[A-Za-z0-9_-]+$/.test(key)) return { data: {}, error: "key" };
+    if (key.length > WEBHOOK_LIMITS.maxKeyChars) return { data: {}, error: "keyLength" };
     if (value.length > WEBHOOK_LIMITS.maxValueChars) return { data: {}, error: "value" };
     data[key] = value;
   }
