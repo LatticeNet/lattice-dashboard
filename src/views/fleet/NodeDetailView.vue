@@ -26,6 +26,7 @@ import {
   FolderTree,
   Gauge,
   Globe,
+  Info,
   KeyRound,
   MapPin,
   Pencil,
@@ -66,12 +67,12 @@ import {
   type TimelineEntry,
 } from "./nodeTimelineModel";
 import { buildNodeQueue, type NodeQueueEntry } from "./nodeTaskQueueModel";
-import { leaseAttemptLabel } from "@/lib/taskLease";
+import { leaseAttemptLabel, stalledText, taskStateStyle } from "@/lib/taskLease";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { hasNeverReported, statusMeta } from "@/lib/status";
-import { describeNodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
+import { describeNodeStatus, isReporting, metricFreshness, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -79,8 +80,7 @@ import {
   formatDateTime,
   formatRelativeTime,
   formatDuration,
-  formatPercent,
-  ratio,
+  NO_VALUE,
   shortId,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -483,6 +483,28 @@ const statusBadge = computed(() => ({
 const statusSince = computed(() => (node.value ? nodeStatusSince(node.value) : undefined));
 const statusReason = computed(() => (node.value ? nodeStatusReason(node.value) : ""));
 
+/**
+ * Whether the resource card is reporting a measurement or a memory.
+ *
+ * It used to print CPU, throughput and a twelve-day uptime for a machine last
+ * heard from six days earlier, under a heading that said "Live status". The
+ * numbers are still worth showing; the heading and the description now say
+ * which of the three cases the card is in.
+ */
+const metricSample = computed(() => metricFreshness(node.value ?? {}, !!node.value?.metrics));
+const metricsAreLive = computed(() => metricSample.value === "live");
+const noSample = computed(() => metricSample.value === "none");
+const statusCardTitle = computed(() =>
+  metricsAreLive.value ? t("fleet.nodes.detail.liveStatus") : t("fleet.nodes.detail.lastKnownStatus"),
+);
+const statusCardDesc = computed(() => {
+  if (metricsAreLive.value) return t("fleet.nodes.detail.liveStatusDesc");
+  if (noSample.value) return t("fleet.nodes.detail.noStatusDesc");
+  return t("fleet.nodes.detail.lastKnownStatusDesc", {
+    time: formatRelativeTime(node.value?.metrics?.collected_at ?? node.value?.last_seen),
+  });
+});
+
 /* Feed each poll into the shared ring so the sparkline accrues history. */
 const metricBuffer = useMetricBuffer();
 watch(
@@ -666,18 +688,50 @@ const timelineDays = computed(() => groupByDay(timeline.value));
 // against it and in what order it will be taken.
 const nodeQueue = computed(() => buildNodeQueue(nodeTasksQuery.data.value ?? [], nodeId.value));
 
-/** "leased 41 min, attempt 2 of 3", or the reason the store gave up; empty on an older server. */
-function queueLeaseLabel(entry: NodeQueueEntry): string {
-  return leaseAttemptLabel(entry.lease, {
-    leasedFor: (age) => t("operations.tasks.leasedFor", { age }),
-    attemptOf: (attempt, max) => t("operations.tasks.attemptOf", { attempt, max }),
-  });
+/** Translated fragments for the lease line, including the duration units. */
+function leaseText() {
+  return {
+    leasedFor: (age: string) => t("operations.tasks.leasedFor", { age }),
+    attemptOf: (attempt: number, max: number) => t("operations.tasks.attemptOf", { attempt, max }),
+    duration: {
+      days: (n: number) => t("common.duration.days", { n }),
+      hours: (n: number) => t("common.duration.hours", { n }),
+      minutes: (n: number) => t("common.duration.minutes", { n }),
+      seconds: (n: number) => t("common.duration.seconds", { n }),
+    },
+    stalledNoLease: t("operations.tasks.stalledNoLease"),
+  };
 }
 
-function queueBadge(entry: NodeQueueEntry): { variant: "warning" | "destructive" | "secondary"; label: string } {
-  if (entry.stalled) return { variant: "destructive", label: t("fleet.nodes.detail.queueStalled") };
-  if (entry.running) return { variant: "warning", label: t("fleet.nodes.detail.queueRunning") };
-  return { variant: "secondary", label: t("fleet.nodes.detail.queueWaiting") };
+/**
+ * "leased 41 min, attempt 2 of 3", or the whole account of a stall said once.
+ * Empty on a server too old to count attempts.
+ */
+function queueLeaseLabel(entry: NodeQueueEntry): string {
+  const text = leaseText();
+  return entry.stalled ? stalledText(entry.lease, text) : leaseAttemptLabel(entry.lease, text);
+}
+
+/** The state this entry is in, in the vocabulary the Tasks page uses. */
+function queueState(entry: NodeQueueEntry): "stalled" | "leased" | "queued" {
+  if (entry.stalled) return "stalled";
+  if (entry.running) return "leased";
+  return "queued";
+}
+
+/**
+ * Badge for a queue entry. The colour comes from the shared task-state table,
+ * not from a private one: this used to paint Stalled red while the Tasks page
+ * painted it amber, and Running amber while Tasks painted it grey.
+ */
+function queueBadge(entry: NodeQueueEntry): { variant: ReturnType<typeof taskStateStyle>["variant"]; label: string } {
+  const labels = {
+    stalled: "fleet.nodes.detail.queueStalled",
+    leased: "fleet.nodes.detail.queueRunning",
+    queued: "fleet.nodes.detail.queueWaiting",
+  } as const;
+  const state = queueState(entry);
+  return { variant: taskStateStyle(state).variant, label: t(labels[state]) };
 }
 const timelineExpanded = ref(false);
 const timelineHasMore = computed(
@@ -745,7 +799,7 @@ function goBack() {
 }
 
 function openTerminal() {
-  if (!canOpenTerminal.value || !node.value || !node.value.online || node.value.disabled) return;
+  if (!canOpenTerminal.value || !node.value || !isReporting(node.value)) return;
   router.push({ name: "terminal", query: { node_id: node.value.id, connect: "1" } });
 }
 
@@ -1259,7 +1313,7 @@ async function resolveGeo() {
           <Button
             v-if="canOpenTerminal"
             size="sm"
-            :disabled="!node.online || node.disabled"
+            :disabled="!isReporting(node)"
             @click="openTerminal"
           >
             <SquareTerminal class="size-4" aria-hidden="true" />
@@ -1274,7 +1328,7 @@ async function resolveGeo() {
 
       <!-- Identity row: status / role / tags / groups, last-seen. -->
       <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-        <Badge :variant="statusBadge.variant" :title="statusReason || $t(statusInfo.hintKey)">{{ statusBadge.label }}</Badge>
+        <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
         <span v-if="statusSince" class="text-xs text-muted-foreground" :title="statusSince">
           {{ $t('fleet.nodes.detail.statusSince', { time: formatRelativeTime(statusSince) }) }}
         </span>
@@ -1305,6 +1359,14 @@ async function resolveGeo() {
           {{ lastSeenText(node) }}
         </span>
       </div>
+
+      <!-- Why the word above says what it says. The page has room for the
+           sentence, so it is printed rather than hidden behind a hover: a
+           title attribute is not reachable by keyboard and is not read out. -->
+      <p class="mt-2 flex items-start gap-2 text-sm text-muted-foreground">
+        <Info class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+        <span>{{ statusReason || $t(statusInfo.hintKey) }}</span>
+      </p>
 
       <div v-if="node.comment" class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
         <p class="flex items-start gap-2">
@@ -1528,31 +1590,31 @@ async function resolveGeo() {
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
               <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.liveStatus') }}
+              {{ statusCardTitle }}
             </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.liveStatusDesc') }}</CardDescription>
+            <CardDescription>{{ statusCardDesc }}</CardDescription>
           </CardHeader>
           <CardContent class="space-y-5">
             <div class="space-y-2.5">
               <MetricBar
                 :label="$t('fleet.nodes.metric.cpu')"
                 tone="cpu"
-                :percent="node.metrics?.cpu_percent ?? 0"
-                :value-text="formatPercent(node.metrics?.cpu_percent)"
+                :percent="node.metrics?.cpu_percent"
+                :unavailable="noSample"
               />
               <MetricBar
                 :label="$t('fleet.nodes.metric.memory')"
                 tone="memory"
-                :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)"
                 :used="node.metrics?.memory_used"
                 :total="node.metrics?.memory_total"
+                :unavailable="noSample"
               />
               <MetricBar
                 :label="$t('fleet.nodes.metric.disk')"
                 tone="disk"
-                :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)"
                 :used="node.metrics?.disk_used"
                 :total="node.metrics?.disk_total"
+                :unavailable="noSample"
               />
             </div>
 
@@ -1587,7 +1649,7 @@ async function resolveGeo() {
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.load') }}</p>
                 <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
                   <Gauge class="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {{ node.metrics?.load1?.toFixed(2) ?? $t('common.misc.none') }}
+                  {{ node.metrics?.load1?.toFixed(2) ?? NO_VALUE }}
                 </p>
               </div>
               <div class="rounded-md border border-border bg-muted/20 p-3">
@@ -2230,7 +2292,7 @@ async function resolveGeo() {
                            long, which attempt, and why the store stopped if it did. -->
                       <p
                         v-if="queueLeaseLabel(entry)"
-                        :class="cn('text-xs', entry.stalled ? 'text-destructive' : 'text-muted-foreground')"
+                        :class="cn('text-xs', taskStateStyle(queueState(entry)).textClass)"
                         :title="queueLeaseLabel(entry)"
                       >
                         {{ queueLeaseLabel(entry) }}
@@ -2242,7 +2304,7 @@ async function resolveGeo() {
                   </Badge>
                 </li>
               </ol>
-              <p v-if="!node?.online && nodeQueue.queued > 0" class="mt-3 text-xs text-muted-foreground">
+              <p v-if="node && !isReporting(node) && nodeQueue.queued > 0" class="mt-3 text-xs text-muted-foreground">
                 {{ $t('fleet.nodes.detail.queueOfflineHint') }}
               </p>
             </DataState>

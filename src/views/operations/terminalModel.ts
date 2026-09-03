@@ -219,7 +219,7 @@ export function nextActiveTab(tabs: readonly Pick<SessionTab, "id">[], closingId
 // ---------------------------------------------------------------------------
 // Connect readiness and transport
 
-export type BlockedReason = "no-node" | "disabled" | "offline" | "terminal-off" | "exec-off";
+export type BlockedReason = "no-node" | "disabled" | "offline" | "never-reported" | "terminal-off" | "exec-off";
 
 export type ConnectReadiness =
   | { ready: true; transport: TerminalTransport }
@@ -235,8 +235,12 @@ export function connectReadiness(node: NodeLike | undefined, mode: TransportMode
   if (!node) return { ready: false, reason: "no-node" };
   // The same status word every page prints: disabled outranks a live agent,
   // never reported and offline both mean nobody is there to open a shell,
-  // degraded still answers.
-  if (nodeStatus(node) === "disabled") return { ready: false, reason: "disabled" };
+  // degraded still answers. The two silent states are told apart in the
+  // message, because "node offline" for a machine that was never installed
+  // sends an operator looking for an outage that does not exist.
+  const status = nodeStatus(node);
+  if (status === "disabled") return { ready: false, reason: "disabled" };
+  if (status === "never_reported") return { ready: false, reason: "never-reported" };
   if (!isReporting(node)) return { ready: false, reason: "offline" };
   const runtime = node.agent_runtime;
   if (!runtime?.allow_terminal) return { ready: false, reason: "terminal-off" };

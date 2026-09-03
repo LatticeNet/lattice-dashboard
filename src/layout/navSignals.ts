@@ -32,6 +32,8 @@ export interface SignalInputs {
   nodesOffline?: number;
   nodesTotal?: number;
   tasksFailed?: number;
+  /** Targets the store stopped re-leasing: nothing runs and nothing will. */
+  tasksStalled?: number;
   tasksQueued?: number;
 }
 
@@ -66,11 +68,20 @@ export function buildNavSignals(input: SignalInputs): Record<string, NavSignal> 
     };
   }
 
-  if (typeof input.tasksFailed === "number" && input.tasksFailed > 0) {
+  // Failed and stalled are both "this will not finish without you", so they
+  // share the badge. Counting failures alone is why a task stuck for six days
+  // showed nothing at all in the sidebar: it never failed, it just stopped.
+  const failed = input.tasksFailed ?? 0;
+  const stalled = input.tasksStalled ?? 0;
+  const stuck = failed + stalled;
+  if ((typeof input.tasksFailed === "number" || typeof input.tasksStalled === "number") && stuck > 0) {
+    const parts: string[] = [];
+    if (failed > 0) parts.push(`${failed} failed`);
+    if (stalled > 0) parts.push(`${stalled} stalled`);
     signals.tasks = {
-      count: input.tasksFailed,
+      count: stuck,
       tone: "attention",
-      label: `${input.tasksFailed} failed`,
+      label: parts.join(", "),
     };
   } else if (typeof input.tasksQueued === "number" && input.tasksQueued > 0) {
     // Queued work is worth knowing about, but never at the expense of hiding a

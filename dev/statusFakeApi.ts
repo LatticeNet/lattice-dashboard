@@ -18,8 +18,13 @@
  * that never reported. Each node carries `status`, `status_since` and
  * `status_reason` the way lattice-server sends them, and the legacy `online`
  * and `reachability` fields set to agree with the word.
+ *
+ * The task fixture below covers every task state the console can print, so the
+ * badge colours can be compared side by side, plus the KI-20 shape itself: a
+ * fan-out whose target on the offline node has been re-leased three times over
+ * six days and carries a `stalled_reason` that ends in a full stop.
  */
-import type { Node, NodeStatus, Principal } from "@/lib/api/index";
+import type { Node, NodeStatus, Principal, TaskResult, TaskView } from "@/lib/api/index";
 
 export * from "@/lib/api/index";
 
@@ -136,6 +141,82 @@ function toNode(e: FleetEntry, index: number): Node {
 
 const nodes: Node[] = FLEET.map(toNode);
 
+/**
+ * One task per state, so the Tasks page and the node page's queue can be read
+ * against each other. Node ids follow FLEET's order: 002/003 are online,
+ * 005 is the node offline since 2026-08-27, 031 never reported.
+ */
+const tasks: TaskView[] = [
+  // KI-20: leased at fan-out level, stalled on the offline node. The reason is
+  // a finished sentence, which is what used to collide with the comma before
+  // "attempt 3 of 3".
+  {
+    id: "tsk_stalled_fanout",
+    targets: ["node_002", "node_005"],
+    interpreter: "sh",
+    status: "leased",
+    script_size_bytes: 412,
+    timeout_sec: 300,
+    created_at: iso(-(6 * DAY + 3 * HOUR)),
+    started_at: iso(-(6 * DAY + 3 * HOUR)),
+    target_states: {
+      node_002: { status: "leased", attempts: 1, max_attempts: 3, lease_age_seconds: 41 * 60 },
+      node_005: {
+        status: "stalled",
+        attempts: 3,
+        max_attempts: 3,
+        lease_age_seconds: 6 * 86400 + 3 * 3600,
+        stalled_reason:
+          "The store stopped re-leasing after 3 attempts (last lease expired 2026-08-27T08:51:00Z).",
+      },
+    },
+  },
+  // Single target, running now.
+  {
+    id: "tsk_running",
+    targets: ["node_003"],
+    interpreter: "bash",
+    status: "leased",
+    script_size_bytes: 96,
+    created_at: iso(-42 * 60_000),
+    started_at: iso(-41 * 60_000),
+    attempts: 1,
+    max_attempts: 3,
+    lease_age_seconds: 41 * 60,
+  },
+  // Waiting for an agent that is not there to take it.
+  {
+    id: "tsk_queued",
+    targets: ["node_031"],
+    interpreter: "sh",
+    status: "queued",
+    script_size_bytes: 64,
+    created_at: iso(-11 * HOUR),
+  },
+  { id: "tsk_failed", targets: ["node_004"], interpreter: "sh", status: "failed", script_size_bytes: 210, created_at: iso(-2 * HOUR), finished_at: iso(-2 * HOUR + 4000) },
+  { id: "tsk_finished", targets: ["node_007"], interpreter: "sh", status: "finished", script_size_bytes: 88, created_at: iso(-3 * HOUR), finished_at: iso(-3 * HOUR + 2200) },
+  { id: "tsk_cancelled", targets: ["node_009"], interpreter: "sh", status: "cancelled", script_size_bytes: 120, created_at: iso(-5 * HOUR) },
+  { id: "tsk_expired", targets: ["node_018"], interpreter: "sh", status: "expired", script_size_bytes: 150, created_at: iso(-4 * DAY) },
+  // Stalled at the task level too, so the sidebar count and the Tasks filter
+  // both have something to find.
+  {
+    id: "tsk_stalled_single",
+    targets: ["node_005"],
+    interpreter: "sh",
+    status: "stalled",
+    script_size_bytes: 300,
+    created_at: iso(-(6 * DAY)),
+    attempts: 3,
+    max_attempts: 3,
+    stalled_reason: "Superseded by v0.3.9-alpha.5.",
+  },
+];
+
+const results: TaskResult[] = [
+  { task_id: "tsk_failed", node_id: "node_004", exit_code: 1, error: "sing-box: exit status 1", stdout: "", stderr: "FATAL: config parse error at line 12\n", started_at: iso(-2 * HOUR), finished_at: iso(-2 * HOUR + 4000) },
+  { task_id: "tsk_finished", node_id: "node_007", exit_code: 0, stdout: "ok\n", started_at: iso(-3 * HOUR), finished_at: iso(-3 * HOUR + 2200) },
+];
+
 const principal: Principal = {
   actor_id: "cdcd",
   username: "cdcd",
@@ -166,7 +247,15 @@ export const api = {
     list: () => delay({ approvals: [] }),
   },
   tasks: {
-    list: () => delay({ tasks: [] }),
+    list: () => delay({ tasks: tasks.map((t) => ({ ...t })) }),
+    listForNode: (nodeId: string) =>
+      delay({ tasks: tasks.filter((t) => t.targets.includes(nodeId)).map((t) => ({ ...t })) }),
+    results: (query?: { node_id?: string }) =>
+      delay({
+        results: results
+          .filter((r) => !query?.node_id || r.node_id === query.node_id)
+          .map((r) => ({ ...r })),
+      }),
   },
   audit: {
     query: () => delay({ events: [] }),
@@ -176,6 +265,14 @@ export const api = {
   },
   groups: {
     list: () => delay({ groups: [] }),
+  },
+  // Read-only extras the node page pulls on mount. Empty is a legitimate
+  // answer for each; the page renders its own empty states for them.
+  ddns: {
+    list: () => delay([]),
+  },
+  capabilities: {
+    list: () => delay({ capabilities: [] }),
   },
 } as unknown as typeof import("@/lib/api/index").api;
 

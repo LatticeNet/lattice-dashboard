@@ -35,16 +35,14 @@ import {
 } from "lucide-vue-next";
 import type { Node } from "@/lib/api/types";
 import { statusMeta } from "@/lib/status";
-import { describeNodeStatus, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
+import { describeNodeStatus, metricFreshness, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
 import { splitNamePrefix } from "@/lib/fleet";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
   formatBytesPerSec,
   formatDuration,
-  formatPercent,
   formatRelativeTime,
-  ratio,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useMetricBuffer, type MetricKey } from "@/composables/useMetricBuffer";
@@ -52,6 +50,7 @@ import { useMetricBuffer, type MetricKey } from "@/composables/useMetricBuffer";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Badge } from "@/components/ui/badge";
+import NodeStatusBadge from "@/components/common/NodeStatusBadge.vue";
 import { Checkbox } from "@/components/ui/checkbox";
 
 /** A group chip shown near the role/tag badges; clicking emits `group-select`. */
@@ -177,8 +176,16 @@ const statusBadge = computed(() => {
   return { variant: meta.value.badgeVariant, label: labels[info.value.status] };
 });
 
-/** The server's one-sentence account, on hover, so the word can be checked. */
+/** The server's one-sentence account, so the word can be checked. */
 const statusTitle = computed(() => nodeStatusReason(props.node));
+
+/**
+ * Whether this card's numbers mean anything. `none` prints the no-value mark
+ * rather than a zero; `stale` keeps the numbers but the card is already dimmed
+ * and its footer says when the last beat arrived.
+ */
+const freshness = computed(() => metricFreshness(props.node, !!props.node.metrics));
+const noSample = computed(() => freshness.value === "none");
 
 /** First two tags only. Keeps the header from wrapping on dense grids. */
 const visibleTags = computed(() =>
@@ -318,7 +325,7 @@ function onGroup(id: string) {
         </div>
       </div>
       <div class="flex min-w-0 flex-wrap gap-1 @sm:shrink-0 @sm:justify-end">
-        <Badge :variant="statusBadge.variant" :title="statusTitle">{{ statusBadge.label }}</Badge>
+        <NodeStatusBadge :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
         <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
         <button
@@ -369,24 +376,24 @@ function onGroup(id: string) {
         :label="cpuLabel"
         :icon="Cpu"
         tone="cpu"
-        :percent="node.metrics?.cpu_percent ?? 0"
-        :value-text="formatPercent(node.metrics?.cpu_percent)"
+        :percent="node.metrics?.cpu_percent"
+        :unavailable="noSample"
       />
       <MetricBar
         :label="memoryLabel"
         :icon="MemoryStick"
         tone="memory"
-        :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)"
         :used="node.metrics?.memory_used"
         :total="node.metrics?.memory_total"
+        :unavailable="noSample"
       />
       <MetricBar
         :label="diskLabel"
         :icon="HardDrive"
         tone="disk"
-        :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)"
         :used="node.metrics?.disk_used"
         :total="node.metrics?.disk_total"
+        :unavailable="noSample"
       />
     </div>
 

@@ -150,6 +150,14 @@ export default {
       trendOnePoint: "Trend, 1 point, value {value}",
       trendSummary: "Trend, {count} points, min {min}, max {max}, last {last}",
     },
+    // Short duration units. The number is inside the message so a locale can
+    // put it where its grammar wants it, and so Chinese gets no stray space.
+    duration: {
+      days: "{n} d",
+      hours: "{n} h",
+      minutes: "{n} min",
+      seconds: "{n} s",
+    },
     misc: {
       global: "global",
       all: "all",

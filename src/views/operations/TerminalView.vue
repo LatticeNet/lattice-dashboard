@@ -174,6 +174,7 @@ const BLOCKED_KEY: Record<BlockedReason, string> = {
   "no-node": "operations.terminal.proof.blockedNoNode",
   disabled: "operations.terminal.proof.blockedDisabled",
   offline: "operations.terminal.proof.blockedOffline",
+  "never-reported": "operations.terminal.proof.blockedNeverReported",
   "terminal-off": "operations.terminal.proof.blockedTerminalOff",
   "exec-off": "operations.terminal.proof.blockedExecOff",
 };

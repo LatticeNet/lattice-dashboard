@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
-import { formatBytes, formatPercent, ratio } from "@/lib/format";
+import { NO_VALUE, formatBytes, formatPercent, ratio } from "@/lib/format";
 import { Progress } from "@/components/ui/progress";
 
 type Tone = "cpu" | "memory" | "disk" | "net" | "primary";
@@ -13,6 +13,12 @@ const props = withDefaults(
     used?: number;
     total?: number;
     tone?: Tone;
+    /** Overrides the derived reading. Was passed by three call sites for a
+     *  year while this component had no such prop and dropped it into
+     *  `$attrs`, which is how a node with no sample printed "0%". */
+    valueText?: string;
+    /** The node is not in contact and never produced this sample. */
+    unavailable?: boolean;
     class?: HTMLAttributes["class"];
   }>(),
   {
@@ -28,7 +34,23 @@ const TONE_COLORS: Record<Tone, string> = {
   primary: "var(--primary)",
 };
 
+/**
+ * Nothing was measured, so there is nothing to print.
+ *
+ * `ratio()` answers 0 for a missing used/total pair and `percent ?? 0` answers
+ * 0 for a missing percent, so a node that has never reported used to read
+ * "0% / 0% / 0%" next to a "-" for its network rate: three confident zeroes and
+ * one honest blank for the same absence. A missing reading is `NO_VALUE`, the
+ * same mark every other formatter in `@/lib/format` uses.
+ */
+const unavailable = computed(
+  () =>
+    props.unavailable === true ||
+    (props.percent === undefined && props.used === undefined && props.total === undefined),
+);
+
 const pct = computed(() => {
+  if (unavailable.value) return 0;
   if (props.percent !== undefined && props.percent !== null) {
     return Math.min(100, Math.max(0, props.percent));
   }
@@ -40,6 +62,8 @@ const hasBytes = computed(
 );
 
 const valueText = computed(() => {
+  if (unavailable.value) return NO_VALUE;
+  if (props.valueText) return props.valueText;
   if (hasBytes.value) {
     return `${formatBytes(props.used)} / ${formatBytes(props.total)}`;
   }
@@ -58,7 +82,7 @@ const toneColor = computed(() => TONE_COLORS[props.tone]);
       >
         {{ label }}
       </span>
-      <span class="ml-auto font-mono tabular text-xs text-foreground">
+      <span :class="cn('ml-auto font-mono tabular text-xs', unavailable ? 'text-muted-foreground' : 'text-foreground')">
         {{ valueText }}
       </span>
     </div>

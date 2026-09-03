@@ -13,9 +13,16 @@
  * attempts, so everything here returns undefined for an older server and the
  * views render exactly what they rendered before.
  *
+ * It also owns the one thing a task state maps to on screen: its semantic
+ * colour. Tasks and the node queue used to keep private copies of that table
+ * and they had drifted, so the same target read amber "Stalled" on one page
+ * and red "Stalled" on the other. One table, both pages.
+ *
  * No i18n and no formatting library: the rules are testable on bare node. The
  * one formatted piece, the lease age, is built here because the row needs a
- * short unit ("41 min") rather than the "41m" the dashboard uses in tables.
+ * short unit ("41 min") rather than the "41m" the dashboard uses in tables;
+ * the unit words come from the caller so a Chinese console does not read
+ * "已租出 41 min".
  */
 import type { TaskView } from "@/lib/api";
 
@@ -65,24 +72,60 @@ export function taskLeaseProgress(task: TaskView, nodeId?: string): TaskLeasePro
 }
 
 /**
+ * The unit words a lease age is spelled with, one function per unit so a
+ * locale can put the number wherever its grammar wants it. English is the
+ * default so the pure rules stay testable without a message catalogue.
+ */
+export interface DurationText {
+  days: (n: number) => string;
+  hours: (n: number) => string;
+  minutes: (n: number) => string;
+  seconds: (n: number) => string;
+}
+
+export const EN_DURATION: DurationText = {
+  days: (n) => `${n} d`,
+  hours: (n) => `${n} h`,
+  minutes: (n) => `${n} min`,
+  seconds: (n) => `${n} s`,
+};
+
+/**
  * A lease age short enough for a table cell: "30 s", "41 min", "2 h 5 min",
  * "6 d 2 h". Two units at most, because the third never changes a decision.
  */
-export function formatLeaseAge(seconds: number): string {
+export function formatLeaseAge(seconds: number, text: DurationText = EN_DURATION): string {
   const total = Math.max(0, Math.floor(seconds));
   const d = Math.floor(total / 86400);
   const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
-  if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`;
-  if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`;
-  if (m > 0) return `${m} min`;
-  return `${total} s`;
+  if (d > 0) return h > 0 ? `${text.days(d)} ${text.hours(h)}` : text.days(d);
+  if (h > 0) return m > 0 ? `${text.hours(h)} ${text.minutes(m)}` : text.hours(h);
+  if (m > 0) return text.minutes(m);
+  return text.seconds(total);
 }
 
 /** The translated fragments the label is built from; the views pass `t`. */
 export interface LeaseLabelText {
   leasedFor: (age: string) => string;
   attemptOf: (attempt: number, max: number) => string;
+  /** Unit words for the lease age. English when the caller does not say. */
+  duration?: DurationText;
+  /** What a stalled target says when the server sent no reason of its own. */
+  stalledNoLease?: string;
+}
+
+/**
+ * Strip the punctuation a sentence ends on so the attempt count can be joined
+ * to it with a comma.
+ *
+ * `stalled_reason` arrives from the server as a finished sentence, and pasting
+ * ", attempt 3 of 3" after it produced "...08:51:00Z)., attempt 3 of 3". Both
+ * scripts are handled because the reason is passed through verbatim and a
+ * Chinese server writes the full stop as a different character.
+ */
+function unterminate(sentence: string): string {
+  return sentence.replace(/[\s.;,\u3002\uFF1B\uFF0C]+$/u, "");
 }
 
 /**
@@ -95,12 +138,70 @@ export function leaseAttemptLabel(progress: TaskLeaseProgress | undefined, text:
   if (!progress) return "";
   const parts: string[] = [];
   if (progress.stalledReason) {
-    parts.push(progress.stalledReason);
+    parts.push(unterminate(progress.stalledReason));
   } else if (progress.leaseAgeSeconds !== undefined) {
-    parts.push(text.leasedFor(formatLeaseAge(progress.leaseAgeSeconds)));
+    parts.push(text.leasedFor(formatLeaseAge(progress.leaseAgeSeconds, text.duration ?? EN_DURATION)));
   }
   if (progress.attempts > 0 && progress.maxAttempts > 0) {
     parts.push(text.attemptOf(progress.attempts, progress.maxAttempts));
   }
   return parts.join(", ");
+}
+
+/**
+ * Everything a stalled target has to say, said once.
+ *
+ * The row used to print the badge word, then the server's reason, then the
+ * attempt count, then a generic sentence that restated the reason: "Stalled",
+ * "stopped re-leasing after 3 attempts (...)", "attempt 3 of 3", "Nothing is
+ * running this and no result arrived". The server's account is the specific
+ * one and wins; the generic sentence is what a server too old to send a reason
+ * falls back to.
+ */
+export function stalledText(progress: TaskLeaseProgress | undefined, text: LeaseLabelText): string {
+  return leaseAttemptLabel(progress, text) || text.stalledNoLease || "";
+}
+
+/* ------------------------------------------------------------------ */
+/* Task state -> semantic colour. The only table.                      */
+/* ------------------------------------------------------------------ */
+
+/** Every state a task, or one node's share of a task, can be in. */
+export type TaskRunState = "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled";
+
+/** Badge variants that really exist; mirrors `badgeVariants.ts` so it cannot drift. */
+export type TaskStateVariant = "default" | "secondary" | "destructive" | "outline" | "warning";
+
+export interface TaskStateStyle {
+  /** Bind straight to `<Badge :variant>`. */
+  variant: TaskStateVariant;
+  /** Foreground class for prose that carries the same state. */
+  textClass: string;
+}
+
+/**
+ * One semantic token per state, for every surface that prints one.
+ *
+ * - `failed` is the only destructive state: something ran and came back wrong.
+ * - `stalled` is warning, not destructive. Nothing broke; the store stopped
+ *   re-leasing and the run needs a person. That is the same weight `degraded`
+ *   carries in the node ontology.
+ * - `leased` is neutral rather than amber: work in progress is not a warning.
+ *   The node queue painted it amber and made every running task look wrong.
+ * - `cancelled` and `expired` are the deliberate stops, and read alike.
+ * - `queued` is the only outline state: nothing has started yet.
+ */
+const TASK_STATE_STYLE: Record<TaskRunState, TaskStateStyle> = {
+  finished: { variant: "default", textClass: "text-muted-foreground" },
+  failed: { variant: "destructive", textClass: "text-destructive" },
+  stalled: { variant: "warning", textClass: "text-warning" },
+  leased: { variant: "secondary", textClass: "text-muted-foreground" },
+  cancelled: { variant: "secondary", textClass: "text-muted-foreground" },
+  expired: { variant: "secondary", textClass: "text-muted-foreground" },
+  queued: { variant: "outline", textClass: "text-muted-foreground" },
+};
+
+/** Colour for a task state. An unknown word from a newer server reads as queued. */
+export function taskStateStyle(state: string): TaskStateStyle {
+  return { ...(TASK_STATE_STYLE[state as TaskRunState] ?? TASK_STATE_STYLE.queued) };
 }
