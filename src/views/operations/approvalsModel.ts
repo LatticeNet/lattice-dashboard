@@ -309,3 +309,136 @@ export async function runWithConcurrency<T>(
   await Promise.all(Array.from({ length: lanes }, () => lane()));
   return results;
 }
+
+// ── Why an approved approval has not applied ─────────────────────────────────
+//
+// "Approved" is the one status that says nothing about what happens next. The
+// operator reading Pending 0 above a non-empty inbox concluded, reasonably,
+// that the work was done, when in fact one change had been approved against a
+// machine that stopped reporting weeks earlier and would sit there forever.
+//
+// The control plane derives the reason and sends it as ApprovalView.waiting
+// (see the type for why the console must not guess it). This module turns that
+// answer into the three things a screen needs: a short label, a tone, and the
+// counts that let the page say how many items are in each condition.
+
+/** The codes the control plane sends today. The set is open; see below. */
+export const APPROVAL_WAIT_CODES = [
+  "task_failed",
+  "task_running",
+  "task_finished",
+  "plan_superseded",
+  "node_unknown",
+  "node_disabled",
+  "node_never_reported",
+  "node_offline",
+  "capability_excluded",
+  "task_execution_disabled",
+  "not_queued",
+  "task_queued",
+] as const;
+
+export type ApprovalWaitCode = (typeof APPROVAL_WAIT_CODES)[number];
+
+/**
+ * What a code the console does not recognise is called. A newer control plane
+ * may answer with a reason this build has never heard of, and the honest thing
+ * is to say so and still print the server's sentence, rather than drop the
+ * explanation or invent a label for it.
+ */
+export const APPROVAL_WAIT_UNKNOWN = "unknown";
+
+const KNOWN_WAIT_CODES = new Set<string>(APPROVAL_WAIT_CODES);
+
+export function approvalWaitCode(code: string | undefined): ApprovalWaitCode | typeof APPROVAL_WAIT_UNKNOWN {
+  const value = (code ?? "").trim();
+  return KNOWN_WAIT_CODES.has(value) ? (value as ApprovalWaitCode) : APPROVAL_WAIT_UNKNOWN;
+}
+
+/** i18n key of the short label for a code, under `operations.approvals.waiting.codes`. */
+export function approvalWaitLabelKey(code: string | undefined): string {
+  return `operations.approvals.waiting.codes.${approvalWaitCode(code)}`;
+}
+
+/** i18n key of the one-clause way out, under `operations.approvals.waiting.ways`. */
+export function approvalWaitWayKey(code: string | undefined): string {
+  return `operations.approvals.waiting.ways.${approvalWaitCode(code)}`;
+}
+
+export type ApprovalWaitTone = "muted" | "warning" | "destructive";
+
+/**
+ * How loudly the condition should read.
+ *
+ * A failed apply is the only one that reports something already went wrong, so
+ * it is the only destructive one. A blocked item is a warning: nothing broke,
+ * but nothing will happen either. An item that is queued or running is neither;
+ * it clears itself and colouring it would train operators to ignore the colour.
+ */
+export function approvalWaitTone(waiting: Pick<ApprovalWaitFields, "code" | "blocked">): ApprovalWaitTone {
+  if (!waiting.blocked) return "muted";
+  return approvalWaitCode(waiting.code) === "task_failed" ? "destructive" : "warning";
+}
+
+/** The part of ApprovalWaitingView this module reads. */
+export interface ApprovalWaitFields {
+  code: string;
+  reason: string;
+  blocked: boolean;
+  dismissible?: boolean;
+}
+
+/** The part of ApprovalView this module reads. Compatible with ApprovalView. */
+export interface ApprovalInboxItem {
+  status: string;
+  waiting?: ApprovalWaitFields;
+}
+
+/**
+ * Approved, and it will not proceed on its own. This is the number the page
+ * exists to surface: an operator who has cleared their queue still has these.
+ */
+export function isApprovalStuck(item: ApprovalInboxItem): boolean {
+  return item.status === "approved" && item.waiting?.blocked === true;
+}
+
+/** Approved and on its way: queued for the node, or applying right now. */
+export function isApprovalMoving(item: ApprovalInboxItem): boolean {
+  return item.status === "approved" && item.waiting !== undefined && !item.waiting.blocked;
+}
+
+export interface ApprovalInboxCounts {
+  /** Every approval the token can see, decided or not. */
+  total: number;
+  /** Pending and actionable: waiting on a person. */
+  needsReview: number;
+  /** Approved and moving: waiting on a machine, and it clears itself. */
+  moving: number;
+  /** Approved and blocked: waiting on nothing, and it never clears itself. */
+  stuck: number;
+  /**
+   * Approved with no explanation attached. A control plane that predates the
+   * waiting field produces these, and the page must say it does not know
+   * rather than count them as fine.
+   */
+  unexplained: number;
+}
+
+/**
+ * One pass for every number the header prints. Pending is passed in because
+ * "actionable pending" needs the stale heuristics that live in the API layer,
+ * and duplicating them here is how two surfaces start disagreeing.
+ */
+export function countApprovalInbox<T extends ApprovalInboxItem>(
+  items: readonly T[],
+  isNeedsReview: (item: T) => boolean,
+): ApprovalInboxCounts {
+  const counts: ApprovalInboxCounts = { total: items.length, needsReview: 0, moving: 0, stuck: 0, unexplained: 0 };
+  for (const item of items) {
+    if (isNeedsReview(item)) counts.needsReview += 1;
+    if (isApprovalStuck(item)) counts.stuck += 1;
+    else if (isApprovalMoving(item)) counts.moving += 1;
+    else if (item.status === "approved") counts.unexplained += 1;
+  }
+  return counts;
+}
