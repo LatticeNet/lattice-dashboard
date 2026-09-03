@@ -16,6 +16,7 @@ import {
 } from "./pluginFrameModel";
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
 import { claimViewportPane } from "@/layout/viewportPane";
+import { copyForFrame as hostCopy } from "./pluginClipboard";
 
 const props = defineProps<{
   pluginId: string;
@@ -183,78 +184,17 @@ function postToFrame(message: BridgeHostMessage) {
 }
 
 /**
- * How long the host will wait for the browser to put text on the clipboard
- * before it calls the copy failed.
- *
- * There is a real hang to guard here, not a theoretical one: an async
- * clipboard write attempted without transient activation, or against a
- * document that does not have focus, can leave its promise pending instead of
- * rejecting. Without this the plugin would sit forever on a copy that is never
- * going to land, and the operator would never be offered the manual fallback.
- */
-const CLIPBOARD_TIMEOUT_MS = 3_000;
-
-/**
- * Put text on the operator's clipboard on the frame's behalf, and say honestly
- * whether it landed.
- *
- * Two strategies, because the first one is the one that can be unavailable.
- * The async Clipboard API is the correct path and the one that works when the
- * host document has focus and the operator's gesture is still live. Where it
- * refuses, the selection-based `execCommand("copy")` still works: it is
- * deprecated, not removed, and it is the only path that survives a stale
- * activation. Returning false is a real outcome, not a bug, and the plugin
- * renders a selectable value when it sees one.
+ * The toast is the point of the host doing this rather than the frame: a copy
+ * performed on a plugin's word is an action the operator should see the host
+ * take, in the host's own words, in the host's own notification lane. The copy
+ * itself lives in pluginClipboard.ts, where it can be exercised without
+ * mounting a view.
  */
 async function copyForFrame(text: string): Promise<boolean> {
-  const deadline = new Promise<false>((resolve) => setTimeout(() => resolve(false), CLIPBOARD_TIMEOUT_MS));
-  const attempt = (async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      return copyBySelection(text);
-    }
-  })();
-  const copied = await Promise.race([attempt, deadline]);
+  const copied = await hostCopy(text);
   if (copied) toast.success(t("common.actions.copied"));
   else toast.error(t("pluginViews.frame.copyRefused"));
   return copied;
-}
-
-/**
- * The fallback path. A readonly off-screen textarea is selected and copied,
- * then removed, and the operator's own selection is put back: copying from a
- * plugin must not silently destroy whatever the operator had highlighted.
- * Kept out of the layout with `position: fixed` and a zero opacity rather than
- * `display: none`, which would make it unselectable and the copy a no-op.
- */
-function copyBySelection(text: string): boolean {
-  const area = document.createElement("textarea");
-  area.value = text;
-  area.setAttribute("readonly", "");
-  area.setAttribute("aria-hidden", "true");
-  area.style.position = "fixed";
-  area.style.top = "0";
-  area.style.left = "0";
-  area.style.opacity = "0";
-  area.style.pointerEvents = "none";
-  const selection = document.getSelection();
-  const previous = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-  document.body.appendChild(area);
-  try {
-    area.select();
-    area.setSelectionRange(0, text.length);
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    area.remove();
-    if (previous && selection) {
-      selection.removeAllRanges();
-      selection.addRange(previous);
-    }
-  }
 }
 
 function teardownSession() {
