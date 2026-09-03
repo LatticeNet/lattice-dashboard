@@ -18,12 +18,14 @@ import type {
   SSHGuardPlanResponse,
 } from "@/lib/api/index";
 
-import { fixtureId, fixtureIso, toApiNodes } from "./sshGuardFixture";
+import { NO_KNOCK_NODE, fixtureId, fixtureIso, toApiNodes } from "./sshGuardFixture";
 import { state } from "./fixtureState";
 
 export * from "@/lib/api/index";
 
 const LATENCY_MS = 180;
+
+
 
 function delay<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), LATENCY_MS));
@@ -56,6 +58,24 @@ const unimplemented = new Proxy(
 );
 
 export const api = {
+  // Step-up, so the reveal's second factor can be exercised here. Any six
+  // digits pass: the harness is for driving the states the page renders, and
+  // the real check lives on the server where the grant is minted.
+  security: {
+    stepUp: async (code: string) => {
+      await delay(undefined);
+      if (!/^\d{6}$/.test(code.trim())) throw new ApiError(401, "unauthorized", "invalid second factor");
+      return { ok: true, grant: fixtureId("grant"), expires_at: new Date(Date.now() + 60_000).toISOString() };
+    },
+    stepUpWebAuthnBegin: async () => {
+      await delay(undefined);
+      throw new ApiError(400, "bad_request", "the harness has no relying party; use the passcode");
+    },
+    stepUpWebAuthnFinish: async () => {
+      await delay(undefined);
+      throw new ApiError(400, "bad_request", "the harness has no relying party; use the passcode");
+    },
+  },
   auth: {
     me: () => delay(principal),
   },
@@ -111,7 +131,7 @@ export const api = {
         node_id: input.node_id,
         plugin: "sshguard",
         action: "sshguard-arm:v1",
-        plan: `stage: arm\nnode_id: ${input.node_id}\nssh_port: ${input.ssh_port ?? 0}\nconfirm_window_sec: ${input.confirm_window_sec ?? 900}\n`,
+        plan: `stage: arm\nnode_id: ${input.node_id}\nssh_port: ${input.ssh_port ?? 0}\nknock: ${input.enable_knock !== false}\nconfirm_window_sec: ${input.confirm_window_sec ?? 900}\n`,
         status: "pending",
         created_at: fixtureIso(0),
         updated_at: fixtureIso(0),
@@ -136,6 +156,81 @@ export const api = {
       };
       state.approvals.push(approval);
       return { approval };
+    },
+    // The knock endpoints, close enough to the server that every state the
+    // page can render is reachable here: installed and confirmed, installed
+    // but never confirmed, planned, knocking off, and nothing known at all.
+    knockState: async (node_id: string) => {
+      await delay(undefined);
+      const node = state.nodes.find((n) => n.id === node_id);
+      if (!node) throw new ApiError(404, "not_found", "node not found");
+      const mine = state.approvals.filter((a) => a.node_id === node_id && a.plugin === "sshguard");
+      const arms = mine.filter((a) => a.action === "sshguard-arm:v1");
+      const appliedArms = arms.filter((a) => a.status === "applied");
+      const applied = appliedArms.length ? appliedArms[appliedArms.length - 1] : undefined;
+      const confirmed = mine.some((a) => a.action === "sshguard-confirm:v1" && a.status === "applied");
+      // One host in the fixture was hardened without knocking, so the "there
+      // is no sequence" copy has somewhere to render.
+      const noKnock = node.name === NO_KNOCK_NODE;
+      if (!arms.length) {
+        return {
+          ok: true, node_id, knowledge: "unknown" as const, revealable: false,
+          requires_step_up: true, interactive_only: true,
+          note: "The control plane has no SSH Guard plan for this node, so it does not know a knock sequence. If this node knocks, it was configured outside Lattice and the sequence is only wherever that was recorded.",
+        };
+      }
+      if (noKnock) {
+        return {
+          ok: true, node_id, knowledge: "no_knock" as const, revealable: false,
+          requires_step_up: true, interactive_only: true, approval_id: arms[arms.length - 1]!.id,
+          note: "SSH Guard is set up on this node without port knocking. There is no sequence to show; reach SSH from a management source.",
+        };
+      }
+      // A rejected or dismissed arm governs nothing: its sequence was never
+      // written to the node. Only an arm still awaiting a decision is planned.
+      const live = arms.filter((a) => a.status === "pending" || a.status === "approved");
+      if (!applied && !live.length) {
+        return {
+          ok: true, node_id, knowledge: "unknown" as const, revealable: false,
+          requires_step_up: true, interactive_only: true,
+          note: "Every SSH Guard plan for this node was rejected or dismissed, so none of their sequences ever reached it. The control plane knows no sequence that opens this node.",
+        };
+      }
+      if (!applied) {
+        return {
+          ok: true, node_id, knowledge: "planned" as const, revealable: true,
+          requires_step_up: true, interactive_only: true, approval_id: live[live.length - 1]!.id,
+          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394,
+          note: "An SSH Guard plan for this node carries a knock sequence, but it has not been applied. The node is not knocking on it yet.",
+        };
+      }
+      return {
+        ok: true, node_id, knowledge: "installed" as const, revealable: true,
+        requires_step_up: true, interactive_only: true, approval_id: applied.id,
+        applied_at: applied.updated_at, confirmed,
+        port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394,
+        note: confirmed
+          ? "The control plane knows this node's knock sequence. It was applied and confirmed, so it is the sequence the node is running."
+          : "The control plane knows the knock sequence from the arm that was applied. That arm was never confirmed, so its automatic revert may have removed it from the node since.",
+      };
+    },
+    revealKnock: async (node_id: string, step_up_grant: string) => {
+      await delay(undefined);
+      if (!step_up_grant) throw new ApiError(403, "forbidden", "second-factor step-up required");
+      const node = state.nodes.find((n) => n.id === node_id);
+      if (!node) throw new ApiError(404, "not_found", "node not found");
+      if (node.name === NO_KNOCK_NODE) {
+        throw new ApiError(404, "not_found", "SSH Guard is applied on this node without port knocking, so there is no sequence");
+      }
+      // Stable per node so a reveal, a hide and a second reveal agree.
+      const seed = [...node.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 40000, 7);
+      const ports = [20000 + seed, 20000 + ((seed * 7 + 911) % 40000), 20000 + ((seed * 13 + 5077) % 40000)];
+      const addr = node.publicIp;
+      return {
+        ok: true, node_id, knowledge: "installed", approval_id: fixtureId("apr"),
+        ports, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394, address: addr,
+        command: `for p in ${ports.join(" ")}; do printf k | nc -u -w1 ${addr} $p; sleep 1; done\nssh -p 58394 root@${addr}`,
+      };
     },
   },
   // Everything else: a loud failure, never a silent empty list.

@@ -74,6 +74,8 @@ import type {
   RenewalReminderFire,
   SSHGuardPlanRequest,
   SSHGuardPlanResponse,
+  SSHGuardKnockStateResponse,
+  SSHGuardKnockRevealResponse,
   SSOProvider,
   StaticObject,
   StepUpResponse,
@@ -537,6 +539,14 @@ export const api = {
       http.post<SSHGuardPlanResponse>("/api/sshguard/plan", input as unknown as Record<string, unknown>),
     confirm: (node_id: string) =>
       http.post<{ approval: ApprovalView }>("/api/sshguard/confirm", { node_id }),
+    // `knock` says whether the control plane knows a node's sequence and
+    // carries no ports, so the page can stop being silent about it without
+    // disclosing anything. `revealKnock` is the disclosure, and takes the same
+    // step-up grant the task-script reveal does.
+    knockState: (node_id: string) =>
+      http.post<SSHGuardKnockStateResponse>("/api/sshguard/knock", { node_id }),
+    revealKnock: (node_id: string, step_up_grant: string) =>
+      http.post<SSHGuardKnockRevealResponse>("/api/sshguard/knock/reveal", { node_id, step_up_grant }),
   },
 
   ddns: {

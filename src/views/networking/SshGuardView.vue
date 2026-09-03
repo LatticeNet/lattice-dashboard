@@ -21,7 +21,7 @@ import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from "vue
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
-import { AlertTriangle, ChevronRight, Timer, X } from "lucide-vue-next";
+import { AlertTriangle, ChevronRight, KeyRound, Lock, RefreshCw, Timer, X } from "lucide-vue-next";
 
 import {
   api,
@@ -33,8 +33,11 @@ import {
   type Node,
   type NodeCapability,
   type SSHGuardFinding,
+  type SSHGuardKnockRevealResponse,
+  type SSHGuardKnockStateResponse,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatDuration, shortId } from "@/lib/format";
 import { fieldNumber } from "@/lib/formValue";
@@ -45,6 +48,7 @@ import { guardReality } from "@/views/networking/sshGuardReality";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -70,6 +74,7 @@ import {
   defaultGuardForm,
   hasBlocking,
   isSSHGuardApproval,
+  knockKnowledgeFor,
   parseMgmtSources,
   revertDeadline,
   sortFindings,
@@ -112,6 +117,123 @@ const auth = useAuthStore();
 // that always fails.
 const canAdmin = computed(() => auth.canAll(["sshguard:admin", "network:plan"]));
 const canReadReality = computed(() => auth.can("netguard:read"));
+
+/* ------------------------------------------------------------------ */
+/* The knock sequence.                                                  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * This page used to say nothing at all about how to reach a node, which is
+ * what produced the question: an operator who cannot get in has no way to find
+ * the sequence, so he goes to an operations note that holds it in clear. The
+ * table now answers "does the control plane know this" on every row, and the
+ * dialog answers "what is it" behind a second factor.
+ *
+ * The two halves are deliberately different. Knowing whether a sequence exists
+ * is not a secret and needs no ceremony. Being told the sequence is being told
+ * the way into the machine, so it costs a passkey or a passcode and leaves an
+ * audit row.
+ */
+const knockOpen = ref(false);
+const knockNodeId = ref("");
+const knockState = shallowRef<SSHGuardKnockStateResponse | undefined>();
+const knockLoading = ref(false);
+const knockError = ref("");
+const knockRevealed = shallowRef<SSHGuardKnockRevealResponse | undefined>();
+const knockRevealing = ref(false);
+
+const knockStepUp = useStepUp({
+  required: t("networking.sshGuard.knock.stepUp.required"),
+  failed: t("networking.sshGuard.knock.stepUp.failed"),
+  passkeyFailed: t("networking.sshGuard.knock.stepUp.passkeyFailed"),
+});
+const knockStepUpOpen = knockStepUp.open;
+const knockStepUpCode = knockStepUp.code;
+const knockStepUpError = knockStepUp.error;
+const knockStepUpPending = knockStepUp.pending;
+
+/** An applied arm with no applied confirm: the revert may have undone it. */
+const knockUnconfirmed = computed(
+  () => knockState.value?.knowledge === "installed" && knockState.value.confirmed === false,
+);
+
+const knockNodeName = computed(
+  () => nodesQuery.data.value?.find((n) => n.id === knockNodeId.value)?.name || knockNodeId.value,
+);
+
+/** The word the Knock column shows, and the title that explains it. */
+function knockCell(state: NodeGuardState): { text: string; title: string; muted: boolean } {
+  const knowledge = knockKnowledgeFor(state);
+  const key = (
+    { installed: "installed", planned: "planned", no_knock: "noKnock", unknown: "unknown" } as const
+  )[knowledge];
+  return {
+    text: t(`networking.sshGuard.knock.${key}`),
+    title: t(`networking.sshGuard.knock.${key}Title`),
+    // Only a sequence that reached the node is worth reading as present.
+    muted: knowledge !== "installed",
+  };
+}
+
+/**
+ * Open the dialog and ask the server what it knows.
+ *
+ * The table's answer is derived from the plan the page already holds; this one
+ * comes from the server, which is the authority and whose sentence the dialog
+ * renders verbatim. Asking again on open also means a node armed in another
+ * tab is not reported from a stale board.
+ */
+async function openKnock(nodeId: string) {
+  knockNodeId.value = nodeId;
+  knockRevealed.value = undefined;
+  knockState.value = undefined;
+  knockError.value = "";
+  knockOpen.value = true;
+  if (!canAdmin.value) return;
+  knockLoading.value = true;
+  try {
+    knockState.value = await api.sshGuard.knockState(nodeId);
+  } catch (error) {
+    knockError.value = error instanceof Error ? error.message : t("networking.sshGuard.knock.toastRevealFailed");
+  } finally {
+    knockLoading.value = false;
+  }
+}
+
+/**
+ * Reveal, or put it away again.
+ *
+ * Toggling off drops the only copy the page holds. There is no timer on the
+ * display: an operator reading a sequence off the screen is usually typing it
+ * into another window, and a value that vanished mid-type would send him back
+ * through the second factor for no security gain.
+ */
+async function revealKnock() {
+  if (knockRevealed.value) {
+    knockRevealed.value = undefined;
+    return;
+  }
+  if (knockRevealing.value || !knockNodeId.value) return;
+  knockRevealing.value = true;
+  try {
+    const grant = await knockStepUp.request();
+    knockRevealed.value = await api.sshGuard.revealKnock(knockNodeId.value, grant);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("networking.sshGuard.knock.toastRevealFailed"));
+  } finally {
+    knockRevealing.value = false;
+  }
+}
+
+// Closing the dialog drops the sequence rather than leaving it in memory for
+// the next open.
+watch(knockOpen, (open) => {
+  if (!open) {
+    knockRevealed.value = undefined;
+    knockState.value = undefined;
+    knockError.value = "";
+  }
+});
 
 /* ------------------------------------------------------------------ */
 /* Data: approvals, fleet, scope, and what the nodes report.            */
@@ -918,10 +1040,26 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <span v-else class="text-muted-foreground">{{ $t('networking.sshGuard.table.reading') }}</span>
               </td>
 
-              <!-- PASSWORD and KNOCK are not in the snapshot yet. Saying so is
-                   the truthful cell; anything else would be a guess. -->
+              <!-- PASSWORD is not in the snapshot yet. Saying so is the
+                   truthful cell; anything else would be a guess. -->
               <td class="px-2 py-1 align-top text-xs text-muted-foreground whitespace-nowrap">{{ $t('networking.sshGuard.table.notReported') }}</td>
-              <td class="px-2 py-1 align-top text-xs text-muted-foreground whitespace-nowrap">{{ $t('networking.sshGuard.table.notReported') }}</td>
+
+              <!-- KNOCK is not in the snapshot either, but the control plane
+                   does not need the node to tell it: the arm plan it filed is
+                   the record of the sequence. So this cell reports what the
+                   control plane knows rather than what the agent reports, and
+                   never leaves the question unanswered. -->
+              <td class="px-2 py-1 align-top text-xs whitespace-nowrap">
+                <button
+                  type="button"
+                  class="reason-toggle text-left underline-offset-4 hover:underline"
+                  :class="knockCell(state).muted ? 'text-muted-foreground' : 'text-foreground'"
+                  :title="knockCell(state).title"
+                  @click="openKnock(state.nodeId)"
+                >
+                  {{ knockCell(state).text }}
+                </button>
+              </td>
 
               <td class="px-2 py-1 align-top font-mono text-xs tabular whitespace-nowrap">
                 <template v-if="evidence.get(state.nodeId)?.collectedAt">
@@ -985,6 +1123,20 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                     @click="openSheet([state.nodeId])"
                   >
                     {{ $t('networking.sshGuard.actions.arm') }}
+                  </Button>
+                  <!-- Always present when a sequence is known, including on a
+                       confirmed node with nothing else to do. That row is
+                       exactly the one an operator opens when he cannot get in. -->
+                  <Button
+                    v-if="knockKnowledgeFor(state) === 'installed'"
+                    class="row-action"
+                    size="sm"
+                    variant="ghost"
+                    :title="$t('networking.sshGuard.knock.openFor', { node: state.name || state.nodeId })"
+                    @click="openKnock(state.nodeId)"
+                  >
+                    <KeyRound class="size-4" aria-hidden="true" />
+                    <span class="sr-only">{{ $t('networking.sshGuard.knock.openFor', { node: state.name || state.nodeId }) }}</span>
                   </Button>
                 </span>
               </td>
@@ -1310,6 +1462,150 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
       </DialogScrollContent>
     </Dialog>
   </div>
+
+    <!-- The knock sequence.
+
+         The whole point of this dialog is that it always says something. Even
+         with no sequence to show it states which of the four cases this node
+         is in, because the version of this page that said nothing is what sent
+         an operator to read the sequence out of an operations note. -->
+    <Dialog v-model:open="knockOpen">
+      <DialogScrollContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.sshGuard.knock.title') }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.sshGuard.knock.description') }}</DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4">
+          <p class="font-mono text-xs tabular text-muted-foreground">{{ knockNodeName }}</p>
+
+          <p v-if="!canAdmin" class="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+            {{ $t('networking.sshGuard.knock.noScope') }}
+          </p>
+
+          <template v-else>
+            <p v-if="knockLoading" class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.table.reading') }}</p>
+            <p v-else-if="knockError" class="text-xs text-destructive">{{ knockError }}</p>
+
+            <template v-else-if="knockState">
+              <!-- The server's own sentence, verbatim and once, so the page and
+                   the API cannot describe the same node differently. It carries
+                   the revert caveat itself, so this styles it as a warning
+                   rather than repeating it underneath. -->
+              <p
+                :class="knockUnconfirmed
+                  ? 'rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning'
+                  : 'text-sm text-foreground'"
+              >
+                {{ knockState.note }}
+              </p>
+
+              <p v-if="knockState.plan_unreadable" class="text-xs text-warning">
+                {{ $t('networking.sshGuard.knock.unreadable') }}
+              </p>
+
+              <!-- Shape without secret: enough to plan the attempt (how many
+                   datagrams, how fast, how long the door stays open) and not
+                   enough to narrow a guess at the ports. -->
+              <p v-if="knockState.port_count" class="font-mono text-xs tabular text-muted-foreground">
+                {{ $t('networking.sshGuard.knock.shape', {
+                  count: knockState.port_count,
+                  seconds: knockState.seq_timeout_sec ?? 0,
+                  openFor: knockState.open_for ?? '',
+                }) }}
+                <span v-if="knockState.ssh_port"> · {{ $t('networking.sshGuard.knock.sshPort', { port: knockState.ssh_port }) }}</span>
+              </p>
+
+              <div v-if="knockState.revealable" class="space-y-3">
+                <Button variant="outline" size="sm" :disabled="knockRevealing" @click="revealKnock">
+                  <RefreshCw v-if="knockRevealing" class="size-4 animate-spin" aria-hidden="true" />
+                  <KeyRound v-else class="size-4" aria-hidden="true" />
+                  {{ knockRevealed ? $t('networking.sshGuard.knock.hide') : $t('networking.sshGuard.knock.reveal') }}
+                </Button>
+
+                <div v-if="knockRevealed" class="space-y-3 rounded-md border border-warning/40 bg-warning/5 p-3">
+                  <p class="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <Lock class="size-3.5" aria-hidden="true" />
+                    {{ $t('networking.sshGuard.knock.revealed') }}
+                  </p>
+
+                  <div>
+                    <p class="mb-1 text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.sequenceLabel') }}</p>
+                    <!-- Selectable text, not only a copy button: a browser can
+                         refuse the clipboard, and an operator who is locked out
+                         must still be able to read the value off the screen. -->
+                    <code class="block break-all font-mono text-sm tabular text-foreground">{{ knockRevealed.ports.join(' ') }}</code>
+                  </div>
+
+                  <div>
+                    <div class="mb-1 flex items-center justify-between gap-2">
+                      <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.commandLabel') }}</p>
+                      <CopyButton :value="knockRevealed.command" :label="$t('networking.sshGuard.knock.copyCommand')" />
+                    </div>
+                    <pre class="max-h-40 overflow-auto rounded bg-background/70 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">{{ knockRevealed.command }}</pre>
+                  </div>
+
+                  <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.sameSource') }}</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.payloadNote') }}</p>
+                </div>
+              </div>
+
+              <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.agentNote') }}</p>
+            </template>
+          </template>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" @click="knockOpen = false">{{ $t('common.actions.close') }}</Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Second factor for the reveal. Same ceremony as the task-script reveal,
+         because it discloses the same class of thing. -->
+    <Dialog v-model:open="knockStepUpOpen">
+      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="knockStepUp.cancel">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.sshGuard.knock.stepUp.title') }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.sshGuard.knock.stepUp.description') }}</DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" @submit.prevent="knockStepUp.submitTotp">
+          <div class="grid gap-2">
+            <Label for="knock-step-up-code">{{ $t('networking.sshGuard.knock.stepUp.code') }}</Label>
+            <Input
+              id="knock-step-up-code"
+              v-model="knockStepUpCode"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              maxlength="8"
+              placeholder="123456"
+            />
+            <p v-if="knockStepUpError" class="text-xs text-destructive">{{ knockStepUpError }}</p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" @click="knockStepUp.cancel">
+              {{ $t('common.actions.cancel') }}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              :disabled="!!knockStepUpPending || !knockStepUp.supportsPasskey"
+              @click="knockStepUp.submitPasskey"
+            >
+              <RefreshCw v-if="knockStepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
+              <KeyRound v-else class="size-4" aria-hidden="true" />
+              {{ $t('networking.sshGuard.knock.stepUp.passkey') }}
+            </Button>
+            <Button type="submit" :disabled="!!knockStepUpPending || !knockStepUpCode.trim()">
+              <RefreshCw v-if="knockStepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
+              <Lock v-else class="size-4" aria-hidden="true" />
+              {{ $t('networking.sshGuard.knock.stepUp.submit') }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogScrollContent>
+    </Dialog>
+
 </template>
 
 <style scoped>

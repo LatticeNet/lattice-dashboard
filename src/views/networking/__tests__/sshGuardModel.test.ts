@@ -11,8 +11,10 @@ import {
   emptyAdvancedForm,
   guardCoverage,
   hasBlocking,
+  knockKnowledgeFor,
   nodesAwaitingConfirm,
   parseConfirmWindow,
+  parseKnockDeclared,
   parseMgmtSources,
   parsePortList,
   revertDeadline,
@@ -328,4 +330,72 @@ test("the sheet's default policy is refused before anything is typed, so the ref
   assert.deepEqual(validateForm({ ...form, mgmtSources: "203.0.113.5" }), []);
   assert.deepEqual(validateForm({ ...form, outOfBandFallback: true }), []);
   assert.deepEqual(validateForm(defaultGuardForm()), ["node_required", "single_way_in"], "with no member left, the missing node is listed too");
+});
+
+
+/* ------------------------------------------------------------------ */
+/* The knock sequence: what the page may say about it.                  */
+/* ------------------------------------------------------------------ */
+
+// RenderArmPlan writes `knock:` into the header block, next to ssh_port.
+const PLAN_WITH_KNOCK = "# Lattice SSH Guard plan\n\nstage: arm\nnode_id: hk-edge-01\nssh_port: 58394\nkeep_legacy_port: true\nknock: true\nconfirm_window_sec: 900\n";
+const PLAN_WITHOUT_KNOCK = PLAN_WITH_KNOCK.replace("knock: true", "knock: false");
+
+test("the header says whether a plan carries a knock sequence, without reading the sequence", () => {
+  assert.equal(parseKnockDeclared(PLAN_WITH_KNOCK), true);
+  assert.equal(parseKnockDeclared(PLAN_WITHOUT_KNOCK), false);
+  assert.equal(parseKnockDeclared(undefined), undefined);
+  assert.equal(parseKnockDeclared("not a plan"), undefined);
+});
+
+// The question the operator actually asked. A node with no plan and a node
+// whose plan turned knocking off are different answers, and reading either as
+// silence is what sent him to the operations note.
+test("a node the control plane has never planned for reports unknown, not no-knock", () => {
+  const s = deriveNodeGuardState([], NODE);
+  assert.equal(knockKnowledgeFor(s), "unknown");
+});
+
+test("a plan that turned knocking off says so rather than looking like a missing secret", () => {
+  const s = deriveNodeGuardState([arm({ status: "applied", plan: PLAN_WITHOUT_KNOCK })], NODE);
+  assert.equal(knockKnowledgeFor(s), "no_knock");
+});
+
+// Only a sequence that reached the box is one an operator can knock. Reporting
+// a pending plan as installed would send him to knock ports nothing is
+// listening for, and that failure is indistinguishable from a wrong sequence.
+test("an arm that has not applied is planned, not installed", () => {
+  for (const status of ["pending", "approved"]) {
+    const s = deriveNodeGuardState([arm({ status, plan: PLAN_WITH_KNOCK })], NODE);
+    assert.equal(knockKnowledgeFor(s), "planned", status);
+  }
+});
+
+test("an applied arm is installed, whether or not the confirm has landed", () => {
+  const armed = deriveNodeGuardState([arm({ status: "applied", plan: PLAN_WITH_KNOCK })], NODE);
+  assert.equal(armed.stage, "awaitingConfirm");
+  assert.equal(knockKnowledgeFor(armed), "installed");
+
+  const done = deriveNodeGuardState(
+    [arm({ status: "applied", plan: PLAN_WITH_KNOCK }), confirm({ status: "applied" })],
+    NODE,
+  );
+  assert.equal(done.stage, "confirmed");
+  assert.equal(knockKnowledgeFor(done), "installed");
+});
+
+// A plan the reader cannot parse must not be reported as a sequence that
+// exists: offering a reveal that then fails is worse than saying it is unknown.
+// A rejected arm's sequence never reached the node. Calling it planned would
+// send an operator to knock ports nothing is listening for, and that failure
+// is indistinguishable from the sequence being wrong.
+test("a rejected arm is not a planned sequence", () => {
+  const s = deriveNodeGuardState([arm({ status: "rejected", plan: PLAN_WITH_KNOCK })], NODE);
+  assert.equal(s.stage, "armFailed");
+  assert.equal(knockKnowledgeFor(s), "unknown");
+});
+
+test("an unreadable plan reports unknown rather than claiming a sequence", () => {
+  const s = deriveNodeGuardState([arm({ status: "applied", plan: "garbage" })], NODE);
+  assert.equal(knockKnowledgeFor(s), "unknown");
 });

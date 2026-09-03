@@ -486,6 +486,64 @@ export function parseConfirmWindow(plan: string | undefined): number | undefined
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/**
+ * What the control plane knows about a node's knock sequence.
+ *
+ * Mirrors the server's `knowledge` field so the table and the endpoint cannot
+ * disagree about a node. Derived here from the arm plan the page already
+ * holds, so every row can say something without a request per node; the reveal
+ * dialog then asks the server, which is the authority.
+ */
+export type KnockKnowledge = "installed" | "planned" | "no_knock" | "unknown";
+
+/**
+ * Whether the arm plan declares port knocking, read from the plan header.
+ *
+ * The header line is `knock: true|false`, written by RenderArmPlan next to
+ * ssh_port. Reading that rather than the fenced knockd block is deliberate:
+ * the question "is there a sequence" is answerable without going anywhere
+ * near the sequence itself.
+ */
+export function parseKnockDeclared(plan: string | undefined): boolean | undefined {
+  const m = /^knock:\s*(true|false)\s*$/m.exec(plan ?? "");
+  if (!m) return undefined;
+  return m[1] === "true";
+}
+
+/** The stages that mean the arm reached the box. */
+const ARM_APPLIED_STAGES: ReadonlySet<GuardStage> = new Set<GuardStage>([
+  "awaitingConfirm",
+  "confirmPending",
+  "confirmApproved",
+  "confirmed",
+]);
+
+/**
+ * The stages where a sequence is written down and still on its way.
+ *
+ * `armFailed` is deliberately absent. A rejected or failed arm carries a
+ * sequence that was never written to the node and never will be, so calling it
+ * planned would send an operator to knock ports nothing is listening for.
+ */
+const ARM_PENDING_STAGES: ReadonlySet<GuardStage> = new Set<GuardStage>(["armPending", "armApproved"]);
+
+/**
+ * What the page can say about this node's knock sequence.
+ *
+ * The distinction that matters is between "there is no sequence" and "there is
+ * one and this console will not tell you": an operator locked out reads
+ * silence as the first and goes hunting through an operations note. Only
+ * `installed` means the node is listening for the sequence now.
+ */
+export function knockKnowledgeFor(state: NodeGuardState): KnockKnowledge {
+  if (!state.arm) return "unknown";
+  const declared = parseKnockDeclared(state.arm.plan);
+  if (declared === undefined) return "unknown";
+  if (!declared) return "no_knock";
+  if (ARM_APPLIED_STAGES.has(state.stage)) return "installed";
+  return ARM_PENDING_STAGES.has(state.stage) ? "planned" : "unknown";
+}
+
 export interface RevertDeadline {
   /** Epoch milliseconds when the node reverts on its own. */
   at: number;
