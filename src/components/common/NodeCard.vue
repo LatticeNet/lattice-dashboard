@@ -187,10 +187,28 @@ const statusTitle = computed(() => nodeStatusReason(props.node));
 const freshness = computed(() => metricFreshness(props.node, !!props.node.metrics));
 const noSample = computed(() => freshness.value === "none");
 
-/** First two tags only. Keeps the header from wrapping on dense grids. */
-const visibleTags = computed(() =>
-  [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)).slice(0, 2),
-);
+/** The header shows at most two of each badge kind and counts the rest, the
+ *  same cap and the same +N the table uses. This card used to drop the extra
+ *  tags with no sign they existed, and group chips were not capped at all: a
+ *  node in six groups gave a five-row rail and a card 80px taller than the two
+ *  beside it. The overflow badge carries the full list in its title, so the
+ *  cap hides nothing. */
+const BADGE_CAP = 2;
+
+/** The hostname line truncates once the name block narrows, and had no title,
+ *  so the dropped tail was unrecoverable. */
+const hostFactsLine = computed(() => {
+  const f = props.node.host_facts;
+  if (!f) return "";
+  return [f.hostname || props.node.id, f.os, f.arch].filter(Boolean).join(" · ");
+});
+
+const sortedTags = computed(() => [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)));
+const visibleTags = computed(() => sortedTags.value.slice(0, BADGE_CAP));
+const hiddenTags = computed(() => sortedTags.value.slice(BADGE_CAP));
+
+const visibleGroups = computed(() => props.groups.slice(0, BADGE_CAP));
+const hiddenGroups = computed(() => props.groups.slice(BADGE_CAP));
 
 /* ---------------------------------------------------------------- */
 /* Sparkline. Tiny inline SVG from the shared client-side ring.     */
@@ -317,6 +335,7 @@ function onGroup(id: string) {
         <p
           v-if="node.host_facts"
           class="mt-1 truncate font-mono text-xs text-muted-foreground tabular"
+          :title="hostFactsLine"
         >
           {{ node.host_facts.hostname || node.id }}
           <template v-if="node.host_facts.os"> · {{ node.host_facts.os }}</template>
@@ -332,9 +351,17 @@ function onGroup(id: string) {
       <div class="flex min-w-0 flex-wrap gap-1 @sm:max-w-[55%] @sm:justify-end">
         <NodeStatusBadge :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
         <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
-        <Badge v-for="tag in visibleTags" :key="tag" variant="outline">{{ tag }}</Badge>
+        <Badge v-for="tag in visibleTags" :key="tag" variant="outline" class="max-w-full shrink truncate">{{ tag }}</Badge>
+        <Badge
+          v-if="hiddenTags.length"
+          variant="secondary"
+          class="shrink-0"
+          :title="hiddenTags.join(', ')"
+        >
+          +{{ hiddenTags.length }}
+        </Badge>
         <button
-          v-for="g in groups"
+          v-for="g in visibleGroups"
           :key="g.id"
           type="button"
           :class="
@@ -351,6 +378,14 @@ function onGroup(id: string) {
           <span class="truncate">{{ g.name }}</span>
           <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
         </button>
+        <Badge
+          v-if="hiddenGroups.length"
+          variant="secondary"
+          class="shrink-0"
+          :title="hiddenGroups.map((g) => g.name).join(', ')"
+        >
+          +{{ hiddenGroups.length }}
+        </Badge>
       </div>
     </div>
 
