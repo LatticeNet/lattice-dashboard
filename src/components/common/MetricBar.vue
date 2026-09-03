@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, type HTMLAttributes } from "vue";
+import { computed, ref, type HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 import { NO_VALUE, formatBytes, formatPercent, ratio } from "@/lib/format";
 import { Progress } from "@/components/ui/progress";
@@ -71,18 +71,42 @@ const valueText = computed(() => {
 });
 
 const toneColor = computed(() => TONE_COLORS[props.tone]);
+
+// The native tooltip is the escape hatch for a value too wide for its track,
+// so it is bound only when the text is actually cut. Binding it always put a
+// tooltip on every cell in the table repeating what was already on screen,
+// and gave an unavailable cell a title of "-" that said nothing. Measured on
+// hover rather than on render: the width that matters is the one the column
+// has at that moment, and this component is used at several track widths.
+const valueEl = ref<HTMLElement | null>(null);
+const overflowing = ref(false);
+const measureOverflow = () => {
+  const el = valueEl.value;
+  overflowing.value = el ? el.scrollWidth > el.clientWidth : false;
+};
 </script>
 
 <template>
   <div :class="cn('space-y-1', props.class)">
-    <div class="flex items-center justify-between gap-2">
+    <div class="flex min-w-0 items-center justify-between gap-2">
       <span
         v-if="label"
-        class="text-xs text-muted-foreground"
+        class="shrink-0 text-xs text-muted-foreground"
       >
         {{ label }}
       </span>
-      <span :class="cn('ml-auto font-mono tabular text-xs', unavailable ? 'text-muted-foreground' : 'text-foreground')">
+      <span
+        ref="valueEl"
+        :title="overflowing ? valueText : undefined"
+        @mouseenter="measureOverflow"
+        @focusin="measureOverflow"
+        :class="
+          cn(
+            'ml-auto min-w-0 truncate whitespace-nowrap font-mono tabular text-xs',
+            unavailable ? 'text-muted-foreground' : 'text-foreground',
+          )
+        "
+      >
         {{ valueText }}
       </span>
     </div>
