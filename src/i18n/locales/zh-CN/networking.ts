@@ -360,6 +360,16 @@ export default {
       colCredential: "凭据",
       colPublished: "上次发布尝试",
       colActions: "操作",
+      lockout: {
+        title: "这份计划会切断节点",
+        description:
+          "在 {node} 上为 {name} 生成计划被拒绝。DNS 计划会替换该节点的整套包过滤规则，而新规则会丢弃所有没有写进去的流量。",
+        remedy:
+          "先给这个节点配好 Network Guard 基线，把管理端口和现有服务留出来，然后重新生成计划。节点自己发现不了这个问题：它用一条出方向连接做自检，而新规则并不拦出方向。",
+        accept: "我接受被锁在门外的风险",
+        acceptHint: "只有在你还有别的路进这台机器时才勾选。这次强制会记在你的账号下。",
+        planAnyway: "仍然生成计划",
+      },
       editTitle: "编辑部署",
       newTitle: "新建部署",
       dialogDescription: "CoreDNS 引擎。公网主机名需要 Cloudflare 凭据。",

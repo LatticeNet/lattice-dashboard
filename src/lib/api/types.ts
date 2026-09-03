@@ -552,12 +552,22 @@ export interface ApprovalView {
   waiting?: ApprovalWaitingView;
 }
 
-/** A lint result from the SSH Guard pre-check. `block` refuses the plan. */
-export interface SSHGuardFinding {
+/**
+ * A lint result from a plan pre-check. `block` refuses the plan unless the
+ * operator explicitly accepts the risk, which the server audits.
+ *
+ * Shared by every surface that commits the node's single lattice_guard input
+ * chain: SSH Guard, Network Guard, and Self-host DNS all compose the same
+ * default-drop ruleset and so carry the same lockout risk.
+ */
+export interface GuardLintFinding {
   code: string;
   severity: "block" | "warn" | string;
   message: string;
 }
+
+/** @deprecated Use GuardLintFinding; the findings are not SSH-specific. */
+export type SSHGuardFinding = GuardLintFinding;
 
 /**
  * Fields the caller omits keep the server's verified defaults, so an ordinary
@@ -584,6 +594,16 @@ export interface SSHGuardPlanRequest {
   /** sshd's own "start:rate:full" triple, or a bare "start". */
   max_startups?: string;
   permit_root_login?: string;
+}
+
+/**
+ * A Self-host DNS plan carries its lint findings alongside the approval, for
+ * the same reason SSH Guard does: the plan replaces the node's whole
+ * default-drop input chain, so the reviewer has to see what it would cut off.
+ */
+export interface DNSPlanResponse {
+  approval: ApprovalView;
+  findings?: GuardLintFinding[];
 }
 
 export interface SSHGuardPlanResponse {

@@ -16,6 +16,7 @@ import type {
   DDNSView,
   DNSDeploymentBody,
   DNSDeploymentView,
+  DNSPlanResponse,
   DNSPublishResponse,
   EnrollTokenResponse,
   GeoRouting,
@@ -516,7 +517,11 @@ export const api = {
     upsert: (input: DNSDeploymentBody) =>
       http.post<DNSDeploymentView>("/api/dns/deployments", input),
     delete: (id: string) => http.post<{ ok: boolean }>("/api/dns/deployments/delete", { id }),
-    plan: (id: string) => http.post<ApprovalView>("/api/dns/plan", { id }),
+    // acceptLockoutRisk overrides a blocking lint finding. The server refuses
+    // the plan with 409 and the findings until it is set, and audits the
+    // override when it is.
+    plan: (id: string, acceptLockoutRisk = false) =>
+      http.post<DNSPlanResponse>("/api/dns/plan", { id, accept_lockout_risk: acceptLockoutRisk }),
     publish: (id: string) => http.post<DNSPublishResponse>("/api/dns/publish", { id }),
   },
 
