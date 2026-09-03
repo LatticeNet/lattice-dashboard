@@ -1,4 +1,6 @@
 import { createI18n } from "vue-i18n";
+
+import { setFormatLocale } from "@/lib/format";
 import en from "./locales/en";
 import zhCN from "./locales/zh-CN";
 
@@ -70,6 +72,9 @@ function applyHtmlLang(code: LocaleCode): void {
 /** Switch and persist the active locale. */
 export function setLocale(code: LocaleCode): void {
   i18n.global.locale.value = code;
+  // Intl-backed formatters follow the console, not the browser: a zh-CN
+  // console on an en-US browser used to render "自 6 days ago".
+  setFormatLocale(code);
   try {
     localStorage.setItem(STORAGE_KEY, code);
   } catch {
@@ -82,5 +87,7 @@ export function currentLocale(): LocaleCode {
   return i18n.global.locale.value as LocaleCode;
 }
 
-// Reflect the initial locale onto <html lang> for a11y + correct text rendering.
+// Reflect the initial locale onto <html lang> for a11y + correct text rendering,
+// and hand it to the Intl formatters, which have no access to the catalogue.
 applyHtmlLang(currentLocale());
+setFormatLocale(currentLocale());

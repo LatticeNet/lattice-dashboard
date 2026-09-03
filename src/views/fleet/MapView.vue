@@ -23,7 +23,7 @@ import {
   type NodeGeoResolveResult,
   type NodeGeoView,
 } from "@/lib/api";
-import { NODE_STATUSES, compareByAttention, countNodeStatuses, describeNodeStatus, nodeStatus, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
+import { NODE_STATUSES, compareByAttention, countNodeStatuses, describeNodeStatus, nodeStatus, nodeStatusReason, type NodeStatus, type NodeStatusTone } from "@/lib/nodeStatus";
 import { statusMeta } from "@/lib/status";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -245,23 +245,39 @@ function markerStatus(node: NodeGeoView) {
 }
 
 /**
- * Marker colour by status word: success green for online, warning amber for
- * degraded, destructive red for offline, and the muted ground for never
- * reported and disabled, which are not failures. The literal oklch values
- * mirror the success / warning / destructive tokens in app.css; SVG fill
- * cannot read a utility class.
+ * Marker colours by status word, taken from the palette rather than copied
+ * from it.
+ *
+ * These were four hand-written oklch literals that no longer matched the
+ * success / warning / destructive tokens in app.css and did not change with
+ * the theme, so the map drew its own slightly different greens and reds. SVG
+ * presentation attributes cannot read a utility class, but `fill-*` and
+ * `stroke-*` classes can, and Tailwind generates them from the same tokens
+ * everything else here uses.
+ *
+ * The halo and the ping ring were separately hard-coded green and drawn for
+ * any reporting node, which put a green halo around an amber degraded marker.
+ * They now take the marker's own colour.
  */
-function markerFill(node: NodeGeoView): string {
-  switch (markerStatus(node).tone) {
-    case "success":
-      return "oklch(0.74 0.15 162)";
-    case "warning":
-      return "oklch(0.8 0.15 80)";
-    case "destructive":
-      return "oklch(0.6 0.16 25)";
-    default:
-      return "oklch(0.6 0.02 260)";
-  }
+const MARKER_CLASSES: Record<NodeStatusTone, { fill: string; halo: string; haloSelected: string; ping: string }> = {
+  success: { fill: "fill-success", halo: "fill-success/15", haloSelected: "fill-success/30", ping: "stroke-success/50" },
+  warning: { fill: "fill-warning", halo: "fill-warning/15", haloSelected: "fill-warning/30", ping: "stroke-warning/50" },
+  destructive: {
+    fill: "fill-destructive",
+    halo: "fill-destructive/15",
+    haloSelected: "fill-destructive/30",
+    ping: "stroke-destructive/50",
+  },
+  muted: {
+    fill: "fill-muted-foreground",
+    halo: "fill-muted-foreground/15",
+    haloSelected: "fill-muted-foreground/30",
+    ping: "stroke-muted-foreground/50",
+  },
+};
+
+function markerClasses(node: NodeGeoView) {
+  return MARKER_CLASSES[markerStatus(node).tone];
 }
 
 function mapNodeHasAgentCapability(node: NodeGeoView, cap: AgentCapabilityFilter): boolean {
@@ -932,10 +948,9 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                     v-if="markerStatus(point.node).reporting"
                     :cx="markerScreenX(point.x)"
                     :cy="markerScreenY(point.y)"
-                    class="map-ping"
+                    :class="cn('map-ping', markerClasses(point.node).ping)"
                     r="2.2"
                     fill="none"
-                    stroke="oklch(0.8 0.15 162 / 0.5)"
                     stroke-width="1"
                   />
                   <g
@@ -963,13 +978,13 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                       :cx="markerScreenX(point.x)"
                       :cy="markerScreenY(point.y)"
                       :r="point.selected || hoveredNodeId === point.node.id ? 5.8 : 4"
-                      :fill="point.selected ? 'oklch(0.8 0.15 162 / 0.24)' : 'oklch(0.8 0.15 162 / 0.12)'"
+                      :class="point.selected ? markerClasses(point.node).haloSelected : markerClasses(point.node).halo"
                     />
                     <circle
                       :cx="markerScreenX(point.x)"
                       :cy="markerScreenY(point.y)"
                       :r="point.selected || hoveredNodeId === point.node.id ? 3.5 : 2.2"
-                      :fill="markerFill(point.node)"
+                      :class="markerClasses(point.node).fill"
                       :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
                       :stroke-width="point.selected ? 1.35 : 0.9"
                       :opacity="markerStatus(point.node).reporting ? 1 : 0.82"

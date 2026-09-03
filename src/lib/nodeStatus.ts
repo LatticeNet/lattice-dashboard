@@ -170,6 +170,26 @@ export function needsAttention(node: NodeStatusInput): boolean {
   return INFO[nodeStatus(node)].attention;
 }
 
+/**
+ * How to read a node's resource numbers.
+ *
+ * A console that prints 41% CPU for a machine last heard from six days ago is
+ * not reporting a measurement, it is reporting a memory, and the "Live status"
+ * card said exactly that. There are three cases and they must not be conflated:
+ *
+ *  - `live`  the agent is in contact and the sample is current.
+ *  - `stale` the agent is out of contact but a sample survives from the last
+ *    beat. Show it only under a label saying when it was taken.
+ *  - `none`  nothing was ever measured. Print the no-value mark, never a zero:
+ *    "0% CPU" is a claim, and it is false.
+ */
+export type MetricFreshness = "live" | "stale" | "none";
+
+export function metricFreshness(node: NodeStatusInput, hasSample: boolean): MetricFreshness {
+  if (!hasSample) return "none";
+  return INFO[nodeStatus(node)].reporting ? "live" : "stale";
+}
+
 /** Worst first, then a caller-supplied tiebreak (usually name then id). */
 export function compareByAttention(a: NodeStatusInput, b: NodeStatusInput): number {
   return ATTENTION_ORDER[nodeStatus(a)] - ATTENTION_ORDER[nodeStatus(b)];

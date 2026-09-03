@@ -60,6 +60,7 @@ export function useNavSignals() {
       nodesTotal: nodeRows?.length,
       approvalsPending: approvalRows?.filter(isActionablePendingApproval).length,
       tasksFailed: taskRows?.filter((task) => task.status === "failed").length,
+      tasksStalled: taskRows?.filter((task) => task.status === "stalled").length,
       tasksQueued: taskRows?.filter((task) => task.status === "queued").length,
     });
   });

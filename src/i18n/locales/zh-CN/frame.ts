@@ -147,6 +147,13 @@ export default {
       trendOnePoint: "趋势，1 个数据点，数值 {value}",
       trendSummary: "趋势，{count} 个数据点，最小 {min}，最大 {max}，最新 {last}",
     },
+    // 短时长单位。数字写在文案里，中文不留空格。
+    duration: {
+      days: "{n} 天",
+      hours: "{n} 小时",
+      minutes: "{n} 分钟",
+      seconds: "{n} 秒",
+    },
     misc: {
       global: "全局",
       all: "全部",

@@ -17,9 +17,9 @@ import { useI18n } from "vue-i18n";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, KeyRound, Power, SquareTerminal } from "lucide-vue-next";
 import type { AgentUpdatePolicy, Node } from "@/lib/api/types";
 import { hasNeverReported, statusMeta, type BadgeVariant, type NodeHealth } from "@/lib/status";
-import { describeNodeStatus, nodeStatusReason } from "@/lib/nodeStatus";
+import { describeNodeStatus, metricFreshness, nodeStatusReason } from "@/lib/nodeStatus";
 import { splitNamePrefix } from "@/lib/fleet";
-import { formatBytes, formatBytesPerSec, formatRelativeTime, ratio, shortId } from "@/lib/format";
+import { formatBytes, formatBytesPerSec, formatRelativeTime, shortId } from "@/lib/format";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 import {
   gridTemplate,
@@ -33,6 +33,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import StatusDot from "@/components/common/StatusDot.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import { Badge } from "@/components/ui/badge";
+import NodeStatusBadge from "@/components/common/NodeStatusBadge.vue";
 import { Button } from "@/components/ui/button";
 
 const props = withDefaults(
@@ -163,6 +164,15 @@ function lastSeenLabel(node: Node): string {
 
 function statusVariant(node: Node): BadgeVariant {
   return statusMeta(dotStatus(node)).badgeVariant;
+}
+
+/**
+ * Nothing was ever measured on this machine. The bars print the no-value mark
+ * instead of a zero, the same mark the network cell already printed, so one
+ * row does not answer the same absence in two different ways.
+ */
+function noSample(node: Node): boolean {
+  return metricFreshness(node, !!node.metrics) === "none";
 }
 
 /**
@@ -355,10 +365,14 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
              33-row fleet is 33 pieces of emphasis competing for none. Only the
              states that want an operator keep the pill. -->
         <div class="min-w-0">
-          <Badge v-if="!isHealthy(node)" :variant="statusVariant(node)" class="max-w-full truncate" :title="statusTitle(node)">
-            {{ statusLabel(node) }}
-          </Badge>
-          <span v-else class="text-xs text-muted-foreground" :title="statusTitle(node)">{{ statusLabel(node) }}</span>
+          <NodeStatusBadge
+            v-if="!isHealthy(node)"
+            :variant="statusVariant(node)"
+            :label="statusLabel(node)"
+            :reason="statusTitle(node)"
+            class="max-w-full truncate"
+          />
+          <span v-else class="text-xs text-muted-foreground">{{ statusLabel(node) }}</span>
         </div>
 
         <!-- Role -->
@@ -422,16 +436,25 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         </div>
 
         <!-- CPU / Memory / Disk mini-bars -->
-        <MetricBar v-if="show('cpu')" tone="cpu" :percent="node.metrics?.cpu_percent ?? 0" />
+        <MetricBar
+          v-if="show('cpu')"
+          tone="cpu"
+          :percent="node.metrics?.cpu_percent"
+          :unavailable="noSample(node)"
+        />
         <MetricBar
           v-if="show('memory')"
           tone="memory"
-          :percent="ratio(node.metrics?.memory_used, node.metrics?.memory_total)"
+          :used="node.metrics?.memory_used"
+          :total="node.metrics?.memory_total"
+          :unavailable="noSample(node)"
         />
         <MetricBar
           v-if="show('disk')"
           tone="disk"
-          :percent="ratio(node.metrics?.disk_used, node.metrics?.disk_total)"
+          :used="node.metrics?.disk_used"
+          :total="node.metrics?.disk_total"
+          :unavailable="noSample(node)"
         />
 
         <!-- Net rx / tx -->
@@ -482,7 +505,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
             v-if="canOpenTerminal"
             variant="ghost"
             size="icon-sm"
-            :disabled="!node.online || node.disabled"
+            :disabled="!isLive(node)"
             :title="$t('fleet.nodes.list.openTerminal')"
             :aria-label="$t('fleet.nodes.list.openTerminal')"
             @click.stop="emit('terminal', node)"

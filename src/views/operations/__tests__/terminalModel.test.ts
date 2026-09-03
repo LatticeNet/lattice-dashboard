@@ -137,6 +137,10 @@ test("Connect is off until a node is chosen, and names the one reason it stays o
   assert.deepEqual(connectReadiness(node({ id: "x", disabled: true }), "auto"), { ready: false, reason: "disabled" });
   assert.deepEqual(connectReadiness(node({ id: "x", agent_runtime: { allow_terminal: false } }), "auto"), { ready: false, reason: "terminal-off" });
   assert.deepEqual(connectReadiness(node({ id: "x", agent_runtime: { allow_terminal: true, no_exec: true } }), "auto"), { ready: false, reason: "exec-off" });
+  // A node that was enrolled and never installed is not an outage. Calling it
+  // offline collapsed the fifth status word and sent operators looking for a
+  // machine that had gone quiet, when nothing had ever been there.
+  assert.deepEqual(connectReadiness(node({ id: "x", status: "never_reported" }), "auto"), { ready: false, reason: "never-reported" });
   assert.deepEqual(connectReadiness(node({ id: "x" }), "auto"), { ready: true, transport: "stream" });
 });
 

@@ -28,7 +28,9 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
-import { leaseAttemptLabel, taskLeaseProgress, type TaskLeaseProgress } from "@/lib/taskLease";
+import { leaseAttemptLabel, stalledText, taskLeaseProgress, taskStateStyle, type TaskLeaseProgress } from "@/lib/taskLease";
+import { describeNodeStatus, isReporting } from "@/lib/nodeStatus";
+import { statusMeta } from "@/lib/status";
 import { tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 import {
@@ -655,7 +657,9 @@ const targetPreflight = computed<TargetPreflight>(() => {
     const node = nodesById.value[id];
     if (!node) continue;
     const name = node.name || id;
-    if (node.disabled || !node.online) out.offline.push(name);
+    // "Will not run now" is the ontology's reporting question, not the legacy
+    // online boolean: a never-reported node belongs in this list too.
+    if (!isReporting(node)) out.offline.push(name);
     const runtime = node.agent_runtime;
     if (!runtime?.reported_at) continue;
     if (runtime.no_exec || runtime.allow_exec === false) out.execDisabled.push(name);
@@ -802,17 +806,30 @@ function statusLabel(status: NodeRunStatus | TaskView["status"]): string {
   return t(`operations.tasks.status.${status}`);
 }
 
+/** Translated fragments for the lease line, including the duration units. */
+function leaseText() {
+  return {
+    leasedFor: (age: string) => t("operations.tasks.leasedFor", { age }),
+    attemptOf: (attempt: number, max: number) => t("operations.tasks.attemptOf", { attempt, max }),
+    duration: {
+      days: (n: number) => t("common.duration.days", { n }),
+      hours: (n: number) => t("common.duration.hours", { n }),
+      minutes: (n: number) => t("common.duration.minutes", { n }),
+      seconds: (n: number) => t("common.duration.seconds", { n }),
+    },
+    stalledNoLease: t("operations.tasks.stalledNoLease"),
+  };
+}
+
+/**
+ * The colour for a task state, from the shared table in `@/lib/taskLease`.
+ *
+ * It used to be this private switch, and the node page had a second one that
+ * disagreed with it: Stalled was amber here and red there, Running grey here
+ * and amber there. Both pages read the table now.
+ */
 function statusVariant(status: NodeRunStatus | TaskView["status"]): BadgeVariant {
-  if (status === "failed") return "destructive";
-  // Stalled is the state that wants an operator: nothing is running, nothing
-  // answered, and the result will not arrive on its own.
-  if (status === "stalled") return "warning";
-  // Expired is not a failure and must not read like one: nothing went wrong,
-  // the control plane stopped waiting. Secondary, the same weight as cancelled.
-  if (status === "expired") return "secondary";
-  if (status === "finished") return "default";
-  if (status === "leased") return "secondary";
-  return "outline";
+  return taskStateStyle(status).variant;
 }
 
 function taskCounts(rows: NodeExecutionRow[]) {
@@ -849,12 +866,14 @@ function resultlessText(row: NodeExecutionRow): string {
   // "Running" alone is what hid six days of agent restarts (KI-20): the
   // lease age and attempt count are the evidence that it is still running,
   // and on a stalled row the reason comes first because it is the finding.
-  const lease = leaseAttemptLabel(row.lease, {
-    leasedFor: (age) => t("operations.tasks.leasedFor", { age }),
-    attemptOf: (attempt, max) => t("operations.tasks.attemptOf", { attempt, max }),
-  });
+  const text = leaseText();
+  const lease = leaseAttemptLabel(row.lease, text);
   if (row.status === "leased") return lease ? `${t("operations.tasks.running")} · ${lease}` : t("operations.tasks.running");
-  if (row.status === "stalled") return lease ? `${lease} · ${t("operations.tasks.stalledNoLease")}` : t("operations.tasks.stalledNoLease");
+  // Once, cleanly: the server's reason and the attempt count that evidences it,
+  // or the generic sentence when the server sent no reason. The badge beside
+  // this cell already says the word "Stalled"; repeating it here and then
+  // restating the reason is what produced three sentences saying one thing.
+  if (row.status === "stalled") return stalledText(row.lease, text);
   if (row.status === "cancelled") return t("operations.tasks.cancelledNoResult");
   return t("operations.tasks.failedNoResult");
 }
@@ -1163,8 +1182,8 @@ const taskMetrics = computed<Metric[]>(() => [
                   <div class="grid min-w-0 gap-1">
                     <div class="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
-                      <Badge :variant="node.online ? 'default' : 'secondary'">
-                        {{ node.online ? $t('operations.tasks.on') : $t('operations.tasks.off') }}
+                      <Badge :variant="statusMeta(describeNodeStatus(node).health).badgeVariant">
+                        {{ $t(describeNodeStatus(node).labelKey) }}
                       </Badge>
                       <Badge
                         v-for="badge in nodeAgentBadges(node).slice(0, 3)"
@@ -1510,7 +1529,7 @@ const taskMetrics = computed<Metric[]>(() => [
                     <p class="mt-1 font-medium">{{ taskCounts(nodeRows(detailTask)).failed }}</p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
-                    <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.attempts') }}</p>
+                    <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.runs') }}</p>
                     <p class="mt-1 font-medium">{{ attemptTasks(detailTask).length }}</p>
                   </div>
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
@@ -1538,7 +1557,7 @@ const taskMetrics = computed<Metric[]>(() => [
                         <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colTarget') }}</th>
                         <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colStatus') }}</th>
                         <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colLatest') }}</th>
-                        <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colAttempts') }}</th>
+                        <th scope="col" class="px-3 py-2 text-left">{{ $t('operations.tasks.colRuns') }}</th>
                         <th scope="col" class="px-3 py-2 text-right">{{ $t('operations.tasks.colActions') }}</th>
                       </tr>
                     </thead>
@@ -1591,7 +1610,7 @@ const taskMetrics = computed<Metric[]>(() => [
                               @click="toggleNodeExpanded(detailTask.id, row.nodeId)"
                             >
                               <ChevronDown :class="cn('size-4 transition-transform', isNodeExpanded(detailTask.id, row.nodeId) && 'rotate-180')" aria-hidden="true" />
-                              {{ isNodeExpanded(detailTask.id, row.nodeId) ? $t('operations.tasks.collapseAttempts') : $t('operations.tasks.expandAttempts') }}
+                              {{ isNodeExpanded(detailTask.id, row.nodeId) ? $t('operations.tasks.collapseRuns') : $t('operations.tasks.expandRuns') }}
                             </Button>
                             <Button
                               v-if="row.failed"

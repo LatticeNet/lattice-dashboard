@@ -8,6 +8,7 @@ import {
   countNodeStatuses,
   describeNodeStatus,
   isReporting,
+  metricFreshness,
   needsAttention,
   nodeStatus,
   nodeStatusSince,
@@ -121,4 +122,17 @@ test("since comes from the server, or from the last beat only for a node that we
   assert.equal(nodeStatusSince({ reachability: "offline", online: false, last_seen: BEAT }), BEAT);
   assert.equal(nodeStatusSince({ reachability: "online", online: true, last_seen: BEAT }), undefined);
   assert.equal(nodeStatusSince({ reachability: "never", last_seen: ZERO }), undefined);
+});
+
+test("resource numbers are live, remembered, or absent, and never a confident zero", () => {
+  // A node in contact: the sample is now.
+  assert.equal(metricFreshness({ status: "online" }, true), "live");
+  assert.equal(metricFreshness({ status: "degraded" }, true), "live");
+  // Out of contact but a sample survives from the last beat. Shown under a
+  // label that says when, never as a current reading.
+  assert.equal(metricFreshness({ status: "offline" }, true), "stale");
+  assert.equal(metricFreshness({ status: "disabled" }, true), "stale");
+  // Nothing was ever measured. This is the case that printed "0% / 0% / 0%".
+  assert.equal(metricFreshness({ status: "never_reported" }, false), "none");
+  assert.equal(metricFreshness({ status: "online" }, false), "none");
 });

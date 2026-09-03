@@ -318,6 +318,11 @@ export default {
         viewMonitoring: "Monitoring",
         liveStatus: "Live status",
         liveStatusDesc: "Live resource pressure and recent trend",
+        // A node out of contact still has the numbers from its last beat. They
+        // are shown, under a heading that does not call them live.
+        lastKnownStatus: "Last known status",
+        lastKnownStatusDesc: "Measured at the last report, {time}. Not current readings.",
+        noStatusDesc: "No report has ever arrived from this node, so there is nothing to measure.",
         sparklineLabel: "Recent CPU trend",
         sparklinePending: "Collecting samples: the trend appears after a few polls.",
         load: "Load (1m)",

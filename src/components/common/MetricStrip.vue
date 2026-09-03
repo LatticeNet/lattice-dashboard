@@ -102,11 +102,16 @@ const gridClass = computed(
       />
       <div class="min-w-0">
         <p class="truncate text-xs text-muted-foreground">{{ metric.label }}</p>
-        <p class="flex min-w-0 items-baseline gap-1.5">
+        <!-- Value and hint sit side by side once there is room for both. At
+             375 there is not: a two-column strip leaves each segment ~115px of
+             text, and a throughput beside its cumulative total clipped to
+             "70.7 ... 98....". Below `sm` the hint drops to its own line and
+             the rate gets the whole width. -->
+        <p class="flex min-w-0 flex-col items-start gap-x-1.5 sm:flex-row sm:items-baseline">
           <span
-            :class="cn('truncate text-xl font-semibold leading-tight tabular', toneClass[metric.tone ?? 'default'])"
+            :class="cn('max-w-full truncate text-lg font-semibold leading-tight tabular sm:text-xl', toneClass[metric.tone ?? 'default'])"
           >{{ metric.value }}</span>
-          <span v-if="metric.hint" class="truncate text-xs text-muted-foreground">{{ metric.hint }}</span>
+          <span v-if="metric.hint" class="max-w-full truncate text-xs text-muted-foreground">{{ metric.hint }}</span>
         </p>
       </div>
     </component>

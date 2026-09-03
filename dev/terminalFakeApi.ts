@@ -15,7 +15,7 @@
  * lattice-server does since the session-ownership fix.
  */
 import { ApiError } from "@/lib/api/client";
-import type { Node, Principal, TerminalEvent, TerminalEventsResponse, TerminalSession } from "@/lib/api/index";
+import type { Node, NodeStatus, Principal, TerminalEvent, TerminalEventsResponse, TerminalSession } from "@/lib/api/index";
 
 export * from "@/lib/api/index";
 
@@ -49,6 +49,8 @@ interface FleetEntry {
   terminal?: boolean;
   disabled?: boolean;
   version?: string;
+  /** The control plane's word, when it is not simply derived from `online`. */
+  status?: NodeStatus;
 }
 
 const FLEET: FleetEntry[] = [
@@ -85,6 +87,9 @@ const FLEET: FleetEntry[] = [
   { name: "[Metix]-Crunchbits-SPO", ip: "198.51.100.30", host: "crunchbits-spo", transport: "poll" },
   { name: "[cd]-Evoxt-KUL", ip: "203.0.113.30", host: "evoxt-kul", transport: "poll" },
   { name: "[Metix]-Tencent-SG-lite", ip: "198.51.100.31", host: "tencent-sg", transport: "poll", version: "0.3.8" },
+  // Enrolled, agent never installed. The picker used to refuse it with "node
+  // offline", which is a different problem with a different fix.
+  { name: "[cd]-new-hkbn-hub", ip: "", host: "", transport: "poll", online: false, status: "never_reported", version: "" },
 ];
 
 function slug(name: string): string {
@@ -102,7 +107,11 @@ const nodes: Node[] = FLEET.map((entry) => ({
   agent_version: entry.version ?? "0.3.9-alpha.2",
   online: entry.online ?? true,
   disabled: entry.disabled,
-  last_seen: iso(-(entry.online === false ? 3 * 3600_000 : 8_000)),
+  status: entry.status,
+  last_seen:
+    entry.status === "never_reported"
+      ? "0001-01-01T00:00:00Z"
+      : iso(-(entry.online === false ? 3 * 3600_000 : 8_000)),
   agent_runtime: {
     allow_terminal: entry.terminal ?? true,
     no_exec: false,

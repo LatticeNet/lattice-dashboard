@@ -46,10 +46,30 @@ export function formatDuration(seconds?: number): string {
   return `${Math.floor(seconds)}s`;
 }
 
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+/**
+ * The locale these formatters speak.
+ *
+ * `Intl.RelativeTimeFormat(undefined)` follows the browser, not the console's
+ * language switcher, so a Chinese console on an English browser rendered
+ * "自 6 days ago" and "已租出 41 min": half a sentence in each script. The i18n
+ * module pushes the active locale in here whenever it changes, and these
+ * formatters read it instead of asking the browser.
+ *
+ * `undefined` until something sets it, which keeps the module usable from
+ * `node --test` with no app around it.
+ */
+let activeLocale: string | undefined;
+let rtf = new Intl.RelativeTimeFormat(activeLocale, { numeric: "auto" });
+
+export function setFormatLocale(locale: string | undefined): void {
+  activeLocale = locale;
+  rtf = new Intl.RelativeTimeFormat(activeLocale, { numeric: "auto" });
+}
 
 export function formatRelativeTime(input?: string | number | Date): string {
-  if (!input) return "never";
+  // No timestamp is the same absence a missing byte count is, and gets the same
+  // mark. It used to answer the English word "never" whatever the locale.
+  if (!input) return NO_VALUE;
   const then = new Date(input).getTime();
   if (Number.isNaN(then)) return NO_VALUE;
   const diff = then - Date.now();
@@ -67,7 +87,7 @@ export function formatDateTime(input?: string | number | Date): string {
   if (!input) return NO_VALUE;
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) return NO_VALUE;
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(activeLocale, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -79,7 +99,7 @@ export function formatDateTime(input?: string | number | Date): string {
 export function formatMoney(cents?: number, currency = "USD"): string {
   if (cents === undefined) return NO_VALUE;
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(cents / 100);
+    return new Intl.NumberFormat(activeLocale, { style: "currency", currency }).format(cents / 100);
   } catch {
     return `${(cents / 100).toFixed(2)} ${currency}`;
   }

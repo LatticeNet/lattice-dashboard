@@ -313,6 +313,10 @@ export default {
         viewMonitoring: "监控",
         liveStatus: "实时状态",
         liveStatusDesc: "实时资源压力与近期趋势",
+        // 失联节点仍保留最后一次心跳的数据。照常展示,但标题不再称之为实时。
+        lastKnownStatus: "最后一次已知状态",
+        lastKnownStatusDesc: "采集于最后一次上报,{time}。不是当前读数。",
+        noStatusDesc: "该节点从未上报过,没有可测量的数据。",
         sparklineLabel: "近期 CPU 趋势",
         sparklinePending: "正在采集样本:几次轮询后会显示趋势。",
         load: "负载(1 分钟)",

@@ -51,7 +51,10 @@ export interface NodeTableColumn {
 
 export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   { id: "name", labelKey: "fleet.nodes.table.colName", width: "minmax(180px,1.6fr)", optional: false, sortKey: "name", defaultDir: "asc" },
-  { id: "status", labelKey: "fleet.nodes.table.colStatus", width: "90px", optional: false, sortKey: "status", defaultDir: "asc" },
+  // 90px clipped the widest status pill ("never reported") to "never report...".
+  // The track is sized to the longest word the column can hold, because a
+  // status the operator has to guess at is the one thing this column exists for.
+  { id: "status", labelKey: "fleet.nodes.table.colStatus", width: "112px", optional: false, sortKey: "status", defaultDir: "asc" },
   { id: "role", labelKey: "fleet.nodes.table.colRole", width: "104px", optional: true },
   { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true, defaultHidden: true },
   { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true, defaultHidden: true },
