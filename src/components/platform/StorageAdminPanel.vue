@@ -17,6 +17,7 @@ import {
   api,
   type StorageAccess,
   type StorageBinding,
+  type StorageBucket,
   type StorageKind,
   type StorageTokenCreateResponse,
   type StorageTokenView,
@@ -64,7 +65,7 @@ const currentBucket = computed(() => props.activeBucket?.trim() || "default");
 
 const bucketsQuery = useAsyncData(
   () => {
-    if (!canRead.value) return Promise.resolve({ buckets: [] });
+    if (!canRead.value) return Promise.resolve({ buckets: [] as StorageBucket[] });
     return api.storage.buckets(props.kind);
   },
   {

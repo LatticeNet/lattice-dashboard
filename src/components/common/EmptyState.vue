@@ -11,6 +11,14 @@ const props = withDefaults(
     description?: string;
     /** Visual tone: 'default' keeps the neutral dashed look; 'positive' applies a subtle success treatment. */
     tone?: "default" | "positive";
+    /**
+     * Ordered prerequisites, rendered as a numbered list under the
+     * description. A feature with nothing authored yet has an empty state that
+     * either teaches the loop or wastes the screen; seeding fake data to make
+     * it look busy is the alternative, and on a control plane that drives real
+     * nodes it is the wrong one.
+     */
+    steps?: { title: string; detail: string }[];
     class?: HTMLAttributes["class"];
   }>(),
   {
@@ -37,7 +45,7 @@ const resolvedIcon = computed<Component | undefined>(
   <div
     :class="
       cn(
-        'flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-10 text-center',
+        'flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-6 text-center sm:p-10',
         isPositive ? 'border-success/30' : 'border-border',
         props.class,
       )
@@ -69,6 +77,18 @@ const resolvedIcon = computed<Component | undefined>(
         {{ description }}
       </p>
     </div>
+    <ol v-if="steps?.length" class="w-full max-w-xl space-y-3 text-left">
+      <li v-for="(step, index) in steps" :key="step.title" class="flex gap-3">
+        <span
+          class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium tabular text-muted-foreground"
+          aria-hidden="true"
+        >{{ index + 1 }}</span>
+        <span>
+          <span class="block text-sm font-medium text-foreground">{{ step.title }}</span>
+          <span class="block text-sm text-muted-foreground">{{ step.detail }}</span>
+        </span>
+      </li>
+    </ol>
     <div v-if="slots.default" class="mt-1 flex items-center gap-2">
       <slot />
     </div>

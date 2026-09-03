@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,34 @@ const auth = useAuthStore();
 const canRead = computed(() => auth.can("geo:read"));
 const canAdmin = computed(() => auth.can("geo:admin"));
 const canReadNodes = computed(() => auth.can("node:read"));
+
+/**
+ * What an operator has to have before a geo-routing can be authored and
+ * rendered, in the order they have to have it.
+ *
+ * A seeded example is the tempting alternative and the wrong one: a routing
+ * has to name real node ids to be renderable at all, so a demo would be
+ * indistinguishable from a live one on a control plane driving production
+ * nodes. Teaching the loop costs an empty screen and risks nothing.
+ */
+const prerequisites = computed(() => [
+  {
+    title: t("networking.geoRouting.prereqNodesTitle"),
+    detail: t("networking.geoRouting.prereqNodesDetail"),
+  },
+  {
+    title: t("networking.geoRouting.prereqGeoTitle"),
+    detail: t("networking.geoRouting.prereqGeoDetail"),
+  },
+  {
+    title: t("networking.geoRouting.prereqDnsNodeTitle"),
+    detail: t("networking.geoRouting.prereqDnsNodeDetail"),
+  },
+  {
+    title: t("networking.geoRouting.prereqDatabaseTitle"),
+    detail: t("networking.geoRouting.prereqDatabaseDetail"),
+  },
+]);
 
 const routesQuery = useAsyncData(
   (signal) => {
@@ -315,6 +344,19 @@ const continentEntries = computed(() =>
           :empty-description="$t('networking.geoRouting.emptyDescription')"
           @retry="routesQuery.refresh"
         >
+          <template #empty>
+            <EmptyState
+              :icon="Route"
+              :title="$t('networking.geoRouting.emptyTitle')"
+              :description="$t('networking.geoRouting.emptyDescription')"
+              :steps="prerequisites"
+            >
+              <Button v-if="canAdmin" size="sm" @click="openCreate">
+                <Plus aria-hidden="true" class="size-4" />
+                {{ $t('networking.geoRouting.newRouting') }}
+              </Button>
+            </EmptyState>
+          </template>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>

@@ -64,6 +64,23 @@ const manualChildRoutes: RouteRecordRaw[] = [
     redirect: (to) => ({ path: "/platform/evidence", query: to.query }),
   },
   {
+    // KV and Static became one Store page with the kind in the query. Old
+    // links keep working and keep the bucket they pointed at; kv is the
+    // default kind, so it is the absence of the parameter.
+    path: "platform/kv",
+    redirect: (to) => ({ path: "/platform/store", query: to.query }),
+  },
+  {
+    path: "platform/static",
+    redirect: (to) => ({ path: "/platform/store", query: { ...to.query, kind: "static" } }),
+  },
+  {
+    // Workers is gone. Nothing ever routed to it, and the only thing it could
+    // read was the KV store, so the store page is where its links belong.
+    path: "platform/workers",
+    redirect: () => ({ path: "/platform/store" }),
+  },
+  {
     // Plugin-contributed view (design-10). The route stays open (scopes: []) so a
     // wrong/insufficient scope renders a friendly "no access" panel inside the
     // page rather than a redirect; PluginView enforces the contribution's own

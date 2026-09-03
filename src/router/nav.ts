@@ -16,9 +16,7 @@ import {
   Cable,
   Link2,
   Blocks,
-  Cpu,
   Database,
-  FolderOpen,
   Waypoints,
   Bell,
   KeyRound,
@@ -119,13 +117,17 @@ export const NAV: NavSection[] = [
     icon: Blocks,
     items: [
       { name: "platform-plugins", title: "Plugins", path: "/platform/plugins", icon: Blocks, scopes: ["audit:read", "plugin:admin", "plugin:verify"] },
-      { name: "platform-workers", title: "Workers", path: "/platform/workers", icon: Cpu, scopes: ["worker:deploy"] },
       // One page owns what URL content is visible at and who may read it, for
       // every origin. Each origin still enforces its own admin scope, so this
       // entry lists all of them rather than inventing a publishing scope.
       { name: "platform-publishing", title: "Publishing", path: "/platform/publishing", icon: Globe, scopes: ["kv:read", "static:read", "proxy:admin"] },
-      { name: "platform-kv", title: "KV Store", path: "/platform/kv", icon: Database, scopes: ["kv:read", "kv:write"] },
-      { name: "platform-static", title: "Static", path: "/platform/static", icon: FolderOpen, scopes: ["static:read", "static:write"] },
+      // KV and Static are one kind-parameterised store on the server: one
+      // bucket record, one binding, one access-token type, one handler set
+      // under /api/storage. The console split was cosmetic, so one entry owns
+      // both with the kind in the URL, the way Evidence owns two lenses. Each
+      // kind still enforces its own scope, so this lists all four rather than
+      // inventing a storage scope. The old paths redirect with their query.
+      { name: "platform-store", title: "Store", path: "/platform/store", icon: Database, scopes: ["kv:read", "kv:write", "static:read", "static:write"] },
       // Logs and the connection trace are one evidence surface at two levels
       // of structure: the raw sing-box line tail per source, and the
       // connection records assembled from the same store. One entry, two

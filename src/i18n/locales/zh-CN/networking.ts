@@ -426,7 +426,19 @@ export default {
       apexRecord: "{count} 条地理感知 apex 记录",
       emptyTitle: "未配置地理路由",
       emptyDescription:
-        "创建地理感知的 DNS apex，把客户端引导到最近的健康节点。这个列表也只显示你的令牌能读到的内容。",
+        "地理路由会渲染一份 CoreDNS 区域配置，让一个 DNS apex 由最近的健康节点来应答。本页只做渲染和校验和，不会触达任何节点；列表也只显示你的令牌能读到的内容。",
+      prereqNodesTitle: "先接入参与应答的节点",
+      prereqNodesDetail:
+        "每个参与节点都需要 agent 正在运行、上报在线并带有公网 IP。缺任何一项的节点会被渲染丢弃并给出警告；若所有节点都不满足，渲染直接失败。",
+      prereqGeoTitle: "为这些节点填入坐标",
+      prereqGeoDetail:
+        "geoip 策略按节点上的经纬度分流，写入坐标需要 node:admin。若所有参与节点都没有坐标，渲染会退回 all-healthy 轮询，并在警告中说明。",
+      prereqDnsNodeTitle: "指定权威 DNS 节点",
+      prereqDnsNodeDetail:
+        "承载渲染出的区域配置的节点。该字段按填写原样保存，服务端不会校验它是否真有 DNS 部署，因此必须填你确认在跑自建 DNS 的节点。",
+      prereqDatabaseTitle: "在该节点上放置 GeoLite2 数据库",
+      prereqDatabaseDetail:
+        "渲染出的配置会让 CoreDNS 指向一个 mmdb 路径，未指定时为 /etc/coredns/GeoLite2-City.mmdb。这里不会检查文件是否存在，路径错误要等 CoreDNS 加载时才暴露。",
       colName: "名称",
       colHostname: "主机名",
       colStrategy: "策略",
@@ -643,7 +655,6 @@ export default {
       clipboardUnavailable: "剪贴板不可用，请手动选中 URL 复制。",
       alsoPublishes: "本服务器还通过这些方式对外提供内容",
       staticLink: "静态对象",
-      workersLink: "Worker 路由",
     },
 
     tunnels: {
@@ -655,7 +666,20 @@ export default {
       tunnelCountOne: "{count} 条隧道",
       credentialsNote: "凭据存于节点本地,服务端从不存储",
       emptyTitle: "未配置隧道",
-      emptyDescription: "创建 cloudflared 隧道以暴露节点本地服务。",
+      emptyDescription:
+        "隧道通过 cloudflared，把一个公网主机名映射到只在某个节点上监听的服务。服务端只保存拓扑并渲染配置，真正运行它的是节点。",
+      prereqCloudflareTitle: "先在 Cloudflare 侧创建隧道",
+      prereqCloudflareDetail:
+        "本服务端不会调用 Cloudflare API。请在 Cloudflare 创建隧道，并把凭据 JSON 放到节点上，未指定路径时为 /etc/cloudflared/<tunnel id>.json。这里不检查该文件是否存在，缺失要等配置下发时才失败。",
+      prereqNodeTitle: "绑定到一个节点",
+      prereqNodeDetail:
+        "运行 cloudflared 且能访问该服务的节点。保存时不会校验 node id 是否真的存在于机队，因此绑到不存在节点的配置也能保存和计划，只在下发时失败。",
+      prereqIngressTitle: "至少添加一条 ingress 规则",
+      prereqIngressDetail:
+        "主机名至少包含一个点，服务地址使用 http、https、ssh、rdp、tcp 或 unix。系统会自动补一条兜底的 404 规则。",
+      prereqApproveTitle: "先计划，再审批",
+      prereqApproveDetail:
+        "保存本身不改变节点上的任何东西。计划会渲染 config.yml 并创建一条待审批；审批通过后才会在该节点写入 /etc/cloudflared/config.yml、校验 ingress 并重载 cloudflared。",
       colName: "名称",
       colNode: "节点",
       colTunnelId: "隧道 ID",

@@ -29,10 +29,8 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
     import("@/views/networking/SubscriptionSharesView.vue"),
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
-  "platform-workers": () => import("@/views/platform/WorkersView.vue"),
   "platform-publishing": () => import("@/views/platform/PublishingView.vue"),
-  "platform-kv": () => import("@/views/platform/KvView.vue"),
-  "platform-static": () => import("@/views/platform/StaticView.vue"),
+  "platform-store": () => import("@/views/platform/StoreView.vue"),
   "platform-evidence": () => import("@/views/platform/EvidenceView.vue"),
   "platform-notifications": () => import("@/views/platform/NotificationsView.vue"),
   "platform-agent-updates": () => import("@/views/platform/AgentUpdatesView.vue"),

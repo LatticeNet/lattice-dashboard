@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import NodePicker from "@/components/common/NodePicker.vue";
@@ -57,6 +58,33 @@ const TUNNEL_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("tunnel:admin"));
+
+/**
+ * The ordered prerequisites for a working tunnel.
+ *
+ * Not a seeded example: a plannable profile has to name a real node id, and
+ * approving its plan writes /etc/cloudflared/config.yml on that node and
+ * reloads the service. A demo would sit one click away from restarting
+ * cloudflared on a production node, so the empty state teaches instead.
+ */
+const prerequisites = computed(() => [
+  {
+    title: t("networking.tunnels.prereqCloudflareTitle"),
+    detail: t("networking.tunnels.prereqCloudflareDetail"),
+  },
+  {
+    title: t("networking.tunnels.prereqNodeTitle"),
+    detail: t("networking.tunnels.prereqNodeDetail"),
+  },
+  {
+    title: t("networking.tunnels.prereqIngressTitle"),
+    detail: t("networking.tunnels.prereqIngressDetail"),
+  },
+  {
+    title: t("networking.tunnels.prereqApproveTitle"),
+    detail: t("networking.tunnels.prereqApproveDetail"),
+  },
+]);
 
 // BARE ARRAY endpoint: do NOT unwrap.
 const tunnelsQuery = useAsyncData((signal) => api.tunnels.list({ signal }), { pollInterval: 15000 });
@@ -283,6 +311,19 @@ async function openPlan(tunnel: TunnelView) {
           :empty-description="$t('networking.tunnels.emptyDescription')"
           @retry="tunnelsQuery.refresh"
         >
+          <template #empty>
+            <EmptyState
+              :icon="Cable"
+              :title="$t('networking.tunnels.emptyTitle')"
+              :description="$t('networking.tunnels.emptyDescription')"
+              :steps="prerequisites"
+            >
+              <Button v-if="canAdmin" size="sm" @click="openCreate">
+                <Plus aria-hidden="true" class="size-4" />
+                {{ $t('networking.tunnels.newTunnel') }}
+              </Button>
+            </EmptyState>
+          </template>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>

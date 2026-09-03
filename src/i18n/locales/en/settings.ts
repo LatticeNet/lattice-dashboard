@@ -75,7 +75,7 @@ export default {
         actor: "Actor",
         unknown: "unknown",
         scopes: "Scopes",
-        superuserHelp: "* is the bootstrap superuser scope. It includes every dashboard and API scope, including worker:deploy.",
+        superuserHelp: "* is the bootstrap superuser scope. It includes every dashboard and API scope, including node:admin.",
         scopedHelp: "Only the scopes listed below are active for this sign-in. A page missing from the sidebar usually means the scope it needs is missing here.",
         noScopes: "no scopes",
       },

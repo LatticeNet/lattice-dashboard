@@ -1363,20 +1363,6 @@ export interface PluginVerifyResponse {
   capabilities: { name: string; risk: "read" | "write" | "host" | string }[];
 }
 
-export interface WorkerScript {
-  id: string;
-  name: string;
-  source: string;
-  capabilities: string[];
-  public: boolean;
-  updated_at: string;
-}
-
-export interface WorkerRunResponse {
-  status: number;
-  body: string;
-}
-
 export interface KVEntry {
   bucket: string;
   key: string;
@@ -1394,6 +1380,24 @@ export interface StaticObject {
 }
 
 export type StorageKind = "kv" | "static";
+
+/**
+ * One bucket that actually exists, as opposed to one an operator registered.
+ *
+ * `StorageBucket` is the registered record. A bucket a plugin wrote into
+ * without registering has no such record, which is how a console that listed
+ * only registered buckets showed nothing while the store held Sub-Store's
+ * whole database. `entries` is what the bucket holds, `registered` says
+ * whether a bucket record exists, and `reserved` marks a bucket whose name is
+ * visible but whose contents the server refuses to serve.
+ */
+export interface StorageBucketInventoryEntry {
+  name: string;
+  kind: StorageKind | string;
+  entries: number;
+  registered: boolean;
+  reserved: boolean;
+}
 export type StorageAccess = "admin" | "read" | "write";
 
 /**

@@ -199,7 +199,6 @@ export const SCOPE_GROUPS: readonly ScopeGroup[] = [
         grants: "Manage log sources, including deleting them.",
         note: "Three levels here (read, write, admin) where most resources have two.",
       },
-      { scope: "worker:deploy", grants: "Deploy and run edge workers.", note: "No worker:read exists." },
       { scope: "notify:send", grants: "Manage notification channels and rules, and send test notifications.", note: "Named for a verb, but it governs channel and rule administration too." },
     ],
   },

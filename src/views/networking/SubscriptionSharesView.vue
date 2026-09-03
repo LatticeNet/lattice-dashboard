@@ -701,15 +701,9 @@ watch(() => route.query, applyDeepLink);
           <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.alsoPublishes') }}</p>
           <div class="mt-2 flex flex-wrap gap-2">
             <Button variant="outline" size="sm" as-child>
-              <RouterLink to="/platform/static">
+              <RouterLink to="/platform/store?kind=static">
                 <ExternalLink class="size-3.5" aria-hidden="true" />
                 {{ $t('networking.shares.staticLink') }}
-              </RouterLink>
-            </Button>
-            <Button variant="outline" size="sm" as-child>
-              <RouterLink to="/platform/workers">
-                <ExternalLink class="size-3.5" aria-hidden="true" />
-                {{ $t('networking.shares.workersLink') }}
               </RouterLink>
             </Button>
           </div>
