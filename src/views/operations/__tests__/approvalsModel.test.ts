@@ -16,7 +16,19 @@ import {
   partitionBatchResults,
   runWithConcurrency,
   type ApprovalEventItem,
+  APPROVAL_WAIT_CODES,
+  APPROVAL_WAIT_UNKNOWN,
+  approvalWaitCode,
+  approvalWaitLabelKey,
+  approvalWaitTone,
+  approvalWaitWayKey,
+  countApprovalInbox,
+  isApprovalMoving,
+  isApprovalStuck,
+  type ApprovalInboxItem,
 } from "../approvalsModel.ts";
+import enOperations from "../../../i18n/locales/en/operations.ts";
+import zhOperations from "../../../i18n/locales/zh-CN/operations.ts";
 
 let nextId = 0;
 
@@ -254,4 +266,90 @@ test("runWithConcurrency preserves order, caps in-flight work, and reports progr
   }
   assert.equal(progress.length, 10);
   assert.deepEqual(progress[progress.length - 1], [10, 10]);
+});
+
+
+// ── Why an approved approval has not applied ─────────────────────────────────
+
+function waitingItem(code: string, blocked: boolean, status = "approved"): ApprovalInboxItem {
+  return { status, waiting: { code, reason: "because", blocked } };
+}
+
+test("a code this build does not know is named unknown, not dropped", () => {
+  assert.equal(approvalWaitCode("node_offline"), "node_offline");
+  assert.equal(approvalWaitCode("some_future_reason"), APPROVAL_WAIT_UNKNOWN);
+  assert.equal(approvalWaitCode(undefined), APPROVAL_WAIT_UNKNOWN);
+  assert.equal(approvalWaitCode("  "), APPROVAL_WAIT_UNKNOWN);
+  // It still resolves to a real label and a real way out, so the banner keeps
+  // its shape and the server's own sentence keeps carrying the detail.
+  assert.equal(approvalWaitLabelKey("some_future_reason"), "operations.approvals.waiting.codes.unknown");
+  assert.equal(approvalWaitWayKey("some_future_reason"), "operations.approvals.waiting.ways.unknown");
+});
+
+test("only a failed apply reads as destructive, and nothing moving is coloured", () => {
+  assert.equal(approvalWaitTone({ code: "task_failed", blocked: true }), "destructive");
+  assert.equal(approvalWaitTone({ code: "node_offline", blocked: true }), "warning");
+  assert.equal(approvalWaitTone({ code: "not_queued", blocked: true }), "warning");
+  assert.equal(approvalWaitTone({ code: "task_queued", blocked: false }), "muted");
+  assert.equal(approvalWaitTone({ code: "task_running", blocked: false }), "muted");
+});
+
+test("stuck and moving split the approved rows and nothing else", () => {
+  assert.equal(isApprovalStuck(waitingItem("node_offline", true)), true);
+  assert.equal(isApprovalMoving(waitingItem("node_offline", true)), false);
+  assert.equal(isApprovalStuck(waitingItem("task_queued", false)), false);
+  assert.equal(isApprovalMoving(waitingItem("task_queued", false)), true);
+  // A pending row is never either, whatever it carries.
+  assert.equal(isApprovalStuck(waitingItem("node_offline", true, "pending")), false);
+  assert.equal(isApprovalMoving(waitingItem("task_queued", false, "pending")), false);
+  assert.equal(isApprovalStuck({ status: "approved" }), false);
+});
+
+test("the header counts separate what waits on a person, a machine, and nothing", () => {
+  const items: ApprovalInboxItem[] = [
+    { status: "pending" },
+    { status: "pending" },
+    waitingItem("node_offline", true),
+    waitingItem("task_failed", true),
+    waitingItem("task_queued", false),
+    { status: "approved" },
+    { status: "applied" },
+  ];
+  const counts = countApprovalInbox(items, (item) => item.status === "pending");
+  assert.deepEqual(counts, { total: 7, needsReview: 2, moving: 1, stuck: 2, unexplained: 1 });
+});
+
+// An approved row with no explanation is the older-server case. Counting it as
+// fine is what the page used to do, and it is what hid the defect.
+test("an approved row with no explanation is counted as unexplained, never as fine", () => {
+  const counts = countApprovalInbox([{ status: "approved" }], () => false);
+  assert.equal(counts.unexplained, 1);
+  assert.equal(counts.stuck, 0);
+  assert.equal(counts.moving, 0);
+});
+
+// The label and the way out are looked up with a computed key, which the
+// repository-wide key sweep cannot see. This is that check.
+test("every wait code has a label and a way out in both locales", () => {
+  const codes = [...APPROVAL_WAIT_CODES, APPROVAL_WAIT_UNKNOWN];
+  for (const [name, tree] of [["en", enOperations], ["zh-CN", zhOperations]] as const) {
+    const waiting = (tree as Record<string, any>).operations?.approvals?.waiting;
+    assert.ok(waiting, `${name} has no operations.approvals.waiting subtree`);
+    for (const code of codes) {
+      assert.equal(typeof waiting.codes?.[code], "string", `${name} is missing waiting.codes.${code}`);
+      assert.equal(typeof waiting.ways?.[code], "string", `${name} is missing waiting.ways.${code}`);
+    }
+  }
+});
+
+// Same problem, same fix: the bucket chip hint is keyed by the selected bucket.
+test("every inbox bucket has a hint in both locales", () => {
+  const buckets = ["active", "pending", "stale", "approved", "stuck", "applied", "rejected", "dismissed", "all"];
+  for (const [name, tree] of [["en", enOperations], ["zh-CN", zhOperations]] as const) {
+    const hints = (tree as Record<string, any>).operations?.approvals?.bucketHint;
+    assert.ok(hints, `${name} has no operations.approvals.bucketHint subtree`);
+    for (const bucket of buckets) {
+      assert.equal(typeof hints[bucket], "string", `${name} is missing bucketHint.${bucket}`);
+    }
+  }
 });

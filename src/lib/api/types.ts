@@ -501,6 +501,39 @@ export interface TerminalEventsResponse {
 
 export type ApprovalStatus = "pending" | "approved" | "applied" | "rejected" | "dismissed" | "failed";
 
+/**
+ * Why an approved approval has not applied.
+ *
+ * The control plane derives this (lattice-server, server_approval_waiting.go)
+ * and sends it only on approvals whose status is "approved"; every other
+ * status already says what it is. The console cannot work it out for itself:
+ * whether an apply task was ever queued is not on this wire at all, the node's
+ * contact state lives behind another endpoint, and the capability gate and the
+ * fleet kill switch have no client-visible projection. A wrong guess here is
+ * worse than no explanation, so the server answers.
+ *
+ * `code` is an open set. A console that meets a code it does not know still
+ * renders `reason`, which is the sentence the server wrote.
+ */
+export interface ApprovalWaitingView {
+  code: string;
+  /** One sentence in terms of the world: which machine, since when, which task. */
+  reason: string;
+  /** False for the two states that clear themselves: queued, and running now. */
+  blocked: boolean;
+  node_id?: string;
+  node_name?: string;
+  /** The same word the Nodes page shows for this machine. */
+  node_status?: NodeStatus;
+  node_status_since?: string;
+  node_status_reason?: string;
+  task_id?: string;
+  task_status?: string;
+  superseded_by?: string;
+  /** The dismiss endpoint accepts this approval as it stands. */
+  dismissible?: boolean;
+}
+
 export interface ApprovalView {
   id: string;
   node_id: string;
@@ -515,6 +548,8 @@ export interface ApprovalView {
   approved_by?: string;
   created_at?: string;
   updated_at?: string;
+  /** Present only while status is "approved". See ApprovalWaitingView. */
+  waiting?: ApprovalWaitingView;
 }
 
 /** A lint result from the SSH Guard pre-check. `block` refuses the plan. */

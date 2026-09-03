@@ -3,7 +3,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
-import { AlertTriangle, ArchiveX, Ban, CheckCircle2, ChevronDown, ChevronRight, FileCode2, Funnel, GitCompare, Play, RefreshCw, Search, ShieldCheck } from "lucide-vue-next";
+import { AlertTriangle, ArchiveX, Ban, CheckCircle2, ChevronDown, ChevronRight, Clock, ExternalLink, FileCode2, Funnel, GitCompare, Play, RefreshCw, Search, ServerOff, ShieldCheck } from "lucide-vue-next";
 import {
   api,
   APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED,
@@ -20,13 +20,19 @@ import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { approvalStatusMeta } from "@/lib/status";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { describeNodeStatus } from "@/lib/nodeStatus";
 import { evalFilterExpression, tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 import {
   UNKNOWN_WRITER,
+  approvalWaitLabelKey,
+  approvalWaitTone,
+  approvalWaitWayKey,
+  countApprovalInbox,
   groupApprovalsIntoEvents,
   groupNodePreview,
   isApprovalEventGroupable,
+  isApprovalStuck,
   partitionBatchResults,
   runWithConcurrency,
   type ApprovalEventGroup,
@@ -72,7 +78,7 @@ const approvalsQuery = useAsyncData((signal) => api.approvals.list({ include_dis
 });
 
 const selectedId = ref("");
-type ApprovalBucket = "active" | "pending" | "stale" | "approved" | "applied" | "rejected" | "dismissed" | "all";
+type ApprovalBucket = "active" | "pending" | "stale" | "approved" | "stuck" | "applied" | "rejected" | "dismissed" | "all";
 const approvalBucket = ref<ApprovalBucket>("active");
 const approvalSearch = ref("");
 const approvalExpression = ref("");
@@ -139,7 +145,7 @@ const sortedApprovals = computed(() =>
   }),
 );
 
-const APPROVAL_BUCKETS: ApprovalBucket[] = ["active", "pending", "stale", "approved", "applied", "rejected", "dismissed", "all"];
+const APPROVAL_BUCKETS: ApprovalBucket[] = ["active", "pending", "stale", "approved", "stuck", "applied", "rejected", "dismissed", "all"];
 
 function matchesBucket(approval: ApprovalView, bucket: ApprovalBucket): boolean {
   switch (bucket) {
@@ -151,6 +157,10 @@ function matchesBucket(approval: ApprovalView, bucket: ApprovalBucket): boolean 
       return isStaleAgentUpdateApproval(approval);
     case "approved":
       return approval.status === "approved";
+    // Its own slice, because it is the one an operator can never reach by
+    // clearing their queue: every item here is decided and going nowhere.
+    case "stuck":
+      return isApprovalStuck(approval);
     case "applied":
       return approval.status === "applied";
     case "rejected":
@@ -202,7 +212,14 @@ function approvalFieldValues(approval: ApprovalView, rawField: string): string[]
       return [approval.node_id || "global"];
     case "status":
     case "state":
-      return [approval.status, isStaleAgentUpdateApproval(approval) ? "stale" : ""];
+      return [
+        approval.status,
+        isStaleAgentUpdateApproval(approval) ? "stale" : "",
+        isApprovalStuck(approval) ? "stuck" : "",
+      ];
+    case "waiting":
+    case "blocked":
+      return [approval.waiting?.code ?? "", approval.waiting?.reason ?? "", approval.waiting?.node_status ?? ""];
     case "reason":
     case "message":
       return [approval.reason ?? "", approval.stale_code ?? ""];
@@ -370,6 +387,37 @@ function eventApprovedCount(group: ApprovalEventGroup<ApprovalView>): number {
   return group.items.filter((item) => item.status === "approved").length;
 }
 
+/**
+ * "3 already approved" was true and useless: it did not distinguish the two
+ * that a node is about to pick up from the one that will sit there forever.
+ * Empty when nothing in the card is stuck.
+ */
+function eventStuckSummary(group: ApprovalEventGroup<ApprovalView>): string {
+  const blocked = group.items.filter((item) => isStuck(item));
+  const first = blocked[0];
+  if (!first) return "";
+  const count = t("operations.approvals.waiting.listOfStuck", { count: blocked.length });
+  return `${count} · ${waitingLabel(first)}`;
+}
+
+/**
+ * Select an approval that may sit outside the current slice, widening to All
+ * when it does. A button that quietly selects something else is worse than one
+ * that does nothing.
+ */
+function selectApproval(id: string) {
+  selectedId.value = id;
+  if (!filteredApprovals.value.some((approval) => approval.id === id)) {
+    approvalBucket.value = "all";
+  }
+}
+
+/** Jump to the stuck slice from wherever the operator noticed the count. */
+function showStuck() {
+  approvalBucket.value = "stuck";
+  inboxTab.value = "individual";
+}
+
 function eventBatchFor(key: string): EventBatchState | undefined {
   return eventBatches.value[key];
 }
@@ -396,11 +444,13 @@ function refreshApprovals() {
 const confirmOpen = ref(false);
 const confirmTitle = ref("");
 const confirmDescription = ref("");
+const confirmLabel = ref("");
 let confirmAction: (() => Promise<void>) | undefined;
 
-function askConfirm(title: string, description: string, action: () => Promise<void>) {
+function askConfirm(title: string, description: string, action: () => Promise<void>, label?: string) {
   confirmTitle.value = title;
   confirmDescription.value = description;
+  confirmLabel.value = label ?? t("operations.approvals.reject");
   confirmAction = action;
   confirmOpen.value = true;
 }
@@ -620,7 +670,7 @@ async function performReject(approval: ApprovalView) {
 }
 
 async function dismissApproval(approval: ApprovalView, staleOverride = false) {
-  if (!canDismissApproval(approval, staleOverride)) return;
+  if (!canDismissApproval(approval, staleOverride) && !canDismissWaitingApproval(approval)) return;
   dismissingApproval.value = approval.id;
   lastApprovalError.value = undefined;
   try {
@@ -806,6 +856,81 @@ watch([approvalBucket, approvalSearch, approvalExpression, inboxTab], () => {
   selectedRows.value = new Set();
 });
 
+// ── Why an approved change has not applied ───────────────────────────────────
+//
+// Every sentence below comes from the control plane (ApprovalView.waiting).
+// The console supplies the label, the tone and the way out; it never derives
+// the reason, because it cannot see the task queue, the node's contact state
+// or the capability gate from this page, and a wrong explanation here is worse
+// than none.
+
+/** Approved and going nowhere. */
+function isStuck(approval?: ApprovalView): boolean {
+  return !!approval && isApprovalStuck(approval);
+}
+
+/** Approved, explained, and on its way: queued for the node, or running. */
+function isMoving(approval?: ApprovalView): boolean {
+  return approval?.status === "approved" && !!approval.waiting && !approval.waiting.blocked;
+}
+
+/**
+ * Approved with no explanation at all. A control plane older than the waiting
+ * field produces these, and the page says so rather than implying the change
+ * is fine.
+ */
+function isUnexplained(approval?: ApprovalView): boolean {
+  return approval?.status === "approved" && !approval.waiting;
+}
+
+function waitingLabel(approval: ApprovalView): string {
+  return t(approvalWaitLabelKey(approval.waiting?.code));
+}
+
+function waitingWayOut(approval: ApprovalView): string {
+  return t(approvalWaitWayKey(approval.waiting?.code));
+}
+
+/** The machine, named the way an operator names it. */
+function waitingNodeLabel(approval: ApprovalView): string {
+  return approval.waiting?.node_name || approval.waiting?.node_id || approval.node_id || t("common.misc.global");
+}
+
+/** The node's status word, translated through the one node-status ontology. */
+function waitingNodeStatusLabel(approval: ApprovalView): string {
+  const status = approval.waiting?.node_status;
+  return status ? t(describeNodeStatus(status).labelKey) : "";
+}
+
+function waitingBadgeVariant(approval: ApprovalView): "warning" | "destructive" | "outline" {
+  if (!approval.waiting) return "outline";
+  const tone = approvalWaitTone(approval.waiting);
+  if (tone === "destructive") return "destructive";
+  return tone === "warning" ? "warning" : "outline";
+}
+
+const selectedWaiting = computed(() => selected.value?.waiting);
+
+/** Dismissal is offered only where the server has said it will accept it. */
+function canDismissWaitingApproval(approval?: ApprovalView): boolean {
+  return !!approval && approval.waiting?.dismissible === true && canDecideApproval(approval);
+}
+
+const canDismissSelectedWaiting = computed(() => canDismissWaitingApproval(selected.value));
+
+function dismissWaitingApproval(approval: ApprovalView) {
+  askConfirm(
+    t("operations.approvals.waiting.dismissTitle"),
+    t("operations.approvals.waiting.dismissConfirm", {
+      plugin: approval.plugin,
+      action: approval.action,
+      node: waitingNodeLabel(approval),
+    }),
+    () => dismissApproval(approval),
+    t("operations.approvals.waiting.dismiss"),
+  );
+}
+
 function canDismissApproval(approval?: ApprovalView, staleOverride = false): boolean {
   return (
     !!approval &&
@@ -816,25 +941,56 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
   );
 }
 
+const inboxCounts = computed(() => countApprovalInbox(approvals.value, isActionablePendingApproval));
+
 /**
- * The three numbers this page is judged by. "Can apply" is a capability, not a
- * count, so it says yes or no and colours only when the answer blocks work.
+ * The numbers this page is judged by, in the order an operator's attention
+ * moves: what is waiting on them, what is waiting on the fleet, what is
+ * waiting on nothing at all, and how much history sits behind it.
+ *
+ * "Pending" used to be the second number and it was read as the whole answer:
+ * a console showing Pending 0 above a non-empty inbox says the work is done.
+ * It was not. One change had been approved against a machine that stopped
+ * reporting weeks earlier, and no number on this page counted it. Stuck is
+ * that number, and it is loud on purpose.
+ *
+ * Four, not five. "Can apply" used to sit here as a fifth tile reading Yes,
+ * which is a capability rather than a count and left an empty cell in the
+ * two-column strip a phone gets. It now appears as a line under the strip, and
+ * only when the answer is no, which is the only time it changes what an
+ * operator can do.
  */
 const approvalMetrics = computed<Metric[]>(() => [
-  { key: "total", label: t("operations.approvals.total"), value: approvals.value.length, icon: ShieldCheck },
   {
-    key: "pending",
-    label: t("operations.approvals.pending"),
-    value: pending.value.length,
-    tone: pending.value.length > 0 ? "warning" : "default",
+    key: "needsReview",
+    label: t("operations.approvals.needsReview"),
+    value: inboxCounts.value.needsReview,
+    tone: inboxCounts.value.needsReview > 0 ? "warning" : "default",
     icon: GitCompare,
   },
   {
-    key: "canApply",
-    label: t("operations.approvals.canApply"),
-    value: canApply.value ? t("common.misc.yes") : t("common.misc.no"),
-    tone: canApply.value ? "default" : "warning",
-    icon: CheckCircle2,
+    key: "moving",
+    label: t("operations.approvals.moving"),
+    value: inboxCounts.value.moving,
+    icon: Clock,
+  },
+  {
+    key: "stuck",
+    label: t("operations.approvals.stuck"),
+    value: inboxCounts.value.stuck,
+    hint:
+      inboxCounts.value.unexplained > 0
+        ? t("operations.approvals.waiting.unexplainedHint", { count: inboxCounts.value.unexplained })
+        : undefined,
+    tone: inboxCounts.value.stuck > 0 ? "destructive" : "default",
+    icon: ServerOff,
+  },
+  {
+    key: "total",
+    label: t("operations.approvals.total"),
+    value: inboxCounts.value.total,
+    tone: "muted",
+    icon: ShieldCheck,
   },
 ]);
 
@@ -854,8 +1010,15 @@ const approvalMetrics = computed<Metric[]>(() => [
       </template>
     </PageHeader>
 
-    <!-- One band rather than three stretched cards. See MetricStrip. -->
-    <MetricStrip :metrics="approvalMetrics" :columns="3" />
+    <!-- One band rather than four stretched cards. See MetricStrip. -->
+    <MetricStrip :metrics="approvalMetrics" :columns="4" />
+    <p
+      v-if="!canApply"
+      class="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-xs text-muted-foreground"
+    >
+      <AlertTriangle class="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
+      <span>{{ $t('operations.approvals.applyRequired') }}</span>
+    </p>
 
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <Card>
@@ -922,6 +1085,10 @@ const approvalMetrics = computed<Metric[]>(() => [
               <Badge variant="outline" class="ml-1">{{ bucketCounts[bucket] }}</Badge>
             </Button>
           </div>
+          <!-- Naming the slice is the cheapest fix for the misread that started
+               this: "Active 4" beside "Pending 0" told an operator the work was
+               done. Whatever is selected now says what is in it. -->
+          <p class="text-xs text-muted-foreground">{{ $t(`operations.approvals.bucketHint.${approvalBucket}`) }}</p>
 
           <label class="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
             <Checkbox v-model="includeDismissed" />
@@ -944,9 +1111,18 @@ const approvalMetrics = computed<Metric[]>(() => [
               >
                 <p class="text-sm font-medium">{{ $t('operations.approvals.events.noEventsTitle') }}</p>
                 <p class="mt-1 text-xs text-muted-foreground">{{ $t('operations.approvals.events.noEventsDescription') }}</p>
-                <Button type="button" variant="outline" size="sm" class="mt-3" @click="inboxTab = 'individual'">
-                  {{ $t('operations.approvals.events.noEventsSwitch') }}
-                </Button>
+                <p v-if="inboxCounts.stuck > 0" class="mt-2 inline-flex items-center gap-1.5 text-xs text-warning">
+                  <ServerOff class="size-3.5 shrink-0" aria-hidden="true" />
+                  {{ $t('operations.approvals.waiting.listOfStuck', { count: inboxCounts.stuck }) }}
+                </p>
+                <div class="mt-3 flex flex-wrap justify-center gap-2">
+                  <Button v-if="inboxCounts.stuck > 0" type="button" size="sm" @click="showStuck">
+                    {{ $t('operations.approvals.waiting.showStuck') }}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" @click="inboxTab = 'individual'">
+                    {{ $t('operations.approvals.events.noEventsSwitch') }}
+                  </Button>
+                </div>
               </div>
 
               <div v-for="group in eventGroups" :key="group.key" class="rounded-md border border-border">
@@ -982,6 +1158,10 @@ const approvalMetrics = computed<Metric[]>(() => [
 
                   <p v-if="eventApprovedCount(group) > 0" class="text-xs text-muted-foreground">
                     {{ $t('operations.approvals.events.approvedNote', { count: eventApprovedCount(group) }) }}
+                  </p>
+                  <p v-if="eventStuckSummary(group)" class="flex items-start gap-1.5 text-xs text-warning">
+                    <ServerOff class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                    <span class="min-w-0 break-words">{{ eventStuckSummary(group) }}</span>
                   </p>
 
                   <div
@@ -1061,6 +1241,12 @@ const approvalMetrics = computed<Metric[]>(() => [
                       <span>{{ item.node_id || $t('common.misc.global') }}</span>
                       <span>{{ formatDateTime(item.created_at) }}</span>
                     </div>
+                    <p
+                      v-if="item.waiting && item.status === 'approved'"
+                      :class="cn('mt-1 break-words text-xs', isStuck(item) ? 'text-warning' : 'text-muted-foreground')"
+                    >
+                      {{ item.waiting.reason }}
+                    </p>
                   </button>
                 </div>
               </div>
@@ -1083,10 +1269,23 @@ const approvalMetrics = computed<Metric[]>(() => [
               @row-select="selectedId = $event.id"
             >
               <template #cell-status="{ row }">
-                <Badge v-if="isStaleAgentUpdateApproval(row)" variant="outline">
-                  {{ $t('operations.approvals.staleBadge') }}
-                </Badge>
-                <Badge v-else :variant="variantFor(row.status)">{{ $t('common.status.' + row.status) }}</Badge>
+                <div class="flex flex-wrap items-center gap-1">
+                  <Badge v-if="isStaleAgentUpdateApproval(row)" variant="outline">
+                    {{ $t('operations.approvals.staleBadge') }}
+                  </Badge>
+                  <Badge v-else :variant="variantFor(row.status)">{{ $t('common.status.' + row.status) }}</Badge>
+                  <!-- "approved" alone is why one item looked like the rest of a
+                       finished batch for weeks. -->
+                  <Badge v-if="isStuck(row)" :variant="waitingBadgeVariant(row)">
+                    {{ $t('operations.approvals.waiting.stuckBadge') }}
+                  </Badge>
+                  <Badge v-else-if="isMoving(row)" variant="outline">
+                    {{ $t('operations.approvals.waiting.movingBadge') }}
+                  </Badge>
+                  <Badge v-else-if="isUnexplained(row)" variant="outline">
+                    {{ $t('operations.approvals.waiting.unexplainedBadge') }}
+                  </Badge>
+                </div>
               </template>
 
               <template #cell-what="{ row }">
@@ -1095,6 +1294,18 @@ const approvalMetrics = computed<Metric[]>(() => [
                     {{ changeLabel(row) }}
                   </p>
                   <p class="truncate font-mono text-xs text-muted-foreground" :title="row.id">{{ shortId(row.id) }}</p>
+                  <!-- Clamped rather than truncated. A nowrap line contributes
+                       its own width to an auto-width column, so truncating here
+                       pushed Target and Requested off the table on a desktop and
+                       widened the page past the viewport on a phone. Wrapping to
+                       two lines costs the cell nothing and shows more sentence. -->
+                  <p
+                    v-if="row.waiting && row.status === 'approved'"
+                    :class="cn('line-clamp-2 break-words text-xs', isStuck(row) ? 'text-warning' : 'text-muted-foreground')"
+                    :title="row.waiting.reason"
+                  >
+                    {{ row.waiting.reason }}
+                  </p>
                 </div>
               </template>
 
@@ -1167,6 +1378,106 @@ const approvalMetrics = computed<Metric[]>(() => [
             <Badge variant="outline">{{ $t('operations.approvals.idLabel', { id: shortId(selected.id, 12) }) }}</Badge>
             <Badge v-if="selected.approved_by" variant="secondary">{{ $t('operations.approvals.byLabel', { actor: selected.approved_by }) }}</Badge>
           </div>
+          <!-- Approved is the one status that says nothing about what happens
+               next, and the silence is what let a change sit against a machine
+               that had been offline since August without the page ever saying
+               so. Every sentence in here comes from the control plane. -->
+          <div
+            v-if="selected.status === 'approved'"
+            :class="cn(
+              'rounded-md border p-3 text-sm text-muted-foreground',
+              isStuck(selected) ? 'border-warning/40 bg-warning/5' : 'border-border bg-muted/20',
+            )"
+          >
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <p class="flex min-w-0 items-center gap-2 font-medium text-foreground">
+                <ServerOff v-if="isStuck(selected)" class="size-4 shrink-0 text-warning" aria-hidden="true" />
+                <Clock v-else-if="isMoving(selected)" class="size-4 shrink-0" aria-hidden="true" />
+                <AlertTriangle v-else class="size-4 shrink-0 text-warning" aria-hidden="true" />
+                <span class="min-w-0 break-words">
+                  {{
+                    isStuck(selected)
+                      ? $t('operations.approvals.waiting.blockedTitle')
+                      : isMoving(selected)
+                        ? $t('operations.approvals.waiting.movingTitle')
+                        : $t('operations.approvals.waiting.unexplainedTitle')
+                  }}
+                </span>
+              </p>
+              <Badge v-if="selectedWaiting" :variant="waitingBadgeVariant(selected)" class="shrink-0">
+                {{ waitingLabel(selected) }}
+              </Badge>
+            </div>
+            <p class="mt-1">
+              {{ $t('operations.approvals.waiting.approvedAge', { age: formatRelativeTime(selected.updated_at || selected.created_at) }) }}
+            </p>
+
+            <template v-if="selectedWaiting">
+              <p class="mt-3 text-xs font-medium uppercase text-muted-foreground">
+                {{ $t('operations.approvals.waiting.evidence') }}
+              </p>
+              <p class="mt-1 break-words text-foreground">{{ selectedWaiting.reason }}</p>
+
+              <!-- The node's own word and instant, from the same derivation the
+                   Nodes page prints, so the two cannot disagree. -->
+              <template v-if="selectedWaiting.node_status">
+                <p class="mt-3 text-xs font-medium uppercase text-muted-foreground">
+                  {{ $t('operations.approvals.waiting.nodeHeading') }}
+                </p>
+                <p class="mt-1 flex flex-wrap items-center gap-2">
+                  <span class="font-medium text-foreground">{{ waitingNodeLabel(selected) }}</span>
+                  <Badge variant="outline">{{ waitingNodeStatusLabel(selected) }}</Badge>
+                  <span v-if="selectedWaiting.node_status_since" class="text-xs">
+                    {{ formatDateTime(selectedWaiting.node_status_since) }}
+                  </span>
+                </p>
+                <p v-if="selectedWaiting.node_status_reason" class="mt-1 break-words text-xs">
+                  {{ selectedWaiting.node_status_reason }}
+                </p>
+              </template>
+
+              <p class="mt-3 text-xs font-medium uppercase text-muted-foreground">
+                {{ $t('operations.approvals.waiting.wayOutHeading') }}
+              </p>
+              <p class="mt-1 break-words">{{ waitingWayOut(selected) }}</p>
+            </template>
+            <p v-else class="mt-2 break-words">{{ $t('operations.approvals.waiting.unexplainedBody') }}</p>
+
+            <div class="mt-3 flex flex-wrap gap-2">
+              <Button v-if="selectedWaiting?.node_id" variant="outline" size="sm" as-child>
+                <RouterLink :to="{ name: 'node-detail', params: { id: selectedWaiting.node_id } }">
+                  <ExternalLink class="size-4" aria-hidden="true" />
+                  {{ $t('operations.approvals.waiting.openNode') }}
+                </RouterLink>
+              </Button>
+              <Button
+                v-if="selectedWaiting?.superseded_by"
+                type="button"
+                variant="outline"
+                size="sm"
+                @click="selectApproval(selectedWaiting.superseded_by)"
+              >
+                <FileCode2 class="size-4" aria-hidden="true" />
+                {{ $t('operations.approvals.waiting.openSuperseding') }}
+              </Button>
+              <Button
+                v-if="canDismissSelectedWaiting"
+                type="button"
+                variant="ghost"
+                size="sm"
+                :disabled="dismissingApproval === selected.id"
+                @click="dismissWaitingApproval(selected)"
+              >
+                <RefreshCw v-if="dismissingApproval === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+                <ArchiveX v-else class="size-4" aria-hidden="true" />
+                {{ $t('operations.approvals.waiting.dismiss') }}
+              </Button>
+            </div>
+            <p v-if="isStuck(selected) && !canDismissSelectedWaiting" class="mt-2 text-xs">
+              {{ $t('operations.approvals.waiting.notDismissible') }}
+            </p>
+          </div>
+
           <div
             v-if="selectedAgentUpdateStale"
             class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-muted-foreground"
@@ -1342,7 +1653,7 @@ const approvalMetrics = computed<Metric[]>(() => [
       v-model:open="confirmOpen"
       :title="confirmTitle"
       :description="confirmDescription"
-      :confirm-label="$t('operations.approvals.reject')"
+      :confirm-label="confirmLabel"
       :cancel-label="$t('common.actions.cancel')"
       @confirm="runConfirmed"
     />
