@@ -142,6 +142,7 @@ export default {
       card: {
         showMoreTags: "显示 {names}",
         showMoreGroups: "显示分组 {names}",
+        showFewer: "收起",
       },
       table: {
         colName: "节点",

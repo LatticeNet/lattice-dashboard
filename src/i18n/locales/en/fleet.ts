@@ -144,6 +144,7 @@ export default {
       card: {
         showMoreTags: "Show {names}",
         showMoreGroups: "Show groups {names}",
+        showFewer: "Show fewer",
       },
       table: {
         colName: "Node",

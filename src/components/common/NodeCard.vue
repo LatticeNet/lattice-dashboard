@@ -208,10 +208,17 @@ const hostFactsLine = computed(() => {
 
 const sortedTags = computed(() => [...(props.node.tags ?? [])].sort((a, b) => a.localeCompare(b)));
 const visibleTags = computed(() => (badgesExpanded.value ? sortedTags.value : sortedTags.value.slice(0, BADGE_CAP)));
-const hiddenTags = computed(() => (badgesExpanded.value ? [] : sortedTags.value.slice(BADGE_CAP)));
+const overflowTags = computed(() => sortedTags.value.slice(BADGE_CAP));
+const hiddenTags = computed(() => (badgesExpanded.value ? [] : overflowTags.value));
 
 const visibleGroups = computed(() => (badgesExpanded.value ? props.groups : props.groups.slice(0, BADGE_CAP)));
-const hiddenGroups = computed(() => (badgesExpanded.value ? [] : props.groups.slice(BADGE_CAP)));
+/** What the cap holds back, whether or not it is currently revealed. The
+ *  button stays mounted and toggles: unmounting it on expand left no way to
+ *  collapse, made aria-expanded="true" unobservable because the element
+ *  carrying it disappeared in the same tick, dropped focus to the body, and
+ *  left that one card permanently taller than its neighbours. */
+const overflowGroups = computed(() => props.groups.slice(BADGE_CAP));
+const hiddenGroups = computed(() => (badgesExpanded.value ? [] : overflowGroups.value));
 
 /** The overflow badges were spans carrying their contents only in a title, so
  *  a keyboard or screen-reader user had no route to the hidden names, and a
@@ -280,8 +287,14 @@ const sparkClass = computed(() => (isNetMetric.value ? "text-primary" : meta.val
  * Enter or Space opens the node, but only when the card itself has focus, so
  * keyboard use of the selection checkbox does not also navigate away.
  */
+// The .prevent modifiers this used to carry ran before the target guard
+// below, so every Enter and Space bubbling out of the card had its default
+// cancelled: a focused group chip, or the overflow disclosure, could be
+// reached by Tab and then did nothing when pressed. preventDefault belongs
+// after the guard, where it applies to the card itself and nothing inside it.
 function onCardKey(event: KeyboardEvent): void {
   if (event.target !== event.currentTarget) return;
+  event.preventDefault();
   onSelect();
 }
 
@@ -318,8 +331,8 @@ function onGroup(id: string) {
     :aria-label="selectable ? node.name || node.id : undefined"
     :aria-selected="checkable ? checked : undefined"
     @click="selectable && onSelect()"
-    @keydown.enter.prevent="selectable && onCardKey($event)"
-    @keydown.space.prevent="selectable && onCardKey($event)"
+    @keydown.enter="selectable && onCardKey($event)"
+    @keydown.space="selectable && onCardKey($event)"
   >
     <!-- Header. Below ~384px of card width the badges drop under the name
          instead of squeezing it to an ellipsis and overflowing the card. -->
@@ -364,15 +377,19 @@ function onGroup(id: string) {
         <!-- Styled as the kind it counts, so two overflow badges on a wrapped
              rail cannot be mistaken for each other. -->
         <button
-          v-if="hiddenTags.length"
+          v-if="overflowTags.length"
           type="button"
           class="shrink-0 rounded-md border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          :aria-label="t('fleet.nodes.card.showMoreTags', { names: hiddenTags.join(', ') })"
+          :aria-label="
+            badgesExpanded
+              ? t('fleet.nodes.card.showFewer')
+              : t('fleet.nodes.card.showMoreTags', { names: overflowTags.join(', ') })
+          "
           :aria-expanded="badgesExpanded"
-          :title="hiddenTags.join(', ')"
-          @click.stop="badgesExpanded = true"
+          :title="overflowTags.join(', ')"
+          @click.stop="badgesExpanded = !badgesExpanded"
         >
-          +{{ hiddenTags.length }}
+          {{ badgesExpanded ? "&minus;" : `+${overflowTags.length}` }}
         </button>
         <button
           v-for="g in visibleGroups"
@@ -393,15 +410,19 @@ function onGroup(id: string) {
           <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
         </button>
         <button
-          v-if="hiddenGroups.length"
+          v-if="overflowGroups.length"
           type="button"
           class="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          :aria-label="t('fleet.nodes.card.showMoreGroups', { names: hiddenGroups.map((g) => g.name).join(', ') })"
+          :aria-label="
+            badgesExpanded
+              ? t('fleet.nodes.card.showFewer')
+              : t('fleet.nodes.card.showMoreGroups', { names: overflowGroups.map((g) => g.name).join(', ') })
+          "
           :aria-expanded="badgesExpanded"
-          :title="hiddenGroups.map((g) => g.name).join(', ')"
-          @click.stop="badgesExpanded = true"
+          :title="overflowGroups.map((g) => g.name).join(', ')"
+          @click.stop="badgesExpanded = !badgesExpanded"
         >
-          +{{ hiddenGroups.length }}
+          {{ badgesExpanded ? "&minus;" : `+${overflowGroups.length}` }}
         </button>
       </div>
     </div>
