@@ -27,6 +27,7 @@ import {
   UserCog,
   SlidersHorizontal,
   CircleArrowUp,
+  Webhook,
 } from "lucide-vue-next";
 
 /** A single navigable destination in the sidebar. */
@@ -134,6 +135,11 @@ export const NAV: NavSection[] = [
       // lenses; the old paths redirect with their query intact.
       { name: "platform-evidence", title: "Evidence", path: "/platform/evidence", icon: Waypoints, scopes: ["log:read", "log:admin"] },
       { name: "platform-notifications", title: "Notifications", path: "/platform/notifications", icon: Bell, scopes: ["notify:send"] },
+      // Inbound webhooks are a source of notification events, not a second
+      // delivery path, so they sit next to Notifications and share its scope:
+      // an operator who can already route any event to any channel does not
+      // need a second grant to author a source for one.
+      { name: "platform-webhooks", title: "Webhooks", path: "/platform/webhooks", icon: Webhook, scopes: ["notify:send"] },
       // The route and the view have existed since agent rollouts shipped; the
       // nav entry did not, and NAV is what builds the route table, so the whole
       // surface was unreachable in a running console.

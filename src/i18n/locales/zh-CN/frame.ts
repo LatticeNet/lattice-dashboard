@@ -217,6 +217,7 @@ export default {
       "platform-store": "存储",
       "platform-evidence": "证据",
       "platform-notifications": "通知",
+      "platform-webhooks": "入站 Webhook",
       "platform-agent-updates": "Agent 更新",
       "settings-security": "安全与 2FA",
       "settings-capabilities": "能力准入开关",

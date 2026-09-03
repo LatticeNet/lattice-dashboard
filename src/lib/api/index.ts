@@ -62,6 +62,10 @@ import type {
   NotifyRuleUpsertRequest,
   NotifyRuleView,
   NotifyTestRequest,
+  NotifyWebhookDelivery,
+  NotifyWebhookSecretResponse,
+  NotifyWebhookUpsertRequest,
+  NotifyWebhookView,
   OIDCProviderTestResult,
   OIDCProviderUpsertRequest,
   OIDCProviderView,
@@ -730,6 +734,27 @@ export const api = {
       http.post<{ ok: boolean }>("/api/notify/channels/delete", { id }),
     test: (input: NotifyTestRequest) =>
       http.post<{ ok: boolean; channel: string }>("/api/notify/test", input),
+    webhooks: (opts?: RequestOptions) =>
+      http.get<{ webhooks: NotifyWebhookView[] }>("/api/notify/webhooks", undefined, opts),
+    // Create returns the plaintext secret; edit returns the plain view. The
+    // caller decides which by whether it passed an id, exactly as the server does.
+    upsertWebhook: (input: NotifyWebhookUpsertRequest) =>
+      http.post<NotifyWebhookSecretResponse>("/api/notify/webhooks", input),
+    deleteWebhook: (id: string) =>
+      http.post<{ ok: boolean }>("/api/notify/webhooks/delete", { id }),
+    rotateWebhookSecret: (id: string) =>
+      http.post<NotifyWebhookSecretResponse>("/api/notify/webhooks/rotate", { id }),
+    webhookDeliveries: (id: string, opts?: RequestOptions) =>
+      http.get<{ deliveries: NotifyWebhookDelivery[] }>(
+        "/api/notify/webhooks/deliveries",
+        { id },
+        opts,
+      ),
+    // Fires the webhook through the identical path the public endpoint uses, so
+    // the operator proves the whole chain (event, rule, channel) rather than a
+    // shortcut past it. No secret needed: the caller is already authenticated.
+    testWebhook: (id: string, data?: Record<string, string>) =>
+      http.post<NotifyWebhookDelivery>("/api/notify/webhooks/test", { id, data }),
     rules: (opts?: RequestOptions) =>
       http.get<{ rules: NotifyRuleView[] }>("/api/notify/rules", undefined, opts),
     upsertRule: (input: NotifyRuleUpsertRequest) =>
