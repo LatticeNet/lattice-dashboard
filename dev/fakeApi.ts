@@ -102,7 +102,14 @@ export const api = {
     me: () => delay(principal),
   },
   approvals: {
+    // The board asks for plugin=sshguard with plan text; the fixture holds
+    // only SSH Guard rows, so the filter is honoured by construction.
     list: () => delay({ approvals: state.approvals.map((a) => ({ ...a })) }),
+    counts: () => delay({ pending: 0, approved: 0, stale: 0, applied: 0, rejected: 0, dismissed: 0, total: state.approvals.length }),
+    get: (id: string) => {
+      const row = state.approvals.find((a) => a.id === id);
+      return row ? delay({ ...row }) : Promise.reject(new Error("approval not found"));
+    },
   },
   nodes: {
     list: () => delay({ nodes: toApiNodes(state.nodes) as Node[] }),

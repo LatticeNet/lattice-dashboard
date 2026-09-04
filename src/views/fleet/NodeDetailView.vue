@@ -309,8 +309,10 @@ const nodeResultsQuery = useAsyncData<TaskResult[] | undefined>(
   soften((signal) => api.tasks.results({ node_id: nodeId.value, limit: 40 }, { signal }).then((r) => unwrap(r, "results"))),
   { pollInterval: 20000 },
 );
+// Filtered by the server to this node, without plan text: the timeline prints
+// status, actor and reason and never opens a plan.
 const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
-  soften((signal) => api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals"))),
+  soften((signal) => api.approvals.list({ node_id: nodeId.value }, { signal }).then((r) => unwrap(r, "approvals"))),
   { pollInterval: 20000 },
 );
 

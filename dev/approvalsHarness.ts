@@ -52,8 +52,49 @@ const router = createRouter({
   ],
 });
 
+/**
+ * First paint of the inbox, for the before/after measurement: the time from
+ * navigation start until the first inbox row (an event card or a table row)
+ * is in the DOM, and the bytes the fake had answered by then. Read it from
+ * the console as window.__approvalsFirstPaint; window.__approvalsRequests is
+ * the full request log.
+ *
+ * A MutationObserver rather than requestAnimationFrame: rAF is throttled to a
+ * standstill in a background tab, so a driven browser that is not the frontmost
+ * window would silently never record a measurement.
+ */
+const INBOX_PAINTED = "[data-event-card], [data-history-note], [data-inbox-empty], table tbody tr";
+
+function watchFirstPaint() {
+  const started = performance.now();
+  const record = () => {
+    if (!document.querySelector(INBOX_PAINTED)) return false;
+    const log = (window as unknown as { __approvalsRequests?: Array<{ bytes: number; ms: number; url: string }> }).__approvalsRequests ?? [];
+    (window as unknown as { __approvalsFirstPaint?: unknown }).__approvalsFirstPaint = {
+      ms: Math.round(performance.now()),
+      sinceMountMs: Math.round(performance.now() - started),
+      bytes: log.reduce((sum, r) => sum + r.bytes, 0),
+      requests: log.map((r) => ({ url: r.url, bytes: r.bytes, ms: Math.round(r.ms) })),
+    };
+    return true;
+  };
+  if (record()) return;
+  const observer = new MutationObserver(() => {
+    if (record()) observer.disconnect();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
 async function main() {
   const app = createApp(Shell);
+  // A render error in a view mounted this bare leaves an empty #app and an
+  // otherwise quiet console, which reads as "the harness is broken" rather
+  // than "the page throws". Keep the last one where a driven browser can read
+  // it, and still log it.
+  app.config.errorHandler = (err) => {
+    (window as unknown as { __vueError?: string }).__vueError = String((err as Error)?.stack ?? err);
+    console.error(err);
+  };
   app.use(createPinia());
   app.use(i18n);
   useThemeStore().init();
@@ -61,6 +102,7 @@ async function main() {
   app.use(router);
   await router.isReady();
   app.mount("#app");
+  watchFirstPaint();
 }
 
 void main();
