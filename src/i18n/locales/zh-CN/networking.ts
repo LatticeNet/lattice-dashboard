@@ -440,12 +440,14 @@ export default {
 
     dns: {
       title: "自建 DNS",
-      description: "每节点 CoreDNS 部署,支持 forward/static/block 区域及可选的公网发布",
+      description: "节点上的解析器:Lattice 自己部署的 CoreDNS,以及它只观察的那些",
       newDeployment: "新建部署",
-      cardTitle: "CoreDNS 部署",
-      cardDescription: "配置变更要先过审批，你批准之前节点不会应用任何东西。发布不等审批：确认之后立刻改写公网 DNS。",
-      emptyTitle: "暂无 DNS 部署",
-      emptyDescription: "创建一个 CoreDNS 部署,从节点上提供区域解析。",
+      cardTitle: "解析器",
+      cardDescription:
+        "部署型解析器要先过审批，你批准之前节点不会应用任何东西。发布不等审批：确认之后立刻改写公网 DNS。观察型解析器没有这一套：Lattice 只记录它在哪些端口监听、证书什么时候到期，永不去动它。",
+      emptyTitle: "暂无已登记的解析器",
+      emptyDescription:
+        "把你已经在跑的解析器登记进来,让 Lattice 在不碰它的前提下盯住它的监听端口和证书;或者在节点上部署一个 CoreDNS 解析器,经审批后由它提供区域解析。",
       colName: "名称",
       colNode: "节点",
       colListen: "监听",
@@ -453,6 +455,7 @@ export default {
       colZones: "区域",
       colHostname: "主机名",
       colStatus: "状态",
+      colReality: "实况",
       colCredential: "凭据",
       colPublished: "上次发布尝试",
       colActions: "操作",
@@ -469,6 +472,45 @@ export default {
       editTitle: "编辑部署",
       newTitle: "新建部署",
       dialogDescription: "CoreDNS 引擎。公网主机名需要 Cloudflare 凭据。",
+      dialogDescriptionExternal:
+        "一个你自己已经在跑的解析器。Lattice 只记录它在哪里监听、证书何时到期,不会为它渲染、下发或发布任何东西。",
+      engine: "引擎",
+      engineCoredns: "CoreDNS(由 Lattice 部署)",
+      engineExternal: "外部(Lattice 只观察)",
+      engineCorednsHint:
+        "Lattice 渲染 Corefile、生成计划送审,节点批准后安装并运行它。该计划同时会替换这台节点的包过滤规则。",
+      engineExternalHint:
+        "适用于运维已经自己在跑的解析器,比如 dnsproxy 或 unbound。不渲染、不计划、不下发、不发布;这条记录的意义是让控制台能列出这个守护进程,并把它的监听端口和节点上报的实况对照。",
+      observedAria: "仅观察",
+      observedNoActions: "仅观察",
+      listeners: "监听端口",
+      listenersHint:
+        "你所知道的、这个守护进程持有的套接字。每次读取都会拿它和节点自己上报的监听列表对照,端口背后的进程名也由该上报填入。",
+      addListener: "添加监听",
+      listenerProtocol: "协议",
+      listenerPort: "端口",
+      removeListener: "移除监听",
+      errListenerPort: "端口必须在 1 到 65535 之间",
+      errExternalHostname: "必须填完整域名,比如 dns.example.com。只有一段、不带点的名字不算。",
+      externalHostnameHint: "这个解析器对外应答的完整域名。TLS 证书监控就是盯着它。",
+      certNotAfter: "证书到期",
+      certNotAfterHint:
+        "这个守护进程的 TLS 证书什么时候到期(如果它提供 DoT 或 DoH)。这里不会去链路上读取,而且光有这个日期不会提醒任何人:证书监控会真的去握手,并在到期之前就开始失败。",
+      certWatchSetUp: "去监控页建一个",
+      certWatched: "已监控,剩余不足 {days} 天时失败",
+      certUnwatched: "没有证书监控",
+      certUnknown: "未记录证书到期时间",
+      certExpired: "证书已于 {date} 过期",
+      certDays: "证书还有 {days} 天到期({date})",
+      realityCollected: "实况采集于 {time}",
+      driftFindingsToggle: "1 条差异 | {count} 条差异",
+      driftFindingsTitle: "节点上报的 {name} 实况",
+      realityNotObserved: "不观察",
+      drift: {
+        ok: "与实况一致",
+        drift: "有偏差",
+        unknown: "未核对",
+      },
       name: "名称",
       nodeLabel: "节点",
       selectNode: "选择节点",
@@ -512,6 +554,8 @@ export default {
       deleteDescription: "删除该 DNS 部署",
       deleteIrreversible:
         "节点上的 CoreDNS 会继续按它上次应用的配置运行；这个部署已经发布出去的公网记录也会留在那里。",
+      deleteObserved:
+        "守护进程本身不受影响：这只是让 Lattice 不再列出它、不再把它的监听端口和节点上报对照。随时可以重新登记。",
       credSet: "已设置",
       credNone: "无",
       toastUpdated: "部署已更新",
@@ -532,7 +576,7 @@ export default {
       apexRecord: "{count} 条地理感知 apex 记录",
       emptyTitle: "未配置地理路由",
       emptyDescription:
-        "地理路由会渲染一份 CoreDNS 区域配置，让一个 DNS apex 由最近的健康节点来应答。本页只做渲染和校验和，不会触达任何节点；列表也只显示你的令牌能读到的内容。",
+        "地理路由会渲染一份 CoreDNS 区域配置，让一个 DNS apex 由最近的健康节点来应答。本页只做渲染和校验和，不会触达任何节点；列表也只显示你的令牌能读到的内容。名字以 demo- 开头的路由可以放心删除：它只是一个预览，删掉就整条记录都没了。",
       prereqNodesTitle: "先接入参与应答的节点",
       prereqNodesDetail:
         "每个参与节点都需要 agent 正在运行、上报在线并带有公网 IP。缺任何一项的节点会被渲染丢弃并给出警告；若所有节点都不满足，渲染直接失败。",
@@ -599,6 +643,13 @@ export default {
       toastDeleted: "地理路由已删除",
       toastDeleteFailed: "删除失败",
       toastPlanFailed: "计划预览失败",
+      demo: {
+        badge: "演示",
+        title: "本页现在展示的是一个演示记录",
+        what: "地理路由让一个 DNS apex 由参与节点中最近且健康的那一台来应答。本页做的全部事情就是编辑和渲染：产出一份 CoreDNS 区域配置和它的校验和,不触达任何节点。",
+        real: "你自己的路由要写你真正拥有的 apex、应该应答它的节点,以及一台跑着自建 DNS、用来提供这份区域的节点。这个演示用的是舰队里真实的节点,所以渲染是真的;但它的 apex 以 .invalid 结尾,永远不可能解析到任何地方。",
+        remove: "用行内的删除按钮,或者 POST /api/geo-routing/delete 带上它的 id。删掉它不会影响别的任何东西。",
+      },
     },
 
     ddns: {
@@ -831,6 +882,8 @@ export default {
       toastDeleteFailed: "删除失败",
       toastPlanCreated: "计划已生成，请在审批中审阅",
       toastPlanFailed: "生成计划失败",
+      noDemo:
+        "这一页没有演示隧道,也不可能有。隧道要真正起作用,必须先在节点上装好 cloudflared,并把凭据 JSON 放到 {path},而 Lattice 没有任何路径能替你放这两样东西。缺了它们保存出来的配置照样能生成计划,然后在节点上卡在 ingress validate 失败,还留下一个多余的配置文件。所以这一页诚实的样子就是空的。",
     },
 
     matrix: {

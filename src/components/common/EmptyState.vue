@@ -77,6 +77,16 @@ const resolvedIcon = computed<Component | undefined>(
         {{ description }}
       </p>
     </div>
+    <!--
+      A caveat that changes whether the steps are worth starting at all: a
+      prerequisite the console cannot satisfy, a cost, a thing that breaks.
+      It sits above the steps and reads left-aligned, because a centred
+      paragraph under the call to action is read after the click it was meant
+      to prevent, if it is read at all.
+    -->
+    <div v-if="slots.notice" class="w-full max-w-xl text-left text-sm text-muted-foreground">
+      <slot name="notice" />
+    </div>
     <ol v-if="steps?.length" class="w-full max-w-xl space-y-3 text-left">
       <li v-for="(step, index) in steps" :key="step.title" class="flex gap-3">
         <span

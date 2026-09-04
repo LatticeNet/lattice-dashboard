@@ -19,6 +19,19 @@ import {
   XCircle,
 } from "lucide-vue-next";
 import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
+import {
+  AGENT_DEFAULT_INTERVAL_SEC,
+  AGENT_DEFAULT_TIMEOUT_SEC,
+  MONITOR_TYPES,
+  TLS_DEFAULT_THRESHOLD_DAYS,
+  TLS_MAX_THRESHOLD_DAYS,
+  buildMonitorCreate,
+  canSubmitMonitor,
+  isServerEvaluated,
+  switchMonitorType,
+  tlsTargetError,
+  type ProbeAssignment,
+} from "./monitorTypeModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatPercent, formatRelativeTime, shortId } from "@/lib/format";
@@ -92,10 +105,12 @@ const deletePending = ref(false);
 const deleteOpen = ref(false);
 
 const monitorName = ref("");
-const monitorType = ref<"tcp" | "http">("tcp");
+const monitorType = ref<string>("tcp");
 const monitorTarget = ref("");
-const intervalSec = ref(30);
-const timeoutSec = ref(5);
+const intervalSec = ref(AGENT_DEFAULT_INTERVAL_SEC);
+const timeoutSec = ref(AGENT_DEFAULT_TIMEOUT_SEC);
+const thresholdDays = ref(TLS_DEFAULT_THRESHOLD_DAYS);
+
 const assignAll = ref(true);
 const selectedNodeIds = ref<string[]>([]);
 const selectedNodeIdsInput = computed({
@@ -108,6 +123,42 @@ const selectedNodeIdsInput = computed({
 function parseNodeIdList(value: string): string[] {
   return [...new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
 }
+/**
+ * What a certificate watch does to the assignment and the cadence.
+ *
+ * The server dials a tls target itself, so it takes no node assignment and
+ * wants an hourly cadence. Saying that by overwriting cost the operator their
+ * work: a node list worked through on a long fleet was emptied by one mis-click
+ * on the type selector and never came back. switchMonitorType holds the
+ * agent-probe state aside instead and hands it back on the way in.
+ */
+const agentProbeStash = ref<ProbeAssignment | undefined>(undefined);
+
+watch(monitorType, (type, previous) => {
+  const { state, stash } = switchMonitorType(
+    previous ?? "",
+    type,
+    {
+      assignAll: assignAll.value,
+      nodeIds: selectedNodeIds.value,
+      intervalSec: intervalSec.value,
+      timeoutSec: timeoutSec.value,
+    },
+    agentProbeStash.value,
+  );
+  agentProbeStash.value = stash;
+  assignAll.value = state.assignAll;
+  selectedNodeIds.value = state.nodeIds;
+  intervalSec.value = state.intervalSec;
+  timeoutSec.value = state.timeoutSec;
+});
+
+const isCertWatch = computed(() => isServerEvaluated(monitorType.value));
+/** Set once the operator has typed something that is not host:port. */
+const tlsTargetProblem = computed(() =>
+  isCertWatch.value && monitorTarget.value.trim() ? tlsTargetError(monitorTarget.value) : undefined,
+);
+
 
 /** The assignment picker is a checkbox list writing into one array of ids. */
 function toggleAssignedNode(id: string, on: boolean) {
@@ -322,12 +373,17 @@ const averageLatency = computed(() => {
   if (values.length === 0) return t("common.misc.none");
   return formatLatency(values.reduce((sum, value) => sum + value, 0) / values.length);
 });
-const canSubmit = computed(
-  () =>
-    !!monitorName.value.trim() &&
-    !!monitorTarget.value.trim() &&
-    (assignAll.value || selectedNodeIds.value.length > 0),
-);
+const monitorForm = computed(() => ({
+  name: monitorName.value,
+  type: monitorType.value,
+  target: monitorTarget.value,
+  intervalSec: Number(intervalSec.value),
+  timeoutSec: Number(timeoutSec.value),
+  thresholdDays: Number(thresholdDays.value),
+  assignAll: assignAll.value,
+  nodeIds: selectedNodeIds.value,
+}));
+const canSubmit = computed(() => canSubmitMonitor(monitorForm.value));
 
 // Chronological latency series for the TrendChart: successful results only,
 // ordered oldest → newest, with null/undefined latency dropped.
@@ -395,10 +451,13 @@ function formatLatency(ms?: number): string {
 }
 
 function nodeName(id: string): string {
+  // A tls result has no node: the control plane dialled the endpoint itself.
+  if (!id) return t("fleet.monitoring.result.controlPlane");
   return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
 }
 
 function assignmentLabel(monitor: MonitorView): string {
+  if (isServerEvaluated(monitor.type)) return t("fleet.monitoring.assignment.controlPlane");
   if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
   const count = monitor.node_ids?.length ?? 0;
   return t("fleet.monitoring.assignment.nodeCount", { count });
@@ -471,20 +530,16 @@ async function createMonitor() {
   if (!canSubmit.value) return;
   createPending.value = true;
   try {
-    const created = await api.monitors.create({
-      name: monitorName.value.trim(),
-      type: monitorType.value,
-      target: monitorTarget.value.trim(),
-      interval_sec: Number(intervalSec.value),
-      timeout_sec: Number(timeoutSec.value),
-      assign_all: assignAll.value,
-      node_ids: assignAll.value ? undefined : selectedNodeIds.value,
-    });
+    const created = await api.monitors.create(buildMonitorCreate(monitorForm.value));
     monitorName.value = "";
+    // Dropped before the type changes: the form is being emptied on purpose,
+    // so the state held aside for a round trip through tls is not owed back.
+    agentProbeStash.value = undefined;
     monitorType.value = "tcp";
     monitorTarget.value = "";
-    intervalSec.value = 30;
-    timeoutSec.value = 5;
+    intervalSec.value = AGENT_DEFAULT_INTERVAL_SEC;
+    timeoutSec.value = AGENT_DEFAULT_TIMEOUT_SEC;
+    thresholdDays.value = TLS_DEFAULT_THRESHOLD_DAYS;
     assignAll.value = true;
     selectedNodeIds.value = [];
     selectedMonitorId.value = created.id;
@@ -630,6 +685,9 @@ async function deleteMonitor() {
                   </div>
                   <div class="flex flex-wrap justify-end gap-1.5">
                     <Badge variant="outline">{{ monitor.type }}</Badge>
+                    <Badge v-if="monitor.type === 'tls'" variant="secondary">
+                      {{ $t('fleet.monitoring.definitions.threshold', { days: monitor.threshold_days ?? 14 }) }}
+                    </Badge>
                     <Badge :variant="monitor.enabled ? 'success' : 'secondary'">
                       {{ monitor.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
                     </Badge>
@@ -677,8 +735,31 @@ async function deleteMonitor() {
                 id="monitor-target"
                 v-model="monitorTarget"
                 required
-                :placeholder="monitorType === 'tcp' ? $t('fleet.monitoring.create.targetTcpPlaceholder') : $t('fleet.monitoring.create.targetHttpPlaceholder')"
+                :aria-invalid="!!tlsTargetProblem"
+                :aria-describedby="tlsTargetProblem ? 'monitor-target-error' : undefined"
+                :placeholder="
+                  isCertWatch
+                    ? $t('fleet.monitoring.create.targetTlsPlaceholder')
+                    : monitorType === 'tcp'
+                      ? $t('fleet.monitoring.create.targetTcpPlaceholder')
+                      : $t('fleet.monitoring.create.targetHttpPlaceholder')
+                "
               />
+              <!--
+                The message carries the reason, so it has to be reachable by
+                the reader who cannot see the red: aria-invalid alone announces
+                "invalid" and stops, which is the one word the operator already
+                knows. Same wiring as the observed hostname field on Self-host
+                DNS.
+              -->
+              <p
+                v-if="tlsTargetProblem"
+                id="monitor-target-error"
+                role="alert"
+                class="text-xs text-destructive"
+              >
+                {{ $t('fleet.monitoring.create.targetTlsError') }}
+              </p>
             </div>
 
             <div class="grid gap-3 sm:grid-cols-2">
@@ -689,12 +770,29 @@ async function deleteMonitor() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="tcp">TCP</SelectItem>
-                    <SelectItem value="http">HTTP</SelectItem>
+                    <SelectItem v-for="option in MONITOR_TYPES" :key="option" :value="option">
+                      {{ option.toUpperCase() }}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
+                <p v-if="isCertWatch" class="text-xs text-muted-foreground">
+                  {{ $t('fleet.monitoring.create.tlsHint') }}
+                </p>
               </div>
-              <div class="grid gap-2">
+              <div v-if="isCertWatch" class="grid gap-2">
+                <Label for="monitor-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
+                <Input
+                  id="monitor-threshold"
+                  v-model="thresholdDays"
+                  type="number"
+                  min="1"
+                  :max="TLS_MAX_THRESHOLD_DAYS"
+                />
+                <p class="text-xs text-muted-foreground">
+                  {{ $t('fleet.monitoring.create.thresholdHint', { days: thresholdDays }) }}
+                </p>
+              </div>
+              <div v-else class="grid gap-2">
                 <Label>{{ $t('fleet.monitoring.create.assignment') }}</Label>
                 <div class="grid grid-cols-2 rounded-md border border-input p-1">
                   <button
@@ -728,7 +826,7 @@ async function deleteMonitor() {
               </div>
             </div>
 
-            <div v-if="!assignAll">
+            <div v-if="!assignAll && !isCertWatch">
               <DataState
                 v-if="canReadNodes"
                 :loading="nodesQuery.loading.value"

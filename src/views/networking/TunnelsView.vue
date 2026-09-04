@@ -55,6 +55,14 @@ import {
 
 const TUNNEL_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 
+/**
+ * Where cloudflared expects the credentials JSON a tunnel cannot run without.
+ * Named once rather than written into the copy, so the one string an operator
+ * will retype is a mono path in both locales instead of prose either locale
+ * can drift.
+ */
+const CREDENTIALS_PATH = "/etc/cloudflared/<tunnel id>.json";
+
 const { t } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("tunnel:admin"));
@@ -318,6 +326,27 @@ async function openPlan(tunnel: TunnelView) {
               :description="$t('networking.tunnels.emptyDescription')"
               :steps="prerequisites"
             >
+              <!--
+                Why this page has no demo, said plainly rather than left to be
+                inferred from an empty table. Every other empty surface in this
+                console can be shown working with a record that touches
+                nothing; this one cannot, and the reason is a prerequisite the
+                operator has to satisfy off-console.
+
+                It goes above the steps and above the button, because it is
+                what decides whether either is worth starting: a profile saved
+                without that file plans cleanly and then fails on the node, so
+                an operator who reads this after clicking has already learnt it
+                by breaking something. The path is a path and is set as one, so
+                it is copied right and does not break mid-token.
+              -->
+              <template #notice>
+                <i18n-t keypath="networking.tunnels.noDemo" tag="p" scope="global">
+                  <template #path>
+                    <code class="whitespace-nowrap font-mono text-xs text-foreground">{{ CREDENTIALS_PATH }}</code>
+                  </template>
+                </i18n-t>
+              </template>
               <Button v-if="canAdmin" size="sm" @click="openCreate">
                 <Plus aria-hidden="true" class="size-4" />
                 {{ $t('networking.tunnels.newTunnel') }}

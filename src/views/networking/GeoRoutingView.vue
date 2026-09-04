@@ -21,6 +21,7 @@ import {
   type Node,
 } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
+import { isDemoObject, onlyDemos } from "@/lib/demo";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
@@ -124,6 +126,17 @@ const nodesQuery = useAsyncData(
 );
 
 const routes = computed(() => routesQuery.data.value ?? []);
+
+/**
+ * Whether the only thing on this page is the demo. A control plane that drives
+ * production nodes must not seed itself with fake rows, but geo-routing is the
+ * one page here whose whole loop (author, render, checksum) touches no node at
+ * all, so one honestly named record can show the loop working instead of an
+ * empty screen. The explanation stands only while nothing real exists beside
+ * it, and it names the delete call so the demo is never load-bearing.
+ */
+const firstRun = computed(() => onlyDemos(routes.value.map((route) => route.name)));
+
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
 const sortedRoutes = computed(() =>
@@ -137,6 +150,30 @@ function nodeName(id: string): string {
 function strategyVariant(strategy: string): "info" | "secondary" {
   return strategy === "geoip" ? "info" : "secondary";
 }
+
+/**
+ * The routings table, through the shared DataTable.
+ *
+ * It was a hand-rolled `<table>` in an `overflow-x-auto`, which on a phone
+ * showed Name, Hostname and Strategy and cut everything after them off past
+ * the card edge with no scrollbar and no hint that a swipe was available. The
+ * whole Actions cell went with it, including the delete button the first-run
+ * copy tells the reader to use, so the page's own instruction pointed at a
+ * control the reader could not see. DataTable stacks each row into a
+ * definition list below `md`, which is the layout that keeps a nine-column row
+ * readable at 375.
+ */
+const columns = computed<DataTableColumn<GeoRouting>[]>(() => [
+  { key: "name", label: t("networking.geoRouting.colName"), sortable: true, searchable: true, value: (route) => route.name || route.id },
+  { key: "hostname", label: t("networking.geoRouting.colHostname"), sortable: true, searchable: true },
+  { key: "strategy", label: t("networking.geoRouting.colStrategy"), sortable: true, searchable: true },
+  { key: "nodes", label: t("networking.geoRouting.colNodes"), align: "right", sortable: true, value: (route) => route.node_ids?.length ?? 0 },
+  { key: "dns", label: t("networking.geoRouting.colDns"), align: "right", sortable: true, value: (route) => route.dns_node_ids?.length ?? 0 },
+  { key: "status", label: t("networking.geoRouting.colStatus"), sortable: true, value: (route) => route.status ?? "" },
+  { key: "lastApplied", label: t("networking.geoRouting.colLastApplied"), sortable: true, value: (route) => (hasRealTime(route.last_applied_at) ? route.last_applied_at : "") },
+  { key: "lastError", label: t("networking.geoRouting.colLastError"), value: (route) => route.last_error ?? "" },
+  { key: "actions", label: t("networking.geoRouting.colActions"), align: "right" },
+]);
 
 // ── Create / edit dialog ────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -324,6 +361,26 @@ const continentEntries = computed(() =>
       </template>
     </PageHeader>
 
+    <!--
+      First run. The demo is one real record on the real control plane, so the
+      page has to say what it is, what a routing does, and what a routing of
+      the operator's own would have to name. It disappears the moment a record
+      that is not a demo exists.
+    -->
+    <Card v-if="firstRun" class="border-dashed">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <FileCode2 class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('networking.geoRouting.demo.title') }}
+        </CardTitle>
+        <CardDescription>{{ $t('networking.geoRouting.demo.what') }}</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-2 text-sm text-muted-foreground">
+        <p>{{ $t('networking.geoRouting.demo.real') }}</p>
+        <p>{{ $t('networking.geoRouting.demo.remove') }}</p>
+      </CardContent>
+    </Card>
+
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
@@ -335,13 +392,20 @@ const continentEntries = computed(() =>
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <DataState
+        <DataTable
+          state-key="geoRoutings"
+          :columns="columns"
+          :rows="sortedRoutes"
+          :row-key="(route) => route.id"
           :loading="routesQuery.loading.value"
           :error="routesQuery.error.value"
           :has-data="routesQuery.data.value !== undefined"
-          :is-empty="routes.length === 0"
+          searchable
+          :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('networking.geoRouting.emptyTitle')"
           :empty-description="$t('networking.geoRouting.emptyDescription')"
+          :no-match-title="$t('networking.shared.noMatchTitle')"
+          :no-match-description="$t('networking.shared.noMatchDescription')"
           @retry="routesQuery.refresh"
         >
           <template #empty>
@@ -357,94 +421,82 @@ const continentEntries = computed(() =>
               </Button>
             </EmptyState>
           </template>
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colName') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colHostname') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colStrategy') }}</th>
-                  <th scope="col" class="py-2 pr-4 text-right font-medium">{{ $t('networking.geoRouting.colNodes') }}</th>
-                  <th scope="col" class="py-2 pr-4 text-right font-medium">{{ $t('networking.geoRouting.colDns') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colStatus') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colLastApplied') }}</th>
-                  <th scope="col" class="py-2 pr-4 font-medium">{{ $t('networking.geoRouting.colLastError') }}</th>
-                  <th scope="col" class="py-2 pl-4 text-right font-medium">{{ $t('networking.geoRouting.colActions') }}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="route in sortedRoutes"
-                  :key="route.id"
-                  class="border-b border-border last:border-b-0"
-                >
-                  <td class="py-3 pr-4">
-                    <div class="font-medium">{{ route.name || route.id }}</div>
-                    <div class="font-mono text-xs text-muted-foreground">{{ shortId(route.id, 16) }}</div>
-                  </td>
-                  <td class="py-3 pr-4 font-mono text-xs">{{ route.hostname }}</td>
-                  <td class="py-3 pr-4">
-                    <Badge :variant="strategyVariant(route.strategy)">{{ route.strategy }}</Badge>
-                  </td>
-                  <td class="py-3 pr-4 text-right tabular">{{ route.node_ids?.length ?? 0 }}</td>
-                  <td class="py-3 pr-4 text-right tabular">{{ route.dns_node_ids?.length ?? 0 }}</td>
-                  <td class="py-3 pr-4">
-                    <Badge v-if="route.status" :variant="route.status === 'configured' ? 'success' : 'warning'">
-                      {{ route.status }}
-                    </Badge>
-                    <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                  </td>
-                  <td class="py-3 pr-4 text-xs text-muted-foreground">
-                    {{ hasRealTime(route.last_applied_at) ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
-                  </td>
-                  <td class="py-3 pr-4 max-w-[180px]">
-                    <span
-                      v-if="route.last_error"
-                      class="line-clamp-3 break-words text-xs text-destructive"
-                      :title="route.last_error"
-                    >
-                      {{ route.last_error }}
-                    </span>
-                    <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                  </td>
-                  <td class="py-3 pl-4">
-                    <div class="flex justify-end gap-1">
-                      <Button
-                        v-if="canRead"
-                        variant="ghost"
-                        size="sm"
-                        :disabled="planning === route.id"
-                        @click="openPlan(route)"
-                      >
-                        <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" aria-hidden="true" />
-                        <FileCode2 v-else class="size-4" aria-hidden="true" />
-                        {{ $t('networking.geoRouting.previewConfig') }}
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.edit')"
-                        @click="openEdit(route)"
-                      >
-                        <Pencil class="size-4" />
-                      </Button>
-                      <Button
-                        v-if="canAdmin"
-                        variant="ghost"
-                        size="icon-sm"
-                        :aria-label="$t('common.actions.delete')"
-                        @click="deleteTarget = route"
-                      >
-                        <Trash2 class="size-4 text-destructive" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </DataState>
+          <template #cell-name="{ row: route }">
+            <div class="flex items-center gap-1.5">
+              <span class="font-medium">{{ route.name || route.id }}</span>
+              <Badge v-if="isDemoObject(route.name)" variant="outline">
+                {{ $t('networking.geoRouting.demo.badge') }}
+              </Badge>
+            </div>
+            <div class="font-mono text-xs text-muted-foreground">{{ shortId(route.id, 16) }}</div>
+          </template>
+          <template #cell-hostname="{ row: route }">
+            <span class="font-mono text-xs">{{ route.hostname }}</span>
+          </template>
+          <template #cell-strategy="{ row: route }">
+            <Badge :variant="strategyVariant(route.strategy)">{{ route.strategy }}</Badge>
+          </template>
+          <template #cell-nodes="{ row: route }">
+            <span class="tabular">{{ route.node_ids?.length ?? 0 }}</span>
+          </template>
+          <template #cell-dns="{ row: route }">
+            <span class="tabular">{{ route.dns_node_ids?.length ?? 0 }}</span>
+          </template>
+          <template #cell-status="{ row: route }">
+            <Badge v-if="route.status" :variant="route.status === 'configured' ? 'success' : 'warning'">
+              {{ route.status }}
+            </Badge>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
+          </template>
+          <template #cell-lastApplied="{ row: route }">
+            <span class="text-xs text-muted-foreground">
+              {{ hasRealTime(route.last_applied_at) ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
+            </span>
+          </template>
+          <template #cell-lastError="{ row: route }">
+            <span
+              v-if="route.last_error"
+              class="line-clamp-3 block max-w-[180px] break-words text-xs text-destructive"
+              :title="route.last_error"
+            >
+              {{ route.last_error }}
+            </span>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
+          </template>
+          <template #cell-actions="{ row: route }">
+            <div class="flex flex-wrap justify-end gap-1">
+              <Button
+                v-if="canRead"
+                variant="ghost"
+                size="sm"
+                :disabled="planning === route.id"
+                @click="openPlan(route)"
+              >
+                <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" aria-hidden="true" />
+                <FileCode2 v-else class="size-4" aria-hidden="true" />
+                {{ $t('networking.geoRouting.previewConfig') }}
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.edit')"
+                @click="openEdit(route)"
+              >
+                <Pencil class="size-4" />
+              </Button>
+              <Button
+                v-if="canAdmin"
+                variant="ghost"
+                size="icon-sm"
+                :aria-label="$t('common.actions.delete')"
+                @click="deleteTarget = route"
+              >
+                <Trash2 class="size-4 text-destructive" />
+              </Button>
+            </div>
+          </template>
+        </DataTable>
       </CardContent>
     </Card>
 

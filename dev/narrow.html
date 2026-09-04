@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Fixed viewport rig</title>
+    <!--
+      A chosen viewport width without a window that size. The harness pages are
+      ordinary documents, so the only way to render one at an exact CSS width
+      is to give it a frame of that width. The frame lays out at `w` whatever
+      the browser window happens to be, which is what makes a width check
+      reproducible from a machine whose window is not 1440 wide.
+
+        open http://127.0.0.1:5210/dev/narrow.html?to=dns.html
+        open http://127.0.0.1:5210/dev/narrow.html?to=dns.html&w=1440&h=1200
+        open http://127.0.0.1:5210/dev/narrow.html?to=geo-routing.html&h=1400
+    -->
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #0b0d10; font: 13px system-ui, sans-serif; color: #9aa4b2; }
+      header { padding: 8px 12px; }
+      iframe { border: 1px solid #2a313a; background: #0b0d10; display: block; }
+    </style>
+  </head>
+  <body>
+    <header id="label">375 CSS px</header>
+    <iframe id="frame" title="Fixed viewport"></iframe>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const to = params.get("to") ?? "dns.html";
+      const width = Number(params.get("w") ?? 375);
+      const frame = document.getElementById("frame");
+      document.getElementById("label").textContent = `${width} CSS px`;
+      frame.style.width = `${width}px`;
+      frame.style.height = `${Number(params.get("h") ?? 1600)}px`;
+      frame.src = `/dev/${to}`;
+    </script>
+  </body>
+</html>
