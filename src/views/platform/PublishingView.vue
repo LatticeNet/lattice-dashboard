@@ -11,6 +11,8 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   PUBLISHING_ORIGINS,
+  type PublishingAccessMode,
+  accessLegend,
   accessMode,
   arrivedFromWorkers,
   isFirstRun,
@@ -93,8 +95,24 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
  */
 const showOriginPrimer = computed(() => loaded.value && isFirstRun(records.value));
 
+/**
+ * The access column's own explanation, kept on the page rather than in a
+ * pointer-only tooltip. The badge's title attribute sits on a span nothing can
+ * focus, so tabbing the page goes from the search box straight into the bucket
+ * form and never reaches it, and the primer that says the same thing is only
+ * shown while the plane is empty. The legend covers the modes on screen.
+ */
+const visibleAccessModes = computed(() => accessLegend(records.value));
+
+// Anonymous is the one mode that reads as a warning: it is the only route
+// anybody who knows the URL can fetch. The badge and the legend line share the
+// rule so the same mode cannot be coloured two ways on one page.
+function accessModeVariant(mode: PublishingAccessMode) {
+  return mode === "anonymous" ? "warning" : "secondary";
+}
+
 function accessVariant(record: Pick<PublishingRecord, "origin">) {
-  return accessMode(record) === "anonymous" ? "warning" : "secondary";
+  return accessModeVariant(accessMode(record));
 }
 
 function stateVariant(record: PublishingRecord) {
@@ -238,6 +256,26 @@ function stateVariant(record: PublishingRecord) {
             </span>
           </template>
         </DataTable>
+
+        <!--
+          What the Access column means, for every input method. Keyboard and
+          touch operators cannot reach a title attribute, so the sentences the
+          badges carry are also on the page, under the table they describe.
+        -->
+        <dl
+          v-if="visibleAccessModes.length"
+          class="mt-4 space-y-1.5 border-t border-border pt-3 text-xs text-muted-foreground"
+        >
+          <div class="font-medium text-foreground">{{ $t('platform.publishing.accessLegendTitle') }}</div>
+          <div v-for="mode in visibleAccessModes" :key="mode" class="flex flex-wrap items-baseline gap-2">
+            <dt>
+              <Badge :variant="accessModeVariant(mode)" class="text-[10px]">
+                {{ $t(`platform.publishing.access.${mode}`) }}
+              </Badge>
+            </dt>
+            <dd class="min-w-0 flex-1 leading-relaxed">{{ $t(`platform.publishing.accessHint.${mode}`) }}</dd>
+          </div>
+        </dl>
       </CardContent>
     </Card>
 

@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   WORKERS_REDIRECT_TO,
+  accessLegend,
   accessMode,
   arrivedFromWorkers,
   isFirstRun,
@@ -120,6 +121,32 @@ test("a route that exists ends the first run, reserved or not", () => {
   assert.equal(isFirstRun([record({ reserved: true })]), false);
   assert.equal(isFirstRun([record({ reserved: false })]), false);
   assert.equal(isFirstRun([record({ reserved: true }), record({ reserved: false })]), false);
+});
+
+test("the access column explains itself without a pointer", () => {
+  // The badge carries its sentence in a title attribute on a span nothing can
+  // focus, and the primer that repeats it is gone as soon as a route exists.
+  // A keyboard or touch operator had no way left to learn what "Storage token"
+  // means, so the legend under the table lists every mode the table is
+  // actually showing, in the order the rows are grouped in.
+  const rows = [
+    record({ origin: "static" }),
+    record({ origin: "plugin" }),
+    record({ origin: "kv" }),
+    record({ origin: "static", hostname: "other.example" }),
+  ];
+  assert.deepEqual(accessLegend(rows), ["storage_token", "anonymous", "share_token"]);
+  assert.deepEqual(accessLegend([record({ origin: "static" })]), ["anonymous"]);
+  assert.deepEqual(accessLegend([]), []);
+});
+
+test("an origin the console cannot read is explained too, and explained last", () => {
+  // The unknown badge is the one an operator is most likely to stop at, so the
+  // legend has to carry its line rather than leaving the odd row unexplained.
+  assert.deepEqual(accessLegend([record({ origin: "worker" }), record({ origin: "kv" })]), [
+    "storage_token",
+    "unknown",
+  ]);
 });
 
 test("old Workers links land on Publishing and say so", () => {

@@ -208,6 +208,7 @@ export default {
         share_token: "The share's bearer token is part of the URL, so rotating the share is what revokes it.",
         unknown: "This server reported an origin this console does not know, so its access rule is not shown rather than guessed.",
       },
+      accessLegendTitle: "What the access column means",
       primerTitle: "The three origins",
       primerDescription:
         "Nothing is published yet. A route decides the URL; the origin decides where the bytes come from and who may fetch them.",

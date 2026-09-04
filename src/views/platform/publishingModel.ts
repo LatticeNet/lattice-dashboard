@@ -110,6 +110,33 @@ export function accessMode(record: Pick<PublishingRecord, "origin">): Publishing
 }
 
 /**
+ * The access modes, in the order the table groups its rows: kv, static, plugin,
+ * and last the one the console could not read.
+ */
+export const PUBLISHING_ACCESS_MODES = [
+  "storage_token",
+  "anonymous",
+  "share_token",
+  "unknown",
+] as const satisfies readonly PublishingAccessMode[];
+
+/**
+ * The access modes the table is actually showing, for the legend under it.
+ *
+ * The badge's sentence lives in a title attribute on a span nothing can focus,
+ * so a keyboard or touch operator could not reach it, and the primer that
+ * repeated it is only on an empty plane. The legend puts the same sentences
+ * under the table permanently, and lists only the modes on screen so a fleet
+ * with one kind of route does not read three explanations for it.
+ */
+export function accessLegend(
+  records: readonly Pick<PublishingRecord, "origin">[],
+): PublishingAccessMode[] {
+  const present = new Set(records.map((record) => accessMode(record)));
+  return PUBLISHING_ACCESS_MODES.filter((mode) => present.has(mode));
+}
+
+/**
  * A first run is a plane with no route on it at all.
  *
  * Reserved does not carve out an exception, and reading it as one was wrong:

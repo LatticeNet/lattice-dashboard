@@ -196,6 +196,7 @@ export default {
         share_token: "分享的 bearer token 就在 URL 里，因此轮换分享才是吊销访问的办法。",
         unknown: "服务端报告了这个控制台不认识的 origin，因此不展示它的访问规则，而不是猜一个。",
       },
+      accessLegendTitle: "访问方式这一列的含义",
       primerTitle: "三种 origin",
       primerDescription: "这里还没有任何路由。路由决定 URL，origin 决定内容从哪来、谁能取。",
       primer: {
