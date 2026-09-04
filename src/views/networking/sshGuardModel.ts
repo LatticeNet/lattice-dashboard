@@ -463,15 +463,35 @@ export function validateForm(form: GuardForm): string[] {
 // ── evidence carried by the approvals ───────────────────────────────────────
 
 /**
+ * An arm a person refused, as opposed to one the node could not apply.
+ *
+ * Both end as `rejected`, and the server writes a reason only for the
+ * second: a failed task overwrites `reason` with its summary, while an
+ * operator's rejection leaves the plan's own summary standing. Reading the
+ * summary as a failure line is what made "Harden sshd only, no firewall"
+ * look like something that went wrong on the box. What separates the two is
+ * `approved_by`: a task only ever runs for an approval someone approved, so
+ * an arm rejected without an approver was refused, not failed. The server
+ * records who refused it in the audit trail, not on the approval, so only
+ * the moment is known here.
+ */
+export function armRejection(state: NodeGuardState): { at: string } | undefined {
+  if (state.stage !== "armFailed" || !state.arm) return undefined;
+  if (state.arm.status !== "rejected" || state.arm.approved_by) return undefined;
+  return { at: state.arm.updated_at || state.arm.created_at || "" };
+}
+
+/**
  * Why the last arm did not survive, in the server's words.
  *
- * A rejected arm carries the refusal or the failed task's summary in
- * `reason`. The summary can run to several lines; the last non-empty one is
- * the line the task died on and the one an operator reads first. The full
- * text travels alongside for the tooltip.
+ * A failed arm carries the task's summary in `reason`. The summary can run
+ * to several lines; the last non-empty one is the line the task died on and
+ * the one an operator reads first. The full text travels alongside for the
+ * tooltip. An arm a person refused (see armRejection) has no failure to
+ * print.
  */
 export function armFailureText(state: NodeGuardState): { line: string; full: string } | undefined {
-  if (state.stage !== "armFailed") return undefined;
+  if (state.stage !== "armFailed" || armRejection(state)) return undefined;
   const full = (state.arm?.reason ?? "").trim();
   if (!full) return undefined;
   const lines = full.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);

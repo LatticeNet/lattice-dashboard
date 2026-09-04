@@ -69,6 +69,7 @@ import {
   KNOCK_OPEN_FOR_VALUES,
   PERMIT_ROOT_LOGIN_VALUES,
   armFailureText,
+  armRejection,
   buildFleetStates,
   buildPlanRequest,
   defaultGuardForm,
@@ -939,11 +940,11 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               </th>
               <th scope="col" class="px-2 py-2 text-left font-medium">{{ $t('networking.sshGuard.table.stage') }}</th>
               <th scope="col" class="px-2 py-2 text-left font-medium whitespace-nowrap">{{ $t('networking.sshGuard.table.sshdNow') }}</th>
-              <!-- Neither column is in the snapshot yet. The reason is printed
-                   once, here, instead of on every row. -->
               <th scope="col" class="px-2 py-2 text-left font-medium">
-                <span class="cursor-help underline decoration-dotted underline-offset-4" :title="$t('networking.sshGuard.table.notReportedTitle')">{{ $t('networking.sshGuard.table.password') }}</span>
+                <span class="cursor-help underline decoration-dotted underline-offset-4" :title="$t('networking.sshGuard.table.passwordTitle')">{{ $t('networking.sshGuard.table.password') }}</span>
               </th>
+              <!-- Knock state is not in the snapshot. The reason is printed
+                   once, here, instead of on every row. -->
               <th scope="col" class="px-2 py-2 text-left font-medium">
                 <span class="cursor-help underline decoration-dotted underline-offset-4" :title="$t('networking.sshGuard.table.notReportedTitle')">{{ $t('networking.sshGuard.table.knock') }}</span>
               </th>
@@ -1002,6 +1003,14 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   :title="expandedReasons.has(`row:${state.nodeId}`) ? $t('networking.sshGuard.table.reasonCollapse') : $t('networking.sshGuard.table.reasonExpand')"
                   @click="toggleReason(`row:${state.nodeId}`)"
                 >{{ expandedReasons.has(`row:${state.nodeId}`) ? armFailureText(state)!.full : armFailureText(state)!.line }}</button>
+                <!-- A refusal is not a failure: the plan never reached the box. -->
+                <p
+                  v-else-if="armRejection(state)"
+                  class="mt-1 text-[11px] text-muted-foreground"
+                  :title="$t('networking.sshGuard.table.rejectedByTitle', { summary: state.arm?.reason || '' })"
+                >
+                  {{ $t('networking.sshGuard.table.rejectedBy', { time: formatDateTime(armRejection(state)!.at) }) }}
+                </p>
                 <!-- A closed window: when it closed, where a failure prints its reason. -->
                 <p
                   v-else-if="stageOf(state) === 'reverted'"
@@ -1040,9 +1049,36 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <span v-else class="text-muted-foreground">{{ $t('networking.sshGuard.table.reading') }}</span>
               </td>
 
-              <!-- PASSWORD is not in the snapshot yet. Saying so is the
-                   truthful cell; anything else would be a guess. -->
-              <td class="px-2 py-1 align-top text-xs text-muted-foreground whitespace-nowrap">{{ $t('networking.sshGuard.table.notReported') }}</td>
+              <!-- PASSWORD: PasswordAuthentication as the node's own sshd -T
+                   printed it. "on" is the finding this board exists for, so it
+                   is the one value with a colour. A snapshot past its freshness
+                   says so beside the value rather than printing an age alone:
+                   a stale "off" is a claim about the past. -->
+              <td class="px-2 py-1 align-top font-mono text-xs tabular whitespace-nowrap max-sm:text-[11px]">
+                <template v-if="evidence.get(state.nodeId)?.password">
+                  <span
+                    :class="evidence.get(state.nodeId)!.password!.enabled ? 'text-warning' : ''"
+                    :title="$t('networking.sshGuard.table.passwordObserved', { time: formatDateTime(evidence.get(state.nodeId)!.password!.observedAt) })"
+                  >{{ evidence.get(state.nodeId)!.password!.enabled ? $t('networking.sshGuard.table.passwordOn') : $t('networking.sshGuard.table.passwordOff') }}</span>
+                  <span
+                    v-if="evidence.get(state.nodeId)!.status === 'stale'"
+                    class="ml-1 text-warning"
+                    :title="$t('networking.sshGuard.table.staleTitle')"
+                  >{{ $t('networking.sshGuard.table.staleSince', { time: formatDateTime(evidence.get(state.nodeId)!.staleSince) }) }}</span>
+                </template>
+                <span
+                  v-else-if="evidence.get(state.nodeId)?.sshd"
+                  class="text-muted-foreground"
+                  :title="evidence.get(state.nodeId)!.sshdNote || $t('networking.sshGuard.table.passwordNotReportedTitle')"
+                >{{ $t('networking.sshGuard.table.notReported') }}</span>
+                <span v-else-if="!canReadReality" class="text-muted-foreground" :title="$t('networking.sshGuard.table.noAccessTitle')">
+                  {{ $t('networking.sshGuard.table.noAccess') }}
+                </span>
+                <span v-else-if="evidence.get(state.nodeId)?.status === 'unknown'" class="text-muted-foreground" :title="$t('networking.sshGuard.table.noSnapshotTitle')">
+                  {{ $t('networking.sshGuard.table.noSnapshot') }}
+                </span>
+                <span v-else class="text-muted-foreground">{{ $t('networking.sshGuard.table.reading') }}</span>
+              </td>
 
               <!-- KNOCK is not in the snapshot either, but the control plane
                    does not need the node to tell it: the arm plan it filed is

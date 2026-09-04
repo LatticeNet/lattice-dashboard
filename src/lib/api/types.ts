@@ -676,6 +676,21 @@ export interface GuardInterface {
   addresses?: string[];
 }
 
+/**
+ * What `sshd -T` printed on the node, read by the agent. Absent from the
+ * snapshot when the agent predates the field or could not prove it.
+ */
+export interface GuardSSHDFacts {
+  password_authentication: boolean;
+  pubkey_authentication: boolean;
+  /** The literal value sshd prints: yes, no, prohibit-password, without-password, forced-commands-only. */
+  permit_root_login: string;
+  max_auth_tries?: number;
+  ports: number[];
+  listen_addresses?: string[];
+  observed_at: string;
+}
+
 export interface GuardNodeReality {
   node_id: string;
   listeners?: GuardListener[];
@@ -683,6 +698,9 @@ export interface GuardNodeReality {
   managed_sha?: string;
   foreign_tables?: string[];
   nft_version?: string;
+  sshd?: GuardSSHDFacts;
+  /** Why a current agent could not report sshd facts. */
+  sshd_note?: string;
   collected_at: string;
 }
 
