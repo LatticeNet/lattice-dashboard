@@ -4,8 +4,11 @@ import { test } from "node:test";
 import type { Node } from "../../../lib/api/types.ts";
 import {
   DEFAULT_HIDDEN_COLUMNS,
+  NAME_TRACK_MAX_PX,
+  NAME_TRACK_MIN_PX,
   NODE_TABLE_COLUMNS,
   gridTemplate,
+  nameTrackMin,
   nextSortState,
   parseHiddenColumns,
   parseSortState,
@@ -120,6 +123,49 @@ test("visibleColumns always keeps required columns and gridTemplate matches", ()
     ["name", "status", "actions"],
   );
   assert.equal(gridTemplate(hidden).split(" ").length, visible.length);
+});
+
+test("the name track is at least as wide as the fleet's longest rendered name", () => {
+  // The live fleet's widest cells. Chrome on macOS draws
+  // "Akkocloud-UK-London-KVM" at 187px in 14px medium; with the dot, the [cd]
+  // badge and the gaps the cell wants 232px, which is more than the 180px
+  // floor and exactly why the name used to print as "Akkocloud-UK-Lond...".
+  const fleet = [
+    node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" }),
+    node({ id: "node_ykr7g35t3gzmgshc", name: "[OpenJobs-Data]-TiDB-1" }),
+    node({ id: "openjobs-data-scripts", name: "[OpenJobs-Data]-scripts" }),
+    node({ id: "node_fdlsvreyz4un2elo", name: "[Metix]-Aaitr-jp-softbank-NAT" }),
+    node({ id: "dmit-1", name: "[Metix]-DMIT-1" }),
+  ];
+  const min = nameTrackMin(fleet);
+  assert.ok(min >= 8 + 8 + 21 + 8 + 187, `${min}px is narrower than Akkocloud's cell`);
+  assert.ok(min < 300, `${min}px is more than the longest name needs`);
+  // The widest row governs, whichever it is: the [Metix] badge makes the
+  // 21-character softbank name wider than the 23-character Akkocloud one.
+  assert.equal(min, Math.max(...fleet.map((n) => nameTrackMin([n]))));
+  assert.ok(nameTrackMin([fleet[4]!]) < min);
+  // A wide prefix badge costs width too: the same body behind [OpenJobs-Data]
+  // needs a wider track than it does bare.
+  assert.ok(
+    nameTrackMin([node({ id: "p", name: "[OpenJobs-Data]-gomami-jpn-pulse-nano" })]) >
+      nameTrackMin([node({ id: "b", name: "gomami-jpn-pulse-nano" })]),
+  );
+});
+
+test("the name track stays inside its band", () => {
+  assert.equal(nameTrackMin([]), NAME_TRACK_MIN_PX);
+  assert.equal(nameTrackMin([node({ id: "a", name: "a" })]), NAME_TRACK_MIN_PX);
+  assert.equal(nameTrackMin([node({ id: "x", name: "x".repeat(120) })]), NAME_TRACK_MAX_PX);
+  // The id stands in for a missing name, as it does in the cell.
+  assert.ok(nameTrackMin([node({ id: "node_" + "k".repeat(40), name: "" })]) > NAME_TRACK_MIN_PX);
+});
+
+test("gridTemplate carries the content-derived name minimum into the name track", () => {
+  const template = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 260);
+  assert.ok(template.startsWith("minmax(260px,1.6fr) "), template);
+  assert.ok(gridTemplate(DEFAULT_HIDDEN_COLUMNS).startsWith(`minmax(${NAME_TRACK_MIN_PX}px,1.6fr) `));
+  // The other tracks are untouched by it.
+  assert.equal(template.split(" ").slice(1).join(" "), gridTemplate(DEFAULT_HIDDEN_COLUMNS).split(" ").slice(1).join(" "));
 });
 
 test("sort-state persistence round-trips and rejects unknown keys", () => {

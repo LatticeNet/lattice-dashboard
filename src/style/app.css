@@ -601,6 +601,13 @@ html[data-density="compact"] {
     padding: 0.75rem; /* p-3 */
   }
 
+  /* Second lines inside fixed-height rows. The 32px row has no room for one,
+     so a cell that stacks an identifier under its label opts in via
+     `density-secondary` and loses that line here. */
+  .density-secondary {
+    display: none;
+  }
+
   /* Vertical stack gap override. For opt-in `density-stack` containers. */
   .density-stack > * + * {
     margin-top: 0.5rem; /* space-y-2 */

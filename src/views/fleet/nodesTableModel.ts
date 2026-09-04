@@ -4,6 +4,7 @@
  * `node --test` covers it directly (house *Model.ts pattern).
  */
 import type { Node } from "@/lib/api/types";
+import { splitNamePrefix } from "@/lib/fleet";
 import { NODE_STATUSES, nodeStatus } from "@/lib/nodeStatus";
 
 export type NodeSortKey =
@@ -50,6 +51,8 @@ export interface NodeTableColumn {
 }
 
 export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
+  // The name track's minimum is not this constant: gridTemplate() sizes it
+  // from the longest name in the rows (nameTrackMin), so this is the floor.
   { id: "name", labelKey: "fleet.nodes.table.colName", width: "minmax(180px,1.6fr)", optional: false, sortKey: "name", defaultDir: "asc" },
   // 90px clipped the widest status pill ("never reported") to "never report...".
   // The track is sized to the longest word the column can hold, because a
@@ -216,10 +219,57 @@ export function visibleColumns(hidden: ReadonlySet<string>): NodeTableColumn[] {
   return NODE_TABLE_COLUMNS.filter((c) => !c.optional || !hidden.has(c.id));
 }
 
-/** CSS grid-template-columns for the currently visible column set. */
-export function gridTemplate(hidden: ReadonlySet<string>): string {
+/**
+ * The name track's minimum width, from the longest name in the rows.
+ *
+ * The name is how an operator tells two nodes apart, so it never truncates.
+ * A grid track cannot promise that on its own: a `minmax(180px, 1.6fr)` track
+ * sits at 180px whenever the table is pinned at its minimum width, which on a
+ * 1440 screen with the sidebar open is always, and the fleet's longest names
+ * need more than that. So the minimum follows the content: the status dot,
+ * the prefix badge and the gaps between them, plus the name body at the width
+ * 14px medium text takes in the console's system face (Chrome on macOS
+ * draws "Akkocloud-UK-London-KVM" at 187px, 8.1px a character; 8.3 leaves a
+ * little to spare). Beyond the minimum the table scrolls horizontally, so a
+ * wider name pushes the metric columns right rather than folding.
+ *
+ * An estimate, not a measurement: the fixed-height rows cannot wait for a
+ * layout pass, and a text measurement would need a canvas the strict CSP
+ * would rather not see. The band keeps a single absurd name from turning the
+ * whole table into a scroll.
+ */
+export const NAME_TRACK_MIN_PX = 180;
+export const NAME_TRACK_MAX_PX = 440;
+const NAME_CHAR_PX = 8.3;
+/** CJK and other full-width glyphs are square: one em at 14px. */
+const WIDE_CHAR_PX = 14;
+const PREFIX_CHAR_PX = 6;
+/** Status dot, then the gap-2 between each of dot, badge and name. */
+const DOT_PX = 8;
+const GAP_PX = 8;
+/** px-1 either side plus the badge border. */
+const BADGE_PAD_PX = 10;
+
+export function nameTrackMin(nodes: readonly Pick<Node, "id" | "name">[]): number {
+  let widest = 0;
+  for (const node of nodes) {
+    const { prefix, body } = splitNamePrefix(node);
+    let px = DOT_PX + GAP_PX;
+    for (const ch of body) px += (ch.codePointAt(0) ?? 0) > 0x2e7f ? WIDE_CHAR_PX : NAME_CHAR_PX;
+    if (prefix) px += prefix.length * PREFIX_CHAR_PX + BADGE_PAD_PX + GAP_PX;
+    if (px > widest) widest = px;
+  }
+  return Math.min(NAME_TRACK_MAX_PX, Math.max(NAME_TRACK_MIN_PX, Math.ceil(widest)));
+}
+
+/**
+ * CSS grid-template-columns for the currently visible column set. The name
+ * track takes its minimum from the rows (see nameTrackMin) rather than the
+ * catalog constant.
+ */
+export function gridTemplate(hidden: ReadonlySet<string>, nameMinPx = NAME_TRACK_MIN_PX): string {
   return visibleColumns(hidden)
-    .map((c) => c.width)
+    .map((c) => (c.id === "name" ? `minmax(${nameMinPx}px,1.6fr)` : c.width))
     .join(" ");
 }
 
