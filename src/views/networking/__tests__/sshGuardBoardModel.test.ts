@@ -158,6 +158,30 @@ test("the fold says when a node was seen from the summary and what it does only 
 
   const absent = foldReality("not-in-feed", summaries, details);
   assert.equal(absent.status, "unknown");
+  assert.equal(seen.password, undefined, "a detail without an sshd block makes no claim about passwords");
+});
+
+test("the fold reads PasswordAuthentication from the detail's sshd block and the stale moment from the summary", () => {
+  const summaries = new Map([
+    ["stale", { node_id: "stale", snapshot_status: "stale", drift_state: "unknown", managed: false, has_binding: false, collected_at: "2026-09-01T03:00:00Z", stale_after: "2026-09-02T09:00:00Z" }],
+    ["fresh", { node_id: "fresh", snapshot_status: "fresh", drift_state: "unknown", managed: false, has_binding: false, collected_at: "2026-09-04T03:43:04Z", stale_after: "2026-09-05T09:43:04Z" }],
+  ]);
+  const sshd = { pubkey_authentication: true, permit_root_login: "without-password", ports: [22], observed_at: "2026-09-04T03:43:04Z" };
+  const details = new Map([
+    ["stale", { node_id: "stale", collected_at: "2026-09-01T03:00:00Z", sshd: { ...sshd, password_authentication: true, observed_at: "2026-09-01T03:00:00Z" } }],
+    ["fresh", { node_id: "fresh", collected_at: "2026-09-04T03:43:04Z", sshd: { ...sshd, password_authentication: false } }],
+    ["mute", { node_id: "mute", collected_at: "2026-09-04T03:43:04Z", sshd_note: "sshd -T exceeded 3s" }],
+  ]);
+  const fresh = foldReality("fresh", summaries, details);
+  assert.deepEqual(fresh.password, { enabled: false, observedAt: "2026-09-04T03:43:04Z" });
+  assert.equal(fresh.staleSince, "2026-09-05T09:43:04Z");
+  const stale = foldReality("stale", summaries, details);
+  assert.deepEqual(stale.password, { enabled: true, observedAt: "2026-09-01T03:00:00Z" });
+  assert.equal(stale.status, "stale");
+  assert.equal(stale.staleSince, "2026-09-02T09:00:00Z");
+  const mute = foldReality("mute", summaries, details);
+  assert.equal(mute.password, undefined);
+  assert.equal(mute.sshdNote, "sshd -T exceeded 3s");
 });
 
 test("details are re-read only when the summary says the snapshot moved", () => {

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import type { Node } from "../../../lib/api/types.ts";
 import {
   DEFAULT_HIDDEN_COLUMNS,
+  NAME_TRACK_MAX_PX,
+  NAME_TRACK_MIN_PX,
   NODE_TABLE_COLUMNS,
   gridTemplate,
+  nameTrackMin,
   nextSortState,
   parseHiddenColumns,
   parseSortState,
@@ -95,7 +100,7 @@ test("a console that has never been configured gets the default column set", () 
   // The default has to leave the triage columns visible, or hiding things by
   // default would be a worse answer than the wide table it replaced.
   const visible = visibleColumns(hidden).map((c) => c.id);
-  for (const id of ["name", "status", "role", "cpu", "memory", "disk", "lastSeen", "actions"]) {
+  for (const id of ["name", "status", "hostname", "role", "cpu", "memory", "disk", "lastSeen", "actions"]) {
     assert.ok(visible.includes(id), `${id} must be visible by default`);
   }
 });
@@ -120,6 +125,91 @@ test("visibleColumns always keeps required columns and gridTemplate matches", ()
     ["name", "status", "actions"],
   );
   assert.equal(gridTemplate(hidden).split(" ").length, visible.length);
+});
+
+test("the name track is at least as wide as the fleet's longest rendered name", () => {
+  // The live fleet's widest cells. Chrome on macOS draws
+  // "Akkocloud-UK-London-KVM" at 187px in 14px medium; with the dot, the [cd]
+  // badge and the gaps the cell wants 232px, which is more than the 180px
+  // floor and exactly why the name used to print as "Akkocloud-UK-Lond...".
+  const fleet = [
+    node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" }),
+    node({ id: "node_ykr7g35t3gzmgshc", name: "[OpenJobs-Data]-TiDB-1" }),
+    node({ id: "openjobs-data-scripts", name: "[OpenJobs-Data]-scripts" }),
+    node({ id: "node_fdlsvreyz4un2elo", name: "[Metix]-Aaitr-jp-softbank-NAT" }),
+    node({ id: "dmit-1", name: "[Metix]-DMIT-1" }),
+  ];
+  const min = nameTrackMin(fleet);
+  assert.ok(min >= 8 + 8 + 21 + 8 + 187, `${min}px is narrower than Akkocloud's cell`);
+  assert.ok(min < 300, `${min}px is more than the longest name needs`);
+  // The widest row governs, whichever it is: the [Metix] badge makes the
+  // 21-character softbank name wider than the 23-character Akkocloud one.
+  assert.equal(min, Math.max(...fleet.map((n) => nameTrackMin([n]))));
+  assert.ok(nameTrackMin([fleet[4]!]) < min);
+  // A wide prefix badge costs width too: the same body behind [OpenJobs-Data]
+  // needs a wider track than it does bare.
+  assert.ok(
+    nameTrackMin([node({ id: "p", name: "[OpenJobs-Data]-gomami-jpn-pulse-nano" })]) >
+      nameTrackMin([node({ id: "b", name: "gomami-jpn-pulse-nano" })]),
+  );
+});
+
+test("the name track stays inside its band", () => {
+  assert.equal(nameTrackMin([]), NAME_TRACK_MIN_PX);
+  assert.equal(nameTrackMin([node({ id: "a", name: "a" })]), NAME_TRACK_MIN_PX);
+  assert.equal(nameTrackMin([node({ id: "x", name: "x".repeat(120) })]), NAME_TRACK_MAX_PX);
+  // The id stands in for a missing name, as it does in the cell.
+  assert.ok(nameTrackMin([node({ id: "node_" + "k".repeat(40), name: "" })]) > NAME_TRACK_MIN_PX);
+});
+
+test("the hostname is a column of its own, in the catalog and the column manager", () => {
+  const hostname = NODE_TABLE_COLUMNS.find((c) => c.id === "hostname");
+  assert.ok(hostname, "hostname column missing from the catalog");
+  assert.equal(hostname.labelKey, "fleet.nodes.table.colHostname");
+  // Optional, so the column manager lists it; visible until hidden.
+  assert.equal(hostname.optional, true);
+  assert.ok(!hostname.defaultHidden);
+  assert.ok(visibleColumns(parseHiddenColumns(null)).some((c) => c.id === "hostname"));
+  assert.ok(!visibleColumns(parseHiddenColumns("hostname")).some((c) => c.id === "hostname"));
+  assert.equal(serializeHiddenColumns(new Set(["hostname"])), "hostname");
+});
+
+test("past the track cap the name cell truncates rather than painting under the next column", () => {
+  // The content-derived minimum is the mechanism; the cap is what stops one
+  // absurd name from turning the table into a scroll. A name wider than the
+  // cap then has nowhere to go, so the cell itself has to clip it.
+  const absurd = node({ id: "x", name: "[prefix]-" + "x".repeat(120) });
+  assert.equal(nameTrackMin([absurd]), NAME_TRACK_MAX_PX);
+  const source = readFileSync(fileURLToPath(new URL("../../../components/common/NodeTable.vue", import.meta.url)), "utf8");
+  const nameCell = /<p class="([^"]*)">\{\{ nameBody\(node\) \}\}<\/p>/.exec(source);
+  assert.ok(nameCell, "the name <p> was not found in NodeTable.vue");
+  const classes = nameCell[1]!.split(/\s+/);
+  // Tailwind's `truncate` is overflow-hidden + text-ellipsis + nowrap.
+  assert.ok(classes.includes("truncate"), `name cell classes: ${classes.join(" ")}`);
+  assert.ok(!classes.includes("whitespace-normal"));
+  // ...and the block it sits in must be allowed to shrink, or the clip never happens.
+  assert.match(source, /<div class="min-w-0">\s*<p class="[^"]*truncate/);
+});
+
+test("one name minimum for the page, so grouped tables do not disagree on the column width", () => {
+  // Grouped by region: one group holds the long-named node, the other does
+  // not. Computed per group the two tables would render the name column at
+  // different widths; the page's minimum is the widest group's.
+  const london = [node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" })];
+  const tokyo = [node({ id: "dmit-1", name: "[Metix]-DMIT-1" }), node({ id: "b", name: "b" })];
+  assert.notEqual(nameTrackMin(london), nameTrackMin(tokyo));
+  const page = nameTrackMin([...london, ...tokyo]);
+  assert.equal(page, Math.max(nameTrackMin(london), nameTrackMin(tokyo)));
+  // Order of the groups does not matter.
+  assert.equal(nameTrackMin([...tokyo, ...london]), page);
+});
+
+test("gridTemplate carries the content-derived name minimum into the name track", () => {
+  const template = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 260);
+  assert.ok(template.startsWith("minmax(260px,1.6fr) "), template);
+  assert.ok(gridTemplate(DEFAULT_HIDDEN_COLUMNS).startsWith(`minmax(${NAME_TRACK_MIN_PX}px,1.6fr) `));
+  // The other tracks are untouched by it.
+  assert.equal(template.split(" ").slice(1).join(" "), gridTemplate(DEFAULT_HIDDEN_COLUMNS).split(" ").slice(1).join(" "));
 });
 
 test("sort-state persistence round-trips and rejects unknown keys", () => {

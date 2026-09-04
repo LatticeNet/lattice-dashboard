@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   armFailureText,
+  armRejection,
   buildAdvancedRequest,
   buildFleetStates,
   buildPlanRequest,
@@ -284,15 +285,34 @@ test("port lists split on commas or spaces and keep what could not be a port", (
 // ── evidence carried by the approvals ───────────────────────────────────────
 
 test("a failed arm prints the line the task died on, with the full reason alongside", () => {
-  const s = deriveNodeGuardState([arm({ status: "rejected", reason: "apply: step 3/5\nsshd -t: /etc/ssh/sshd_config.d/lattice.conf line 4: Bad configuration option" })], NODE);
+  // A task only runs for an approval someone approved, so a failed arm always
+  // carries an approver; that is what tells it apart from a refusal below.
+  const s = deriveNodeGuardState([arm({ status: "rejected", approved_by: "cdcd", reason: "apply: step 3/5\nsshd -t: /etc/ssh/sshd_config.d/lattice.conf line 4: Bad configuration option" })], NODE);
   const text = armFailureText(s);
   assert.equal(text?.line, "sshd -t: /etc/ssh/sshd_config.d/lattice.conf line 4: Bad configuration option");
   assert.ok(text?.full.startsWith("apply: step 3/5"));
+  assert.equal(armRejection(s), undefined, "a task failure is not a refusal");
 });
 
 test("a failed arm with no reason, and a node that did not fail, print nothing", () => {
-  assert.equal(armFailureText(deriveNodeGuardState([arm({ status: "rejected" })], NODE)), undefined);
+  assert.equal(armFailureText(deriveNodeGuardState([arm({ status: "rejected", approved_by: "cdcd" })], NODE)), undefined);
   assert.equal(armFailureText(deriveNodeGuardState([arm({ status: "applied" })], NODE)), undefined);
+});
+
+test("an arm a person refused reads as a refusal with its moment, never as a failure", () => {
+  // The live shape: the operator rejected the plan, the server left the
+  // plan's own summary in `reason` and recorded no approver. Printing that
+  // summary as a failure line is what made three NAT nodes look broken.
+  const refused = deriveNodeGuardState(
+    [arm({ status: "rejected", reason: "Harden sshd only, no firewall (auto-revert in 3600s)", updated_at: "2026-08-29T04:27:50Z" })],
+    NODE,
+  );
+  assert.equal(refused.stage, "armFailed");
+  assert.deepEqual(armRejection(refused), { at: "2026-08-29T04:27:50Z" });
+  assert.equal(armFailureText(refused), undefined, "the plan summary is not a failure reason");
+  // Neither a dismissal nor an applied arm is a refusal.
+  assert.equal(armRejection(deriveNodeGuardState([arm({ status: "dismissed" })], NODE)), undefined);
+  assert.equal(armRejection(deriveNodeGuardState([arm({ status: "applied" })], NODE)), undefined);
 });
 
 test("the confirm window is read back from the plan the arm was rendered with", () => {

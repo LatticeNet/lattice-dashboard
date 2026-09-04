@@ -147,6 +147,7 @@ export default {
       table: {
         colName: "节点",
         colStatus: "状态",
+        colHostname: "主机名",
         colRole: "角色",
         colTags: "标签",
         colPublicIp: "公网 IPv4",

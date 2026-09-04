@@ -28,8 +28,12 @@ export interface FixtureNode {
   /** Seconds since the snapshot was collected; undefined means never reported. */
   observedAgoSec?: number;
   failure?: string;
+  /** An operator refused the arm: the server keeps the plan summary as the reason and records no approver. */
+  refused?: boolean;
   /** Seconds left on the revert timer, for awaitingConfirm. Negative: the window closed that long ago. */
   revertInSec?: number;
+  /** PasswordAuthentication as sshd -T prints it; undefined when the agent predates the sshd block. */
+  password?: boolean;
 }
 
 const NOW = Date.now();
@@ -97,6 +101,9 @@ export function buildFixtureNodes(): FixtureNode[] {
       scope: "enrolled",
       sshd: [22],
       observedAgoSec: 12 + ((i * 37) % 290),
+      // Most of the fleet has password auth off; a few open boxes are the
+      // finding the PASSWORD column exists to surface.
+      password: i % 7 === 3,
     };
     out.push(node);
   });
@@ -114,6 +121,10 @@ export function buildFixtureNodes(): FixtureNode[] {
     n.failure = FAILURES[k] as string;
     n.sshd = k === 1 ? [22, 58394] : [22];
   });
+  // 1 arm an operator refused, as the two NAT nodes were in production: same
+  // status as a failure on the wire, different story.
+  (out[30] as FixtureNode).stage = "armFailed";
+  (out[30] as FixtureNode).refused = true;
   // 2 on a revert timer: sshd is already on the new port, 22 still open.
   const revert = out[0] as FixtureNode;
   revert.stage = "awaitingConfirm";
@@ -143,10 +154,12 @@ export function buildFixtureNodes(): FixtureNode[] {
   // Two hosts run dropbear on 3434, as three machines in the real fleet do.
   (out[23] as FixtureNode).sshd = [3434];
   (out[24] as FixtureNode).sshd = [3434];
-  // One never reported, one went stale, one reports no sshd at all.
+  // One never reported, one went stale, one reports no sshd at all, and one
+  // runs an agent from before the sshd block existed.
   (out[25] as FixtureNode).observedAgoSec = undefined;
   (out[26] as FixtureNode).observedAgoSec = 40 * 3600;
   (out[27] as FixtureNode).sshd = [];
+  (out[31] as FixtureNode).password = undefined;
   return out;
 }
 
@@ -188,7 +201,11 @@ export function buildFixture(): FixtureState {
         );
         break;
       case "armFailed":
-        approvals.push({ ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", reason: n.failure, created_at: iso(-2 * 3_600_000), updated_at: iso(-2 * 3_600_000 + 45_000) });
+        approvals.push(
+          n.refused
+            ? { ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", reason: "Harden sshd only, no firewall (auto-revert in 3600s)", created_at: iso(-6 * 86_400_000), updated_at: iso(-5 * 86_400_000) }
+            : { ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", approved_by: "cdcd", reason: n.failure, created_at: iso(-2 * 3_600_000), updated_at: iso(-2 * 3_600_000 + 45_000) },
+        );
         break;
       case "awaitingConfirm": {
         const startedAgo = 900 - (n.revertInSec ?? 0);
@@ -248,6 +265,18 @@ export function buildFixture(): FixtureState {
       listeners,
       interfaces: [{ name: "eth0", addresses: [`${n.publicIp}/24`] }],
       nft_version: "1.0.9",
+      sshd:
+        n.password === undefined || n.sshd.length === 0
+          ? undefined
+          : {
+              password_authentication: n.password,
+              pubkey_authentication: true,
+              permit_root_login: n.password ? "yes" : "prohibit-password",
+              max_auth_tries: 3,
+              ports: n.sshd,
+              observed_at: collected,
+            },
+      sshd_note: n.password === undefined ? "agent 0.3.8 predates sshd facts" : undefined,
     });
   }
   return { nodes, approvals, capabilities, summaries, details };

@@ -31,17 +31,11 @@ import { api, unwrap, type AgentLaunchConfig, type AgentUpdatePolicy, type Enrol
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
-import {
-  formatBytes,
-  formatBytesPerSec,
-  formatRelativeTime,
-  shortId,
-} from "@/lib/format";
+import { formatBytes, formatBytesPerSec } from "@/lib/format";
 import { fleetTotals, groupNodes, type GroupBy, type NodeGroup } from "@/lib/fleet";
 import { groupColor } from "@/lib/groupColors";
 import { cn } from "@/lib/utils";
 import {
-  agentConfigBadges,
   evalFilterExpression,
   nodeHasAgentCapability,
   nodeHasArchOsToken,
@@ -50,7 +44,7 @@ import {
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
-import NodeCard from "@/components/common/NodeCard.vue";
+import NodeCard, { type NodeCardAction } from "@/components/common/NodeCard.vue";
 import NodeTable from "@/components/common/NodeTable.vue";
 import TableColumnManager from "@/components/common/TableColumnManager.vue";
 import FilterPanel from "@/components/common/FilterPanel.vue";
@@ -69,6 +63,7 @@ import { partitionBatchResults, runWithConcurrency } from "@/views/operations/ap
 import {
   NODE_TABLE_COLUMNS,
   compareNodeIdentity,
+  nameTrackMin,
   nextSortState,
   parseHiddenColumns,
   parseSortState,
@@ -94,7 +89,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { hasNeverReported } from "@/lib/status";
 import {
   NODE_STATUSES,
   compareByAttention,
@@ -265,6 +259,11 @@ const optionalColumns = computed(() =>
 );
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
+
+/** One name-track minimum for every table on the page, from the whole fleet
+ *  rather than each group's rows, so the name column does not change width
+ *  between group sections or as a filter narrows the rows. */
+const nameMinPx = computed(() => nameTrackMin(nodes.value));
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
 const duplicatesQuery = useAsyncData((signal) => api.nodes.duplicates({ signal }).then((r) => r.groups), {
@@ -558,10 +557,6 @@ function clearFilters() {
   tagsExpr.value = "";
 }
 
-function agentBadges(node: Node): string[] {
-  return agentConfigBadges(node);
-}
-
 /* ----------------------------------------------------------------- */
 /* Grouping: bucket the filtered fleet by region / role / status / …  */
 /* so a 16+ node fleet reads as clusters, not one long wall of cards.  */
@@ -669,31 +664,31 @@ function nodeGroups(node: Node) {
 }
 
 /**
- * Say "never checked in" rather than formatting the server's zero time, which
- * renders as a six-figure number of days ago. The reading itself lives in
- * `@/lib/status`; this used to be a private copy of it in each of three views.
+ * The card's header actions: the same three intents the table's action cell
+ * wires, so the two view modes share one set of handlers.
  */
-function lastSeenText(node: Node): string {
-  if (hasNeverReported(node)) return t("fleet.nodes.list.neverSeen");
-  return t("fleet.nodes.list.lastSeen", { time: formatRelativeTime(node.last_seen) });
+function cardActions(node: Node): NodeCardAction[] {
+  const out: NodeCardAction[] = [];
+  if (canOpenTerminal.value) {
+    out.push({ id: "terminal", label: t("fleet.nodes.list.openTerminal"), icon: SquareTerminal, disabled: !isReporting(node) });
+  }
+  if (canAdminNodes.value) {
+    out.push({ id: "rotate", label: t("fleet.nodes.list.rotateToken"), icon: KeyRound, disabled: pendingNode.value === node.id });
+    out.push({
+      id: "power",
+      label: node.disabled ? t("common.actions.enable") : t("common.actions.disable"),
+      icon: Power,
+      variant: node.disabled ? "default" : "destructive",
+      disabled: pendingNode.value === node.id,
+    });
+  }
+  return out;
 }
 
-function nodeUpdatePolicy(node: Node): AgentUpdatePolicy | undefined {
-  return updatePolicies.value.find((p) => p.node_id === node.id);
-}
-
-function nodeUpdateLabel(node: Node): string {
-  const policy = nodeUpdatePolicy(node);
-  if (!policy) return t("fleet.nodes.list.noUpdatePolicy");
-  if (policy.enabled && policy.auto_plan) return t("fleet.nodes.list.autoUpdate");
-  return t("fleet.nodes.list.manualUpdate");
-}
-
-function nodeUpdateVariant(node: Node): "success" | "secondary" | "outline" {
-  const policy = nodeUpdatePolicy(node);
-  if (!policy) return "outline";
-  if (policy.enabled && policy.auto_plan) return "success";
-  return "secondary";
+function onCardAction({ id, node }: { id: string; node: Node }) {
+  if (id === "terminal") openTerminal(node);
+  else if (id === "rotate") rotateToken(node);
+  else if (id === "power") setDisabled(node, !node.disabled);
 }
 
 /** Cross-link a group chip to the Groups page with that group pre-selected. */
@@ -1662,17 +1657,17 @@ function openTerminal(node: Node) {
                 v-show="!collapsed.has(group.key)"
                 :class="cn(groupBy !== 'none' && 'mt-3')"
               >
-                <!-- The card grid stopped at two columns, so on a wide screen each card
-                     was half the viewport and read as oversized. The column count follows
-                     the space the grid actually has rather than the viewport, because the
-                     sidebar is resizable from 224 to 360 and every fixed breakpoint is
-                     wrong for some width of it: measured, a 1560px step gave a 405px card
-                     at a 224 sidebar and a 373px card at 360. 410px is where NodeCard's own
-                     container query stacks its header, and a card below it gets taller as
-                     it gets narrower. min() keeps a single column intact below 410. -->
+                <!-- The column count follows the space the grid actually has rather
+                     than the viewport, because the sidebar is resizable from 224 to 360
+                     and every fixed breakpoint is wrong for some width of it. 320px is
+                     the narrowest a card can be before its three metric bars stop
+                     printing a label and a value each; at 1440 with the default sidebar
+                     that gives three columns of about 376px, where the old 410px minimum
+                     gave two of 570px, each half the viewport and taller than wide.
+                     min() keeps a single column intact below 320. -->
                 <div
                   v-if="viewMode === 'card'"
-                  class="grid grid-cols-[repeat(auto-fill,minmax(min(410px,100%),1fr))] gap-3"
+                  class="grid grid-cols-[repeat(auto-fill,minmax(min(320px,100%),1fr))] gap-3"
                 >
                 <NodeCard
                   v-for="node in group.nodes"
@@ -1694,60 +1689,18 @@ function openTerminal(node: Node) {
                   :checkable="canAdminNodes"
                   :checked="selectedIds.has(node.id)"
                   :check-label="t('fleet.nodes.bulk.selectRow', { name: node.name || node.id })"
+                  :show-actions="canOpenTerminal || canAdminNodes"
+                  :actions="cardActions(node)"
                   @select="openNode(node)"
                   @group-select="goToGroup"
                   @toggle-check="toggleSelect(node.id)"
-                >
-                  <template #footer="{ node: cardNode }">
-                    <div class="mt-3 flex flex-wrap items-center gap-1.5">
-                      <span class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.filters.agentConfig') }}</span>
-                      <Badge
-                        v-for="badge in agentBadges(cardNode)"
-                        :key="`${cardNode.id}:${badge}`"
-                        variant="outline"
-                      >
-                        {{ badge }}
-                      </Badge>
-                      <span v-if="agentBadges(cardNode).length === 0" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                    </div>
-                    <p class="mt-3 font-mono text-xs text-muted-foreground">
-                      {{ shortId(cardNode.id, 16) }} · {{ lastSeenText(cardNode) }}
-                    </p>
-                    <div v-if="canOpenTerminal || canAdminNodes" class="mt-3 flex flex-wrap gap-2">
-                      <Badge :variant="nodeUpdateVariant(cardNode)">
-                        {{ nodeUpdateLabel(cardNode) }}
-                      </Badge>
-                      <Button
-                        v-if="canOpenTerminal"
-                        size="sm"
-                        variant="outline"
-                        :disabled="!isReporting(cardNode)"
-                        @click.stop="openTerminal(cardNode)"
-                      >
-                        <SquareTerminal class="size-4" aria-hidden="true" />
-                        {{ $t('fleet.nodes.list.openTerminal') }}
-                      </Button>
-                      <Button v-if="canAdminNodes" size="sm" variant="outline" :disabled="pendingNode === cardNode.id" @click.stop="rotateToken(cardNode)">
-                        <KeyRound class="size-4" aria-hidden="true" />
-                        {{ $t('fleet.nodes.list.rotateToken') }}
-                      </Button>
-                      <Button
-                        v-if="canAdminNodes"
-                        size="sm"
-                        :variant="cardNode.disabled ? 'outline' : 'destructive'"
-                        :disabled="pendingNode === cardNode.id"
-                        @click.stop="setDisabled(cardNode, !cardNode.disabled)"
-                      >
-                        <Power class="size-4" aria-hidden="true" />
-                        {{ cardNode.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
-                      </Button>
-                    </div>
-                  </template>
-                </NodeCard>
+                  @action="onCardAction"
+                />
                 </div>
                 <NodeTable
                   v-else
                   :nodes="group.nodes"
+                  :name-min-px="nameMinPx"
                   :hidden-columns="hiddenColumns"
                   :sort="tableSort"
                   :can-open-terminal="canOpenTerminal"

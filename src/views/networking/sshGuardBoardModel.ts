@@ -191,8 +191,17 @@ export interface RealityEvidence {
   status: "unknown" | "fresh" | "stale" | string;
   /** When the agent collected the snapshot. Absent until it has reported. */
   collectedAt?: string;
+  /** When the snapshot stopped counting as fresh, from the server. */
+  staleSince?: string;
   /** Undefined until the per-node detail has been read. */
   sshd?: SshdNow;
+  /**
+   * PasswordAuthentication as sshd -T printed it. Undefined until the detail
+   * has been read, and undefined when the detail carries no sshd block: the
+   * agent predates the field or could not prove it, and `sshdNote` says which.
+   */
+  password?: { enabled: boolean; observedAt: string };
+  sshdNote?: string;
 }
 
 /**
@@ -210,7 +219,12 @@ export function foldReality(
   const out: RealityEvidence = { status: summary?.snapshot_status ?? "unknown" };
   if (summary?.collected_at) out.collectedAt = summary.collected_at;
   else if (detail?.collected_at) out.collectedAt = detail.collected_at;
-  if (detail) out.sshd = describeSshdNow(sshdPorts(detail));
+  if (summary?.stale_after) out.staleSince = summary.stale_after;
+  if (detail) {
+    out.sshd = describeSshdNow(sshdPorts(detail));
+    if (detail.sshd) out.password = { enabled: detail.sshd.password_authentication, observedAt: detail.sshd.observed_at };
+    if (detail.sshd_note) out.sshdNote = detail.sshd_note;
+  }
   return out;
 }
 

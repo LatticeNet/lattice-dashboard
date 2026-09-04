@@ -23,6 +23,7 @@ import { formatBytes, formatBytesPerSec, formatRelativeTime, shortId } from "@/l
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 import {
   gridTemplate,
+  nameTrackMin,
   visibleColumns,
   type NodeSortState,
   type NodeTableColumn,
@@ -56,6 +57,13 @@ const props = withDefaults(
     selectable?: boolean;
     /** Ids currently selected, across every group the caller renders. */
     selectedIds?: ReadonlySet<string>;
+    /**
+     * The name track's minimum, computed by the caller over every node on the
+     * page. A grouped view renders one table per group; left to each table,
+     * the minimum follows that group's longest name and the column jumps
+     * between sections. Defaults to this table's own rows.
+     */
+    nameMinPx?: number;
   }>(),
   {
     hiddenColumns: () => new Set<string>(),
@@ -66,6 +74,7 @@ const props = withDefaults(
     updatePolicies: () => [],
     selectable: false,
     selectedIds: () => new Set<string>(),
+    nameMinPx: undefined,
   },
 );
 
@@ -89,12 +98,14 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const columns = computed(() => visibleColumns(props.hiddenColumns));
+/** The name track never drops below what the longest name on the page needs. */
+const nameMin = computed(() => props.nameMinPx ?? nameTrackMin(props.nodes));
 /** The selection column is a fixed leading track, so hiding columns still works. */
 const SELECT_TRACK = "36px";
 const gridStyle = computed(() => ({
   gridTemplateColumns: props.selectable
-    ? `${SELECT_TRACK} ${gridTemplate(props.hiddenColumns)}`
-    : gridTemplate(props.hiddenColumns),
+    ? `${SELECT_TRACK} ${gridTemplate(props.hiddenColumns, nameMin.value)}`
+    : gridTemplate(props.hiddenColumns, nameMin.value),
 }));
 
 const rowIds = computed(() => props.nodes.map((node) => node.id));
@@ -103,13 +114,13 @@ function isSelected(node: Node): boolean {
   return props.selectedIds.has(node.id);
 }
 /** The min width shrinks as columns are hidden: roughly the sum of fixed
- *  tracks plus room for the flexible ones. */
+ *  tracks plus room for the flexible ones, the name at its content minimum. */
 const minWidth = computed(() => {
   let px = 0;
   for (const column of columns.value) {
     const fixed = /^(\d+)px$/.exec(column.width);
     if (fixed) px += Number(fixed[1]);
-    else px += 200;
+    else px += column.id === "name" ? nameMin.value : 200;
   }
   if (props.selectable) px += 36 + 12;
   return `${px + (columns.value.length - 1) * 12 + 24}px`;
@@ -146,6 +157,23 @@ function dotStatus(node: Node): NodeHealth {
 function statusLabel(node: Node): string {
   return t(info(node).labelKey);
 }
+
+/**
+ * The leading cells stay put while the rest of the row scrolls under them.
+ *
+ * `left` is the cell's resting offset (the row's px-3, plus the selection
+ * track and its gap when there is one) so a pinned cell sits exactly where an
+ * unpinned one did. Painted opaque so scrolled cells pass behind, which means
+ * the row's translucent hover tint has to be composited onto it by hand.
+ *
+ * From sm up only. Below it the pinned cells would be the whole viewport:
+ * a 239px name track plus the selection track is 299px of a 327px-wide table
+ * on a 375px phone, leaving 28px for everything else to scroll through. There
+ * the table scrolls freely and the name scrolls with it.
+ */
+const STICKY_CELL =
+  "sm:sticky z-10 bg-background group-hover/row:bg-[color-mix(in_oklab,var(--foreground)_3%,var(--background))]";
+const stickyLeft = computed(() => (props.selectable ? "sm:left-15" : "sm:left-3"));
 
 /** The server's one-sentence account, shown on hover so the word can be checked. */
 function statusTitle(node: Node): string {
@@ -185,13 +213,13 @@ function isHealthy(node: Node): boolean {
 }
 
 /**
- * The identifier printed beside the name, or "" when it would just repeat it.
+ * The identifier printed under the name, or "" when it would just repeat it.
  *
- * The hostname is the useful second value when it differs from the display
- * name; when it does not (the common case on a fleet named after its hosts)
- * the node id is what actually disambiguates two machines sharing a name.
- * Printing a duplicate of the name in every row is what the old two-line cell
- * did, and it cost 15px of row height to say nothing.
+ * The short id: the one value that separates two machines sharing a name.
+ * The hostname used to take this line when it differed from the name, but it
+ * is a value in its own right and now has its own column. Printing a
+ * duplicate of the name in every row is what the old two-line cell did, and
+ * it cost 15px of row height to say nothing.
  */
 function namePrefix(node: Node): string {
   return splitNamePrefix(node).prefix;
@@ -202,10 +230,12 @@ function nameBody(node: Node): string {
 
 function secondaryLabel(node: Node): string {
   const name = node.name || node.id;
-  const hostname = node.host_facts?.hostname ?? "";
-  if (hostname && hostname !== name) return hostname;
   const id = shortId(node.id, 16);
   return id === name ? "" : id;
+}
+
+function hostname(node: Node): string {
+  return node.host_facts?.hostname ?? "";
 }
 
 function archOs(node: Node): string {
@@ -266,19 +296,21 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
   <div class="overflow-x-auto rounded-lg border border-border">
     <div :style="{ minWidth }">
       <!-- Header.
-           Not sticky, deliberately. `overflow-x-auto` on the wrapper makes it
-           the nearest scroll container in both axes, so a `position: sticky`
-           header here would stick to a box that never scrolls vertically and
-           do nothing at all. Pinning it needs the table to own its vertical
-           scroll (a bounded height inside the page pane), which is a page-scroll
-           change, not a table change. The column budget below is the fix that
-           actually pays: a table that fits needs no header chase. -->
+           Not sticky vertically, deliberately. `overflow-x-auto` on the wrapper
+           makes it the nearest scroll container in both axes, so a
+           `position: sticky` header here would stick to a box that never
+           scrolls vertically and do nothing at all. Pinning it needs the table
+           to own its vertical scroll (a bounded height inside the page pane),
+           which is a page-scroll change, not a table change. Horizontally the
+           wrapper does scroll, so from sm up the leading cells of the header
+           and of every row pin to the left edge and the name stays readable
+           while the metric columns pass underneath it. -->
       <div
         class="grid h-8 items-center gap-3 border-b border-border bg-card px-3 text-xs font-medium text-muted-foreground"
         :style="gridStyle"
         role="row"
       >
-        <span v-if="selectable" class="flex items-center">
+        <span v-if="selectable" class="z-10 flex items-center bg-card sm:sticky sm:left-3">
           <Checkbox
             :model-value="allSelected"
             :aria-label="$t('fleet.nodes.bulk.selectAllVisible')"
@@ -290,7 +322,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
             v-if="column.sortKey"
             type="button"
             class="inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
-            :class="column.id === 'actions' && 'justify-end'"
+            :class="[column.id === 'actions' && 'justify-end', column.id === 'name' && ['z-10 bg-card sm:sticky', stickyLeft]]"
             :aria-sort="ariaSort(column)"
             :title="$t('common.table.sortBy', { column: headerLabel(column) })"
             @click="emit('toggle-sort', column.id)"
@@ -334,7 +366,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
       >
         <!-- Selection. Stops both click and key so the checkbox can be used
              without the row's open-node handler firing underneath it. -->
-        <span v-if="selectable" class="flex items-center" @click.stop @keydown.stop>
+        <span v-if="selectable" :class="['flex items-center sm:left-3', STICKY_CELL]" @click.stop @keydown.stop>
           <Checkbox
             :model-value="isSelected(node)"
             :aria-label="$t('fleet.nodes.bulk.selectRow', { name: node.name || node.id })"
@@ -342,22 +374,35 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           />
         </span>
 
-        <!-- Name + status dot. One line: the second line was what made every
-             row 55px tall, and it usually repeated the name, because a node's
-             hostname and its display name are the same string on most fleets.
-             The identifier now rides beside the name and disappears when it
-             carries nothing the name did not already say. -->
-        <div class="flex min-w-0 items-baseline gap-2" :title="node.name || node.id">
-          <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" class="self-center shrink-0" />
-          <Badge v-if="namePrefix(node)" variant="outline" class="shrink-0 self-center px-1 py-0 text-[10px] leading-4">{{ namePrefix(node) }}</Badge>
-          <span class="min-w-0 shrink truncate font-medium">{{ nameBody(node) }}</span>
-          <!-- The identifier yields first. It is the tiebreak for two machines
-               sharing a name, not something anyone reads across 200 rows, so it
-               gives up its width before the name loses a character. -->
-          <span
-            v-if="secondaryLabel(node)"
-            class="hidden min-w-0 shrink-[4] truncate font-mono text-xs text-muted-foreground tabular sm:inline"
-          >{{ secondaryLabel(node) }}</span>
+        <!-- Name + status dot. The name does not truncate in practice: the
+             track is at least as wide as the longest name on the page
+             (nameTrackMin) and the table scrolls past that, so a long name
+             pushes the metric columns right rather than losing characters.
+             The `truncate` on the name is the cap, not the mechanism: the
+             track stops growing at NAME_TRACK_MAX_PX, and a name wider than
+             that ends in an ellipsis instead of painting under the next
+             column. The name used to share the line with the identifier,
+             shrinking in proportion to it, which on a fleet whose hostnames
+             all differ from their names cut every long name to
+             "Akkocloud-UK-Lond...". The short id now sits on a second line
+             inside the fixed 40px row (20px name over 16px id). It is the
+             tiebreak for two machines sharing a name, not something anyone
+             reads across 200 rows, so it goes away where there is no room for
+             it: at compact density (a 32px row) and below sm. The tooltip
+             carries both. -->
+        <div
+          :class="['flex min-w-0 items-center gap-2', STICKY_CELL, stickyLeft]"
+          :title="secondaryLabel(node) ? `${node.name || node.id}\n${secondaryLabel(node)}` : node.name || node.id"
+        >
+          <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" class="shrink-0" />
+          <Badge v-if="namePrefix(node)" variant="outline" class="shrink-0 px-1 py-0 text-[10px] leading-4">{{ namePrefix(node) }}</Badge>
+          <div class="min-w-0">
+            <p class="truncate text-sm leading-5 font-medium">{{ nameBody(node) }}</p>
+            <p
+              v-if="secondaryLabel(node)"
+              class="density-secondary hidden truncate font-mono text-xs leading-4 text-muted-foreground tabular sm:block"
+            >{{ secondaryLabel(node) }}</p>
+          </div>
         </div>
 
         <!-- Status. A healthy node says so quietly: the dot beside the name
@@ -373,6 +418,11 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
             class="max-w-full truncate"
           />
           <span v-else class="text-xs text-muted-foreground">{{ statusLabel(node) }}</span>
+        </div>
+
+        <!-- Hostname. The machine's own name for itself, beside the operator's. -->
+        <div v-if="show('hostname')" class="min-w-0" :title="hostname(node) || undefined">
+          <p class="truncate font-mono text-xs">{{ hostname(node) || $t('common.misc.none') }}</p>
         </div>
 
         <!-- Role -->

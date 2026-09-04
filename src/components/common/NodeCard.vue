@@ -8,11 +8,14 @@
  *    plane's status word through `@/lib/nodeStatus`, so a disabled / degraded /
  *    offline / never-reported node renders the same word as every other page,
  *    and the pulse only animates when the agent is in contact.
- *  - Three {@link MetricBar}s (CPU / Memory / Disk).
+ *  - Three {@link MetricBar}s (CPU / Memory / Disk), side by side in compact
+ *    mode, stacked otherwise.
  *  - An optional compact per-node trend sparkline (CPU or net), drawn as a tiny
  *    inline SVG fed by {@link useMetricBuffer}'s shared ring buffer. CSP-safe:
  *    no canvas, no echarts, no runtime style/script injection.
  *  - A footer with net rx/tx, uptime, and last-seen.
+ *  - Optional per-node actions as icon buttons at the end of the footer,
+ *    revealed on hover or focus the way {@link NodeTable}'s action cell is.
  *
  * Presentational only. It does NOT fetch and does NOT record samples (a parent
  * owns the poll loop and `record()`s into the shared buffer). User-facing text is
@@ -24,16 +27,7 @@
  */
 import { computed, ref, type HTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
-import {
-  Activity,
-  ArrowDown,
-  ArrowUp,
-  Clock,
-  Cpu,
-  Crown,
-  HardDrive,
-  MemoryStick,
-} from "lucide-vue-next";
+import { Activity, ArrowDown, ArrowUp, Clock, Crown } from "lucide-vue-next";
 import type { Node } from "@/lib/api/types";
 import { statusMeta } from "@/lib/status";
 import { describeNodeStatus, metricFreshness, nodeStatusReason, type NodeStatus } from "@/lib/nodeStatus";
@@ -43,7 +37,9 @@ import {
   formatBytes,
   formatBytesPerSec,
   formatDuration,
+  formatPercent,
   formatRelativeTime,
+  ratio,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useMetricBuffer, type MetricKey } from "@/composables/useMetricBuffer";
@@ -53,6 +49,7 @@ import MetricBar from "@/components/common/MetricBar.vue";
 import { Badge } from "@/components/ui/badge";
 import NodeStatusBadge from "@/components/common/NodeStatusBadge.vue";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
 
 /** A group chip shown near the role/tag badges; clicking emits `group-select`. */
 export interface NodeCardGroup {
@@ -66,16 +63,16 @@ export interface NodeCardGroup {
   leader?: boolean;
 }
 
-/** A single declarative footer action surfaced as a button; emitted via `action`. */
+/** A single declarative footer action surfaced as an icon button; emitted via `action`. */
 export interface NodeCardAction {
   /** Stable identifier echoed back through the `action` event. */
   id: string;
-  /** Button text. */
+  /** Tooltip and accessible name; the button text when there is no icon. */
   label: string;
   /** Optional lucide icon component. */
   icon?: unknown;
-  /** reka-ui / shadcn button variant. Defaults to `outline`. */
-  variant?: "default" | "outline" | "secondary" | "destructive" | "ghost" | "link";
+  /** `destructive` colours the icon; every button is otherwise a ghost. */
+  variant?: "default" | "destructive";
   /** Disable the button without removing it. */
   disabled?: boolean;
 }
@@ -88,7 +85,7 @@ const props = withDefaults(
     compact?: boolean;
     /** Group chips (color dot + name) rendered next to the role/tag badges. */
     groups?: NodeCardGroup[];
-    /** Render the footer action row (emits `action`). */
+    /** Render the footer action buttons (emits `action`). */
     showActions?: boolean;
     /** Declarative footer actions; only shown when `showActions` is true. */
     actions?: NodeCardAction[];
@@ -189,6 +186,20 @@ const freshness = computed(() => metricFreshness(props.node, !!props.node.metric
 const { t } = useI18n();
 
 const noSample = computed(() => freshness.value === "none");
+
+/**
+ * In compact mode the three bars share one row, about 110px each on the
+ * Nodes wall, and "3.2 GB / 8.0 GB" does not fit beside a label at that
+ * width. The bar prints the percent and carries the byte pair in its tooltip.
+ */
+function bytesPercent(used?: number, total?: number): string | undefined {
+  if (!props.compact || used === undefined || total === undefined) return undefined;
+  return formatPercent(ratio(used, total));
+}
+function bytesPair(used?: number, total?: number): string | undefined {
+  if (!props.compact || used === undefined || total === undefined) return undefined;
+  return `${formatBytes(used)} / ${formatBytes(total)}`;
+}
 
 /** The header shows at most two of each badge kind and counts the rest, the
  *  same cap and the same +N the table uses. This card used to drop the extra
@@ -315,10 +326,10 @@ function onGroup(id: string) {
   <div
     :class="
       cn(
-        // A container, so the header can stack on the card's own width rather
-        // than the viewport's: these cards are narrow in the Overview grid at
-        // 1440 too, not only on a phone.
-        '@container rounded-lg border border-border bg-background/40 transition-colors',
+        // A container, so the metric row can stack on the card's own width
+        // rather than the viewport's: these cards are narrow in the Overview
+        // grid at 1440 too, not only on a phone.
+        '@container group/card rounded-lg border border-border bg-background/40 transition-colors',
         compact ? 'p-3' : 'p-4',
         isLive ? 'hover:bg-muted/40' : 'opacity-60',
         selectable &&
@@ -334,25 +345,29 @@ function onGroup(id: string) {
     @keydown.enter="selectable && onCardKey($event)"
     @keydown.space="selectable && onCardKey($event)"
   >
-    <!-- Header. Below ~384px of card width the badges drop under the name
-         instead of squeezing it to an ellipsis and overflowing the card. -->
-    <div class="flex flex-col gap-2 @sm:flex-row @sm:items-start @sm:justify-between">
-      <div class="flex min-w-0 flex-1 items-start gap-2">
-        <!-- Stops click and key so the checkbox works without opening the node. -->
-        <span v-if="checkable" class="mt-0.5 flex items-center" @click.stop @keydown.stop>
-          <Checkbox
-            :model-value="checked"
-            :aria-label="checkLabel"
-            @update:model-value="emit('toggle-check', node)"
-          />
-        </span>
-        <div class="min-w-0">
+    <!-- Header: the name block alone, so the name has the card's whole width.
+         The badges used to sit beside the name above 384px of card width and
+         under it below, which made a card taller as it got narrower; they
+         always sit under it now, on one wrapped rail, so the header's height
+         does not depend on the column. -->
+    <div class="flex items-start gap-2">
+      <!-- Stops click and key so the checkbox works without opening the node. -->
+      <span v-if="checkable" class="mt-0.5 flex items-center" @click.stop @keydown.stop>
+        <Checkbox
+          :model-value="checked"
+          :aria-label="checkLabel"
+          @update:model-value="emit('toggle-check', node)"
+        />
+      </span>
+      <div class="min-w-0 flex-1">
         <div class="flex min-w-0 items-center gap-2 font-medium" :title="node.name || node.id">
           <StatusDot :status="dotStatus" :pulse="isLive" />
           <!-- The bracketed fleet prefix as a small badge, so it stops eating
-               the name's width; the full name stays in the title. -->
+               the name's width; the full name stays in the title. Below 288px
+               of card width (a phone) the name wraps rather than truncates:
+               it is how the operator tells nodes apart. -->
           <Badge v-if="displayName.prefix" variant="outline" class="shrink-0 px-1 py-0 text-[10px] leading-4">{{ displayName.prefix }}</Badge>
-          <span class="truncate">{{ displayName.body }}</span>
+          <span class="truncate @max-[18rem]:whitespace-normal">{{ displayName.body }}</span>
         </div>
         <p
           v-if="node.host_facts"
@@ -363,68 +378,68 @@ function onGroup(id: string) {
           <template v-if="node.host_facts.os"> · {{ node.host_facts.os }}</template>
           <template v-if="node.host_facts.arch"> · {{ node.host_facts.arch }}</template>
         </p>
-        </div>
       </div>
-      <!-- The badge rail used to refuse to shrink in row mode, so a node in
-           three or more groups squeezed the name block to zero width and spilled
-           past the card edge: measured at a 413px card, a six-group node lost its
-           name and overflowed by 313px. It shrinks and wraps now, and never takes
-           more than half the header, so the name always keeps a share. -->
-      <div class="flex min-w-0 flex-wrap gap-1 @sm:max-w-[55%] @sm:justify-end">
-        <NodeStatusBadge :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
-        <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
-        <Badge v-for="tag in visibleTags" :key="tag" variant="outline" class="max-w-full shrink truncate">{{ tag }}</Badge>
-        <!-- Styled as the kind it counts, so two overflow badges on a wrapped
-             rail cannot be mistaken for each other. -->
-        <button
-          v-if="overflowTags.length"
-          type="button"
-          class="shrink-0 rounded-md border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          :aria-label="
-            badgesExpanded
-              ? t('fleet.nodes.card.showFewer')
-              : t('fleet.nodes.card.showMoreTags', { names: overflowTags.join(', ') })
-          "
-          :aria-expanded="badgesExpanded"
-          :title="overflowTags.join(', ')"
-          @click.stop="badgesExpanded = !badgesExpanded"
-        >
-          {{ badgesExpanded ? "&minus;" : `+${overflowTags.length}` }}
-        </button>
-        <button
-          v-for="g in visibleGroups"
-          :key="g.id"
-          type="button"
-          :class="
-            cn(
-              'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              groupColor(g.color).border,
-              groupColor(g.color).soft,
-              groupColor(g.color).text,
-            )
-          "
-          @click.stop="onGroup(g.id)"
-        >
-          <span :class="cn('size-1.5 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
-          <span class="truncate">{{ g.name }}</span>
-          <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
-        </button>
-        <button
-          v-if="overflowGroups.length"
-          type="button"
-          class="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          :aria-label="
-            badgesExpanded
-              ? t('fleet.nodes.card.showFewer')
-              : t('fleet.nodes.card.showMoreGroups', { names: overflowGroups.map((g) => g.name).join(', ') })
-          "
-          :aria-expanded="badgesExpanded"
-          :title="overflowGroups.map((g) => g.name).join(', ')"
-          @click.stop="badgesExpanded = !badgesExpanded"
-        >
-          {{ badgesExpanded ? "&minus;" : `+${overflowGroups.length}` }}
-        </button>
-      </div>
+    </div>
+
+    <!-- Badge rail. A healthy node says so quietly, as it does in the table:
+         the dot already carries the colour, and a filled pill on every card of
+         a 33-card wall is 33 pieces of emphasis competing for none. Only the
+         states that want an operator keep the pill. -->
+    <div class="mt-2 flex min-w-0 flex-wrap items-center gap-1">
+      <NodeStatusBadge v-if="info.attention" :variant="statusBadge.variant" :label="statusBadge.label" :reason="statusTitle" />
+      <span v-else class="text-xs text-muted-foreground" :title="statusTitle || undefined">{{ statusBadge.label }}</span>
+      <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
+      <Badge v-for="tag in visibleTags" :key="tag" variant="outline" class="max-w-full shrink truncate">{{ tag }}</Badge>
+      <!-- Styled as the kind it counts, so two overflow badges on a wrapped
+           rail cannot be mistaken for each other. -->
+      <button
+        v-if="overflowTags.length"
+        type="button"
+        class="shrink-0 rounded-md border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        :aria-label="
+          badgesExpanded
+            ? t('fleet.nodes.card.showFewer')
+            : t('fleet.nodes.card.showMoreTags', { names: overflowTags.join(', ') })
+        "
+        :aria-expanded="badgesExpanded"
+        :title="overflowTags.join(', ')"
+        @click.stop="badgesExpanded = !badgesExpanded"
+      >
+        {{ badgesExpanded ? "&minus;" : `+${overflowTags.length}` }}
+      </button>
+      <button
+        v-for="g in visibleGroups"
+        :key="g.id"
+        type="button"
+        :class="
+          cn(
+            'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            groupColor(g.color).border,
+            groupColor(g.color).soft,
+            groupColor(g.color).text,
+          )
+        "
+        @click.stop="onGroup(g.id)"
+      >
+        <span :class="cn('size-1.5 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+        <span class="truncate">{{ g.name }}</span>
+        <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+      </button>
+      <button
+        v-if="overflowGroups.length"
+        type="button"
+        class="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        :aria-label="
+          badgesExpanded
+            ? t('fleet.nodes.card.showFewer')
+            : t('fleet.nodes.card.showMoreGroups', { names: overflowGroups.map((g) => g.name).join(', ') })
+        "
+        :aria-expanded="badgesExpanded"
+        :title="overflowGroups.map((g) => g.name).join(', ')"
+        @click.stop="badgesExpanded = !badgesExpanded"
+      >
+        {{ badgesExpanded ? "&minus;" : `+${overflowGroups.length}` }}
+      </button>
     </div>
 
     <!-- Sparkline (optional) -->
@@ -448,29 +463,33 @@ function onGroup(id: string) {
       />
     </svg>
 
-    <!-- Metrics -->
-    <div :class="cn(compact ? 'mt-3 space-y-2' : 'mt-4 space-y-2.5')">
+    <!-- Metrics. One row of three in compact mode: stacked, the bars were a
+         third of the card's height on the Nodes wall. Below 288px of card
+         width a third of the row cannot hold "Memory" and "100%" side by
+         side and the value is what would be cut, so a phone gets the stack. -->
+    <div :class="cn(compact ? 'mt-3 grid grid-cols-1 gap-2 @min-[18rem]:grid-cols-3' : 'mt-4 space-y-2.5')">
       <MetricBar
         :label="cpuLabel"
-        :icon="Cpu"
         tone="cpu"
         :percent="node.metrics?.cpu_percent"
         :unavailable="noSample"
       />
       <MetricBar
         :label="memoryLabel"
-        :icon="MemoryStick"
         tone="memory"
         :used="node.metrics?.memory_used"
         :total="node.metrics?.memory_total"
+        :value-text="bytesPercent(node.metrics?.memory_used, node.metrics?.memory_total)"
+        :title="bytesPair(node.metrics?.memory_used, node.metrics?.memory_total)"
         :unavailable="noSample"
       />
       <MetricBar
         :label="diskLabel"
-        :icon="HardDrive"
         tone="disk"
         :used="node.metrics?.disk_used"
         :total="node.metrics?.disk_total"
+        :value-text="bytesPercent(node.metrics?.disk_used, node.metrics?.disk_total)"
+        :title="bytesPair(node.metrics?.disk_used, node.metrics?.disk_total)"
         :unavailable="noSample"
       />
     </div>
@@ -499,31 +518,30 @@ function onGroup(id: string) {
         <Clock class="size-3" aria-hidden="true" />
         {{ info.status === "never_reported" ? neverLabel : formatRelativeTime(node.last_seen) }}
       </span>
-    </div>
-
-    <!-- Actions (optional) -->
-    <div v-if="showActions && actions.length" class="mt-4 flex flex-wrap gap-2">
-      <button
-        v-for="a in actions"
-        :key="a.id"
-        type="button"
-        :disabled="a.disabled"
-        :class="
-          cn(
-            'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-50',
-            a.variant === 'destructive'
-              ? 'border-destructive/40 text-destructive hover:bg-destructive/10'
-              : 'border-border hover:bg-muted/40',
-          )
-        "
-        @click.stop="onAction(a.id)"
+      <!-- Actions (optional). At the end of the footer, where the table keeps
+           its action cell, and revealed on hover or keyboard focus rather than
+           drawn on every card, for the reason the table gives: three buttons
+           times a 33-card wall is 99 controls competing with the data. They
+           stay in the DOM and in the tab order. Negative vertical margin keeps
+           the 32px targets from growing the 16px line. -->
+      <span
+        v-if="showActions && actions.length"
+        class="-my-2 ml-auto flex items-center gap-1 opacity-0 transition-opacity group-hover/card:opacity-100 group-focus-within/card:opacity-100 focus-within:opacity-100"
       >
-        <component :is="a.icon" v-if="a.icon" class="size-3.5" aria-hidden="true" />
-        {{ a.label }}
-      </button>
+        <Button
+          v-for="a in actions"
+          :key="a.id"
+          variant="ghost"
+          :size="a.icon ? 'icon-sm' : 'sm'"
+          :disabled="a.disabled"
+          :title="a.label"
+          :aria-label="a.label"
+          @click.stop="onAction(a.id)"
+        >
+          <component :is="a.icon" v-if="a.icon" :class="['size-4', a.variant === 'destructive' && 'text-destructive']" aria-hidden="true" />
+          <template v-else>{{ a.label }}</template>
+        </Button>
+      </span>
     </div>
-
-    <!-- Caller-supplied extras (e.g. richer action rows) render after the footer. -->
-    <slot name="footer" :node="node" />
   </div>
 </template>
