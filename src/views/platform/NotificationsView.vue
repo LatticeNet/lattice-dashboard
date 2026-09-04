@@ -25,6 +25,7 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   buildConfig as buildConfigFor,
+  channelSaveGate,
   configComplete as configCompleteFor,
   fromSelectValue,
   KIND_FIELDS,
@@ -162,6 +163,10 @@ const formEnabled = ref(true);
 const formConfig = ref<Record<string, string>>({});
 const formTitle = ref("");
 const formBody = ref("");
+// Keys the server holds for the channel being edited. Values never come back,
+// so this is the only trace the form has of a stored level, group or url.
+const storedKeys = ref<string[]>([]);
+const clearAcknowledged = ref(false);
 
 const activeFields = computed<FieldDef[]>(() => KIND_FIELDS[formKind.value]);
 
@@ -180,6 +185,8 @@ function openCreate(): void {
   formEnabled.value = true;
   formTitle.value = "";
   formBody.value = "";
+  storedKeys.value = [];
+  clearAcknowledged.value = false;
   resetConfigForKind();
   formOpen.value = true;
 }
@@ -195,11 +202,14 @@ function openEdit(channel: NotifyChannelView): void {
   formEnabled.value = channel.enabled;
   formTitle.value = "";
   formBody.value = "";
+  storedKeys.value = [...(channel.config_keys ?? [])];
+  clearAcknowledged.value = false;
   resetConfigForKind();
   formOpen.value = true;
 }
 
 function onKindChange(): void {
+  clearAcknowledged.value = false;
   resetConfigForKind();
 }
 
@@ -213,8 +223,22 @@ const configComplete = computed(() => configCompleteFor(activeFields.value, form
 const kindChanged = computed(() => !!editingId.value && formKind.value !== editingKind.value);
 const secretsOptional = computed(() => !!editingId.value && !kindChanged.value);
 
+// Stored optional keys the form leaves blank are replaced away on save, with
+// no error to say so. The gate lists them and keeps Save out of reach until
+// the operator either re-enters them or acknowledges the clear.
+const saveGate = computed(() =>
+  channelSaveGate({
+    fields: activeFields.value,
+    storedKeys: editingId.value ? storedKeys.value : [],
+    config: formConfig.value,
+    kindChanged: kindChanged.value,
+    clearAcknowledged: clearAcknowledged.value,
+  }),
+);
+const isStored = (key: string): boolean => !!editingId.value && !kindChanged.value && storedKeys.value.includes(key);
+
 const canSubmit = computed(
-  () => !!formName.value.trim() && (secretsOptional.value || configComplete.value),
+  () => !!formName.value.trim() && (secretsOptional.value || configComplete.value) && !saveGate.value.blocked,
 );
 
 function buildConfig(): Record<string, string> {
@@ -647,6 +671,9 @@ async function confirmDeleteRule(): Promise<void> {
                 <span v-else-if="field.required" class="text-xs font-normal text-muted-foreground">
                   ({{ $t('common.misc.keepBlank') }})
                 </span>
+                <span v-else-if="isStored(field.key)" class="text-xs font-normal text-warning">
+                  ({{ $t('platform.notifications.storedOptionalHint') }})
+                </span>
                 <span v-else class="text-xs font-normal text-muted-foreground">
                   ({{ $t('common.misc.optional') }})
                 </span>
@@ -657,7 +684,7 @@ async function confirmDeleteRule(): Promise<void> {
                 @update:model-value="(value) => (formConfig[field.key] = fromSelectValue(String(value ?? '')))"
               >
                 <SelectTrigger :id="`cfg-${field.key}`">
-                  <SelectValue :placeholder="$t(field.placeholder)" />
+                  <SelectValue :placeholder="isStored(field.key) ? $t('platform.notifications.storedPlaceholder') : $t(field.placeholder)" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem :value="SELECT_DEFAULT">{{ $t(field.placeholder) }}</SelectItem>
@@ -670,7 +697,11 @@ async function confirmDeleteRule(): Promise<void> {
                 v-else
                 :id="`cfg-${field.key}`"
                 v-model="formConfig[field.key]"
-                :placeholder="secretsOptional ? $t('common.misc.keepBlank') : (field.placeholder.startsWith('platform.') ? $t(field.placeholder) : field.placeholder)"
+                :placeholder="isStored(field.key) && !field.required
+                  ? $t('platform.notifications.storedPlaceholder')
+                  : secretsOptional && field.required
+                    ? $t('common.misc.keepBlank')
+                    : (field.placeholder.startsWith('platform.') ? $t(field.placeholder) : field.placeholder)"
                 autocomplete="off"
               />
               <p v-if="field.hint" class="text-xs text-muted-foreground">{{ $t(field.hint) }}</p>
@@ -681,6 +712,13 @@ async function confirmDeleteRule(): Promise<void> {
             <p v-else-if="editingId" class="text-xs text-muted-foreground">
               {{ $t('platform.notifications.replaceConfigHint') }}
             </p>
+            <label
+              v-if="saveGate.dropped.length > 0"
+              class="flex cursor-pointer items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-sm"
+            >
+              <Checkbox v-model="clearAcknowledged" class="mt-0.5" />
+              <span>{{ $t('platform.notifications.clearStoredLabel', { keys: saveGate.dropped.join(', ') }) }}</span>
+            </label>
           </div>
 
           <label class="flex cursor-pointer items-center gap-2 text-sm">

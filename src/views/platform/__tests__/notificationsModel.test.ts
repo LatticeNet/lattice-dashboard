@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BARK_LEVELS, buildConfig, configComplete, fromSelectValue, KIND_FIELDS, SELECT_DEFAULT, toSelectValue } from "../notificationsModel.ts";
+import {
+  BARK_LEVELS,
+  buildConfig,
+  channelSaveGate,
+  configComplete,
+  droppedStoredKeys,
+  fromSelectValue,
+  KIND_FIELDS,
+  SELECT_DEFAULT,
+  toSelectValue,
+} from "../notificationsModel.ts";
 
 const bark = KIND_FIELDS.bark;
 const field = (key: string) => bark.find((f) => f.key === key);
@@ -93,4 +103,64 @@ test("the blank level entry carries a sentinel the config never sees", () => {
   assert.equal(fromSelectValue(SELECT_DEFAULT), "");
   assert.equal(fromSelectValue("passive"), "passive");
   assert.deepEqual(buildConfig(bark, { base_url: "b", key: "k", level: fromSelectValue(SELECT_DEFAULT) }), { base_url: "b", key: "k" });
+});
+
+/**
+ * GET returns config_keys and never a value, and the server replaces the whole
+ * config on save. Opening a channel saved with level, group and url just to
+ * rename it, and saving with those blank, therefore drops all three: the next
+ * incident page arrives as a plain, silence-able notification. The gate turns
+ * that silent revert into a listed, acknowledged clear.
+ */
+const ONCALL_KEYS = ["base_url", "group", "key", "level", "url"];
+const RETYPED_SECRETS = { base_url: "https://bark.lattice.example", key: "k", level: "", group: "", url: "" };
+
+test("an untouched edit of a channel with stored optional fields is blocked until the clear is acknowledged", () => {
+  const gate = channelSaveGate({ fields: bark, storedKeys: ONCALL_KEYS, config: RETYPED_SECRETS, kindChanged: false, clearAcknowledged: false });
+  assert.deepEqual(gate.dropped, ["group", "level", "url"]);
+  assert.equal(gate.blocked, true);
+  const acknowledged = channelSaveGate({ fields: bark, storedKeys: ONCALL_KEYS, config: RETYPED_SECRETS, kindChanged: false, clearAcknowledged: true });
+  assert.deepEqual(acknowledged.dropped, ["group", "level", "url"]);
+  assert.equal(acknowledged.blocked, false);
+});
+
+test("re-entering every stored optional field lifts the gate, partially re-entering lists the rest", () => {
+  const full = channelSaveGate({
+    fields: bark,
+    storedKeys: ONCALL_KEYS,
+    config: { ...RETYPED_SECRETS, level: "critical", group: "oncall", url: "https://lattice.example/alerts" },
+    kindChanged: false,
+    clearAcknowledged: false,
+  });
+  assert.deepEqual(full, { dropped: [], blocked: false });
+  const partial = channelSaveGate({
+    fields: bark,
+    storedKeys: ONCALL_KEYS,
+    config: { ...RETYPED_SECRETS, level: "critical" },
+    kindChanged: false,
+    clearAcknowledged: false,
+  });
+  assert.deepEqual(partial.dropped, ["group", "url"]);
+  assert.equal(partial.blocked, true);
+});
+
+/**
+ * Required keys left blank are the server's 400 and the edit hint's subject, not
+ * this gate's: a channel saved before the fields existed opens with everything
+ * blank and must stay saveable exactly as before.
+ */
+test("a channel saved without the optional fields is not gated, and blank required keys are left to the server", () => {
+  const legacy = channelSaveGate({ fields: bark, storedKeys: ["base_url", "key"], config: { base_url: "", key: "", level: "", group: "", url: "" }, kindChanged: false, clearAcknowledged: false });
+  assert.deepEqual(legacy, { dropped: [], blocked: false });
+  assert.deepEqual(droppedStoredKeys(bark, ["base_url", "key"], {}), []);
+});
+
+test("a kind change hands the stored config to the kind-changed hint instead of the gate", () => {
+  const gate = channelSaveGate({ fields: KIND_FIELDS.telegram, storedKeys: ONCALL_KEYS, config: {}, kindChanged: true, clearAcknowledged: false });
+  assert.deepEqual(gate, { dropped: [], blocked: false });
+});
+
+/** A key the form has no input for (set through the API) is replaced away just the same, so it is listed too. */
+test("stored keys the form cannot re-enter are listed as dropped", () => {
+  assert.deepEqual(droppedStoredKeys(bark, ["base_url", "key", "sound"], { base_url: "b", key: "k" }), ["sound"]);
 });

@@ -111,3 +111,47 @@ export function buildConfig(fields: readonly FieldDef[], config: Record<string, 
   }
   return out;
 }
+
+/**
+ * Stored keys the save would silently drop. The server never returns config
+ * values and replaces the whole map on save, so a stored key the form does not
+ * re-send is gone once the save lands. Required keys left blank already fail
+ * the save with a 400 and are covered by the edit hint, so they are not listed
+ * here; the optional Bark fields (level, group, url) and any key the form has
+ * no input for would vanish without a word, which is what this list exists to
+ * surface.
+ */
+export function droppedStoredKeys(
+  fields: readonly FieldDef[],
+  storedKeys: readonly string[],
+  config: Record<string, string>,
+): string[] {
+  const sent = buildConfig(fields, config);
+  const required = new Set(fields.filter((field) => field.required).map((field) => field.key));
+  return storedKeys.filter((key) => !(key in sent) && !required.has(key));
+}
+
+export interface ChannelSaveGate {
+  /** Stored keys this save would clear, in the order the server listed them. */
+  dropped: string[];
+  /** True while the save must not go out: keys would be cleared without an acknowledgement. */
+  blocked: boolean;
+}
+
+/**
+ * Whether an edit may be saved. A kind change hands the whole config over to
+ * the kind-changed hint, since nothing stored carries across; otherwise every
+ * stored optional key the form leaves blank has to be acknowledged as cleared
+ * before Save is reachable.
+ */
+export function channelSaveGate(input: {
+  fields: readonly FieldDef[];
+  storedKeys: readonly string[];
+  config: Record<string, string>;
+  kindChanged: boolean;
+  clearAcknowledged: boolean;
+}): ChannelSaveGate {
+  if (input.kindChanged) return { dropped: [], blocked: false };
+  const dropped = droppedStoredKeys(input.fields, input.storedKeys, input.config);
+  return { dropped, blocked: dropped.length > 0 && !input.clearAcknowledged };
+}

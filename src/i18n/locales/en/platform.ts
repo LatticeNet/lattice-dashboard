@@ -739,6 +739,10 @@ export default {
       groupHint: "Notifications with the same group stack together in Notification Center; blank uses the group \"lattice\".",
       fieldBarkUrl: "Link",
       barkUrlHint: "Tapping the notification opens this URL instead of the Bark app.",
+      storedOptionalHint: "stored, enter again to keep",
+      storedPlaceholder: "stored value, not shown",
+      clearStoredLabel:
+        "Clear the stored {keys}. Blank fields are not kept: the save replaces the whole config, so these revert to the server defaults.",
       rulesTitle: "Routing rules",
       rulesDescription:
         "With no enabled rule, every enabled channel gets every notification. Once one enabled rule exists, only matching rules deliver, and a notification that no rule matches is dropped without a record.",

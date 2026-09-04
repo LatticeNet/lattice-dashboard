@@ -693,6 +693,9 @@ export default {
       groupHint: "同一分组的通知在通知中心折叠在一起,留空使用分组「lattice」。",
       fieldBarkUrl: "链接",
       barkUrlHint: "点按通知时打开这个 URL,而不是打开 Bark 应用。",
+      storedOptionalHint: "已存储,重新填写才会保留",
+      storedPlaceholder: "已存储,不显示",
+      clearStoredLabel: "清除已存储的 {keys}。留空的字段不会保留:保存会整体替换配置,这些项将回到服务端默认值。",
       rulesTitle: "路由规则",
       rulesDescription:
         "没有启用任何规则时，每个已启用渠道都会收到所有通知。一旦有一条规则处于启用状态，就只有匹配的规则会投递；没有任何规则匹配的通知会被直接丢弃，且不留记录。",
