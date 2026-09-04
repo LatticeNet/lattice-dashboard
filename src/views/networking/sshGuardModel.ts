@@ -336,6 +336,8 @@ export interface PlanRequest {
   max_auth_tries?: number;
   max_startups?: string;
   permit_root_login?: string;
+  rotate_from_sha256?: string;
+  previous_knock_ports?: number[];
 }
 
 /**
@@ -412,11 +414,7 @@ export function validateAdvanced(adv: GuardAdvancedForm): string[] {
   if (parsePortList(adv.gatePorts).invalid.length) errors.push("gate_ports_invalid");
   const knock = parsePortList(adv.knockPorts);
   if (knock.invalid.length) errors.push("knock_ports_invalid");
-  else if (knock.values.length) {
-    const inRange = knock.values.every((p) => p >= KNOCK_PORT_MIN && p <= KNOCK_PORT_MAX);
-    const distinct = new Set(knock.values).size === knock.values.length;
-    if (knock.values.length !== KNOCK_SEQUENCE_LEN || !inRange || !distinct) errors.push("knock_ports_invalid");
-  }
+  else if (knock.values.length && !isKnockSequence(knock.values)) errors.push("knock_ports_invalid");
   const openFor = fieldText(adv.knockOpenFor);
   if (openFor && !(KNOCK_OPEN_FOR_VALUES as readonly string[]).includes(openFor)) errors.push("knock_open_for_invalid");
   if (outOfRange(adv.knockSeqTimeoutSec, 3, 120)) errors.push("knock_seq_timeout_range");
@@ -427,6 +425,13 @@ export function validateAdvanced(adv: GuardAdvancedForm): string[] {
   const root = fieldText(adv.permitRootLogin);
   if (root && !(PERMIT_ROOT_LOGIN_VALUES as readonly string[]).includes(root)) errors.push("permit_root_login_invalid");
   return errors;
+}
+
+/** The server's own rule for a sequence: exactly three distinct ports in the knock range. */
+export function isKnockSequence(values: number[]): boolean {
+  const inRange = values.every((p) => p >= KNOCK_PORT_MIN && p <= KNOCK_PORT_MAX);
+  const distinct = new Set(values).size === values.length;
+  return values.length === KNOCK_SEQUENCE_LEN && inRange && distinct;
 }
 
 /** Set and outside [lo, hi], or set and not a whole number. Blank is never wrong. */
@@ -683,4 +688,243 @@ export function sortFindings(findings: Finding[]): Finding[] {
 
 export function hasBlocking(findings: Finding[]): boolean {
   return findings.some((f) => f.severity === "block");
+}
+
+// ── knock rotation ──────────────────────────────────────────────────────────
+
+/**
+ * A rotation is an arm with one extra promise: the sequence the node runs
+ * today stays alive beside the new one until the confirm applies. So the
+ * window is the longest the server allows, because the operator has to
+ * approve the arm, wait for it to apply, knock with the new sequence, get a
+ * shell, and confirm, and a node that reverts halfway through that has
+ * quietly gone back to the old sequence while the console says otherwise.
+ */
+export const ROTATION_CONFIRM_WINDOW_SEC = 3600;
+
+export type RotateRefusalCode =
+  /** The button acts on exactly one row. */
+  | "select_one"
+  /** The sequence is written down but not on the node yet; there is nothing to rotate from. */
+  | "planned"
+  /** Guarded without knocking: no sequence exists. */
+  | "no_knock"
+  /** The control plane never installed a sequence here: the advanced path needs the previous ports. */
+  | "previous_ports_required"
+  | "previous_ports_invalid"
+  /** No source says which port sshd listens on. */
+  | "port_unknown"
+  /** The sequence is installed, but the arm that installed it is not on this page: see governingArm. */
+  | "arm_unresolved";
+
+export type RotateEligibility =
+  /** The ordinary path: reveal the installed sequence, hand the server its digest. */
+  | { ok: true; path: "digest" }
+  /** The advanced path: the operator typed the sequence the node runs. */
+  | { ok: true; path: "previous_ports"; ports: number[] }
+  | { ok: false; code: RotateRefusalCode };
+
+/**
+ * The arm whose plan a rotation stands on.
+ *
+ * NodeGuardState.arm is the newest arm by timestamp, which answers where the
+ * node sits in the sequence and nothing else: a hardening-only re-arm or a
+ * rejected re-plan is the newest record and governs no knock. The arm that
+ * does is the one the server names in the knock state's approval_id (its
+ * sshGuardKnockStateFor walks the node's whole history for it), and that is
+ * the record whose sources and port a rotation has to repeat, because the
+ * server arms exactly the shape the request describes. When the server has
+ * named an arm this page does not hold, nothing here is allowed to stand in
+ * for it. Without the server's word at all, the nearest reading is the newest
+ * applied arm that declared a knock; a retired record the server would still
+ * count cannot be told apart here, so that case waits for the server.
+ */
+export function governingArm(
+  approvals: readonly ApprovalView[],
+  nodeId: string,
+  server: Pick<SSHGuardKnockStateResponse, "approval_id"> | undefined,
+): ApprovalView | undefined {
+  const arms = approvals.filter(
+    (a) => isSSHGuardApproval(a) && a.node_id === nodeId && a.action === SSHGUARD_ARM_ACTION,
+  );
+  if (server?.approval_id) return arms.find((a) => a.id === server.approval_id);
+  return newest(arms.filter((a) => a.status === "applied" && parseKnockDeclared(a.plan) === true));
+}
+
+/**
+ * Whether the selection can be rotated, and by which path.
+ *
+ * Installed knowledge (plain or from a retired record) goes by digest: the
+ * server resolves the sequence itself, so the request never carries ports.
+ * That path also needs the governing arm on this page, since the request
+ * repeats its fallback and port; without it the dialog does not open.
+ * Unknown knowledge can only go by the previous ports, and only once they
+ * are typed and well formed; an empty field is "required", not "invalid",
+ * so the header button can open the dialog for such a row without lying
+ * about being ready to file. Planned and no-knock rows have nothing to
+ * rotate from and say so.
+ */
+export function rotateEligibility(
+  selected: Pick<KnockRowKnowledge, "knowledge">[],
+  previousPorts: string,
+  sshPort: number | undefined,
+  governing: Pick<ApprovalView, "plan"> | undefined,
+): RotateEligibility {
+  if (selected.length !== 1) return { ok: false, code: "select_one" };
+  const row = selected[0] as Pick<KnockRowKnowledge, "knowledge">;
+  if (row.knowledge === "planned") return { ok: false, code: "planned" };
+  if (row.knowledge === "no_knock") return { ok: false, code: "no_knock" };
+  if (KNOCK_INSTALLED.has(row.knowledge) && !governing) return { ok: false, code: "arm_unresolved" };
+  if (sshPort === undefined) return { ok: false, code: "port_unknown" };
+  if (KNOCK_INSTALLED.has(row.knowledge)) return { ok: true, path: "digest" };
+  if (!hasFieldText(previousPorts)) return { ok: false, code: "previous_ports_required" };
+  const parsed = parsePortList(previousPorts);
+  if (parsed.invalid.length || !isKnockSequence(parsed.values)) return { ok: false, code: "previous_ports_invalid" };
+  return { ok: true, path: "previous_ports", ports: parsed.values };
+}
+
+/** Whether the header button should open the dialog for this selection at all. */
+export function rotateOpenable(e: RotateEligibility): boolean {
+  return e.ok || e.code === "previous_ports_required" || e.code === "previous_ports_invalid";
+}
+
+/**
+ * The port the rotation gates, from the most authoritative source that has
+ * one: the server's knock state, then the arm plan, then what sshd is
+ * observed listening on. Zero means "keep the current port", which is what
+ * the server does with an omitted ssh_port; 22 is refused by the server as
+ * the legacy port and so also maps to keep-current.
+ */
+export function rotationSshPort(
+  server: Pick<SSHGuardKnockStateResponse, "ssh_port"> | undefined,
+  arm: Pick<ApprovalView, "plan"> | undefined,
+  observedSshd: number[],
+): number | undefined {
+  if (server?.ssh_port && server.ssh_port > 0) return server.ssh_port;
+  const m = /^ssh_port:\s*(\d+)\s*$/m.exec(arm?.plan ?? "");
+  if (m) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  const port = observedSshd.find((p) => p > 0);
+  return port === undefined ? undefined : port;
+}
+
+export type RotationFallback = { kind: "terminal" } | { kind: "sources"; sources: string[] };
+
+/**
+ * The management sources the arm plan was rendered with, read back from its
+ * "## Management sources" section. Undefined when the plan has no such
+ * section (a hardening-only arm, or no arm at all); an empty list when the
+ * section says "(none)".
+ */
+export function parseArmMgmtSources(plan: string | undefined): string[] | undefined {
+  const lines = (plan ?? "").split(/\r?\n/);
+  const start = lines.findIndex((l) => /^## Management sources\b/.test(l));
+  if (start === -1) return undefined;
+  const sources: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^## /.test(line)) break;
+    const m = /^-\s+(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const value = m[1] as string;
+    if (value === "(none)") continue;
+    if (isAddressOrCIDR(value)) sources.push(value);
+  }
+  return sources;
+}
+
+/**
+ * The fallback the governing arm stood on, so the rotation stands on the same
+ * one. The plan records the sources it admitted; the terminal fallback is
+ * not written into the plan text, so an arm with no sources is read as
+ * having used it, which is the only profile the server would have accepted
+ * with knocking on and no source.
+ */
+export function rotationFallbackFor(arm: Pick<ApprovalView, "plan"> | undefined): RotationFallback {
+  const sources = parseArmMgmtSources(arm?.plan);
+  return sources?.length ? { kind: "sources", sources } : { kind: "terminal" };
+}
+
+export interface RotationInput {
+  nodeId: string;
+  /** 0 keeps the current port. */
+  sshPort: number;
+  from: { sha256: string } | { previousPorts: number[] };
+  fallback: RotationFallback;
+}
+
+/**
+ * The plan request for a rotation. Knocking is sent on explicitly because the
+ * server's default follows ssh_port, and a rotation with knocking off is a
+ * contradiction the server refuses. Nothing else is overridden: the new
+ * sequence is drawn server-side and the hardening keeps its verified defaults.
+ */
+export function buildRotationRequest(input: RotationInput): PlanRequest {
+  const req: PlanRequest = {
+    node_id: input.nodeId.trim(),
+    enable_knock: true,
+    confirm_window_sec: ROTATION_CONFIRM_WINDOW_SEC,
+  };
+  if (input.sshPort > 0 && input.sshPort !== 22) req.ssh_port = input.sshPort;
+  if ("sha256" in input.from) req.rotate_from_sha256 = input.from.sha256;
+  else req.previous_knock_ports = [...input.from.previousPorts];
+  if (input.fallback.kind === "sources") req.mgmt_sources = [...input.fallback.sources];
+  else req.out_of_band_fallback = true;
+  return req;
+}
+
+export interface RotationRefusal {
+  /** The server's own sentence, verbatim. */
+  message: string;
+  /** The lint findings when the refusal carried them, verbatim and blocking first. */
+  findings: Finding[];
+}
+
+/**
+ * What to show when the plan endpoint says no. A lint refusal arrives as a
+ * 409 whose body carries the findings; those are the reason and the
+ * operator's next move, so they are kept whole. Any other failure is its
+ * message. The shape is duck-typed so this stays free of the HTTP client.
+ */
+export function rotationRefusal(err: unknown): RotationRefusal {
+  const e = err as { message?: unknown; body?: unknown } | undefined;
+  const body = e?.body as { error?: unknown; findings?: unknown } | undefined;
+  const findings = Array.isArray(body?.findings)
+    ? sortFindings(body.findings.filter(isFinding))
+    : [];
+  const message =
+    typeof body?.error === "string" && body.error
+      ? body.error
+      : typeof e?.message === "string" && e.message
+        ? e.message
+        : String(err);
+  return { message, findings };
+}
+
+function isFinding(value: unknown): value is Finding {
+  const f = value as Partial<Finding> | undefined;
+  return !!f && typeof f.code === "string" && typeof f.message === "string" && typeof f.severity === "string";
+}
+
+/**
+ * When the previous sequence stops being honoured.
+ *
+ * Mid-rotation the server reports previous_honoured; the arm that rotated is
+ * applied and its window is running, so the deadline is the applied moment
+ * plus that window, exactly as the revert deadline is. The server's own
+ * applied_at is preferred when it sent one. A retired record has no applied
+ * moment, and then there is no deadline to print rather than a made-up one.
+ */
+export function rotationDeadline(
+  state: NodeGuardState,
+  server: Pick<SSHGuardKnockStateResponse, "previous_honoured" | "applied_at"> | undefined,
+): RevertDeadline | undefined {
+  if (server?.previous_honoured !== true) return undefined;
+  const arm = state.arm;
+  const recorded = server.applied_at || (arm?.status === "applied" ? arm.updated_at || arm.created_at : "") || "";
+  const startedAt = Date.parse(recorded);
+  if (Number.isNaN(startedAt)) return undefined;
+  const windowSec = parseConfirmWindow(arm?.plan) ?? DEFAULT_CONFIRM_WINDOW_SEC;
+  return { at: startedAt + windowSec * 1000, windowSec, startedAt };
 }

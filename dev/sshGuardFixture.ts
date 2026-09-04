@@ -6,6 +6,14 @@
  * guard-reality snapshot per node except one that has never reported and one
  * that went stale.
  *
+ * For the knock rotation every state the control can be in has a row: an
+ * installed sequence (any confirmed node), one known from a retired record,
+ * one mid-rotation with the previous sequence still honoured and a confirm
+ * deadline, one planned and not yet applied, one hardened without knocking,
+ * nodes the control plane never armed (the advanced path), one whose
+ * rotation the lint refuses, and one whose newest arm is a hardening-only
+ * re-arm on top of the knock arm that still governs it.
+ *
  * Everything is derived from `Date.now()` at load, so the countdowns and the
  * ages read as they would in production.
  */
@@ -45,8 +53,28 @@ export interface FixtureNode {
    * and the reveal returns these ports beside the new ones.
    */
   previousPorts?: number[];
+  /**
+   * The fake plan endpoint refuses a rotation on this node with the
+   * server's override finding, verbatim: its lattice_guard chain is policy
+   * drop and does not accept the SSH port, so a knock would look like it
+   * worked and the connection would still never open.
+   */
+  rotationBlocked?: boolean;
   /** Seconds left on the revert timer, for awaitingConfirm. Negative: the window closed that long ago. */
   revertInSec?: number;
+  /** The port the arm plan moved sshd to, when it is not the fleet's 58394. */
+  sshPort?: number;
+  /** The management sources the arm plan listed; absent renders "(none)". */
+  mgmtSources?: string[];
+  /**
+   * A hardening-only re-arm applied and confirmed after the knock arm. The
+   * newest arm record carries no firewall and no sequence, so it governs no
+   * knock; the server names the earlier arm in approval_id, and a rotation
+   * has to repeat that arm's sources and port, not this one's.
+   */
+  rearmedHardeningOnly?: boolean;
+  /** The host runs dropbear rather than sshd on its listening port. */
+  dropbear?: boolean;
   /** PasswordAuthentication as sshd -T prints it; undefined when the agent predates the sshd block. */
   password?: boolean;
 }
@@ -129,6 +157,10 @@ export function buildFixtureNodes(): FixtureNode[] {
     n.stage = "confirmed";
     n.sshd = k % 3 === 0 ? [22, 58394] : [58394];
   });
+  // One confirmed node sits behind a guard chain that does not accept its
+  // SSH port, so a rotation on it is refused by the lint. Arming it once was
+  // fine: the chain was bound after.
+  (out[7] as FixtureNode).rotationBlocked = true;
   // 3 failed arms, each with the server's actual failure text.
   [1, 4, 9].forEach((i, k) => {
     const n = out[i] as FixtureNode;
@@ -182,7 +214,18 @@ export function buildFixtureNodes(): FixtureNode[] {
   (out[21] as FixtureNode).scope = "undecided";
   // Two hosts run dropbear on 3434, as three machines in the real fleet do.
   (out[23] as FixtureNode).sshd = [3434];
+  (out[23] as FixtureNode).dropbear = true;
   (out[31] as FixtureNode).sshd = [3434];
+  (out[31] as FixtureNode).dropbear = true;
+  // One confirmed node was armed twice: the knock arm moved sshd to 3434
+  // behind two management sources, and a later hardening-only re-arm
+  // tightened sshd without touching the firewall. Its newest arm record
+  // governs no knock.
+  const rearmed = out[13] as FixtureNode;
+  rearmed.sshPort = 3434;
+  rearmed.mgmtSources = ["203.0.113.5/32", "198.51.100.0/24"];
+  rearmed.rearmedHardeningOnly = true;
+  rearmed.sshd = [22, 3434];
   // One never reported, one went stale, one reports no sshd at all, and one
   // runs an agent from before the sshd block existed.
   (out[25] as FixtureNode).observedAgoSec = undefined;
@@ -209,7 +252,14 @@ export const NO_KNOCK_NODE = "[cd]-BWH-DC9";
 
 function armPlan(n: FixtureNode): string {
   const knock = n.name !== NO_KNOCK_NODE;
-  return `${ARM_PLAN_HEADER}node_id: ${n.id}\nnode_name: ${n.name}\nssh_port: 58394\nkeep_legacy_port: true\nknock: ${knock}\ngated_ports: 22, 58394\nconfirm_window_sec: 900\n`;
+  const port = n.sshPort ?? 58394;
+  const sources = n.mgmtSources?.length ? n.mgmtSources.map((s) => `- ${s}\n`).join("") : "- (none)\n";
+  return `${ARM_PLAN_HEADER}node_id: ${n.id}\nnode_name: ${n.name}\nssh_port: ${port}\nkeep_legacy_port: true\nknock: ${knock}\ngated_ports: 22, ${port}\nconfirm_window_sec: 900\n\n## Management sources (reach SSH without knocking, no expiry)\n\n${sources}\n## sshd drop-in: /etc/ssh/sshd_config.d/50-lattice-guard.conf\n`;
+}
+
+/** A hardening-only re-arm, as RenderArmPlan writes one: no port move, no firewall, no sources section. */
+function hardeningPlan(n: FixtureNode): string {
+  return `${ARM_PLAN_HEADER}node_id: ${n.id}\nnode_name: ${n.name}\nssh_port: 0\nkeep_legacy_port: true\nknock: false\nconfirm_window_sec: 3600\n\n## sshd drop-in: /etc/ssh/sshd_config.d/50-lattice-guard.conf\n`;
 }
 
 export interface FixtureState {
@@ -227,12 +277,21 @@ export function buildFixture(): FixtureState {
     const armId = id("apr");
     const base = { node_id: n.id, plugin: "sshguard", plan: armPlan(n) };
     switch (n.stage) {
-      case "confirmed":
+      case "confirmed": {
+        // The re-armed node's knock arm is older, so the hardening re-arm below is the newest record.
+        const armedAgo = n.rearmedHardeningOnly ? 10 * 86_400_000 : 3 * 86_400_000;
         approvals.push(
-          { ...base, id: armId, action: "sshguard-arm:v1", status: "applied", created_at: iso(-3 * 86_400_000), updated_at: iso(-3 * 86_400_000 + 60_000) },
-          { ...base, id: id("apr"), action: "sshguard-confirm:v1", status: "applied", plan: "stage: confirm\n", created_at: iso(-3 * 86_400_000 + 300_000), updated_at: iso(-3 * 86_400_000 + 360_000) },
+          { ...base, id: armId, action: "sshguard-arm:v1", status: "applied", created_at: iso(-armedAgo), updated_at: iso(-armedAgo + 60_000) },
+          { ...base, id: id("apr"), action: "sshguard-confirm:v1", status: "applied", plan: "stage: confirm\n", created_at: iso(-armedAgo + 300_000), updated_at: iso(-armedAgo + 360_000) },
         );
+        if (n.rearmedHardeningOnly) {
+          approvals.push(
+            { ...base, id: id("apr"), action: "sshguard-arm:v1", status: "applied", plan: hardeningPlan(n), created_at: iso(-2 * 86_400_000), updated_at: iso(-2 * 86_400_000 + 60_000) },
+            { ...base, id: id("apr"), action: "sshguard-confirm:v1", status: "applied", plan: "stage: confirm\n", created_at: iso(-2 * 86_400_000 + 300_000), updated_at: iso(-2 * 86_400_000 + 360_000) },
+          );
+        }
         break;
+      }
       case "armFailed":
         if (n.superseded) {
           approvals.push(
@@ -280,7 +339,7 @@ export function buildFixture(): FixtureState {
     const collected = iso(-n.observedAgoSec * 1000);
     const stale = n.observedAgoSec > 30 * 3600;
     const listeners = [
-      ...n.sshd.map((port) => ({ protocol: "tcp", port, address: "0.0.0.0", process: port === 3434 ? "dropbear" : "sshd" })),
+      ...n.sshd.map((port) => ({ protocol: "tcp", port, address: "0.0.0.0", process: n.dropbear ? "dropbear" : "sshd" })),
       { protocol: "tcp", port: 443, address: "0.0.0.0", process: "sing-box" },
       { protocol: "udp", port: 51820, address: "0.0.0.0", process: "wireguard" },
       { protocol: "tcp", port: 2222, address: "127.0.0.1", process: "sshd" },
