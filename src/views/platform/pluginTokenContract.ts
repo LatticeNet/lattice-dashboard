@@ -54,6 +54,15 @@ export const PLUGIN_TOKEN_NAMES = [
   "--info",
   "--info-foreground",
 
+  // The same three as ink. The fills are pair colours: something sits on them.
+  // Written as text on the page instead, the light-scheme amber measures
+  // 2.5:1 and the green 3.4:1, so a frame that used --warning for a status
+  // label shipped an unreadable label. These carry the readable step, and in
+  // dark they are the fill, so a plugin rule written once works in both.
+  "--success-text",
+  "--warning-text",
+  "--info-text",
+
   // Corner radius. Four steps and the shadcn alias; the step decides whether a
   // dense grid reads as an operator tool.
   "--radius-sm",
