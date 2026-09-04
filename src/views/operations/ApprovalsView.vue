@@ -239,18 +239,6 @@ const selectedPlanState = computed<"ready" | "loading" | "error" | "missing">(()
   return row.plan === undefined ? "missing" : "ready";
 });
 
-watch(
-  () => {
-    const row = selected.value;
-    return row ? `${row.id}:${row.plan_sha256 ?? ""}:${row.plan === undefined ? "-" : "+"}` : "";
-  },
-  () => {
-    const row = selected.value;
-    if (row && row.plan === undefined) void loadSelectedPlan(row);
-  },
-  { immediate: true },
-);
-
 /**
  * Applied plans for the selected target, read once per (node, plugin) with
  * their text: history is not loaded until asked, and the diff baseline for
@@ -273,14 +261,6 @@ async function loadBaseline(row: ApprovalView): Promise<void> {
     baselinesInFlight.delete(key);
   }
 }
-
-watch(
-  () => (selected.value ? baselineKey(selected.value) : ""),
-  () => {
-    if (selected.value) void loadBaseline(selected.value);
-  },
-  { immediate: true },
-);
 
 // What is actually live for the selected target: the most recent earlier
 // applied plan for the same node, plugin and action, whether it came with the
@@ -524,6 +504,31 @@ const filteredApprovals = computed(() => {
     return approvalHaystack(approval).includes(q);
   });
 });
+
+// These two watch `selected`, which resolves through filteredApprovals, so
+// they are registered after it exists: an immediate watcher that reads it
+// during setup hits the temporal dead zone and the whole page renders blank.
+// Both read the selected row: its plan for the review panel, and the applied
+// plans of its target for the diff baseline.
+watch(
+  () => {
+    const row = selected.value;
+    return row ? `${row.id}:${row.plan_sha256 ?? ""}:${row.plan === undefined ? "-" : "+"}` : "";
+  },
+  () => {
+    const row = selected.value;
+    if (row && row.plan === undefined) void loadSelectedPlan(row);
+  },
+  { immediate: true },
+);
+
+watch(
+  () => (selected.value ? baselineKey(selected.value) : ""),
+  () => {
+    if (selected.value) void loadBaseline(selected.value);
+  },
+  { immediate: true },
+);
 
 /**
  * Deep-link: /approvals?selected=<id> lands on that approval.

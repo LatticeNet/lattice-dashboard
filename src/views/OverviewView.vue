@@ -84,7 +84,6 @@ const tasks = useAsyncData<TaskView[] | undefined>(
   { pollInterval: 10000 },
 );
 
-
 const audit = useAsyncData<AuditEvent[] | undefined>(
   (signal) => api.audit.query({ limit: AUDIT_PREVIEW }, { signal }).then((r) => r.events ?? []),
   { pollInterval: 15000 },
