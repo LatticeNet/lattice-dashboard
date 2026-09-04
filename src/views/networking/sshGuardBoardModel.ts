@@ -294,6 +294,23 @@ export function knockStatesToFetch(
   return nodeIds.filter((id) => asked.get(id) !== (fingerprints.get(id) ?? ""));
 }
 
+/**
+ * Fold one pass's answers into what the board already holds. The approvals
+ * and the fleet arrive separately, so two passes overlap on first load; each
+ * merges into the map as it stands when its answers land, and neither may
+ * start from a copy taken when it began or the later one drops the earlier
+ * one's rows. An answer of `undefined` is a refusal, and clears the row so it
+ * falls back to its plan.
+ */
+export function mergeKnockAnswers<T>(current: ReadonlyMap<string, T>, answers: ReadonlyMap<string, T | undefined>): Map<string, T> {
+  const next = new Map(current);
+  for (const [nodeId, answer] of answers) {
+    if (answer === undefined) next.delete(nodeId);
+    else next.set(nodeId, answer);
+  }
+  return next;
+}
+
 // ── time on screen ──────────────────────────────────────────────────────────
 
 /** "43s", "2m", "3h", "2d". The floor is zero: an age is never negative. */

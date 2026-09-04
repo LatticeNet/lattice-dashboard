@@ -101,6 +101,7 @@ import {
   orderForBoard,
   knockFingerprints,
   knockStatesToFetch,
+  mergeKnockAnswers,
   proofCounts,
   realityDetailsToFetch,
   revertingNodes,
@@ -171,40 +172,6 @@ const knockUnconfirmed = computed(
 const knockNodeName = computed(
   () => nodesQuery.data.value?.find((n) => n.id === knockNodeId.value)?.name || knockNodeId.value,
 );
-
-/*
- * What the server knows per row. The plan on this page can say whether an
- * arm declared a knock and whether it applied; only the server, reading the
- * node's whole history, can say that a retired record still governs the box
- * or that a rotation left the previous sequence honoured. So every row asks
- * it once, and again only when that node's approvals move.
- */
-const knockRows = shallowRef<Map<string, SSHGuardKnockStateResponse>>(new Map());
-const knockAsked = new Map<string, string>();
-
-async function readKnockRows() {
-  if (!canAdmin.value) return;
-  const prints = knockFingerprints(approvals.value);
-  const ids = knockStatesToFetch(states.value.map((s) => s.nodeId), prints, knockAsked);
-  if (!ids.length) return;
-  const next = new Map(knockRows.value);
-  try {
-    await runWithConcurrency(ids, 4, async (nodeId) => {
-      // Recorded before the request, so a refusal is not retried on every
-      // poll; the row falls back to its plan until the approvals move.
-      knockAsked.set(nodeId, prints.get(nodeId) ?? "");
-      try {
-        next.set(nodeId, await api.sshGuard.knockState(nodeId));
-      } catch {
-        next.delete(nodeId);
-      }
-    });
-  } finally {
-    knockRows.value = next;
-  }
-}
-
-watch([() => approvals.value, () => nodesQuery.data.value, canAdmin], () => void readKnockRows());
 
 const KNOCK_KEY = {
   installed: "installed",
@@ -398,6 +365,42 @@ onBeforeUnmount(() => clearInterval(clock));
 const states = computed<NodeGuardState[]>(() =>
   orderForBoard(buildFleetStates(approvals.value, nodesQuery.data.value ?? []), now.value),
 );
+
+/*
+ * What the server knows per row. The plan on this page can say whether an
+ * arm declared a knock and whether it applied; only the server, reading the
+ * node's whole history, can say that a retired record still governs the box
+ * or that a rotation left the previous sequence honoured. So every row asks
+ * it once, and again only when that node's approvals move.
+ */
+const knockRows = shallowRef<Map<string, SSHGuardKnockStateResponse>>(new Map());
+const knockAsked = new Map<string, string>();
+
+async function readKnockRows() {
+  if (!canAdmin.value) return;
+  const prints = knockFingerprints(approvals.value);
+  const ids = knockStatesToFetch(states.value.map((s) => s.nodeId), prints, knockAsked);
+  if (!ids.length) return;
+  // Merged into whatever the map holds when they land, never into a copy
+  // taken now: see mergeKnockAnswers for why.
+  const answers = new Map<string, SSHGuardKnockStateResponse | undefined>();
+  try {
+    await runWithConcurrency(ids, 4, async (nodeId) => {
+      // Recorded before the request, so a refusal is not retried on every
+      // poll; the row falls back to its plan until the approvals move.
+      knockAsked.set(nodeId, prints.get(nodeId) ?? "");
+      try {
+        answers.set(nodeId, await api.sshGuard.knockState(nodeId));
+      } catch {
+        answers.set(nodeId, undefined);
+      }
+    });
+  } finally {
+    knockRows.value = mergeKnockAnswers(knockRows.value, answers);
+  }
+}
+
+watch([() => approvals.value, () => nodesQuery.data.value, canAdmin], () => void readKnockRows());
 
 /**
  * The board's word for a row. It is the approval stage except for one case

@@ -16,6 +16,7 @@ import {
   isCoverageFilter,
   knockFingerprints,
   knockStatesToFetch,
+  mergeKnockAnswers,
   membersToFile,
   newestObservation,
   orderForBoard,
@@ -305,4 +306,18 @@ test("a node is asked about its knock once, and again only when one of its appro
 
   // Order of arrival does not change the print.
   assert.equal(knockFingerprints([...before].reverse()).get("n1"), prints.get("n1"));
+});
+
+// The approvals and the fleet arrive separately, so the first two knock
+// passes overlap. Each folds its answers into the map as it stands when they
+// land; a pass that started from a copy of an empty map would hand back only
+// its own rows and drop the other pass's.
+test("overlapping knock passes keep each other's rows, and a refusal clears one", () => {
+  const first = mergeKnockAnswers(new Map(), new Map([["n1", "installed"]]));
+  const second = mergeKnockAnswers(first, new Map([["n2", "planned"]]));
+  assert.deepEqual([...second], [["n1", "installed"], ["n2", "planned"]]);
+  const refused = mergeKnockAnswers(second, new Map([["n1", undefined], ["n3", "unknown"]]));
+  assert.deepEqual([...refused], [["n2", "planned"], ["n3", "unknown"]]);
+  // The map it was handed is not written to.
+  assert.deepEqual([...second], [["n1", "installed"], ["n2", "planned"]]);
 });
