@@ -31,6 +31,7 @@ export default {
       expressionHelp: "字段:id、plugin、action、node、status、reason、actor、approved_by、plan。支持 AND(...)、OR(...)、NOT(...) 或 field:value。",
       history: {
         notLoaded: "未加载：{statuses}。打开该分组后从服务器读取。",
+        staleSlice: "已拒绝的 Agent 更新",
         partial: "{status}：已显示 {loaded} / {total}。",
         complete: "历史记录已全部加载。",
         loading: "正在从服务器加载历史记录",

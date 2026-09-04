@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   ACTIVE_STATUSES,
+  APPROVAL_SLICES,
   HISTORY_PAGE_SIZE,
   HISTORY_STATUSES,
+  STALE_SLICE,
   activeListParams,
   agentUpdatePlanParams,
   agentUpdateStaleParams,
@@ -18,11 +20,14 @@ import {
   hasMoreHistory,
   historyLoadNote,
   historyPageParams,
-  historyStatusesForBucket,
   isHistoryLoaded,
   mergeApprovalRows,
   planCacheIsStale,
+  pollReplacesSlice,
   previousAppliedPlan,
+  slicePageParams,
+  slicesForBucket,
+  staleSliceParams,
 } from "../approvalsListModel.ts";
 import { approvalListTotal, unwrapApproval, unwrapApprovalCounts } from "../../../lib/api/approvalsEnvelope.ts";
 import type { ApprovalCounts, ApprovalView } from "../../../lib/api/types.ts";
@@ -55,13 +60,55 @@ test("a history page is one status, 200 rows, at an offset, and only dismissed a
   assert.deepEqual(historyPageParams("dismissed"), { status: "dismissed", limit: 200, offset: 0, include_dismissed: true });
 });
 
-test("history buckets name their status; all names every history status; active buckets none", () => {
-  assert.deepEqual(historyStatusesForBucket("applied"), ["applied"]);
-  assert.deepEqual(historyStatusesForBucket("dismissed"), ["dismissed"]);
-  assert.deepEqual(historyStatusesForBucket("all"), ["applied", "rejected", "dismissed"]);
-  for (const bucket of ["active", "pending", "stale", "approved", "stuck"]) {
-    assert.deepEqual(historyStatusesForBucket(bucket), [], bucket);
+test("history buckets name their status; all names every history status; the stale bucket names the stale slice", () => {
+  assert.deepEqual(slicesForBucket("applied"), ["applied"]);
+  assert.deepEqual(slicesForBucket("dismissed"), ["dismissed"]);
+  assert.deepEqual(slicesForBucket("all"), ["applied", "rejected", "dismissed"]);
+  // The bucket whose rows the active set cannot reach on its own. Returning
+  // nothing here is what left the Stale bucket showing only the stale rows
+  // that happen to still be pending, with no note saying the rest was never
+  // read.
+  assert.deepEqual(slicesForBucket("stale"), ["stale"]);
+  for (const bucket of ["active", "pending", "approved", "stuck"]) {
+    assert.deepEqual(slicesForBucket(bucket), [], bucket);
   }
+});
+
+// The control plane rejects a locally stale agent update at the top of every
+// GET of the listing, before it filters the rows it answers, so the poll that
+// would have shown a newly stale row is the poll that takes it out of pending.
+// status=pending,approved,stale can never see one again: "stale" matches no
+// status column, and the row now reads "rejected". The page reads those back
+// as their own slice, narrowed to the only plugin that goes stale and to the
+// one status the active set does not already ask for.
+test("the stale slice reads the rejected agent updates the active set can never see", () => {
+  assert.deepEqual(staleSliceParams(), { status: "rejected", plugin: "agentupdate", limit: 200, offset: 0 });
+  assert.deepEqual(staleSliceParams(200), { status: "rejected", plugin: "agentupdate", limit: 200, offset: 200 });
+
+  // The slice has to name a status the active set leaves out, or it reads
+  // rows the page already holds and still misses the auto-rejected ones.
+  const active = ACTIVE_STATUSES as readonly string[];
+  assert.equal(active.includes(String(staleSliceParams().status)), false);
+  assert.equal(staleSliceParams().plugin, "agentupdate");
+  assert.deepEqual([...APPROVAL_SLICES], ["applied", "rejected", "dismissed", STALE_SLICE]);
+});
+
+test("a slice page asks for the stale read or the history read, by slice", () => {
+  assert.deepEqual(slicePageParams(STALE_SLICE, 400), staleSliceParams(400));
+  assert.deepEqual(slicePageParams("applied", 400), historyPageParams("applied", 400));
+  assert.deepEqual(slicePageParams("dismissed"), historyPageParams("dismissed"));
+});
+
+// The stale slice rides the eight second poll of the active set, and a first
+// page replaces the run so a row that left the slice leaves the page. That is
+// only right while the operator holds one page.
+test("a poll replaces the first page of a slice, and leaves a run the operator paged past alone", () => {
+  assert.equal(pollReplacesSlice(undefined), true);
+  assert.equal(pollReplacesSlice(emptyHistoryPage()), true);
+  const onePage = appendHistoryPage(undefined, { rows: Array.from({ length: 200 }, (_, i) => row(`p${i}`)), total: 260, offset: 0 });
+  assert.equal(pollReplacesSlice(onePage), true);
+  const twoPages = appendHistoryPage(onePage, { rows: [row("p200")], total: 260, offset: 200 });
+  assert.equal(pollReplacesSlice(twoPages), false);
 });
 
 test("the agent-update plan read and the diff baseline read are narrow and carry plan text", () => {
@@ -127,6 +174,16 @@ test("the load note names what is missing, what is partial, and when nothing is"
 
   const active = historyLoadNote("pending", {});
   assert.deepEqual(active, { notLoaded: [], partial: [], complete: false });
+
+  // The Stale bucket draws on a paged read like any other, and said nothing
+  // at all while it drew on the active set alone.
+  assert.deepEqual(historyLoadNote("stale", {}).notLoaded, ["stale"]);
+  const stalePage = appendHistoryPage(undefined, { rows: [row("s1")], total: 48, offset: 0 });
+  assert.deepEqual(historyLoadNote("stale", { stale: stalePage }), {
+    notLoaded: [],
+    partial: [{ status: "stale", loaded: 1, total: 48 }],
+    complete: false,
+  });
 });
 
 // ── The merged list ──────────────────────────────────────────────────────────
@@ -183,6 +240,18 @@ test("history buckets print the server's count before any history row is loaded;
   assert.equal(bucketCount("dismissed", rows, COUNTS, matches), 7);
   assert.equal(bucketCount("all", rows, COUNTS, matches), 1285);
   assert.equal(bucketCount("pending", rows, COUNTS, matches), 1);
+
+  // Stale counts the rows on the page even when the server offers a count,
+  // and the stale slice is what puts those rows there. The server's stale
+  // count is a wider population: it is the reason prefix over every status it
+  // can see, and a dismissed stale agent update keeps its stale reason, so a
+  // badge printing it would still read 2 after an operator had cleared every
+  // stale plan the bucket lists.
+  const staleRows = [row("s1", { plugin: "agentupdate", status: "rejected", stale: true }), row("s2", { plugin: "agentupdate", stale: true })];
+  const isStale = (r: ApprovalView) => r.stale === true;
+  assert.equal(bucketCount("stale", staleRows, { ...COUNTS, stale: 51 }, isStale), 2);
+  assert.equal(bucketCount("stale", [], { ...COUNTS, stale: 2 }, isStale), 0);
+
   // Without counts the page can only say what it holds.
   assert.equal(bucketCount("applied", rows, undefined, matches), 0);
   assert.equal(bucketCount("all", rows, undefined, matches), 2);

@@ -34,6 +34,7 @@ export default {
       noMatchDescription: "Adjust the search or the status group. Applied, rejected and dismissed approvals are loaded only when their group is opened.",
       history: {
         notLoaded: "Not loaded: {statuses}. Open that group to read it from the server.",
+        staleSlice: "rejected agent updates",
         partial: "{status}: showing {loaded} of {total}.",
         complete: "History loaded in full.",
         loading: "Loading history from the server",

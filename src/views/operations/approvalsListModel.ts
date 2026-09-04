@@ -14,6 +14,9 @@
  *     first and paints it, then loads history (applied, rejected, dismissed)
  *     one status at a time, HISTORY_PAGE_SIZE rows per page, only when the
  *     operator opens that slice;
+ *   - the stale agent updates the control plane has already rejected are read
+ *     as their own narrow slice, because the active set cannot reach them at
+ *     all (see staleSliceParams);
  *   - the plan for one approval is read by id when it is selected;
  *   - counters read the status counts and no rows at all.
  *
@@ -69,9 +72,65 @@ export function historyPageParams(status: HistoryStatus, offset = 0): ApprovalLi
   };
 }
 
-/** Which history statuses a bucket of the inbox draws on. Empty for active buckets. */
-export function historyStatusesForBucket(bucket: string): HistoryStatus[] {
+/**
+ * The stale slice: the agent updates the control plane has already rejected
+ * for going stale.
+ *
+ * Staleness is derived rather than a status column value, and asking for it by
+ * status answers nothing, so the active set names it and relies on a stale row
+ * also being pending or approved. That holds for about a minute. Every GET of
+ * the listing runs rejectLocallyStaleAgentUpdateApprovals first, which walks
+ * the store and writes status=rejected on every agent-update approval whose
+ * plan no longer matches policy, before the same request filters the rows it
+ * answers. So the poll that would have surfaced a newly stale row is the poll
+ * that takes it out of pending, and the active set never sees it again: the
+ * Stale bucket went quiet on exactly the rows an operator has to re-plan.
+ *
+ * Reading it back costs one narrow request, not the listing: the only plugin
+ * that goes stale, and the one status the active set does not already ask for.
+ * Paged like history, because rejected agent updates accumulate for as long as
+ * nobody dismisses them, and the store answers newest first.
+ */
+export const STALE_SLICE = "stale";
+
+/** A slice of the listing the page holds beside the active set. */
+export type ApprovalSlice = HistoryStatus | typeof STALE_SLICE;
+
+export const APPROVAL_SLICES: readonly ApprovalSlice[] = [...HISTORY_STATUSES, STALE_SLICE];
+
+export function staleSliceParams(offset = 0): ApprovalListParams {
+  return { status: "rejected", plugin: "agentupdate", limit: HISTORY_PAGE_SIZE, offset };
+}
+
+/** One page of one slice, whichever kind it is. */
+export function slicePageParams(slice: ApprovalSlice, offset = 0): ApprovalListParams {
+  return slice === STALE_SLICE ? staleSliceParams(offset) : historyPageParams(slice, offset);
+}
+
+/**
+ * Whether a poll may re-read a slice's first page over what is held.
+ *
+ * The stale slice rides the active poll, and a first page replaces the run so
+ * a row that left the slice leaves the page. That is right while the operator
+ * holds one page and wrong the moment they have asked for more: an eight
+ * second timer would throw their pages away. Past the first page the poll
+ * leaves the run alone and the Refresh button is what re-reads it.
+ */
+export function pollReplacesSlice(page: HistoryPage | undefined): boolean {
+  return !page || page.rows.length <= HISTORY_PAGE_SIZE;
+}
+
+/**
+ * Which slices a bucket of the inbox draws on. Empty for the buckets that are
+ * served by the active set alone.
+ *
+ * The Stale bucket names the stale slice: its rows are half in the active set
+ * and half in the rejected agent updates, and saying so is what makes the note
+ * under the buttons print for it.
+ */
+export function slicesForBucket(bucket: string): ApprovalSlice[] {
   if (bucket === "all") return [...HISTORY_STATUSES];
+  if (bucket === STALE_SLICE) return [STALE_SLICE];
   return isHistoryStatus(bucket) ? [bucket] : [];
 }
 
@@ -177,6 +236,15 @@ export function planCacheIsStale(row: Pick<ApprovalView, "plan_sha256">, cached:
  * print the server's count, which is known before a single history row is
  * loaded; before the counts arrive they fall back to what is loaded, which is
  * zero, and the button says so rather than guessing.
+ *
+ * Stale stays a row count, and the stale slice is what makes that number right
+ * again: the button used to print the one or two stale rows that were still
+ * pending because the rest were never read. The server's stale count is a
+ * different population and cannot replace it. It is computed from the reason
+ * prefix over every status the caller can see, tombstones included, and a
+ * dismissed stale agent update keeps its stale reason, so that count carries
+ * rows this bucket never lists. Printing it would leave an operator who has
+ * cleared every stale plan looking at a badge that never reaches zero.
  */
 export function bucketCount(
   bucket: string,
@@ -201,20 +269,20 @@ export function bucketCount(
  * nothing.
  */
 export interface HistoryLoadNote {
-  /** Statuses this bucket needs that have never answered. */
-  notLoaded: HistoryStatus[];
-  /** Statuses that answered, with what the page holds against the server's total. */
-  partial: Array<{ status: HistoryStatus; loaded: number; total: number }>;
+  /** Slices this bucket needs that have never answered. */
+  notLoaded: ApprovalSlice[];
+  /** Slices that answered, with what the page holds against the server's total. */
+  partial: Array<{ status: ApprovalSlice; loaded: number; total: number }>;
   /** Everything the bucket draws on is held in full. */
   complete: boolean;
 }
 
 export function historyLoadNote(
   bucket: string,
-  pages: Readonly<Partial<Record<HistoryStatus, HistoryPage>>>,
+  pages: Readonly<Partial<Record<ApprovalSlice, HistoryPage>>>,
 ): HistoryLoadNote {
-  const needed = historyStatusesForBucket(bucket);
-  const notLoaded: HistoryStatus[] = [];
+  const needed = slicesForBucket(bucket);
+  const notLoaded: ApprovalSlice[] = [];
   const partial: HistoryLoadNote["partial"] = [];
   for (const status of needed) {
     const page = pages[status];

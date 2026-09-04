@@ -39,8 +39,9 @@ import {
   type ApprovalEventGroup,
 } from "./approvalsModel";
 import {
+  APPROVAL_SLICES,
   HISTORY_PAGE_SIZE,
-  HISTORY_STATUSES,
+  STALE_SLICE,
   activeListParams,
   agentUpdatePlanParams,
   agentUpdateRowsNeedingPlans,
@@ -51,16 +52,17 @@ import {
   bucketCount,
   emptyHistoryPage,
   historyLoadNote,
-  historyPageParams,
-  historyStatusesForBucket,
   isHistoryLoaded,
   isHistoryStatus,
   mergeApprovalRows,
   planCacheIsStale,
+  pollReplacesSlice,
   previousAppliedPlan,
+  slicePageParams,
+  slicesForBucket,
+  type ApprovalSlice,
   type CachedPlan,
   type HistoryPage,
-  type HistoryStatus,
 } from "./approvalsListModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -106,6 +108,10 @@ const auth = useAuthStore();
 //
 //   - history (applied, rejected, dismissed) one status at a time, a page of
 //     HISTORY_PAGE_SIZE rows, when the operator opens that group;
+//   - the stale agent updates the control plane has already rejected, on the
+//     same poll as the active set, because the active set cannot reach them:
+//     the listing rejects a stale agent update on its way out (see
+//     staleSliceParams) and rejected is not an active status;
 //   - the plan text of the selected approval, by id, for the Plan Review panel;
 //   - the applied plans of the selected target, for the diff baseline;
 //   - the plan text of active agent updates, so event cards keep grouping by
@@ -146,22 +152,32 @@ function decisionDigest(item: ApprovalView): Promise<string> {
   return approvalDigest(item, { hashPlan: digestFor, fetchFull });
 }
 
-const history = ref<Partial<Record<HistoryStatus, HistoryPage>>>({});
+const slicePages = ref<Partial<Record<ApprovalSlice, HistoryPage>>>({});
 
-/** One page of one history status; `more` asks for the page after what is held. */
-async function loadHistory(status: HistoryStatus, more = false): Promise<void> {
-  const prev = history.value[status];
+/** One page of one slice; `more` asks for the page after what is held. */
+async function loadSlice(slice: ApprovalSlice, more = false): Promise<void> {
+  const prev = slicePages.value[slice];
   if (prev?.loading) return;
   const offset = more ? (prev?.rows.length ?? 0) : 0;
-  history.value = { ...history.value, [status]: { ...(prev ?? emptyHistoryPage()), loading: true, error: "" } };
+  slicePages.value = { ...slicePages.value, [slice]: { ...(prev ?? emptyHistoryPage()), loading: true, error: "" } };
   try {
-    const res = await api.approvals.list(historyPageParams(status, offset));
+    const res = await api.approvals.list(slicePageParams(slice, offset));
     const page = appendHistoryPage(prev, { rows: unwrap(res, "approvals"), total: approvalListTotal(res), offset });
-    history.value = { ...history.value, [status]: page };
+    slicePages.value = { ...slicePages.value, [slice]: page };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    history.value = { ...history.value, [status]: { ...(prev ?? emptyHistoryPage()), loading: false, error: message } };
+    slicePages.value = { ...slicePages.value, [slice]: { ...(prev ?? emptyHistoryPage()), loading: false, error: message } };
   }
+}
+
+/**
+ * Re-read the stale slice, on the poll that re-reads the active set. Left
+ * alone once the operator has paged past the first page, so a timer never
+ * discards pages they asked for.
+ */
+function refreshStaleSlice(): void {
+  if (!pollReplacesSlice(slicePages.value[STALE_SLICE])) return;
+  void loadSlice(STALE_SLICE);
 }
 
 /** Rows reached by deep link or a "superseded by" jump that sit in no loaded slice. */
@@ -182,7 +198,7 @@ const forceReplanMessage = ref("");
 const approvals = computed(() =>
   mergeApprovalRows({
     active: approvalsQuery.data.value ?? [],
-    history: HISTORY_STATUSES.map((status) => history.value[status]?.rows ?? []),
+    history: APPROVAL_SLICES.map((slice) => slicePages.value[slice]?.rows ?? []),
     pinned: pinnedRows.value,
     plans: planCache.value,
   }),
@@ -408,31 +424,36 @@ const bucketCounts = computed<Record<ApprovalBucket, number>>(() => {
 
 // ── History: loaded when its group is opened, and the page says what it holds ─
 
-const historyStatuses = computed(() => historyStatusesForBucket(approvalBucket.value));
-const historyNote = computed(() => historyLoadNote(approvalBucket.value, history.value));
-const historyLoading = computed(() => historyStatuses.value.some((status) => history.value[status]?.loading));
+const bucketSlices = computed(() => slicesForBucket(approvalBucket.value));
+const historyNote = computed(() => historyLoadNote(approvalBucket.value, slicePages.value));
+const historyLoading = computed(() => bucketSlices.value.some((slice) => slicePages.value[slice]?.loading));
 const historyError = computed(() => {
-  for (const status of historyStatuses.value) {
-    const error = history.value[status]?.error;
+  for (const slice of bucketSlices.value) {
+    const error = slicePages.value[slice]?.error;
     if (error) return error;
   }
   return "";
 });
 
 watch(
-  historyStatuses,
-  (statuses) => {
-    for (const status of statuses) {
-      if (!isHistoryLoaded(history.value[status]) && !history.value[status]?.loading) void loadHistory(status);
+  bucketSlices,
+  (slices) => {
+    for (const slice of slices) {
+      if (!isHistoryLoaded(slicePages.value[slice]) && !slicePages.value[slice]?.loading) void loadSlice(slice);
     }
   },
   { immediate: true },
 );
 
 function retryHistory() {
-  for (const status of historyStatuses.value) {
-    if (history.value[status]?.error) void loadHistory(status);
+  for (const slice of bucketSlices.value) {
+    if (slicePages.value[slice]?.error) void loadSlice(slice);
   }
+}
+
+/** What the note calls a slice: a status name, or the read the stale rows come from. */
+function sliceLabel(slice: ApprovalSlice): string {
+  return slice === STALE_SLICE ? t("operations.approvals.history.staleSlice") : t(`common.status.${slice}`);
 }
 
 /** The narrowest bucket a row can be found in, without loading history it is not in. */
@@ -494,6 +515,11 @@ watch(
   },
   { immediate: true },
 );
+
+// The stale slice is open work, not history, so it rides the active poll: a
+// row the control plane rejects for going stale surfaces on the same eight
+// second beat it did when this page read the whole listing.
+watch(() => approvalsQuery.data.value, refreshStaleSlice, { immediate: true });
 
 const filteredApprovals = computed(() => {
   const q = approvalSearch.value.trim().toLowerCase();
@@ -677,10 +703,10 @@ function refreshApprovals() {
   concealedIds.value = new Set();
   void approvalsQuery.refresh();
   void countsQuery.refresh();
-  // Loaded history re-reads its first page; the note under the buttons says
-  // how much of the server's total the page then holds.
-  for (const status of HISTORY_STATUSES) {
-    if (isHistoryLoaded(history.value[status])) void loadHistory(status);
+  // Every loaded slice re-reads its first page; the note under the buttons
+  // says how much of the server's total the page then holds.
+  for (const slice of APPROVAL_SLICES) {
+    if (isHistoryLoaded(slicePages.value[slice])) void loadSlice(slice);
   }
 }
 
@@ -1346,9 +1372,10 @@ const approvalMetrics = computed<Metric[]>(() => [
                filters and grouping cover only what was read. Saying exactly
                what is held is cheaper than an operator concluding a change
                never happened because its row was on a page they never asked
-               for. -->
+               for. The Stale bucket says it too: half its rows arrive in the
+               rejected agent updates, which is a paged read like any other. -->
           <div
-            v-if="historyStatuses.length"
+            v-if="bucketSlices.length"
             class="space-y-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
             data-history-note
           >
@@ -1364,12 +1391,12 @@ const approvalMetrics = computed<Metric[]>(() => [
             </p>
             <template v-else>
               <p v-if="historyNote.notLoaded.length">
-                {{ $t('operations.approvals.history.notLoaded', { statuses: historyNote.notLoaded.map((s) => $t('common.status.' + s)).join(', ') }) }}
+                {{ $t('operations.approvals.history.notLoaded', { statuses: historyNote.notLoaded.map(sliceLabel).join(', ') }) }}
               </p>
               <p v-for="part in historyNote.partial" :key="part.status" class="flex flex-wrap items-center gap-2">
-                <span>{{ $t('operations.approvals.history.partial', { status: $t('common.status.' + part.status), loaded: part.loaded, total: part.total }) }}</span>
-                <Button type="button" variant="outline" size="sm" @click="loadHistory(part.status, true)">
-                  {{ $t('operations.approvals.history.loadMore', { count: Math.min(HISTORY_PAGE_SIZE, part.total - part.loaded), status: $t('common.status.' + part.status) }) }}
+                <span>{{ $t('operations.approvals.history.partial', { status: sliceLabel(part.status), loaded: part.loaded, total: part.total }) }}</span>
+                <Button type="button" variant="outline" size="sm" @click="loadSlice(part.status, true)">
+                  {{ $t('operations.approvals.history.loadMore', { count: Math.min(HISTORY_PAGE_SIZE, part.total - part.loaded), status: sliceLabel(part.status) }) }}
                 </Button>
               </p>
               <p v-if="historyNote.complete">{{ $t('operations.approvals.history.complete') }}</p>
