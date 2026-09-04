@@ -736,6 +736,7 @@ async function deleteMonitor() {
                 v-model="monitorTarget"
                 required
                 :aria-invalid="!!tlsTargetProblem"
+                :aria-describedby="tlsTargetProblem ? 'monitor-target-error' : undefined"
                 :placeholder="
                   isCertWatch
                     ? $t('fleet.monitoring.create.targetTlsPlaceholder')
@@ -744,7 +745,19 @@ async function deleteMonitor() {
                       : $t('fleet.monitoring.create.targetHttpPlaceholder')
                 "
               />
-              <p v-if="tlsTargetProblem" class="text-xs text-destructive">
+              <!--
+                The message carries the reason, so it has to be reachable by
+                the reader who cannot see the red: aria-invalid alone announces
+                "invalid" and stops, which is the one word the operator already
+                knows. Same wiring as the observed hostname field on Self-host
+                DNS.
+              -->
+              <p
+                v-if="tlsTargetProblem"
+                id="monitor-target-error"
+                role="alert"
+                class="text-xs text-destructive"
+              >
                 {{ $t('fleet.monitoring.create.targetTlsError') }}
               </p>
             </div>

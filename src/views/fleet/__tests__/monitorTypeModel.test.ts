@@ -147,3 +147,15 @@ test("MonitoringView switches type through the reducer instead of overwriting", 
   );
   assert.doesNotMatch(watcher, /assignAll\.value = true/, "the watcher still forces assign-all");
 });
+
+test("the tls target error is announced, not left as an unexplained invalid field", () => {
+  // aria-invalid on its own says "invalid" and stops, which is the one word the
+  // operator already knows. The sentence that says a certificate watch takes
+  // host:port has to reach the reader who cannot see the red border.
+  const view = readFileSync(new URL("../MonitoringView.vue", import.meta.url), "utf8");
+  const field = view.slice(view.indexOf('id="monitor-target"'), view.indexOf('id="monitor-type"'));
+  assert.ok(field.length > 0, "MonitoringView no longer has a target field before the type select");
+  assert.match(field, /:aria-describedby="tlsTargetProblem \? 'monitor-target-error' : undefined"/);
+  assert.match(field, /id="monitor-target-error"/);
+  assert.match(field, /role="alert"/);
+});
