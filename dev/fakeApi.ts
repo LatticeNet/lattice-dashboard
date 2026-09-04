@@ -46,6 +46,17 @@ function knockDigest(nodeId: string): string {
   return knockPorts(nodeId).map((p) => p.toString(16).padStart(4, "0")).join("").padEnd(64, "0");
 }
 
+/** Whether an arm plan carried a firewall with a knock, read from the header line RenderArmPlan writes. */
+function planKnocks(a: ApprovalView): boolean {
+  return /^knock: true$/m.test(a.plan ?? "");
+}
+
+/** The port the arm plan moved sshd to, as the server reads it back out of the plan. */
+function planSshPort(a: ApprovalView | undefined): number {
+  const m = /^ssh_port:\s*(\d+)\s*$/m.exec(a?.plan ?? "");
+  return m ? Number(m[1]) : 58394;
+}
+
 // Two of the failed-arm nodes misbehave on purpose so the batch outcome shows
 // every kind at once: one is refused by the pre-check, one fails outright.
 const LINT_BLOCKED = nodeByName("[Metix]-DMIT-1")?.id;
@@ -203,7 +214,11 @@ export const api = {
       if (!node) throw new ApiError(404, "not_found", "node not found");
       const mine = state.approvals.filter((a) => a.node_id === node_id && a.plugin === "sshguard");
       const arms = mine.filter((a) => a.action === "sshguard-arm:v1");
-      const appliedArms = arms.filter((a) => a.status === "applied");
+      // The arm that governs the knock is the newest applied one that carried
+      // a firewall with a sequence, as the server's sshGuardKnockStateFor
+      // reads it: a hardening-only re-arm on top neither supplies nor
+      // retires a knock, so it is skipped and the earlier arm is named.
+      const appliedArms = arms.filter((a) => a.status === "applied" && planKnocks(a));
       const applied = appliedArms.length ? appliedArms[appliedArms.length - 1] : undefined;
       const confirmed = mine.some((a) => a.action === "sshguard-confirm:v1" && a.status === "applied");
       // An arm retired as superseded still governs the node when a confirm
@@ -233,7 +248,7 @@ export const api = {
         return {
           ok: true, node_id, knowledge: "installed_superseded" as const, revealable: true,
           requires_step_up: true, interactive_only: true, approval_id: supersededArm.id, confirmed: false,
-          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394, ...previous,
+          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(supersededArm), ...previous,
           note: "The control plane knows this node's knock sequence from an arm record that was later dismissed as superseded. The dismissal retired the record, not the change: the arm and a confirm after it were both approved and dispatched before apply results were recorded on approvals, so neither outcome was written back. No later plan has replaced the knock since. Treat this as the sequence the node was last told to run, and prove it with a knock before relying on it.",
         };
       }
@@ -251,7 +266,7 @@ export const api = {
         return {
           ok: true, node_id, knowledge: "planned" as const, revealable: true,
           requires_step_up: true, interactive_only: true, approval_id: live[live.length - 1]!.id,
-          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394,
+          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(live[live.length - 1]),
           note: "An SSH Guard plan for this node carries a knock sequence, but it has not been applied. The node is not knocking on it yet.",
         };
       }
@@ -259,7 +274,7 @@ export const api = {
         ok: true, node_id, knowledge: "installed" as const, revealable: true,
         requires_step_up: true, interactive_only: true, approval_id: applied.id,
         applied_at: applied.updated_at, confirmed,
-        port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394,
+        port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(applied),
         ...(confirmed ? {} : previous),
         note: confirmed
           ? "The control plane knows this node's knock sequence. It was applied and confirmed, so it is the sequence the node is running."
@@ -278,11 +293,12 @@ export const api = {
       const addr = node.publicIp;
       const stateNow: SSHGuardKnockStateResponse = await api.sshGuard.knockState(node_id);
       const digest = knockDigest(node.id);
+      const sshPort = stateNow.ssh_port ?? 58394;
       return {
         ok: true, node_id, knowledge: stateNow.knowledge, approval_id: stateNow.approval_id ?? fixtureId("apr"),
         note: stateNow.note, confirmed: stateNow.confirmed ?? false,
-        ports, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394, address: addr,
-        command: `for p in ${ports.join(" ")}; do printf k | nc -u -w1 ${addr} $p; sleep 1; done\nssh -p 58394 root@${addr}`,
+        ports, seq_timeout_sec: 15, open_for: "12h", ssh_port: sshPort, address: addr,
+        command: `for p in ${ports.join(" ")}; do printf k | nc -u -w1 ${addr} $p; sleep 1; done\nssh -p ${sshPort} root@${addr}`,
         sequence_sha256: digest,
         ...(stateNow.previous_honoured && node.previousPorts ? { previous_ports: node.previousPorts } : {}),
       };
