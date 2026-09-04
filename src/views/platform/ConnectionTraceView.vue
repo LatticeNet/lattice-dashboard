@@ -271,19 +271,37 @@ const coverage = computed(() => traceBytesCoverage(records.value));
  * do to the filters will ever help. The server reports what the store holds
  * for the nodes they may see, so the page says which of the two it is.
  */
-const emptyReason = computed(() => (loadedOnce.value ? connEmptyReason(paging.value) : ""));
-const nothingCollected = computed(() => emptyReason.value === "nothing-collected");
-const resultsEmptyTitle = computed(() =>
-  nothingCollected.value
-    ? t("platform.trace.nothingCollectedTitle")
-    : t("platform.trace.resultsEmptyTitle"),
+/**
+ * The nodes this operator may see, as evidence for the empty state.
+ *
+ * The server answers a caller with no visible node before it reaches the trace
+ * store, and that response reads as collected_total 0, which the page turned
+ * into "nothing has been collected, switch collection on". /api/nodes filters
+ * on the same allowlist, so an operator holding node:read who sees no node
+ * sees none for log:read either, and the page can say the true thing instead.
+ */
+const visibleNodes = computed(() => ({
+  known: canReadNodes.value && nodesQuery.data.value !== undefined && !nodesQuery.error.value,
+  count: nodes.value.length,
+}));
+
+const emptyReason = computed(() =>
+  loadedOnce.value ? connEmptyReason(paging.value, visibleNodes.value) : "",
 );
+const nothingCollected = computed(() => emptyReason.value === "nothing-collected");
+const noVisibleNodes = computed(() => emptyReason.value === "no-visible-nodes");
+const resultsEmptyTitle = computed(() => {
+  if (noVisibleNodes.value) return t("platform.trace.noVisibleNodesTitle");
+  if (nothingCollected.value) return t("platform.trace.nothingCollectedTitle");
+  return t("platform.trace.resultsEmptyTitle");
+});
 // How far to widen. Telling an operator to widen the range without saying how
 // far is what makes them step through 6h, 24h and 7d over a store whose newest
 // record is days older than any of them. When the server names that record,
 // the empty state names it too.
 const emptyNewestAt = computed(() => connEmptyNewestAt(paging.value));
 const resultsEmptyDescription = computed(() => {
+  if (noVisibleNodes.value) return t("platform.trace.noVisibleNodesDescription");
   if (nothingCollected.value) return t("platform.trace.nothingCollectedDescription");
   if (emptyReason.value === "nothing-matched") {
     return emptyNewestAt.value

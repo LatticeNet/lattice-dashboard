@@ -632,25 +632,61 @@ export function emptyConnTracePaging(): ConnTracePaging {
 }
 
 /**
+ * What the console knows about the nodes this operator may see.
+ *
+ * `known` is false whenever the console never read the list: without node:read
+ * it does not ask, and a failed request leaves it with nothing. An unread list
+ * is not an empty fleet, so the two are kept apart here rather than collapsed
+ * into a count of zero.
+ */
+export interface ConnVisibleNodes {
+  known: boolean;
+  count: number;
+}
+
+/**
  * Why the connections table is empty.
  *
  * "Nothing matched these filters" was the only answer the page had, and on a
  * fleet with every collection policy off it was a confident wrong one: the
  * operator widens the time range, drops filters, and finds nothing, because
  * nothing was ever recorded. The server now reports what the store holds for
- * the nodes the caller may see, so the three cases separate:
+ * the nodes the caller may see, so the cases separate:
  *
+ * - "no-visible-nodes": the operator can see no node at all, so there is no
+ *   node whose evidence could be searched or collected.
  * - "nothing-collected": the store holds no record at all for those nodes.
  * - "nothing-matched": it holds records and this filter selected none of them.
  * - "unknown": the server did not report, so the page keeps the old wording
  *   rather than guessing which of the two it is.
  *
+ * The visible-node case comes first because the server answers that path
+ * before it ever reaches the store: handleTraceRecords returns an empty page
+ * when visibleNodeIDs() is empty, and collected_total carries no omitempty, so
+ * that response reads as collected_total 0. Without this branch an operator
+ * whose allowlist matches no enrolled node was told the fleet had collected
+ * nothing and to switch collection on, and sent to a policy tab that is empty
+ * for the same reason. The node list settles it: /api/nodes filters on the
+ * same ServerAllowlist that visibleNodeIDs() uses, so a caller holding
+ * node:read who sees no node sees none for log:read either.
+ *
  * Returns "" while rows are on screen.
  */
-export type ConnEmptyReason = "" | "nothing-collected" | "nothing-matched" | "unknown";
+export type ConnEmptyReason =
+  | ""
+  | "no-visible-nodes"
+  | "nothing-collected"
+  | "nothing-matched"
+  | "unknown";
 
-export function connEmptyReason(state: ConnTracePaging): ConnEmptyReason {
+const NO_NODE_KNOWLEDGE: ConnVisibleNodes = { known: false, count: 0 };
+
+export function connEmptyReason(
+  state: ConnTracePaging,
+  nodes: ConnVisibleNodes = NO_NODE_KNOWLEDGE,
+): ConnEmptyReason {
   if (state.records.length > 0) return "";
+  if (nodes.known && nodes.count === 0) return "no-visible-nodes";
   if (state.collectedTotal === undefined) return "unknown";
   return state.collectedTotal === 0 ? "nothing-collected" : "nothing-matched";
 }

@@ -423,6 +423,34 @@ test("an empty table says whether nothing matched or nothing was collected", () 
   assert.equal(connEmptyReason(hasRows), "");
 });
 
+test("no visible node is its own answer, not a fleet that collected nothing", () => {
+  // handleTraceRecords returns an empty page before it touches the trace store
+  // when visibleNodeIDs() is empty, and collected_total carries no omitempty,
+  // so that response arrives as collected_total 0. Read as "nothing
+  // collected", an operator whose allowlist matches no enrolled node was told
+  // the fleet had recorded nothing and to switch collection on, and sent to a
+  // policy tab that is empty for the same reason. The truth is that they can
+  // see no node at all.
+  const empty = appendConnPage(emptyConnTracePaging(), { records: [], collected_total: 0 });
+  assert.equal(connEmptyReason(empty, { known: true, count: 0 }), "no-visible-nodes");
+
+  // With a node in sight the collection answer is the right one again.
+  assert.equal(connEmptyReason(empty, { known: true, count: 3 }), "nothing-collected");
+
+  // An unread node list is not an empty fleet. Without node:read the console
+  // never asks, and claiming no node is visible would be the same confident
+  // wrong answer pointed the other way.
+  assert.equal(connEmptyReason(empty, { known: false, count: 0 }), "nothing-collected");
+  assert.equal(connEmptyReason(empty), "nothing-collected");
+
+  // Rows on screen settle it before any of this, and a server that never
+  // reported still gets the unknown wording.
+  const hasRows = appendConnPage(emptyConnTracePaging(), { records: [record()], collected_total: 0 });
+  assert.equal(connEmptyReason(hasRows, { known: true, count: 0 }), "");
+  const silent = appendConnPage(emptyConnTracePaging(), { records: [] });
+  assert.equal(connEmptyReason(silent, { known: true, count: 2 }), "unknown");
+});
+
 test("nothing matched says how far back the store's newest record is", () => {
   // "Widen the time range" without saying how far is what makes an operator
   // step through 6h, 24h and 7d and give up. Production's newest record is

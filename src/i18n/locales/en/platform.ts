@@ -435,6 +435,9 @@ export default {
         "The store holds records for these nodes, but none match this filter. Widen the time range, or drop a filter.",
       nothingMatchedNewestDescription:
         "The store holds records for these nodes, but none match this filter. The newest one it holds started at {newest}, so widen the time range past that, or drop a filter.",
+      noVisibleNodesTitle: "No node is visible to you",
+      noVisibleNodesDescription:
+        "Evidence is collected per node and this account can see no node, so there is nothing here to search and nothing to switch on. Either no node is enrolled yet, or your access is limited to nodes that are not.",
       nothingCollectedTitle: "Nothing has been collected",
       nothingCollectedDescription:
         "The trace store holds no connection record at all for the nodes you can see, so no filter will find one. Collection is set per node and is off until you switch it on.",
