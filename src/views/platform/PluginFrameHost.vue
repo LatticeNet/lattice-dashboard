@@ -15,6 +15,7 @@ import {
   pluginFramePhase,
 } from "./pluginFrameModel";
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
+import { PLUGIN_TOKEN_NAMES } from "./pluginTokenContract";
 import { claimViewportPane } from "@/layout/viewportPane";
 import { copyForFrame as hostCopy } from "./pluginClipboard";
 
@@ -160,23 +161,17 @@ function colorScheme(): string {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-const TOKEN_NAMES = [
-  "--background",
-  "--foreground",
-  "--card",
-  "--card-foreground",
-  "--muted",
-  "--muted-foreground",
-  "--border",
-  "--primary",
-  "--primary-foreground",
-  "--destructive",
-  "--ring",
-];
-
+/**
+ * The frame gets the console's chassis, not just its palette: colours, status
+ * semantics, radius, rows, spacing, type, elevation and motion. The list lives
+ * in pluginTokenContract.ts because the guard test and the bridge package both
+ * read it as one thing.
+ */
 function designTokens(): Record<string, string> {
   const styles = getComputedStyle(document.documentElement);
-  return Object.fromEntries(TOKEN_NAMES.map((name) => [name, styles.getPropertyValue(name).trim()]));
+  return Object.fromEntries(
+    PLUGIN_TOKEN_NAMES.map((name) => [name, styles.getPropertyValue(name).trim()]),
+  );
 }
 
 function postToFrame(message: BridgeHostMessage) {

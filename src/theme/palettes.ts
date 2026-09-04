@@ -68,9 +68,14 @@ export const PALETTES: Record<Exclude<ColorThemeName, "custom">, Palette> = {
   },
   teal: {
     swatch: "oklch(0.72 0.13 184)",
-    // Light: teal-600 with white text. Dark: bright teal-400 with a near-black
-    // foreground so on-accent text stays legible against the deep slate surfaces.
-    light: make("oklch(0.63 0.105 185)", "oklch(0.985 0.01 180)", "oklch(0.63 0.105 185)"),
+    // Light: teal-700 with white text. It was teal-600 (oklch 0.63), on which
+    // the near-white label measures 3.2:1 -- under AA for the console's primary
+    // button, which is the control that saves, applies and confirms. Same hue
+    // and chroma, one shade deeper, and the label reads 4.7:1. This is the rule
+    // the "claude" entry above already states for itself.
+    // Dark: bright teal-400 with a near-black foreground (11.2:1) so on-accent
+    // text stays legible against the deep slate surfaces.
+    light: make("oklch(0.53 0.105 185)", "oklch(0.985 0.01 180)", "oklch(0.53 0.105 185)"),
     dark: make("oklch(0.81 0.13 180)", "oklch(0.17 0.012 240)", "oklch(0.7 0.12 182)"),
   },
   blue: {
