@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Narrow viewport rig</title>
+    <!--
+      A phone-width viewport without a phone. The harness pages are ordinary
+      documents, so the only way to render one at 375 CSS pixels on a desktop
+      window is to give it a frame that is 375 CSS pixels wide.
+
+        open http://127.0.0.1:5210/dev/narrow.html?to=dns.html
+        open http://127.0.0.1:5210/dev/narrow.html?to=geo-routing.html&h=1400
+    -->
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; background: #0b0d10; font: 13px system-ui, sans-serif; color: #9aa4b2; }
+      header { padding: 8px 12px; }
+      iframe { width: 375px; border: 1px solid #2a313a; background: #0b0d10; display: block; }
+    </style>
+  </head>
+  <body>
+    <header>375 CSS px</header>
+    <iframe id="frame" title="Narrow viewport"></iframe>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const to = params.get("to") ?? "dns.html";
+      const frame = document.getElementById("frame");
+      frame.style.height = `${Number(params.get("h") ?? 1600)}px`;
+      frame.src = `/dev/${to}`;
+    </script>
+  </body>
+</html>
