@@ -323,6 +323,16 @@ async function openPlan(tunnel: TunnelView) {
                 {{ $t('networking.tunnels.newTunnel') }}
               </Button>
             </EmptyState>
+            <!--
+              Why this page has no demo, said plainly rather than left to be
+              inferred from an empty table. Every other empty surface in this
+              console can be shown working with a record that touches nothing;
+              this one cannot, and the reason is a prerequisite the operator
+              has to satisfy off-console.
+            -->
+            <p class="mx-auto mt-4 max-w-xl text-center text-sm text-muted-foreground">
+              {{ $t('networking.tunnels.noDemo') }}
+            </p>
           </template>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">

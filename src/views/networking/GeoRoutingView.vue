@@ -21,6 +21,7 @@ import {
   type Node,
 } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
+import { isDemoObject, onlyDemos } from "@/lib/demo";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -124,6 +125,17 @@ const nodesQuery = useAsyncData(
 );
 
 const routes = computed(() => routesQuery.data.value ?? []);
+
+/**
+ * Whether the only thing on this page is the demo. A control plane that drives
+ * production nodes must not seed itself with fake rows, but geo-routing is the
+ * one page here whose whole loop (author, render, checksum) touches no node at
+ * all, so one honestly named record can show the loop working instead of an
+ * empty screen. The explanation stands only while nothing real exists beside
+ * it, and it names the delete call so the demo is never load-bearing.
+ */
+const firstRun = computed(() => onlyDemos(routes.value.map((route) => route.name)));
+
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
 const sortedRoutes = computed(() =>
@@ -324,6 +336,26 @@ const continentEntries = computed(() =>
       </template>
     </PageHeader>
 
+    <!--
+      First run. The demo is one real record on the real control plane, so the
+      page has to say what it is, what a routing does, and what a routing of
+      the operator's own would have to name. It disappears the moment a record
+      that is not a demo exists.
+    -->
+    <Card v-if="firstRun" class="border-dashed">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <FileCode2 class="size-4 text-muted-foreground" aria-hidden="true" />
+          {{ $t('networking.geoRouting.demo.title') }}
+        </CardTitle>
+        <CardDescription>{{ $t('networking.geoRouting.demo.what') }}</CardDescription>
+      </CardHeader>
+      <CardContent class="space-y-2 text-sm text-muted-foreground">
+        <p>{{ $t('networking.geoRouting.demo.real') }}</p>
+        <p>{{ $t('networking.geoRouting.demo.remove') }}</p>
+      </CardContent>
+    </Card>
+
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
@@ -379,7 +411,12 @@ const continentEntries = computed(() =>
                   class="border-b border-border last:border-b-0"
                 >
                   <td class="py-3 pr-4">
-                    <div class="font-medium">{{ route.name || route.id }}</div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-medium">{{ route.name || route.id }}</span>
+                      <Badge v-if="isDemoObject(route.name)" variant="outline">
+                        {{ $t('networking.geoRouting.demo.badge') }}
+                      </Badge>
+                    </div>
                     <div class="font-mono text-xs text-muted-foreground">{{ shortId(route.id, 16) }}</div>
                   </td>
                   <td class="py-3 pr-4 font-mono text-xs">{{ route.hostname }}</td>
