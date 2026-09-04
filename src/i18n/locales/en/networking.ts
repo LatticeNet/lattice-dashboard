@@ -699,6 +699,8 @@ export default {
       description:
         "A subscription is the record that produces the config. A share is the public URL this server serves it on. Any path that is not a live share returns an empty 404, so a prober cannot tell an existing share from a missing one.",
       publish: "Publish",
+      plane:
+        "A share is the plugin origin of the publishing plane that also carries the KV and Static origins: the URL and who may fetch it belong to the platform, while the subscription behind it belongs to the Sub-Store plugin.",
       publishTitle: "Publish a subscription",
       publishDescription:
         "Pick the record to serve. The URL is live the moment it is created, and its token is what makes it unguessable.",

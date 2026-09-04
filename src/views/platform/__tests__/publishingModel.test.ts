@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  WORKERS_REDIRECT_TO,
+  accessLegend,
+  accessMode,
+  arrivedFromWorkers,
+  isFirstRun,
   isServing,
   originTarget,
   publishingState,
   recordsForShare,
   routeLabel,
   routePath,
+  showOriginPrimer,
   sortRecords,
 } from "../publishingModel.ts";
 
@@ -86,4 +92,115 @@ test("a share's routes come from the plane, not from a second idea of the URL", 
   assert.equal(mine.length, 1);
   assert.equal(routePath(mine[0]), "/sub/one");
   assert.equal(recordsForShare(rows, "missing").length, 0);
+});
+
+test("each origin carries its own answer to who may read it", () => {
+  // The three differ on the server and the table used to present them as one
+  // kind of thing: a KV route runs authorizeStorageToken on GET, a static
+  // route is anonymous public hosting, a share is a bearer token in the URL.
+  assert.equal(accessMode(record({ origin: "kv" })), "storage_token");
+  assert.equal(accessMode(record({ origin: "static" })), "anonymous");
+  assert.equal(accessMode(record({ origin: "plugin" })), "share_token");
+});
+
+test("an origin this console has never heard of is not guessed at", () => {
+  // Printing "anonymous" for a route that is not is the one wrong answer on
+  // this page an operator could act on and not recover from.
+  assert.equal(accessMode(record({ origin: "worker" })), "unknown");
+  assert.equal(accessMode(record({ origin: "" })), "unknown");
+});
+
+test("a route that exists ends the first run, reserved or not", () => {
+  // Reserved is the server saying the operator cannot move or delete this
+  // route from this page: publishingRecordFromShare sets it on every share.
+  // It is not a claim that nobody published anything, because a share only
+  // exists because an operator created it in the Publish dialog. Production
+  // runs exactly one record, a reserved share that is serving, and treating
+  // reserved as "not published on purpose" printed "nothing is published yet"
+  // directly above it.
+  assert.equal(isFirstRun([]), true);
+  assert.equal(isFirstRun([record({ reserved: true })]), false);
+  assert.equal(isFirstRun([record({ reserved: false })]), false);
+  assert.equal(isFirstRun([record({ reserved: true }), record({ reserved: false })]), false);
+});
+
+test("the origin primer does not tell an operator the plane is empty when they may not look at it", () => {
+  // The server returns origins: [] when the caller holds none of kv:admin,
+  // kv:read, static:admin or static:read, and the record list is empty for the
+  // same reason. Gated on the records alone, the primer rendered its "nothing
+  // is published yet" heading and taught three origins the operator has no
+  // access to, directly above the card saying they cannot see any origin.
+  assert.equal(
+    showOriginPrimer({ loaded: true, visibleOrigins: [], records: [] }),
+    false,
+  );
+
+  // A plane the operator can see, with nothing on it, is the run the primer
+  // exists for.
+  assert.equal(
+    showOriginPrimer({ loaded: true, visibleOrigins: ["kv", "static", "plugin"], records: [] }),
+    true,
+  );
+  assert.equal(
+    showOriginPrimer({ loaded: true, visibleOrigins: ["static"], records: [] }),
+    true,
+  );
+
+  // A route on the plane, reserved or not, means it has been published to.
+  assert.equal(
+    showOriginPrimer({
+      loaded: true,
+      visibleOrigins: ["kv", "static", "plugin"],
+      records: [record({ reserved: true })],
+    }),
+    false,
+  );
+
+  // A load that failed or has not returned says nothing at all; the table owns
+  // the error and loading states.
+  assert.equal(
+    showOriginPrimer({ loaded: false, visibleOrigins: [], records: [] }),
+    false,
+  );
+  assert.equal(
+    showOriginPrimer({ loaded: false, visibleOrigins: ["kv"], records: [] }),
+    false,
+  );
+});
+
+test("the access column explains itself without a pointer", () => {
+  // The badge carries its sentence in a title attribute on a span nothing can
+  // focus, and the primer that repeats it is gone as soon as a route exists.
+  // A keyboard or touch operator had no way left to learn what "Storage token"
+  // means, so the legend under the table lists every mode the table is
+  // actually showing, in the order the rows are grouped in.
+  const rows = [
+    record({ origin: "static" }),
+    record({ origin: "plugin" }),
+    record({ origin: "kv" }),
+    record({ origin: "static", hostname: "other.example" }),
+  ];
+  assert.deepEqual(accessLegend(rows), ["storage_token", "anonymous", "share_token"]);
+  assert.deepEqual(accessLegend([record({ origin: "static" })]), ["anonymous"]);
+  assert.deepEqual(accessLegend([]), []);
+});
+
+test("an origin the console cannot read is explained too, and explained last", () => {
+  // The unknown badge is the one an operator is most likely to stop at, so the
+  // legend has to carry its line rather than leaving the odd row unexplained.
+  assert.deepEqual(accessLegend([record({ origin: "worker" }), record({ origin: "kv" })]), [
+    "storage_token",
+    "unknown",
+  ]);
+});
+
+test("old Workers links land on Publishing and say so", () => {
+  // Store was the first redirect target and it answers a different question.
+  // The job Workers was held for was serving content at a URL.
+  assert.equal(WORKERS_REDIRECT_TO.path, "/platform/publishing");
+  assert.equal(arrivedFromWorkers(WORKERS_REDIRECT_TO.query), true);
+  assert.equal(arrivedFromWorkers({ from: ["workers"] }), true);
+  assert.equal(arrivedFromWorkers({}), false);
+  assert.equal(arrivedFromWorkers({ from: "store" }), false);
+  assert.equal(arrivedFromWorkers({ q: "workers" }), false);
 });

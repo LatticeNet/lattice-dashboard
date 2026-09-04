@@ -1,15 +1,26 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { Globe, Link2, RefreshCw, ShieldAlert } from "lucide-vue-next";
-import { RouterLink } from "vue-router";
+import { BookOpen, Globe, Link2, RefreshCw, ShieldAlert, Trash2 } from "lucide-vue-next";
+import { RouterLink, useRoute } from "vue-router";
 
 import { api, type PublishingRecord, type StorageKind } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { originTarget, publishingState, routeLabel, sortRecords } from "./publishingModel";
+import {
+  PUBLISHING_ORIGINS,
+  type PublishingAccessMode,
+  accessLegend,
+  accessMode,
+  arrivedFromWorkers,
+  originTarget,
+  publishingState,
+  routeLabel,
+  showOriginPrimer as originPrimerVisible,
+  sortRecords,
+} from "./publishingModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -26,6 +37,11 @@ import {
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const route = useRoute();
+
+// An old /platform/workers bookmark lands here. Saying so beats dropping the
+// operator on a page they did not ask for and letting them work out why.
+const fromWorkers = computed(() => arrivedFromWorkers(route.query));
 
 // The storage forms below edit one origin at a time. Which origins the operator
 // may edit is the server's answer, not a guess, so an origin they cannot admin
@@ -56,8 +72,54 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
   { key: "route", label: t("platform.publishing.columnRoute"), searchable: true },
   { key: "origin", label: t("platform.publishing.columnOrigin"), sortable: true, searchable: true },
   { key: "target", label: t("platform.publishing.columnServes"), searchable: true },
+  // The column this page was missing. "Who may read it" is half of what the
+  // plane is for, and the three origins answer it three different ways: a KV
+  // route demands a storage token even on GET, a static route is anonymous,
+  // and a share carries its bearer token in the URL. Without the column the
+  // table presented all three as one kind of thing.
+  {
+    key: "access",
+    label: t("platform.publishing.columnAccess"),
+    sortable: true,
+    searchable: true,
+    value: (record) => t(`platform.publishing.access.${accessMode(record)}`),
+  },
   { key: "state", label: t("platform.publishing.columnState") },
 ]);
+
+/**
+ * The three origins, explained once, while the plane still holds no route.
+ * A reserved route counts as a route: the server marks every share reserved to
+ * say the operator cannot move or delete it here, and a share exists because
+ * an operator published one.
+ */
+const showOriginPrimer = computed(() =>
+  originPrimerVisible({
+    loaded: loaded.value,
+    visibleOrigins: visibleOrigins.value,
+    records: records.value,
+  }),
+);
+
+/**
+ * The access column's own explanation, kept on the page rather than in a
+ * pointer-only tooltip. The badge's title attribute sits on a span nothing can
+ * focus, so tabbing the page goes from the search box straight into the bucket
+ * form and never reaches it, and the primer that says the same thing is only
+ * shown while the plane is empty. The legend covers the modes on screen.
+ */
+const visibleAccessModes = computed(() => accessLegend(records.value));
+
+// Anonymous is the one mode that reads as a warning: it is the only route
+// anybody who knows the URL can fetch. The badge and the legend line share the
+// rule so the same mode cannot be coloured two ways on one page.
+function accessModeVariant(mode: PublishingAccessMode) {
+  return mode === "anonymous" ? "warning" : "secondary";
+}
+
+function accessVariant(record: Pick<PublishingRecord, "origin">) {
+  return accessModeVariant(accessMode(record));
+}
 
 function stateVariant(record: PublishingRecord) {
   switch (publishingState(record)) {
@@ -89,6 +151,49 @@ function stateVariant(record: PublishingRecord) {
         </Button>
       </template>
     </PageHeader>
+
+    <!-- Where Workers went, said once, to whoever followed an old link. -->
+    <p
+      v-if="fromWorkers"
+      class="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground"
+    >
+      <Trash2 aria-hidden="true" class="mt-0.5 size-4 shrink-0" />
+      <span>{{ $t('platform.publishing.workersRemoved') }}</span>
+    </p>
+
+    <!--
+      What the three origins are, shown while nothing has been published on
+      purpose. It carries the same access badges the table does, so the column
+      and the explanation teach each other rather than sitting apart.
+    -->
+    <Card v-if="showOriginPrimer">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <BookOpen aria-hidden="true" class="size-4 text-muted-foreground" />
+          {{ $t('platform.publishing.primerTitle') }}
+        </CardTitle>
+        <CardDescription>{{ $t('platform.publishing.primerDescription') }}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <dl class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="origin in PUBLISHING_ORIGINS"
+            :key="origin"
+            class="rounded-md border border-border bg-muted/20 p-3"
+          >
+            <dt class="flex flex-wrap items-center gap-2">
+              <span class="text-sm font-medium">{{ $t(`platform.publishing.origin.${origin}`) }}</span>
+              <Badge :variant="accessVariant({ origin })" class="text-[10px]">
+                {{ $t(`platform.publishing.access.${accessMode({ origin })}`) }}
+              </Badge>
+            </dt>
+            <dd class="mt-2 text-sm leading-relaxed text-muted-foreground">
+              {{ $t(`platform.publishing.primer.${origin}`) }}
+            </dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>
@@ -143,6 +248,11 @@ function stateVariant(record: PublishingRecord) {
             </RouterLink>
             <span v-else class="font-mono text-xs">{{ originTarget(row) }}</span>
           </template>
+          <template #cell-access="{ row }">
+            <Badge :variant="accessVariant(row)" :title="$t(`platform.publishing.accessHint.${accessMode(row)}`)">
+              {{ $t(`platform.publishing.access.${accessMode(row)}`) }}
+            </Badge>
+          </template>
           <template #cell-state="{ row }">
             <Badge :variant="stateVariant(row)">
               {{ $t(`platform.publishing.state.${publishingState(row)}`) }}
@@ -152,6 +262,26 @@ function stateVariant(record: PublishingRecord) {
             </span>
           </template>
         </DataTable>
+
+        <!--
+          What the Access column means, for every input method. Keyboard and
+          touch operators cannot reach a title attribute, so the sentences the
+          badges carry are also on the page, under the table they describe.
+        -->
+        <dl
+          v-if="visibleAccessModes.length"
+          class="mt-4 space-y-1.5 border-t border-border pt-3 text-xs text-muted-foreground"
+        >
+          <div class="font-medium text-foreground">{{ $t('platform.publishing.accessLegendTitle') }}</div>
+          <div v-for="mode in visibleAccessModes" :key="mode" class="flex flex-wrap items-baseline gap-2">
+            <dt>
+              <Badge :variant="accessModeVariant(mode)" class="text-[10px]">
+                {{ $t(`platform.publishing.access.${mode}`) }}
+              </Badge>
+            </dt>
+            <dd class="min-w-0 flex-1 leading-relaxed">{{ $t(`platform.publishing.accessHint.${mode}`) }}</dd>
+          </div>
+        </dl>
       </CardContent>
     </Card>
 
