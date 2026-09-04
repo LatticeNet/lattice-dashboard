@@ -82,6 +82,7 @@ import {
   revertDeadline,
   ROTATION_CONFIRM_WINDOW_SEC,
   buildRotationRequest,
+  governingArm,
   rotateEligibility,
   rotateOpenable,
   rotationDeadline,
@@ -313,24 +314,44 @@ function rotateServerFor(state: NodeGuardState): SSHGuardKnockStateResponse | un
   return (state.nodeId === rotateNodeId.value && rotateState.value) || knockRows.value.get(state.nodeId);
 }
 
+/**
+ * The arm the rotation repeats. Not `state.arm`: that is the newest record,
+ * and a hardening-only re-arm or a rejected re-plan is newest without
+ * governing the knock. The server names the governing arm in its answer.
+ */
+function rotateGoverningFor(state: NodeGuardState): ApprovalView | undefined {
+  return governingArm(approvals.value, state.nodeId, rotateServerFor(state));
+}
+
 function rotateSshPortFor(state: NodeGuardState): number | undefined {
-  return rotationSshPort(rotateServerFor(state), state.arm, evidence.value.get(state.nodeId)?.sshd?.ports ?? []);
+  return rotationSshPort(rotateServerFor(state), rotateGoverningFor(state), evidence.value.get(state.nodeId)?.sshd?.ports ?? []);
+}
+
+/** Whether one row can be rotated as it stands, with the advanced field empty. */
+function rowRotate(state: NodeGuardState): RotateEligibility {
+  return rotateEligibility([knockRowKnowledge(state, rotateServerFor(state))], "", rotateSshPortFor(state), rotateGoverningFor(state));
 }
 
 /** The header button reads the selection; the dialog reads its own node and the advanced field. */
 const headerRotate = computed<RotateEligibility>(() => {
   const rows = selectedVisible.value;
-  const only = rows.length === 1 ? rows[0] : undefined;
+  if (rows.length === 1) return rowRotate(rows[0] as NodeGuardState);
   return rotateEligibility(
     rows.map((row) => knockRowKnowledge(row, rotateServerFor(row))),
     "",
-    only ? rotateSshPortFor(only) : undefined,
+    undefined,
+    undefined,
   );
 });
 const rotateEligible = computed<RotateEligibility>(() => {
   const target = rotateTarget.value;
-  if (!target) return rotateEligibility([], rotatePrevious.value, undefined);
-  return rotateEligibility([knockRowKnowledge(target, rotateServerFor(target))], rotatePrevious.value, rotateSshPortFor(target));
+  if (!target) return rotateEligibility([], rotatePrevious.value, undefined, undefined);
+  return rotateEligibility(
+    [knockRowKnowledge(target, rotateServerFor(target))],
+    rotatePrevious.value,
+    rotateSshPortFor(target),
+    rotateGoverningFor(target),
+  );
 });
 
 const ROTATE_REASON: Record<RotateRefusalCode, string> = {
@@ -340,6 +361,7 @@ const ROTATE_REASON: Record<RotateRefusalCode, string> = {
   port_unknown: "portUnknown",
   previous_ports_required: "previousRequired",
   previous_ports_invalid: "previousInvalid",
+  arm_unresolved: "armUnresolved",
 };
 
 /** One sentence for why the control is inert, or nothing when it is not. */
@@ -348,7 +370,7 @@ function rotateReason(e: RotateEligibility): string | undefined {
 }
 
 const rotateSshPort = computed(() => (rotateTarget.value ? rotateSshPortFor(rotateTarget.value) : undefined));
-const rotateFallback = computed(() => rotationFallbackFor(rotateTarget.value?.arm));
+const rotateFallback = computed(() => rotationFallbackFor(rotateTarget.value ? rotateGoverningFor(rotateTarget.value) : undefined));
 const rotateUnknown = computed(
   () => !!rotateTarget.value && knockRowKnowledge(rotateTarget.value, rotateServerFor(rotateTarget.value)).knowledge === "unknown",
 );
@@ -1444,8 +1466,8 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                     class="row-action"
                     size="sm"
                     variant="ghost"
-                    :disabled="!canAdmin"
-                    :title="$t('networking.sshGuard.rotate.titleFor', { name: state.name || state.nodeId })"
+                    :disabled="!canAdmin || !rotateOpenable(rowRotate(state))"
+                    :title="rotateReason(rowRotate(state)) ?? $t('networking.sshGuard.rotate.titleFor', { name: state.name || state.nodeId })"
                     @click="openRotate(state.nodeId)"
                   >
                     <RotateCw class="size-4" aria-hidden="true" />

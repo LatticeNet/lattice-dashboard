@@ -142,6 +142,7 @@ export default {
         noKnock: "这台节点的 SSH Guard 没有启用端口敲门，没有序列可轮换。",
         unknownOpen: "控制面从未在这台节点上安装过序列。可在「高级」里从节点现在使用的序列发起轮换。",
         portUnknown: "这里没有任何信息说明 sshd 监听哪个端口，无法提交轮换。等节点下一次上报 guard-reality 快照。",
+        armUnresolved: "控制面指认的安装了这台节点序列的加固审批不在本页上，无法从这里读出它的后备通路和端口。刷新审批后再试。",
         previousRequired: "在「高级」里填写节点现在使用的序列。",
         previousInvalid: "旧序列必须是 20000 到 60000 之间的三个互不相同的端口。",
         portLabel: "SSH",

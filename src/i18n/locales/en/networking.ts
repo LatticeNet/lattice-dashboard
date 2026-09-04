@@ -147,6 +147,7 @@ export default {
         noKnock: "This node is guarded without port knocking. There is no sequence to rotate.",
         unknownOpen: "The control plane never installed a sequence on this node. Rotation is possible under Advanced, from the sequence the node runs today.",
         portUnknown: "Nothing here says which port sshd listens on, so a rotation cannot be filed. Wait for the node's next guard-reality snapshot.",
+        armUnresolved: "The control plane names an arm this page does not hold as the one that installed this node's sequence, so its fallback and port cannot be read here. Refresh the approvals and try again.",
         previousRequired: "Type the sequence the node runs today under Advanced.",
         previousInvalid: "The previous sequence must be exactly three distinct ports between 20000 and 60000.",
         portLabel: "SSH",

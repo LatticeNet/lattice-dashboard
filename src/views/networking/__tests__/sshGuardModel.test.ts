@@ -11,6 +11,7 @@ import {
   defaultGuardForm,
   deriveNodeGuardState,
   emptyAdvancedForm,
+  governingArm,
   guardCoverage,
   hasBlocking,
   knockKnowledgeFor,
@@ -492,31 +493,33 @@ test("the row reads its plan until the server answers, then the server's word st
 // ── knock rotation ──────────────────────────────────────────────────────────
 
 const PREVIOUS = "27431 45902 38117";
+/** The arm the server names as governing, held on the page. */
+const GOVERNING = { plan: "stage: arm\nssh_port: 58394\nknock: true\n" };
 
 test("rotation is offered by digest for an installed sequence, plain or from a retired record", () => {
-  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", 58394), { ok: true, path: "digest" });
-  assert.deepEqual(rotateEligibility([{ knowledge: "installed_superseded" }], "", 58394), { ok: true, path: "digest" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", 58394, GOVERNING), { ok: true, path: "digest" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed_superseded" }], "", 58394, GOVERNING), { ok: true, path: "digest" });
   // The digest path never reads the advanced field, even when it is filled.
-  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], PREVIOUS, 58394), { ok: true, path: "digest" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], PREVIOUS, 58394, GOVERNING), { ok: true, path: "digest" });
 });
 
 test("rotation acts on exactly one row", () => {
-  assert.deepEqual(rotateEligibility([], "", 58394), { ok: false, code: "select_one" });
-  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }, { knowledge: "installed" }], "", 58394), { ok: false, code: "select_one" });
+  assert.deepEqual(rotateEligibility([], "", 58394, GOVERNING), { ok: false, code: "select_one" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }, { knowledge: "installed" }], "", 58394, GOVERNING), { ok: false, code: "select_one" });
 });
 
 test("a planned or knock-less row has nothing to rotate from, and says which", () => {
-  assert.deepEqual(rotateEligibility([{ knowledge: "planned" }], PREVIOUS, 58394), { ok: false, code: "planned" });
-  assert.deepEqual(rotateEligibility([{ knowledge: "no_knock" }], PREVIOUS, 58394), { ok: false, code: "no_knock" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "planned" }], PREVIOUS, 58394, GOVERNING), { ok: false, code: "planned" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "no_knock" }], PREVIOUS, 58394, GOVERNING), { ok: false, code: "no_knock" });
 });
 
 test("an unknown row rotates only by the advanced path, once the previous ports are well formed", () => {
-  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "", 3434), { ok: false, code: "previous_ports_required" });
-  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "   ", 3434), { ok: false, code: "previous_ports_required" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "", 3434, undefined), { ok: false, code: "previous_ports_required" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "   ", 3434, undefined), { ok: false, code: "previous_ports_required" });
   for (const bad of ["1 2 3", "27431 45902", "27431 45902 45902", "27431,45902,38117,20001", "27431 abc 38117"]) {
-    assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], bad, 3434), { ok: false, code: "previous_ports_invalid" }, bad);
+    assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], bad, 3434, undefined), { ok: false, code: "previous_ports_invalid" }, bad);
   }
-  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "27431, 45902, 38117", 3434), {
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "27431, 45902, 38117", 3434, undefined), {
     ok: true,
     path: "previous_ports",
     ports: [27431, 45902, 38117],
@@ -524,7 +527,7 @@ test("an unknown row rotates only by the advanced path, once the previous ports 
 });
 
 test("no known ssh port refuses the rotation before a request is built", () => {
-  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", undefined), { ok: false, code: "port_unknown" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", undefined, GOVERNING), { ok: false, code: "port_unknown" });
 });
 
 test("the dialog opens for an installed row and for an unknown row that still needs its ports, not for the rest", () => {
@@ -534,6 +537,59 @@ test("the dialog opens for an installed row and for an unknown row that still ne
   assert.equal(rotateOpenable({ ok: false, code: "planned" }), false);
   assert.equal(rotateOpenable({ ok: false, code: "no_knock" }), false);
   assert.equal(rotateOpenable({ ok: false, code: "select_one" }), false);
+  assert.equal(rotateOpenable({ ok: false, code: "arm_unresolved" }), false);
+});
+
+test("an installed sequence whose governing arm is not on the page is refused before the port is even read", () => {
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", 58394, undefined), { ok: false, code: "arm_unresolved" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed_superseded" }], "", undefined, undefined), { ok: false, code: "arm_unresolved" });
+  // The advanced path never needs an arm: the control plane installed nothing there.
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], PREVIOUS, 3434, undefined), { ok: true, path: "previous_ports", ports: [27431, 45902, 38117] });
+});
+
+// A node armed twice: the first arm moved sshd to 3434 behind two management
+// sources and installed the knock; a later hardening-only re-arm tightened
+// sshd and touched neither. The newest record governs no knock, and a
+// rotation read off it would file the wrong fallback and the wrong port.
+const KNOCK_ARM_PLAN =
+  "# Lattice SSH Guard plan\n\nstage: arm\nnode_id: hk-edge-01\nssh_port: 3434\nkeep_legacy_port: true\nknock: true\ngated_ports: 22, 3434\nconfirm_window_sec: 900\n\n## Management sources (reach SSH without knocking, no expiry)\n\n- 203.0.113.5/32\n- 198.51.100.0/24\n\n## sshd drop-in: /etc/ssh/sshd_config.d/50-lattice-guard.conf\n";
+const HARDENING_ARM_PLAN =
+  "# Lattice SSH Guard plan\n\nstage: arm\nnode_id: hk-edge-01\nssh_port: 0\nkeep_legacy_port: true\nknock: false\nconfirm_window_sec: 3600\n\n## sshd drop-in: /etc/ssh/sshd_config.d/50-lattice-guard.conf\n";
+const REARMED = [
+  arm({ id: "arm-knock", status: "applied", plan: KNOCK_ARM_PLAN, created_at: "2026-08-20T10:00:00Z", updated_at: "2026-08-20T10:01:00Z" }),
+  confirm({ id: "cfm-knock", status: "applied", created_at: "2026-08-20T10:05:00Z", updated_at: "2026-08-20T10:06:00Z" }),
+  arm({ id: "arm-hardening", status: "applied", plan: HARDENING_ARM_PLAN, created_at: "2026-08-28T10:00:00Z", updated_at: "2026-08-28T10:01:00Z" }),
+  confirm({ id: "cfm-hardening", status: "applied", created_at: "2026-08-28T10:05:00Z", updated_at: "2026-08-28T10:06:00Z" }),
+];
+
+test("the governing arm is the one the server names, not the newest record on the node", () => {
+  const state = deriveNodeGuardState(REARMED, NODE);
+  assert.equal(state.arm?.id, "arm-hardening", "the newest arm is the hardening-only re-arm");
+  const governing = governingArm(REARMED, NODE, { approval_id: "arm-knock" });
+  assert.equal(governing?.id, "arm-knock");
+  const sshPort = rotationSshPort({ approval_id: "arm-knock" }, governing, [22, 3434]);
+  const req = buildRotationRequest({ nodeId: NODE, sshPort: sshPort ?? 0, from: { sha256: "ab".repeat(32) }, fallback: rotationFallbackFor(governing) });
+  assert.equal(req.ssh_port, 3434);
+  assert.deepEqual(req.mgmt_sources, ["203.0.113.5/32", "198.51.100.0/24"]);
+  assert.equal("out_of_band_fallback" in req, false, "the governing arm listed sources, so the rotation must not fall back to the terminal");
+});
+
+test("without the server's word, the governing arm is the newest applied arm that declared a knock", () => {
+  const governing = governingArm(REARMED, NODE, undefined);
+  assert.equal(governing?.id, "arm-knock");
+  assert.equal(governingArm(REARMED, NODE, {})?.id, "arm-knock", "an answer with no approval_id reads the same as no answer");
+  const req = buildRotationRequest({ nodeId: NODE, sshPort: rotationSshPort(undefined, governing, [22]) ?? 0, from: { sha256: "x" }, fallback: rotationFallbackFor(governing) });
+  assert.equal(req.ssh_port, 3434);
+  assert.deepEqual(req.mgmt_sources, ["203.0.113.5/32", "198.51.100.0/24"]);
+  // A pending or rejected knock arm on top changes nothing: it never reached the node.
+  const withRejected = [...REARMED, arm({ id: "arm-rejected", status: "rejected", plan: KNOCK_ARM_PLAN.replace("3434", "4000"), created_at: "2026-08-29T10:00:00Z" })];
+  assert.equal(governingArm(withRejected, NODE, undefined)?.id, "arm-knock");
+});
+
+test("an arm the server names but this page does not hold resolves to nothing, never to a stand-in", () => {
+  assert.equal(governingArm(REARMED, NODE, { approval_id: "arm-from-elsewhere" }), undefined);
+  assert.equal(governingArm(REARMED, "other-node", { approval_id: "arm-knock" }), undefined, "the id must belong to this node");
+  assert.equal(governingArm([], NODE, undefined), undefined);
 });
 
 test("the ssh port comes from the server, then the arm plan, then what sshd is seen listening on", () => {

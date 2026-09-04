@@ -713,7 +713,9 @@ export type RotateRefusalCode =
   | "previous_ports_required"
   | "previous_ports_invalid"
   /** No source says which port sshd listens on. */
-  | "port_unknown";
+  | "port_unknown"
+  /** The sequence is installed, but the arm that installed it is not on this page: see governingArm. */
+  | "arm_unresolved";
 
 export type RotateEligibility =
   /** The ordinary path: reveal the installed sequence, hand the server its digest. */
@@ -723,10 +725,39 @@ export type RotateEligibility =
   | { ok: false; code: RotateRefusalCode };
 
 /**
+ * The arm whose plan a rotation stands on.
+ *
+ * NodeGuardState.arm is the newest arm by timestamp, which answers where the
+ * node sits in the sequence and nothing else: a hardening-only re-arm or a
+ * rejected re-plan is the newest record and governs no knock. The arm that
+ * does is the one the server names in the knock state's approval_id (its
+ * sshGuardKnockStateFor walks the node's whole history for it), and that is
+ * the record whose sources and port a rotation has to repeat, because the
+ * server arms exactly the shape the request describes. When the server has
+ * named an arm this page does not hold, nothing here is allowed to stand in
+ * for it. Without the server's word at all, the nearest reading is the newest
+ * applied arm that declared a knock; a retired record the server would still
+ * count cannot be told apart here, so that case waits for the server.
+ */
+export function governingArm(
+  approvals: readonly ApprovalView[],
+  nodeId: string,
+  server: Pick<SSHGuardKnockStateResponse, "approval_id"> | undefined,
+): ApprovalView | undefined {
+  const arms = approvals.filter(
+    (a) => isSSHGuardApproval(a) && a.node_id === nodeId && a.action === SSHGUARD_ARM_ACTION,
+  );
+  if (server?.approval_id) return arms.find((a) => a.id === server.approval_id);
+  return newest(arms.filter((a) => a.status === "applied" && parseKnockDeclared(a.plan) === true));
+}
+
+/**
  * Whether the selection can be rotated, and by which path.
  *
  * Installed knowledge (plain or from a retired record) goes by digest: the
  * server resolves the sequence itself, so the request never carries ports.
+ * That path also needs the governing arm on this page, since the request
+ * repeats its fallback and port; without it the dialog does not open.
  * Unknown knowledge can only go by the previous ports, and only once they
  * are typed and well formed; an empty field is "required", not "invalid",
  * so the header button can open the dialog for such a row without lying
@@ -737,11 +768,13 @@ export function rotateEligibility(
   selected: Pick<KnockRowKnowledge, "knowledge">[],
   previousPorts: string,
   sshPort: number | undefined,
+  governing: Pick<ApprovalView, "plan"> | undefined,
 ): RotateEligibility {
   if (selected.length !== 1) return { ok: false, code: "select_one" };
   const row = selected[0] as Pick<KnockRowKnowledge, "knowledge">;
   if (row.knowledge === "planned") return { ok: false, code: "planned" };
   if (row.knowledge === "no_knock") return { ok: false, code: "no_knock" };
+  if (KNOCK_INSTALLED.has(row.knowledge) && !governing) return { ok: false, code: "arm_unresolved" };
   if (sshPort === undefined) return { ok: false, code: "port_unknown" };
   if (KNOCK_INSTALLED.has(row.knowledge)) return { ok: true, path: "digest" };
   if (!hasFieldText(previousPorts)) return { ok: false, code: "previous_ports_required" };
@@ -802,7 +835,7 @@ export function parseArmMgmtSources(plan: string | undefined): string[] | undefi
 }
 
 /**
- * The fallback the last arm stood on, so the rotation stands on the same
+ * The fallback the governing arm stood on, so the rotation stands on the same
  * one. The plan records the sources it admitted; the terminal fallback is
  * not written into the plan text, so an arm with no sources is read as
  * having used it, which is the only profile the server would have accepted
