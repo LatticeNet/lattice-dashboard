@@ -515,6 +515,8 @@ export default {
       certExpired: "certificate expired {date}",
       certDays: "certificate expires in {days}d ({date})",
       realityCollected: "reality collected {time}",
+      driftFindingsToggle: "1 finding | {count} findings",
+      driftFindingsTitle: "What the node reports about {name}",
       realityNotObserved: "not observed",
       drift: {
         ok: "matches reality",

@@ -125,3 +125,42 @@ export function driftTone(status: string | undefined): "success" | "destructive"
       return "warning";
   }
 }
+
+// ── Deployments table layout ──────────────────────────────────────────────
+//
+// The table is auto-layout with eleven columns, and auto layout hands width to
+// whatever cannot shrink. A hostname is one unbreakable mono string, so its
+// column holds whatever it needs; the drift findings are prose that wraps
+// anywhere, so their minimum width is the longest single word and the browser
+// takes the rest away. The Reality column is the point of an observed record,
+// and it was the column being crushed.
+//
+// So the verdict and the countdown reserve width rather than capping it, the
+// two text columns that were hoarding it are capped and truncated, and the
+// findings themselves leave the row entirely for a full-width detail panel:
+// no column width makes a sentence read well beside ten other columns. These
+// live here, and not inline in the template, because "this column reserves
+// width" is the kind of claim that gets silently reverted to a max-width
+// during a tidy-up.
+
+/** Tailwind sizing applied to a deployments-table column, header and body cell. */
+export const DNS_COLUMN_SIZING: Record<"node" | "hostname" | "reality", string> = {
+  node: "max-w-[150px]",
+  hostname: "max-w-[150px]",
+  reality: "w-[190px] min-w-[190px] align-top",
+};
+
+/**
+ * Whether a class string reserves horizontal space instead of only capping it.
+ * `max-w-*` alone is a ceiling: a column that carries only one is free to be
+ * squeezed to its longest word, which is what happened to Reality.
+ */
+export function reservesWidth(classes: string | undefined): boolean {
+  return /(^|\s)(min-)?w-\[/.test(classes ?? "");
+}
+
+/** The reserved width in CSS pixels, or 0 when the class string reserves none. */
+export function reservedWidthPx(classes: string | undefined): number {
+  const widths = [...(classes ?? "").matchAll(/(?:^|\s)(?:min-)?w-\[(\d+)px\]/g)].map((m) => Number(m[1]));
+  return widths.length ? Math.min(...widths) : 0;
+}

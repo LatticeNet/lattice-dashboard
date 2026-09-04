@@ -499,6 +499,8 @@ export default {
       certExpired: "证书已于 {date} 过期",
       certDays: "证书还有 {days} 天到期({date})",
       realityCollected: "实况采集于 {time}",
+      driftFindingsToggle: "1 条差异 | {count} 条差异",
+      driftFindingsTitle: "节点上报的 {name} 实况",
       realityNotObserved: "不观察",
       drift: {
         ok: "与实况一致",

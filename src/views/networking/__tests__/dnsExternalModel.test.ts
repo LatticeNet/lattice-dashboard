@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import type { DNSDeploymentView } from "@/lib/api";
 import {
+  DNS_COLUMN_SIZING,
   canPlanDeployment,
   canPublishDeployment,
   certExpiry,
@@ -11,6 +13,8 @@ import {
   isObservedEngine,
   listenSummary,
   listenerProcesses,
+  reservedWidthPx,
+  reservesWidth,
 } from "../dnsExternalModel.ts";
 
 function deployment(over: Partial<DNSDeploymentView>): DNSDeploymentView {
@@ -96,4 +100,63 @@ test("an uncheckable drift verdict is a warning, not a neutral badge", () => {
   assert.equal(driftTone("drift"), "destructive");
   assert.equal(driftTone("unknown"), "warning");
   assert.equal(driftTone(undefined), "warning");
+});
+
+// ── Deployments table layout ──────────────────────────────────────────────
+
+test("the Reality column reserves width instead of only capping it", () => {
+  // A cap lets auto layout squeeze the column to its longest word, which is
+  // what shredded two drift findings over nine lines at 1440.
+  assert.equal(reservesWidth(DNS_COLUMN_SIZING.reality), true);
+  assert.ok(
+    reservedWidthPx(DNS_COLUMN_SIZING.reality) >= 180,
+    "the drift verdict and the certificate countdown need at least 180px",
+  );
+  // The space has to come from somewhere: the two mono columns that cannot
+  // shrink on their own are capped so they stop hoarding it.
+  assert.equal(reservesWidth(DNS_COLUMN_SIZING.node), false);
+  assert.equal(reservesWidth(DNS_COLUMN_SIZING.hostname), false);
+  assert.match(DNS_COLUMN_SIZING.node, /max-w-\[/);
+  assert.match(DNS_COLUMN_SIZING.hostname, /max-w-\[/);
+});
+
+test("a max-width alone does not count as a reservation", () => {
+  assert.equal(reservesWidth("max-w-[280px]"), false);
+  assert.equal(reservesWidth("w-[280px]"), true);
+  assert.equal(reservesWidth("min-w-[240px] max-w-[280px]"), true);
+  assert.equal(reservesWidth(undefined), false);
+  assert.equal(reservedWidthPx("max-w-[280px]"), 0);
+  assert.equal(reservedWidthPx("w-[300px] min-w-[280px]"), 280);
+});
+
+test("DnsView gives the Reality column the reserved sizing and caps the columns it takes from", () => {
+  // Grounding: the sizing constants are worth nothing if the table stops using
+  // them, and a table-layout claim cannot be asserted any other way from here.
+  const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
+  assert.match(view, /key:\s*"reality"[^]*?class:\s*DNS_COLUMN_SIZING\.reality/);
+  assert.match(view, /key:\s*"node"[^]*?class:\s*DNS_COLUMN_SIZING\.node/);
+  assert.match(view, /key:\s*"hostname"[^]*?class:\s*DNS_COLUMN_SIZING\.hostname/);
+  assert.doesNotMatch(view, /class:\s*"max-w-\[280px\]"/, "the Reality column is back on a bare cap");
+});
+
+test("the drift findings are rendered at the table's width, not inside the Reality column", () => {
+  const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
+  const cell = view.slice(
+    view.indexOf('#cell-reality='),
+    view.indexOf('#row-detail='),
+  );
+  assert.ok(cell.length > 0, "DnsView no longer has a reality cell and a row-detail panel");
+  assert.doesNotMatch(cell, /drift\.findings/, "the findings list is back inside the table cell");
+  assert.match(cell, /driftFindingsToggle/, "the cell no longer offers a way to open the findings");
+
+  const detail = view.slice(view.indexOf('#row-detail='));
+  assert.match(detail, /v-for="\(finding, index\) in driftFindings\(dep\)"/);
+
+  // The panel is inert unless DataTable is told which rows are open.
+  assert.match(view, /:row-expanded="isDriftOpen"/);
+
+  // DataTable has to carry the slot, or the panel renders nowhere.
+  const table = readFileSync(new URL("../../../components/common/DataTable.vue", import.meta.url), "utf8");
+  assert.match(table, /name="row-detail"/);
+  assert.match(table, /:colspan="spannedColumns"/);
 });

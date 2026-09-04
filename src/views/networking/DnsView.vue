@@ -3,6 +3,7 @@ import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
+  ChevronDown,
   Eye,
   Globe2,
   KeyRound,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/api";
 import {
   canPlanDeployment,
+  DNS_COLUMN_SIZING,
   canPublishDeployment,
   certDate,
   certExpiry,
@@ -146,6 +148,7 @@ const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
     sortable: true,
     searchable: true,
     value: (dep) => nodeLabel(dep),
+    class: DNS_COLUMN_SIZING.node,
   },
   {
     key: "listen",
@@ -156,19 +159,46 @@ const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
   },
   { key: "exposure", label: t("networking.dns.colExposure"), sortable: true },
   { key: "zones", label: t("networking.dns.colZones"), align: "right", sortable: true, value: (dep) => dep.zones.length },
-  { key: "hostname", label: t("networking.dns.colHostname"), sortable: true, searchable: true },
+  { key: "hostname", label: t("networking.dns.colHostname"), sortable: true, searchable: true, class: DNS_COLUMN_SIZING.hostname },
   { key: "status", label: t("networking.dns.colStatus"), sortable: true },
   {
     key: "reality",
     label: t("networking.dns.colReality"),
     sortable: true,
     value: (dep) => dep.drift?.status ?? "",
-    class: "max-w-[280px]",
+    class: DNS_COLUMN_SIZING.reality,
   },
   { key: "credential", label: t("networking.dns.colCredential"), sortable: true, value: (dep) => (dep.has_credential ? 1 : 0) },
   { key: "published", label: t("networking.dns.colPublished"), sortable: true, value: (dep) => dep.last_published_at ?? "" },
   { key: "actions", label: t("networking.dns.colActions"), align: "right" },
 ]);
+
+/**
+ * Observed records whose drift findings are open.
+ *
+ * The findings are sentences, and a table column is the one place a sentence
+ * cannot be given room: auto layout hands width to whatever cannot wrap, so
+ * the prose column loses to the mono ones every time. The verdict and the
+ * certificate countdown stay in the row because they are short and are what
+ * the operator scans for; the sentences that explain a verdict open under the
+ * row at the table's full width.
+ */
+const openDrift = ref<Set<string>>(new Set());
+
+function driftFindings(dep: DNSDeploymentView): string[] {
+  return dep.drift?.findings ?? [];
+}
+
+function isDriftOpen(dep: DNSDeploymentView): boolean {
+  return openDrift.value.has(dep.id);
+}
+
+function toggleDrift(dep: DNSDeploymentView) {
+  const next = new Set(openDrift.value);
+  if (next.has(dep.id)) next.delete(dep.id);
+  else next.add(dep.id);
+  openDrift.value = next;
+}
 
 // ── Zone / record editor drafts ───────────────────────────────────────────
 type ZoneMode = "forward" | "static" | "block";
@@ -694,6 +724,7 @@ function closePlan(open: boolean) {
           :columns="columns"
           :rows="sortedDeployments"
           :row-key="(dep) => dep.id"
+          :row-expanded="isDriftOpen"
           :loading="deploymentsQuery.loading.value"
           :error="deploymentsQuery.error.value"
           searchable
@@ -721,8 +752,8 @@ function closePlan(open: boolean) {
             </div>
           </template>
           <template #cell-node="{ row: dep }">
-            <div>{{ nodeLabel(dep) }}</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ shortId(dep.node_id, 12) }}</div>
+            <div class="truncate" :title="nodeLabel(dep)">{{ nodeLabel(dep) }}</div>
+            <div class="truncate font-mono text-xs text-muted-foreground">{{ shortId(dep.node_id, 12) }}</div>
           </template>
           <template #cell-listen="{ row: dep }">
             <span class="font-mono text-xs">{{ listenSummary(dep) }}</span>
@@ -744,7 +775,7 @@ function closePlan(open: boolean) {
             <span v-else class="text-muted-foreground">·</span>
           </template>
           <template #cell-hostname="{ row: dep }">
-            <span class="font-mono text-xs">{{ dep.hostname || $t('common.misc.none') }}</span>
+            <div class="truncate font-mono text-xs" :title="dep.hostname || ''">{{ dep.hostname || $t('common.misc.none') }}</div>
           </template>
           <template #cell-status="{ row: dep }">
             <Badge :variant="statusVariant(dep.status)">{{ dep.status }}</Badge>
@@ -764,13 +795,40 @@ function closePlan(open: boolean) {
                   <ShieldAlert v-if="dep.drift?.status === 'drift'" class="size-3" aria-hidden="true" />
                   {{ $t(`networking.dns.drift.${dep.drift?.status ?? 'unknown'}`) }}
                 </Badge>
-                <span :class="certToneClass(dep)" class="text-xs">{{ certLabel(dep) }}</span>
               </div>
-              <ul v-if="dep.drift?.findings?.length" class="space-y-0.5">
+              <div :class="certToneClass(dep)" class="text-xs">{{ certLabel(dep) }}</div>
+              <Button
+                v-if="driftFindings(dep).length"
+                variant="ghost"
+                size="sm"
+                class="-ms-2 h-6 px-2 text-xs"
+                :aria-expanded="isDriftOpen(dep)"
+                @click="toggleDrift(dep)"
+              >
+                <ChevronDown
+                  :class="cn('size-3.5 transition-transform', isDriftOpen(dep) && 'rotate-180')"
+                  aria-hidden="true"
+                />
+                {{ $t('networking.dns.driftFindingsToggle', driftFindings(dep).length) }}
+              </Button>
+            </div>
+            <span v-else class="text-xs text-muted-foreground">{{ $t('networking.dns.realityNotObserved') }}</span>
+          </template>
+          <!--
+            The findings, at the table's width instead of a column's. Named by
+            the record they belong to, because a panel under a row still has to
+            say which row it came from once it is scrolled past.
+          -->
+          <template #row-detail="{ row: dep }">
+            <div class="space-y-1.5 rounded-md border border-border bg-background p-3">
+              <p class="text-xs font-medium">
+                {{ $t('networking.dns.driftFindingsTitle', { name: dep.name }) }}
+              </p>
+              <ul class="space-y-1">
                 <li
-                  v-for="(finding, index) in dep.drift.findings"
+                  v-for="(finding, index) in driftFindings(dep)"
                   :key="index"
-                  class="text-xs leading-snug text-muted-foreground"
+                  class="text-xs leading-relaxed text-muted-foreground"
                 >
                   {{ finding }}
                 </li>
@@ -779,7 +837,6 @@ function closePlan(open: boolean) {
                 {{ $t('networking.dns.realityCollected', { time: formatDateTime(dep.drift.reality_collected_at) }) }}
               </p>
             </div>
-            <span v-else class="text-xs text-muted-foreground">{{ $t('networking.dns.realityNotObserved') }}</span>
           </template>
           <template #cell-credential="{ row: dep }">
             <span v-if="isObservedEngine(dep.engine)" class="text-muted-foreground">·</span>
