@@ -648,8 +648,8 @@ export const api = {
     ) => http.post<StorageBinding>(`/api/storage/bindings?kind=${encodeURIComponent(kind)}`, input),
     deleteBinding: (kind: StorageKind, id: string) =>
       http.post<{ ok: boolean }>("/api/storage/bindings/delete", { kind, id }),
-    tokens: (kind: StorageKind) =>
-      http.get<{ tokens: StorageTokenView[] }>("/api/storage/tokens", { kind }),
+    tokens: (kind: StorageKind, opts?: RequestOptions) =>
+      http.get<{ tokens: StorageTokenView[] }>("/api/storage/tokens", { kind }, opts),
     createToken: (
       kind: StorageKind,
       input: { name: string; access: StorageAccess; buckets?: string[] },

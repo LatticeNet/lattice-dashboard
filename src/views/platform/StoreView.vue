@@ -26,6 +26,7 @@ import {
   type StaticObject,
   type StorageBucketInventoryEntry,
   type StorageKind,
+  type StorageTokenView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useRouteTab } from "@/composables/useRouteTab";
@@ -37,6 +38,7 @@ import {
   bucketOwner,
   bucketOwnerNote,
   bucketPluginId,
+  bucketTokenWriterNames,
   bucketWritable,
 } from "./storeModel";
 
@@ -153,11 +155,38 @@ const activeFacts = computed(() => ({
   kind: kind.value,
   reserved: activeReserved.value,
 }));
+/**
+ * The storage tokens for this kind, when the operator may read them.
+ *
+ * They answer the half of "who writes here" the bucket name cannot: a bucket
+ * published through a binding is written by any caller holding a write-scoped
+ * token for it, and the console used to tell the operator nothing but itself
+ * writes there. Reading the list needs kv:admin or static:admin, so it is only
+ * asked for when the operator holds it, and its absence is reported as "cannot
+ * tell" rather than filled in with a guess.
+ */
+const canAdmin = computed(() => auth.can(`${kind.value}:admin`));
+const adminScope = computed(() => `${kind.value}:admin`);
+const tokensQuery = useAsyncData(
+  (signal) => api.storage.tokens(kind.value, { signal }).then((res) => res.tokens ?? []),
+  { pollInterval: 0, immediate: false },
+);
+const knownTokens = computed<StorageTokenView[] | undefined>(() =>
+  canAdmin.value && !tokensQuery.error.value ? tokensQuery.data.value : undefined,
+);
+
 // A reserved bucket states its own case in the card body and gets no owner
 // note: two sentences on one card, one of them derived from a name rule that
 // never saw this bucket, is how the page came to answer "who wrote this"
 // wrongly on the buckets holding VPN user secrets.
-const activeOwnerNote = computed(() => bucketOwnerNote(activeFacts.value));
+const activeOwnerNote = computed(() => bucketOwnerNote(activeFacts.value, knownTokens.value));
+// A token the operator never named still writes the bucket, so the sentence is
+// still true and only its quotation changes.
+const activeTokenWriters = computed(
+  () =>
+    bucketTokenWriterNames(activeFacts.value, knownTokens.value ?? []).join(", ") ||
+    t("platform.store.unnamedToken"),
+);
 const activePluginId = computed(() => bucketPluginId(activeFacts.value));
 const activeWritable = computed(() => canWrite.value && bucketWritable(activeFacts.value));
 const activeContentAvailable = computed(() => bucketContentAvailable(activeFacts.value));
@@ -208,9 +237,10 @@ function reload() {
 }
 
 watch(
-  [kind, canRead],
+  [kind, canRead, canAdmin],
   () => {
     if (canRead.value) inventoryQuery.refresh();
+    if (canAdmin.value) tokensQuery.refresh();
   },
   { immediate: true },
 );
@@ -478,6 +508,22 @@ async function submitPut() {
               scope="global"
             >
               <template #plugin><span class="font-mono">{{ activePluginId }}</span></template>
+            </i18n-t>
+            <i18n-t
+              v-else-if="activeOwnerNote === 'operatorToken'"
+              keypath="platform.store.ownerNote.operatorToken"
+              tag="span"
+              scope="global"
+            >
+              <template #tokens><span class="font-mono">{{ activeTokenWriters }}</span></template>
+            </i18n-t>
+            <i18n-t
+              v-else-if="activeOwnerNote === 'operatorUnknown'"
+              keypath="platform.store.ownerNote.operatorUnknown"
+              tag="span"
+              scope="global"
+            >
+              <template #scope><span class="font-mono">{{ adminScope }}</span></template>
             </i18n-t>
             <span v-else>{{ $t(`platform.store.ownerNote.${activeOwnerNote}`) }}</span>
             <RouterLink

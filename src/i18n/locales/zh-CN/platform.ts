@@ -99,11 +99,14 @@ export default {
         agent: "Agent 发布包",
       },
       ownerNote: {
-        operator: "除了这个控制台，没有别的东西往这里写。里面的内容都是运维自己放进去的。",
+        operatorConsoleOnly: "没有存储令牌能写这个 bucket，也没有插件、服务端或 agent 发布包规则认领它，所以里面的内容是运维在这里写进去的。",
+        operatorToken: "有存储令牌可以写这个 bucket（{tokens}），所以这里的条目除了运维手写，也可能来自控制台之外的调用方。",
+        operatorUnknown: "控制台没有识别出这个 bucket 的机器写入方：插件、服务端和 agent 发布包规则都不匹配它。要判断是否有调用方持有能写它的存储令牌，需要 {scope} 权限。",
         plugin: "这个 bucket 属于 {plugin} 插件。服务端把该插件的写入固定在这里，内容是插件自己的状态，不是本页面写出来的。",
         server: "这个 bucket 由服务端自己写入：它是线路链路回读的线路身份映射。控制台只列出它、不做编辑，因为手工改动会改变节点解析线路的结果，而这里没有可回退的历史版本。",
         agent: "这个 bucket 属于 agent 发布包上传。这里只列出对象本身，不返回内容字节，因为节点会以 root 身份取回并安装它们；增删发布包请到 Agent 更新页。",
       },
+      unnamedToken: "一个未命名的令牌",
       openAgentUpdates: "打开 Agent 更新",
     },
     kv: {

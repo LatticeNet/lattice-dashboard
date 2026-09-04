@@ -4,10 +4,13 @@ import { test } from "node:test";
 import {
   AGENT_RELEASES_BUCKET,
   bucketContentAvailable,
+  bucketHasTokenWriter,
   bucketOwner,
   bucketOwnerNote,
+  bucketTokenWriterNames,
   bucketPluginId,
   bucketWritable,
+  tokenWritesBucket,
 } from "../storeModel.ts";
 
 function bucket(overrides: Record<string, unknown> = {}) {
@@ -111,5 +114,79 @@ test("a reserved bucket says it is reserved once, not twice in two voices", () =
   assert.equal(bucketOwnerNote(bucket({ name: "vpnmeta/lineuuid" })), "server");
   assert.equal(bucketOwnerNote(bucket({ name: "plugin:latticenet.sub-store" })), "plugin");
   assert.equal(bucketOwnerNote(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), "agent");
-  assert.equal(bucketOwnerNote(bucket()), "operator");
+  // With no token list read, the fallback branch says so rather than claiming
+  // the console is the only writer; the tokens are asserted below.
+  assert.equal(bucketOwnerNote(bucket()), "operatorUnknown");
+});
+
+function token(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "t1",
+    name: "ci",
+    kind: "kv",
+    access: "write",
+    created_at: "",
+    updated_at: "",
+    ...overrides,
+  } as never;
+}
+
+test("a storage token is read against the same rule the server admits it by", () => {
+  // storageTokenAllows(): an empty bucket list is every bucket, "*" is the
+  // same spelled out, admin passes every access check, and a revoked token
+  // passes nothing.
+  const edge = bucket({ name: "edge-config" });
+  assert.equal(tokenWritesBucket(token(), edge), true);
+  assert.equal(tokenWritesBucket(token({ buckets: ["*"] }), edge), true);
+  assert.equal(tokenWritesBucket(token({ buckets: ["edge-config"] }), edge), true);
+  assert.equal(tokenWritesBucket(token({ access: "admin", buckets: ["edge-config"] }), edge), true);
+
+  assert.equal(tokenWritesBucket(token({ buckets: ["other"] }), edge), false);
+  assert.equal(tokenWritesBucket(token({ access: "read" }), edge), false);
+  assert.equal(tokenWritesBucket(token({ revoked_at: "2026-01-01T00:00:00Z" }), edge), false);
+  // A static token does not write a KV bucket of the same name: the server
+  // holds the two kinds apart and the token carries its kind.
+  assert.equal(tokenWritesBucket(token({ kind: "static" }), edge), false);
+  assert.equal(tokenWritesBucket(token({ kind: "static" }), bucket({ kind: "static", name: "edge-config" })), true);
+});
+
+test("the console does not claim to be the only writer of a bucket a token can write", () => {
+  // The operator note is the fallback branch, so it is asserted about every
+  // bucket the console does not recognise. "Nothing writes here except this
+  // console" was therefore said about a KV bucket published through a binding
+  // with a write token, which server_storage.go writes on POST and PUT under
+  // StorageAccessWrite. An operator debugging an unexpected value read that
+  // no machine touches the bucket.
+  const edge = bucket({ name: "edge-config" });
+  const ciToken = token({ name: "ci push", buckets: ["edge-config"] });
+
+  assert.equal(bucketOwnerNote(edge, [ciToken]), "operatorToken");
+  assert.equal(bucketHasTokenWriter(edge, [ciToken]), true);
+  assert.deepEqual(bucketTokenWriterNames(edge, [ciToken]), ["ci push"]);
+
+  // No live token that reaches this bucket: the console is the only writer
+  // left once the plugin, server and agent rules have not matched, and it may
+  // say so.
+  assert.equal(bucketOwnerNote(edge, [token({ access: "read" })]), "operatorConsoleOnly");
+  assert.equal(bucketOwnerNote(edge, [token({ buckets: ["other"] })]), "operatorConsoleOnly");
+  assert.equal(bucketOwnerNote(edge, []), "operatorConsoleOnly");
+
+  // Reading the token list needs kv:admin or static:admin. Without it the
+  // console has no evidence either way and says that instead of guessing.
+  assert.equal(bucketOwnerNote(edge), "operatorUnknown");
+
+  // A token changes nothing about a bucket whose writer the console already
+  // knows: the plugin host, the server and the agent upload own theirs.
+  const wildcard = [token({ name: "everything", access: "admin" })];
+  assert.equal(bucketOwnerNote(bucket({ name: "plugin:latticenet.sub-store" }), wildcard), "plugin");
+  assert.equal(bucketOwnerNote(bucket({ name: "vpnmeta/lineuuid" }), wildcard), "server");
+  assert.equal(bucketOwnerNote(bucket({ name: "vpn_user_secrets", reserved: true }), wildcard), "");
+});
+
+test("an unnamed token still counts as a writer even though the note cannot quote it", () => {
+  const edge = bucket({ name: "edge-config" });
+  const unnamed = [token({ name: "  " })];
+  assert.equal(bucketHasTokenWriter(edge, unnamed), true);
+  assert.deepEqual(bucketTokenWriterNames(edge, unnamed), []);
+  assert.equal(bucketOwnerNote(edge, unnamed), "operatorToken");
 });

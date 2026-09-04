@@ -1,4 +1,4 @@
-import type { StorageBucketInventoryEntry } from "@/lib/api";
+import type { StorageBucketInventoryEntry, StorageTokenView } from "@/lib/api";
 
 /**
  * Who writes into a bucket, and what the console may do with it.
@@ -44,6 +44,54 @@ export function bucketOwner(entry: BucketFacts): StorageBucketOwner {
   return "operator";
 }
 
+/** What the console can read of a storage token, for the writer question. */
+export type StorageTokenFacts = Pick<StorageTokenView, "name" | "kind" | "access"> &
+  Partial<Pick<StorageTokenView, "buckets" | "revoked_at">>;
+
+/**
+ * Whether this token can write this bucket from outside the console.
+ *
+ * The rule is the server's, from storageTokenAllows(): an admin token passes
+ * every access check, a write token passes a write, an empty bucket list means
+ * every bucket, and "*" means the same thing spelled out. A revoked token
+ * passes nothing.
+ */
+export function tokenWritesBucket(token: StorageTokenFacts, entry: BucketFacts): boolean {
+  if (token.revoked_at) return false;
+  if (token.kind !== entry.kind) return false;
+  if (token.access !== "write" && token.access !== "admin") return false;
+  const scoped = token.buckets ?? [];
+  if (scoped.length === 0) return true;
+  return scoped.some((bucket) => bucket === "*" || bucket === entry.name);
+}
+
+/** Whether any live token can write this bucket from outside the console. */
+export function bucketHasTokenWriter(
+  entry: BucketFacts,
+  tokens: readonly StorageTokenFacts[],
+): boolean {
+  return tokens.some((token) => tokenWritesBucket(token, entry));
+}
+
+/**
+ * The names of those tokens, for the note to quote.
+ *
+ * A token the operator never named still counts as a writer, so the note is
+ * decided by bucketHasTokenWriter() and this only decides what it can quote:
+ * an unnamed token is left out of the list rather than printed as an empty
+ * string, and the sentence stays true with a shorter list.
+ */
+export function bucketTokenWriterNames(
+  entry: BucketFacts,
+  tokens: readonly StorageTokenFacts[],
+): string[] {
+  const names = tokens
+    .filter((token) => tokenWritesBucket(token, entry))
+    .map((token) => token.name.trim())
+    .filter(Boolean);
+  return [...new Set(names)].sort((a, b) => a.localeCompare(b));
+}
+
 /**
  * Which owner note the card should print, or "" for no note at all.
  *
@@ -53,10 +101,43 @@ export function bucketOwner(entry: BucketFacts): StorageBucketOwner {
  * vpn_user_secrets holds. One bucket saying two different things about itself
  * is how this page started contradicting itself, so the reserved copy stands
  * alone and the derivation stays quiet.
+ *
+ * The operator note is the fallback branch, so it is the one asserted about
+ * every bucket this console does not recognise rather than about buckets it
+ * has evidence for. "Nothing writes here except this console" was therefore a
+ * claim it could not make: a KV bucket published through a binding is written
+ * by any caller holding a write-scoped storage token (server_storage.go
+ * accepts POST and PUT under StorageAccessWrite), and that bucket landed on
+ * this same branch. The token list settles it, and the three answers are
+ * different sentences:
+ *
+ * - "operatorToken": a live token can write this bucket, so a machine may.
+ * - "operatorConsoleOnly": no live token can, so the console really is the
+ *   only writer left once the plugin, server and agent rules have not matched.
+ * - "operatorUnknown": the token list needs kv:admin or static:admin and this
+ *   operator does not hold it, so the console says it cannot tell.
+ *
+ * Passing no token list means the console has not read one, which is the
+ * unknown case rather than a licence to claim exclusivity.
  */
-export function bucketOwnerNote(entry: BucketFacts): StorageBucketOwner | "" {
+export type StoreOwnerNote =
+  | ""
+  | "plugin"
+  | "server"
+  | "agent"
+  | "operatorToken"
+  | "operatorConsoleOnly"
+  | "operatorUnknown";
+
+export function bucketOwnerNote(
+  entry: BucketFacts,
+  tokens?: readonly StorageTokenFacts[],
+): StoreOwnerNote {
   if (entry.reserved) return "";
-  return bucketOwner(entry);
+  const owner = bucketOwner(entry);
+  if (owner !== "operator") return owner;
+  if (!tokens) return "operatorUnknown";
+  return bucketHasTokenWriter(entry, tokens) ? "operatorToken" : "operatorConsoleOnly";
 }
 
 /** The plugin id a plugin-owned bucket belongs to, or "" for every other bucket. */

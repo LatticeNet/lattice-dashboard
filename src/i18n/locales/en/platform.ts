@@ -105,8 +105,12 @@ export default {
         agent: "agent releases",
       },
       ownerNote: {
-        operator:
-          "Nothing writes here except this console. Whatever it holds was put there by an operator.",
+        operatorConsoleOnly:
+          "No storage token can write this bucket, and no plugin, server or agent release rule claims it, so whatever it holds was written here by an operator.",
+        operatorToken:
+          "A storage token can write this bucket ({tokens}), so entries here may come from a caller outside this console as well as from an operator.",
+        operatorUnknown:
+          "The console did not identify a machine writer for this bucket: no plugin, server or agent release rule matches it. Whether a caller holds a storage token that writes it needs the {scope} scope to check.",
         plugin:
           "The {plugin} plugin owns this bucket. The server pins that plugin's writes to it, so its contents are the plugin's own state rather than anything authored on this page.",
         server:
@@ -114,6 +118,7 @@ export default {
         agent:
           "The agent release upload owns this bucket. Its objects are listed without their bytes, because nodes fetch and install those as root, and a release is added or removed on Agent Updates rather than here.",
       },
+      unnamedToken: "an unnamed token",
       openAgentUpdates: "Open Agent Updates",
     },
     kv: {
