@@ -539,7 +539,20 @@ export interface ApprovalView {
   node_id: string;
   plugin: string;
   action: string;
-  plan: string;
+  /**
+   * The reviewable plan text. Absent on listing rows unless the list was asked
+   * for it (include=plan): on a fleet with a thousand applied approvals the
+   * plan bodies were nearly all of the bytes. The per-id read
+   * (api.approvals.get) and the decision responses always carry it.
+   */
+  plan?: string;
+  /**
+   * Hex SHA-256 of the plan text, present on every row. It is the value the
+   * approve endpoint checks plan_sha256 against, so a decision can bind to a
+   * plan the console never downloaded, and a changed plan shows as a changed
+   * hash without the body.
+   */
+  plan_sha256?: string;
   status: ApprovalStatus;
   reason?: string;
   stale?: boolean;
@@ -557,6 +570,24 @@ export interface ApprovalView {
   rejected_at?: string;
   /** Present only while status is "approved". See ApprovalWaitingView. */
   waiting?: ApprovalWaitingView;
+}
+
+/**
+ * Status breakdown of the approvals a principal can see, from
+ * GET /api/network/approvals?count=1. "stale" counts agent-update rows whose
+ * plan no longer matches policy, whatever their status column says; "total"
+ * counts every row, dismissed included. Keys are open: a newer control plane
+ * may add one, and a missing key reads as zero.
+ */
+export interface ApprovalCounts {
+  pending: number;
+  approved: number;
+  stale: number;
+  applied: number;
+  rejected: number;
+  dismissed: number;
+  total: number;
+  [status: string]: number;
 }
 
 /**
@@ -1404,7 +1435,7 @@ export interface TunnelUpsertRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Platform: Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates.
+// Platform: Plugins, Publishing, Store (KV and Static), Evidence, Notifications, Agent Updates.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2208,6 +2239,17 @@ export interface HopPath {
 export interface TraceConnectionsResponse {
   records: ConnRecord[];
   next_cursor?: string;
+  /**
+   * How many records the store holds for every node this caller may see,
+   * before the operator's own filter narrowed anything. An empty `records`
+   * with this at 0 means nothing was ever collected; an empty `records` with
+   * this above 0 means the filter matched nothing. Optional because a server
+   * that predates the field answers the query without it, and the console
+   * must not read a missing field as "nothing collected".
+   */
+  collected_total?: number;
+  /** Start time of the newest record the store holds, absent when it holds none. */
+  collected_newest_at?: string;
 }
 
 export interface TraceSessionsResponse {

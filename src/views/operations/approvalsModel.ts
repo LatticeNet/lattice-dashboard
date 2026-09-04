@@ -26,7 +26,8 @@ export interface ApprovalEventItem {
   node_id: string;
   plugin: string;
   action: string;
-  plan: string;
+  /** Absent on listing rows; see ApprovalView.plan. */
+  plan?: string;
   status: string;
   actor_id?: string;
   created_at?: string;
@@ -137,7 +138,7 @@ export function parseAgentUpdatePlan(plan: string): {
 /** Human-friendly node label: the plan's node_name when present, else the id. */
 export function approvalNodeLabel(item: ApprovalEventItem): string {
   if (item.plugin === "agentupdate") {
-    const nodeName = parseAgentUpdatePlan(item.plan).nodeName;
+    const nodeName = parseAgentUpdatePlan(item.plan ?? "").nodeName;
     if (nodeName) return nodeName;
   }
   return item.node_id || "global";
@@ -187,7 +188,7 @@ export function groupApprovalsIntoEvents<T extends ApprovalEventItem>(items: rea
     if (!isApprovalEventGroupable(item)) continue;
     const writer = approvalWriter(item);
     const prefix = approvalActionPrefix(item.action);
-    const transition = item.plugin === "agentupdate" ? parseAgentUpdatePlan(item.plan).transition : undefined;
+    const transition = item.plugin === "agentupdate" ? parseAgentUpdatePlan(item.plan ?? "").transition : undefined;
     const key = groupKey(writer, item.plugin, prefix, transition);
     let group = groups.get(key);
     if (!group) {

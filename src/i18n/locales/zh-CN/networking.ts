@@ -718,6 +718,7 @@ export default {
       description:
         "订阅是产出配置的那条记录，分享是本服务器对外提供它的公开 URL。不是有效分享的路径一律返回空 404，扫描者无法区分存在与不存在的分享。",
       publish: "发布",
+      plane: "分享是发布平面的插件 origin，KV 和静态资源是同一个平面的另外两种 origin：URL 以及谁能取它属于平台，背后的订阅记录属于 Sub-Store 插件。",
       publishTitle: "发布一个订阅",
       publishDescription: "选择要对外提供的记录。URL 创建即生效，其 token 是它不可猜测的原因。",
       searchPlaceholder: "搜索 slug 或来源…",

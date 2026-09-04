@@ -16,6 +16,8 @@ import {
   clampTraceTtlSeconds,
   closeReasonDisplay,
   connCloseCell,
+  connEmptyNewestAt,
+  connEmptyReason,
   connRecordKey,
   connTraceFiltersEqual,
   connectionsRequestParams,
@@ -396,6 +398,129 @@ test("paging appends a page, dedupes by key, and never loses or duplicates a row
   assert.equal(second.cursor, "");
   assert.equal(second.exhausted, true);
   assert.equal(new Set(second.records.map(connRecordKey)).size, second.records.length);
+});
+
+test("an empty table says whether nothing matched or nothing was collected", () => {
+  // The page had one answer for both, and on a fleet with every collection
+  // policy off it was the wrong one: an operator told "nothing matched these
+  // filters" widens the range forever over a store that holds no record.
+  const nothingCollected = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 0,
+  });
+  assert.equal(connEmptyReason(nothingCollected), "nothing-collected");
+
+  const nothingMatched = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 9,
+  });
+  assert.equal(connEmptyReason(nothingMatched), "nothing-matched");
+
+  const hasRows = appendConnPage(emptyConnTracePaging(), {
+    records: [record({ log_id: 1 })],
+    collected_total: 0,
+  });
+  assert.equal(connEmptyReason(hasRows), "");
+});
+
+test("no visible node is its own answer, not a fleet that collected nothing", () => {
+  // handleTraceRecords returns an empty page before it touches the trace store
+  // when visibleNodeIDs() is empty, and collected_total carries no omitempty,
+  // so that response arrives as collected_total 0. Read as "nothing
+  // collected", an operator whose allowlist matches no enrolled node was told
+  // the fleet had recorded nothing and to switch collection on, and sent to a
+  // policy tab that is empty for the same reason. The truth is that they can
+  // see no node at all.
+  const empty = appendConnPage(emptyConnTracePaging(), { records: [], collected_total: 0 });
+  assert.equal(connEmptyReason(empty, { known: true, count: 0 }), "no-visible-nodes");
+
+  // With a node in sight the collection answer is the right one again.
+  assert.equal(connEmptyReason(empty, { known: true, count: 3 }), "nothing-collected");
+
+  // An unread node list is not an empty fleet. Without node:read the console
+  // never asks, and claiming no node is visible would be the same confident
+  // wrong answer pointed the other way.
+  assert.equal(connEmptyReason(empty, { known: false, count: 0 }), "nothing-collected");
+  assert.equal(connEmptyReason(empty), "nothing-collected");
+
+  // Rows on screen settle it before any of this, and a server that never
+  // reported still gets the unknown wording.
+  const hasRows = appendConnPage(emptyConnTracePaging(), { records: [record()], collected_total: 0 });
+  assert.equal(connEmptyReason(hasRows, { known: true, count: 0 }), "");
+  const silent = appendConnPage(emptyConnTracePaging(), { records: [] });
+  assert.equal(connEmptyReason(silent, { known: true, count: 2 }), "unknown");
+});
+
+test("nothing matched says how far back the store's newest record is", () => {
+  // "Widen the time range" without saying how far is what makes an operator
+  // step through 6h, 24h and 7d and give up. Production's newest record is
+  // eight days older than the default window, and the branch already holds
+  // that timestamp: the empty state hands it over instead of hiding it.
+  const nothingMatched = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 9,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(nothingMatched), "2026-08-27T05:59:00Z");
+
+  // A store with records but no timestamp reported keeps the plain wording
+  // rather than printing an empty date.
+  const noTimestamp = appendConnPage(emptyConnTracePaging(), { records: [], collected_total: 9 });
+  assert.equal(connEmptyNewestAt(noTimestamp), "");
+});
+
+test("the newest record is offered only where it answers the question", () => {
+  // A store that collected nothing has no newest record to name, rows on
+  // screen make the question moot, and a server that never reported the total
+  // has not said anything worth quoting.
+  const nothingCollected = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 0,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(nothingCollected), "");
+
+  const hasRows = appendConnPage(emptyConnTracePaging(), {
+    records: [record({ log_id: 1 })],
+    collected_total: 9,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(hasRows), "");
+
+  const silentServer = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(silentServer), "");
+});
+
+test("a server that never reports collection is not read as nothing collected", () => {
+  // A missing field is silence, not a zero. Telling an operator on an older
+  // server that nothing was ever collected would be a confident wrong answer
+  // about their own fleet.
+  const state = appendConnPage(emptyConnTracePaging(), { records: [] });
+  assert.equal(state.collectedTotal, undefined);
+  assert.equal(connEmptyReason(state), "unknown");
+});
+
+test("collection totals describe the store, so a later page updates them and an older one cannot erase them", () => {
+  const first = appendConnPage(emptyConnTracePaging(), {
+    records: [record({ log_id: 1 })],
+    next_cursor: "c",
+    collected_total: 12,
+    collected_newest_at: "2026-08-27T06:00:00Z",
+  });
+  assert.equal(first.collectedTotal, 12);
+  assert.equal(first.collectedNewestAt, "2026-08-27T06:00:00Z");
+
+  // A page from a server mid-upgrade omits the fields. The last known answer
+  // stands rather than reverting to "the server never said".
+  const older = appendConnPage(first, { records: [record({ log_id: 2 })] });
+  assert.equal(older.collectedTotal, 12);
+  assert.equal(older.collectedNewestAt, "2026-08-27T06:00:00Z");
+
+  const refreshed = appendConnPage(older, { records: [], collected_total: 14 });
+  assert.equal(refreshed.collectedTotal, 14);
 });
 
 test("an empty page ends the walk without touching what is on screen", () => {

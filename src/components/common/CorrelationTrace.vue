@@ -51,10 +51,15 @@ async function load(correlationId: string) {
     const list = orderTimeline(res.events ?? []);
     events.value = list;
 
+    // By id, one read each: the trace names a handful of approvals and used to
+    // download the whole listing to find them. A row that no longer exists, or
+    // that this token cannot see, is simply absent from the section.
     const approvalIds = referencedApprovalIds(list);
     if (approvalIds.length > 0) {
-      const all = unwrap(await api.approvals.list({ include_dismissed: true }), "approvals");
-      approvals.value = all.filter((a) => approvalIds.includes(a.id));
+      const found = await Promise.all(
+        approvalIds.map((id) => api.approvals.get(id).catch(() => undefined)),
+      );
+      approvals.value = found.filter((a): a is ApprovalView => a !== undefined);
     }
 
     const taskIds = referencedTaskIds(list);
