@@ -491,6 +491,7 @@ export default {
       listenerPort: "端口",
       removeListener: "移除监听",
       errListenerPort: "端口必须在 1 到 65535 之间",
+      errExternalHostname: "必须填完整域名,比如 dns.example.com。只有一段、不带点的名字不算。",
       externalHostnameHint: "这个解析器对外应答的完整域名。TLS 证书监控就是盯着它。",
       certNotAfter: "证书到期",
       certNotAfterHint:

@@ -34,6 +34,7 @@ import {
   certDate,
   certExpiry,
   driftTone,
+  externalHostnameProblem,
   isObservedEngine,
   listenSummary,
   listenerProcesses,
@@ -428,7 +429,19 @@ const hasListenerErrors = computed(() => listenerErrors.value.some((e) => e !== 
  * hostname has to be a fully qualified domain: the server refuses anything
  * else, and it is the only handle the certificate watch can be pointed at.
  */
-const externalHostnameValid = computed(() => /\./.test(form.hostname.trim()));
+const externalHostnameValid = computed(() => externalHostnameProblem(form.hostname) === undefined);
+
+/**
+ * What to tell the operator, once they have typed something.
+ *
+ * An empty field is not an error yet: it is a field they have not reached.
+ * A single label is, and saying so is the whole point, because the hint under
+ * this input describes what the field is for and turning it red says nothing
+ * about what to type instead.
+ */
+const externalHostnameError = computed(() =>
+  externalHostnameProblem(form.hostname) === "not_fqdn" ? t("networking.dns.errExternalHostname") : undefined,
+);
 
 function addZone() {
   form.zones.push(emptyZone());
@@ -981,11 +994,20 @@ function closePlan(open: boolean) {
                 id="dns-external-hostname"
                 v-model="form.hostname"
                 placeholder="dns.example.com"
-                :aria-invalid="!!form.hostname.trim() && !externalHostnameValid"
+                :aria-invalid="!!externalHostnameError"
+                :aria-describedby="externalHostnameError ? 'dns-external-hostname-error' : undefined"
                 required
               />
-              <p class="text-xs" :class="!!form.hostname.trim() && !externalHostnameValid ? 'text-destructive' : 'text-muted-foreground'">
+              <p class="text-xs text-muted-foreground">
                 {{ $t('networking.dns.externalHostnameHint') }}
+              </p>
+              <p
+                v-if="externalHostnameError"
+                id="dns-external-hostname-error"
+                role="alert"
+                class="text-xs text-destructive"
+              >
+                {{ externalHostnameError }}
               </p>
             </div>
 

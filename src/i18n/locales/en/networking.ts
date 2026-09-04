@@ -506,6 +506,8 @@ export default {
       listenerPort: "Port",
       removeListener: "Remove listener",
       errListenerPort: "port must be between 1 and 65535",
+      errExternalHostname:
+        "a fully qualified name is required, such as dns.example.com. A single label with no dot is not one.",
       externalHostnameHint:
         "The fully qualified name this resolver answers at. It is what a TLS certificate watch is pointed at.",
       certNotAfter: "Certificate expires",

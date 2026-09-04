@@ -228,3 +228,29 @@ function carriedExposure(carried: ExternalCarried | undefined): string {
   const value = (carried?.exposure ?? "").trim().toLowerCase();
   return value === "mesh" || value === "public" ? value : "public";
 }
+
+// ── The observed hostname ─────────────────────────────────────────────────
+
+/** Why an observed hostname cannot be sent, or undefined when it can. */
+export type ExternalHostnameProblem = "empty" | "not_fqdn";
+
+/**
+ * The hostname an observed record answers at.
+ *
+ * The server refuses anything without a dot, and this is the only handle a
+ * certificate watch can be pointed at, so the rule is worth stating twice.
+ * It returns which rule was broken rather than a boolean, because a red border
+ * over a hint that only restates what the field is for tells the operator
+ * nothing about what to type instead.
+ */
+export function externalHostnameProblem(hostname: string): ExternalHostnameProblem | undefined {
+  const value = hostname.trim();
+  if (!value) return "empty";
+  if (!value.includes(".")) return "not_fqdn";
+  return undefined;
+}
+
+/** Whether the hostname as typed can be sent. */
+export function isExternalHostnameValid(hostname: string): boolean {
+  return externalHostnameProblem(hostname) === undefined;
+}

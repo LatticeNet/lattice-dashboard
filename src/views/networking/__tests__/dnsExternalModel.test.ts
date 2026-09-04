@@ -10,7 +10,9 @@ import {
   canPublishDeployment,
   certExpiry,
   driftTone,
+  externalHostnameProblem,
   formatListeners,
+  isExternalHostnameValid,
   isObservedEngine,
   listenSummary,
   listenerProcesses,
@@ -218,4 +220,26 @@ test("DnsView builds the observed body through the carrying builder", () => {
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
   assert.match(view, /buildExternalDnsBody\(/);
   assert.doesNotMatch(view, /exposure:\s*"public",\s*\n\s*zones:\s*\[\],/, "the observed body still hard-codes both fields");
+});
+
+// ── The observed hostname ─────────────────────────────────────────────────
+
+test("an unqualified observed hostname is named as such, not just marked red", () => {
+  assert.equal(externalHostnameProblem("dns-malibu"), "not_fqdn");
+  assert.equal(externalHostnameProblem("  "), "empty");
+  assert.equal(externalHostnameProblem(""), "empty");
+  assert.equal(externalHostnameProblem(" dns.roobli.org "), undefined);
+  assert.equal(isExternalHostnameValid("dns-malibu"), false);
+  assert.equal(isExternalHostnameValid("dns.roobli.org"), true);
+});
+
+test("the observed hostname field says what is wrong and points a reader at it", () => {
+  const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
+  // A red border with no message is not a message. The listener port and the
+  // TLS target already do this; the hostname was the one field that did not.
+  assert.match(view, /errExternalHostname/, "the hostname field still has no error string");
+  assert.match(view, /id="dns-external-hostname-error"/);
+  assert.match(view, /role="alert"/);
+  assert.match(view, /:aria-describedby="externalHostnameError \? 'dns-external-hostname-error' : undefined"/);
+  assert.match(view, /externalHostnameError/);
 });
