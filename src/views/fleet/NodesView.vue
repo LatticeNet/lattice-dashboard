@@ -63,6 +63,7 @@ import { partitionBatchResults, runWithConcurrency } from "@/views/operations/ap
 import {
   NODE_TABLE_COLUMNS,
   compareNodeIdentity,
+  nameTrackMin,
   nextSortState,
   parseHiddenColumns,
   parseSortState,
@@ -258,6 +259,11 @@ const optionalColumns = computed(() =>
 );
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
+
+/** One name-track minimum for every table on the page, from the whole fleet
+ *  rather than each group's rows, so the name column does not change width
+ *  between group sections or as a filter narrows the rows. */
+const nameMinPx = computed(() => nameTrackMin(nodes.value));
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
 const duplicatesQuery = useAsyncData((signal) => api.nodes.duplicates({ signal }).then((r) => r.groups), {
@@ -1694,6 +1700,7 @@ function openTerminal(node: Node) {
                 <NodeTable
                   v-else
                   :nodes="group.nodes"
+                  :name-min-px="nameMinPx"
                   :hidden-columns="hiddenColumns"
                   :sort="tableSort"
                   :can-open-terminal="canOpenTerminal"

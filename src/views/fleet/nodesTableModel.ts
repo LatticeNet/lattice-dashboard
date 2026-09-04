@@ -58,6 +58,11 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   // The track is sized to the longest word the column can hold, because a
   // status the operator has to guess at is the one thing this column exists for.
   { id: "status", labelKey: "fleet.nodes.table.colStatus", width: "112px", optional: false, sortKey: "status", defaultDir: "asc" },
+  // The hostname used to ride under the name as the row's second line. It is
+  // the machine's own answer to "which box is this", so it gets a column of
+  // its own; the line under the name is the short id, the one value that
+  // still separates two machines sharing a name. Truncates with a title.
+  { id: "hostname", labelKey: "fleet.nodes.table.colHostname", width: "minmax(140px,1fr)", optional: true },
   { id: "role", labelKey: "fleet.nodes.table.colRole", width: "104px", optional: true },
   { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true, defaultHidden: true },
   { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true, defaultHidden: true },
@@ -236,7 +241,12 @@ export function visibleColumns(hidden: ReadonlySet<string>): NodeTableColumn[] {
  * An estimate, not a measurement: the fixed-height rows cannot wait for a
  * layout pass, and a text measurement would need a canvas the strict CSP
  * would rather not see. The band keeps a single absurd name from turning the
- * whole table into a scroll.
+ * whole table into a scroll; past the cap the cell truncates (NodeTable's
+ * name class list), the last resort rather than the mechanism.
+ *
+ * Pass every node on the page, not one group's rows: a grouped Nodes view
+ * renders one table per group, and a minimum taken per group makes the name
+ * column jump between adjacent sections.
  */
 export const NAME_TRACK_MIN_PX = 180;
 export const NAME_TRACK_MAX_PX = 440;

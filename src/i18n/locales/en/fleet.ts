@@ -149,6 +149,7 @@ export default {
       table: {
         colName: "Node",
         colStatus: "Status",
+        colHostname: "Hostname",
         colRole: "Role",
         colTags: "Tags",
         colPublicIp: "Public IPv4",

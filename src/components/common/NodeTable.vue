@@ -57,6 +57,13 @@ const props = withDefaults(
     selectable?: boolean;
     /** Ids currently selected, across every group the caller renders. */
     selectedIds?: ReadonlySet<string>;
+    /**
+     * The name track's minimum, computed by the caller over every node on the
+     * page. A grouped view renders one table per group; left to each table,
+     * the minimum follows that group's longest name and the column jumps
+     * between sections. Defaults to this table's own rows.
+     */
+    nameMinPx?: number;
   }>(),
   {
     hiddenColumns: () => new Set<string>(),
@@ -67,6 +74,7 @@ const props = withDefaults(
     updatePolicies: () => [],
     selectable: false,
     selectedIds: () => new Set<string>(),
+    nameMinPx: undefined,
   },
 );
 
@@ -90,8 +98,8 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const columns = computed(() => visibleColumns(props.hiddenColumns));
-/** The name track never drops below what the longest name in these rows needs. */
-const nameMin = computed(() => nameTrackMin(props.nodes));
+/** The name track never drops below what the longest name on the page needs. */
+const nameMin = computed(() => props.nameMinPx ?? nameTrackMin(props.nodes));
 /** The selection column is a fixed leading track, so hiding columns still works. */
 const SELECT_TRACK = "36px";
 const gridStyle = computed(() => ({
@@ -205,13 +213,13 @@ function isHealthy(node: Node): boolean {
 }
 
 /**
- * The identifier printed beside the name, or "" when it would just repeat it.
+ * The identifier printed under the name, or "" when it would just repeat it.
  *
- * The hostname is the useful second value when it differs from the display
- * name; when it does not (the common case on a fleet named after its hosts)
- * the node id is what actually disambiguates two machines sharing a name.
- * Printing a duplicate of the name in every row is what the old two-line cell
- * did, and it cost 15px of row height to say nothing.
+ * The short id: the one value that separates two machines sharing a name.
+ * The hostname used to take this line when it differed from the name, but it
+ * is a value in its own right and now has its own column. Printing a
+ * duplicate of the name in every row is what the old two-line cell did, and
+ * it cost 15px of row height to say nothing.
  */
 function namePrefix(node: Node): string {
   return splitNamePrefix(node).prefix;
@@ -222,10 +230,12 @@ function nameBody(node: Node): string {
 
 function secondaryLabel(node: Node): string {
   const name = node.name || node.id;
-  const hostname = node.host_facts?.hostname ?? "";
-  if (hostname && hostname !== name) return hostname;
   const id = shortId(node.id, 16);
   return id === name ? "" : id;
+}
+
+function hostname(node: Node): string {
+  return node.host_facts?.hostname ?? "";
 }
 
 function archOs(node: Node): string {
@@ -364,18 +374,22 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           />
         </span>
 
-        <!-- Name + status dot. The name never truncates: the track is at
-             least as wide as the longest name in the table (nameTrackMin) and
-             the table scrolls past that, so a long name pushes the metric
-             columns right rather than losing characters. It used to share the
-             line with the identifier, shrinking in proportion to it, which on
-             a fleet whose hostnames all differ from their names cut every
-             long name to "Akkocloud-UK-Lond...". The identifier now sits on a
-             second line inside the fixed 40px row (20px name over 16px
-             hostname). It is the tiebreak for two machines sharing a name,
-             not something anyone reads across 200 rows, so it goes away where
-             there is no room for it: at compact density (a 32px row) and
-             below sm. The tooltip carries both. -->
+        <!-- Name + status dot. The name does not truncate in practice: the
+             track is at least as wide as the longest name on the page
+             (nameTrackMin) and the table scrolls past that, so a long name
+             pushes the metric columns right rather than losing characters.
+             The `truncate` on the name is the cap, not the mechanism: the
+             track stops growing at NAME_TRACK_MAX_PX, and a name wider than
+             that ends in an ellipsis instead of painting under the next
+             column. The name used to share the line with the identifier,
+             shrinking in proportion to it, which on a fleet whose hostnames
+             all differ from their names cut every long name to
+             "Akkocloud-UK-Lond...". The short id now sits on a second line
+             inside the fixed 40px row (20px name over 16px id). It is the
+             tiebreak for two machines sharing a name, not something anyone
+             reads across 200 rows, so it goes away where there is no room for
+             it: at compact density (a 32px row) and below sm. The tooltip
+             carries both. -->
         <div
           :class="['flex min-w-0 items-center gap-2', STICKY_CELL, stickyLeft]"
           :title="secondaryLabel(node) ? `${node.name || node.id}\n${secondaryLabel(node)}` : node.name || node.id"
@@ -383,7 +397,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" class="shrink-0" />
           <Badge v-if="namePrefix(node)" variant="outline" class="shrink-0 px-1 py-0 text-[10px] leading-4">{{ namePrefix(node) }}</Badge>
           <div class="min-w-0">
-            <p class="whitespace-nowrap text-sm leading-5 font-medium">{{ nameBody(node) }}</p>
+            <p class="truncate text-sm leading-5 font-medium">{{ nameBody(node) }}</p>
             <p
               v-if="secondaryLabel(node)"
               class="density-secondary hidden truncate font-mono text-xs leading-4 text-muted-foreground tabular sm:block"
@@ -404,6 +418,11 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
             class="max-w-full truncate"
           />
           <span v-else class="text-xs text-muted-foreground">{{ statusLabel(node) }}</span>
+        </div>
+
+        <!-- Hostname. The machine's own name for itself, beside the operator's. -->
+        <div v-if="show('hostname')" class="min-w-0" :title="hostname(node) || undefined">
+          <p class="truncate font-mono text-xs">{{ hostname(node) || $t('common.misc.none') }}</p>
         </div>
 
         <!-- Role -->
