@@ -46,15 +46,30 @@ test("a plugin bucket names its plugin and nothing else does", () => {
   assert.equal(bucketPluginId(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), "");
 });
 
-test("the two server refusals show as disabled controls rather than as a 403 toast", () => {
+test("a bucket the console does not author is not editable by hand", () => {
   // A reserved bucket is refused outright; the agent release bucket is refused
-  // for writes because adding or removing a release is an agent-update
-  // decision. Both used to be discovered only after the operator had typed a
-  // value and pressed save.
+  // because adding or removing a release is an agent-update decision. Both
+  // used to be discovered only after the operator had typed a value and
+  // pressed save.
   assert.equal(bucketWritable(bucket({ reserved: true })), false);
   assert.equal(bucketWritable(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), false);
+
+  // The line identity map is the third. The card says the server writes it and
+  // that editing it changes what nodes resolve a line to, and then offered an
+  // enabled New entry button and an enabled row pencil over 313 entries with
+  // no confirmation and no history to revert from. Saying who owns a bucket
+  // and leaving its controls live is the worst of the two answers.
+  assert.equal(bucketWritable(bucket({ name: "vpnmeta/lineuuid" })), false);
+  assert.equal(bucketWritable(bucket({ name: "vpnmeta/lineuuid-owner" })), false);
+
+  // A plugin's bucket stays writable: it is ordinary state a plugin keeps, the
+  // console is where an operator repairs it, and no chain reads it back as an
+  // identity.
   assert.equal(bucketWritable(bucket({ name: "plugin:latticenet.sub-store" })), true);
   assert.equal(bucketWritable(bucket()), true);
+  // The kind carries the rule here too: a static bucket named vpnmeta/x was
+  // made by whoever created it and is the operator's to edit.
+  assert.equal(bucketWritable(bucket({ kind: "static", name: "vpnmeta/lineuuid" })), true);
 });
 
 test("the agent release listing carries no bytes, so it offers no preview", () => {

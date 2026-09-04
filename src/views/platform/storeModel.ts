@@ -47,15 +47,28 @@ export function bucketPluginId(entry: BucketFacts): string {
 /**
  * Whether this console may write into the bucket at all.
  *
- * Two separate refusals live on the server and both have to be visible here as
- * a disabled control rather than as a 403 toast after the operator typed a
+ * Two of the refusals are the server's and have to be visible here as a
+ * disabled control rather than as a 403 toast after the operator typed a
  * value: a reserved bucket is refused outright, and the agent release bucket
  * is refused for writes because deleting or replacing a release is an
  * agent-update decision, not a store edit.
+ *
+ * The third is this console's own, and it is the one this page was missing.
+ * The server will accept a hand write into vpnmeta/*, but that bucket is the
+ * line identity map the line chain reads back on every node, the console keeps
+ * no history to revert an edit from, and this page now states that the server
+ * owns it. Naming the owner and leaving the pencil live is the worst of the
+ * two answers, so the machine-owned buckets are read here and changed through
+ * the pages that own them.
+ *
+ * A plugin's bucket stays writable. It is state a plugin keeps for itself, the
+ * console is where an operator repairs it, and nothing resolves an identity
+ * out of it.
  */
 export function bucketWritable(entry: BucketFacts): boolean {
   if (entry.reserved) return false;
-  return bucketOwner(entry) !== "agent";
+  const owner = bucketOwner(entry);
+  return owner !== "agent" && owner !== "server";
 }
 
 /**

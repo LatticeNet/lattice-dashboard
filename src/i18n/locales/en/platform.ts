@@ -110,7 +110,7 @@ export default {
         plugin:
           "The {plugin} plugin owns this bucket. The server pins that plugin's writes to it, so its contents are the plugin's own state rather than anything authored on this page.",
         server:
-          "The server writes this bucket itself: it is the line identity map the line chain reads back. Editing it by hand changes what nodes resolve a line to.",
+          "The server writes this bucket itself: it is the line identity map the line chain reads back. This console lists it and does not edit it, because a hand edit changes what nodes resolve a line to and nothing here keeps a version to revert to.",
         agent:
           "The agent release upload owns this bucket. Its objects are listed without their bytes, because nodes fetch and install those as root, and a release is added or removed on Agent Updates rather than here.",
       },

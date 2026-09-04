@@ -229,7 +229,11 @@ const kvColumns = computed<DataTableColumn<KVEntry>[]>(() => {
     { key: "value", label: t("platform.kv.colValue"), sortable: true, searchable: true },
     { key: "updated_at", label: t("platform.kv.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
   ];
-  if (canWrite.value) {
+  // No column rather than a column of controls the page has already said it
+  // will not use. A bucket the server owns is listed and not edited here, and
+  // an enabled pencil beside that sentence is what made the note read as
+  // decoration.
+  if (activeWritable.value) {
     cols.push({ key: "actions", label: t("platform.kv.colActions"), align: "right" });
   }
   return cols;
