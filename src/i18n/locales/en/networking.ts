@@ -94,6 +94,12 @@ export default {
         // sends an operator to the operations note.
         installed: "sequence known",
         installedTitle: "The control plane holds this node's knock sequence, from the arm plan that was applied. Open it to reveal the sequence.",
+        installedSuperseded: "known, record retired",
+        installedSupersededTitle: "The control plane holds this node's knock sequence from an arm record it later retired as superseded. The retirement closed the record, not the change on the node. Open it for the caveat and the sequence.",
+        previousHonoured: "previous still opens",
+        previousHonouredTitle: "A rotation is under way. The sequence before this one still opens the node until the confirm applies.",
+        previousHonouredNote: "A rotation is under way and no confirm has applied yet, so the previous sequence still opens this node. The reveal shows both.",
+        previousSequenceLabel: "Previous sequence (still honoured until the confirm applies)",
         planned: "planned",
         plannedTitle: "An arm plan for this node carries a sequence, but it has not reached the node. Knocking it now will not open anything.",
         noKnock: "no knock",

@@ -14,6 +14,8 @@ import {
   formatAge,
   formatCountdown,
   isCoverageFilter,
+  knockFingerprints,
+  knockStatesToFetch,
   membersToFile,
   newestObservation,
   orderForBoard,
@@ -271,4 +273,36 @@ test("a retry re-files the blocked members and the untried ones, never a filed o
 test("fleet states feed the board without a name when the node has none", () => {
   const state: NodeGuardState | undefined = FLEET.find((s) => s.nodeId === "never");
   assert.equal(state?.name, "");
+});
+
+// The server's knock answer depends on every SSH Guard approval a node has,
+// so the row is re-asked when any of them moves and never otherwise: the
+// approvals poll every fifteen seconds and a fleet of thirty-three must not
+// cost thirty-three requests each time.
+test("a node is asked about its knock once, and again only when one of its approvals moves", () => {
+  const before = [
+    approval({ id: "old", node_id: "n1", status: "dismissed", updated_at: "2026-08-10T00:00:00Z" }),
+    approval({ id: "new", node_id: "n1", status: "applied", updated_at: "2026-09-01T00:00:00Z" }),
+    approval({ id: "x", node_id: "n2", status: "pending" }),
+    approval({ id: "other", node_id: "n1", plugin: "nftpolicy", status: "pending" }),
+  ];
+  const prints = knockFingerprints(before);
+  assert.equal(prints.has("n2"), true);
+  // n3 has no approvals at all and is still asked once: "never planned" is
+  // an answer the server states in its own words.
+  const asked = new Map<string, string>();
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], prints, asked), ["n1", "n2", "n3"]);
+  for (const id of ["n1", "n2", "n3"]) asked.set(id, prints.get(id) ?? "");
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], knockFingerprints(before), asked), []);
+
+  // A cleanup retires the three-week-old arm without touching the newest row.
+  const retired = before.map((a) => ((a as { id: string }).id === "old" ? { ...(a as object), stale_code: "sshguard_approval_superseded" } as never : a));
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], knockFingerprints(retired), asked), ["n1"]);
+
+  // Another plugin's approval moving on the same node is not a reason to ask.
+  const unrelated = before.map((a) => ((a as { id: string }).id === "other" ? { ...(a as object), status: "applied" } as never : a));
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], knockFingerprints(unrelated), asked), []);
+
+  // Order of arrival does not change the print.
+  assert.equal(knockFingerprints([...before].reverse()).get("n1"), prints.get("n1"));
 });

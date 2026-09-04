@@ -39,6 +39,12 @@ export interface FixtureNode {
    * wrote, and the confirm after it was retired the same way.
    */
   superseded?: boolean;
+  /**
+   * Mid-rotation: the newest arm rotated the sequence and kept this one
+   * alive until the confirm applies, so the server reports previous_honoured
+   * and the reveal returns these ports beside the new ones.
+   */
+  previousPorts?: number[];
   /** Seconds left on the revert timer, for awaitingConfirm. Negative: the window closed that long ago. */
   revertInSec?: number;
   /** PasswordAuthentication as sshd -T prints it; undefined when the agent predates the sshd block. */
@@ -144,15 +150,19 @@ export function buildFixtureNodes(): FixtureNode[] {
   (out[24] as FixtureNode).stage = "armFailed";
   (out[24] as FixtureNode).superseded = true;
   (out[24] as FixtureNode).sshd = [22, 58394];
+  (out[24] as FixtureNode).previousPorts = [27431, 45902, 38117];
   // 2 on a revert timer: sshd is already on the new port, 22 still open.
   const revert = out[0] as FixtureNode;
   revert.stage = "awaitingConfirm";
   revert.revertInSec = 7 * 60 + 41;
   revert.sshd = [22, 58394];
+  // The second one is a rotation: the arm swapped the sequence and kept the
+  // old one honoured until the confirm lands.
   const revert2 = out[6] as FixtureNode;
   revert2.stage = "awaitingConfirm";
   revert2.revertInSec = 3 * 60 + 12;
   revert2.sshd = [22, 58394];
+  revert2.previousPorts = [31207, 44118, 26590];
   // 1 whose window closed 4m18s ago: the approvals still say "applied, no
   // confirm", the box has reverted, and sshd is back on 22 alone.
   const reverted = out[29] as FixtureNode;

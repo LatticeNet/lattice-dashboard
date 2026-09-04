@@ -15,7 +15,7 @@
  * Pure functions only: no i18n, no colors, no HTTP. The sequence rules are the
  * part worth testing, and they are testable without a browser.
  */
-import type { ApprovalView } from "@/lib/api";
+import type { ApprovalView, SSHGuardKnockStateResponse } from "@/lib/api";
 import { fieldNumber, fieldText, hasFieldText } from "@/lib/formValue";
 
 export const SSHGUARD_PLUGIN = "sshguard";
@@ -545,7 +545,7 @@ export function parseConfirmWindow(plan: string | undefined): number | undefined
  * holds, so every row can say something without a request per node; the reveal
  * dialog then asks the server, which is the authority.
  */
-export type KnockKnowledge = "installed" | "planned" | "no_knock" | "unknown";
+export type KnockKnowledge = SSHGuardKnockStateResponse["knowledge"];
 
 /**
  * Whether the arm plan declares port knocking, read from the plan header.
@@ -593,6 +593,39 @@ export function knockKnowledgeFor(state: NodeGuardState): KnockKnowledge {
   if (!declared) return "no_knock";
   if (ARM_APPLIED_STAGES.has(state.stage)) return "installed";
   return ARM_PENDING_STAGES.has(state.stage) ? "planned" : "unknown";
+}
+
+/** The knowledge values under which the node is listening for a sequence the control plane holds. */
+export const KNOCK_INSTALLED: ReadonlySet<KnockKnowledge> = new Set<KnockKnowledge>(["installed", "installed_superseded"]);
+
+export interface KnockRowKnowledge {
+  knowledge: KnockKnowledge;
+  /** The server's sentence, once it has answered. Absent while the row still reads its plan. */
+  note?: string;
+  /** Mid-rotation: the sequence before this one still opens the node. */
+  previousHonoured: boolean;
+  /** True once the server's answer is in; false while the plan-derived reading stands in for it. */
+  fromServer: boolean;
+}
+
+/**
+ * What the row says about the knock, with the server's answer in charge.
+ *
+ * The server reads the node's whole arm history and knows two things the
+ * plan on this page cannot: that an arm retired as superseded still governs
+ * the node, and that a rotation left the previous sequence honoured. Until
+ * its answer arrives the row reads its own plan, which is right for every
+ * case it can see and says `unknown` for the rest; once the server has
+ * spoken, the plan reading is never consulted again for that node.
+ */
+export function knockRowKnowledge(
+  state: NodeGuardState,
+  server: Pick<SSHGuardKnockStateResponse, "knowledge" | "note" | "previous_honoured"> | undefined,
+): KnockRowKnowledge {
+  if (server) {
+    return { knowledge: server.knowledge, note: server.note, previousHonoured: server.previous_honoured === true, fromServer: true };
+  }
+  return { knowledge: knockKnowledgeFor(state), previousHonoured: false, fromServer: false };
 }
 
 export interface RevertDeadline {

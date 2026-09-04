@@ -14,6 +14,7 @@ import {
   guardCoverage,
   hasBlocking,
   knockKnowledgeFor,
+  knockRowKnowledge,
   nodesAwaitingConfirm,
   parseConfirmWindow,
   parseKnockDeclared,
@@ -458,4 +459,23 @@ test("a rejected arm is not a planned sequence", () => {
 test("an unreadable plan reports unknown rather than claiming a sequence", () => {
   const s = deriveNodeGuardState([arm({ status: "applied", plan: "garbage" })], NODE);
   assert.equal(knockKnowledgeFor(s), "unknown");
+});
+
+// The server reads the node's whole history and the page reads one plan, so
+// the two can disagree; when they do, the server is right. A retired record
+// that still governs the box is the case the plan cannot see.
+test("the row reads its plan until the server answers, then the server's word stands", () => {
+  const retired = deriveNodeGuardState([arm({ status: "dismissed", stale_code: "sshguard_approval_superseded", plan: PLAN_WITH_KNOCK })], NODE);
+  assert.equal(retired.stage, "armFailed");
+  const waiting = knockRowKnowledge(retired, undefined);
+  assert.deepEqual(waiting, { knowledge: "unknown", previousHonoured: false, fromServer: false });
+
+  const note = "The control plane knows this node's knock sequence from an arm record that was later dismissed as superseded.";
+  const answered = knockRowKnowledge(retired, { knowledge: "installed_superseded", note, previous_honoured: true });
+  assert.deepEqual(answered, { knowledge: "installed_superseded", note, previousHonoured: true, fromServer: true });
+
+  // The flag is read only when the server sets it; an omitted field is false.
+  const plain = knockRowKnowledge(retired, { knowledge: "unknown", note: "Every SSH Guard plan for this node was rejected or dismissed." });
+  assert.equal(plain.previousHonoured, false);
+  assert.equal(plain.knowledge, "unknown");
 });
