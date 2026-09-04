@@ -5,6 +5,7 @@ import {
   AGENT_RELEASES_BUCKET,
   bucketContentAvailable,
   bucketOwner,
+  bucketOwnerNote,
   bucketPluginId,
   bucketWritable,
 } from "../storeModel.ts";
@@ -79,4 +80,36 @@ test("the agent release listing carries no bytes, so it offers no preview", () =
   assert.equal(bucketContentAvailable(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), false);
   assert.equal(bucketContentAvailable(bucket({ kind: "static", name: "site" })), true);
   assert.equal(bucketContentAvailable(bucket({ name: "plugin:latticenet.sub-store" })), true);
+});
+
+test("a reserved bucket is the server's, and it is not the operator's own work", () => {
+  // reservedLineSecretKVBucket() marks vpn-core's KV bucket, managedline/def,
+  // vpn_users, vpn_user_secrets and managed_line_secrets reserved. None of
+  // them carries a plugin: or vpnmeta/ name, so the name rules alone dropped
+  // all five into the operator fallback: the sidebar badged the bucket holding
+  // VPN user secrets "operator", and the card said nothing writes there except
+  // this console, directly above the page's own line saying the server owns
+  // the contents. Reserved is the server's own statement of ownership and it
+  // outranks every name rule.
+  assert.equal(bucketOwner(bucket({ name: "vpn_user_secrets", reserved: true })), "server");
+  assert.equal(bucketOwner(bucket({ name: "vpn_users", reserved: true })), "server");
+  assert.equal(bucketOwner(bucket({ name: "managed_line_secrets", reserved: true })), "server");
+  assert.equal(bucketOwner(bucket({ name: "managedline/def", reserved: true })), "server");
+  assert.equal(bucketOwner(bucket({ kind: "static", name: "anything", reserved: true })), "server");
+});
+
+test("a reserved bucket says it is reserved once, not twice in two voices", () => {
+  // The card already renders the reserved copy: typed private state the server
+  // owns, refused to every scope. The owner note is the derivation, and the
+  // server-owned note names the line identity map, which is not what
+  // vpn_user_secrets holds. So a reserved bucket carries no owner note and the
+  // reserved copy stands alone.
+  assert.equal(bucketOwnerNote(bucket({ name: "vpn_user_secrets", reserved: true })), "");
+  assert.equal(bucketOwnerNote(bucket({ name: "vpnmeta/lineuuid", reserved: true })), "");
+
+  // Every unreserved bucket still explains its owner.
+  assert.equal(bucketOwnerNote(bucket({ name: "vpnmeta/lineuuid" })), "server");
+  assert.equal(bucketOwnerNote(bucket({ name: "plugin:latticenet.sub-store" })), "plugin");
+  assert.equal(bucketOwnerNote(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), "agent");
+  assert.equal(bucketOwnerNote(bucket()), "operator");
 });

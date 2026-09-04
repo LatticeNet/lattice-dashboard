@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import {
   bucketContentAvailable,
   bucketOwner,
+  bucketOwnerNote,
   bucketPluginId,
   bucketWritable,
 } from "./storeModel";
@@ -152,7 +153,11 @@ const activeFacts = computed(() => ({
   kind: kind.value,
   reserved: activeReserved.value,
 }));
-const activeOwner = computed(() => bucketOwner(activeFacts.value));
+// A reserved bucket states its own case in the card body and gets no owner
+// note: two sentences on one card, one of them derived from a name rule that
+// never saw this bucket, is how the page came to answer "who wrote this"
+// wrongly on the buckets holding VPN user secrets.
+const activeOwnerNote = computed(() => bucketOwnerNote(activeFacts.value));
 const activePluginId = computed(() => bucketPluginId(activeFacts.value));
 const activeWritable = computed(() => canWrite.value && bucketWritable(activeFacts.value));
 const activeContentAvailable = computed(() => bucketContentAvailable(activeFacts.value));
@@ -465,18 +470,18 @@ async function submitPut() {
             written by a machine except one leftover key, and a page that lists
             it without saying so reads as "some keys, origin unknown".
           -->
-          <p class="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+          <p v-if="activeOwnerNote" class="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <i18n-t
-              v-if="activeOwner === 'plugin'"
+              v-if="activeOwnerNote === 'plugin'"
               keypath="platform.store.ownerNote.plugin"
               tag="span"
               scope="global"
             >
               <template #plugin><span class="font-mono">{{ activePluginId }}</span></template>
             </i18n-t>
-            <span v-else>{{ $t(`platform.store.ownerNote.${activeOwner}`) }}</span>
+            <span v-else>{{ $t(`platform.store.ownerNote.${activeOwnerNote}`) }}</span>
             <RouterLink
-              v-if="activeOwner === 'agent'"
+              v-if="activeOwnerNote === 'agent'"
               to="/platform/agent-updates"
               class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
             >{{ $t('platform.store.openAgentUpdates') }}</RouterLink>

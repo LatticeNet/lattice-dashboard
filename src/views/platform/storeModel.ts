@@ -32,10 +32,31 @@ type BucketFacts = Pick<StorageBucketInventoryEntry, "name" | "kind"> &
   Partial<Pick<StorageBucketInventoryEntry, "reserved">>;
 
 export function bucketOwner(entry: BucketFacts): StorageBucketOwner {
+  // Reserved is the server saying the bucket is its own, and it outranks every
+  // name rule below. reservedLineSecretKVBucket() marks vpn-core's KV bucket,
+  // managedline/def, vpn_users, vpn_user_secrets and managed_line_secrets, and
+  // not one of those carries a plugin: or vpnmeta/ name, so reading the name
+  // alone badged the bucket holding VPN user secrets as the operator's own.
+  if (entry.reserved) return "server";
   if (entry.name.startsWith(PLUGIN_BUCKET_PREFIX)) return "plugin";
   if (entry.kind === "kv" && entry.name.startsWith(LINE_META_PREFIX)) return "server";
   if (entry.kind === "static" && entry.name === AGENT_RELEASES_BUCKET) return "agent";
   return "operator";
+}
+
+/**
+ * Which owner note the card should print, or "" for no note at all.
+ *
+ * A reserved bucket gets none. The card already states the reserved fact in
+ * full (typed private state the server owns, refused to every scope), and the
+ * server note underneath it names the line identity map, which is not what
+ * vpn_user_secrets holds. One bucket saying two different things about itself
+ * is how this page started contradicting itself, so the reserved copy stands
+ * alone and the derivation stays quiet.
+ */
+export function bucketOwnerNote(entry: BucketFacts): StorageBucketOwner | "" {
+  if (entry.reserved) return "";
+  return bucketOwner(entry);
 }
 
 /** The plugin id a plugin-owned bucket belongs to, or "" for every other bucket. */
