@@ -920,7 +920,7 @@ export default {
       toastPlanCreated: "Plan created, review in Approvals",
       toastPlanFailed: "Plan failed",
       noDemo:
-        "There is no demo tunnel here, and there cannot be one. A tunnel only does anything once cloudflared is installed on the node and its credentials JSON is sitting at /etc/cloudflared/<tunnel id>.json, and Lattice has no path that puts either there. A profile saved without them plans cleanly and then fails on the node at ingress validate, leaving a stray config file behind, so the honest empty page is this one.",
+        "There is no demo tunnel here, and there cannot be one. A tunnel only does anything once cloudflared is installed on the node and its credentials JSON is sitting at {path}, and Lattice has no path that puts either there. A profile saved without them plans cleanly and then fails on the node at ingress validate, leaving a stray config file behind, so the honest empty page is this one.",
     },
 
     matrix: {

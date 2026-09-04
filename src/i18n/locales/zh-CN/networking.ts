@@ -879,7 +879,7 @@ export default {
       toastPlanCreated: "计划已生成，请在审批中审阅",
       toastPlanFailed: "生成计划失败",
       noDemo:
-        "这一页没有演示隧道,也不可能有。隧道要真正起作用,必须先在节点上装好 cloudflared,并把凭据 JSON 放到 /etc/cloudflared/<tunnel id>.json,而 Lattice 没有任何路径能替你放这两样东西。缺了它们保存出来的配置照样能生成计划,然后在节点上卡在 ingress validate 失败,还留下一个多余的配置文件。所以这一页诚实的样子就是空的。",
+        "这一页没有演示隧道,也不可能有。隧道要真正起作用,必须先在节点上装好 cloudflared,并把凭据 JSON 放到 {path},而 Lattice 没有任何路径能替你放这两样东西。缺了它们保存出来的配置照样能生成计划,然后在节点上卡在 ingress validate 失败,还留下一个多余的配置文件。所以这一页诚实的样子就是空的。",
     },
 
     matrix: {
