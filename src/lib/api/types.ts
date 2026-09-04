@@ -548,6 +548,13 @@ export interface ApprovalView {
   approved_by?: string;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Who rejected this approval and when. Present only when a person or token
+   * said no. A rejected row without them was failed by its own task on the
+   * node, or retired by the server; `reason` and `stale_code` say which.
+   */
+  rejected_by?: string;
+  rejected_at?: string;
   /** Present only while status is "approved". See ApprovalWaitingView. */
   waiting?: ApprovalWaitingView;
 }

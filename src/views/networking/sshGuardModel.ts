@@ -462,30 +462,52 @@ export function validateForm(form: GuardForm): string[] {
 
 // ── evidence carried by the approvals ───────────────────────────────────────
 
+/** The server's stale code on an SSH Guard arm it retired as superseded. */
+export const SSHGUARD_SUPERSEDED_CODE = "sshguard_approval_superseded";
+
+export interface ArmRejection {
+  /** When the refusal was recorded. */
+  at: string;
+  /** Who refused it, when the server recorded that. Absent on a row written before it did. */
+  by?: string;
+}
+
 /**
  * An arm a person refused, as opposed to one the node could not apply.
  *
- * Both end as `rejected`, and the server writes a reason only for the
- * second: a failed task overwrites `reason` with its summary, while an
- * operator's rejection leaves the plan's own summary standing. Reading the
- * summary as a failure line is what made "Harden sshd only, no firewall"
- * look like something that went wrong on the box. What separates the two is
- * `approved_by`: a task only ever runs for an approval someone approved, so
- * an arm rejected without an approver was refused, not failed. The server
- * records who refused it in the audit trail, not on the approval, so only
- * the moment is known here.
+ * Both end as `rejected`. The server now writes `rejected_by` and
+ * `rejected_at` on the row when a person or token said no, and writes nothing
+ * for a task failure or an automatic rejection, so that field is the split.
  *
- * Provisional. The split rests on a correlation the API does not promise:
- * that a task runs only against an approved approval and always stamps
- * `approved_by`, and that nothing but a person's refusal leaves it empty. A
- * server path that rejects for another reason without an approver (an
- * expired or policy-rejected approval) would read here as a refusal. The
- * reading stays until the server writes the rejecting actor and reason on the
- * approval itself, at which point this becomes a field read.
+ * Rows from before the server recorded the actor still exist, and for those
+ * the old reading stands: a task only runs for an approval someone approved,
+ * so a rejected arm with no approver was refused, not failed. The moment is
+ * `updated_at`, and the actor is not known. An arm the server retired as
+ * superseded (see armSuperseded) is neither.
  */
-export function armRejection(state: NodeGuardState): { at: string } | undefined {
+export function armRejection(state: NodeGuardState): ArmRejection | undefined {
   if (state.stage !== "armFailed" || !state.arm) return undefined;
-  if (state.arm.status !== "rejected" || state.arm.approved_by) return undefined;
+  const arm = state.arm;
+  if (arm.rejected_by) {
+    return { at: arm.rejected_at || arm.updated_at || arm.created_at || "", by: arm.rejected_by };
+  }
+  if (arm.status !== "rejected" || arm.approved_by || armSuperseded(state)) return undefined;
+  return { at: arm.updated_at || arm.created_at || "" };
+}
+
+/**
+ * An arm the server retired because a newer plan replaced it.
+ *
+ * The server marks such a row with `stale_code` and never with a rejecting
+ * actor: nobody refused it and nothing on the node failed, the record was
+ * closed by the plan that took over. Printing it as a failure would send an
+ * operator looking for a fault that never happened; printing it as a refusal
+ * would blame someone. The server accepts the code on a dismissed row today
+ * and on a rejected one by contract, so the status is not read here.
+ */
+export function armSuperseded(state: NodeGuardState): { at: string } | undefined {
+  if (state.stage !== "armFailed" || !state.arm) return undefined;
+  if (state.arm.rejected_by || state.arm.stale_code !== SSHGUARD_SUPERSEDED_CODE) return undefined;
   return { at: state.arm.updated_at || state.arm.created_at || "" };
 }
 
@@ -495,11 +517,12 @@ export function armRejection(state: NodeGuardState): { at: string } | undefined 
  * A failed arm carries the task's summary in `reason`. The summary can run
  * to several lines; the last non-empty one is the line the task died on and
  * the one an operator reads first. The full text travels alongside for the
- * tooltip. An arm a person refused (see armRejection) has no failure to
- * print.
+ * tooltip. An arm a person refused (see armRejection) or the server retired
+ * (see armSuperseded) has no failure to print: its `reason` is the plan's
+ * own summary or the retirement note, not a fault.
  */
 export function armFailureText(state: NodeGuardState): { line: string; full: string } | undefined {
-  if (state.stage !== "armFailed" || armRejection(state)) return undefined;
+  if (state.stage !== "armFailed" || armRejection(state) || armSuperseded(state)) return undefined;
   const full = (state.arm?.reason ?? "").trim();
   if (!full) return undefined;
   const lines = full.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);

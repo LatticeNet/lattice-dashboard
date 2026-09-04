@@ -70,6 +70,7 @@ import {
   PERMIT_ROOT_LOGIN_VALUES,
   armFailureText,
   armRejection,
+  armSuperseded,
   buildFleetStates,
   buildPlanRequest,
   defaultGuardForm,
@@ -1003,13 +1004,25 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   :title="expandedReasons.has(`row:${state.nodeId}`) ? $t('networking.sshGuard.table.reasonCollapse') : $t('networking.sshGuard.table.reasonExpand')"
                   @click="toggleReason(`row:${state.nodeId}`)"
                 >{{ expandedReasons.has(`row:${state.nodeId}`) ? armFailureText(state)!.full : armFailureText(state)!.line }}</button>
-                <!-- A refusal is not a failure: the plan never reached the box. -->
+                <!-- A refusal is not a failure: the plan never reached the box.
+                     The actor is named when the server recorded one; a row
+                     from before it did says only that an operator refused. -->
                 <p
                   v-else-if="armRejection(state)"
                   class="mt-1 text-[11px] text-muted-foreground"
                   :title="$t('networking.sshGuard.table.rejectedByTitle', { summary: state.arm?.reason || '' })"
                 >
-                  {{ $t('networking.sshGuard.table.rejectedBy', { time: formatDateTime(armRejection(state)!.at) }) }}
+                  {{ armRejection(state)!.by
+                    ? $t('networking.sshGuard.table.rejectedByActor', { actor: armRejection(state)!.by, time: formatDateTime(armRejection(state)!.at) })
+                    : $t('networking.sshGuard.table.rejectedBy', { time: formatDateTime(armRejection(state)!.at) }) }}
+                </p>
+                <!-- Retired by a newer plan: neither a fault nor a refusal. -->
+                <p
+                  v-else-if="armSuperseded(state)"
+                  class="mt-1 text-[11px] text-muted-foreground"
+                  :title="$t('networking.sshGuard.table.supersededTitle')"
+                >
+                  {{ $t('networking.sshGuard.table.supersededOn', { time: formatDateTime(armSuperseded(state)!.at) }) }}
                 </p>
                 <!-- A closed window: when it closed, where a failure prints its reason. -->
                 <p

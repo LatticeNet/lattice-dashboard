@@ -30,6 +30,15 @@ export interface FixtureNode {
   failure?: string;
   /** An operator refused the arm: the server keeps the plan summary as the reason and records no approver. */
   refused?: boolean;
+  /** Like `refused`, on a server that records who said no and when. */
+  rejectedBy?: string;
+  /**
+   * The arm was approved and dispatched before apply results reached
+   * approvals, then retired as superseded by a cleanup. The record is
+   * dismissed with the server's stale code; the node still runs what it
+   * wrote, and the confirm after it was retired the same way.
+   */
+  superseded?: boolean;
   /** Seconds left on the revert timer, for awaitingConfirm. Negative: the window closed that long ago. */
   revertInSec?: number;
   /** PasswordAuthentication as sshd -T prints it; undefined when the agent predates the sshd block. */
@@ -122,9 +131,19 @@ export function buildFixtureNodes(): FixtureNode[] {
     n.sshd = k === 1 ? [22, 58394] : [22];
   });
   // 1 arm an operator refused, as the two NAT nodes were in production: same
-  // status as a failure on the wire, different story.
+  // status as a failure on the wire, different story. This one predates the
+  // server recording the actor, so the row says only that an operator did.
   (out[30] as FixtureNode).stage = "armFailed";
   (out[30] as FixtureNode).refused = true;
+  // 1 refused on a server that writes who said no and when.
+  (out[32] as FixtureNode).stage = "armFailed";
+  (out[32] as FixtureNode).rejectedBy = "user_ops";
+  // 1 armed before task results were recorded on approvals and retired as
+  // superseded since: the record reads dismissed, the box is hardened and
+  // knocking. sshd moved, and 22 stayed open for the management sources.
+  (out[24] as FixtureNode).stage = "armFailed";
+  (out[24] as FixtureNode).superseded = true;
+  (out[24] as FixtureNode).sshd = [22, 58394];
   // 2 on a revert timer: sshd is already on the new port, 22 still open.
   const revert = out[0] as FixtureNode;
   revert.stage = "awaitingConfirm";
@@ -153,7 +172,7 @@ export function buildFixtureNodes(): FixtureNode[] {
   (out[21] as FixtureNode).scope = "undecided";
   // Two hosts run dropbear on 3434, as three machines in the real fleet do.
   (out[23] as FixtureNode).sshd = [3434];
-  (out[24] as FixtureNode).sshd = [3434];
+  (out[31] as FixtureNode).sshd = [3434];
   // One never reported, one went stale, one reports no sshd at all, and one
   // runs an agent from before the sshd block existed.
   (out[25] as FixtureNode).observedAgoSec = undefined;
@@ -164,6 +183,10 @@ export function buildFixtureNodes(): FixtureNode[] {
 }
 
 const ARM_PLAN_HEADER = "# Lattice SSH Guard plan\n\nstage: arm\n";
+
+/** The server's stale code and reason on a record it retired as superseded. */
+export const SUPERSEDED_CODE = "sshguard_approval_superseded";
+const SUPERSEDED_REASON = "approval superseded: approved but never applied; the task ran before apply results were recorded on approvals";
 
 /**
  * One host is hardened without port knocking, which is a legitimate profile
@@ -201,11 +224,18 @@ export function buildFixture(): FixtureState {
         );
         break;
       case "armFailed":
-        approvals.push(
-          n.refused
-            ? { ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", reason: "Harden sshd only, no firewall (auto-revert in 3600s)", created_at: iso(-6 * 86_400_000), updated_at: iso(-5 * 86_400_000) }
-            : { ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", approved_by: "cdcd", reason: n.failure, created_at: iso(-2 * 3_600_000), updated_at: iso(-2 * 3_600_000 + 45_000) },
-        );
+        if (n.superseded) {
+          approvals.push(
+            { ...base, id: armId, action: "sshguard-arm:v1", status: "dismissed", stale_code: SUPERSEDED_CODE, reason: SUPERSEDED_REASON, created_at: iso(-21 * 86_400_000), updated_at: iso(-4 * 86_400_000) },
+            { ...base, id: id("apr"), action: "sshguard-confirm:v1", status: "dismissed", stale_code: SUPERSEDED_CODE, reason: SUPERSEDED_REASON, plan: "stage: confirm\n", created_at: iso(-21 * 86_400_000 + 420_000), updated_at: iso(-4 * 86_400_000) },
+          );
+        } else if (n.rejectedBy) {
+          approvals.push({ ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", reason: "Move sshd to :58394, gate 22 and 58394, knock on (auto-revert in 900s)", rejected_by: n.rejectedBy, rejected_at: iso(-26 * 3_600_000), created_at: iso(-27 * 3_600_000), updated_at: iso(-26 * 3_600_000) });
+        } else if (n.refused) {
+          approvals.push({ ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", reason: "Harden sshd only, no firewall (auto-revert in 3600s)", created_at: iso(-6 * 86_400_000), updated_at: iso(-5 * 86_400_000) });
+        } else {
+          approvals.push({ ...base, id: armId, action: "sshguard-arm:v1", status: "rejected", approved_by: "cdcd", reason: n.failure, created_at: iso(-2 * 3_600_000), updated_at: iso(-2 * 3_600_000 + 45_000) });
+        }
         break;
       case "awaitingConfirm": {
         const startedAgo = 900 - (n.revertInSec ?? 0);
