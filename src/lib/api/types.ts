@@ -816,13 +816,22 @@ export interface AuditVerifyResponse {
   error?: string;
 }
 
+/**
+ * `tls` opens a TLS session to host:port and reports the certificate's days
+ * to expiry; the probe fails once fewer than `threshold_days` remain, so the
+ * result log turns red before the certificate lapses rather than after.
+ */
+export type MonitorType = "tcp" | "http" | "tls";
+
 export interface MonitorView {
   id: string;
   name: string;
-  type: "tcp" | "http" | string;
+  type: MonitorType | string;
   target: string;
   interval_sec: number;
   timeout_sec: number;
+  /** Only on `tls` monitors: how many days before expiry the probe starts failing. */
+  threshold_days?: number;
   assign_all?: boolean;
   node_ids?: string[];
   enabled: boolean;
@@ -832,19 +841,24 @@ export interface MonitorView {
 
 export interface MonitorResult {
   monitor_id: string;
+  /** Empty on a `tls` result: the server dials those itself, no agent does. */
   node_id: string;
   at: string;
   success: boolean;
   latency_ms?: number;
   error?: string;
+  /** `tls` only: the leaf certificate expiry the probe read, set whenever the handshake completed. */
+  cert_not_after?: string;
 }
 
 export interface MonitorCreateInput {
   name: string;
-  type: "tcp" | "http";
+  type: MonitorType;
   target: string;
   interval_sec?: number;
   timeout_sec?: number;
+  /** `tls` only. */
+  threshold_days?: number;
   assign_all?: boolean;
   node_ids?: string[];
 }
@@ -1160,6 +1174,40 @@ export interface NetPolicyGraph {
 export type DNSZoneMode = "forward" | "static" | "block";
 export type DNSExposure = "mesh" | "public";
 
+/**
+ * `coredns` is a daemon Lattice installs and configures through a plan.
+ * `external` is one it only observes: a resolver the operator already runs,
+ * registered so the console lists it, reads its listeners from the node's
+ * guard reality and watches its certificate. An external record can never be
+ * planned or published; the server refuses both.
+ */
+export type DNSEngine = "coredns" | "external";
+
+/**
+ * One socket the observed daemon holds. Protocol and port are the operator's
+ * claim; `process` is what the node's guard reality reported on that socket
+ * when the claim was recorded, and is empty when nothing was listening there.
+ */
+export interface DNSListener {
+  port: number;
+  protocol: string;
+  /** Process name behind the socket, e.g. `dnsproxy`. Server-recorded, never operator-entered. */
+  process?: string;
+}
+
+/**
+ * The read-time comparison of a recorded listener set with the node's latest
+ * guard reality. The server computes it on every read and never acts on it:
+ * `findings` are finished sentences, and `status` is `drift` when any listener
+ * disagrees, `unknown` when the node has never reported or its report is
+ * stale, `ok` otherwise.
+ */
+export interface DNSDriftView {
+  status: "ok" | "drift" | "unknown" | string;
+  findings: string[];
+  reality_collected_at?: string;
+}
+
 export interface DNSRecord {
   name: string;
   type: string;
@@ -1179,13 +1227,19 @@ export interface DNSDeploymentView {
   name: string;
   node_id: string;
   node_name?: string;
-  engine: string;
+  engine: DNSEngine | string;
   listen_port: number;
   enable_udp: boolean;
   enable_tcp: boolean;
   exposure: DNSExposure | string;
   zones: DNSZone[];
   hostname?: string;
+  /** `external` only: the daemon's sockets, each stamped with the process reality reported. */
+  listeners?: DNSListener[];
+  /** `external` only: when the daemon's certificate expires, operator-entered. */
+  cert_not_after?: string;
+  /** `external` only: what the node's latest reality disagrees with. */
+  drift?: DNSDriftView;
   publish_ipv4: boolean;
   publish_ipv6: boolean;
   record_ttl?: number;
@@ -1208,13 +1262,17 @@ export interface DNSDeploymentBody {
   id?: string;
   name: string;
   node_id: string;
-  engine?: string;
+  engine?: DNSEngine | string;
   listen_port?: number;
   enable_udp?: boolean;
   enable_tcp?: boolean;
   exposure?: DNSExposure | string;
   zones: DNSZone[];
   hostname?: string;
+  /** `external` only: the sockets the observed daemon owns. At least one is required. */
+  listeners?: DNSListener[];
+  /** `external` only. */
+  cert_not_after?: string;
   publish_ipv4?: boolean;
   publish_ipv6?: boolean;
   record_ttl?: number;

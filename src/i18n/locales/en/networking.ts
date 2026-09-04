@@ -454,13 +454,14 @@ export default {
     dns: {
       title: "Self-host DNS",
       description:
-        "Per-node CoreDNS deployments with forward/static/block zones and optional public publishing",
+        "Resolvers on your nodes: the CoreDNS ones Lattice deploys, and the ones it only watches",
       newDeployment: "New deployment",
-      cardTitle: "CoreDNS deployments",
+      cardTitle: "Resolvers",
       cardDescription:
-        "Config changes go to Approvals first, and no node applies them until you approve the plan. Publishing does not wait: it writes public DNS the moment you confirm.",
-      emptyTitle: "No DNS deployments",
-      emptyDescription: "Create a CoreDNS deployment to serve zones from a node.",
+        "A deployed resolver goes to Approvals first, and no node applies it until you approve the plan. Publishing does not wait: it writes public DNS the moment you confirm. An observed resolver has none of that: Lattice records where it listens and when its certificate expires, and never touches it.",
+      emptyTitle: "No resolvers registered",
+      emptyDescription:
+        "Register a resolver you already run to have Lattice watch its listeners and its certificate without touching it, or deploy a CoreDNS resolver on a node and serve zones from it through an approved plan.",
       colName: "Name",
       colNode: "Node",
       colListen: "Listen",
@@ -468,6 +469,7 @@ export default {
       colZones: "Zones",
       colHostname: "Hostname",
       colStatus: "Status",
+      colReality: "Reality",
       colCredential: "Credential",
       colPublished: "Last publish attempt",
       colActions: "Actions",
@@ -485,6 +487,40 @@ export default {
       editTitle: "Edit deployment",
       newTitle: "New deployment",
       dialogDescription: "CoreDNS engine. A public hostname requires a Cloudflare credential.",
+      dialogDescriptionExternal:
+        "A resolver you already run. Lattice records where it listens and when its certificate expires, and never plans, applies or publishes anything for it.",
+      engine: "Engine",
+      engineCoredns: "CoreDNS (Lattice deploys it)",
+      engineExternal: "External (Lattice only watches it)",
+      engineCorednsHint:
+        "Lattice renders the Corefile, files a plan for approval, and a node installs and runs it. The plan also replaces that node's packet filter.",
+      engineExternalHint:
+        "For a resolver the operator already runs, such as dnsproxy or unbound. Nothing is rendered, planned, applied or published; the record exists so the console can list the daemon and compare its listeners with what the node reports.",
+      observedAria: "Observed only",
+      observedNoActions: "observed only",
+      listeners: "Listeners",
+      listenersHint:
+        "The sockets this daemon owns, as you know them. Each one is compared with the node's own listener report on every read, and the process behind it is filled in from that report.",
+      addListener: "Add listener",
+      listenerProtocol: "Protocol",
+      listenerPort: "Port",
+      removeListener: "Remove listener",
+      errListenerPort: "port must be between 1 and 65535",
+      externalHostnameHint:
+        "The fully qualified name this resolver answers at. It is what a TLS certificate watch is pointed at.",
+      certNotAfter: "Certificate expires",
+      certNotAfterHint:
+        "When this daemon's TLS certificate expires, if it serves DoT or DoH. Nothing reads it off the wire here; a TLS monitor on Monitoring does that and fires before the date arrives.",
+      certUnknown: "certificate expiry not recorded",
+      certExpired: "certificate expired {date}",
+      certDays: "certificate expires in {days}d ({date})",
+      realityCollected: "reality collected {time}",
+      realityNotObserved: "not observed",
+      drift: {
+        ok: "matches reality",
+        drift: "drift",
+        unknown: "unchecked",
+      },
       name: "Name",
       nodeLabel: "Node",
       selectNode: "Select a node",
@@ -531,6 +567,8 @@ export default {
       deleteDescription: "Delete the DNS deployment",
       deleteIrreversible:
         "CoreDNS keeps running on the node with the config it last applied, and any public records this deployment published stay published.",
+      deleteObserved:
+        "The daemon is untouched: this only stops Lattice listing it and comparing its listeners with the node's report. Register it again at any time.",
       credSet: "set",
       credNone: "none",
       toastUpdated: "Deployment updated",
@@ -553,7 +591,7 @@ export default {
       apexRecord: "{count} geo-aware apex record",
       emptyTitle: "No geo-routings configured",
       emptyDescription:
-        "A geo-routing renders a CoreDNS zone that answers one DNS apex with the nearest healthy node. This page renders that config and checksums it; nothing here reaches a node, and the list shows only what your token can read.",
+        "A geo-routing renders a CoreDNS zone that answers one DNS apex with the nearest healthy node. This page renders that config and checksums it; nothing here reaches a node, and the list shows only what your token can read. A routing named demo-something is safe to delete: it is a preview, and deleting it removes the whole record.",
       prereqNodesTitle: "Enrol the nodes that will answer",
       prereqNodesDetail:
         "Each participating node needs a running agent reporting it online with a public IP. A node missing either is dropped from the render with a warning, and a routing whose nodes are all missing fails to render at all.",
@@ -623,6 +661,13 @@ export default {
       toastDeleted: "Geo-routing deleted",
       toastDeleteFailed: "Delete failed",
       toastPlanFailed: "Plan preview failed",
+      demo: {
+        badge: "demo",
+        title: "This page is showing a demo",
+        what: "A geo-routing answers one DNS apex with whichever participating node is nearest and healthy. Everything this page does is authoring and rendering: it produces a CoreDNS zone and its checksum, and it reaches no node.",
+        real: "A routing of your own names the apex you actually own, the nodes that should answer it, and a node running self-host DNS to serve the rendered zone. The demo names real fleet nodes so the render is real, but its apex ends in .invalid, which can never resolve anywhere.",
+        remove: "Delete it with the row's delete button, or POST /api/geo-routing/delete with its id. Nothing else changes when it goes.",
+      },
     },
 
     ddns: {
@@ -870,6 +915,8 @@ export default {
       toastDeleteFailed: "Delete failed",
       toastPlanCreated: "Plan created, review in Approvals",
       toastPlanFailed: "Plan failed",
+      noDemo:
+        "There is no demo tunnel here, and there cannot be one. A tunnel only does anything once cloudflared is installed on the node and its credentials JSON is sitting at /etc/cloudflared/<tunnel id>.json, and Lattice has no path that puts either there. A profile saved without them plans cleanly and then fails on the node at ingress validate, leaving a stray config file behind, so the honest empty page is this one.",
     },
 
     matrix: {
