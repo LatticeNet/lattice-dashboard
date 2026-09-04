@@ -29,6 +29,7 @@ import {
 import {
   canPlanDeployment,
   DNS_COLUMN_SIZING,
+  buildExternalDnsBody,
   canPublishDeployment,
   certDate,
   certExpiry,
@@ -284,6 +285,15 @@ interface DnsForm {
 
 const dialogOpen = ref(false);
 const editingId = ref<string | undefined>(undefined);
+/**
+ * The record being edited, kept whole.
+ *
+ * The observed branch of this form does not show exposure or zones, and a DNS
+ * upsert replaces the stored record rather than merging into it. So the record
+ * has to be carried across the save, or the fields the form never showed are
+ * the fields the save destroys.
+ */
+const editingRecord = ref<DNSDeploymentView | undefined>(undefined);
 const editingHasCredential = ref(false);
 const saving = ref(false);
 const form = reactive<DnsForm>(emptyForm());
@@ -343,6 +353,7 @@ function emptyForm(): DnsForm {
 
 function openCreate() {
   editingId.value = undefined;
+  editingRecord.value = undefined;
   editingHasCredential.value = false;
   Object.assign(form, emptyForm());
   formSnapshot.value = snapshotForm();
@@ -351,6 +362,7 @@ function openCreate() {
 
 function openEdit(dep: DNSDeploymentView) {
   editingId.value = dep.id;
+  editingRecord.value = dep;
   editingHasCredential.value = dep.has_credential;
   Object.assign(form, {
     engine: isObservedEngine(dep.engine) ? "external" : "coredns",
@@ -511,27 +523,23 @@ function buildBody(): DNSDeploymentBody {
 }
 
 /**
- * The observed body carries no zones, no publishing and no credential. The
- * server strips those fields anyway; sending them would still say this console
- * thinks it can publish for a daemon it does not own.
+ * The observed body carries no publishing and no credential, and hands back
+ * the exposure and the zones the record already held. The two fields are not
+ * on this form and the server replaces rather than merges, so leaving them out
+ * is not neutral: it publishes a mesh-only resolver and drops its zones.
  */
 function buildExternalBody(): DNSDeploymentBody {
-  const listeners: DNSListener[] = form.listeners.map((listener) => ({
-    protocol: listener.protocol,
-    port: Number(listener.port),
-  }));
-  const body: DNSDeploymentBody = {
-    ...(editingId.value ? { id: editingId.value } : {}),
-    name: form.name.trim(),
-    node_id: form.node_id,
-    engine: "external",
-    exposure: "public",
-    zones: [],
-    hostname: form.hostname.trim(),
-    listeners,
-  };
-  if (form.cert_not_after) body.cert_not_after = `${form.cert_not_after}T00:00:00Z`;
-  return body;
+  return buildExternalDnsBody(
+    {
+      id: editingId.value,
+      name: form.name,
+      node_id: form.node_id,
+      hostname: form.hostname,
+      listeners: form.listeners,
+      cert_not_after: form.cert_not_after,
+    },
+    editingRecord.value,
+  );
 }
 
 async function submit() {
@@ -759,19 +767,31 @@ function closePlan(open: boolean) {
             <span class="font-mono text-xs">{{ listenSummary(dep) }}</span>
           </template>
           <!--
-            Exposure, zones, credential and publish history all describe an
-            intent Lattice holds. An observed record holds none, so these print
-            nothing rather than a zero or a "none" that reads as a fact about
-            the operator's daemon.
+            Credential and publish history describe an intent Lattice holds,
+            and an observed record holds neither, so those print nothing rather
+            than a "none" that reads as a fact about the operator's daemon.
+
+            Exposure and zones are different: the server keeps both on an
+            observed record, as the operator's own documentation of what the
+            daemon serves and who can reach it. They are printed in a neutral
+            tone, because on an observed row they are a note and not something
+            Lattice arranged, and they are printed at all because a field no
+            cell ever shows is a field a save can destroy unnoticed.
           -->
           <template #cell-exposure="{ row: dep }">
-            <Badge v-if="!isObservedEngine(dep.engine)" :variant="dep.exposure === 'public' ? 'warning' : 'secondary'">
+            <Badge
+              v-if="!isObservedEngine(dep.engine)"
+              :variant="dep.exposure === 'public' ? 'warning' : 'secondary'"
+            >
               {{ dep.exposure }}
             </Badge>
+            <Badge v-else-if="dep.exposure" variant="outline">{{ dep.exposure }}</Badge>
             <span v-else class="text-muted-foreground">·</span>
           </template>
           <template #cell-zones="{ row: dep }">
-            <span v-if="!isObservedEngine(dep.engine)" class="tabular-nums">{{ dep.zones.length }}</span>
+            <span v-if="!isObservedEngine(dep.engine) || dep.zones.length" class="tabular-nums">
+              {{ dep.zones.length }}
+            </span>
             <span v-else class="text-muted-foreground">·</span>
           </template>
           <template #cell-hostname="{ row: dep }">

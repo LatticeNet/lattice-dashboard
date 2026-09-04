@@ -5,6 +5,7 @@ import { test } from "node:test";
 import type { DNSDeploymentView } from "@/lib/api";
 import {
   DNS_COLUMN_SIZING,
+  buildExternalDnsBody,
   canPlanDeployment,
   canPublishDeployment,
   certExpiry,
@@ -159,4 +160,62 @@ test("the drift findings are rendered at the table's width, not inside the Reali
   const table = readFileSync(new URL("../../../components/common/DataTable.vue", import.meta.url), "utf8");
   assert.match(table, /name="row-detail"/);
   assert.match(table, /:colspan="spannedColumns"/);
+});
+
+// ── The observed body ─────────────────────────────────────────────────────
+
+const externalForm = {
+  id: "dns_2",
+  name: "lan resolver",
+  node_id: "node_ob46mh4ltshdpkhc",
+  hostname: " resolver.lan.example ",
+  listeners: [{ protocol: "udp", port: "53" }, { protocol: "tcp", port: 6053 }],
+  cert_not_after: "2026-11-17",
+};
+
+test("editing an observed record hands its exposure and zones back untouched", () => {
+  // The server replaces rather than merges: an absent zones is nilled and an
+  // absent exposure defaults to public, so a save from a form that shows
+  // neither would silently publish a mesh-only resolver and drop its zones.
+  const carried = {
+    exposure: "mesh",
+    zones: [
+      { suffix: "lan.example", mode: "forward", upstreams: ["10.0.0.1"] },
+      { suffix: "corp.example", mode: "block" },
+    ],
+  };
+  const body = buildExternalDnsBody(externalForm, carried);
+  assert.equal(body.exposure, "mesh");
+  assert.deepEqual(body.zones, carried.zones);
+  assert.equal(body.id, "dns_2");
+  assert.equal(body.engine, "external");
+  assert.equal(body.hostname, "resolver.lan.example");
+  assert.deepEqual(body.listeners, [
+    { protocol: "udp", port: 53 },
+    { protocol: "tcp", port: 6053 },
+  ]);
+  assert.equal(body.cert_not_after, "2026-11-17T00:00:00Z");
+});
+
+test("a new observed record carries nothing and lets the server default", () => {
+  const body = buildExternalDnsBody({ ...externalForm, id: undefined, cert_not_after: "" });
+  assert.equal(body.exposure, "public");
+  assert.deepEqual(body.zones, []);
+  assert.equal("id" in body, false);
+  assert.equal("cert_not_after" in body, false);
+});
+
+test("an exposure the server would refuse is not passed back through", () => {
+  // Failing the whole save over a field the form never showed is worse than
+  // the server's own default.
+  const body = buildExternalDnsBody(externalForm, { exposure: "internal", zones: [] });
+  assert.equal(body.exposure, "public");
+  assert.equal(buildExternalDnsBody(externalForm, { exposure: " PUBLIC ", zones: [] }).exposure, "public");
+  assert.equal(buildExternalDnsBody(externalForm, { exposure: " Mesh ", zones: [] }).exposure, "mesh");
+});
+
+test("DnsView builds the observed body through the carrying builder", () => {
+  const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
+  assert.match(view, /buildExternalDnsBody\(/);
+  assert.doesNotMatch(view, /exposure:\s*"public",\s*\n\s*zones:\s*\[\],/, "the observed body still hard-codes both fields");
 });

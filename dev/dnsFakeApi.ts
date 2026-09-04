@@ -121,8 +121,15 @@ const deployments: DNSDeploymentView[] = [
     listen_port: 53,
     enable_udp: true,
     enable_tcp: true,
-    exposure: "public",
-    zones: [],
+    // A LAN-only resolver, with the two suffixes it serves written down. The
+    // observed form shows neither field, so this row is the one that proves an
+    // edit hands them back instead of publishing the daemon and forgetting
+    // what it serves.
+    exposure: "mesh",
+    zones: [
+      { suffix: "xuezhang.example", mode: "forward", upstreams: ["10.10.0.1"] },
+      { suffix: "ads.example", mode: "block" },
+    ],
     hostname: "resolver.xuezhang.example",
     listeners: [
       { protocol: "udp", port: 53, process: "unbound" },
@@ -353,6 +360,40 @@ export const api = {
   },
   dns: {
     deployments: () => delay({ deployments: deployments.map((d) => ({ ...d })) }),
+    /**
+     * Replace, not merge, exactly as the server does.
+     *
+     * server_dns.go decodes the request into a fresh record and
+     * normalizeExternalDNSDeployment nils zones when the request sends none
+     * and defaults exposure to public when the field is absent. Nothing about
+     * the stored record survives a field the client left out, which is the
+     * behaviour this harness has to reproduce for the observed form to be
+     * checked at all.
+     */
+    upsert: (body: Partial<DNSDeploymentView> & { id?: string }) => {
+      const at = body.id ? deployments.findIndex((d) => d.id === body.id) : -1;
+      const previous = at >= 0 ? deployments[at] : undefined;
+      const exposure = (body.exposure ?? "").trim().toLowerCase() || "public";
+      // Object.assign rather than a spread literal: a spread of a Partial
+      // widens every field to `| undefined`, and this fixture is only useful
+      // while it keeps the stored record's shape intact.
+      const next: DNSDeploymentView = Object.assign({}, previous ?? deployments[0], body, {
+        id: body.id || `dns_${Date.now().toString(36)}`,
+        exposure,
+        zones: body.zones?.length ? body.zones : [],
+        // The process behind a socket is not the operator's to send; the
+        // server fills it from the node's reality report, so keep whatever the
+        // stored record already knew about the same socket.
+        listeners: (body.listeners ?? []).map((l) => {
+          const known = previous?.listeners?.find((p) => p.port === l.port && p.protocol === l.protocol);
+          return known?.process ? { ...l, process: known.process } : l;
+        }),
+        updated_at: iso(0),
+      });
+      if (at >= 0) deployments[at] = next;
+      else deployments.push(next);
+      return delay({ deployment: { ...next } }, 180);
+    },
   },
   geoRouting: {
     list: () => delay({ geo_routings: geoRoutings.map((g) => ({ ...g })) }),

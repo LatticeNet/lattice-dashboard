@@ -11,7 +11,7 @@
  * Everything here is pure so the difference can be asserted in a test rather
  * than eyeballed in a table cell.
  */
-import type { DNSDeploymentView, DNSListener } from "@/lib/api";
+import type { DNSDeploymentBody, DNSDeploymentView, DNSListener } from "@/lib/api";
 
 /** Milliseconds in a day, for the certificate countdown. */
 const DAY_MS = 86_400_000;
@@ -163,4 +163,68 @@ export function reservesWidth(classes: string | undefined): boolean {
 export function reservedWidthPx(classes: string | undefined): number {
   const widths = [...(classes ?? "").matchAll(/(?:^|\s)(?:min-)?w-\[(\d+)px\]/g)].map((m) => Number(m[1]));
   return widths.length ? Math.min(...widths) : 0;
+}
+
+// ── The observed body ─────────────────────────────────────────────────────
+
+/** What the external branch of the deployment form holds. */
+export interface ExternalFormInput {
+  /** Set when an existing record is being edited. */
+  id?: string;
+  name: string;
+  node_id: string;
+  hostname: string;
+  /** Ports arrive as strings from the number inputs until they are edited. */
+  listeners: { protocol: string; port: string | number }[];
+  /** `YYYY-MM-DD` from the date input, or "" when the expiry is not recorded. */
+  cert_not_after: string;
+}
+
+/** The two fields the observed form does not show and must not overwrite. */
+export type ExternalCarried = Pick<DNSDeploymentView, "exposure" | "zones">;
+
+/**
+ * The body for an observed record.
+ *
+ * `exposure` and `zones` are not in this form, and the server does not merge:
+ * an upsert replaces the record, so an absent `zones` is nilled and an absent
+ * `exposure` is defaulted to public. Sending nothing is therefore not the same
+ * as leaving them alone; it destroys them. An operator who opens a LAN-only
+ * resolver to add a listener would have silently published it and dropped
+ * whatever zones it documented, with no diff and no cell in the table that
+ * would have shown the change.
+ *
+ * So both are carried from the record being edited and handed straight back.
+ * On a create there is nothing to carry, and the server's own default applies.
+ */
+export function buildExternalDnsBody(
+  input: ExternalFormInput,
+  carried?: ExternalCarried,
+): DNSDeploymentBody {
+  const listeners: DNSListener[] = input.listeners.map((listener) => ({
+    protocol: listener.protocol,
+    port: Number(listener.port),
+  }));
+  const body: DNSDeploymentBody = {
+    ...(input.id ? { id: input.id } : {}),
+    name: input.name.trim(),
+    node_id: input.node_id,
+    engine: "external",
+    exposure: carriedExposure(carried),
+    zones: carried?.zones ?? [],
+    hostname: input.hostname.trim(),
+    listeners,
+  };
+  if (input.cert_not_after) body.cert_not_after = `${input.cert_not_after}T00:00:00Z`;
+  return body;
+}
+
+/**
+ * The exposure to send back. An unrecognised value is not passed through: the
+ * server refuses anything but mesh or public, and failing the whole save over
+ * a field the form never showed would be a worse outcome than the default.
+ */
+function carriedExposure(carried: ExternalCarried | undefined): string {
+  const value = (carried?.exposure ?? "").trim().toLowerCase();
+  return value === "mesh" || value === "public" ? value : "public";
 }
