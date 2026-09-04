@@ -731,6 +731,14 @@ export default {
       fieldWebhookUrl: "Webhook URL",
       fieldUrl: "URL",
       deviceKeyPlaceholder: "device key",
+      fieldLevel: "Interruption level",
+      levelDefault: "Server default (active)",
+      levelHint:
+        "How the phone interrupts: timeSensitive and critical break through Focus and silent mode, passive lands in the list without a sound, and blank sends active.",
+      fieldGroup: "Group",
+      groupHint: "Notifications with the same group stack together in Notification Center; blank uses the group \"lattice\".",
+      fieldBarkUrl: "Link",
+      barkUrlHint: "Tapping the notification opens this URL instead of the Bark app.",
       rulesTitle: "Routing rules",
       rulesDescription:
         "With no enabled rule, every enabled channel gets every notification. Once one enabled rule exists, only matching rules deliver, and a notification that no rule matches is dropped without a record.",

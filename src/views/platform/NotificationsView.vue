@@ -23,6 +23,13 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  buildConfig as buildConfigFor,
+  configComplete as configCompleteFor,
+  KIND_FIELDS,
+  KIND_OPTIONS,
+  type FieldDef,
+} from "./notificationsModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -57,7 +64,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type FieldDef = { key: string; label: string; required: boolean; placeholder: string };
 type RulePreset = {
   key: "quota" | "monitor" | "ssh";
   events: string;
@@ -65,25 +71,6 @@ type RulePreset = {
   body: string;
 };
 
-const KIND_FIELDS: Record<NotifyKind, FieldDef[]> = {
-  telegram: [
-    { key: "token", label: "platform.notifications.fieldBotToken", required: true, placeholder: "123456:ABC-DEF…" },
-    { key: "chat_id", label: "platform.notifications.fieldChatId", required: true, placeholder: "-1001234567890" },
-    { key: "base_url", label: "platform.notifications.fieldBaseUrl", required: false, placeholder: "https://api.telegram.org (optional)" },
-  ],
-  bark: [
-    { key: "base_url", label: "platform.notifications.fieldBaseUrl", required: true, placeholder: "https://api.day.app" },
-    { key: "key", label: "platform.notifications.fieldDeviceKey", required: true, placeholder: "platform.notifications.deviceKeyPlaceholder" },
-  ],
-  discord: [
-    { key: "webhook_url", label: "platform.notifications.fieldWebhookUrl", required: true, placeholder: "https://discord.com/api/webhooks/…" },
-  ],
-  webhook: [
-    { key: "url", label: "platform.notifications.fieldUrl", required: true, placeholder: "https://example.com/hook" },
-  ],
-};
-
-const KIND_OPTIONS: NotifyKind[] = ["telegram", "bark", "discord", "webhook"];
 const EVENT_OPTIONS = ["*", "monitor.down", "monitor.recovered", "ssh.login", "proxy.quota", "proxy.expiry"];
 // renderNotifyTemplate substitutes exactly three variables: event_type, title,
 // and body. Anything else is left in the delivered message verbatim, which is
@@ -213,11 +200,7 @@ function onKindChange(): void {
   resetConfigForKind();
 }
 
-const configComplete = computed(() =>
-  activeFields.value
-    .filter((field) => field.required)
-    .every((field) => (formConfig.value[field.key] ?? "").trim().length > 0),
-);
+const configComplete = computed(() => configCompleteFor(activeFields.value, formConfig.value));
 
 // Secrets are write-only: the server never returns them, so an edit starts with
 // empty fields and a blank field means "leave the stored value alone". Demanding
@@ -231,15 +214,8 @@ const canSubmit = computed(
   () => !!formName.value.trim() && (secretsOptional.value || configComplete.value),
 );
 
-// Blank fields are omitted, never sent as empty strings: an omitted key keeps
-// whatever the server already holds instead of clearing it.
 function buildConfig(): Record<string, string> {
-  const config: Record<string, string> = {};
-  for (const field of activeFields.value) {
-    const value = (formConfig.value[field.key] ?? "").trim();
-    if (value) config[field.key] = value;
-  }
-  return config;
+  return buildConfigFor(activeFields.value, formConfig.value);
 }
 
 async function submitForm(): Promise<void> {
@@ -668,13 +644,29 @@ async function confirmDeleteRule(): Promise<void> {
                 <span v-else-if="field.required" class="text-xs font-normal text-muted-foreground">
                   ({{ $t('common.misc.keepBlank') }})
                 </span>
+                <span v-else class="text-xs font-normal text-muted-foreground">
+                  ({{ $t('common.misc.optional') }})
+                </span>
               </Label>
+              <Select v-if="field.options" v-model="formConfig[field.key]">
+                <SelectTrigger :id="`cfg-${field.key}`">
+                  <SelectValue :placeholder="$t(field.placeholder)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">{{ $t(field.placeholder) }}</SelectItem>
+                  <SelectItem v-for="option in field.options" :key="option" :value="option">
+                    {{ option }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
               <Input
+                v-else
                 :id="`cfg-${field.key}`"
                 v-model="formConfig[field.key]"
                 :placeholder="secretsOptional ? $t('common.misc.keepBlank') : (field.placeholder.startsWith('platform.') ? $t(field.placeholder) : field.placeholder)"
                 autocomplete="off"
               />
+              <p v-if="field.hint" class="text-xs text-muted-foreground">{{ $t(field.hint) }}</p>
             </div>
             <p v-if="kindChanged" class="text-xs text-warning">
               {{ $t('platform.notifications.kindChangedHint') }}
