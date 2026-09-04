@@ -26,8 +26,11 @@ import { cn } from "@/lib/utils";
 import {
   buildConfig as buildConfigFor,
   configComplete as configCompleteFor,
+  fromSelectValue,
   KIND_FIELDS,
   KIND_OPTIONS,
+  SELECT_DEFAULT,
+  toSelectValue,
   type FieldDef,
 } from "./notificationsModel";
 
@@ -648,12 +651,16 @@ async function confirmDeleteRule(): Promise<void> {
                   ({{ $t('common.misc.optional') }})
                 </span>
               </Label>
-              <Select v-if="field.options" v-model="formConfig[field.key]">
+              <Select
+                v-if="field.options"
+                :model-value="toSelectValue(formConfig[field.key] ?? '')"
+                @update:model-value="(value) => (formConfig[field.key] = fromSelectValue(String(value ?? '')))"
+              >
                 <SelectTrigger :id="`cfg-${field.key}`">
                   <SelectValue :placeholder="$t(field.placeholder)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">{{ $t(field.placeholder) }}</SelectItem>
+                  <SelectItem :value="SELECT_DEFAULT">{{ $t(field.placeholder) }}</SelectItem>
                   <SelectItem v-for="option in field.options" :key="option" :value="option">
                     {{ option }}
                   </SelectItem>

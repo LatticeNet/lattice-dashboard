@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BARK_LEVELS, buildConfig, configComplete, KIND_FIELDS } from "../notificationsModel.ts";
+import { BARK_LEVELS, buildConfig, configComplete, fromSelectValue, KIND_FIELDS, SELECT_DEFAULT, toSelectValue } from "../notificationsModel.ts";
 
 const bark = KIND_FIELDS.bark;
 const field = (key: string) => bark.find((f) => f.key === key);
@@ -77,4 +77,20 @@ test("bark field copy is keyed, so both locales carry it", () => {
     if (f.hint) assert.match(f.hint, /^platform\.notifications\./);
     if (f.options) assert.match(f.placeholder, /^platform\.notifications\./);
   }
+});
+
+/**
+ * reka-ui throws at render on a SelectItem whose value is "", and the throw
+ * unmounts the whole option list, so the level select opened to nothing. The
+ * blank entry therefore carries a sentinel that is not a level, and the two
+ * boundary functions keep "" as the only blank the config ever sees.
+ */
+test("the blank level entry carries a sentinel the config never sees", () => {
+  assert.notEqual(SELECT_DEFAULT, "");
+  assert.equal(BARK_LEVELS.includes(SELECT_DEFAULT as (typeof BARK_LEVELS)[number]), false);
+  assert.equal(toSelectValue(""), SELECT_DEFAULT);
+  assert.equal(toSelectValue("critical"), "critical");
+  assert.equal(fromSelectValue(SELECT_DEFAULT), "");
+  assert.equal(fromSelectValue("passive"), "passive");
+  assert.deepEqual(buildConfig(bark, { base_url: "b", key: "k", level: fromSelectValue(SELECT_DEFAULT) }), { base_url: "b", key: "k" });
 });

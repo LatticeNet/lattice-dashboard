@@ -73,6 +73,23 @@ export const KIND_FIELDS: Record<NotifyKind, FieldDef[]> = {
 
 export const KIND_OPTIONS: NotifyKind[] = ["telegram", "bark", "discord", "webhook"];
 
+/**
+ * What the blank entry of a select carries. reka-ui refuses a SelectItem whose
+ * value is the empty string (it reserves "" for "nothing selected" and throws
+ * at render, which unmounts the whole list), so the "server default" entry
+ * carries this sentinel and the form maps it back to blank at the boundary.
+ * The config itself never holds it: blank stays "" and is omitted on save.
+ */
+export const SELECT_DEFAULT = "__default__";
+
+export function toSelectValue(value: string): string {
+  return value || SELECT_DEFAULT;
+}
+
+export function fromSelectValue(value: string): string {
+  return value === SELECT_DEFAULT ? "" : value;
+}
+
 /** Whether every required field has a non-blank value. Optional fields never block. */
 export function configComplete(fields: readonly FieldDef[], config: Record<string, string>): boolean {
   return fields
