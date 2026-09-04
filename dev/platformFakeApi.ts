@@ -44,13 +44,25 @@ export * from "@/lib/api/index";
  * can be checked without editing this file:
  *
  *   ?empty-plane      Publishing answers with no route at all (first run).
+ *   ?no-origins       Publishing answers with no origin the caller may see,
+ *                     which is what the server returns for an operator holding
+ *                     none of kv:admin, kv:read, static:admin, static:read.
  *   ?nothing-collected  Evidence answers with a store that holds no record.
+ *   ?no-nodes         The caller can see no node, so the trace handler answers
+ *                     before it reaches the store and its collected_total is 0.
  *   ?old-server       Evidence answers without the collection fields at all.
+ *   ?token-writer     A storage token can write the operator's own bucket.
+ *   ?no-admin         The caller holds no kv:admin or static:admin, so the
+ *                     console cannot read the token list at all.
  */
 const flags = new URLSearchParams(location.search);
 const EMPTY_PLANE = flags.has("empty-plane");
+const NO_ORIGINS = flags.has("no-origins");
 const NOTHING_COLLECTED = flags.has("nothing-collected");
+const NO_NODES = flags.has("no-nodes");
 const OLD_SERVER = flags.has("old-server");
+const TOKEN_WRITER = flags.has("token-writer");
+const NO_ADMIN = flags.has("no-admin");
 
 const NOW = Date.now();
 const DAY = 86_400_000;
@@ -70,14 +82,15 @@ const principal: Principal = {
   scopes: [
     "kv:read",
     "kv:write",
-    "kv:admin",
     "static:read",
     "static:write",
-    "static:admin",
     "log:read",
     "log:admin",
     "node:read",
     "user:admin",
+    // Reading the storage token list needs these, and an operator without them
+    // is the case where the console cannot tell who writes a bucket.
+    ...(NO_ADMIN ? [] : ["kv:admin", "static:admin"]),
   ],
   server_allowlist: [],
   csrf_token: "harness",
@@ -291,6 +304,22 @@ const tokens: Record<StorageKind, StorageTokenView[]> = {
       created_at: iso(-40 * DAY),
       updated_at: iso(-40 * DAY),
     },
+    // The case the operator note used to deny: a CI job pushes into a bucket
+    // the console called its own.
+    ...(TOKEN_WRITER
+      ? [
+          {
+            id: "tok_kv_ci",
+            name: "ci push",
+            kind: "kv" as StorageKind,
+            access: "write",
+            buckets: ["default"],
+            last_used_at: iso(-40 * 60_000),
+            created_at: iso(-12 * DAY),
+            updated_at: iso(-12 * DAY),
+          } as StorageTokenView,
+        ]
+      : []),
   ],
   static: [],
 };
@@ -339,8 +368,11 @@ export const api = {
   publishing: {
     records: () =>
       delay({
-        records: EMPTY_PLANE ? [] : records.map((r) => ({ ...r })),
-        origins: ["kv", "static", "plugin"],
+        records: EMPTY_PLANE || NO_ORIGINS ? [] : records.map((r) => ({ ...r })),
+        // No origin the caller may look at. The server answers this way for an
+        // operator holding none of the storage scopes, and the record list is
+        // empty for the same reason rather than because nothing is published.
+        origins: NO_ORIGINS ? [] : ["kv", "static", "plugin"],
       }),
   },
 
@@ -400,7 +432,7 @@ export const api = {
   },
 
   nodes: {
-    list: () => delay({ nodes: nodes.map((n) => ({ ...n })) } as never),
+    list: () => delay({ nodes: NO_NODES ? [] : nodes.map((n) => ({ ...n })) } as never),
   },
 
   users: {
@@ -412,6 +444,10 @@ export const api = {
     // case the empty state used to answer with "widen the time range" and no
     // idea of how far. The newest record is eight days old.
     connections: () => {
+      // handleTraceRecords returns before it reaches the store when the caller
+      // has no visible node, and collected_total carries no omitempty, so that
+      // answer is indistinguishable from a store that collected nothing.
+      if (NO_NODES) return delay({ records: NO_RECORDS, collected_total: 0 });
       if (OLD_SERVER) return delay({ records: NO_RECORDS });
       if (NOTHING_COLLECTED) return delay({ records: NO_RECORDS, collected_total: 0 });
       return delay({
@@ -421,7 +457,7 @@ export const api = {
       });
     },
     sessions: () => delay({ sessions: [] }),
-    policy: () => delay({ policies: policies.map((p) => ({ ...p })) }),
+    policy: () => delay({ policies: NO_NODES ? [] : policies.map((p) => ({ ...p })) }),
   },
 
   approvals: unimplemented,

@@ -33,6 +33,7 @@ const LINKS = [
   ["/publishing", "Publishing"],
   ["/store", "Store"],
   ["/store?kind=kv&bucket=vpnmeta%2Flineuuid", "Store: line identity map"],
+  ["/store?kind=kv&bucket=line-secrets", "Store: reserved bucket"],
   ["/evidence", "Evidence"],
 ] as const;
 
