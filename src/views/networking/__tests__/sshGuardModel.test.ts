@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   armFailureText,
   armRejection,
+  armSuperseded,
   buildAdvancedRequest,
   buildFleetStates,
   buildPlanRequest,
@@ -13,6 +14,7 @@ import {
   guardCoverage,
   hasBlocking,
   knockKnowledgeFor,
+  knockRowKnowledge,
   nodesAwaitingConfirm,
   parseConfirmWindow,
   parseKnockDeclared,
@@ -315,6 +317,45 @@ test("an arm a person refused reads as a refusal with its moment, never as a fai
   assert.equal(armRejection(deriveNodeGuardState([arm({ status: "applied" })], NODE)), undefined);
 });
 
+test("the server's rejecting actor is read off the row, with the moment it recorded", () => {
+  // The server writes rejected_by and rejected_at only on a person's path.
+  // The plan summary still sits in `reason`, and must not print as a fault.
+  const refused = deriveNodeGuardState(
+    [arm({ status: "rejected", reason: "Move sshd to :58394, knock on (auto-revert in 900s)", rejected_by: "user_ops", rejected_at: "2026-09-01T08:15:00Z", updated_at: "2026-09-01T08:15:02Z" })],
+    NODE,
+  );
+  assert.deepEqual(armRejection(refused), { at: "2026-09-01T08:15:00Z", by: "user_ops" });
+  assert.equal(armFailureText(refused), undefined);
+  assert.equal(armSuperseded(refused), undefined);
+  // The actor wins over the old approver reading: a row that carries both
+  // was refused by the person named, whatever approved_by says.
+  const both = deriveNodeGuardState([arm({ status: "rejected", approved_by: "cdcd", reason: "sshd -t: bad option", rejected_by: "user_ops" })], NODE);
+  assert.equal(armRejection(both)?.by, "user_ops");
+  assert.equal(armFailureText(both), undefined);
+});
+
+test("an arm retired as superseded is neither a failure nor a refusal", () => {
+  // The server retires an arm that was approved and dispatched before apply
+  // results reached approvals. The record carries its stale code and a
+  // reason that explains the retirement; nothing on the node failed.
+  const reason = "approval superseded: approved but never applied";
+  for (const status of ["dismissed", "rejected"]) {
+    const s = deriveNodeGuardState([arm({ status, stale_code: "sshguard_approval_superseded", reason, updated_at: "2026-08-31T02:00:00Z" })], NODE);
+    assert.equal(s.stage, "armFailed", status);
+    assert.deepEqual(armSuperseded(s), { at: "2026-08-31T02:00:00Z" }, status);
+    assert.equal(armRejection(s), undefined, `${status}: a retirement is not a refusal`);
+    assert.equal(armFailureText(s), undefined, `${status}: the retirement note is not a fault`);
+  }
+  // A person's rejection carrying the code by accident is still a rejection.
+  const named = deriveNodeGuardState([arm({ status: "rejected", stale_code: "sshguard_approval_superseded", rejected_by: "user_ops" })], NODE);
+  assert.equal(armSuperseded(named), undefined);
+  assert.equal(armRejection(named)?.by, "user_ops");
+  // A dismissed row without the code is what it always was: nothing to print.
+  const plain = deriveNodeGuardState([arm({ status: "dismissed", reason: "operator cleanup" })], NODE);
+  assert.equal(armSuperseded(plain), undefined);
+  assert.equal(armFailureText(plain)?.line, "operator cleanup");
+});
+
 test("the confirm window is read back from the plan the arm was rendered with", () => {
   assert.equal(parseConfirmWindow("stage: arm\nnode_id: x\nconfirm_window_sec: 300\n"), 300);
   assert.equal(parseConfirmWindow("no such line"), undefined);
@@ -418,4 +459,23 @@ test("a rejected arm is not a planned sequence", () => {
 test("an unreadable plan reports unknown rather than claiming a sequence", () => {
   const s = deriveNodeGuardState([arm({ status: "applied", plan: "garbage" })], NODE);
   assert.equal(knockKnowledgeFor(s), "unknown");
+});
+
+// The server reads the node's whole history and the page reads one plan, so
+// the two can disagree; when they do, the server is right. A retired record
+// that still governs the box is the case the plan cannot see.
+test("the row reads its plan until the server answers, then the server's word stands", () => {
+  const retired = deriveNodeGuardState([arm({ status: "dismissed", stale_code: "sshguard_approval_superseded", plan: PLAN_WITH_KNOCK })], NODE);
+  assert.equal(retired.stage, "armFailed");
+  const waiting = knockRowKnowledge(retired, undefined);
+  assert.deepEqual(waiting, { knowledge: "unknown", previousHonoured: false, fromServer: false });
+
+  const note = "The control plane knows this node's knock sequence from an arm record that was later dismissed as superseded.";
+  const answered = knockRowKnowledge(retired, { knowledge: "installed_superseded", note, previous_honoured: true });
+  assert.deepEqual(answered, { knowledge: "installed_superseded", note, previousHonoured: true, fromServer: true });
+
+  // The flag is read only when the server sets it; an omitted field is false.
+  const plain = knockRowKnowledge(retired, { knowledge: "unknown", note: "Every SSH Guard plan for this node was rejected or dismissed." });
+  assert.equal(plain.previousHonoured, false);
+  assert.equal(plain.knowledge, "unknown");
 });

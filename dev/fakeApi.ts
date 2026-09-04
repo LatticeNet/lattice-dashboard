@@ -14,11 +14,12 @@ import type {
   NodeCapability,
   Principal,
   SSHGuardFinding,
+  SSHGuardKnockStateResponse,
   SSHGuardPlanRequest,
   SSHGuardPlanResponse,
 } from "@/lib/api/index";
 
-import { NO_KNOCK_NODE, fixtureId, fixtureIso, toApiNodes } from "./sshGuardFixture";
+import { NO_KNOCK_NODE, SUPERSEDED_CODE, fixtureId, fixtureIso, toApiNodes } from "./sshGuardFixture";
 import { state } from "./fixtureState";
 
 export * from "@/lib/api/index";
@@ -169,6 +170,12 @@ export const api = {
       const appliedArms = arms.filter((a) => a.status === "applied");
       const applied = appliedArms.length ? appliedArms[appliedArms.length - 1] : undefined;
       const confirmed = mine.some((a) => a.action === "sshguard-confirm:v1" && a.status === "applied");
+      // An arm retired as superseded still governs the node when a confirm
+      // was dispatched after it, which the server reads from the confirm's
+      // own retirement. The fixture files both together.
+      const supersededArm = arms.find((a) => a.stale_code === SUPERSEDED_CODE);
+      const supersededConfirm = mine.some((a) => a.action === "sshguard-confirm:v1" && a.stale_code === SUPERSEDED_CODE);
+      const previous = node.previousPorts?.length ? { previous_honoured: true as const } : {};
       // One host in the fixture was hardened without knocking, so the "there
       // is no sequence" copy has somewhere to render.
       const noKnock = node.name === NO_KNOCK_NODE;
@@ -184,6 +191,14 @@ export const api = {
           ok: true, node_id, knowledge: "no_knock" as const, revealable: false,
           requires_step_up: true, interactive_only: true, approval_id: arms[arms.length - 1]!.id,
           note: "SSH Guard is set up on this node without port knocking. There is no sequence to show; reach SSH from a management source.",
+        };
+      }
+      if (!applied && supersededArm && supersededConfirm) {
+        return {
+          ok: true, node_id, knowledge: "installed_superseded" as const, revealable: true,
+          requires_step_up: true, interactive_only: true, approval_id: supersededArm.id, confirmed: false,
+          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394, ...previous,
+          note: "The control plane knows this node's knock sequence from an arm record that was later dismissed as superseded. The dismissal retired the record, not the change: the arm and a confirm after it were both approved and dispatched before apply results were recorded on approvals, so neither outcome was written back. No later plan has replaced the knock since. Treat this as the sequence the node was last told to run, and prove it with a knock before relying on it.",
         };
       }
       // A rejected or dismissed arm governs nothing: its sequence was never
@@ -209,6 +224,7 @@ export const api = {
         requires_step_up: true, interactive_only: true, approval_id: applied.id,
         applied_at: applied.updated_at, confirmed,
         port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394,
+        ...(confirmed ? {} : previous),
         note: confirmed
           ? "The control plane knows this node's knock sequence. It was applied and confirmed, so it is the sequence the node is running."
           : "The control plane knows the knock sequence from the arm that was applied. That arm was never confirmed, so its automatic revert may have removed it from the node since.",
@@ -226,10 +242,15 @@ export const api = {
       const seed = [...node.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 40000, 7);
       const ports = [20000 + seed, 20000 + ((seed * 7 + 911) % 40000), 20000 + ((seed * 13 + 5077) % 40000)];
       const addr = node.publicIp;
+      const stateNow: SSHGuardKnockStateResponse = await api.sshGuard.knockState(node_id);
+      const digest = ports.map((p) => p.toString(16).padStart(4, "0")).join("").padEnd(64, "0");
       return {
-        ok: true, node_id, knowledge: "installed", approval_id: fixtureId("apr"),
+        ok: true, node_id, knowledge: stateNow.knowledge, approval_id: stateNow.approval_id ?? fixtureId("apr"),
+        note: stateNow.note, confirmed: stateNow.confirmed ?? false,
         ports, seq_timeout_sec: 15, open_for: "12h", ssh_port: 58394, address: addr,
         command: `for p in ${ports.join(" ")}; do printf k | nc -u -w1 ${addr} $p; sleep 1; done\nssh -p 58394 root@${addr}`,
+        sequence_sha256: digest,
+        ...(stateNow.previous_honoured && node.previousPorts ? { previous_ports: node.previousPorts } : {}),
       };
     },
   },

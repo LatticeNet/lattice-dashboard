@@ -70,12 +70,14 @@ import {
   PERMIT_ROOT_LOGIN_VALUES,
   armFailureText,
   armRejection,
+  armSuperseded,
   buildFleetStates,
   buildPlanRequest,
   defaultGuardForm,
   hasBlocking,
   isSSHGuardApproval,
-  knockKnowledgeFor,
+  KNOCK_INSTALLED,
+  knockRowKnowledge,
   parseMgmtSources,
   revertDeadline,
   sortFindings,
@@ -97,6 +99,9 @@ import {
   membersToFile,
   newestObservation,
   orderForBoard,
+  knockFingerprints,
+  knockStatesToFetch,
+  mergeKnockAnswers,
   proofCounts,
   realityDetailsToFetch,
   revertingNodes,
@@ -105,6 +110,7 @@ import {
   type BatchOutcome,
   type BoardStage,
   type CoverageFilter,
+  type KnockAnswer,
   type ScopeState,
 } from "./sshGuardBoardModel";
 
@@ -153,27 +159,52 @@ const knockStepUpCode = knockStepUp.code;
 const knockStepUpError = knockStepUp.error;
 const knockStepUpPending = knockStepUp.pending;
 
-/** An applied arm with no applied confirm: the revert may have undone it. */
+/**
+ * The server's sentence carries a caveat the page styles as a warning: an
+ * applied arm with no applied confirm, whose revert may have undone it, or a
+ * sequence known only from a record the server retired as superseded.
+ */
 const knockUnconfirmed = computed(
-  () => knockState.value?.knowledge === "installed" && knockState.value.confirmed === false,
+  () =>
+    knockState.value?.knowledge === "installed_superseded" ||
+    (knockState.value?.knowledge === "installed" && knockState.value.confirmed === false),
 );
 
 const knockNodeName = computed(
   () => nodesQuery.data.value?.find((n) => n.id === knockNodeId.value)?.name || knockNodeId.value,
 );
 
+const KNOCK_KEY = {
+  installed: "installed",
+  installed_superseded: "installedSuperseded",
+  planned: "planned",
+  no_knock: "noKnock",
+  unknown: "unknown",
+} as const;
+
 /** The word the Knock column shows, and the title that explains it. */
-function knockCell(state: NodeGuardState): { text: string; title: string; muted: boolean } {
-  const knowledge = knockKnowledgeFor(state);
-  const key = (
-    { installed: "installed", planned: "planned", no_knock: "noKnock", unknown: "unknown" } as const
-  )[knowledge];
+function knockCell(state: NodeGuardState): { text: string; title: string; tone: string; previousHonoured: boolean } {
+  const row = knockRowKnowledge(state, knockRows.value.get(state.nodeId));
+  const key = KNOCK_KEY[row.knowledge];
   return {
     text: t(`networking.sshGuard.knock.${key}`),
-    title: t(`networking.sshGuard.knock.${key}Title`),
-    // Only a sequence that reached the node is worth reading as present.
-    muted: knowledge !== "installed",
+    // The server's own sentence once it has answered; the page's until then.
+    title: row.note ?? t(`networking.sshGuard.knock.${key}Title`),
+    // Only a sequence that reached the node is worth reading as present, and
+    // one known from a retired record reads as present with a caveat.
+    tone:
+      row.knowledge === "installed"
+        ? "text-foreground"
+        : row.knowledge === "installed_superseded"
+          ? "text-warning"
+          : "text-muted-foreground",
+    previousHonoured: row.previousHonoured,
   };
+}
+
+/** Whether the row's key button belongs: the node is listening for a sequence the server holds. */
+function knockKnown(state: NodeGuardState): boolean {
+  return KNOCK_INSTALLED.has(knockRowKnowledge(state, knockRows.value.get(state.nodeId)).knowledge);
 }
 
 /**
@@ -335,6 +366,45 @@ onBeforeUnmount(() => clearInterval(clock));
 const states = computed<NodeGuardState[]>(() =>
   orderForBoard(buildFleetStates(approvals.value, nodesQuery.data.value ?? []), now.value),
 );
+
+/*
+ * What the server knows per row. The plan on this page can say whether an
+ * arm declared a knock and whether it applied; only the server, reading the
+ * node's whole history, can say that a retired record still governs the box
+ * or that a rotation left the previous sequence honoured. So every row asks
+ * it once, and again only when that node's approvals move.
+ */
+const knockRows = shallowRef<Map<string, SSHGuardKnockStateResponse>>(new Map());
+const knockAsked = new Map<string, string>();
+
+async function readKnockRows() {
+  if (!canAdmin.value) return;
+  const prints = knockFingerprints(approvals.value);
+  const ids = knockStatesToFetch(states.value.map((s) => s.nodeId), prints, knockAsked);
+  if (!ids.length) return;
+  // Merged into whatever the map holds when they land, never into a copy
+  // taken now, and each answer carries the print it was asked against so an
+  // older pass landing late cannot overwrite a newer one: see
+  // mergeKnockAnswers for both.
+  const answers = new Map<string, KnockAnswer<SSHGuardKnockStateResponse>>();
+  try {
+    await runWithConcurrency(ids, 4, async (nodeId) => {
+      // Recorded before the request, so a refusal is not retried on every
+      // poll; the row falls back to its plan until the approvals move.
+      const print = prints.get(nodeId) ?? "";
+      knockAsked.set(nodeId, print);
+      try {
+        answers.set(nodeId, { print, answer: await api.sshGuard.knockState(nodeId) });
+      } catch {
+        answers.set(nodeId, { print, answer: undefined });
+      }
+    });
+  } finally {
+    knockRows.value = mergeKnockAnswers(knockRows.value, answers, knockAsked);
+  }
+}
+
+watch([() => approvals.value, () => nodesQuery.data.value, canAdmin], () => void readKnockRows());
 
 /**
  * The board's word for a row. It is the approval stage except for one case
@@ -1003,13 +1073,25 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   :title="expandedReasons.has(`row:${state.nodeId}`) ? $t('networking.sshGuard.table.reasonCollapse') : $t('networking.sshGuard.table.reasonExpand')"
                   @click="toggleReason(`row:${state.nodeId}`)"
                 >{{ expandedReasons.has(`row:${state.nodeId}`) ? armFailureText(state)!.full : armFailureText(state)!.line }}</button>
-                <!-- A refusal is not a failure: the plan never reached the box. -->
+                <!-- A refusal is not a failure: the plan never reached the box.
+                     The actor is named when the server recorded one; a row
+                     from before it did says only that an operator refused. -->
                 <p
                   v-else-if="armRejection(state)"
                   class="mt-1 text-[11px] text-muted-foreground"
                   :title="$t('networking.sshGuard.table.rejectedByTitle', { summary: state.arm?.reason || '' })"
                 >
-                  {{ $t('networking.sshGuard.table.rejectedBy', { time: formatDateTime(armRejection(state)!.at) }) }}
+                  {{ armRejection(state)!.by
+                    ? $t('networking.sshGuard.table.rejectedByActor', { actor: armRejection(state)!.by, time: formatDateTime(armRejection(state)!.at) })
+                    : $t('networking.sshGuard.table.rejectedBy', { time: formatDateTime(armRejection(state)!.at) }) }}
+                </p>
+                <!-- Retired by a newer plan: neither a fault nor a refusal. -->
+                <p
+                  v-else-if="armSuperseded(state)"
+                  class="mt-1 text-[11px] text-muted-foreground"
+                  :title="$t('networking.sshGuard.table.supersededTitle')"
+                >
+                  {{ $t('networking.sshGuard.table.supersededOn', { time: formatDateTime(armSuperseded(state)!.at) }) }}
                 </p>
                 <!-- A closed window: when it closed, where a failure prints its reason. -->
                 <p
@@ -1089,12 +1171,19 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <button
                   type="button"
                   class="reason-toggle text-left underline-offset-4 hover:underline"
-                  :class="knockCell(state).muted ? 'text-muted-foreground' : 'text-foreground'"
+                  :class="knockCell(state).tone"
                   :title="knockCell(state).title"
                   @click="openKnock(state.nodeId)"
                 >
                   {{ knockCell(state).text }}
                 </button>
+                <!-- Mid-rotation: the sequence the operator already holds
+                     still opens the node until the confirm applies. -->
+                <span
+                  v-if="knockCell(state).previousHonoured"
+                  class="block text-[11px] text-muted-foreground"
+                  :title="$t('networking.sshGuard.knock.previousHonouredTitle')"
+                >{{ $t('networking.sshGuard.knock.previousHonoured') }}</span>
               </td>
 
               <td class="px-2 py-1 align-top font-mono text-xs tabular whitespace-nowrap">
@@ -1164,7 +1253,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                        confirmed node with nothing else to do. That row is
                        exactly the one an operator opens when he cannot get in. -->
                   <Button
-                    v-if="knockKnowledgeFor(state) === 'installed'"
+                    v-if="knockKnown(state)"
                     class="row-action"
                     size="sm"
                     variant="ghost"
@@ -1540,6 +1629,12 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 {{ $t('networking.sshGuard.knock.unreadable') }}
               </p>
 
+              <!-- Mid-rotation. Said before the reveal, so an operator who
+                   already holds the old sequence knows it still works. -->
+              <p v-if="knockState.previous_honoured" class="text-xs text-foreground">
+                {{ $t('networking.sshGuard.knock.previousHonouredNote') }}
+              </p>
+
               <!-- Shape without secret: enough to plan the attempt (how many
                    datagrams, how fast, how long the door stays open) and not
                    enough to narrow a guess at the ports. -->
@@ -1571,6 +1666,11 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                          refuse the clipboard, and an operator who is locked out
                          must still be able to read the value off the screen. -->
                     <code class="block break-all font-mono text-sm tabular text-foreground">{{ knockRevealed.ports.join(' ') }}</code>
+                  </div>
+
+                  <div v-if="knockRevealed.previous_ports?.length">
+                    <p class="mb-1 text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.previousSequenceLabel') }}</p>
+                    <code class="block break-all font-mono text-sm tabular text-foreground">{{ knockRevealed.previous_ports.join(' ') }}</code>
                   </div>
 
                   <div>

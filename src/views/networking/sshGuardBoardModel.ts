@@ -11,11 +11,11 @@
  *
  * Pure functions only, like the sibling model: no i18n, no colours, no HTTP.
  */
-import type { GuardNodeReality, GuardRealitySummary, Node } from "@/lib/api";
+import type { ApprovalView, GuardNodeReality, GuardRealitySummary, Node } from "@/lib/api";
 
 // Through the alias, not "./": the node test runner resolves only `@/`, and this
 // module now pulls values from its sibling, not only types.
-import { STAGE_ORDER, revertWindowPassed, type Finding, type GuardStage, type NodeGuardState } from "@/views/networking/sshGuardModel";
+import { STAGE_ORDER, isSSHGuardApproval, revertWindowPassed, type Finding, type GuardStage, type NodeGuardState } from "@/views/networking/sshGuardModel";
 
 // ── coverage ────────────────────────────────────────────────────────────────
 
@@ -256,6 +256,78 @@ export function newestObservation(summaries: readonly GuardRealitySummary[]): st
     if (s.collected_at && (!best || s.collected_at > best)) best = s.collected_at;
   }
   return best;
+}
+
+// ── knock knowledge from the server ─────────────────────────────────────────
+
+/**
+ * One string per node that changes whenever any of its SSH Guard approvals
+ * does. The server's knock answer is a function of the node's whole arm and
+ * confirm history, not only the newest row, so the print covers every row:
+ * a cleanup that retires a three-week-old arm as superseded changes what the
+ * server says without touching the newest approval.
+ */
+export function knockFingerprints(approvals: readonly ApprovalView[]): Map<string, string> {
+  const parts = new Map<string, string[]>();
+  for (const a of approvals) {
+    if (!isSSHGuardApproval(a)) continue;
+    const list = parts.get(a.node_id) ?? [];
+    list.push(`${a.id}:${a.status}:${a.stale_code ?? ""}:${a.updated_at ?? ""}`);
+    parts.set(a.node_id, list);
+  }
+  return new Map([...parts].map(([nodeId, list]) => [nodeId, list.sort().join("|")]));
+}
+
+/**
+ * Which nodes are worth asking the server about. One request per node on
+ * first load, then only for a node whose approvals moved: the approvals poll
+ * every fifteen seconds and a fleet of thirty-three must not cost
+ * thirty-three requests each time. A node with no approvals prints as the
+ * empty string and is asked once, because "never planned" is an answer the
+ * server states in its own words.
+ */
+export function knockStatesToFetch(
+  nodeIds: readonly string[],
+  fingerprints: ReadonlyMap<string, string>,
+  asked: ReadonlyMap<string, string>,
+): string[] {
+  return nodeIds.filter((id) => asked.get(id) !== (fingerprints.get(id) ?? ""));
+}
+
+/** One pass's answer for a node, tagged with the fingerprint it was asked against. */
+export interface KnockAnswer<T> {
+  print: string;
+  answer: T | undefined;
+}
+
+/**
+ * Fold one pass's answers into what the board already holds. The approvals
+ * and the fleet arrive separately, so two passes overlap on first load; each
+ * merges into the map as it stands when its answers land, and neither may
+ * start from a copy taken when it began or the later one drops the earlier
+ * one's rows.
+ *
+ * Two passes can also ask about the same node against different fingerprints
+ * (an operator re-arms right after a rejection, or two approval polls land
+ * close together). `asked` already holds the newer print before either
+ * request leaves, so an answer tagged with an older print is dropped whichever
+ * order the two land in: the map would otherwise show the retired answer, and
+ * no later poll would re-ask about it because the print already matches.
+ * An answer of `undefined` is a refusal, and clears the row so it falls back
+ * to its plan.
+ */
+export function mergeKnockAnswers<T>(
+  current: ReadonlyMap<string, T>,
+  answers: ReadonlyMap<string, KnockAnswer<T>>,
+  asked: ReadonlyMap<string, string>,
+): Map<string, T> {
+  const next = new Map(current);
+  for (const [nodeId, { print, answer }] of answers) {
+    if (asked.get(nodeId) !== print) continue;
+    if (answer === undefined) next.delete(nodeId);
+    else next.set(nodeId, answer);
+  }
+  return next;
 }
 
 // ── time on screen ──────────────────────────────────────────────────────────

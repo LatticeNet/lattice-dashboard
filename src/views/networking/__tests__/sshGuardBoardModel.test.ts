@@ -14,6 +14,9 @@ import {
   formatAge,
   formatCountdown,
   isCoverageFilter,
+  knockFingerprints,
+  knockStatesToFetch,
+  mergeKnockAnswers,
   membersToFile,
   newestObservation,
   orderForBoard,
@@ -271,4 +274,79 @@ test("a retry re-files the blocked members and the untried ones, never a filed o
 test("fleet states feed the board without a name when the node has none", () => {
   const state: NodeGuardState | undefined = FLEET.find((s) => s.nodeId === "never");
   assert.equal(state?.name, "");
+});
+
+// The server's knock answer depends on every SSH Guard approval a node has,
+// so the row is re-asked when any of them moves and never otherwise: the
+// approvals poll every fifteen seconds and a fleet of thirty-three must not
+// cost thirty-three requests each time.
+test("a node is asked about its knock once, and again only when one of its approvals moves", () => {
+  const before = [
+    approval({ id: "old", node_id: "n1", status: "dismissed", updated_at: "2026-08-10T00:00:00Z" }),
+    approval({ id: "new", node_id: "n1", status: "applied", updated_at: "2026-09-01T00:00:00Z" }),
+    approval({ id: "x", node_id: "n2", status: "pending" }),
+    approval({ id: "other", node_id: "n1", plugin: "nftpolicy", status: "pending" }),
+  ];
+  const prints = knockFingerprints(before);
+  assert.equal(prints.has("n2"), true);
+  // n3 has no approvals at all and is still asked once: "never planned" is
+  // an answer the server states in its own words.
+  const asked = new Map<string, string>();
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], prints, asked), ["n1", "n2", "n3"]);
+  for (const id of ["n1", "n2", "n3"]) asked.set(id, prints.get(id) ?? "");
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], knockFingerprints(before), asked), []);
+
+  // A cleanup retires the three-week-old arm without touching the newest row.
+  const retired = before.map((a) => ((a as { id: string }).id === "old" ? { ...(a as object), stale_code: "sshguard_approval_superseded" } as never : a));
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], knockFingerprints(retired), asked), ["n1"]);
+
+  // Another plugin's approval moving on the same node is not a reason to ask.
+  const unrelated = before.map((a) => ((a as { id: string }).id === "other" ? { ...(a as object), status: "applied" } as never : a));
+  assert.deepEqual(knockStatesToFetch(["n1", "n2", "n3"], knockFingerprints(unrelated), asked), []);
+
+  // Order of arrival does not change the print.
+  assert.equal(knockFingerprints([...before].reverse()).get("n1"), prints.get("n1"));
+});
+
+// The approvals and the fleet arrive separately, so the first two knock
+// passes overlap. Each folds its answers into the map as it stands when they
+// land; a pass that started from a copy of an empty map would hand back only
+// its own rows and drop the other pass's.
+test("overlapping knock passes keep each other's rows, and a refusal clears one", () => {
+  const asked = new Map([["n1", "a"], ["n2", "b"], ["n3", "c"]]);
+  const first = mergeKnockAnswers(new Map(), new Map([["n1", { print: "a", answer: "installed" }]]), asked);
+  const second = mergeKnockAnswers(first, new Map([["n2", { print: "b", answer: "planned" }]]), asked);
+  assert.deepEqual([...second], [["n1", "installed"], ["n2", "planned"]]);
+  const refused = mergeKnockAnswers(
+    second,
+    new Map([["n1", { print: "a", answer: undefined }], ["n3", { print: "c", answer: "unknown" }]]),
+    asked,
+  );
+  assert.deepEqual([...refused], [["n2", "planned"], ["n3", "unknown"]]);
+  // The map it was handed is not written to.
+  assert.deepEqual([...second], [["n1", "installed"], ["n2", "planned"]]);
+});
+
+// One node hit by two passes in quick succession (an operator re-arms right
+// after a rejection, or two approval polls land close together) has two
+// requests in flight against different fingerprints. The record of what was
+// asked already holds the newer print before either request leaves, so an
+// answer that comes back against an older print is thrown away whichever
+// order the two land in; the map never shows a retired answer that no poll
+// would ever re-ask about.
+test("a knock answer requested against a fingerprint the node has moved past is dropped", () => {
+  const asked = new Map<string, string>();
+  // Pass A asks n1 against print "a"; pass B asks it against "b" before A lands.
+  asked.set("n1", "a");
+  asked.set("n1", "b");
+  // A's answer arrives last and must not overwrite B's.
+  const afterB = mergeKnockAnswers(new Map(), new Map([["n1", { print: "b", answer: "installed" }]]), asked);
+  const afterA = mergeKnockAnswers(afterB, new Map([["n1", { print: "a", answer: "installed_superseded" }]]), asked);
+  assert.deepEqual([...afterA], [["n1", "installed"]]);
+  // A's answer arriving first is not shown either, not even for a moment.
+  const aFirst = mergeKnockAnswers(new Map(), new Map([["n1", { print: "a", answer: "installed_superseded" }]]), asked);
+  assert.deepEqual([...aFirst], []);
+  assert.deepEqual([...mergeKnockAnswers(aFirst, new Map([["n1", { print: "b", answer: "installed" }]]), asked)], [["n1", "installed"]]);
+  // A stale refusal does not clear the fresh row.
+  assert.deepEqual([...mergeKnockAnswers(afterB, new Map([["n1", { print: "a", answer: undefined }]]), asked)], [["n1", "installed"]]);
 });

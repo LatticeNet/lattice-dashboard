@@ -548,6 +548,13 @@ export interface ApprovalView {
   approved_by?: string;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Who rejected this approval and when. Present only when a person or token
+   * said no. A rejected row without them was failed by its own task on the
+   * node, or retired by the server; `reason` and `stale_code` say which.
+   */
+  rejected_by?: string;
+  rejected_at?: string;
   /** Present only while status is "approved". See ApprovalWaitingView. */
   waiting?: ApprovalWaitingView;
 }
@@ -573,7 +580,13 @@ export interface GuardLintFinding {
 export interface SSHGuardKnockStateResponse {
   ok: boolean;
   node_id: string;
-  knowledge: "installed" | "planned" | "no_knock" | "unknown";
+  /**
+   * `installed_superseded`: the arm that carried the sequence was approved
+   * and dispatched, and its record was later retired as superseded because
+   * nothing had carried the task result back at the time. The record was
+   * retired, not the change on the node.
+   */
+  knowledge: SSHGuardKnockKnowledge;
   /** The server's own sentence for this state. Rendered verbatim. */
   note: string;
   /** Whether a reveal would return anything. */
@@ -582,7 +595,7 @@ export interface SSHGuardKnockStateResponse {
   interactive_only: boolean;
   approval_id?: string;
   applied_at?: string;
-  /** Only on `installed`: whether a confirm approval also applied. */
+  /** Only on `installed` and `installed_superseded`: whether a confirm approval also applied. */
   confirmed?: boolean;
   /** Present when the plan could not be parsed. */
   plan_unreadable?: string;
@@ -590,7 +603,15 @@ export interface SSHGuardKnockStateResponse {
   seq_timeout_sec?: number;
   open_for?: string;
   ssh_port?: number;
+  /**
+   * Mid-rotation: the arm kept the previous sequence alive and no confirm
+   * has retired it yet, so the knock the operator already holds still works.
+   * Omitted otherwise.
+   */
+  previous_honoured?: boolean;
 }
+
+export type SSHGuardKnockKnowledge = "installed" | "installed_superseded" | "planned" | "no_knock" | "unknown";
 
 /**
  * The sequence itself. Returned once, to an interactive session that has
@@ -608,6 +629,13 @@ export interface SSHGuardKnockRevealResponse {
   address: string;
   /** The shell that opens the gate, identical to the arm plan's. */
   command: string;
+  /** The same sentence the state endpoint shows, so a sequence read out of a superseded record carries its caveat. */
+  note: string;
+  confirmed: boolean;
+  /** What a rotation request hands back as rotate_from_sha256. Returned here and nowhere else. */
+  sequence_sha256: string;
+  /** Mid-rotation: the sequence before this one, still honoured until the confirm applies. */
+  previous_ports?: number[];
 }
 
 /** @deprecated Use GuardLintFinding; the findings are not SSH-specific. */
