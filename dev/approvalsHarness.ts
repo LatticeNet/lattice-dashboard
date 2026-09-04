@@ -52,6 +52,34 @@ const router = createRouter({
   ],
 });
 
+/**
+ * First paint of the inbox, for the before/after measurement: the time from
+ * navigation start until the first inbox row (an event card or a table row)
+ * is in the DOM, and the bytes the fake answered by then. Read from the
+ * console as window.__approvalsFirstPaint; the request log is
+ * window.__approvalsRequests.
+ */
+function watchFirstPaint() {
+  const started = performance.now();
+  const tick = () => {
+    const row = document.querySelector("[data-history-note], [data-testid='event-card'], table tbody tr, [data-inbox-empty]");
+    const cards = document.querySelectorAll("[data-event-card]").length;
+    const rows = document.querySelectorAll("table tbody tr").length;
+    if (row || cards || rows) {
+      const log = (window as unknown as { __approvalsRequests?: Array<{ bytes: number; ms: number; url: string }> }).__approvalsRequests ?? [];
+      (window as unknown as { __approvalsFirstPaint?: unknown }).__approvalsFirstPaint = {
+        ms: Math.round(performance.now()),
+        sinceMountMs: Math.round(performance.now() - started),
+        bytes: log.reduce((sum, r) => sum + r.bytes, 0),
+        requests: log.map((r) => ({ url: r.url, bytes: r.bytes, ms: Math.round(r.ms) })),
+      };
+      return;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 async function main() {
   const app = createApp(Shell);
   app.use(createPinia());
@@ -61,6 +89,7 @@ async function main() {
   app.use(router);
   await router.isReady();
   app.mount("#app");
+  watchFirstPaint();
 }
 
 void main();

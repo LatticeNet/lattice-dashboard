@@ -23,7 +23,7 @@ import {
   WifiOff,
 } from "lucide-vue-next";
 import { api, unwrap, isActionablePendingApproval } from "@/lib/api";
-import type { Node, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
+import type { Node, ApprovalCounts, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -61,8 +61,21 @@ const fleet = useAsyncData<Node[] | undefined>(
   { pollInterval: 5000 },
 );
 
+const AUDIT_PREVIEW = 6;
+const APPROVALS_PREVIEW = 5;
+/** Rows read for the preview: enough to survive stale rows being filtered out. */
+const APPROVALS_PREVIEW_READ = 50;
+
+// The KPI reads the status counts and no rows: the whole listing was 2.6 MB
+// and 7.5 s on a fleet with a thousand applied approvals, and this tile said
+// "unknown" until all of it had landed. The preview underneath needs rows, so
+// it reads exactly the pending ones, without plan text.
+const approvalCounts = useAsyncData<ApprovalCounts | undefined>(
+  (signal) => api.approvals.counts(undefined, { signal }),
+  { pollInterval: 10000 },
+);
 const approvals = useAsyncData<ApprovalView[] | undefined>(
-  (signal) => api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals")),
+  (signal) => api.approvals.list({ status: "pending", limit: APPROVALS_PREVIEW_READ }, { signal }).then((r) => unwrap(r, "approvals")),
   { pollInterval: 10000 },
 );
 
@@ -71,8 +84,6 @@ const tasks = useAsyncData<TaskView[] | undefined>(
   { pollInterval: 10000 },
 );
 
-const AUDIT_PREVIEW = 6;
-const APPROVALS_PREVIEW = 5;
 
 const audit = useAsyncData<AuditEvent[] | undefined>(
   (signal) => api.audit.query({ limit: AUDIT_PREVIEW }, { signal }).then((r) => r.events ?? []),
@@ -128,6 +139,8 @@ const isEmptyFleet = computed(
 const pendingApprovals = computed(
   () => (approvals.data.value ?? []).filter(isActionablePendingApproval),
 );
+/** The server's pending count; the preview list is capped and cannot count. */
+const pendingApprovalCount = computed(() => approvalCounts.data.value?.pending ?? 0);
 const queuedTasks = computed(
   () => (tasks.data.value ?? []).filter((t) => t.status === "queued").length,
 );
@@ -238,8 +251,8 @@ const kpiMetrics = computed<Metric[]>(() => [
   {
     key: "approvals",
     label: t("overview.kpi.approvals"),
-    value: statValue(approvals, pendingApprovals.value.length),
-    tone: pendingApprovals.value.length > 0 ? "warning" : "default",
+    value: statValue(approvalCounts, pendingApprovalCount.value),
+    tone: pendingApprovalCount.value > 0 ? "warning" : "default",
     icon: ShieldCheck,
     to: { name: "approvals" },
   },
@@ -291,6 +304,7 @@ function decisionVariant(d: string): "success" | "destructive" | "secondary" {
 
 function refreshAll() {
   fleet.refresh();
+  approvalCounts.refresh();
   approvals.refresh();
   tasks.refresh();
   audit.refresh();
@@ -605,11 +619,11 @@ function refreshAll() {
                 </li>
               </ul>
               <RouterLink
-                v-if="pendingApprovals.length > APPROVALS_PREVIEW"
+                v-if="pendingApprovalCount > APPROVALS_PREVIEW"
                 :to="{ name: 'approvals' }"
                 class="mt-2 block rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
               >
-                {{ $t('operations.approvals.showingOfTotal', { shown: APPROVALS_PREVIEW, total: pendingApprovals.length }) }}
+                {{ $t('operations.approvals.showingOfTotal', { shown: Math.min(APPROVALS_PREVIEW, pendingApprovals.length), total: pendingApprovalCount }) }}
               </RouterLink>
             </DataState>
           </CardContent>

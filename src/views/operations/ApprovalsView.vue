@@ -12,6 +12,7 @@ import {
   isApprovalStaleError,
   isStaleAgentUpdateApprovalView,
   unwrap,
+  approvalListTotal,
   type ApprovalStatus,
   type ApprovalView,
 } from "@/lib/api";
@@ -37,6 +38,30 @@ import {
   runWithConcurrency,
   type ApprovalEventGroup,
 } from "./approvalsModel";
+import {
+  HISTORY_PAGE_SIZE,
+  HISTORY_STATUSES,
+  activeListParams,
+  agentUpdatePlanParams,
+  agentUpdateRowsNeedingPlans,
+  appendHistoryPage,
+  approvalDigest,
+  baselineKey,
+  baselineParams,
+  bucketCount,
+  emptyHistoryPage,
+  historyLoadNote,
+  historyPageParams,
+  historyStatusesForBucket,
+  isHistoryLoaded,
+  isHistoryStatus,
+  mergeApprovalRows,
+  planCacheIsStale,
+  previousAppliedPlan,
+  type CachedPlan,
+  type HistoryPage,
+  type HistoryStatus,
+} from "./approvalsListModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
@@ -47,7 +72,6 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import PlanDiff from "@/components/common/PlanDiff.vue";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Card,
@@ -72,10 +96,76 @@ import { useRouteTab } from "@/composables/useRouteTab";
 const { t } = useI18n();
 const route = useRoute();
 const auth = useAuthStore();
-const includeDismissed = ref(false);
-const approvalsQuery = useAsyncData((signal) => api.approvals.list({ include_dismissed: includeDismissed.value }, { signal }).then((r) => unwrap(r, "approvals")), {
+
+// ── What this page reads, and when ───────────────────────────────────────────
+//
+// The whole listing was 2.6 MB and 7.5 s on a fleet with a thousand applied
+// approvals, and a click on Approvals looked dead until all of it had landed.
+// The page now paints from the active set (pending, approved, stale) read
+// without plan text, and reads everything else on demand:
+//
+//   - history (applied, rejected, dismissed) one status at a time, a page of
+//     HISTORY_PAGE_SIZE rows, when the operator opens that group;
+//   - the plan text of the selected approval, by id, for the Plan Review panel;
+//   - the applied plans of the selected target, for the diff baseline;
+//   - the plan text of active agent updates, so event cards keep grouping by
+//     version transition and naming nodes.
+//
+// Every plan the page has read lives in planCache, and mergeApprovalRows puts
+// it back on its row, so the rest of this file sees the shape it always did.
+const approvalsQuery = useAsyncData((signal) => api.approvals.list(activeListParams(), { signal }).then((r) => unwrap(r, "approvals")), {
   pollInterval: 8000,
 });
+const countsQuery = useAsyncData((signal) => api.approvals.counts(undefined, { signal }), {
+  pollInterval: 8000,
+});
+
+const planCache = ref<Record<string, CachedPlan>>({});
+const { digestFor, digestHex, cache: digestCache } = usePlanDigest();
+
+/** Keep a row's plan text, keyed by the hash of exactly those bytes. */
+async function rememberPlan(row: ApprovalView): Promise<void> {
+  if (row.plan === undefined) return;
+  const sha256 = row.plan_sha256 || (await digestHex(row.plan));
+  planCache.value = { ...planCache.value, [row.id]: { plan: row.plan, sha256 } };
+}
+
+/** The full record, remembered on the way through. */
+async function fetchFull(id: string): Promise<ApprovalView> {
+  const full = await api.approvals.get(id);
+  await rememberPlan(full);
+  return full;
+}
+
+/**
+ * The digest a decision binds to: the plan text when the row carries it, the
+ * server's hash of it when the row was listed without text. See
+ * approvalDigest for why the two are the same binding.
+ */
+function decisionDigest(item: ApprovalView): Promise<string> {
+  return approvalDigest(item, { hashPlan: digestFor, fetchFull });
+}
+
+const history = ref<Partial<Record<HistoryStatus, HistoryPage>>>({});
+
+/** One page of one history status; `more` asks for the page after what is held. */
+async function loadHistory(status: HistoryStatus, more = false): Promise<void> {
+  const prev = history.value[status];
+  if (prev?.loading) return;
+  const offset = more ? (prev?.rows.length ?? 0) : 0;
+  history.value = { ...history.value, [status]: { ...(prev ?? emptyHistoryPage()), loading: true, error: "" } };
+  try {
+    const res = await api.approvals.list(historyPageParams(status, offset));
+    const page = appendHistoryPage(prev, { rows: unwrap(res, "approvals"), total: approvalListTotal(res), offset });
+    history.value = { ...history.value, [status]: page };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    history.value = { ...history.value, [status]: { ...(prev ?? emptyHistoryPage()), loading: false, error: message } };
+  }
+}
+
+/** Rows reached by deep link or a "superseded by" jump that sit in no loaded slice. */
+const pinnedRows = ref<ApprovalView[]>([]);
 
 const selectedId = ref("");
 type ApprovalBucket = "active" | "pending" | "stale" | "approved" | "stuck" | "applied" | "rejected" | "dismissed" | "all";
@@ -89,9 +179,14 @@ const replanningApproval = ref<string | undefined>();
 const forceReplanOpen = ref(false);
 const forceReplanApproval = ref<ApprovalView | undefined>();
 const forceReplanMessage = ref("");
-const { digestFor, cache: digestCache } = usePlanDigest();
-
-const approvals = computed(() => approvalsQuery.data.value ?? []);
+const approvals = computed(() =>
+  mergeApprovalRows({
+    active: approvalsQuery.data.value ?? [],
+    history: HISTORY_STATUSES.map((status) => history.value[status]?.rows ?? []),
+    pinned: pinnedRows.value,
+    plans: planCache.value,
+  }),
+);
 const pending = computed(() => approvals.value.filter(isActionablePendingApproval));
 const selected = computed<ApprovalView | undefined>(() =>
   filteredApprovals.value.find((approval) => approval.id === selectedId.value) ?? filteredApprovals.value[0],
@@ -115,24 +210,85 @@ const canApproveSelected = computed(() => canDecideSelected.value && !selectedAg
 const canReplanSelectedAgentUpdate = computed(() => canReplanAgentUpdate(selected.value, selectedAgentUpdateStale.value));
 const canDismissSelectedApproval = computed(() => canDismissApproval(selected.value, selectedAgentUpdateStale.value));
 
-// The most recent earlier applied plan for the same target (node + plugin +
-// action), i.e. what is actually live. Approved-but-not-applied plans are not a
-// live baseline and would make the diff lie about the current state.
+// ── The selected approval's plan, and what it is diffed against ──────────────
+
+const planLoading = ref<string | undefined>();
+const planError = ref<{ id: string; message: string } | undefined>();
+
+/** Read the selected approval's plan by id when the page does not hold it. */
+async function loadSelectedPlan(row: ApprovalView): Promise<void> {
+  const cached = planCache.value[row.id];
+  if (row.plan !== undefined && cached && !planCacheIsStale(row, cached)) return;
+  if (planLoading.value === row.id) return;
+  planLoading.value = row.id;
+  planError.value = undefined;
+  try {
+    await fetchFull(row.id);
+  } catch (error) {
+    planError.value = { id: row.id, message: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (planLoading.value === row.id) planLoading.value = undefined;
+  }
+}
+
+const selectedPlanState = computed<"ready" | "loading" | "error" | "missing">(() => {
+  const row = selected.value;
+  if (!row) return "missing";
+  if (planLoading.value === row.id) return "loading";
+  if (planError.value?.id === row.id) return "error";
+  return row.plan === undefined ? "missing" : "ready";
+});
+
+watch(
+  () => {
+    const row = selected.value;
+    return row ? `${row.id}:${row.plan_sha256 ?? ""}:${row.plan === undefined ? "-" : "+"}` : "";
+  },
+  () => {
+    const row = selected.value;
+    if (row && row.plan === undefined) void loadSelectedPlan(row);
+  },
+  { immediate: true },
+);
+
+/**
+ * Applied plans for the selected target, read once per (node, plugin) with
+ * their text: history is not loaded until asked, and the diff baseline for
+ * one row must not cost a page of it.
+ */
+const baselines = ref<Record<string, ApprovalView[]>>({});
+const baselinesInFlight = new Set<string>();
+
+async function loadBaseline(row: ApprovalView): Promise<void> {
+  const key = baselineKey(row);
+  if (baselines.value[key] || baselinesInFlight.has(key)) return;
+  baselinesInFlight.add(key);
+  try {
+    const rows = unwrap(await api.approvals.list(baselineParams(row)), "approvals");
+    baselines.value = { ...baselines.value, [key]: rows };
+  } catch {
+    // The diff then says "no prior applied plan", which is what the page
+    // said before history existed here; the next selection tries again.
+  } finally {
+    baselinesInFlight.delete(key);
+  }
+}
+
+watch(
+  () => (selected.value ? baselineKey(selected.value) : ""),
+  () => {
+    if (selected.value) void loadBaseline(selected.value);
+  },
+  { immediate: true },
+);
+
+// What is actually live for the selected target: the most recent earlier
+// applied plan for the same node, plugin and action, whether it came with the
+// loaded history or with the baseline read.
 const previousPlan = computed(() => {
   const cur = selected.value;
   if (!cur) return "";
-  const prior = approvals.value
-    .filter(
-      (a) =>
-        a.id !== cur.id &&
-        a.node_id === cur.node_id &&
-        a.plugin === cur.plugin &&
-        a.action === cur.action &&
-        a.status === "applied" &&
-        (a.created_at || "") < (cur.created_at || ""),
-    )
-    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-  return prior[0]?.plan ?? "";
+  return previousAppliedPlan(cur, [...approvals.value, ...(baselines.value[baselineKey(cur)] ?? [])]);
 });
 
 const sortedApprovals = computed(() =>
@@ -260,15 +416,104 @@ function approvalMatchesExpression(approval: ApprovalView): boolean {
   return result.ok ? result.value : true;
 }
 
+// Active buckets count the rows on the page; history buckets print the
+// server's count, which is known before a single history row is loaded.
 const bucketCounts = computed<Record<ApprovalBucket, number>>(() => {
-  const counts = Object.fromEntries(APPROVAL_BUCKETS.map((bucket) => [bucket, 0])) as Record<ApprovalBucket, number>;
-  for (const approval of approvals.value) {
-    for (const bucket of APPROVAL_BUCKETS) {
-      if (matchesBucket(approval, bucket)) counts[bucket] += 1;
-    }
+  const counts = {} as Record<ApprovalBucket, number>;
+  for (const bucket of APPROVAL_BUCKETS) {
+    counts[bucket] = bucketCount(bucket, approvals.value, countsQuery.data.value, (row, b) => matchesBucket(row, b as ApprovalBucket));
   }
   return counts;
 });
+
+// ── History: loaded when its group is opened, and the page says what it holds ─
+
+const historyStatuses = computed(() => historyStatusesForBucket(approvalBucket.value));
+const historyNote = computed(() => historyLoadNote(approvalBucket.value, history.value));
+const historyLoading = computed(() => historyStatuses.value.some((status) => history.value[status]?.loading));
+const historyError = computed(() => {
+  for (const status of historyStatuses.value) {
+    const error = history.value[status]?.error;
+    if (error) return error;
+  }
+  return "";
+});
+
+watch(
+  historyStatuses,
+  (statuses) => {
+    for (const status of statuses) {
+      if (!isHistoryLoaded(history.value[status]) && !history.value[status]?.loading) void loadHistory(status);
+    }
+  },
+  { immediate: true },
+);
+
+function retryHistory() {
+  for (const status of historyStatuses.value) {
+    if (history.value[status]?.error) void loadHistory(status);
+  }
+}
+
+/** The narrowest bucket a row can be found in, without loading history it is not in. */
+function bucketFor(row: ApprovalView): ApprovalBucket {
+  if (matchesBucket(row, "active")) return "active";
+  if (isHistoryStatus(row.status)) return row.status;
+  return "all";
+}
+
+/**
+ * Select an approval the page may not hold at all: read it by id, keep it as
+ * a pinned row, and open the group it belongs to. A link that quietly selects
+ * something else is worse than one that does nothing, so an id the server
+ * does not answer for selects nothing.
+ */
+let revealing: string | undefined;
+async function revealApproval(id: string): Promise<boolean> {
+  const held = approvals.value.find((approval) => approval.id === id);
+  if (held) {
+    selectedId.value = id;
+    if (!filteredApprovals.value.some((approval) => approval.id === id)) approvalBucket.value = bucketFor(held);
+    return true;
+  }
+  if (revealing === id) return false;
+  revealing = id;
+  try {
+    const full = await fetchFull(id);
+    pinnedRows.value = [...pinnedRows.value.filter((row) => row.id !== id), full];
+    selectedId.value = id;
+    approvalBucket.value = bucketFor(full);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (revealing === id) revealing = undefined;
+  }
+}
+
+// Event cards group agent updates by the version transition parsed from the
+// plan and name nodes by its node_name line; the active read has no plan
+// text, so those rows get one narrow second read with it.
+let hydratingAgentUpdates = false;
+async function hydrateAgentUpdatePlans(rows: readonly ApprovalView[]): Promise<void> {
+  if (hydratingAgentUpdates || agentUpdateRowsNeedingPlans(rows, planCache.value).length === 0) return;
+  hydratingAgentUpdates = true;
+  try {
+    for (const row of unwrap(await api.approvals.list(agentUpdatePlanParams()), "approvals")) await rememberPlan(row);
+  } catch {
+    // Cards then group without the transition until the next poll.
+  } finally {
+    hydratingAgentUpdates = false;
+  }
+}
+
+watch(
+  () => approvalsQuery.data.value,
+  (rows) => {
+    if (rows) void hydrateAgentUpdatePlans(rows);
+  },
+  { immediate: true },
+);
 
 const filteredApprovals = computed(() => {
   const q = approvalSearch.value.trim().toLowerCase();
@@ -280,32 +525,25 @@ const filteredApprovals = computed(() => {
   });
 });
 
-watch(includeDismissed, () => {
-  approvalsQuery.refresh();
-});
-
 /**
  * Deep-link: /approvals?selected=<id> lands on that approval.
  *
  * A caller that just created an approval knows its id, so handing over a bare
  * /approvals and letting the operator hunt for it in a list of hundreds is a
  * loss of information the page can avoid. Seeded once per id so a poll never
- * yanks the selection back, and the bucket widens when the target sits outside
- * the current slice, since a link that quietly selects something else is worse
- * than one that does nothing.
+ * yanks the selection back. A target outside the active set is read by id and
+ * its own group opened, since a link that quietly selects something else is
+ * worse than one that does nothing.
  */
 const seededSelection = ref<string | undefined>(undefined);
 watch(
-  [approvals, () => route.query.selected],
-  ([list, queryId]) => {
+  [() => approvalsQuery.data.value, () => route.query.selected],
+  ([active, queryId]) => {
     const id = typeof queryId === "string" ? queryId : undefined;
-    if (!id || id === seededSelection.value) return;
-    if (!list.some((approval) => approval.id === id)) return;
-    seededSelection.value = id;
-    selectedId.value = id;
-    if (!filteredApprovals.value.some((approval) => approval.id === id)) {
-      approvalBucket.value = "all";
-    }
+    if (!id || id === seededSelection.value || active === undefined) return;
+    void revealApproval(id).then((found) => {
+      if (found) seededSelection.value = id;
+    });
   },
   { immediate: true },
 );
@@ -406,10 +644,7 @@ function eventStuckSummary(group: ApprovalEventGroup<ApprovalView>): string {
  * that does nothing.
  */
 function selectApproval(id: string) {
-  selectedId.value = id;
-  if (!filteredApprovals.value.some((approval) => approval.id === id)) {
-    approvalBucket.value = "all";
-  }
+  void revealApproval(id);
 }
 
 /** Jump to the stuck slice from wherever the operator noticed the count. */
@@ -436,6 +671,12 @@ function toggleEventExpanded(key: string) {
 function refreshApprovals() {
   concealedIds.value = new Set();
   void approvalsQuery.refresh();
+  void countsQuery.refresh();
+  // Loaded history re-reads its first page; the note under the buttons says
+  // how much of the server's total the page then holds.
+  for (const status of HISTORY_STATUSES) {
+    if (isHistoryLoaded(history.value[status])) void loadHistory(status);
+  }
 }
 
 // Every destructive decision (single reject, event batch reject, bulk reject)
@@ -467,12 +708,16 @@ function changeLabel(approval: ApprovalView): string {
   return `${approval.plugin} · ${approval.action}`;
 }
 
-/** Compute the plan digest with a visible pending state. */
+/**
+ * Compute the plan digest with a visible pending state. Hashes the bytes on
+ * screen; a row whose plan the page has not read yet is read first, so the
+ * printed hash is always of text the operator can open.
+ */
 async function computePlanHash(approval: ApprovalView) {
   if (hashingApproval.value) return;
   hashingApproval.value = approval.id;
   try {
-    await digestFor(approval);
+    await digestFor(approval.plan === undefined ? await fetchFull(approval.id) : approval);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.approvals.toastFailed"));
   } finally {
@@ -510,7 +755,7 @@ async function performEventBatch(
     4,
     async (item) => {
       if (mode === "approve-queue") {
-        await api.approvals.approve(item.id, true, await digestFor(item));
+        await api.approvals.approve(item.id, true, await decisionDigest(item));
       } else {
         await api.approvals.reject(item.id);
       }
@@ -625,7 +870,7 @@ async function approve(approval: ApprovalView, queueApply: boolean) {
   pendingApproval.value = approval.id;
   lastApprovalError.value = undefined;
   try {
-    const digest = await digestFor(approval);
+    const digest = await decisionDigest(approval);
     await api.approvals.approve(approval.id, queueApply, digest);
     toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
     await approvalsQuery.refresh();
@@ -824,7 +1069,7 @@ async function performDecide(mode: "approve-queue" | "reject", targets: Approval
     4,
     async (item) => {
       if (mode === "approve-queue") {
-        await api.approvals.approve(item.id, true, await digestFor(item));
+        await api.approvals.approve(item.id, true, await decisionDigest(item));
       } else {
         await api.approvals.reject(item.id);
       }
@@ -942,6 +1187,8 @@ function canDismissApproval(approval?: ApprovalView, staleOverride = false): boo
 }
 
 const inboxCounts = computed(() => countApprovalInbox(approvals.value, isActionablePendingApproval));
+/** Every approval the token can see, from the server's count; the page holds only a slice. */
+const totalApprovals = computed(() => countsQuery.data.value?.total ?? inboxCounts.value.total);
 
 /**
  * The numbers this page is judged by, in the order an operator's attention
@@ -988,7 +1235,7 @@ const approvalMetrics = computed<Metric[]>(() => [
   {
     key: "total",
     label: t("operations.approvals.total"),
-    value: inboxCounts.value.total,
+    value: totalApprovals.value,
     tone: "muted",
     icon: ShieldCheck,
   },
@@ -1090,24 +1337,55 @@ const approvalMetrics = computed<Metric[]>(() => [
                done. Whatever is selected now says what is in it. -->
           <p class="text-xs text-muted-foreground">{{ $t(`operations.approvals.bucketHint.${approvalBucket}`) }}</p>
 
-          <label class="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            <Checkbox v-model="includeDismissed" />
-            <span>{{ $t('operations.approvals.includeDismissed') }}</span>
-          </label>
+          <!-- History is read only when its group is opened, and search,
+               filters and grouping cover only what was read. Saying exactly
+               what is held is cheaper than an operator concluding a change
+               never happened because its row was on a page they never asked
+               for. -->
+          <div
+            v-if="historyStatuses.length"
+            class="space-y-1 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+            data-history-note
+          >
+            <p v-if="historyLoading" class="flex items-center gap-1.5">
+              <RefreshCw class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('operations.approvals.history.loading') }}
+            </p>
+            <p v-else-if="historyError" class="flex flex-wrap items-center gap-2 text-destructive">
+              <span class="min-w-0 break-words">{{ $t('operations.approvals.history.failed', { message: historyError }) }}</span>
+              <Button type="button" variant="outline" size="sm" @click="retryHistory">
+                {{ $t('operations.approvals.history.retry') }}
+              </Button>
+            </p>
+            <template v-else>
+              <p v-if="historyNote.notLoaded.length">
+                {{ $t('operations.approvals.history.notLoaded', { statuses: historyNote.notLoaded.map((s) => $t('common.status.' + s)).join(', ') }) }}
+              </p>
+              <p v-for="part in historyNote.partial" :key="part.status" class="flex flex-wrap items-center gap-2">
+                <span>{{ $t('operations.approvals.history.partial', { status: $t('common.status.' + part.status), loaded: part.loaded, total: part.total }) }}</span>
+                <Button type="button" variant="outline" size="sm" @click="loadHistory(part.status, true)">
+                  {{ $t('operations.approvals.history.loadMore', { count: Math.min(HISTORY_PAGE_SIZE, part.total - part.loaded), status: $t('common.status.' + part.status) }) }}
+                </Button>
+              </p>
+              <p v-if="historyNote.complete">{{ $t('operations.approvals.history.complete') }}</p>
+              <p>{{ $t('operations.approvals.history.excluded') }}</p>
+            </template>
+          </div>
 
           <DataState
             :loading="approvalsQuery.loading.value"
             :error="approvalsQuery.error.value"
             :has-data="approvalsQuery.data.value !== undefined"
             :is-empty="inboxTab === 'individual' && filteredApprovals.length === 0"
-            :empty-title="approvals.length ? $t('operations.approvals.noMatchTitle') : $t('operations.approvals.emptyTitle')"
-            :empty-description="approvals.length ? $t('operations.approvals.noMatchDescription') : $t('operations.approvals.emptyDescription')"
+            :empty-title="totalApprovals ? $t('operations.approvals.noMatchTitle') : $t('operations.approvals.emptyTitle')"
+            :empty-description="totalApprovals ? $t('operations.approvals.noMatchDescription') : $t('operations.approvals.emptyDescription')"
             @retry="approvalsQuery.refresh"
           >
             <div v-if="inboxTab === 'events'" class="space-y-2">
               <div
                 v-if="eventGroups.length === 0"
                 class="rounded-md border border-dashed border-border p-4 text-center"
+                data-inbox-empty
               >
                 <p class="text-sm font-medium">{{ $t('operations.approvals.events.noEventsTitle') }}</p>
                 <p class="mt-1 text-xs text-muted-foreground">{{ $t('operations.approvals.events.noEventsDescription') }}</p>
@@ -1125,7 +1403,7 @@ const approvalMetrics = computed<Metric[]>(() => [
                 </div>
               </div>
 
-              <div v-for="group in eventGroups" :key="group.key" class="rounded-md border border-border">
+              <div v-for="group in eventGroups" :key="group.key" class="rounded-md border border-border" data-event-card>
                 <div class="space-y-2 p-3">
                   <div class="flex items-start justify-between gap-2">
                     <div class="min-w-0">
@@ -1561,7 +1839,31 @@ const approvalMetrics = computed<Metric[]>(() => [
               </div>
               <CopyButton :value="selected.plan || ''" />
             </div>
-            <template v-if="planView === 'diff'">
+            <!-- The listing carries no plan text; the panel reads it by id
+                 when a row is selected. Decisions do not wait for it: they
+                 bind to the server's hash of the same bytes. -->
+            <div
+              v-if="selectedPlanState === 'loading'"
+              class="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-6 text-sm text-muted-foreground"
+              data-plan-state="loading"
+            >
+              <RefreshCw class="size-4 animate-spin" aria-hidden="true" />
+              {{ $t('operations.approvals.planLoading') }}
+            </div>
+            <div
+              v-else-if="selectedPlanState === 'error' || selectedPlanState === 'missing'"
+              class="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-muted-foreground"
+              data-plan-state="error"
+            >
+              <p class="break-words">
+                {{ selectedPlanState === 'error' ? $t('operations.approvals.planLoadFailed', { message: planError?.message ?? '' }) : $t('operations.approvals.planNotLoaded') }}
+              </p>
+              <Button type="button" variant="outline" size="sm" @click="loadSelectedPlan(selected)">
+                <RefreshCw class="size-4" aria-hidden="true" />
+                {{ $t('operations.approvals.history.retry') }}
+              </Button>
+            </div>
+            <template v-else-if="planView === 'diff'">
               <div class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
                 <span>{{ previousPlan ? $t('operations.approvals.diffAgainstApplied') : $t('operations.approvals.diffNoPrior') }}</span>
                 <span v-if="previousPlan" class="inline-flex items-center gap-1 rounded-full border border-destructive/30 px-2 py-0.5 text-destructive">

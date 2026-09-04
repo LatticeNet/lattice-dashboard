@@ -26,6 +26,7 @@ import { NAV, type NavItem } from "@/router/nav";
 import { api, isActionablePendingApproval, unwrap, type ApprovalView } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
 import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
+import { approvalDigest } from "@/views/operations/approvalsListModel";
 import { createTtlCache, filterPendingSystemApprovals } from "./commandPaletteModel";
 
 /**
@@ -130,7 +131,7 @@ const systemActionRunning = ref(false);
 
 async function refreshSystemApprovals(): Promise<void> {
   try {
-    const approvals = await systemApprovalsCache.load(() => api.approvals.list().then((r) => unwrap(r, "approvals")));
+    const approvals = await systemApprovalsCache.load(() => api.approvals.list({ status: "pending" }).then((r) => unwrap(r, "approvals")));
     // Stale plans would fail server-side, so the action counts only the items
     // the Approvals event cards would also act on.
     pendingSystemApprovals.value = filterPendingSystemApprovals(approvals).filter(isActionablePendingApproval);
@@ -158,7 +159,7 @@ async function runApproveSystemEvents(): Promise<void> {
   // Re-read before firing: the 30s probe cache keeps ⌘K instant, but a batch
   // decision must bind fresh membership. An item dispositioned elsewhere
   // since the probe would otherwise be toasted as this batch's success.
-  const fresh = await api.approvals.list().then((r) => unwrap(r, "approvals"));
+  const fresh = await api.approvals.list({ status: "pending" }).then((r) => unwrap(r, "approvals"));
   const targets = filterPendingSystemApprovals(fresh).filter(isActionablePendingApproval);
   if (targets.length === 0) {
     systemApprovalsCache.invalidate();
@@ -169,8 +170,14 @@ async function runApproveSystemEvents(): Promise<void> {
   isOpen.value = false;
   try {
     const results = await runWithConcurrency(targets, 4, async (item) => {
-      // Same bytes the Approvals plan review binds: sha256 of the plan string.
-      await api.approvals.approve(item.id, true, await sha256Hex(item.plan || ""));
+      // Same binding the Approvals event cards use: the plan text when the
+      // row carries it, else the server's hash of it. The pending listing is
+      // read without plan text now, so it is the hash.
+      await api.approvals.approve(
+        item.id,
+        true,
+        await approvalDigest(item, { hashPlan: (row) => sha256Hex(row.plan || ""), fetchFull: api.approvals.get }),
+      );
     });
     const { succeeded, failed } = partitionBatchResults(targets, results);
     systemApprovalsCache.invalidate();

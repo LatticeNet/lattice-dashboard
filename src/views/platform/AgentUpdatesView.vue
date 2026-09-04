@@ -28,6 +28,7 @@ import {
   type AgentReleaseInfo,
   type ApprovalView,
 } from "@/lib/api";
+import { agentUpdateStaleParams } from "@/views/operations/approvalsListModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
@@ -91,7 +92,11 @@ const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) 
   pollInterval: 15000,
 });
 const approvalsQuery = useAsyncData(
-  (signal) => (canPlan.value ? api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals")) : Promise.resolve([] as ApprovalView[])),
+  // This plugin's rows only, no plan text: the page prints the agent updates
+  // whose plan has gone stale, and it reads status, reason and the stale flag
+  // to find them, never a plan. Staleness cannot be asked for by status (see
+  // agentUpdateStaleParams), so it stays a client-side filter as before.
+  (signal) => (canPlan.value ? api.approvals.list(agentUpdateStaleParams(), { signal }).then((r) => unwrap(r, "approvals")) : Promise.resolve([] as ApprovalView[])),
   { pollInterval: 15000 },
 );
 

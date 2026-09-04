@@ -457,8 +457,13 @@ watch(rotateOpen, (open) => {
 /* Data: approvals, fleet, scope, and what the nodes report.            */
 /* ------------------------------------------------------------------ */
 
+// Only this plugin's rows, and with plan text: the board reads the knock
+// declaration, the confirm window, the SSH port and the management sources
+// out of the arm plan, so a plan-less listing would answer "unknown" for
+// every node. The plugin filter is what keeps it small; the whole listing was
+// 2.6 MB on a fleet with a thousand applied approvals of every kind.
 const approvalsQuery = useAsyncData<ApprovalView[] | undefined>(
-  (signal) => api.approvals.list(undefined, { signal }).then((r) => unwrap(r, "approvals")),
+  (signal) => api.approvals.list({ plugin: "sshguard", include: "plan" }, { signal }).then((r) => unwrap(r, "approvals")),
   { pollInterval: 15000 },
 );
 const approvals = computed(() => (approvalsQuery.data.value ?? []).filter(isSSHGuardApproval));
