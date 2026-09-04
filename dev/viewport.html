@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Viewport rig</title>
+    <style>
+      /* A rig for looking at a harness page at a viewport the display cannot
+         hold. The frame is laid out at the real width in CSS pixels, so the
+         page inside sees 1440 or 375, and only the pixels are scaled down to
+         fit the window. */
+      html, body { margin: 0; background: #0b0b0d; color: #d4d4d8; font: 12px ui-monospace, monospace; }
+      #bar { padding: 4px 8px; }
+      #stage { transform-origin: top left; }
+      iframe { border: 0; display: block; background: #0b0b0d; }
+    </style>
+  </head>
+  <body>
+    <div id="bar"></div>
+    <div id="stage"><iframe id="frame"></iframe></div>
+    <script>
+      const q = new URLSearchParams(location.search);
+      const w = Number(q.get("w") || 1440);
+      const h = Number(q.get("h") || 1200);
+      const to = q.get("to") || "/dev/platform.html";
+      const frame = document.getElementById("frame");
+      frame.style.width = w + "px";
+      frame.style.height = h + "px";
+      frame.src = to;
+      const scale = Math.min(1, (window.innerWidth - 4) / w);
+      document.getElementById("stage").style.transform = "scale(" + scale + ")";
+      document.body.style.height = 24 + h * scale + "px";
+      document.getElementById("bar").textContent = w + "x" + h + " css px, shown at " + scale.toFixed(2) + "x - " + to;
+    </script>
+  </body>
+</html>
