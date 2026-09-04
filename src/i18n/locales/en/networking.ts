@@ -512,7 +512,10 @@ export default {
         "The fully qualified name this resolver answers at. It is what a TLS certificate watch is pointed at.",
       certNotAfter: "Certificate expires",
       certNotAfterHint:
-        "When this daemon's TLS certificate expires, if it serves DoT or DoH. Nothing reads it off the wire here; a TLS monitor on Monitoring does that and fires before the date arrives.",
+        "When this daemon's TLS certificate expires, if it serves DoT or DoH. Nothing reads it off the wire here, and this date on its own warns nobody: a TLS certificate watch dials the endpoint and fails before the date arrives.",
+      certWatchSetUp: "Set one up on Monitoring",
+      certWatched: "watched, fails under {days}d",
+      certUnwatched: "no certificate watch",
       certUnknown: "certificate expiry not recorded",
       certExpired: "certificate expired {date}",
       certDays: "certificate expires in {days}d ({date})",

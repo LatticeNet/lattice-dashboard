@@ -495,7 +495,10 @@ export default {
       externalHostnameHint: "这个解析器对外应答的完整域名。TLS 证书监控就是盯着它。",
       certNotAfter: "证书到期",
       certNotAfterHint:
-        "如果这个守护进程提供 DoT 或 DoH,填它的 TLS 证书到期时间。这里不会去线上读取证书;那是监控页上 TLS 监控的事,它会在到期之前先报警。",
+        "这个守护进程的 TLS 证书什么时候到期(如果它提供 DoT 或 DoH)。这里不会去链路上读取,而且光有这个日期不会提醒任何人:证书监控会真的去握手,并在到期之前就开始失败。",
+      certWatchSetUp: "去监控页建一个",
+      certWatched: "已监控,剩余不足 {days} 天时失败",
+      certUnwatched: "没有证书监控",
       certUnknown: "未记录证书到期时间",
       certExpired: "证书已于 {date} 过期",
       certDays: "证书还有 {days} 天到期({date})",

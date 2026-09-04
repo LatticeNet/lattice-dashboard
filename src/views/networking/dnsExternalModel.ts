@@ -11,17 +11,11 @@
  * Everything here is pure so the difference can be asserted in a test rather
  * than eyeballed in a table cell.
  */
-import type { DNSDeploymentBody, DNSDeploymentView, DNSListener } from "@/lib/api";
+import type { DNSDeploymentBody, DNSDeploymentView, DNSListener, MonitorView } from "@/lib/api";
+import { TLS_DEFAULT_THRESHOLD_DAYS } from "@/views/fleet/monitorTypeModel";
 
 /** Milliseconds in a day, for the certificate countdown. */
 const DAY_MS = 86_400_000;
-
-/**
- * How close an expiry has to be before the console calls it out. Thirty days
- * is the usual Let's Encrypt renewal window, so a certificate still inside it
- * is one that automatic renewal has already failed to move.
- */
-export const CERT_WARN_DAYS = 30;
 
 /** Whether a record describes a daemon Lattice watches rather than one it deploys. */
 export function isObservedEngine(engine: string | undefined): boolean {
@@ -95,19 +89,105 @@ export interface CertExpiry {
 }
 
 /**
- * The certificate countdown. A zero time from Go arrives as year 1, which
- * formats into a real-looking date, so it is treated as unknown rather than as
- * a certificate that expired two thousand years ago.
+ * The certificate countdown, judged against a threshold the caller supplies.
+ *
+ * The threshold used to be a constant thirty days living here, which made this
+ * page disagree with the watch that owns the question: a tls monitor fails at
+ * its own threshold_days, so a sixty-day watch went red on Monitoring while
+ * this row still printed the same countdown in neutral grey, and a seven-day
+ * watch stayed green while this row went amber. Two surfaces contradicting
+ * each other about whether a certificate is about to break is worse than
+ * either verdict alone, so there is no default: whoever renders the countdown
+ * has to say what it is being measured against.
+ *
+ * A zero time from Go arrives as year 1, which formats into a real-looking
+ * date, so it is treated as unknown rather than as a certificate that expired
+ * two thousand years ago.
  */
-export function certExpiry(certNotAfter: string | undefined, now: Date): CertExpiry {
+export function certExpiry(certNotAfter: string | undefined, now: Date, thresholdDays: number): CertExpiry {
   const raw = (certNotAfter ?? "").trim();
   if (!raw || raw.startsWith("0001")) return { tone: "unknown", days: 0 };
   const at = new Date(raw);
   if (Number.isNaN(at.getTime())) return { tone: "unknown", days: 0 };
   const days = Math.floor((at.getTime() - now.getTime()) / DAY_MS);
   if (days < 0) return { tone: "expired", days };
-  if (days <= CERT_WARN_DAYS) return { tone: "warn", days };
+  if (days <= thresholdDays) return { tone: "warn", days };
   return { tone: "ok", days };
+}
+
+// ── Who owns the expiry question ──────────────────────────────────────────
+//
+// The recorded cert_not_after is a date the operator typed. The thing that
+// actually fires before it arrives is a tls monitor, which dials the endpoint,
+// reads the leaf certificate and fails once fewer than threshold_days remain.
+// So this page does not get to hold an opinion of its own: it either finds the
+// watch and answers with the watch's threshold, or it says plainly that
+// nothing is watching, which is the state an amber number was hiding. An
+// observed resolver with no watch used to look exactly like a watched one.
+
+/** The fields of a monitor this page needs. */
+export type CertWatchMonitor = Pick<MonitorView, "id" | "name" | "type" | "target" | "threshold_days" | "enabled">;
+
+export interface CertWatchLookup {
+  /** `unknown` when the monitor list could not be read, which is not the same claim as "nothing watches this". */
+  state: "watched" | "unwatched" | "unknown";
+  monitor?: CertWatchMonitor;
+  /** The days-left threshold the verdict is measured against; 0 when nothing watches. */
+  thresholdDays: number;
+}
+
+/**
+ * The host a tls target names. The probe takes host:port and nothing else, so
+ * the port is dropped and the host compared case-insensitively, the way DNS
+ * itself compares names.
+ */
+export function tlsTargetHost(target: string | undefined): string {
+  const value = (target ?? "").trim().toLowerCase();
+  const at = value.lastIndexOf(":");
+  return (at > 0 ? value.slice(0, at) : value).replace(/^\[|\]$/g, "");
+}
+
+/**
+ * The certificate watch pointed at this hostname.
+ *
+ * `monitors` undefined means the list was not read: a token without
+ * monitor:read cannot see whether a watch exists, and answering "nothing
+ * watches this" on its behalf would be a claim the page cannot support.
+ */
+export function lookupCertWatch(
+  hostname: string | undefined,
+  monitors: CertWatchMonitor[] | undefined,
+): CertWatchLookup {
+  const name = (hostname ?? "").trim().toLowerCase();
+  if (!monitors || !name) return { state: "unknown", thresholdDays: 0 };
+  const monitor = monitors.find(
+    (candidate) =>
+      candidate.type === "tls" && candidate.enabled !== false && tlsTargetHost(candidate.target) === name,
+  );
+  if (!monitor) return { state: "unwatched", thresholdDays: 0 };
+  const threshold = monitor.threshold_days;
+  return {
+    state: "watched",
+    monitor,
+    // The server applies its own default when the field is absent, so mirror
+    // that rather than treating a missing threshold as no threshold.
+    thresholdDays: Number.isFinite(threshold) && (threshold ?? 0) > 0 ? (threshold as number) : TLS_DEFAULT_THRESHOLD_DAYS,
+  };
+}
+
+/**
+ * The countdown as this page is entitled to state it: at the watch's own
+ * threshold when there is a watch, and with no threshold at all when there is
+ * not, so an unwatched row reads neutral and says so instead of inventing an
+ * amber that nothing behind it will act on. An expiry already in the past is
+ * still called out, because that is a fact and not a judgement.
+ */
+export function certVerdict(
+  certNotAfter: string | undefined,
+  now: Date,
+  watch: CertWatchLookup,
+): CertExpiry {
+  return certExpiry(certNotAfter, now, watch.thresholdDays);
 }
 
 /**

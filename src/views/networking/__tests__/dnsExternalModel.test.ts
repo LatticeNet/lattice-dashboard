@@ -9,6 +9,7 @@ import {
   canPlanDeployment,
   canPublishDeployment,
   certExpiry,
+  certVerdict,
   dnsHostnameSizing,
   dnsVisibleColumns,
   driftTone,
@@ -19,6 +20,8 @@ import {
   isObservedOnlyTable,
   listenSummary,
   listenerProcesses,
+  lookupCertWatch,
+  tlsTargetHost,
   reservedWidthPx,
   reservesWidth,
 } from "../dnsExternalModel.ts";
@@ -90,15 +93,19 @@ test("the listen column prints the observed socket set, not a single deployed po
   assert.equal(listenSummary(deployment({ enable_udp: false, enable_tcp: false })), "53");
 });
 
-test("the certificate countdown warns inside the renewal window and treats a zero time as unknown", () => {
+test("the certificate countdown warns inside the window it was given and treats a zero time as unknown", () => {
   const now = new Date("2026-09-04T00:00:00Z");
-  assert.deepEqual(certExpiry("2026-11-17T00:00:00Z", now), { tone: "ok", days: 74 });
-  assert.deepEqual(certExpiry("2026-09-20T00:00:00Z", now), { tone: "warn", days: 16 });
-  assert.deepEqual(certExpiry("2026-08-30T00:00:00Z", now), { tone: "expired", days: -5 });
+  assert.deepEqual(certExpiry("2026-11-17T00:00:00Z", now, 30), { tone: "ok", days: 74 });
+  assert.deepEqual(certExpiry("2026-09-20T00:00:00Z", now, 30), { tone: "warn", days: 16 });
+  assert.deepEqual(certExpiry("2026-08-30T00:00:00Z", now, 30), { tone: "expired", days: -5 });
+  // The window is the caller's, not this module's: the same date is a warning
+  // against a sixty-day watch and fine against a seven-day one.
+  assert.equal(certExpiry("2026-10-20T00:00:00Z", now, 60).tone, "warn");
+  assert.equal(certExpiry("2026-10-20T00:00:00Z", now, 7).tone, "ok");
   // Go's zero time survives omitempty and must not read as a lapsed certificate.
-  assert.deepEqual(certExpiry("0001-01-01T00:00:00Z", now), { tone: "unknown", days: 0 });
-  assert.deepEqual(certExpiry(undefined, now), { tone: "unknown", days: 0 });
-  assert.deepEqual(certExpiry("not a date", now), { tone: "unknown", days: 0 });
+  assert.deepEqual(certExpiry("0001-01-01T00:00:00Z", now, 30), { tone: "unknown", days: 0 });
+  assert.deepEqual(certExpiry(undefined, now, 30), { tone: "unknown", days: 0 });
+  assert.deepEqual(certExpiry("not a date", now, 30), { tone: "unknown", days: 0 });
 });
 
 test("an uncheckable drift verdict is a warning, not a neutral badge", () => {
@@ -301,4 +308,78 @@ test("DnsView renders the visible columns, and stops truncating the reserved hos
   assert.match(view, /const visibleColumns = computed\(\(\) => dnsVisibleColumns\(columns\.value, observedOnly\.value\)\)/);
   const cell = view.slice(view.indexOf("#cell-hostname="), view.indexOf("#cell-status="));
   assert.match(cell, /observedOnly \? 'font-mono text-xs' : 'truncate font-mono text-xs'/);
+});
+
+// ── Who owns the expiry question ──────────────────────────────────────────
+
+const NOW = new Date("2026-09-04T00:00:00Z");
+
+/** The production watch: dns.roobli.org on the DoH port, failing under 30 days. */
+const watch60 = { id: "mon_tls_dns", name: "dns.roobli.org certificate", type: "tls", target: "dns.roobli.org:8443", threshold_days: 60, enabled: true };
+const watch7 = { ...watch60, id: "mon_tls_short", threshold_days: 7 };
+const tcpMonitor = { id: "mon_tcp", name: "plain DNS", type: "tcp", target: "dns.roobli.org:53", enabled: true };
+
+test("a tls target names a host, whatever port it was dialled on", () => {
+  assert.equal(tlsTargetHost("dns.roobli.org:8443"), "dns.roobli.org");
+  assert.equal(tlsTargetHost("DNS.Roobli.ORG:853"), "dns.roobli.org");
+  // A bracketed literal keeps its address and loses the brackets, so it can be
+  // compared with a hostname the same way everything else is.
+  assert.equal(tlsTargetHost("[2606:4700::1111]:853"), "2606:4700::1111");
+  assert.equal(tlsTargetHost(undefined), "");
+});
+
+test("the watch for a hostname is the enabled tls monitor pointed at it, and nothing else", () => {
+  assert.equal(lookupCertWatch("dns.roobli.org", [tcpMonitor, watch60]).state, "watched");
+  assert.equal(lookupCertWatch("DNS.roobli.org ", [watch60]).state, "watched");
+  // A tcp probe on the same host is not a certificate watch.
+  assert.equal(lookupCertWatch("dns.roobli.org", [tcpMonitor]).state, "unwatched");
+  assert.equal(lookupCertWatch("dns.roobli.org", [{ ...watch60, enabled: false }]).state, "unwatched");
+  assert.equal(lookupCertWatch("resolver.xuezhang.example", [watch60]).state, "unwatched");
+  // No monitor list is not a claim that nothing watches: a token without
+  // monitor:read cannot see one either way, and must not say so.
+  assert.equal(lookupCertWatch("dns.roobli.org", undefined).state, "unknown");
+  assert.equal(lookupCertWatch("", [watch60]).state, "unknown");
+});
+
+test("a missing threshold falls to the server's own default, not to no threshold", () => {
+  const found = lookupCertWatch("dns.roobli.org", [{ ...watch60, threshold_days: undefined }]);
+  assert.equal(found.state, "watched");
+  assert.equal(found.thresholdDays, 14);
+  assert.equal(lookupCertWatch("dns.roobli.org", [watch60]).thresholdDays, 60);
+});
+
+test("the row's verdict is the watch's verdict, so the two pages cannot disagree", () => {
+  // 55 days left. The operator set the watch to 60, so the watch is failing;
+  // the row used to print this in neutral grey against its own hard-coded 30.
+  const cert = "2026-10-29T00:00:00Z";
+  assert.equal(certVerdict(cert, NOW, lookupCertWatch("dns.roobli.org", [watch60])).tone, "warn");
+  // The reverse: 25 days against a seven-day watch that is green. The row used
+  // to go amber on its own.
+  const nearer = "2026-09-29T00:00:00Z";
+  assert.equal(certVerdict(nearer, NOW, lookupCertWatch("dns.roobli.org", [watch7])).tone, "ok");
+});
+
+test("an unwatched row states that, rather than inventing a verdict nothing acts on", () => {
+  const none = lookupCertWatch("resolver.xuezhang.example", [watch60]);
+  assert.equal(none.state, "unwatched");
+  assert.equal(none.thresholdDays, 0);
+  // 15 days left and nothing watching: neutral, with the row saying why.
+  assert.equal(certVerdict("2026-09-19T00:00:00Z", NOW, none).tone, "ok");
+  // An expiry already in the past is a fact and is still called out.
+  assert.equal(certVerdict("2026-08-30T00:00:00Z", NOW, none).tone, "expired");
+});
+
+test("DnsView resolves the watch and links both directions", () => {
+  const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
+  assert.match(view, /lookupCertWatch\(dep\.hostname, certWatches\.value\)/);
+  assert.match(view, /certVerdict\(dep\.cert_not_after, new Date\(\), certWatch\(dep\)\)/);
+  assert.doesNotMatch(view, /certExpiry\(/, "the row is judging the expiry on its own again");
+  // Watched and unwatched look different, and both reach Monitoring.
+  const cell = view.slice(view.indexOf("#cell-reality="), view.indexOf("#row-detail="));
+  assert.match(cell, /certWatch\(dep\)\.state === 'watched'/);
+  assert.match(cell, /certWatch\(dep\)\.state === 'unwatched'/);
+  assert.match(cell, /name: 'monitor-detail'/);
+  assert.match(cell, /name: 'monitoring'/);
+  // And the create dialog's prose reference is a link the reader can follow.
+  assert.match(view, /networking\.dns\.certWatchSetUp/);
 });

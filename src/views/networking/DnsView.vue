@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
+import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -25,6 +26,7 @@ import {
   type DNSRecord,
   type DNSZone,
   type GuardLintFinding,
+  type MonitorView,
 } from "@/lib/api";
 import {
   canPlanDeployment,
@@ -32,7 +34,7 @@ import {
   buildExternalDnsBody,
   canPublishDeployment,
   certDate,
-  certExpiry,
+  certVerdict,
   dnsHostnameSizing,
   dnsVisibleColumns,
   driftTone,
@@ -41,6 +43,8 @@ import {
   isObservedOnlyTable,
   listenSummary,
   listenerProcesses,
+  lookupCertWatch,
+  type CertWatchLookup,
 } from "./dnsExternalModel";
 import { ApiError } from "@/lib/api/client";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -96,6 +100,27 @@ const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) 
   pollInterval: 0,
 });
 
+/**
+ * The certificate watches, so this page can name the one that owns each
+ * expiry instead of holding an opinion of its own.
+ *
+ * A token without monitor:read gets no list and no claim: the row then says
+ * nothing about watches rather than reporting "no certificate watch", which
+ * it has no way to know.
+ */
+const canReadMonitors = computed(() => auth.can("monitor:read"));
+const monitorsQuery = useAsyncData(
+  (signal) => api.monitors.list({ signal }).then((r) => unwrap(r, "monitors")),
+  { pollInterval: 60000, immediate: canReadMonitors.value },
+);
+const certWatches = computed<MonitorView[] | undefined>(() =>
+  canReadMonitors.value ? monitorsQuery.data.value : undefined,
+);
+
+function certWatch(dep: DNSDeploymentView): CertWatchLookup {
+  return lookupCertWatch(dep.hostname, certWatches.value);
+}
+
 const deployments = computed(() => deploymentsQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
@@ -127,15 +152,22 @@ function statusVariant(status: string): "success" | "destructive" | "warning" | 
 
 /** The certificate line in the Reality column: how long is left, and when. */
 function certLabel(dep: DNSDeploymentView): string {
-  const expiry = certExpiry(dep.cert_not_after, new Date());
+  const expiry = certVerdict(dep.cert_not_after, new Date(), certWatch(dep));
   if (expiry.tone === "unknown") return t("networking.dns.certUnknown");
   const date = certDate(dep.cert_not_after);
   if (expiry.tone === "expired") return t("networking.dns.certExpired", { date });
   return t("networking.dns.certDays", { days: expiry.days, date });
 }
 
+/**
+ * The tone the countdown is printed in. It follows the watch's threshold, so
+ * this row turns amber at the moment the watch starts failing and not a day
+ * earlier or later. With no watch there is no threshold and no verdict, and
+ * the row carries the "no certificate watch" line instead, which is the thing
+ * actually worth acting on.
+ */
 function certToneClass(dep: DNSDeploymentView): string {
-  switch (certExpiry(dep.cert_not_after, new Date()).tone) {
+  switch (certVerdict(dep.cert_not_after, new Date(), certWatch(dep)).tone) {
     case "expired":
       return "text-destructive";
     case "warn":
@@ -859,6 +891,29 @@ function closePlan(open: boolean) {
                 </Badge>
               </div>
               <div :class="certToneClass(dep)" class="text-xs">{{ certLabel(dep) }}</div>
+              <!--
+                Who owns that countdown. Self-host DNS records the date; a tls
+                monitor is the thing that fires before it arrives. Saying which
+                one, and linking to it, is what stops the two pages
+                contradicting each other, and it is the only way an operator
+                can tell an observed resolver that is watched from one that is
+                not.
+              -->
+              <RouterLink
+                v-if="certWatch(dep).state === 'watched'"
+                :to="{ name: 'monitor-detail', params: { id: certWatch(dep).monitor?.id } }"
+                class="block text-xs text-muted-foreground underline-offset-2 hover:underline"
+                :title="certWatch(dep).monitor?.name"
+              >
+                {{ $t('networking.dns.certWatched', { days: certWatch(dep).thresholdDays }) }}
+              </RouterLink>
+              <RouterLink
+                v-else-if="certWatch(dep).state === 'unwatched'"
+                :to="{ name: 'monitoring' }"
+                class="block text-xs text-warning underline-offset-2 hover:underline"
+              >
+                {{ $t('networking.dns.certUnwatched') }}
+              </RouterLink>
               <Button
                 v-if="driftFindings(dep).length"
                 variant="ghost"
@@ -1087,7 +1142,12 @@ function closePlan(open: boolean) {
             <div class="grid gap-2">
               <Label for="dns-cert">{{ $t('networking.dns.certNotAfter') }}</Label>
               <Input id="dns-cert" v-model="form.cert_not_after" type="date" class="w-full sm:w-56" />
-              <p class="text-xs text-muted-foreground">{{ $t('networking.dns.certNotAfterHint') }}</p>
+              <p class="text-xs text-muted-foreground">
+                {{ $t('networking.dns.certNotAfterHint') }}
+                <RouterLink :to="{ name: 'monitoring' }" class="underline underline-offset-2">
+                  {{ $t('networking.dns.certWatchSetUp') }}
+                </RouterLink>
+              </p>
             </div>
           </div>
 
