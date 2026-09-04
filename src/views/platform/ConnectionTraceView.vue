@@ -87,6 +87,7 @@ import {
   USER_KINDS,
   activeFilterCount,
   appendConnPage,
+  connEmptyNewestAt,
   connEmptyReason,
   clampTraceTtlSeconds,
   connCloseCell,
@@ -277,9 +278,20 @@ const resultsEmptyTitle = computed(() =>
     ? t("platform.trace.nothingCollectedTitle")
     : t("platform.trace.resultsEmptyTitle"),
 );
+// How far to widen. Telling an operator to widen the range without saying how
+// far is what makes them step through 6h, 24h and 7d over a store whose newest
+// record is days older than any of them. When the server names that record,
+// the empty state names it too.
+const emptyNewestAt = computed(() => connEmptyNewestAt(paging.value));
 const resultsEmptyDescription = computed(() => {
   if (nothingCollected.value) return t("platform.trace.nothingCollectedDescription");
-  if (emptyReason.value === "nothing-matched") return t("platform.trace.nothingMatchedDescription");
+  if (emptyReason.value === "nothing-matched") {
+    return emptyNewestAt.value
+      ? t("platform.trace.nothingMatchedNewestDescription", {
+          newest: formatDateTime(emptyNewestAt.value),
+        })
+      : t("platform.trace.nothingMatchedDescription");
+  }
   return t("platform.trace.resultsEmptyDescription");
 });
 

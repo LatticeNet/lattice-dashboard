@@ -16,6 +16,7 @@ import {
   clampTraceTtlSeconds,
   closeReasonDisplay,
   connCloseCell,
+  connEmptyNewestAt,
   connEmptyReason,
   connRecordKey,
   connTraceFiltersEqual,
@@ -420,6 +421,49 @@ test("an empty table says whether nothing matched or nothing was collected", () 
     collected_total: 0,
   });
   assert.equal(connEmptyReason(hasRows), "");
+});
+
+test("nothing matched says how far back the store's newest record is", () => {
+  // "Widen the time range" without saying how far is what makes an operator
+  // step through 6h, 24h and 7d and give up. Production's newest record is
+  // eight days older than the default window, and the branch already holds
+  // that timestamp: the empty state hands it over instead of hiding it.
+  const nothingMatched = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 9,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(nothingMatched), "2026-08-27T05:59:00Z");
+
+  // A store with records but no timestamp reported keeps the plain wording
+  // rather than printing an empty date.
+  const noTimestamp = appendConnPage(emptyConnTracePaging(), { records: [], collected_total: 9 });
+  assert.equal(connEmptyNewestAt(noTimestamp), "");
+});
+
+test("the newest record is offered only where it answers the question", () => {
+  // A store that collected nothing has no newest record to name, rows on
+  // screen make the question moot, and a server that never reported the total
+  // has not said anything worth quoting.
+  const nothingCollected = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 0,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(nothingCollected), "");
+
+  const hasRows = appendConnPage(emptyConnTracePaging(), {
+    records: [record({ log_id: 1 })],
+    collected_total: 9,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(hasRows), "");
+
+  const silentServer = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.equal(connEmptyNewestAt(silentServer), "");
 });
 
 test("a server that never reports collection is not read as nothing collected", () => {

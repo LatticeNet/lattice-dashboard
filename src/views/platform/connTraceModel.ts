@@ -656,6 +656,23 @@ export function connEmptyReason(state: ConnTracePaging): ConnEmptyReason {
 }
 
 /**
+ * The newest record the store holds, for the one empty state it settles.
+ *
+ * "Widen the time range" does not say how far, and on production the newest
+ * record is eight days older than the default window: an operator steps
+ * through 6h, 24h and 7d, still sees nothing, and gives up. The server reports
+ * the timestamp and the page holds it, so the empty state can name it.
+ *
+ * Only "nothing matched" gets it. A store that collected nothing has no newest
+ * record to name, rows on screen make the question moot, and a server that
+ * never reported has said nothing worth quoting. Returns "" in those cases.
+ */
+export function connEmptyNewestAt(state: ConnTracePaging): string {
+  if (connEmptyReason(state) !== "nothing-matched") return "";
+  return state.collectedNewestAt;
+}
+
+/**
  * Append a keyset page to what is already on screen.
  *
  * A record that arrives again replaces the copy already held, in place, rather

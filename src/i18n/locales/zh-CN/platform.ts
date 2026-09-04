@@ -407,6 +407,7 @@ export default {
       resultsEmptyTitle: "该时间窗内没有连接",
       resultsEmptyDescription: "没有记录匹配当前筛选。放宽时间范围,或去掉一个条件。",
       nothingMatchedDescription: "存储里有这些节点的记录，但没有一条匹配当前筛选。放宽时间范围，或去掉一个条件。",
+      nothingMatchedNewestDescription: "存储里有这些节点的记录，但没有一条匹配当前筛选。最新的一条开始于 {newest}，把时间范围放宽到它之前，或者去掉一个条件。",
       nothingCollectedTitle: "还没有采集到任何数据",
       nothingCollectedDescription: "对你能看到的节点，trace 存储里一条连接记录都没有，所以任何筛选都不会有结果。采集按节点设置，不打开就不会有记录。",
       nothingCollectedHint: "只有采集策略处于开启状态的节点才会产生连接记录。",

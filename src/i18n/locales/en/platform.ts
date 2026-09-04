@@ -428,6 +428,8 @@ export default {
         "Nothing matched these filters. Widen the time range, or drop a filter.",
       nothingMatchedDescription:
         "The store holds records for these nodes, but none match this filter. Widen the time range, or drop a filter.",
+      nothingMatchedNewestDescription:
+        "The store holds records for these nodes, but none match this filter. The newest one it holds started at {newest}, so widen the time range past that, or drop a filter.",
       nothingCollectedTitle: "Nothing has been collected",
       nothingCollectedDescription:
         "The trace store holds no connection record at all for the nodes you can see, so no filter will find one. Collection is set per node and is off until you switch it on.",
