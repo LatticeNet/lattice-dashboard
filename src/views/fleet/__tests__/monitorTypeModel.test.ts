@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
+  AGENT_DEFAULT_INTERVAL_SEC,
+  AGENT_DEFAULT_TIMEOUT_SEC,
+  TLS_DEFAULT_INTERVAL_SEC,
+  TLS_DEFAULT_TIMEOUT_SEC,
   buildMonitorCreate,
   canSubmitMonitor,
   isServerEvaluated,
+  switchMonitorType,
   tlsTargetError,
   usesThreshold,
   type MonitorFormState,
+  type ProbeAssignment,
 } from "../monitorTypeModel.ts";
 
 function form(over: Partial<MonitorFormState> = {}): MonitorFormState {
@@ -76,4 +83,67 @@ test("the body carries the threshold for tls and the assignment for agent probes
       node_ids: ["dmit-1"],
     },
   );
+});
+
+// ── Switching type without losing the operator's work ─────────────────────
+
+const picked: ProbeAssignment = {
+  assignAll: false,
+  nodeIds: ["node_ob46mh4ltshdpkhc", "xuezhang-jp"],
+  intervalSec: 60,
+  timeoutSec: 8,
+};
+
+test("a round trip through tls hands the node selection and the cadence back", () => {
+  const out = switchMonitorType("tcp", "tls", picked, undefined);
+  assert.deepEqual(out.state, {
+    assignAll: false,
+    nodeIds: [],
+    intervalSec: TLS_DEFAULT_INTERVAL_SEC,
+    timeoutSec: TLS_DEFAULT_TIMEOUT_SEC,
+  });
+  assert.deepEqual(out.stash, picked);
+
+  const back = switchMonitorType("tls", "tcp", out.state, out.stash);
+  assert.deepEqual(back.state, picked, "the picker has to be re-worked after one mis-click");
+  assert.equal(back.stash, undefined);
+});
+
+test("the state held aside is a copy, so later edits do not reach into it", () => {
+  const live: ProbeAssignment = { ...picked, nodeIds: [...picked.nodeIds] };
+  const out = switchMonitorType("tcp", "tls", live, undefined);
+  live.nodeIds.push("late-addition");
+  const back = switchMonitorType("tls", "http", out.state, out.stash);
+  assert.deepEqual(back.state.nodeIds, picked.nodeIds);
+});
+
+test("coming back with nothing held aside falls to the agent defaults", () => {
+  const back = switchMonitorType("tls", "tcp", { assignAll: false, nodeIds: [], intervalSec: 3600, timeoutSec: 10 }, undefined);
+  assert.deepEqual(back.state, {
+    assignAll: true,
+    nodeIds: [],
+    intervalSec: AGENT_DEFAULT_INTERVAL_SEC,
+    timeoutSec: AGENT_DEFAULT_TIMEOUT_SEC,
+  });
+});
+
+test("switching between two agent types leaves the assignment alone", () => {
+  // Both run the probe on nodes, so there is nothing to move.
+  const out = switchMonitorType("tcp", "http", picked, undefined);
+  assert.deepEqual(out.state, picked);
+  assert.equal(out.stash, undefined);
+  assert.deepEqual(switchMonitorType("tcp", "tcp", picked, undefined).state, picked);
+});
+
+test("MonitoringView switches type through the reducer instead of overwriting", () => {
+  const view = readFileSync(new URL("../MonitoringView.vue", import.meta.url), "utf8");
+  const watcher = view.slice(view.indexOf("watch(monitorType,"), view.indexOf("const isCertWatch"));
+  assert.ok(watcher.length > 0, "MonitoringView no longer watches monitorType");
+  assert.match(watcher, /switchMonitorType\(/);
+  assert.doesNotMatch(
+    watcher,
+    /selectedNodeIds\.value = \[\]/,
+    "the watcher still empties the node list on its own",
+  );
+  assert.doesNotMatch(watcher, /assignAll\.value = true/, "the watcher still forces assign-all");
 });

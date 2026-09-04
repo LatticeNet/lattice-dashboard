@@ -96,3 +96,72 @@ export function buildMonitorCreate(form: MonitorFormState): MonitorCreateInput {
     node_ids: form.assignAll ? undefined : form.nodeIds,
   };
 }
+
+// ── Switching type without losing the operator's work ─────────────────────
+
+/** Agent-probe defaults, mirrored so a form that returns to tcp or http opens on them. */
+export const AGENT_DEFAULT_INTERVAL_SEC = 30;
+export const AGENT_DEFAULT_TIMEOUT_SEC = 5;
+
+/** The part of the create form a type switch used to overwrite. */
+export interface ProbeAssignment {
+  assignAll: boolean;
+  nodeIds: string[];
+  intervalSec: number;
+  timeoutSec: number;
+}
+
+export interface TypeSwitch {
+  /** The assignment and cadence after the switch. */
+  state: ProbeAssignment;
+  /** What to hold aside for the way back, or undefined once it has been handed back. */
+  stash: ProbeAssignment | undefined;
+}
+
+/**
+ * What a change of monitor type does to the assignment and the cadence.
+ *
+ * A certificate watch is dialled by the server, so it has no node assignment
+ * and wants an hourly cadence, and the form has to say so. It used to say so
+ * by overwriting: switching to tls emptied the node list and forced 3600/10,
+ * switching back forced assign-all and 30/5, and a long picker the operator
+ * had worked through was gone for good after one mis-click on a select.
+ *
+ * So the agent-probe state is held aside on the way out and handed back on the
+ * way in. Nothing is destroyed by a round trip through tls, and a switch
+ * between two agent types (tcp to http) leaves the assignment alone, because
+ * both types run it.
+ */
+export function switchMonitorType(
+  previous: string,
+  next: string,
+  current: ProbeAssignment,
+  stash: ProbeAssignment | undefined,
+): TypeSwitch {
+  if (next === previous) return { state: current, stash };
+  if (isServerEvaluated(next)) {
+    return {
+      // Keep the newest agent state, not the oldest: tcp to http to tls has to
+      // come back to what the operator last had, not to what they had first.
+      stash: isServerEvaluated(previous) ? stash : { ...current, nodeIds: [...current.nodeIds] },
+      state: {
+        assignAll: false,
+        nodeIds: [],
+        intervalSec: TLS_DEFAULT_INTERVAL_SEC,
+        timeoutSec: TLS_DEFAULT_TIMEOUT_SEC,
+      },
+    };
+  }
+  if (!isServerEvaluated(previous)) return { state: current, stash };
+  return {
+    stash: undefined,
+    state: stash
+      ? { ...stash, nodeIds: [...stash.nodeIds] }
+      : {
+          assignAll: true,
+          nodeIds: [],
+          intervalSec: AGENT_DEFAULT_INTERVAL_SEC,
+          timeoutSec: AGENT_DEFAULT_TIMEOUT_SEC,
+        },
+  };
+}

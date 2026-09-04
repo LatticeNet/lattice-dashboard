@@ -20,15 +20,17 @@ import {
 } from "lucide-vue-next";
 import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
 import {
+  AGENT_DEFAULT_INTERVAL_SEC,
+  AGENT_DEFAULT_TIMEOUT_SEC,
   MONITOR_TYPES,
-  TLS_DEFAULT_INTERVAL_SEC,
   TLS_DEFAULT_THRESHOLD_DAYS,
-  TLS_DEFAULT_TIMEOUT_SEC,
   TLS_MAX_THRESHOLD_DAYS,
   buildMonitorCreate,
   canSubmitMonitor,
   isServerEvaluated,
+  switchMonitorType,
   tlsTargetError,
+  type ProbeAssignment,
 } from "./monitorTypeModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
@@ -105,8 +107,8 @@ const deleteOpen = ref(false);
 const monitorName = ref("");
 const monitorType = ref<string>("tcp");
 const monitorTarget = ref("");
-const intervalSec = ref(30);
-const timeoutSec = ref(5);
+const intervalSec = ref(AGENT_DEFAULT_INTERVAL_SEC);
+const timeoutSec = ref(AGENT_DEFAULT_TIMEOUT_SEC);
 const thresholdDays = ref(TLS_DEFAULT_THRESHOLD_DAYS);
 
 const assignAll = ref(true);
@@ -122,25 +124,33 @@ function parseNodeIdList(value: string): string[] {
   return [...new Set(value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
 }
 /**
- * A certificate watch is dialled by the server, not by agents, so switching to
- * it drops the node assignment and moves the cadence to the hourly default:
- * an expiry date cannot change faster than that, and probing it every thirty
- * seconds would only be a handshake the endpoint has to answer.
+ * What a certificate watch does to the assignment and the cadence.
+ *
+ * The server dials a tls target itself, so it takes no node assignment and
+ * wants an hourly cadence. Saying that by overwriting cost the operator their
+ * work: a node list worked through on a long fleet was emptied by one mis-click
+ * on the type selector and never came back. switchMonitorType holds the
+ * agent-probe state aside instead and hands it back on the way in.
  */
+const agentProbeStash = ref<ProbeAssignment | undefined>(undefined);
+
 watch(monitorType, (type, previous) => {
-  if (type === previous) return;
-  if (isServerEvaluated(type)) {
-    assignAll.value = false;
-    selectedNodeIds.value = [];
-    intervalSec.value = TLS_DEFAULT_INTERVAL_SEC;
-    timeoutSec.value = TLS_DEFAULT_TIMEOUT_SEC;
-    return;
-  }
-  if (isServerEvaluated(previous ?? "")) {
-    assignAll.value = true;
-    intervalSec.value = 30;
-    timeoutSec.value = 5;
-  }
+  const { state, stash } = switchMonitorType(
+    previous ?? "",
+    type,
+    {
+      assignAll: assignAll.value,
+      nodeIds: selectedNodeIds.value,
+      intervalSec: intervalSec.value,
+      timeoutSec: timeoutSec.value,
+    },
+    agentProbeStash.value,
+  );
+  agentProbeStash.value = stash;
+  assignAll.value = state.assignAll;
+  selectedNodeIds.value = state.nodeIds;
+  intervalSec.value = state.intervalSec;
+  timeoutSec.value = state.timeoutSec;
 });
 
 const isCertWatch = computed(() => isServerEvaluated(monitorType.value));
@@ -522,10 +532,13 @@ async function createMonitor() {
   try {
     const created = await api.monitors.create(buildMonitorCreate(monitorForm.value));
     monitorName.value = "";
+    // Dropped before the type changes: the form is being emptied on purpose,
+    // so the state held aside for a round trip through tls is not owed back.
+    agentProbeStash.value = undefined;
     monitorType.value = "tcp";
     monitorTarget.value = "";
-    intervalSec.value = 30;
-    timeoutSec.value = 5;
+    intervalSec.value = AGENT_DEFAULT_INTERVAL_SEC;
+    timeoutSec.value = AGENT_DEFAULT_TIMEOUT_SEC;
     thresholdDays.value = TLS_DEFAULT_THRESHOLD_DAYS;
     assignAll.value = true;
     selectedNodeIds.value = [];
