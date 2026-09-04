@@ -313,11 +313,40 @@ test("a node is asked about its knock once, and again only when one of its appro
 // land; a pass that started from a copy of an empty map would hand back only
 // its own rows and drop the other pass's.
 test("overlapping knock passes keep each other's rows, and a refusal clears one", () => {
-  const first = mergeKnockAnswers(new Map(), new Map([["n1", "installed"]]));
-  const second = mergeKnockAnswers(first, new Map([["n2", "planned"]]));
+  const asked = new Map([["n1", "a"], ["n2", "b"], ["n3", "c"]]);
+  const first = mergeKnockAnswers(new Map(), new Map([["n1", { print: "a", answer: "installed" }]]), asked);
+  const second = mergeKnockAnswers(first, new Map([["n2", { print: "b", answer: "planned" }]]), asked);
   assert.deepEqual([...second], [["n1", "installed"], ["n2", "planned"]]);
-  const refused = mergeKnockAnswers(second, new Map([["n1", undefined], ["n3", "unknown"]]));
+  const refused = mergeKnockAnswers(
+    second,
+    new Map([["n1", { print: "a", answer: undefined }], ["n3", { print: "c", answer: "unknown" }]]),
+    asked,
+  );
   assert.deepEqual([...refused], [["n2", "planned"], ["n3", "unknown"]]);
   // The map it was handed is not written to.
   assert.deepEqual([...second], [["n1", "installed"], ["n2", "planned"]]);
+});
+
+// One node hit by two passes in quick succession (an operator re-arms right
+// after a rejection, or two approval polls land close together) has two
+// requests in flight against different fingerprints. The record of what was
+// asked already holds the newer print before either request leaves, so an
+// answer that comes back against an older print is thrown away whichever
+// order the two land in; the map never shows a retired answer that no poll
+// would ever re-ask about.
+test("a knock answer requested against a fingerprint the node has moved past is dropped", () => {
+  const asked = new Map<string, string>();
+  // Pass A asks n1 against print "a"; pass B asks it against "b" before A lands.
+  asked.set("n1", "a");
+  asked.set("n1", "b");
+  // A's answer arrives last and must not overwrite B's.
+  const afterB = mergeKnockAnswers(new Map(), new Map([["n1", { print: "b", answer: "installed" }]]), asked);
+  const afterA = mergeKnockAnswers(afterB, new Map([["n1", { print: "a", answer: "installed_superseded" }]]), asked);
+  assert.deepEqual([...afterA], [["n1", "installed"]]);
+  // A's answer arriving first is not shown either, not even for a moment.
+  const aFirst = mergeKnockAnswers(new Map(), new Map([["n1", { print: "a", answer: "installed_superseded" }]]), asked);
+  assert.deepEqual([...aFirst], []);
+  assert.deepEqual([...mergeKnockAnswers(aFirst, new Map([["n1", { print: "b", answer: "installed" }]]), asked)], [["n1", "installed"]]);
+  // A stale refusal does not clear the fresh row.
+  assert.deepEqual([...mergeKnockAnswers(afterB, new Map([["n1", { print: "a", answer: undefined }]]), asked)], [["n1", "installed"]]);
 });

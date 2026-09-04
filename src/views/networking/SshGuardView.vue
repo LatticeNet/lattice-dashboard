@@ -110,6 +110,7 @@ import {
   type BatchOutcome,
   type BoardStage,
   type CoverageFilter,
+  type KnockAnswer,
   type ScopeState,
 } from "./sshGuardBoardModel";
 
@@ -382,21 +383,24 @@ async function readKnockRows() {
   const ids = knockStatesToFetch(states.value.map((s) => s.nodeId), prints, knockAsked);
   if (!ids.length) return;
   // Merged into whatever the map holds when they land, never into a copy
-  // taken now: see mergeKnockAnswers for why.
-  const answers = new Map<string, SSHGuardKnockStateResponse | undefined>();
+  // taken now, and each answer carries the print it was asked against so an
+  // older pass landing late cannot overwrite a newer one: see
+  // mergeKnockAnswers for both.
+  const answers = new Map<string, KnockAnswer<SSHGuardKnockStateResponse>>();
   try {
     await runWithConcurrency(ids, 4, async (nodeId) => {
       // Recorded before the request, so a refusal is not retried on every
       // poll; the row falls back to its plan until the approvals move.
-      knockAsked.set(nodeId, prints.get(nodeId) ?? "");
+      const print = prints.get(nodeId) ?? "";
+      knockAsked.set(nodeId, print);
       try {
-        answers.set(nodeId, await api.sshGuard.knockState(nodeId));
+        answers.set(nodeId, { print, answer: await api.sshGuard.knockState(nodeId) });
       } catch {
-        answers.set(nodeId, undefined);
+        answers.set(nodeId, { print, answer: undefined });
       }
     });
   } finally {
-    knockRows.value = mergeKnockAnswers(knockRows.value, answers);
+    knockRows.value = mergeKnockAnswers(knockRows.value, answers, knockAsked);
   }
 }
 

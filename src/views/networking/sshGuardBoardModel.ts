@@ -294,17 +294,36 @@ export function knockStatesToFetch(
   return nodeIds.filter((id) => asked.get(id) !== (fingerprints.get(id) ?? ""));
 }
 
+/** One pass's answer for a node, tagged with the fingerprint it was asked against. */
+export interface KnockAnswer<T> {
+  print: string;
+  answer: T | undefined;
+}
+
 /**
  * Fold one pass's answers into what the board already holds. The approvals
  * and the fleet arrive separately, so two passes overlap on first load; each
  * merges into the map as it stands when its answers land, and neither may
  * start from a copy taken when it began or the later one drops the earlier
- * one's rows. An answer of `undefined` is a refusal, and clears the row so it
- * falls back to its plan.
+ * one's rows.
+ *
+ * Two passes can also ask about the same node against different fingerprints
+ * (an operator re-arms right after a rejection, or two approval polls land
+ * close together). `asked` already holds the newer print before either
+ * request leaves, so an answer tagged with an older print is dropped whichever
+ * order the two land in: the map would otherwise show the retired answer, and
+ * no later poll would re-ask about it because the print already matches.
+ * An answer of `undefined` is a refusal, and clears the row so it falls back
+ * to its plan.
  */
-export function mergeKnockAnswers<T>(current: ReadonlyMap<string, T>, answers: ReadonlyMap<string, T | undefined>): Map<string, T> {
+export function mergeKnockAnswers<T>(
+  current: ReadonlyMap<string, T>,
+  answers: ReadonlyMap<string, KnockAnswer<T>>,
+  asked: ReadonlyMap<string, string>,
+): Map<string, T> {
   const next = new Map(current);
-  for (const [nodeId, answer] of answers) {
+  for (const [nodeId, { print, answer }] of answers) {
+    if (asked.get(nodeId) !== print) continue;
     if (answer === undefined) next.delete(nodeId);
     else next.set(nodeId, answer);
   }
