@@ -10,7 +10,6 @@ import {
   canPublishDeployment,
   certExpiry,
   certVerdict,
-  dnsHostnameSizing,
   dnsVisibleColumns,
   driftTone,
   externalHostnameProblem,
@@ -125,12 +124,11 @@ test("the Reality column reserves width instead of only capping it", () => {
     reservedWidthPx(DNS_COLUMN_SIZING.reality) >= 180,
     "the drift verdict and the certificate countdown need at least 180px",
   );
-  // The space has to come from somewhere: the two mono columns that cannot
-  // shrink on their own are capped so they stop hoarding it.
+  // Reality states its own width, so it no longer depends on the columns
+  // beside it being capped. Node still is: it prints a name over a short id,
+  // and truncating the name costs nothing the id does not carry.
   assert.equal(reservesWidth(DNS_COLUMN_SIZING.node), false);
-  assert.equal(reservesWidth(DNS_COLUMN_SIZING.hostname), false);
   assert.match(DNS_COLUMN_SIZING.node, /max-w-\[/);
-  assert.match(DNS_COLUMN_SIZING.hostname, /max-w-\[/);
 });
 
 test("a max-width alone does not count as a reservation", () => {
@@ -148,7 +146,7 @@ test("DnsView gives the Reality column the reserved sizing and caps the columns 
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
   assert.match(view, /key:\s*"reality"[^]*?class:\s*DNS_COLUMN_SIZING\.reality/);
   assert.match(view, /key:\s*"node"[^]*?class:\s*DNS_COLUMN_SIZING\.node/);
-  assert.match(view, /key:\s*"hostname"[^]*?class:\s*dnsHostnameSizing\(observedOnly\.value\)/);
+  assert.match(view, /key:\s*"hostname"[^]*?class:\s*DNS_COLUMN_SIZING\.hostname/);
   assert.doesNotMatch(view, /class:\s*"max-w-\[280px\]"/, "the Reality column is back on a bare cap");
 });
 
@@ -289,25 +287,25 @@ test("the two intent columns leave an observed-only table, and nothing else does
   assert.deepEqual(dnsVisibleColumns(allColumns, false), allColumns, "a mixed table loses a column");
 });
 
-test("the hostname turns its ceiling into a floor once the intent columns are gone", () => {
+test("the hostname reserves its width instead of capping it", () => {
   // The hostname is what a certificate watch is pointed at, so it is the value
-  // the operator came to read; `resolver.xuezhan…` is not that value.
-  const wide = dnsHostnameSizing(true);
-  assert.equal(reservesWidth(wide), true, "the observed-only hostname column still only caps its width");
-  assert.ok(reservedWidthPx(wide) >= 200, `reserved ${reservedWidthPx(wide)}px, too little for a real resolver name`);
-  assert.match(wide, /whitespace-nowrap/);
-
-  const capped = dnsHostnameSizing(false);
-  assert.equal(reservesWidth(capped), false, "a mixed table lets the hostname take width from Reality");
-  assert.equal(capped, DNS_COLUMN_SIZING.hostname);
+  // the operator came to read; `resolver.xuezhan…` is not that value. Measured
+  // at 1440 in dev/narrow.html?to=dns.html&w=1440, `resolver.xuezhang.example`
+  // wants 181px against a 150px cap, while the table used 1343 of 1440.
+  const hostname = DNS_COLUMN_SIZING.hostname;
+  assert.equal(reservesWidth(hostname), true, "the hostname column is back on a bare cap");
+  assert.ok(reservedWidthPx(hostname) >= 190, `reserved ${reservedWidthPx(hostname)}px, too little for a real resolver name`);
+  assert.match(hostname, /whitespace-nowrap/);
+  assert.doesNotMatch(hostname, /max-w-/, "the cap is back beside the reservation");
 });
 
-test("DnsView renders the visible columns, and stops truncating the reserved hostname", () => {
+test("DnsView renders the visible columns, and no longer truncates the hostname", () => {
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
   assert.match(view, /:columns="visibleColumns"/);
   assert.match(view, /const visibleColumns = computed\(\(\) => dnsVisibleColumns\(columns\.value, observedOnly\.value\)\)/);
   const cell = view.slice(view.indexOf("#cell-hostname="), view.indexOf("#cell-status="));
-  assert.match(cell, /observedOnly \? 'font-mono text-xs' : 'truncate font-mono text-xs'/);
+  assert.doesNotMatch(cell, /truncate/, "the hostname cell clips again");
+  assert.doesNotMatch(cell, /:title=/, "a tooltip is back standing in for the value");
 });
 
 // ── Who owns the expiry question ──────────────────────────────────────────

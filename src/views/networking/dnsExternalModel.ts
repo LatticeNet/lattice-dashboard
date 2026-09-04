@@ -223,27 +223,30 @@ export function driftTone(status: string | undefined): "success" | "destructive"
 // width" is the kind of claim that gets silently reverted to a max-width
 // during a tidy-up.
 
-/** Tailwind sizing applied to a deployments-table column, header and body cell. */
-export const DNS_COLUMN_SIZING: Record<"node" | "hostname" | "hostnameWide" | "reality", string> = {
+/**
+ * Tailwind sizing applied to a deployments-table column, header and body cell.
+ *
+ * Hostname reserves rather than caps. It was capped at 150px, which rendered
+ * `resolver.xuezhang.example` as `resolver.xuezhan...`: measured at 1440 the
+ * string wants 181px and the cell gave it 150, while the whole table used
+ * 1343 of the 1440 available. The width was there; the cap was spending it
+ * somewhere else. It is also the one identifier the observed story hangs on,
+ * being what a certificate watch is pointed at, and its only recovery was a
+ * title tooltip that neither a keyboard nor a touch reader can open.
+ */
+export const DNS_COLUMN_SIZING: Record<"node" | "hostname" | "reality", string> = {
   node: "max-w-[150px]",
-  hostname: "max-w-[150px]",
-  hostnameWide: "min-w-[220px] whitespace-nowrap",
+  hostname: "min-w-[200px] whitespace-nowrap",
   reality: "w-[190px] min-w-[190px] align-top",
 };
 
 // ── What an observed-only table does not need ─────────────────────────────
 //
-// Capping the hostname was the right trade while eleven columns competed. On a
-// table of nothing but observed records it is not: two of those columns
-// describe an intent Lattice holds, an observed record holds neither, and both
-// print a single "·" while taking about ninety pixels each. The hostname next
-// to them was truncated to `resolver.xuezhan…`, and it is the identifier the
-// whole observed story hangs on: it is what a certificate watch is pointed at
-// and what the operator came to read. A title tooltip is not a recovery, since
-// neither a keyboard nor a touch reader can open one.
-//
-// So the two intent columns leave the table when nothing on it has an intent,
-// and the hostname turns its ceiling into a floor with the width they freed.
+// Two of the eleven columns describe an intent Lattice holds. An observed
+// record holds neither, so on a table of nothing but observed records they are
+// two columns of "·" charging about a hundred pixels each, measured at 1440.
+// They leave that table, which is where the hostname's reserved width comes
+// from without the rest of the row paying for it.
 
 /** Columns that describe an intent Lattice holds rather than a fact about the daemon. */
 export const DNS_INTENT_COLUMN_KEYS = ["credential", "published"];
@@ -263,11 +266,6 @@ export function isObservedOnlyTable(deployments: Pick<DNSDeploymentView, "engine
 export function dnsVisibleColumns<C extends { key: string }>(columns: C[], observedOnly: boolean): C[] {
   if (!observedOnly) return columns;
   return columns.filter((column) => !DNS_INTENT_COLUMN_KEYS.includes(column.key));
-}
-
-/** The hostname column's sizing: a ceiling beside the intent columns, a floor without them. */
-export function dnsHostnameSizing(observedOnly: boolean): string {
-  return observedOnly ? DNS_COLUMN_SIZING.hostnameWide : DNS_COLUMN_SIZING.hostname;
 }
 
 /**
