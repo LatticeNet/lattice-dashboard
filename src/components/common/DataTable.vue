@@ -109,6 +109,16 @@ const props = withDefaults(
      * unique among the tables rendered on one route.
      */
     stateKey?: string;
+    /**
+     * Rows that carry a `row-detail` panel, and whether that panel is open.
+     *
+     * A table column is a bad home for a sentence: auto layout gives width to
+     * whatever cannot wrap, so a column of prose is squeezed to its longest
+     * word while a column of one unbreakable identifier keeps everything it
+     * asks for. A detail panel spans the whole row instead, so the sentence is
+     * read at the table's width rather than at its column's.
+     */
+    rowExpanded?: (row: T) => boolean;
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
   }>(),
@@ -137,6 +147,7 @@ const props = withDefaults(
     selectAllLabel: undefined,
     clearSelectionLabel: undefined,
     selectRowLabel: undefined,
+    rowExpanded: undefined,
     stateKey: undefined,
   },
 );
@@ -220,10 +231,22 @@ defineSlots<
     empty?: () => unknown;
     /** Shown when search/filter removes every row. */
     "no-match"?: () => unknown;
+    /** Full-width panel under a row, rendered while `rowExpanded` holds for it. */
+    "row-detail"?: (props: { row: T }) => unknown;
   } & Record<`cell-${string}`, (props: { row: T; value: unknown }) => unknown>
 >();
 
 const isDesktop = useMediaQuery("(min-width: 768px)");
+
+/** Columns a detail row has to span: the data columns plus the two optional gutters. */
+const spannedColumns = computed(
+  () => props.columns.length + (props.selectable ? 1 : 0) + (props.rowTo ? 1 : 0),
+);
+
+/** Whether this row is currently showing its detail panel. */
+function isRowExpanded(row: T): boolean {
+  return !!props.rowExpanded?.(row);
+}
 
 /* ----------------------------- linkable state ----------------------------- */
 const route = useRoute();
@@ -727,9 +750,8 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             </tr>
           </thead>
           <tbody>
+            <template v-for="row in pagedRows" :key="rowKey(row)">
             <tr
-              v-for="row in pagedRows"
-              :key="rowKey(row)"
               class="group border-b border-border last:border-0 hover:bg-muted/40"
               :class="{
                 'bg-muted/30': selectable && isRowSelected(row),
@@ -767,6 +789,12 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 />
               </td>
             </tr>
+            <tr v-if="isRowExpanded(row)" class="border-b border-border bg-muted/20 last:border-0">
+              <td :colspan="spannedColumns" class="px-3 pb-3 pt-0">
+                <slot name="row-detail" :row="row" />
+              </td>
+            </tr>
+            </template>
           </tbody>
         </table>
       </div>
@@ -810,6 +838,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               </dd>
             </div>
           </dl>
+          <div v-if="isRowExpanded(row)" class="mt-3 border-t border-border pt-3">
+            <slot name="row-detail" :row="row" />
+          </div>
         </li>
       </ul>
 

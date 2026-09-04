@@ -25,6 +25,14 @@
  * six days and carries a `stalled_reason` that ends in a full stop.
  */
 import type { Node, NodeStatus, Principal, TaskResult, TaskView } from "@/lib/api/index";
+import { buildApprovalsFixture, fakeApprovalsApi } from "./approvalsFixture";
+
+// The Overview's approvals card against a fleet's worth of history: the KPI
+// reads counts, the preview reads pending rows, and neither should cost the
+// 2.6 MB the whole listing did. `?approvals=none` keeps the old empty fleet.
+const approvalsStore =
+  new URLSearchParams(window.location.search).get("approvals") === "none" ? [] : buildApprovalsFixture();
+const approvalsFake = fakeApprovalsApi(approvalsStore);
 
 export * from "@/lib/api/index";
 
@@ -246,7 +254,9 @@ export const api = {
     duplicates: () => delay({ groups: [] }),
   },
   approvals: {
-    list: () => delay({ approvals: [] }),
+    list: (params?: Record<string, unknown>) => approvalsFake.list(params),
+    counts: (params?: Record<string, unknown>) => approvalsFake.counts(params),
+    get: (id: string) => approvalsFake.get(id),
   },
   tasks: {
     list: () => delay({ tasks: tasks.map((t) => ({ ...t })) }),

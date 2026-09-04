@@ -1,4 +1,5 @@
 import { ApiError, http, type RequestOptions } from "./client";
+import { unwrapApproval, unwrapApprovalCounts } from "./approvalsEnvelope";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
 import type {
   AgentArtifactListing,
@@ -8,6 +9,8 @@ import type {
   AgentReleaseInfo,
   AgentUpdatePolicy,
   AgentUpdatePolicyUpsertRequest,
+  ApprovalCounts,
+  ApprovalStatus,
   ApprovalView,
   AuditQueryResponse,
   AuditVerifyResponse,
@@ -124,6 +127,7 @@ import type {
 } from "./types";
 
 export * from "./types";
+export * from "./approvalsEnvelope";
 export { ApiError, setCsrfToken, getCsrfToken } from "./client";
 
 export const API_ERROR_APPROVAL_STALE = "approval_stale";
@@ -409,8 +413,48 @@ export const api = {
   },
 
   approvals: {
-    list: (options?: { include_dismissed?: boolean }, opts?: RequestOptions) =>
-      http.get<{ approvals: ApprovalView[] } | ApprovalView[]>("/api/network/approvals", options, opts),
+    /**
+     * List approvals. Rows omit `plan` unless `include: "plan"` is passed and
+     * always carry `plan_sha256`. With no params the server answers a bare
+     * array; with any filter it answers an envelope with `total`, so a caller
+     * paging history can tell how much is left. `status` takes a comma list
+     * and is matched against the status column literally, so a derived flag
+     * such as staleness cannot be asked for by status and stays a client-side
+     * filter; `since` is inclusive on updated_at. Dismissed rows stay hidden
+     * unless `include_dismissed` is set, even when `status` names them.
+     */
+    list: (params?: ApprovalListParams, opts?: RequestOptions) =>
+      http.get<ApprovalListResponse | ApprovalView[]>(
+        "/api/network/approvals",
+        params && {
+          ...params,
+          status: Array.isArray(params.status) ? params.status.join(",") : params.status,
+          include_dismissed: params.include_dismissed ? "true" : undefined,
+        },
+        opts,
+      ),
+    /**
+     * Status counts only, no rows: what the Overview and the sidebar need,
+     * at a few hundred bytes instead of the whole listing. `node_id` and
+     * `plugin` narrow the counts; `status` is the breakdown, not a filter.
+     */
+    counts: (params?: Pick<ApprovalListParams, "node_id" | "plugin">, opts?: RequestOptions) =>
+      http
+        .get<{ counts: Partial<ApprovalCounts> }>("/api/network/approvals", { ...params, count: 1 }, opts)
+        .then((r) => unwrapApprovalCounts(r)),
+    /**
+     * One approval with its plan. The listing never carries plan text unless
+     * asked, so this is how the Plan Review panel and any digest computed
+     * from bytes the operator has not seen get the record. The server lane
+     * chose `?id=<id>` answering `{"approval": {...}}`; a bare record is
+     * accepted too, so a control plane that answers `/approvals/<id>` with
+     * the object itself needs no console change. A dismissed row is readable
+     * by id without include_dismissed: the caller already holds the id.
+     */
+    get: (id: string, opts?: RequestOptions) =>
+      http
+        .get<{ approval: ApprovalView } | ApprovalView>("/api/network/approvals", { id }, opts)
+        .then((r) => unwrapApproval(r)),
     approve: (approval_id: string, queue_apply: boolean, plan_sha256?: string) =>
       http.post<void>("/api/network/approvals/approve", {
         approval_id,
@@ -648,8 +692,8 @@ export const api = {
     ) => http.post<StorageBinding>(`/api/storage/bindings?kind=${encodeURIComponent(kind)}`, input),
     deleteBinding: (kind: StorageKind, id: string) =>
       http.post<{ ok: boolean }>("/api/storage/bindings/delete", { kind, id }),
-    tokens: (kind: StorageKind) =>
-      http.get<{ tokens: StorageTokenView[] }>("/api/storage/tokens", { kind }),
+    tokens: (kind: StorageKind, opts?: RequestOptions) =>
+      http.get<{ tokens: StorageTokenView[] }>("/api/storage/tokens", { kind }, opts),
     createToken: (
       kind: StorageKind,
       input: { name: string; access: StorageAccess; buckets?: string[] },
@@ -842,8 +886,36 @@ export const api = {
 };
 
 /** Normalize list endpoints that may return either a bare array or {key:[]}. */
-export function unwrap<T>(res: T[] | Record<string, T[]>, key: string): T[] {
+/** Query parameters GET /api/network/approvals honours. See api.approvals.list. */
+export interface ApprovalListParams {
+  /** One status or a comma list; "stale" is accepted as a pseudo-status. */
+  status?: ApprovalStatus | "stale" | string | Array<ApprovalStatus | "stale" | string>;
+  plugin?: string;
+  node_id?: string;
+  /** RFC 3339 instant; rows updated at or after it. */
+  since?: string;
+  limit?: number;
+  offset?: number;
+  /** "plan" asks for the plan text on every row. */
+  include?: "plan";
+  include_dismissed?: boolean;
+}
+
+/** The envelope the server answers when any list parameter is present. */
+export type ApprovalListResponse = {
+  approvals: ApprovalView[];
+  total?: number;
+  limit?: number;
+  offset?: number;
+};
+
+// The second overload exists for envelopes that carry more than lists, such as
+// the approvals listing's `total`; the first keeps inference for every caller
+// whose envelope is nothing but arrays.
+export function unwrap<T>(res: T[] | Record<string, T[]>, key: string): T[];
+export function unwrap<T>(res: T[] | { [key: string]: unknown }, key: string): T[];
+export function unwrap<T>(res: T[] | Record<string, unknown>, key: string): T[] {
   if (Array.isArray(res)) return res;
-  const v = (res as Record<string, T[]>)[key];
+  const v = (res as Record<string, unknown>)[key];
   return Array.isArray(v) ? v : [];
 }

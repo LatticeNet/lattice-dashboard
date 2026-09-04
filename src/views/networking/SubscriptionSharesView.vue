@@ -511,6 +511,21 @@ watch(() => route.query, applyDeepLink);
       </template>
     </PageHeader>
 
+    <!--
+      Where this page sits. Shares and the Publishing page were two nav entries
+      over one plane, and nothing on either said so: a share is the plugin
+      origin of the same publishing plane that carries the KV and Static
+      origins, which is why the route below is read from the publishing
+      records rather than from a second private idea of where a share lives.
+    -->
+    <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+      {{ $t('networking.shares.plane') }}
+      <RouterLink
+        to="/platform/publishing"
+        class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
+    </p>
+
     <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
       <DataTable
         state-key="shares"

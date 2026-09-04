@@ -87,6 +87,8 @@ import {
   USER_KINDS,
   activeFilterCount,
   appendConnPage,
+  connEmptyNewestAt,
+  connEmptyReason,
   clampTraceTtlSeconds,
   connCloseCell,
   connRecordKey,
@@ -261,6 +263,55 @@ let connectionsController: AbortController | undefined;
 
 const records = computed(() => paging.value.records);
 const coverage = computed(() => traceBytesCoverage(records.value));
+
+/**
+ * An empty table is two different operator problems and the page used to name
+ * only one of them. "Nothing matched these filters" sends an operator to widen
+ * the range on a fleet where every collection policy is off, and nothing they
+ * do to the filters will ever help. The server reports what the store holds
+ * for the nodes they may see, so the page says which of the two it is.
+ */
+/**
+ * The nodes this operator may see, as evidence for the empty state.
+ *
+ * The server answers a caller with no visible node before it reaches the trace
+ * store, and that response reads as collected_total 0, which the page turned
+ * into "nothing has been collected, switch collection on". /api/nodes filters
+ * on the same allowlist, so an operator holding node:read who sees no node
+ * sees none for log:read either, and the page can say the true thing instead.
+ */
+const visibleNodes = computed(() => ({
+  known: canReadNodes.value && nodesQuery.data.value !== undefined && !nodesQuery.error.value,
+  count: nodes.value.length,
+}));
+
+const emptyReason = computed(() =>
+  loadedOnce.value ? connEmptyReason(paging.value, visibleNodes.value) : "",
+);
+const nothingCollected = computed(() => emptyReason.value === "nothing-collected");
+const noVisibleNodes = computed(() => emptyReason.value === "no-visible-nodes");
+const resultsEmptyTitle = computed(() => {
+  if (noVisibleNodes.value) return t("platform.trace.noVisibleNodesTitle");
+  if (nothingCollected.value) return t("platform.trace.nothingCollectedTitle");
+  return t("platform.trace.resultsEmptyTitle");
+});
+// How far to widen. Telling an operator to widen the range without saying how
+// far is what makes them step through 6h, 24h and 7d over a store whose newest
+// record is days older than any of them. When the server names that record,
+// the empty state names it too.
+const emptyNewestAt = computed(() => connEmptyNewestAt(paging.value));
+const resultsEmptyDescription = computed(() => {
+  if (noVisibleNodes.value) return t("platform.trace.noVisibleNodesDescription");
+  if (nothingCollected.value) return t("platform.trace.nothingCollectedDescription");
+  if (emptyReason.value === "nothing-matched") {
+    return emptyNewestAt.value
+      ? t("platform.trace.nothingMatchedNewestDescription", {
+          newest: formatDateTime(emptyNewestAt.value),
+        })
+      : t("platform.trace.nothingMatchedDescription");
+  }
+  return t("platform.trace.resultsEmptyDescription");
+});
 
 interface ConnRowView {
   user: ReturnType<typeof userCellDisplay>;
@@ -1031,8 +1082,8 @@ onBeforeUnmount(() => {
               :page-size="0"
               searchable
               :search-placeholder="$t('platform.trace.searchPlaceholder')"
-              :empty-title="$t('platform.trace.resultsEmptyTitle')"
-              :empty-description="$t('platform.trace.resultsEmptyDescription')"
+              :empty-title="resultsEmptyTitle"
+              :empty-description="resultsEmptyDescription"
               :no-match-title="$t('platform.shared.noMatchesTitle')"
               :no-match-description="$t('platform.shared.noMatchesDescription')"
               :skeleton-rows="8"
@@ -1146,6 +1197,23 @@ onBeforeUnmount(() => {
                 </div>
               </template>
             </DataTable>
+
+            <!--
+              The one action that changes a "nothing collected" answer. It is
+              on the same card as the empty table because sending an operator
+              to hunt for a tab is how the old copy failed them.
+            -->
+            <div
+              v-if="nothingCollected"
+              class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 p-3"
+            >
+              <p class="text-xs text-muted-foreground">
+                {{ $t('platform.trace.nothingCollectedHint') }}
+              </p>
+              <Button variant="outline" size="sm" @click="tab = 'policy'">
+                {{ $t('platform.trace.openPolicyTab') }}
+              </Button>
+            </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2">
               <p class="text-xs text-muted-foreground">

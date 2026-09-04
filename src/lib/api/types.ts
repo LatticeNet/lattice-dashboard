@@ -539,7 +539,20 @@ export interface ApprovalView {
   node_id: string;
   plugin: string;
   action: string;
-  plan: string;
+  /**
+   * The reviewable plan text. Absent on listing rows unless the list was asked
+   * for it (include=plan): on a fleet with a thousand applied approvals the
+   * plan bodies were nearly all of the bytes. The per-id read
+   * (api.approvals.get) and the decision responses always carry it.
+   */
+  plan?: string;
+  /**
+   * Hex SHA-256 of the plan text, present on every row. It is the value the
+   * approve endpoint checks plan_sha256 against, so a decision can bind to a
+   * plan the console never downloaded, and a changed plan shows as a changed
+   * hash without the body.
+   */
+  plan_sha256?: string;
   status: ApprovalStatus;
   reason?: string;
   stale?: boolean;
@@ -557,6 +570,24 @@ export interface ApprovalView {
   rejected_at?: string;
   /** Present only while status is "approved". See ApprovalWaitingView. */
   waiting?: ApprovalWaitingView;
+}
+
+/**
+ * Status breakdown of the approvals a principal can see, from
+ * GET /api/network/approvals?count=1. "stale" counts agent-update rows whose
+ * plan no longer matches policy, whatever their status column says; "total"
+ * counts every row, dismissed included. Keys are open: a newer control plane
+ * may add one, and a missing key reads as zero.
+ */
+export interface ApprovalCounts {
+  pending: number;
+  approved: number;
+  stale: number;
+  applied: number;
+  rejected: number;
+  dismissed: number;
+  total: number;
+  [status: string]: number;
 }
 
 /**
@@ -816,13 +847,22 @@ export interface AuditVerifyResponse {
   error?: string;
 }
 
+/**
+ * `tls` opens a TLS session to host:port and reports the certificate's days
+ * to expiry; the probe fails once fewer than `threshold_days` remain, so the
+ * result log turns red before the certificate lapses rather than after.
+ */
+export type MonitorType = "tcp" | "http" | "tls";
+
 export interface MonitorView {
   id: string;
   name: string;
-  type: "tcp" | "http" | string;
+  type: MonitorType | string;
   target: string;
   interval_sec: number;
   timeout_sec: number;
+  /** Only on `tls` monitors: how many days before expiry the probe starts failing. */
+  threshold_days?: number;
   assign_all?: boolean;
   node_ids?: string[];
   enabled: boolean;
@@ -832,19 +872,24 @@ export interface MonitorView {
 
 export interface MonitorResult {
   monitor_id: string;
+  /** Empty on a `tls` result: the server dials those itself, no agent does. */
   node_id: string;
   at: string;
   success: boolean;
   latency_ms?: number;
   error?: string;
+  /** `tls` only: the leaf certificate expiry the probe read, set whenever the handshake completed. */
+  cert_not_after?: string;
 }
 
 export interface MonitorCreateInput {
   name: string;
-  type: "tcp" | "http";
+  type: MonitorType;
   target: string;
   interval_sec?: number;
   timeout_sec?: number;
+  /** `tls` only. */
+  threshold_days?: number;
   assign_all?: boolean;
   node_ids?: string[];
 }
@@ -1160,6 +1205,40 @@ export interface NetPolicyGraph {
 export type DNSZoneMode = "forward" | "static" | "block";
 export type DNSExposure = "mesh" | "public";
 
+/**
+ * `coredns` is a daemon Lattice installs and configures through a plan.
+ * `external` is one it only observes: a resolver the operator already runs,
+ * registered so the console lists it, reads its listeners from the node's
+ * guard reality and watches its certificate. An external record can never be
+ * planned or published; the server refuses both.
+ */
+export type DNSEngine = "coredns" | "external";
+
+/**
+ * One socket the observed daemon holds. Protocol and port are the operator's
+ * claim; `process` is what the node's guard reality reported on that socket
+ * when the claim was recorded, and is empty when nothing was listening there.
+ */
+export interface DNSListener {
+  port: number;
+  protocol: string;
+  /** Process name behind the socket, e.g. `dnsproxy`. Server-recorded, never operator-entered. */
+  process?: string;
+}
+
+/**
+ * The read-time comparison of a recorded listener set with the node's latest
+ * guard reality. The server computes it on every read and never acts on it:
+ * `findings` are finished sentences, and `status` is `drift` when any listener
+ * disagrees, `unknown` when the node has never reported or its report is
+ * stale, `ok` otherwise.
+ */
+export interface DNSDriftView {
+  status: "ok" | "drift" | "unknown" | string;
+  findings: string[];
+  reality_collected_at?: string;
+}
+
 export interface DNSRecord {
   name: string;
   type: string;
@@ -1179,13 +1258,19 @@ export interface DNSDeploymentView {
   name: string;
   node_id: string;
   node_name?: string;
-  engine: string;
+  engine: DNSEngine | string;
   listen_port: number;
   enable_udp: boolean;
   enable_tcp: boolean;
   exposure: DNSExposure | string;
   zones: DNSZone[];
   hostname?: string;
+  /** `external` only: the daemon's sockets, each stamped with the process reality reported. */
+  listeners?: DNSListener[];
+  /** `external` only: when the daemon's certificate expires, operator-entered. */
+  cert_not_after?: string;
+  /** `external` only: what the node's latest reality disagrees with. */
+  drift?: DNSDriftView;
   publish_ipv4: boolean;
   publish_ipv6: boolean;
   record_ttl?: number;
@@ -1208,13 +1293,17 @@ export interface DNSDeploymentBody {
   id?: string;
   name: string;
   node_id: string;
-  engine?: string;
+  engine?: DNSEngine | string;
   listen_port?: number;
   enable_udp?: boolean;
   enable_tcp?: boolean;
   exposure?: DNSExposure | string;
   zones: DNSZone[];
   hostname?: string;
+  /** `external` only: the sockets the observed daemon owns. At least one is required. */
+  listeners?: DNSListener[];
+  /** `external` only. */
+  cert_not_after?: string;
   publish_ipv4?: boolean;
   publish_ipv6?: boolean;
   record_ttl?: number;
@@ -1346,7 +1435,7 @@ export interface TunnelUpsertRequest {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Platform: Plugins, Workers, KV, Static, Logs, Notifications, Agent Updates.
+// Platform: Plugins, Publishing, Store (KV and Static), Evidence, Notifications, Agent Updates.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2150,6 +2239,17 @@ export interface HopPath {
 export interface TraceConnectionsResponse {
   records: ConnRecord[];
   next_cursor?: string;
+  /**
+   * How many records the store holds for every node this caller may see,
+   * before the operator's own filter narrowed anything. An empty `records`
+   * with this at 0 means nothing was ever collected; an empty `records` with
+   * this above 0 means the filter matched nothing. Optional because a server
+   * that predates the field answers the query without it, and the console
+   * must not read a missing field as "nothing collected".
+   */
+  collected_total?: number;
+  /** Start time of the newest record the store holds, absent when it holds none. */
+  collected_newest_at?: string;
 }
 
 export interface TraceSessionsResponse {
