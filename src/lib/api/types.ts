@@ -666,6 +666,12 @@ export interface SSHGuardPlanRequest {
   /** sshd's own "start:rate:full" triple, or a bare "start". */
   max_startups?: string;
   permit_root_login?: string;
+  // Rotation. Either field makes the arm keep the sequence the node runs
+  // today alive beside the new one until the confirm applies.
+  /** The digest the reveal returned as sequence_sha256; the server resolves the installed sequence itself. */
+  rotate_from_sha256?: string;
+  /** The advanced path, for a node whose sequence the control plane never installed. */
+  previous_knock_ports?: number[];
 }
 
 /**

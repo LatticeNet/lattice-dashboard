@@ -25,6 +25,15 @@ import {
   sortFindings,
   validateAdvanced,
   validateForm,
+  ROTATION_CONFIRM_WINDOW_SEC,
+  buildRotationRequest,
+  parseArmMgmtSources,
+  rotateEligibility,
+  rotateOpenable,
+  rotationDeadline,
+  rotationFallbackFor,
+  rotationRefusal,
+  rotationSshPort,
   type GuardForm,
 } from "../sshGuardModel.ts";
 
@@ -478,4 +487,176 @@ test("the row reads its plan until the server answers, then the server's word st
   const plain = knockRowKnowledge(retired, { knowledge: "unknown", note: "Every SSH Guard plan for this node was rejected or dismissed." });
   assert.equal(plain.previousHonoured, false);
   assert.equal(plain.knowledge, "unknown");
+});
+
+// ── knock rotation ──────────────────────────────────────────────────────────
+
+const PREVIOUS = "27431 45902 38117";
+
+test("rotation is offered by digest for an installed sequence, plain or from a retired record", () => {
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", 58394), { ok: true, path: "digest" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed_superseded" }], "", 58394), { ok: true, path: "digest" });
+  // The digest path never reads the advanced field, even when it is filled.
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], PREVIOUS, 58394), { ok: true, path: "digest" });
+});
+
+test("rotation acts on exactly one row", () => {
+  assert.deepEqual(rotateEligibility([], "", 58394), { ok: false, code: "select_one" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }, { knowledge: "installed" }], "", 58394), { ok: false, code: "select_one" });
+});
+
+test("a planned or knock-less row has nothing to rotate from, and says which", () => {
+  assert.deepEqual(rotateEligibility([{ knowledge: "planned" }], PREVIOUS, 58394), { ok: false, code: "planned" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "no_knock" }], PREVIOUS, 58394), { ok: false, code: "no_knock" });
+});
+
+test("an unknown row rotates only by the advanced path, once the previous ports are well formed", () => {
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "", 3434), { ok: false, code: "previous_ports_required" });
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "   ", 3434), { ok: false, code: "previous_ports_required" });
+  for (const bad of ["1 2 3", "27431 45902", "27431 45902 45902", "27431,45902,38117,20001", "27431 abc 38117"]) {
+    assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], bad, 3434), { ok: false, code: "previous_ports_invalid" }, bad);
+  }
+  assert.deepEqual(rotateEligibility([{ knowledge: "unknown" }], "27431, 45902, 38117", 3434), {
+    ok: true,
+    path: "previous_ports",
+    ports: [27431, 45902, 38117],
+  });
+});
+
+test("no known ssh port refuses the rotation before a request is built", () => {
+  assert.deepEqual(rotateEligibility([{ knowledge: "installed" }], "", undefined), { ok: false, code: "port_unknown" });
+});
+
+test("the dialog opens for an installed row and for an unknown row that still needs its ports, not for the rest", () => {
+  assert.equal(rotateOpenable({ ok: true, path: "digest" }), true);
+  assert.equal(rotateOpenable({ ok: false, code: "previous_ports_required" }), true);
+  assert.equal(rotateOpenable({ ok: false, code: "previous_ports_invalid" }), true);
+  assert.equal(rotateOpenable({ ok: false, code: "planned" }), false);
+  assert.equal(rotateOpenable({ ok: false, code: "no_knock" }), false);
+  assert.equal(rotateOpenable({ ok: false, code: "select_one" }), false);
+});
+
+test("the ssh port comes from the server, then the arm plan, then what sshd is seen listening on", () => {
+  assert.equal(rotationSshPort({ ssh_port: 58394 }, { plan: "ssh_port: 4000\n" }, [22]), 58394);
+  assert.equal(rotationSshPort(undefined, { plan: "stage: arm\nssh_port: 4000\nknock: true\n" }, [22]), 4000);
+  assert.equal(rotationSshPort(undefined, { plan: "stage: arm\n" }, [3434, 22]), 3434);
+  assert.equal(rotationSshPort(undefined, undefined, []), undefined);
+});
+
+test("the request names the installed sequence by digest, keeps the row's port, and asks for the longest window", () => {
+  const req = buildRotationRequest({
+    nodeId: NODE,
+    sshPort: 58394,
+    from: { sha256: "ab".repeat(32) },
+    fallback: { kind: "terminal" },
+  });
+  assert.deepEqual(req, {
+    node_id: NODE,
+    ssh_port: 58394,
+    enable_knock: true,
+    confirm_window_sec: ROTATION_CONFIRM_WINDOW_SEC,
+    rotate_from_sha256: "ab".repeat(32),
+    out_of_band_fallback: true,
+  });
+  assert.equal(ROTATION_CONFIRM_WINDOW_SEC, 3600);
+  assert.equal("previous_knock_ports" in req, false, "the digest path must not carry ports");
+  assert.equal("knock_ports" in req, false, "the new sequence is drawn server-side");
+});
+
+test("the advanced request carries the previous ports and the sources the last arm listed", () => {
+  const req = buildRotationRequest({
+    nodeId: NODE,
+    sshPort: 3434,
+    from: { previousPorts: [27431, 45902, 38117] },
+    fallback: { kind: "sources", sources: ["203.0.113.5/32", "2001:db8::/64"] },
+  });
+  assert.deepEqual(req, {
+    node_id: NODE,
+    ssh_port: 3434,
+    enable_knock: true,
+    confirm_window_sec: 3600,
+    previous_knock_ports: [27431, 45902, 38117],
+    mgmt_sources: ["203.0.113.5/32", "2001:db8::/64"],
+  });
+  assert.equal("rotate_from_sha256" in req, false);
+  assert.equal("out_of_band_fallback" in req, false, "sources and the terminal fallback are alternatives");
+});
+
+test("a node on the legacy port keeps its current port rather than naming 22, which the server refuses", () => {
+  for (const port of [0, 22]) {
+    const req = buildRotationRequest({ nodeId: NODE, sshPort: port, from: { sha256: "x" }, fallback: { kind: "terminal" } });
+    assert.equal("ssh_port" in req, false, `port ${port}`);
+  }
+});
+
+test("the fallback is read off the arm plan: listed sources, or the terminal when none were", () => {
+  const withSources = "stage: arm\n\n## Management sources (reach SSH without knocking, no expiry)\n\n- 203.0.113.5/32\n- 198.51.100.0/24\n\n## sshd drop-in: /etc/ssh/sshd_config.d/50-lattice-guard.conf\n\n- not a source\n";
+  assert.deepEqual(parseArmMgmtSources(withSources), ["203.0.113.5/32", "198.51.100.0/24"]);
+  assert.deepEqual(rotationFallbackFor({ plan: withSources }), { kind: "sources", sources: ["203.0.113.5/32", "198.51.100.0/24"] });
+  const none = "stage: arm\n\n## Management sources (reach SSH without knocking, no expiry)\n\n- (none)\n\n## sshd drop-in\n";
+  assert.deepEqual(parseArmMgmtSources(none), []);
+  assert.deepEqual(rotationFallbackFor({ plan: none }), { kind: "terminal" });
+  assert.equal(parseArmMgmtSources("stage: arm\n"), undefined);
+  assert.deepEqual(rotationFallbackFor(undefined), { kind: "terminal" });
+});
+
+test("a lint refusal is rendered from the findings the server sent, verbatim, blocking first", () => {
+  const overridden = {
+    code: "sshguard_overridden_by_guard",
+    severity: "block",
+    message: "this node's lattice_guard ruleset is policy drop and does not accept tcp/58394. An accept in the knock table does not let a packet skip lattice_guard, so knocking would appear to succeed and the connection would still never open. Open tcp/58394 in netguard first.",
+  };
+  const warn = { code: "sshguard_no_reality", severity: "warn", message: "this node has never reported its listeners" };
+  const err = Object.assign(new Error("conflict"), {
+    status: 409,
+    body: { error: "plan blocked by lint findings", findings: [warn, overridden] },
+  });
+  const refusal = rotationRefusal(err);
+  assert.equal(refusal.message, "plan blocked by lint findings");
+  assert.deepEqual(refusal.findings, [overridden, warn]);
+  assert.equal(refusal.findings[0]?.message, overridden.message, "the message must reach the screen unedited");
+});
+
+test("a refusal without findings is its message, and a malformed body is not mistaken for findings", () => {
+  const plain = rotationRefusal(new Error("rotate_from_sha256 does not name the sequence the control plane holds as installed (from approval_1); reveal it again, or pass previous_knock_ports if the node runs something else"));
+  assert.match(plain.message, /^rotate_from_sha256 does not name/);
+  assert.deepEqual(plain.findings, []);
+  const odd = rotationRefusal(Object.assign(new Error("conflict"), { body: { findings: [{ code: 1 }, "x", null] } }));
+  assert.equal(odd.message, "conflict");
+  assert.deepEqual(odd.findings, []);
+  assert.equal(rotationRefusal("boom").message, "boom");
+});
+
+test("mid-rotation the previous sequence is honoured until the applied moment plus the arm's window", () => {
+  const applied = "2026-09-04T10:00:00Z";
+  const state = deriveNodeGuardState(
+    [arm({ status: "applied", updated_at: applied, plan: "stage: arm\nknock: true\nconfirm_window_sec: 3600\n" })],
+    NODE,
+  );
+  const deadline = rotationDeadline(state, { previous_honoured: true });
+  assert.ok(deadline);
+  assert.equal(deadline.windowSec, 3600);
+  assert.equal(deadline.startedAt, Date.parse(applied));
+  assert.equal(deadline.at, Date.parse(applied) + 3600 * 1000);
+});
+
+test("the server's applied_at wins over the record's timestamp, and no previous_honoured means no deadline", () => {
+  const state = deriveNodeGuardState(
+    [arm({ status: "applied", updated_at: "2026-09-04T10:00:00Z", plan: "confirm_window_sec: 3600\n" })],
+    NODE,
+  );
+  const serverAt = "2026-09-04T09:58:30Z";
+  assert.equal(rotationDeadline(state, { previous_honoured: true, applied_at: serverAt })?.at, Date.parse(serverAt) + 3600_000);
+  assert.equal(rotationDeadline(state, { previous_honoured: false }), undefined);
+  assert.equal(rotationDeadline(state, {}), undefined);
+  assert.equal(rotationDeadline(state, undefined), undefined);
+});
+
+test("a sequence known from a retired record has no applied moment, so no deadline is invented", () => {
+  const state = deriveNodeGuardState(
+    [arm({ status: "dismissed", stale_code: "sshguard_approval_superseded", updated_at: "2026-09-01T00:00:00Z", plan: "confirm_window_sec: 3600\n" })],
+    NODE,
+  );
+  assert.equal(state.stage, "armFailed");
+  assert.equal(rotationDeadline(state, { previous_honoured: true }), undefined);
 });

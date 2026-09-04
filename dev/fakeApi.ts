@@ -36,6 +36,16 @@ function nodeByName(name: string) {
   return state.nodes.find((n) => n.name === name);
 }
 
+/** Stable per node so a reveal, a hide and a second reveal agree, and so a rotation's digest can be checked against it. */
+function knockPorts(nodeId: string): number[] {
+  const seed = [...nodeId].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 40000, 7);
+  return [20000 + seed, 20000 + ((seed * 7 + 911) % 40000), 20000 + ((seed * 13 + 5077) % 40000)];
+}
+
+function knockDigest(nodeId: string): string {
+  return knockPorts(nodeId).map((p) => p.toString(16).padStart(4, "0")).join("").padEnd(64, "0");
+}
+
 // Two of the failed-arm nodes misbehave on purpose so the batch outcome shows
 // every kind at once: one is refused by the pre-check, one fails outright.
 const LINT_BLOCKED = nodeByName("[Metix]-DMIT-1")?.id;
@@ -116,6 +126,32 @@ export const api = {
       if (input.node_id === PLAN_FAILS) {
         throw new ApiError(503, "node_unreachable", "task queue: node has not reported for 3d 4h; refusing to arm a node that cannot post its result", "req_5c1e9a");
       }
+      // Rotation, as server_sshguard.go's sshGuardRotation reads it: the
+      // digest must name the sequence the control plane holds as installed,
+      // and previous_knock_ports is the path for a node it never armed.
+      const rotation = !!input.rotate_from_sha256 || !!input.previous_knock_ports?.length;
+      if (input.rotate_from_sha256) {
+        const known: SSHGuardKnockStateResponse = await api.sshGuard.knockState(input.node_id);
+        if (known.knowledge !== "installed" && known.knowledge !== "installed_superseded") {
+          throw new ApiError(409, "conflict", "the control plane holds no installed knock sequence for this node to rotate from; if the node knocks on a sequence Lattice never installed, pass previous_knock_ports");
+        }
+        if (input.rotate_from_sha256 !== knockDigest(node.id)) {
+          throw new ApiError(409, "conflict", `rotate_from_sha256 does not name the sequence the control plane holds as installed (from ${known.approval_id}); reveal it again, or pass previous_knock_ports if the node runs something else`);
+        }
+      }
+      if (rotation && input.enable_knock === false) {
+        throw new ApiError(400, "bad_request", "a rotation with knocking off is a contradiction; drop the rotation fields or turn knocking on");
+      }
+      if (rotation && node.rotationBlocked && !input.accept_findings) {
+        const port = input.ssh_port ?? 58394;
+        throw new ApiError(409, "plan_blocked", "plan blocked by lint findings", "req_3b7e10", {
+          error: "plan blocked by lint findings",
+          findings: [
+            { code: "sshguard_no_reality", severity: "warn", message: "this node has never reported its listeners, so the port-conflict and firewall-override checks could not run. The apply verifies the port is listening before it gates anything, but that is a later and more expensive place to find out." },
+            { code: "sshguard_overridden_by_guard", severity: "block", message: `this node's lattice_guard ruleset is policy drop and does not accept tcp/${port}. An accept in the knock table does not let a packet skip lattice_guard, so knocking would appear to succeed and the connection would still never open. Open tcp/${port} in netguard first.` },
+          ],
+        });
+      }
       const findings: SSHGuardFinding[] = [];
       if (input.node_id === LINT_BLOCKED && !input.accept_findings) {
         findings.push(
@@ -132,7 +168,7 @@ export const api = {
         node_id: input.node_id,
         plugin: "sshguard",
         action: "sshguard-arm:v1",
-        plan: `stage: arm\nnode_id: ${input.node_id}\nssh_port: ${input.ssh_port ?? 0}\nknock: ${input.enable_knock !== false}\nconfirm_window_sec: ${input.confirm_window_sec ?? 900}\n`,
+        plan: `stage: arm\nnode_id: ${input.node_id}\nssh_port: ${input.ssh_port ?? 0}\nknock: ${input.enable_knock !== false}\nconfirm_window_sec: ${input.confirm_window_sec ?? 900}\n${rotation ? "\n## Rotation\n\nThe sequence the node runs today stays honoured beside the new one until the confirm applies.\n" : ""}`,
         status: "pending",
         created_at: fixtureIso(0),
         updated_at: fixtureIso(0),
@@ -238,12 +274,10 @@ export const api = {
       if (node.name === NO_KNOCK_NODE) {
         throw new ApiError(404, "not_found", "SSH Guard is applied on this node without port knocking, so there is no sequence");
       }
-      // Stable per node so a reveal, a hide and a second reveal agree.
-      const seed = [...node.id].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 40000, 7);
-      const ports = [20000 + seed, 20000 + ((seed * 7 + 911) % 40000), 20000 + ((seed * 13 + 5077) % 40000)];
+      const ports = knockPorts(node.id);
       const addr = node.publicIp;
       const stateNow: SSHGuardKnockStateResponse = await api.sshGuard.knockState(node_id);
-      const digest = ports.map((p) => p.toString(16).padStart(4, "0")).join("").padEnd(64, "0");
+      const digest = knockDigest(node.id);
       return {
         ok: true, node_id, knowledge: stateNow.knowledge, approval_id: stateNow.approval_id ?? fixtureId("apr"),
         note: stateNow.note, confirmed: stateNow.confirmed ?? false,

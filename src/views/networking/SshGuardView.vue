@@ -21,7 +21,7 @@ import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from "vue
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
-import { AlertTriangle, ChevronRight, KeyRound, Lock, RefreshCw, Timer, X } from "lucide-vue-next";
+import { AlertTriangle, ChevronDown, ChevronRight, KeyRound, Lock, RefreshCw, RotateCw, Timer, X } from "lucide-vue-next";
 
 import {
   api,
@@ -80,10 +80,22 @@ import {
   knockRowKnowledge,
   parseMgmtSources,
   revertDeadline,
+  ROTATION_CONFIRM_WINDOW_SEC,
+  buildRotationRequest,
+  rotateEligibility,
+  rotateOpenable,
+  rotationDeadline,
+  rotationFallbackFor,
+  rotationRefusal,
+  rotationSshPort,
   sortFindings,
   validateForm,
   type GuardForm,
   type NodeGuardState,
+  type RotateEligibility,
+  type RotateRefusalCode,
+  type RotationInput,
+  type RotationRefusal,
 } from "./sshGuardModel";
 import {
   COVERAGE_FILTERS,
@@ -264,6 +276,158 @@ watch(knockOpen, (open) => {
     knockRevealed.value = undefined;
     knockState.value = undefined;
     knockError.value = "";
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Rotating the knock sequence.                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A rotation is an arm with one promise on top: the sequence the node runs
+ * today stays honoured beside the new one until the confirm applies, so
+ * nobody is locked out between the two. The page never handles the old
+ * ports on this path. It runs the same step-up reveal as the dialog above,
+ * keeps only the digest the reveal returned, and hands the server that; the
+ * server resolves the installed sequence itself and refuses if the digest
+ * names anything else. The advanced path, for a node Lattice never armed,
+ * is the one place ports are typed, and the dialog says so.
+ */
+const rotateOpen = ref(false);
+const rotateNodeId = ref("");
+const rotateState = shallowRef<SSHGuardKnockStateResponse | undefined>();
+const rotateLoading = ref(false);
+const rotatePrevious = ref("");
+const rotateAdvancedOpen = ref(false);
+const rotateFiling = ref(false);
+const rotateRefusal = shallowRef<RotationRefusal | undefined>();
+// The port is pinned at filing: once the approvals refresh, the row's arm is
+// the pending rotation and its plan no longer says what was asked.
+const rotateFiled = shallowRef<{ approvalId: string; sshPort: number; findings: SSHGuardFinding[] } | undefined>();
+
+const rotateTarget = computed(() => states.value.find((s) => s.nodeId === rotateNodeId.value));
+const rotateNodeName = computed(() => rotateTarget.value?.name || rotateNodeId.value);
+
+/** The server's answer for a row: the one read on open for the dialog's node, the row's own otherwise. */
+function rotateServerFor(state: NodeGuardState): SSHGuardKnockStateResponse | undefined {
+  return (state.nodeId === rotateNodeId.value && rotateState.value) || knockRows.value.get(state.nodeId);
+}
+
+function rotateSshPortFor(state: NodeGuardState): number | undefined {
+  return rotationSshPort(rotateServerFor(state), state.arm, evidence.value.get(state.nodeId)?.sshd?.ports ?? []);
+}
+
+/** The header button reads the selection; the dialog reads its own node and the advanced field. */
+const headerRotate = computed<RotateEligibility>(() => {
+  const rows = selectedVisible.value;
+  const only = rows.length === 1 ? rows[0] : undefined;
+  return rotateEligibility(
+    rows.map((row) => knockRowKnowledge(row, rotateServerFor(row))),
+    "",
+    only ? rotateSshPortFor(only) : undefined,
+  );
+});
+const rotateEligible = computed<RotateEligibility>(() => {
+  const target = rotateTarget.value;
+  if (!target) return rotateEligibility([], rotatePrevious.value, undefined);
+  return rotateEligibility([knockRowKnowledge(target, rotateServerFor(target))], rotatePrevious.value, rotateSshPortFor(target));
+});
+
+const ROTATE_REASON: Record<RotateRefusalCode, string> = {
+  select_one: "selectOne",
+  planned: "planned",
+  no_knock: "noKnock",
+  port_unknown: "portUnknown",
+  previous_ports_required: "previousRequired",
+  previous_ports_invalid: "previousInvalid",
+};
+
+/** One sentence for why the control is inert, or nothing when it is not. */
+function rotateReason(e: RotateEligibility): string | undefined {
+  return e.ok ? undefined : t(`networking.sshGuard.rotate.${ROTATE_REASON[e.code]}`);
+}
+
+const rotateSshPort = computed(() => (rotateTarget.value ? rotateSshPortFor(rotateTarget.value) : undefined));
+const rotateFallback = computed(() => rotationFallbackFor(rotateTarget.value?.arm));
+const rotateUnknown = computed(
+  () => !!rotateTarget.value && knockRowKnowledge(rotateTarget.value, rotateServerFor(rotateTarget.value)).knowledge === "unknown",
+);
+const rotateWindow = formatDuration(ROTATION_CONFIRM_WINDOW_SEC);
+
+/**
+ * Open the dialog and ask the server again. The rows were asked when the
+ * approvals last moved; a rotation is filed against what the server holds
+ * right now, and a stale "installed" is exactly the case that yields a
+ * digest refusal. When the fresh read fails, the row's answer stands.
+ */
+async function openRotate(nodeId: string) {
+  rotateNodeId.value = nodeId;
+  rotateState.value = undefined;
+  rotatePrevious.value = "";
+  rotateRefusal.value = undefined;
+  rotateFiled.value = undefined;
+  rotateOpen.value = true;
+  if (!canAdmin.value) return;
+  rotateLoading.value = true;
+  try {
+    rotateState.value = await api.sshGuard.knockState(nodeId);
+  } catch {
+    // The row's reading stands in.
+  } finally {
+    rotateLoading.value = false;
+  }
+  // The advanced field is the only way forward for an unknown row, so it
+  // starts open there and closed everywhere else.
+  rotateAdvancedOpen.value = rotateUnknown.value;
+}
+
+async function fileRotation() {
+  const target = rotateTarget.value;
+  const e = rotateEligible.value;
+  if (!target || !e.ok || rotateFiling.value) return;
+  rotateFiling.value = true;
+  rotateRefusal.value = undefined;
+  let from: RotationInput["from"];
+  try {
+    if (e.path === "digest") {
+      const grant = await knockStepUp.request();
+      const revealed = await api.sshGuard.revealKnock(target.nodeId, grant);
+      from = { sha256: revealed.sequence_sha256 };
+    } else {
+      from = { previousPorts: e.ports };
+    }
+  } catch (error) {
+    // Nothing was filed: a cancelled second factor or a failed reveal is not
+    // a refusal, so it is a toast, not the refusal block.
+    toast.error(error instanceof Error ? error.message : t("networking.sshGuard.knock.toastRevealFailed"));
+    rotateFiling.value = false;
+    return;
+  }
+  try {
+    const sshPort = rotateSshPort.value ?? 0;
+    const request = buildRotationRequest({ nodeId: target.nodeId, sshPort, from, fallback: rotateFallback.value });
+    const res = await api.sshGuard.plan(request);
+    rotateFiled.value = { approvalId: res.approval.id, sshPort, findings: res.findings ?? [] };
+    toast.success(t("networking.sshGuard.rotate.toastFiled", { id: shortId(res.approval.id), name: rotateNodeName.value }));
+    approvalsQuery.refresh();
+  } catch (error) {
+    rotateRefusal.value = rotationRefusal(error);
+  } finally {
+    rotateFiling.value = false;
+  }
+}
+
+// A refusal describes the request it answered; a change to the advanced
+// field is a different request.
+watch(rotatePrevious, () => {
+  rotateRefusal.value = undefined;
+});
+
+watch(rotateOpen, (open) => {
+  if (!open) {
+    rotateState.value = undefined;
+    rotatePrevious.value = "";
+    rotateRefusal.value = undefined;
   }
 });
 
@@ -833,14 +997,17 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
       :description="$t('networking.sshGuard.description')"
     >
       <template #actions>
-        <!-- Rotation needs the plan request to accept a knock rotation, which
-             the server does not yet. The control stays visible so the gap is
-             visible; the title says why it is inert. -->
+        <!-- Rotation acts on one selected row whose sequence the control
+             plane holds. The control stays visible when it cannot act; the
+             title says why, in one sentence per case. -->
         <Button
           variant="outline"
-          disabled
-          :title="$t('networking.sshGuard.actions.rotateKnockUnavailable')"
+          :disabled="!canAdmin || !rotateOpenable(headerRotate)"
+          :title="rotateReason(headerRotate)"
+          data-testid="rotate-knock"
+          @click="selectedVisible[0] && openRotate(selectedVisible[0].nodeId)"
         >
+          <RotateCw class="size-4" aria-hidden="true" />
           {{ $t('networking.sshGuard.actions.rotateKnock') }}
         </Button>
         <Button
@@ -1184,6 +1351,15 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   class="block text-[11px] text-muted-foreground"
                   :title="$t('networking.sshGuard.knock.previousHonouredTitle')"
                 >{{ $t('networking.sshGuard.knock.previousHonoured') }}</span>
+                <!-- And until when: the applied moment plus the arm's window.
+                     A sequence known only from a retired record has no
+                     applied moment, and then no deadline is invented. -->
+                <span
+                  v-if="knockCell(state).previousHonoured && rotationDeadline(state, knockRows.get(state.nodeId))"
+                  class="block font-mono text-[11px] tabular text-warning"
+                  :title="$t('networking.sshGuard.knock.confirmByTitle', { window: formatDuration(rotationDeadline(state, knockRows.get(state.nodeId))!.windowSec) })"
+                  data-testid="confirm-by"
+                >{{ $t('networking.sshGuard.knock.confirmBy', { time: formatDateTime(rotationDeadline(state, knockRows.get(state.nodeId))!.at) }) }}</span>
               </td>
 
               <td class="px-2 py-1 align-top font-mono text-xs tabular whitespace-nowrap">
@@ -1262,6 +1438,18 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   >
                     <KeyRound class="size-4" aria-hidden="true" />
                     <span class="sr-only">{{ $t('networking.sshGuard.knock.openFor', { node: state.name || state.nodeId }) }}</span>
+                  </Button>
+                  <Button
+                    v-if="knockKnown(state)"
+                    class="row-action"
+                    size="sm"
+                    variant="ghost"
+                    :disabled="!canAdmin"
+                    :title="$t('networking.sshGuard.rotate.titleFor', { name: state.name || state.nodeId })"
+                    @click="openRotate(state.nodeId)"
+                  >
+                    <RotateCw class="size-4" aria-hidden="true" />
+                    <span class="sr-only">{{ $t('networking.sshGuard.rotate.titleFor', { name: state.name || state.nodeId }) }}</span>
                   </Button>
                 </span>
               </td>
@@ -1682,6 +1870,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   </div>
 
                   <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.sameSource') }}</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.tunNote') }}</p>
                   <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.payloadNote') }}</p>
                 </div>
               </div>
@@ -1693,6 +1882,158 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 
         <DialogFooter>
           <Button variant="outline" @click="knockOpen = false">{{ $t('common.actions.close') }}</Button>
+        </DialogFooter>
+      </DialogScrollContent>
+    </Dialog>
+
+    <!-- Rotation. The dialog names the consequence (a second sequence beside
+         the first, honoured for the window), files the plan through the
+         step-up reveal, and then says what the operator has to do next, in
+         order, because the rotation is not done when the plan is filed. -->
+    <Dialog v-model:open="rotateOpen">
+      <DialogScrollContent class="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{{ $t('networking.sshGuard.rotate.titleFor', { name: rotateNodeName }) }}</DialogTitle>
+          <DialogDescription>{{ $t('networking.sshGuard.rotate.description') }}</DialogDescription>
+        </DialogHeader>
+
+        <div class="space-y-4">
+          <p class="font-mono text-xs tabular text-muted-foreground">{{ rotateNodeId }}</p>
+
+          <p v-if="!canAdmin" class="rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+            {{ $t('networking.sshGuard.knock.noScope') }}
+          </p>
+
+          <template v-else>
+            <p v-if="rotateLoading" class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.table.reading') }}</p>
+
+            <!-- Filed. The plan is on the approvals queue; three things remain. -->
+            <div v-else-if="rotateFiled" class="space-y-3 rounded-md border border-success/40 bg-success/5 p-3" data-testid="rotate-filed">
+              <p class="text-sm font-medium">{{ $t('networking.sshGuard.rotate.filedTitle', { id: shortId(rotateFiled.approvalId) }) }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.rotate.filedIntro') }}</p>
+              <ol class="list-decimal space-y-1.5 pl-5 text-sm">
+                <li>{{ $t('networking.sshGuard.rotate.step1', { id: shortId(rotateFiled.approvalId) }) }}</li>
+                <li>{{ rotateFiled.sshPort > 0 ? $t('networking.sshGuard.rotate.step2', { port: rotateFiled.sshPort }) : $t('networking.sshGuard.rotate.step2Keep') }}</li>
+                <li>{{ $t('networking.sshGuard.rotate.step3') }}</li>
+              </ol>
+              <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.rotate.filedWindow', { window: rotateWindow }) }}</p>
+              <ul v-if="rotateFiled.findings.length" class="space-y-1">
+                <li
+                  v-for="finding in sortFindings(rotateFiled.findings)"
+                  :key="finding.code"
+                  class="flex items-start gap-2 text-xs"
+                >
+                  <Badge class="mt-px shrink-0" :variant="finding.severity === 'block' ? 'destructive' : 'warning'">
+                    {{ finding.severity }}
+                  </Badge>
+                  <span class="min-w-0">
+                    <code class="font-mono">{{ finding.code }}</code>
+                    <span class="ml-1 text-muted-foreground">{{ finding.message }}</span>
+                  </span>
+                </li>
+              </ul>
+              <RouterLink
+                :to="{ path: '/approvals', query: { selected: rotateFiled.approvalId } }"
+                class="inline-block font-mono text-xs text-primary underline-offset-4 hover:underline"
+              >
+                {{ $t('networking.sshGuard.rotate.openApproval') }} {{ shortId(rotateFiled.approvalId) }}
+              </RouterLink>
+            </div>
+
+            <!-- Nothing to rotate from: the reason, and no form. -->
+            <p
+              v-else-if="!rotateOpenable(rotateEligible)"
+              class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning"
+              data-testid="rotate-reason"
+            >
+              {{ rotateReason(rotateEligible) }}
+            </p>
+
+            <template v-else>
+              <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                <dt class="text-muted-foreground">{{ $t('networking.sshGuard.knock.column') }}</dt>
+                <dd>{{ knockCell(rotateTarget!).text }}</dd>
+                <dt class="text-muted-foreground">{{ $t('networking.sshGuard.rotate.portLabel') }}</dt>
+                <dd class="font-mono tabular">{{ rotateSshPort ? $t('networking.sshGuard.rotate.sshPort', { port: rotateSshPort }) : $t('networking.sshGuard.rotate.keepPort') }}</dd>
+                <dt class="text-muted-foreground">{{ $t('networking.sshGuard.rotate.fallbackLabel') }}</dt>
+                <dd>
+                  {{ rotateFallback.kind === 'sources'
+                    ? $t('networking.sshGuard.rotate.fallbackSources', { sources: rotateFallback.sources.join(', ') })
+                    : $t('networking.sshGuard.rotate.fallbackTerminal') }}
+                </dd>
+              </dl>
+
+              <p class="text-sm">{{ $t('networking.sshGuard.rotate.window', { window: rotateWindow }) }}</p>
+
+              <p v-if="rotateUnknown" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
+                {{ $t('networking.sshGuard.rotate.unknownOpen') }}
+              </p>
+              <p v-else class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.rotate.stepUp') }}</p>
+
+              <!-- Advanced: only for a node whose sequence Lattice never installed. -->
+              <div v-if="rotateUnknown">
+                <button
+                  type="button"
+                  class="reason-toggle inline-flex items-center gap-1 text-xs font-medium underline-offset-4 hover:underline"
+                  :aria-expanded="rotateAdvancedOpen"
+                  aria-controls="sshguard-rotate-advanced"
+                  @click="rotateAdvancedOpen = !rotateAdvancedOpen"
+                >
+                  <ChevronDown :class="cn('size-3.5 transition-transform', rotateAdvancedOpen ? '' : '-rotate-90')" aria-hidden="true" />
+                  {{ $t('networking.sshGuard.rotate.advanced') }}
+                </button>
+                <div v-if="rotateAdvancedOpen" id="sshguard-rotate-advanced" class="mt-2 space-y-2">
+                  <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.rotate.advancedHint') }}</p>
+                  <Label for="sshguard-rotate-previous">{{ $t('networking.sshGuard.rotate.previousPorts') }}</Label>
+                  <Input
+                    id="sshguard-rotate-previous"
+                    v-model="rotatePrevious"
+                    class="font-mono"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    spellcheck="false"
+                    :placeholder="$t('networking.sshGuard.rotate.previousPortsPlaceholder')"
+                    :disabled="rotateFiling"
+                  />
+                  <p v-if="!rotateEligible.ok && rotateEligible.code === 'previous_ports_invalid'" class="text-xs text-destructive">
+                    {{ rotateReason(rotateEligible) }}
+                  </p>
+                </div>
+              </div>
+
+              <!-- Refused. The server's sentence and its findings, verbatim. -->
+              <div v-if="rotateRefusal" class="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="rotate-refused">
+                <p class="text-sm font-medium text-destructive">{{ $t('networking.sshGuard.rotate.refusedTitle') }}</p>
+                <p class="text-xs text-foreground">{{ rotateRefusal.message }}</p>
+                <ul v-if="rotateRefusal.findings.length" class="space-y-1">
+                  <li
+                    v-for="finding in rotateRefusal.findings"
+                    :key="finding.code"
+                    class="flex items-start gap-2 text-xs"
+                  >
+                    <Badge class="mt-px shrink-0" :variant="finding.severity === 'block' ? 'destructive' : 'warning'">
+                      {{ finding.severity }}
+                    </Badge>
+                    <span class="min-w-0">
+                      <code class="font-mono">{{ finding.code }}</code>
+                      <span class="ml-1 text-muted-foreground">{{ finding.message }}</span>
+                    </span>
+                  </li>
+                </ul>
+                <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.rotate.refusedHint') }}</p>
+              </div>
+            </template>
+          </template>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" @click="rotateOpen = false">{{ $t('common.actions.close') }}</Button>
+          <span v-if="canAdmin && !rotateFiled && rotateOpenable(rotateEligible)" :title="rotateReason(rotateEligible)">
+            <Button :disabled="!rotateEligible.ok || rotateFiling || rotateLoading" data-testid="rotate-file" @click="fileRotation">
+              <RefreshCw v-if="rotateFiling" class="size-4 animate-spin" aria-hidden="true" />
+              {{ rotateFiling ? $t('networking.sshGuard.rotate.filing') : $t('networking.sshGuard.rotate.file') }}
+            </Button>
+          </span>
         </DialogFooter>
       </DialogScrollContent>
     </Dialog>

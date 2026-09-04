@@ -6,6 +6,13 @@
  * guard-reality snapshot per node except one that has never reported and one
  * that went stale.
  *
+ * For the knock rotation every state the control can be in has a row: an
+ * installed sequence (any confirmed node), one known from a retired record,
+ * one mid-rotation with the previous sequence still honoured and a confirm
+ * deadline, one planned and not yet applied, one hardened without knocking,
+ * nodes the control plane never armed (the advanced path), and one whose
+ * rotation the lint refuses.
+ *
  * Everything is derived from `Date.now()` at load, so the countdowns and the
  * ages read as they would in production.
  */
@@ -45,6 +52,13 @@ export interface FixtureNode {
    * and the reveal returns these ports beside the new ones.
    */
   previousPorts?: number[];
+  /**
+   * The fake plan endpoint refuses a rotation on this node with the
+   * server's override finding, verbatim: its lattice_guard chain is policy
+   * drop and does not accept the SSH port, so a knock would look like it
+   * worked and the connection would still never open.
+   */
+  rotationBlocked?: boolean;
   /** Seconds left on the revert timer, for awaitingConfirm. Negative: the window closed that long ago. */
   revertInSec?: number;
   /** PasswordAuthentication as sshd -T prints it; undefined when the agent predates the sshd block. */
@@ -129,6 +143,10 @@ export function buildFixtureNodes(): FixtureNode[] {
     n.stage = "confirmed";
     n.sshd = k % 3 === 0 ? [22, 58394] : [58394];
   });
+  // One confirmed node sits behind a guard chain that does not accept its
+  // SSH port, so a rotation on it is refused by the lint. Arming it once was
+  // fine: the chain was bound after.
+  (out[7] as FixtureNode).rotationBlocked = true;
   // 3 failed arms, each with the server's actual failure text.
   [1, 4, 9].forEach((i, k) => {
     const n = out[i] as FixtureNode;
