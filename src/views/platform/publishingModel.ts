@@ -151,6 +151,33 @@ export function isFirstRun(records: readonly unknown[]): boolean {
   return records.length === 0;
 }
 
+/**
+ * Whether the page should teach the three origins.
+ *
+ * The primer is headed "nothing is published yet", which is a claim about the
+ * plane and not about the caller. It was gated on the record list alone, and
+ * the record list is empty for two different reasons: nobody has published
+ * anything, or the operator holds none of kv:admin, kv:read, static:admin or
+ * static:read and the server returned no origin they may look at. In the
+ * second case the page asserted the plane was empty directly above the card
+ * telling the same operator they cannot see any origin, and only the second
+ * statement was true.
+ *
+ * So an operator who may see no origin gets no primer: teaching three origins
+ * they have no access to answers a question they did not ask, on top of a
+ * wrong claim. A load that failed or has not returned gets none either, for
+ * the reason the table owns its own error and loading states.
+ */
+export function showOriginPrimer(input: {
+  loaded: boolean;
+  visibleOrigins: readonly string[];
+  records: readonly unknown[];
+}): boolean {
+  if (!input.loaded) return false;
+  if (input.visibleOrigins.length === 0) return false;
+  return isFirstRun(input.records);
+}
+
 /** The query key old Workers links carry so the page can say where they went. */
 export const WORKERS_REDIRECT_QUERY = { from: "workers" } as const;
 

@@ -13,6 +13,7 @@ import {
   recordsForShare,
   routeLabel,
   routePath,
+  showOriginPrimer,
   sortRecords,
 } from "../publishingModel.ts";
 
@@ -121,6 +122,50 @@ test("a route that exists ends the first run, reserved or not", () => {
   assert.equal(isFirstRun([record({ reserved: true })]), false);
   assert.equal(isFirstRun([record({ reserved: false })]), false);
   assert.equal(isFirstRun([record({ reserved: true }), record({ reserved: false })]), false);
+});
+
+test("the origin primer does not tell an operator the plane is empty when they may not look at it", () => {
+  // The server returns origins: [] when the caller holds none of kv:admin,
+  // kv:read, static:admin or static:read, and the record list is empty for the
+  // same reason. Gated on the records alone, the primer rendered its "nothing
+  // is published yet" heading and taught three origins the operator has no
+  // access to, directly above the card saying they cannot see any origin.
+  assert.equal(
+    showOriginPrimer({ loaded: true, visibleOrigins: [], records: [] }),
+    false,
+  );
+
+  // A plane the operator can see, with nothing on it, is the run the primer
+  // exists for.
+  assert.equal(
+    showOriginPrimer({ loaded: true, visibleOrigins: ["kv", "static", "plugin"], records: [] }),
+    true,
+  );
+  assert.equal(
+    showOriginPrimer({ loaded: true, visibleOrigins: ["static"], records: [] }),
+    true,
+  );
+
+  // A route on the plane, reserved or not, means it has been published to.
+  assert.equal(
+    showOriginPrimer({
+      loaded: true,
+      visibleOrigins: ["kv", "static", "plugin"],
+      records: [record({ reserved: true })],
+    }),
+    false,
+  );
+
+  // A load that failed or has not returned says nothing at all; the table owns
+  // the error and loading states.
+  assert.equal(
+    showOriginPrimer({ loaded: false, visibleOrigins: [], records: [] }),
+    false,
+  );
+  assert.equal(
+    showOriginPrimer({ loaded: false, visibleOrigins: ["kv"], records: [] }),
+    false,
+  );
 });
 
 test("the access column explains itself without a pointer", () => {

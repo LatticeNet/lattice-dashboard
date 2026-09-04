@@ -15,10 +15,10 @@ import {
   accessLegend,
   accessMode,
   arrivedFromWorkers,
-  isFirstRun,
   originTarget,
   publishingState,
   routeLabel,
+  showOriginPrimer as originPrimerVisible,
   sortRecords,
 } from "./publishingModel";
 
@@ -93,7 +93,13 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
  * say the operator cannot move or delete it here, and a share exists because
  * an operator published one.
  */
-const showOriginPrimer = computed(() => loaded.value && isFirstRun(records.value));
+const showOriginPrimer = computed(() =>
+  originPrimerVisible({
+    loaded: loaded.value,
+    visibleOrigins: visibleOrigins.value,
+    records: records.value,
+  }),
+);
 
 /**
  * The access column's own explanation, kept on the page rather than in a
