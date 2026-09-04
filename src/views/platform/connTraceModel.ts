@@ -605,6 +605,10 @@ export function connRecordKey(record: ConnRecord): string {
 export interface ConnTracePage {
   records?: ConnRecord[];
   next_cursor?: string;
+  /** Records the store holds for every visible node, before any filter. */
+  collected_total?: number;
+  /** Start time of the newest record the store holds. */
+  collected_newest_at?: string;
 }
 
 export interface ConnTracePaging {
@@ -613,10 +617,42 @@ export interface ConnTracePaging {
   cursor: string;
   /** True once the server stopped handing back a cursor. */
   exhausted: boolean;
+  /**
+   * What the store holds regardless of the filter, or undefined when the
+   * server never said. Undefined and 0 are different answers and the page
+   * renders different copy for each, so they must not collapse into one.
+   */
+  collectedTotal?: number;
+  /** Newest record the store holds, "" when it holds none or never said. */
+  collectedNewestAt: string;
 }
 
 export function emptyConnTracePaging(): ConnTracePaging {
-  return { records: [], cursor: "", exhausted: false };
+  return { records: [], cursor: "", exhausted: false, collectedTotal: undefined, collectedNewestAt: "" };
+}
+
+/**
+ * Why the connections table is empty.
+ *
+ * "Nothing matched these filters" was the only answer the page had, and on a
+ * fleet with every collection policy off it was a confident wrong one: the
+ * operator widens the time range, drops filters, and finds nothing, because
+ * nothing was ever recorded. The server now reports what the store holds for
+ * the nodes the caller may see, so the three cases separate:
+ *
+ * - "nothing-collected": the store holds no record at all for those nodes.
+ * - "nothing-matched": it holds records and this filter selected none of them.
+ * - "unknown": the server did not report, so the page keeps the old wording
+ *   rather than guessing which of the two it is.
+ *
+ * Returns "" while rows are on screen.
+ */
+export type ConnEmptyReason = "" | "nothing-collected" | "nothing-matched" | "unknown";
+
+export function connEmptyReason(state: ConnTracePaging): ConnEmptyReason {
+  if (state.records.length > 0) return "";
+  if (state.collectedTotal === undefined) return "unknown";
+  return state.collectedTotal === 0 ? "nothing-collected" : "nothing-matched";
 }
 
 /**
@@ -646,7 +682,17 @@ export function appendConnPage(state: ConnTracePaging, page: ConnTracePage): Con
   }
 
   const cursor = (page.next_cursor ?? "").trim();
-  return { records, cursor, exhausted: cursor === "" };
+  // Collection totals describe the whole store, not this page, so the newest
+  // answer wins. A page that omits them leaves the last known answer standing
+  // rather than erasing it: an older page loaded from a server mid-upgrade
+  // must not turn a known total back into "the server never said".
+  return {
+    records,
+    cursor,
+    exhausted: cursor === "",
+    collectedTotal: page.collected_total ?? state.collectedTotal,
+    collectedNewestAt: (page.collected_newest_at ?? "").trim() || state.collectedNewestAt,
+  };
 }
 
 /* ------------------------------------------------------------------ */

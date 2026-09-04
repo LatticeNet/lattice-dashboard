@@ -16,6 +16,7 @@ import {
   clampTraceTtlSeconds,
   closeReasonDisplay,
   connCloseCell,
+  connEmptyReason,
   connRecordKey,
   connTraceFiltersEqual,
   connectionsRequestParams,
@@ -396,6 +397,58 @@ test("paging appends a page, dedupes by key, and never loses or duplicates a row
   assert.equal(second.cursor, "");
   assert.equal(second.exhausted, true);
   assert.equal(new Set(second.records.map(connRecordKey)).size, second.records.length);
+});
+
+test("an empty table says whether nothing matched or nothing was collected", () => {
+  // The page had one answer for both, and on a fleet with every collection
+  // policy off it was the wrong one: an operator told "nothing matched these
+  // filters" widens the range forever over a store that holds no record.
+  const nothingCollected = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 0,
+  });
+  assert.equal(connEmptyReason(nothingCollected), "nothing-collected");
+
+  const nothingMatched = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 9,
+  });
+  assert.equal(connEmptyReason(nothingMatched), "nothing-matched");
+
+  const hasRows = appendConnPage(emptyConnTracePaging(), {
+    records: [record({ log_id: 1 })],
+    collected_total: 0,
+  });
+  assert.equal(connEmptyReason(hasRows), "");
+});
+
+test("a server that never reports collection is not read as nothing collected", () => {
+  // A missing field is silence, not a zero. Telling an operator on an older
+  // server that nothing was ever collected would be a confident wrong answer
+  // about their own fleet.
+  const state = appendConnPage(emptyConnTracePaging(), { records: [] });
+  assert.equal(state.collectedTotal, undefined);
+  assert.equal(connEmptyReason(state), "unknown");
+});
+
+test("collection totals describe the store, so a later page updates them and an older one cannot erase them", () => {
+  const first = appendConnPage(emptyConnTracePaging(), {
+    records: [record({ log_id: 1 })],
+    next_cursor: "c",
+    collected_total: 12,
+    collected_newest_at: "2026-08-27T06:00:00Z",
+  });
+  assert.equal(first.collectedTotal, 12);
+  assert.equal(first.collectedNewestAt, "2026-08-27T06:00:00Z");
+
+  // A page from a server mid-upgrade omits the fields. The last known answer
+  // stands rather than reverting to "the server never said".
+  const older = appendConnPage(first, { records: [record({ log_id: 2 })] });
+  assert.equal(older.collectedTotal, 12);
+  assert.equal(older.collectedNewestAt, "2026-08-27T06:00:00Z");
+
+  const refreshed = appendConnPage(older, { records: [], collected_total: 14 });
+  assert.equal(refreshed.collectedTotal, 14);
 });
 
 test("an empty page ends the walk without touching what is on screen", () => {

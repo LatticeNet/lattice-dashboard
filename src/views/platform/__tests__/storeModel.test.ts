@@ -1,0 +1,67 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+import {
+  AGENT_RELEASES_BUCKET,
+  bucketContentAvailable,
+  bucketOwner,
+  bucketPluginId,
+  bucketWritable,
+} from "../storeModel.ts";
+
+function bucket(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "default",
+    kind: "kv",
+    entries: 0,
+    registered: false,
+    reserved: false,
+    ...overrides,
+  } as never;
+}
+
+test("who wrote a bucket is derived by the same rules the server pins writers with", () => {
+  // plugin_host.go pins every plugin write to plugin:<id>, linemeta.go writes
+  // vpnmeta/*, server_agent_artifacts.go writes agent-releases. Anything else
+  // is the operator's own, which is what the console can author here.
+  assert.equal(bucketOwner(bucket({ name: "plugin:latticenet.sub-store" })), "plugin");
+  assert.equal(bucketOwner(bucket({ name: "vpnmeta/lineuuid" })), "server");
+  assert.equal(bucketOwner(bucket({ name: "vpnmeta/lineuuid-owner" })), "server");
+  assert.equal(bucketOwner(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), "agent");
+  assert.equal(bucketOwner(bucket({ name: "default" })), "operator");
+});
+
+test("the kind is part of the rule, so a name alone cannot claim an owner", () => {
+  // vpnmeta/ is a KV prefix and agent-releases is a static bucket. A static
+  // bucket that happens to be called vpnmeta/x was written by whoever created
+  // it, and claiming the server wrote it would be a wrong answer about who
+  // owns the data.
+  assert.equal(bucketOwner(bucket({ kind: "static", name: "vpnmeta/lineuuid" })), "operator");
+  assert.equal(bucketOwner(bucket({ kind: "kv", name: AGENT_RELEASES_BUCKET })), "operator");
+});
+
+test("a plugin bucket names its plugin and nothing else does", () => {
+  assert.equal(bucketPluginId(bucket({ name: "plugin:latticenet.sub-store" })), "latticenet.sub-store");
+  assert.equal(bucketPluginId(bucket({ name: "default" })), "");
+  assert.equal(bucketPluginId(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), "");
+});
+
+test("the two server refusals show as disabled controls rather than as a 403 toast", () => {
+  // A reserved bucket is refused outright; the agent release bucket is refused
+  // for writes because adding or removing a release is an agent-update
+  // decision. Both used to be discovered only after the operator had typed a
+  // value and pressed save.
+  assert.equal(bucketWritable(bucket({ reserved: true })), false);
+  assert.equal(bucketWritable(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), false);
+  assert.equal(bucketWritable(bucket({ name: "plugin:latticenet.sub-store" })), true);
+  assert.equal(bucketWritable(bucket()), true);
+});
+
+test("the agent release listing carries no bytes, so it offers no preview", () => {
+  // The server lists that bucket with the content stripped: nodes fetch and
+  // install those bytes as root under a task lease. A Preview button over a
+  // stripped object would show an empty box and read as data loss.
+  assert.equal(bucketContentAvailable(bucket({ kind: "static", name: AGENT_RELEASES_BUCKET })), false);
+  assert.equal(bucketContentAvailable(bucket({ kind: "static", name: "site" })), true);
+  assert.equal(bucketContentAvailable(bucket({ name: "plugin:latticenet.sub-store" })), true);
+});

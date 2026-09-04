@@ -87,6 +87,7 @@ import {
   USER_KINDS,
   activeFilterCount,
   appendConnPage,
+  connEmptyReason,
   clampTraceTtlSeconds,
   connCloseCell,
   connRecordKey,
@@ -261,6 +262,26 @@ let connectionsController: AbortController | undefined;
 
 const records = computed(() => paging.value.records);
 const coverage = computed(() => traceBytesCoverage(records.value));
+
+/**
+ * An empty table is two different operator problems and the page used to name
+ * only one of them. "Nothing matched these filters" sends an operator to widen
+ * the range on a fleet where every collection policy is off, and nothing they
+ * do to the filters will ever help. The server reports what the store holds
+ * for the nodes they may see, so the page says which of the two it is.
+ */
+const emptyReason = computed(() => (loadedOnce.value ? connEmptyReason(paging.value) : ""));
+const nothingCollected = computed(() => emptyReason.value === "nothing-collected");
+const resultsEmptyTitle = computed(() =>
+  nothingCollected.value
+    ? t("platform.trace.nothingCollectedTitle")
+    : t("platform.trace.resultsEmptyTitle"),
+);
+const resultsEmptyDescription = computed(() => {
+  if (nothingCollected.value) return t("platform.trace.nothingCollectedDescription");
+  if (emptyReason.value === "nothing-matched") return t("platform.trace.nothingMatchedDescription");
+  return t("platform.trace.resultsEmptyDescription");
+});
 
 interface ConnRowView {
   user: ReturnType<typeof userCellDisplay>;
@@ -1031,8 +1052,8 @@ onBeforeUnmount(() => {
               :page-size="0"
               searchable
               :search-placeholder="$t('platform.trace.searchPlaceholder')"
-              :empty-title="$t('platform.trace.resultsEmptyTitle')"
-              :empty-description="$t('platform.trace.resultsEmptyDescription')"
+              :empty-title="resultsEmptyTitle"
+              :empty-description="resultsEmptyDescription"
               :no-match-title="$t('platform.shared.noMatchesTitle')"
               :no-match-description="$t('platform.shared.noMatchesDescription')"
               :skeleton-rows="8"
@@ -1146,6 +1167,23 @@ onBeforeUnmount(() => {
                 </div>
               </template>
             </DataTable>
+
+            <!--
+              The one action that changes a "nothing collected" answer. It is
+              on the same card as the empty table because sending an operator
+              to hunt for a tab is how the old copy failed them.
+            -->
+            <div
+              v-if="nothingCollected"
+              class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 p-3"
+            >
+              <p class="text-xs text-muted-foreground">
+                {{ $t('platform.trace.nothingCollectedHint') }}
+              </p>
+              <Button variant="outline" size="sm" @click="tab = 'policy'">
+                {{ $t('platform.trace.openPolicyTab') }}
+              </Button>
+            </div>
 
             <div class="flex flex-wrap items-center justify-between gap-2">
               <p class="text-xs text-muted-foreground">

@@ -98,6 +98,23 @@ export default {
       reservedDescription:
         "This bucket holds typed private state the server owns, such as line and VPN user secrets. Its name is listed so the space is visibly taken, and the server refuses to serve its contents to any scope.",
       readScopeRequired: "The {scope} scope is required to list this store.",
+      owner: {
+        operator: "operator",
+        plugin: "plugin",
+        server: "server",
+        agent: "agent releases",
+      },
+      ownerNote: {
+        operator:
+          "Nothing writes here except this console. Whatever it holds was put there by an operator.",
+        plugin:
+          "The {plugin} plugin owns this bucket. The server pins that plugin's writes to it, so its contents are the plugin's own state rather than anything authored on this page.",
+        server:
+          "The server writes this bucket itself: it is the line identity map the line chain reads back. Editing it by hand changes what nodes resolve a line to.",
+        agent:
+          "The agent release upload owns this bucket. Its objects are listed without their bytes, because nodes fetch and install those as root, and a release is added or removed on Agent Updates rather than here.",
+      },
+      openAgentUpdates: "Open Agent Updates",
     },
     kv: {
       title: "KV Store",
@@ -165,6 +182,7 @@ export default {
       columnRoute: "Route",
       columnOrigin: "Origin",
       columnServes: "Serves",
+      columnAccess: "Access",
       columnState: "State",
       anyHost: "any host",
       reserved: "Reserved",
@@ -178,6 +196,28 @@ export default {
         disabled: "Disabled",
         expired: "Expired",
       },
+      access: {
+        anonymous: "Anonymous",
+        storage_token: "Storage token",
+        share_token: "Share token",
+        unknown: "Unknown",
+      },
+      accessHint: {
+        anonymous: "Public. Anyone who knows the URL can read it, with no credential.",
+        storage_token: "A storage token is required on every request, including GET.",
+        share_token: "The share's bearer token is part of the URL, so rotating the share is what revokes it.",
+        unknown: "This server reported an origin this console does not know, so its access rule is not shown rather than guessed.",
+      },
+      primerTitle: "The three origins",
+      primerDescription:
+        "Nothing is published on purpose yet. A route decides the URL; the origin decides where the bytes come from and who may fetch them.",
+      primer: {
+        kv: "A KV route serves the values held in one key/value bucket. It is not public hosting: a reader has to present a storage token on every request, GET included, so this origin is for a caller you issued a token to.",
+        static: "A static route serves the objects in one static bucket over plain anonymous HTTP. Anyone who knows the URL can fetch it, so nothing a token was protecting belongs behind one.",
+        plugin: "A plugin route is a subscription share, mounted under the reserved sub/ path. Its bearer token is part of the URL, which is what makes the link unguessable and what makes rotating the share the way to revoke it.",
+      },
+      workersRemoved:
+        "Workers was removed in a87: nothing routed to it and it had no job of its own. Publishing owns the job it was held for, serving content at a URL, so old Workers links land here.",
       searchRoutes: "Search routes",
       emptyTitle: "Nothing is published",
       emptyDescription: "No route is bound yet. Add a host binding below, or publish a subscription share.",
@@ -385,6 +425,14 @@ export default {
       resultsEmptyTitle: "No connections in this window",
       resultsEmptyDescription:
         "Nothing matched these filters. Widen the time range, or drop a filter.",
+      nothingMatchedDescription:
+        "The store holds records for these nodes, but none match this filter. Widen the time range, or drop a filter.",
+      nothingCollectedTitle: "Nothing has been collected",
+      nothingCollectedDescription:
+        "The trace store holds no connection record at all for the nodes you can see, so no filter will find one. Collection is set per node and is off until you switch it on.",
+      nothingCollectedHint:
+        "A node only produces connection records while its collection policy is enabled.",
+      openPolicyTab: "Collection policy",
       searchPlaceholder: "Search loaded rows…",
       sortHint:
         "Search and sort apply to the rows loaded so far. The query endpoint pages by cursor and takes no sort order.",

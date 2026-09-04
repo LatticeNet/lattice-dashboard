@@ -32,6 +32,12 @@ import { useRouteTab } from "@/composables/useRouteTab";
 import { useAuthStore } from "@/stores/auth";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  bucketContentAvailable,
+  bucketOwner,
+  bucketPluginId,
+  bucketWritable,
+} from "./storeModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -128,6 +134,29 @@ const activeInventory = computed(() =>
 );
 const activeReserved = computed(() => activeInventory.value?.reserved ?? false);
 
+/**
+ * Who wrote the bucket the page is showing, and what may be done with it.
+ *
+ * The inventory reports names and counts; it does not say that
+ * plugin:latticenet.sub-store is a plugin's private database, that vpnmeta/*
+ * is the server's line identity map, or that agent-releases holds binaries
+ * nodes install as root. An operator looking at 479 keys they did not write
+ * needs that before anything else on the page is useful.
+ *
+ * A bucket the inventory has not returned yet (a deep link, mid-load) is
+ * treated as an operator bucket named by the URL, which is what it will be in
+ * the common case and what the write controls already assumed.
+ */
+const activeFacts = computed(() => ({
+  name: activeBucket.value,
+  kind: kind.value,
+  reserved: activeReserved.value,
+}));
+const activeOwner = computed(() => bucketOwner(activeFacts.value));
+const activePluginId = computed(() => bucketPluginId(activeFacts.value));
+const activeWritable = computed(() => canWrite.value && bucketWritable(activeFacts.value));
+const activeContentAvailable = computed(() => bucketContentAvailable(activeFacts.value));
+
 // ── Entries in the active bucket ─────────────────────────────────────────────
 // The fetcher records what it actually loaded. Switching kind keeps the last
 // good rows in the composable, and rendering KV entries through the static
@@ -206,13 +235,21 @@ const kvColumns = computed<DataTableColumn<KVEntry>[]>(() => {
   return cols;
 });
 
-const staticColumns = computed<DataTableColumn<StaticObject>[]>(() => [
-  { key: "path", label: t("platform.static.colPath"), sortable: true, searchable: true, class: "font-mono text-xs" },
-  { key: "content_type", label: t("platform.static.colContentType"), sortable: true, searchable: true },
-  { key: "size", label: t("platform.static.colSize"), sortable: true, align: "right" },
-  { key: "updated_at", label: t("platform.static.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
-  { key: "actions", label: t("platform.static.colActions"), align: "right" },
-]);
+const staticColumns = computed<DataTableColumn<StaticObject>[]>(() => {
+  const cols: DataTableColumn<StaticObject>[] = [
+    { key: "path", label: t("platform.static.colPath"), sortable: true, searchable: true, class: "font-mono text-xs" },
+    { key: "content_type", label: t("platform.static.colContentType"), sortable: true, searchable: true },
+    { key: "size", label: t("platform.static.colSize"), sortable: true, align: "right" },
+    { key: "updated_at", label: t("platform.static.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
+  ];
+  // No column rather than a column of disabled controls. The agent release
+  // bucket has neither action available: its listing carries no bytes to
+  // preview and the server refuses a write. The card above says why once.
+  if (activeContentAvailable.value) {
+    cols.push({ key: "actions", label: t("platform.static.colActions"), align: "right" });
+  }
+  return cols;
+});
 
 // ── Row expand (long KV values) ──────────────────────────────────────────────
 const expanded = ref<Set<string>>(new Set());
@@ -261,7 +298,7 @@ function openEditStatic(object: StaticObject) {
 }
 
 const canSubmit = computed(() => {
-  if (!canWrite.value || activeReserved.value || !putKey.value.trim()) return false;
+  if (!activeWritable.value || !putKey.value.trim()) return false;
   return !isStatic.value || !!putContentType.value.trim();
 });
 
@@ -317,7 +354,7 @@ async function submitPut() {
           />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canWrite" size="sm" :disabled="activeReserved" @click="openCreate">
+        <Button v-if="canWrite" size="sm" :disabled="!activeWritable" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
           {{ isStatic ? $t('platform.static.newObject') : $t('platform.kv.newEntry') }}
         </Button>
@@ -380,6 +417,7 @@ async function submitPut() {
                         ? $t('platform.store.entryCountOne', { count: entry.entries })
                         : $t('platform.store.entryCount', { count: entry.entries }) }}
                     </span>
+                    <Badge variant="secondary">{{ $t(`platform.store.owner.${bucketOwner(entry)}`) }}</Badge>
                     <Badge v-if="entry.reserved" variant="outline">{{ $t('platform.store.reserved') }}</Badge>
                     <Badge v-else-if="!entry.registered" variant="outline">{{ $t('platform.store.unregistered') }}</Badge>
                   </span>
@@ -418,6 +456,27 @@ async function submitPut() {
               </i18n-t>
             </span>
           </CardDescription>
+          <!--
+            Who writes here. Everything this store holds on production was
+            written by a machine except one leftover key, and a page that lists
+            it without saying so reads as "some keys, origin unknown".
+          -->
+          <p class="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <i18n-t
+              v-if="activeOwner === 'plugin'"
+              keypath="platform.store.ownerNote.plugin"
+              tag="span"
+              scope="global"
+            >
+              <template #plugin><span class="font-mono">{{ activePluginId }}</span></template>
+            </i18n-t>
+            <span v-else>{{ $t(`platform.store.ownerNote.${activeOwner}`) }}</span>
+            <RouterLink
+              v-if="activeOwner === 'agent'"
+              to="/platform/agent-updates"
+              class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            >{{ $t('platform.store.openAgentUpdates') }}</RouterLink>
+          </p>
         </CardHeader>
         <CardContent>
           <!-- A reserved bucket is named, never opened. -->
@@ -446,7 +505,10 @@ async function submitPut() {
             @retry="entriesQuery.refresh"
           >
             <template #cell-path="{ row }">
-              <span class="font-mono text-xs">{{ row.path }}</span>
+              <!-- break-all: an agent release path is one unbroken token with
+                   a 64-char digest in it, and the stacked mobile row has no
+                   width for it. -->
+              <span class="font-mono text-xs break-all">{{ row.path }}</span>
             </template>
             <template #cell-content_type="{ row }">
               <Badge variant="outline">{{ row.content_type || $t('common.misc.none') }}</Badge>
@@ -462,7 +524,7 @@ async function submitPut() {
                 <Button variant="ghost" size="sm" @click="previewTarget = row">
                   {{ $t('platform.static.preview') }}
                 </Button>
-                <Button v-if="canWrite" variant="outline" size="sm" @click="openEditStatic(row)">
+                <Button v-if="activeWritable" variant="outline" size="sm" @click="openEditStatic(row)">
                   {{ $t('common.actions.edit') }}
                 </Button>
               </div>

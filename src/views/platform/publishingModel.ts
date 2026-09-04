@@ -80,3 +80,69 @@ export function sortRecords(records: PublishingRecord[]): PublishingRecord[] {
 export function recordsForShare(records: PublishingRecord[], shareId: string): PublishingRecord[] {
   return records.filter((record) => record.origin === "plugin" && record.share_id === shareId);
 }
+
+/**
+ * Who may read a route. The three origins answer "who may fetch it" three
+ * different ways on the server, and the table presented them as one kind of
+ * thing until the column existed:
+ *
+ * - a KV route demands a storage token even on GET (serveKVBinding),
+ * - a static route is anonymous public hosting (serveStaticBinding),
+ * - a plugin route is a share, read with the bearer token in its URL.
+ *
+ * An origin this console has never heard of is reported as unknown rather
+ * than guessed at: printing "anonymous" for a route that is not would be the
+ * one wrong answer on this page an operator could not recover from.
+ */
+export type PublishingAccessMode = "anonymous" | "storage_token" | "share_token" | "unknown";
+
+export function accessMode(record: Pick<PublishingRecord, "origin">): PublishingAccessMode {
+  switch (record.origin) {
+    case "kv":
+      return "storage_token";
+    case "static":
+      return "anonymous";
+    case "plugin":
+      return "share_token";
+    default:
+      return "unknown";
+  }
+}
+
+/**
+ * A first run is a plane nothing has been published to on purpose yet. A
+ * reserved route does not count: the subscription mount exists because a
+ * client outside this server already depends on it, not because an operator
+ * chose to publish something, so the origin explainer stays open until a
+ * deliberate route appears.
+ */
+export function isFirstRun(records: readonly Pick<PublishingRecord, "reserved">[]): boolean {
+  return records.every((record) => record.reserved);
+}
+
+/** The query key old Workers links carry so the page can say where they went. */
+export const WORKERS_REDIRECT_QUERY = { from: "workers" } as const;
+
+/**
+ * Where /platform/workers now lands.
+ *
+ * Publishing, not Store: the job Workers was reserved for was "serve this
+ * content at a URL", and Publishing is the page that owns it. Store answers a
+ * different question (what is the control plane holding), which is why the
+ * first redirect after the deletion pointed at the wrong page.
+ */
+export const WORKERS_REDIRECT_TO = {
+  path: "/platform/publishing",
+  query: WORKERS_REDIRECT_QUERY,
+} as const;
+
+/**
+ * Whether this visit arrived through the old /platform/workers URL. Only the
+ * exact marker counts; a bookmark that merely mentions workers in some other
+ * parameter is not a redirect.
+ */
+export function arrivedFromWorkers(query: Record<string, unknown>): boolean {
+  const raw = query.from;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return value === WORKERS_REDIRECT_QUERY.from;
+}

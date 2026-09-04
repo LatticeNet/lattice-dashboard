@@ -1,15 +1,24 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { Globe, Link2, RefreshCw, ShieldAlert } from "lucide-vue-next";
-import { RouterLink } from "vue-router";
+import { BookOpen, Globe, Link2, RefreshCw, ShieldAlert, Trash2 } from "lucide-vue-next";
+import { RouterLink, useRoute } from "vue-router";
 
 import { api, type PublishingRecord, type StorageKind } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { originTarget, publishingState, routeLabel, sortRecords } from "./publishingModel";
+import {
+  PUBLISHING_ORIGINS,
+  accessMode,
+  arrivedFromWorkers,
+  isFirstRun,
+  originTarget,
+  publishingState,
+  routeLabel,
+  sortRecords,
+} from "./publishingModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -26,6 +35,11 @@ import {
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const route = useRoute();
+
+// An old /platform/workers bookmark lands here. Saying so beats dropping the
+// operator on a page they did not ask for and letting them work out why.
+const fromWorkers = computed(() => arrivedFromWorkers(route.query));
 
 // The storage forms below edit one origin at a time. Which origins the operator
 // may edit is the server's answer, not a guess, so an origin they cannot admin
@@ -56,8 +70,32 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
   { key: "route", label: t("platform.publishing.columnRoute"), searchable: true },
   { key: "origin", label: t("platform.publishing.columnOrigin"), sortable: true, searchable: true },
   { key: "target", label: t("platform.publishing.columnServes"), searchable: true },
+  // The column this page was missing. "Who may read it" is half of what the
+  // plane is for, and the three origins answer it three different ways: a KV
+  // route demands a storage token even on GET, a static route is anonymous,
+  // and a share carries its bearer token in the URL. Without the column the
+  // table presented all three as one kind of thing.
+  {
+    key: "access",
+    label: t("platform.publishing.columnAccess"),
+    sortable: true,
+    searchable: true,
+    value: (record) => t(`platform.publishing.access.${accessMode(record)}`),
+  },
   { key: "state", label: t("platform.publishing.columnState") },
 ]);
+
+/**
+ * The three origins, explained once, while nothing has been deliberately
+ * published. A reserved route does not end the first run: the subscription
+ * mount exists because a client outside this server already depends on it,
+ * not because an operator chose to publish anything.
+ */
+const showOriginPrimer = computed(() => loaded.value && isFirstRun(records.value));
+
+function accessVariant(record: Pick<PublishingRecord, "origin">) {
+  return accessMode(record) === "anonymous" ? "warning" : "secondary";
+}
 
 function stateVariant(record: PublishingRecord) {
   switch (publishingState(record)) {
@@ -89,6 +127,49 @@ function stateVariant(record: PublishingRecord) {
         </Button>
       </template>
     </PageHeader>
+
+    <!-- Where Workers went, said once, to whoever followed an old link. -->
+    <p
+      v-if="fromWorkers"
+      class="flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground"
+    >
+      <Trash2 aria-hidden="true" class="mt-0.5 size-4 shrink-0" />
+      <span>{{ $t('platform.publishing.workersRemoved') }}</span>
+    </p>
+
+    <!--
+      What the three origins are, shown while nothing has been published on
+      purpose. It carries the same access badges the table does, so the column
+      and the explanation teach each other rather than sitting apart.
+    -->
+    <Card v-if="showOriginPrimer">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <BookOpen aria-hidden="true" class="size-4 text-muted-foreground" />
+          {{ $t('platform.publishing.primerTitle') }}
+        </CardTitle>
+        <CardDescription>{{ $t('platform.publishing.primerDescription') }}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <dl class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="origin in PUBLISHING_ORIGINS"
+            :key="origin"
+            class="rounded-md border border-border bg-muted/20 p-3"
+          >
+            <dt class="flex flex-wrap items-center gap-2">
+              <span class="text-sm font-medium">{{ $t(`platform.publishing.origin.${origin}`) }}</span>
+              <Badge :variant="accessVariant({ origin })" class="text-[10px]">
+                {{ $t(`platform.publishing.access.${accessMode({ origin })}`) }}
+              </Badge>
+            </dt>
+            <dd class="mt-2 text-sm leading-relaxed text-muted-foreground">
+              {{ $t(`platform.publishing.primer.${origin}`) }}
+            </dd>
+          </div>
+        </dl>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>
@@ -142,6 +223,11 @@ function stateVariant(record: PublishingRecord) {
               {{ originTarget(row) }}
             </RouterLink>
             <span v-else class="font-mono text-xs">{{ originTarget(row) }}</span>
+          </template>
+          <template #cell-access="{ row }">
+            <Badge :variant="accessVariant(row)" :title="$t(`platform.publishing.accessHint.${accessMode(row)}`)">
+              {{ $t(`platform.publishing.access.${accessMode(row)}`) }}
+            </Badge>
           </template>
           <template #cell-state="{ row }">
             <Badge :variant="stateVariant(row)">

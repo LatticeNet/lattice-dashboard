@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  WORKERS_REDIRECT_TO,
+  accessMode,
+  arrivedFromWorkers,
+  isFirstRun,
   isServing,
   originTarget,
   publishingState,
@@ -86,4 +90,40 @@ test("a share's routes come from the plane, not from a second idea of the URL", 
   assert.equal(mine.length, 1);
   assert.equal(routePath(mine[0]), "/sub/one");
   assert.equal(recordsForShare(rows, "missing").length, 0);
+});
+
+test("each origin carries its own answer to who may read it", () => {
+  // The three differ on the server and the table used to present them as one
+  // kind of thing: a KV route runs authorizeStorageToken on GET, a static
+  // route is anonymous public hosting, a share is a bearer token in the URL.
+  assert.equal(accessMode(record({ origin: "kv" })), "storage_token");
+  assert.equal(accessMode(record({ origin: "static" })), "anonymous");
+  assert.equal(accessMode(record({ origin: "plugin" })), "share_token");
+});
+
+test("an origin this console has never heard of is not guessed at", () => {
+  // Printing "anonymous" for a route that is not is the one wrong answer on
+  // this page an operator could act on and not recover from.
+  assert.equal(accessMode(record({ origin: "worker" })), "unknown");
+  assert.equal(accessMode(record({ origin: "" })), "unknown");
+});
+
+test("a reserved route does not end the first run", () => {
+  // The subscription mount exists because a client outside this server depends
+  // on the URL, not because an operator chose to publish anything, so the
+  // origin explainer stays up until a deliberate route appears.
+  assert.equal(isFirstRun([]), true);
+  assert.equal(isFirstRun([record({ reserved: true })]), true);
+  assert.equal(isFirstRun([record({ reserved: true }), record({ reserved: false })]), false);
+});
+
+test("old Workers links land on Publishing and say so", () => {
+  // Store was the first redirect target and it answers a different question.
+  // The job Workers was held for was serving content at a URL.
+  assert.equal(WORKERS_REDIRECT_TO.path, "/platform/publishing");
+  assert.equal(arrivedFromWorkers(WORKERS_REDIRECT_TO.query), true);
+  assert.equal(arrivedFromWorkers({ from: ["workers"] }), true);
+  assert.equal(arrivedFromWorkers({}), false);
+  assert.equal(arrivedFromWorkers({ from: "store" }), false);
+  assert.equal(arrivedFromWorkers({ q: "workers" }), false);
 });
