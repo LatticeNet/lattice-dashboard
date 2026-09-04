@@ -474,6 +474,14 @@ export function validateForm(form: GuardForm): string[] {
  * an arm rejected without an approver was refused, not failed. The server
  * records who refused it in the audit trail, not on the approval, so only
  * the moment is known here.
+ *
+ * Provisional. The split rests on a correlation the API does not promise:
+ * that a task runs only against an approved approval and always stamps
+ * `approved_by`, and that nothing but a person's refusal leaves it empty. A
+ * server path that rejects for another reason without an approver (an
+ * expired or policy-rejected approval) would read here as a refusal. The
+ * reading stays until the server writes the rejecting actor and reason on the
+ * approval itself, at which point this becomes a field read.
  */
 export function armRejection(state: NodeGuardState): { at: string } | undefined {
   if (state.stage !== "armFailed" || !state.arm) return undefined;
