@@ -901,7 +901,8 @@ export default {
 
     monitoring: {
       title: "Monitoring",
-      description: "TCP and HTTP probes distributed through enrolled agents",
+      description:
+        "TCP and HTTP probes distributed through enrolled agents, plus TLS certificate watches this server runs itself",
       stats: {
         monitors: "Monitors",
         enabled: "Enabled",
@@ -912,7 +913,7 @@ export default {
         title: "Probe definitions",
         description: "{enabled} active probes across {total} definitions",
         emptyTitle: "No monitors configured",
-        emptyDescription: "Create a TCP or HTTP monitor to start collecting agent results.",
+        emptyDescription: "Create a TCP or HTTP monitor for agents to run, or a TLS monitor for this server to watch a certificate's expiry.",
         emptyAction: "Create the first monitor",
         emptyReadOnly: "Ask an operator with monitor:admin to create the first one.",
         noMatchTitle: "No monitors match",
@@ -923,6 +924,7 @@ export default {
         expressionInvalid: "Invalid expression",
         expressionHelp: "Fields: id, name, type, target, status, enabled, interval, timeout, scope, node. Use AND(...), OR(...), NOT(...), or field:value.",
         interval: "every {interval}s, timeout {timeout}s",
+        threshold: "fails under {days}d left",
         updated: "updated {time}",
       },
       log: {
@@ -940,8 +942,10 @@ export default {
       assignment: {
         allNodes: "all nodes",
         nodeCount: "{count} nodes",
+        controlPlane: "dialled by the control plane",
       },
       result: {
+        controlPlane: "control plane",
         noResult: "no result",
         passing: "passing",
         failing: "failing",
@@ -952,12 +956,18 @@ export default {
       },
       create: {
         title: "Create monitor",
-        description: "Agents run assigned checks and report bounded result history.",
+        description:
+          "Agents run assigned tcp and http checks and report bounded result history. A tls check is different: this server dials it and watches the certificate.",
         name: "Name",
         namePlaceholder: "public api",
         target: "Target",
         targetTcpPlaceholder: "example.com:443",
         targetHttpPlaceholder: "https://example.com/health",
+        targetTlsPlaceholder: "dns.roobli.org:8443",
+        targetTlsError: "A certificate watch takes host:port. It reads whatever certificate the endpoint presents at handshake and does not speak the protocol behind the port, so a URL would promise more than it does.",
+        tlsHint: "This server dials the target itself and reads the leaf certificate, so a certificate watch runs on no node and its results carry none.",
+        thresholdDays: "Warn under (days)",
+        thresholdHint: "The probe starts failing once the certificate has fewer than {days} days left, so the result log turns red before the certificate lapses.",
         type: "Type",
         assignment: "Assignment",
         all: "All",

@@ -889,7 +889,7 @@ export default {
 
     monitoring: {
       title: "监控",
-      description: "通过已接入的 agent 分发 TCP 与 HTTP 探测",
+      description: "通过已接入的 agent 分发 TCP 与 HTTP 探测,以及由本服务器自己执行的 TLS 证书监控",
       stats: {
         monitors: "监控项",
         enabled: "已启用",
@@ -900,7 +900,7 @@ export default {
         title: "探测定义",
         description: "{total} 个定义中有 {enabled} 个活跃探测",
         emptyTitle: "尚未配置监控",
-        emptyDescription: "创建 TCP 或 HTTP 监控以开始收集 agent 结果。",
+        emptyDescription: "创建 TCP 或 HTTP 监控让 agent 执行,或创建 TLS 监控让本服务器盯住某个证书的到期时间。",
         emptyAction: "创建第一个监控",
         emptyReadOnly: "请让拥有 monitor:admin 权限的运维人员创建第一个监控。",
         noMatchTitle: "没有匹配的监控",
@@ -911,6 +911,7 @@ export default {
         expressionInvalid: "表达式无效",
         expressionHelp: "字段:id、name、type、target、status、enabled、interval、timeout、scope、node。支持 AND(...)、OR(...)、NOT(...) 或 field:value。",
         interval: "每 {interval} 秒,超时 {timeout} 秒",
+        threshold: "剩余不足 {days} 天即判失败",
         updated: "更新于 {time}",
       },
       log: {
@@ -928,8 +929,10 @@ export default {
       assignment: {
         allNodes: "全部节点",
         nodeCount: "{count} 个节点",
+        controlPlane: "由控制面直接拨号",
       },
       result: {
+        controlPlane: "控制面",
         noResult: "无结果",
         passing: "通过",
         failing: "失败",
@@ -940,12 +943,18 @@ export default {
       },
       create: {
         title: "创建监控",
-        description: "agent 运行指派的检查,并上报有限的结果历史。",
+        description:
+          "agent 运行指派的 tcp 和 http 检查,并上报有限的结果历史。tls 检查不一样:由本服务器自己拨号,盯住证书。",
         name: "名称",
         namePlaceholder: "public api",
         target: "目标",
         targetTcpPlaceholder: "example.com:443",
         targetHttpPlaceholder: "https://example.com/health",
+        targetTlsPlaceholder: "dns.roobli.org:8443",
+        targetTlsError: "证书监控只接受 host:port。它读取端点在握手时出示的证书,并不理解端口背后的协议,写成 URL 会让人以为它能做更多。",
+        tlsHint: "证书监控由本服务器自己拨号并读取叶子证书,不在任何节点上运行,结果里也不带节点。",
+        thresholdDays: "提前告警(天)",
+        thresholdHint: "证书剩余不足 {days} 天时探测开始判失败,结果日志会在证书过期之前先变红。",
         type: "类型",
         assignment: "指派",
         all: "全部",
