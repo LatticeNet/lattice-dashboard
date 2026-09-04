@@ -9,11 +9,14 @@ import {
   canPlanDeployment,
   canPublishDeployment,
   certExpiry,
+  dnsHostnameSizing,
+  dnsVisibleColumns,
   driftTone,
   externalHostnameProblem,
   formatListeners,
   isExternalHostnameValid,
   isObservedEngine,
+  isObservedOnlyTable,
   listenSummary,
   listenerProcesses,
   reservedWidthPx,
@@ -138,7 +141,7 @@ test("DnsView gives the Reality column the reserved sizing and caps the columns 
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
   assert.match(view, /key:\s*"reality"[^]*?class:\s*DNS_COLUMN_SIZING\.reality/);
   assert.match(view, /key:\s*"node"[^]*?class:\s*DNS_COLUMN_SIZING\.node/);
-  assert.match(view, /key:\s*"hostname"[^]*?class:\s*DNS_COLUMN_SIZING\.hostname/);
+  assert.match(view, /key:\s*"hostname"[^]*?class:\s*dnsHostnameSizing\(observedOnly\.value\)/);
   assert.doesNotMatch(view, /class:\s*"max-w-\[280px\]"/, "the Reality column is back on a bare cap");
 });
 
@@ -242,4 +245,60 @@ test("the observed hostname field says what is wrong and points a reader at it",
   assert.match(view, /role="alert"/);
   assert.match(view, /:aria-describedby="externalHostnameError \? 'dns-external-hostname-error' : undefined"/);
   assert.match(view, /externalHostnameError/);
+});
+
+// ── An observed-only table ────────────────────────────────────────────────
+
+const observedRow = { engine: "external" };
+const deployedRow = { engine: "coredns" };
+const allColumns = [
+  { key: "name" },
+  { key: "node" },
+  { key: "listen" },
+  { key: "exposure" },
+  { key: "zones" },
+  { key: "hostname" },
+  { key: "status" },
+  { key: "reality" },
+  { key: "credential" },
+  { key: "published" },
+  { key: "actions" },
+];
+
+test("a table of nothing but observed records is observed-only, an empty one is not", () => {
+  assert.equal(isObservedOnlyTable([observedRow, observedRow]), true);
+  assert.equal(isObservedOnlyTable([observedRow, deployedRow]), false);
+  assert.equal(isObservedOnlyTable([deployedRow]), false);
+  // Nothing loaded is not the same claim as nothing deployed, and dropping
+  // columns off an empty table would only make the header lie while it fills.
+  assert.equal(isObservedOnlyTable([]), false);
+});
+
+test("the two intent columns leave an observed-only table, and nothing else does", () => {
+  const kept = dnsVisibleColumns(allColumns, true).map((column) => column.key);
+  assert.deepEqual(kept, ["name", "node", "listen", "exposure", "zones", "hostname", "status", "reality", "actions"]);
+  assert.equal(kept.includes("credential"), false, "Credential prints one dot per observed row");
+  assert.equal(kept.includes("published"), false, "Last publish attempt prints one dot per observed row");
+  assert.deepEqual(dnsVisibleColumns(allColumns, false), allColumns, "a mixed table loses a column");
+});
+
+test("the hostname turns its ceiling into a floor once the intent columns are gone", () => {
+  // The hostname is what a certificate watch is pointed at, so it is the value
+  // the operator came to read; `resolver.xuezhan…` is not that value.
+  const wide = dnsHostnameSizing(true);
+  assert.equal(reservesWidth(wide), true, "the observed-only hostname column still only caps its width");
+  assert.ok(reservedWidthPx(wide) >= 200, `reserved ${reservedWidthPx(wide)}px, too little for a real resolver name`);
+  assert.match(wide, /whitespace-nowrap/);
+
+  const capped = dnsHostnameSizing(false);
+  assert.equal(reservesWidth(capped), false, "a mixed table lets the hostname take width from Reality");
+  assert.equal(capped, DNS_COLUMN_SIZING.hostname);
+});
+
+test("DnsView renders the visible columns, and stops truncating the reserved hostname", () => {
+  const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
+  assert.match(view, /:columns="visibleColumns"/);
+  assert.match(view, /const visibleColumns = computed\(\(\) => dnsVisibleColumns\(columns\.value, observedOnly\.value\)\)/);
+  const cell = view.slice(view.indexOf("#cell-hostname="), view.indexOf("#cell-status="));
+  assert.match(cell, /observedOnly \? 'font-mono text-xs' : 'truncate font-mono text-xs'/);
 });

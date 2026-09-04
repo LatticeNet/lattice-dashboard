@@ -33,9 +33,12 @@ import {
   canPublishDeployment,
   certDate,
   certExpiry,
+  dnsHostnameSizing,
+  dnsVisibleColumns,
   driftTone,
   externalHostnameProblem,
   isObservedEngine,
+  isObservedOnlyTable,
   listenSummary,
   listenerProcesses,
 } from "./dnsExternalModel";
@@ -142,6 +145,14 @@ function certToneClass(dep: DNSDeploymentView): string {
   }
 }
 
+/**
+ * Whether the table is showing nothing but daemons Lattice watches. Two of the
+ * eleven columns describe an intent Lattice holds, and an observed record
+ * holds neither, so on such a table they are two columns of "·" charging the
+ * hostname beside them about ninety pixels each.
+ */
+const observedOnly = computed(() => isObservedOnlyTable(sortedDeployments.value));
+
 const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
   { key: "name", label: t("networking.dns.colName"), sortable: true, searchable: true },
   {
@@ -161,7 +172,13 @@ const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
   },
   { key: "exposure", label: t("networking.dns.colExposure"), sortable: true },
   { key: "zones", label: t("networking.dns.colZones"), align: "right", sortable: true, value: (dep) => dep.zones.length },
-  { key: "hostname", label: t("networking.dns.colHostname"), sortable: true, searchable: true, class: DNS_COLUMN_SIZING.hostname },
+  {
+    key: "hostname",
+    label: t("networking.dns.colHostname"),
+    sortable: true,
+    searchable: true,
+    class: dnsHostnameSizing(observedOnly.value),
+  },
   { key: "status", label: t("networking.dns.colStatus"), sortable: true },
   {
     key: "reality",
@@ -174,6 +191,9 @@ const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
   { key: "published", label: t("networking.dns.colPublished"), sortable: true, value: (dep) => dep.last_published_at ?? "" },
   { key: "actions", label: t("networking.dns.colActions"), align: "right" },
 ]);
+
+/** The columns actually rendered: the intent pair leaves an observed-only table. */
+const visibleColumns = computed(() => dnsVisibleColumns(columns.value, observedOnly.value));
 
 /**
  * Observed records whose drift findings are open.
@@ -742,7 +762,7 @@ function closePlan(open: boolean) {
       <CardContent>
         <DataTable
           state-key="deployments"
-          :columns="columns"
+          :columns="visibleColumns"
           :rows="sortedDeployments"
           :row-key="(dep) => dep.id"
           :row-expanded="isDriftOpen"
@@ -807,8 +827,17 @@ function closePlan(open: boolean) {
             </span>
             <span v-else class="text-muted-foreground">·</span>
           </template>
+          <!--
+            Truncation is the ceiling's other half: once the column reserves
+            its width there is nothing left to clip, and a hostname printed in
+            full is the point. A tooltip was the only recovery before, and a
+            keyboard or touch reader has no way to open one.
+          -->
           <template #cell-hostname="{ row: dep }">
-            <div class="truncate font-mono text-xs" :title="dep.hostname || ''">{{ dep.hostname || $t('common.misc.none') }}</div>
+            <div
+              :class="observedOnly ? 'font-mono text-xs' : 'truncate font-mono text-xs'"
+              :title="dep.hostname || ''"
+            >{{ dep.hostname || $t('common.misc.none') }}</div>
           </template>
           <template #cell-status="{ row: dep }">
             <Badge :variant="statusVariant(dep.status)">{{ dep.status }}</Badge>

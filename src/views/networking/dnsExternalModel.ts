@@ -144,11 +144,51 @@ export function driftTone(status: string | undefined): "success" | "destructive"
 // during a tidy-up.
 
 /** Tailwind sizing applied to a deployments-table column, header and body cell. */
-export const DNS_COLUMN_SIZING: Record<"node" | "hostname" | "reality", string> = {
+export const DNS_COLUMN_SIZING: Record<"node" | "hostname" | "hostnameWide" | "reality", string> = {
   node: "max-w-[150px]",
   hostname: "max-w-[150px]",
+  hostnameWide: "min-w-[220px] whitespace-nowrap",
   reality: "w-[190px] min-w-[190px] align-top",
 };
+
+// ── What an observed-only table does not need ─────────────────────────────
+//
+// Capping the hostname was the right trade while eleven columns competed. On a
+// table of nothing but observed records it is not: two of those columns
+// describe an intent Lattice holds, an observed record holds neither, and both
+// print a single "·" while taking about ninety pixels each. The hostname next
+// to them was truncated to `resolver.xuezhan…`, and it is the identifier the
+// whole observed story hangs on: it is what a certificate watch is pointed at
+// and what the operator came to read. A title tooltip is not a recovery, since
+// neither a keyboard nor a touch reader can open one.
+//
+// So the two intent columns leave the table when nothing on it has an intent,
+// and the hostname turns its ceiling into a floor with the width they freed.
+
+/** Columns that describe an intent Lattice holds rather than a fact about the daemon. */
+export const DNS_INTENT_COLUMN_KEYS = ["credential", "published"];
+
+/**
+ * Whether every record loaded is one Lattice only watches.
+ *
+ * This reads the loaded rows and not the rows a search happens to be showing:
+ * a column set that appears and disappears while the operator types costs more
+ * than the width it wins back.
+ */
+export function isObservedOnlyTable(deployments: Pick<DNSDeploymentView, "engine">[]): boolean {
+  return deployments.length > 0 && deployments.every((dep) => isObservedEngine(dep.engine));
+}
+
+/** The columns to render: the intent pair is dropped from an observed-only table. */
+export function dnsVisibleColumns<C extends { key: string }>(columns: C[], observedOnly: boolean): C[] {
+  if (!observedOnly) return columns;
+  return columns.filter((column) => !DNS_INTENT_COLUMN_KEYS.includes(column.key));
+}
+
+/** The hostname column's sizing: a ceiling beside the intent columns, a floor without them. */
+export function dnsHostnameSizing(observedOnly: boolean): string {
+  return observedOnly ? DNS_COLUMN_SIZING.hostnameWide : DNS_COLUMN_SIZING.hostname;
+}
 
 /**
  * Whether a class string reserves horizontal space instead of only capping it.
