@@ -108,12 +108,17 @@ test("an origin this console has never heard of is not guessed at", () => {
   assert.equal(accessMode(record({ origin: "" })), "unknown");
 });
 
-test("a reserved route does not end the first run", () => {
-  // The subscription mount exists because a client outside this server depends
-  // on the URL, not because an operator chose to publish anything, so the
-  // origin explainer stays up until a deliberate route appears.
+test("a route that exists ends the first run, reserved or not", () => {
+  // Reserved is the server saying the operator cannot move or delete this
+  // route from this page: publishingRecordFromShare sets it on every share.
+  // It is not a claim that nobody published anything, because a share only
+  // exists because an operator created it in the Publish dialog. Production
+  // runs exactly one record, a reserved share that is serving, and treating
+  // reserved as "not published on purpose" printed "nothing is published yet"
+  // directly above it.
   assert.equal(isFirstRun([]), true);
-  assert.equal(isFirstRun([record({ reserved: true })]), true);
+  assert.equal(isFirstRun([record({ reserved: true })]), false);
+  assert.equal(isFirstRun([record({ reserved: false })]), false);
   assert.equal(isFirstRun([record({ reserved: true }), record({ reserved: false })]), false);
 });
 

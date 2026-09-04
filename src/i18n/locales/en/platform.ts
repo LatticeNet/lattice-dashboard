@@ -210,7 +210,7 @@ export default {
       },
       primerTitle: "The three origins",
       primerDescription:
-        "Nothing is published on purpose yet. A route decides the URL; the origin decides where the bytes come from and who may fetch them.",
+        "Nothing is published yet. A route decides the URL; the origin decides where the bytes come from and who may fetch them.",
       primer: {
         kv: "A KV route serves the values held in one key/value bucket. It is not public hosting: a reader has to present a storage token on every request, GET included, so this origin is for a caller you issued a token to.",
         static: "A static route serves the objects in one static bucket over plain anonymous HTTP. Anyone who knows the URL can fetch it, so nothing a token was protecting belongs behind one.",

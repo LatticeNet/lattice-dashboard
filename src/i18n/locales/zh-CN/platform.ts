@@ -197,7 +197,7 @@ export default {
         unknown: "服务端报告了这个控制台不认识的 origin，因此不展示它的访问规则，而不是猜一个。",
       },
       primerTitle: "三种 origin",
-      primerDescription: "目前还没有主动发布任何内容。路由决定 URL，origin 决定内容从哪来、谁能取。",
+      primerDescription: "这里还没有任何路由。路由决定 URL，origin 决定内容从哪来、谁能取。",
       primer: {
         kv: "KV 路由对外提供某个键值 bucket 里的值。它不是公开托管：读取方每次请求都要带存储 token，GET 也一样，所以这种 origin 面向的是你签发过 token 的调用方。",
         static: "静态路由以普通匿名 HTTP 对外提供某个静态 bucket 里的对象。知道 URL 的人都能取，所以原本靠 token 保护的东西不该放在它后面。",

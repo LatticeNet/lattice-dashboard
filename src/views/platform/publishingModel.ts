@@ -110,14 +110,18 @@ export function accessMode(record: Pick<PublishingRecord, "origin">): Publishing
 }
 
 /**
- * A first run is a plane nothing has been published to on purpose yet. A
- * reserved route does not count: the subscription mount exists because a
- * client outside this server already depends on it, not because an operator
- * chose to publish something, so the origin explainer stays open until a
- * deliberate route appears.
+ * A first run is a plane with no route on it at all.
+ *
+ * Reserved does not carve out an exception, and reading it as one was wrong:
+ * the server sets reserved on every share record it builds, and there it means
+ * "the operator cannot move or delete this route from this page", not "nobody
+ * chose to publish it". A share exists because an operator created it in the
+ * Publish dialog, so a plane holding one has been published to. Treating a
+ * reserved route as no route printed the origin primer, headed "nothing is
+ * published yet", directly above a share the table was showing as serving.
  */
-export function isFirstRun(records: readonly Pick<PublishingRecord, "reserved">[]): boolean {
-  return records.every((record) => record.reserved);
+export function isFirstRun(records: readonly unknown[]): boolean {
+  return records.length === 0;
 }
 
 /** The query key old Workers links carry so the page can say where they went. */

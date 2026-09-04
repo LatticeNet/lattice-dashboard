@@ -86,10 +86,10 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
 ]);
 
 /**
- * The three origins, explained once, while nothing has been deliberately
- * published. A reserved route does not end the first run: the subscription
- * mount exists because a client outside this server already depends on it,
- * not because an operator chose to publish anything.
+ * The three origins, explained once, while the plane still holds no route.
+ * A reserved route counts as a route: the server marks every share reserved to
+ * say the operator cannot move or delete it here, and a share exists because
+ * an operator published one.
  */
 const showOriginPrimer = computed(() => loaded.value && isFirstRun(records.value));
 
