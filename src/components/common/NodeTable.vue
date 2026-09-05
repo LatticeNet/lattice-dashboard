@@ -24,6 +24,7 @@ import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 import {
   gridTemplate,
   nameTrackMin,
+  tableMinWidthPx,
   visibleColumns,
   type NodeSortState,
   type NodeTableColumn,
@@ -98,14 +99,12 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const columns = computed(() => visibleColumns(props.hiddenColumns));
-/** The name track never drops below what the longest name on the page needs. */
+/** The Node track is what the longest name on the page needs, no narrower. */
 const nameMin = computed(() => props.nameMinPx ?? nameTrackMin(props.nodes));
-/** The selection column is a fixed leading track, so hiding columns still works. */
-const SELECT_TRACK = "36px";
+/** The selection checkbox rides inside the Node track (see STICKY_CELL), so
+ *  the template has one leading track whether or not the table is selectable. */
 const gridStyle = computed(() => ({
-  gridTemplateColumns: props.selectable
-    ? `${SELECT_TRACK} ${gridTemplate(props.hiddenColumns, nameMin.value)}`
-    : gridTemplate(props.hiddenColumns, nameMin.value),
+  gridTemplateColumns: gridTemplate(props.hiddenColumns, nameMin.value, props.selectable),
 }));
 
 const rowIds = computed(() => props.nodes.map((node) => node.id));
@@ -113,18 +112,9 @@ const allSelected = computed(() => selectionHeaderState(props.selectedIds, rowId
 function isSelected(node: Node): boolean {
   return props.selectedIds.has(node.id);
 }
-/** The min width shrinks as columns are hidden: roughly the sum of fixed
- *  tracks plus room for the flexible ones, the name at its content minimum. */
-const minWidth = computed(() => {
-  let px = 0;
-  for (const column of columns.value) {
-    const fixed = /^(\d+)px$/.exec(column.width);
-    if (fixed) px += Number(fixed[1]);
-    else px += column.id === "name" ? nameMin.value : 200;
-  }
-  if (props.selectable) px += 36 + 12;
-  return `${px + (columns.value.length - 1) * 12 + 24}px`;
-});
+/** The min width follows the visible tracks' floors (see tableMinWidthPx),
+ *  the Node track at its measured width. */
+const minWidth = computed(() => `${tableMinWidthPx(props.hiddenColumns, nameMin.value, props.selectable)}px`);
 
 function show(id: string): boolean {
   return columns.value.some((c) => c.id === id);
@@ -159,21 +149,77 @@ function statusLabel(node: Node): string {
 }
 
 /**
- * The leading cells stay put while the rest of the row scrolls under them.
+ * The Node cell stays put while the rest of the row scrolls under it.
  *
- * `left` is the cell's resting offset (the row's px-3, plus the selection
- * track and its gap when there is one) so a pinned cell sits exactly where an
- * unpinned one did. Painted opaque so scrolled cells pass behind, which means
- * the row's translucent hover tint has to be composited onto it by hand.
+ * One pinned block per row, from x=0 to the column's right edge: the
+ * selection checkbox, the status dot and the name share a single grid cell
+ * that is sticky at left 0 and carries the row's left padding inside it. The
+ * earlier layout pinned the checkbox and the name as two cells with their own
+ * backgrounds, and the row padding before the checkbox, the gap between the
+ * two cells and the name cell's `left` offset were all transparent, so the
+ * Status column's text and dot showed through at the left of every row once
+ * the table scrolled. The row's `px-3` is now `pr-3`, and the cell paints
+ * `pl-3` on its own opaque surface, so no strip is left for anything to
+ * scroll through.
  *
- * From sm up only. Below it the pinned cells would be the whole viewport:
- * a 239px name track plus the selection track is 299px of a 327px-wide table
- * on a 375px phone, leaving 28px for everything else to scroll through. There
- * the table scrolls freely and the name scrolls with it.
+ * The surface is the card, opaque, the same one the header cell paints; the
+ * table sits inside a Card, and the earlier `bg-background` on the cells and
+ * `bg-card` on the header put two surfaces in one column. Hover, selection
+ * and keyboard focus are opaque mixes of the same tints the row applies
+ * translucently, so the pinned cell and the cell beside it read as one row.
+ * The cell is the full row height and ends in an inset hairline, whatever
+ * passes under it.
+ *
+ * Focus is a ring, and the cell draws its share of it. The row's inset ring
+ * (an outer one is clipped by the scroller on every side a full-width row
+ * touches) passes under this opaque cell, which paints above it, so the cell
+ * draws the ring's top, bottom and left segments itself in the same colour
+ * and width; where the cell ends the row's own ring continues, and the
+ * hairline stays on the cell's right edge. Before this the row's only focus
+ * mark was a 5% tint, 1.09:1 against the card, and the cell covered even that
+ * for the checkbox, dot, name and id.
+ *
+ * From sm up only. Below it the pinned cell would be most of the viewport:
+ * 256px of a 375px phone leaves 119px for everything else to scroll through.
+ * There the table scrolls freely and the name scrolls with it.
  */
 const STICKY_CELL =
-  "sm:sticky z-10 bg-background group-hover/row:bg-[color-mix(in_oklab,var(--foreground)_3%,var(--background))]";
-const stickyLeft = computed(() => (props.selectable ? "sm:left-15" : "sm:left-3"));
+  "sm:sticky sm:left-0 z-10 flex h-full min-w-0 items-center bg-card pl-3 pr-3 shadow-[inset_-1px_0_0_var(--border)] " +
+  "group-hover/row:bg-[color-mix(in_oklab,var(--foreground)_3%,var(--card))] " +
+  "group-aria-selected/row:bg-[color-mix(in_oklab,var(--primary)_8%,var(--card))] " +
+  "group-focus-visible/row:bg-[color-mix(in_oklab,var(--foreground)_5%,var(--card))] " +
+  "group-focus-visible/row:shadow-[inset_0_2px_0_var(--ring),inset_0_-2px_0_var(--ring),inset_2px_0_0_var(--ring),inset_-1px_0_0_var(--border)]";
+const STICKY_HEADER_CELL =
+  "sm:sticky sm:left-0 z-20 flex h-full items-center gap-3 bg-card pl-3 pr-3 shadow-[inset_-1px_0_0_var(--border)]";
+
+/**
+ * The Actions cell is the Node cell's mirror at the right edge.
+ *
+ * The three row buttons used to be the last track of a table that scrolls,
+ * which put them off screen at rest whenever the visible set outgrew the
+ * card: on a 1440 display with the sidebar open the buttons sat 250px past
+ * the scroller's edge, and reaching a node's terminal meant scrolling the
+ * row first. The cell pins at right 0 instead, on the same opaque card
+ * surface and with the same tints as the Node cell, with the hairline on its
+ * left edge and the row's right padding inside it, so the last data column
+ * scrolls up to the hairline and never through a transparent strip beside
+ * the buttons. The focus ring's top, bottom and right segments are the
+ * cell's to draw, as the left cell draws the left ones.
+ *
+ * The cell is opaque at rest; only the buttons inside it are the hover
+ * reveal. A cell that faded with its buttons would let the columns show
+ * through the pinned surface on every row the pointer is not on.
+ *
+ * Same breakpoint as the Node cell: from sm up.
+ */
+const STICKY_ACTIONS_CELL =
+  "sm:sticky sm:right-0 z-10 flex h-full min-w-0 items-center justify-end bg-card pr-3 shadow-[inset_1px_0_0_var(--border)] " +
+  "group-hover/row:bg-[color-mix(in_oklab,var(--foreground)_3%,var(--card))] " +
+  "group-aria-selected/row:bg-[color-mix(in_oklab,var(--primary)_8%,var(--card))] " +
+  "group-focus-visible/row:bg-[color-mix(in_oklab,var(--foreground)_5%,var(--card))] " +
+  "group-focus-visible/row:shadow-[inset_0_2px_0_var(--ring),inset_0_-2px_0_var(--ring),inset_-2px_0_0_var(--ring),inset_1px_0_0_var(--border)]";
+const STICKY_ACTIONS_HEADER_CELL =
+  "sm:sticky sm:right-0 z-20 flex h-full items-center justify-end bg-card pr-3 shadow-[inset_1px_0_0_var(--border)]";
 
 /** The server's one-sentence account, shown on hover so the word can be checked. */
 function statusTitle(node: Node): string {
@@ -306,23 +352,41 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
            and of every row pin to the left edge and the name stays readable
            while the metric columns pass underneath it. -->
       <div
-        class="grid h-8 items-center gap-3 border-b border-border bg-card px-3 text-xs font-medium text-muted-foreground"
+        class="grid h-8 items-center gap-3 border-b border-border bg-card text-xs font-medium text-muted-foreground"
         :style="gridStyle"
         role="row"
       >
-        <span v-if="selectable" class="z-10 flex items-center bg-card sm:sticky sm:left-3">
-          <Checkbox
-            :model-value="allSelected"
-            :aria-label="$t('fleet.nodes.bulk.selectAllVisible')"
-            @update:model-value="(value) => emit('toggle-select-all', rowIds, value === true)"
-          />
-        </span>
         <template v-for="column in columns" :key="column.id">
+          <!-- The Node header pins with the Node cells: the same surface, one
+               step above them in z, the select-all checkbox inside it. -->
+          <div v-if="column.id === 'name'" :class="STICKY_HEADER_CELL">
+            <Checkbox
+              v-if="selectable"
+              :model-value="allSelected"
+              :aria-label="$t('fleet.nodes.bulk.selectAllVisible')"
+              @update:model-value="(value) => emit('toggle-select-all', rowIds, value === true)"
+            />
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
+              :aria-sort="ariaSort(column)"
+              :title="$t('common.table.sortBy', { column: headerLabel(column) })"
+              @click="emit('toggle-sort', column.id)"
+            >
+              <span>{{ headerLabel(column) }}</span>
+              <ChevronUp v-if="sort.key === column.sortKey && sort.dir === 'asc'" class="size-3 text-foreground" aria-hidden="true" />
+              <ChevronDown v-else-if="sort.key === column.sortKey && sort.dir === 'desc'" class="size-3 text-foreground" aria-hidden="true" />
+            </button>
+          </div>
+          <!-- The Actions header pins with the Actions cells at the right
+               edge, the mirror of the Node header. -->
+          <div v-else-if="column.id === 'actions'" :class="STICKY_ACTIONS_HEADER_CELL">
+            <span>{{ headerLabel(column) }}</span>
+          </div>
           <button
-            v-if="column.sortKey"
+            v-else-if="column.sortKey"
             type="button"
             class="inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
-            :class="[column.id === 'actions' && 'justify-end', column.id === 'name' && ['z-10 bg-card sm:sticky', stickyLeft]]"
             :aria-sort="ariaSort(column)"
             :title="$t('common.table.sortBy', { column: headerLabel(column) })"
             @click="emit('toggle-sort', column.id)"
@@ -339,7 +403,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
               aria-hidden="true"
             />
           </button>
-          <span v-else :class="column.id === 'actions' && 'text-right'">{{ headerLabel(column) }}</span>
+          <span v-else>{{ headerLabel(column) }}</span>
         </template>
       </div>
 
@@ -353,7 +417,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 px-3 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 focus-visible:bg-foreground/5 focus-visible:outline-none"
+        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 aria-selected:bg-primary/8 focus-visible:bg-foreground/5 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
         :style="gridStyle"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
@@ -364,45 +428,68 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         @keydown.enter.prevent="onRowKey(node, $event)"
         @keydown.space.prevent="onRowKey(node, $event)"
       >
-        <!-- Selection. Stops both click and key so the checkbox can be used
-             without the row's open-node handler firing underneath it. -->
-        <span v-if="selectable" :class="['flex items-center sm:left-3', STICKY_CELL]" @click.stop @keydown.stop>
-          <Checkbox
-            :model-value="isSelected(node)"
-            :aria-label="$t('fleet.nodes.bulk.selectRow', { name: node.name || node.id })"
-            @update:model-value="emit('toggle-select', node.id)"
-          />
-        </span>
+        <!-- Node: selection, status dot, name and id in one pinned cell.
+             The checkbox stops both click and key so it can be used without
+             the row's open-node handler firing underneath it.
 
-        <!-- Name + status dot. The name does not truncate in practice: the
-             track is at least as wide as the longest name on the page
-             (nameTrackMin) and the table scrolls past that, so a long name
-             pushes the metric columns right rather than losing characters.
-             The `truncate` on the name is the cap, not the mechanism: the
-             track stops growing at NAME_TRACK_MAX_PX, and a name wider than
-             that ends in an ellipsis instead of painting under the next
-             column. The name used to share the line with the identifier,
-             shrinking in proportion to it, which on a fleet whose hostnames
-             all differ from their names cut every long name to
-             "Akkocloud-UK-Lond...". The short id now sits on a second line
-             inside the fixed 40px row (20px name over 16px id). It is the
-             tiebreak for two machines sharing a name, not something anyone
-             reads across 200 rows, so it goes away where there is no room for
-             it: at compact density (a 32px row) and below sm. The tooltip
-             carries both. -->
+             The name does not truncate in practice: the track is as wide as
+             the longest name on the page (nameTrackMin) and the table scrolls
+             past that, so a long name pushes the metric columns right rather
+             than losing characters. The `truncate` on the name is the cap,
+             not the mechanism: the track stops growing at NAME_TRACK_MAX_PX,
+             and a name wider than that ends in an ellipsis instead of
+             painting under the next column. The short id sits on a second
+             line inside the fixed 40px row (20px name over 16px id). It is
+             the tiebreak for two machines sharing a name, not something
+             anyone reads across 200 rows, so it goes away where there is no
+             room for it: at compact density (a 32px row) and below sm. The
+             tooltip carries both.
+
+             The checkbox and the dot each sit in a 20px line box, the name
+             line's height, so they centre on the name rather than floating
+             between the name and the id. -->
         <div
-          :class="['flex min-w-0 items-center gap-2', STICKY_CELL, stickyLeft]"
+          :class="STICKY_CELL"
           :title="secondaryLabel(node) ? `${node.name || node.id}\n${secondaryLabel(node)}` : node.name || node.id"
         >
-          <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" class="shrink-0" />
-          <Badge v-if="namePrefix(node)" variant="outline" class="shrink-0 px-1 py-0 text-[10px] leading-4">{{ namePrefix(node) }}</Badge>
-          <div class="min-w-0">
-            <p class="truncate text-sm leading-5 font-medium">{{ nameBody(node) }}</p>
-            <p
-              v-if="secondaryLabel(node)"
-              class="density-secondary hidden truncate font-mono text-xs leading-4 text-muted-foreground tabular sm:block"
-            >{{ secondaryLabel(node) }}</p>
+          <div class="flex min-w-0 items-start gap-2">
+            <span v-if="selectable" class="mr-1 flex h-5 shrink-0 items-center" @click.stop @keydown.stop>
+              <Checkbox
+                :model-value="isSelected(node)"
+                :aria-label="$t('fleet.nodes.bulk.selectRow', { name: node.name || node.id })"
+                @update:model-value="emit('toggle-select', node.id)"
+              />
+            </span>
+            <span class="flex h-5 shrink-0 items-center">
+              <StatusDot :status="dotStatus(node)" :pulse="isLive(node)" />
+            </span>
+            <div class="min-w-0">
+              <p class="truncate text-sm leading-5 font-medium">{{ nameBody(node) }}</p>
+              <p
+                v-if="secondaryLabel(node)"
+                class="density-secondary hidden truncate font-mono text-xs leading-4 text-muted-foreground tabular sm:block"
+              >{{ secondaryLabel(node) }}</p>
+            </div>
           </div>
+        </div>
+
+        <!-- Owner. The bracketed prefix of the name, as a chip in a column of
+             its own: inside the Node cell it started every name at a
+             different x. Empty when the name carries no prefix. The track is
+             sized to the widest owner in the fleet; a longer one truncates
+             inside the chip, with the full text in the chip's title. The
+             ellipsis has to be on a block inside the chip: the chip is a flex
+             box, and text-overflow does nothing to the text it lays out
+             directly. -->
+        <div v-if="show('owner')" class="min-w-0">
+          <Badge
+            v-if="namePrefix(node)"
+            variant="outline"
+            class="max-w-full px-1.5 py-0 text-[11px] leading-4"
+            :title="namePrefix(node)"
+          >
+            <span class="truncate">{{ namePrefix(node) }}</span>
+          </Badge>
         </div>
 
         <!-- Status. A healthy node says so quietly: the dot beside the name
@@ -546,15 +633,19 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           </Badge>
         </div>
 
-        <!-- Actions (reuse the same intents NodeCard wires).
+        <!-- Actions (reuse the same intents NodeCard wires), in the cell
+             pinned to the right edge (see STICKY_ACTIONS_CELL).
              Revealed on row hover or keyboard focus rather than drawn on every
              row: three ghost buttons times a 200-node fleet is 600 controls
              competing with the data for attention, and none of them is the
              thing an operator came to read. They stay in the DOM and in the tab
-             order, so keyboard and screen-reader users lose nothing. -->
-        <div
-          class="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-within:opacity-100"
-        >
+             order, so keyboard and screen-reader users lose nothing. The
+             reveal is on the button group, never on the pinned cell, which
+             stays opaque so nothing scrolls through it. -->
+        <div :class="STICKY_ACTIONS_CELL">
+          <div
+            class="flex items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-within:opacity-100"
+          >
           <Button
             v-if="canOpenTerminal"
             variant="ghost"
@@ -588,6 +679,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           >
             <Power :class="['size-4', !node.disabled && 'text-destructive']" aria-hidden="true" />
           </Button>
+          </div>
         </div>
       </div>
     </div>

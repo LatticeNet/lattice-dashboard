@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import type { Node } from "../../../lib/api/types.ts";
 import {
   DEFAULT_HIDDEN_COLUMNS,
+  NAME_CELL_CHROME_PX,
   NAME_TRACK_MAX_PX,
   NAME_TRACK_MIN_PX,
   NODE_TABLE_COLUMNS,
+  SELECT_CELL_PX,
+  estimateNameWidth,
   gridTemplate,
   nameTrackMin,
   nextSortState,
@@ -17,6 +20,8 @@ import {
   serializeHiddenColumns,
   serializeSortState,
   sortNodes,
+  tableMinWidthPx,
+  trackMinPx,
   visibleColumns,
 } from "../nodesTableModel.ts";
 
@@ -97,11 +102,18 @@ test("hidden-column persistence round-trips and rejects unknown/required ids", (
 test("a console that has never been configured gets the default column set", () => {
   const hidden = parseHiddenColumns(null);
   assert.deepEqual([...hidden].sort(), [...DEFAULT_HIDDEN_COLUMNS].sort());
-  // The default has to leave the triage columns visible, or hiding things by
-  // default would be a worse answer than the wide table it replaced.
-  const visible = visibleColumns(hidden).map((c) => c.id);
-  for (const id of ["name", "status", "hostname", "role", "cpu", "memory", "disk", "lastSeen", "actions"]) {
-    assert.ok(visible.includes(id), `${id} must be visible by default`);
+  // The default is the set that fits the card (see the width budget below):
+  // identity, where to reach the node, its status, what the agent does, and
+  // the row actions. Nothing else, and in this order.
+  assert.deepEqual(
+    visibleColumns(hidden).map((c) => c.id),
+    ["name", "owner", "status", "tags", "publicIp", "agentConfig", "actions"],
+  );
+  // Hostname and Last seen left the default set to make room; they are still
+  // in the catalog and the column manager lists them.
+  for (const id of ["hostname", "lastSeen", "role", "cpu", "memory", "disk"]) {
+    assert.ok(hidden.has(id), `${id} must be hidden by default`);
+    assert.ok(NODE_TABLE_COLUMNS.find((c) => c.id === id)?.optional, `${id} must stay in the column manager`);
   }
 });
 
@@ -127,49 +139,115 @@ test("visibleColumns always keeps required columns and gridTemplate matches", ()
   assert.equal(gridTemplate(hidden).split(" ").length, visible.length);
 });
 
-test("the name track is at least as wide as the fleet's longest rendered name", () => {
-  // The live fleet's widest cells. Chrome on macOS draws
-  // "Akkocloud-UK-London-KVM" at 187px in 14px medium; with the dot, the [cd]
-  // badge and the gaps the cell wants 232px, which is more than the 180px
-  // floor and exactly why the name used to print as "Akkocloud-UK-Lond...".
-  const fleet = [
-    node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" }),
-    node({ id: "node_ykr7g35t3gzmgshc", name: "[OpenJobs-Data]-TiDB-1" }),
-    node({ id: "openjobs-data-scripts", name: "[OpenJobs-Data]-scripts" }),
-    node({ id: "node_fdlsvreyz4un2elo", name: "[Metix]-Aaitr-jp-softbank-NAT" }),
-    node({ id: "dmit-1", name: "[Metix]-DMIT-1" }),
-  ];
-  const min = nameTrackMin(fleet);
-  assert.ok(min >= 8 + 8 + 21 + 8 + 187, `${min}px is narrower than Akkocloud's cell`);
-  assert.ok(min < 300, `${min}px is more than the longest name needs`);
-  // The widest row governs, whichever it is: the [Metix] badge makes the
-  // 21-character softbank name wider than the 23-character Akkocloud one.
-  assert.equal(min, Math.max(...fleet.map((n) => nameTrackMin([n]))));
-  assert.ok(nameTrackMin([fleet[4]!]) < min);
-  // A wide prefix badge costs width too: the same body behind [OpenJobs-Data]
-  // needs a wider track than it does bare.
-  assert.ok(
-    nameTrackMin([node({ id: "p", name: "[OpenJobs-Data]-gomami-jpn-pulse-nano" })]) >
-      nameTrackMin([node({ id: "b", name: "gomami-jpn-pulse-nano" })]),
+/**
+ * The live fleet's six widest name bodies at 14px medium, as Chrome on macOS
+ * draws them (the Akkocloud figure) and as the system face measures them
+ * (the rest, from the design spec's PIL pass over SFNS.ttf).
+ */
+const MEASURED: Record<string, number> = {
+  "Akkocloud-UK-London-KVM": 187,
+  "gomami-jpn-pulse-nano": 152,
+  "Aaitr-jp-softbank-NAT": 149,
+  "gomami-hk-turin-mini": 137,
+  "gomami-jp-pulse-mini": 137,
+  "LegendVPS-SG-EVO": 132,
+};
+const measured = (body: string) => MEASURED[body] ?? body.length * 8;
+
+const fleet = [
+  node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" }),
+  node({ id: "node_5cuasrdombv", name: "[cd]-gomami-jpn-pulse-nano" }),
+  node({ id: "node_fdlsvreyz4un2elo", name: "[Metix]-Aaitr-jp-softbank-NAT" }),
+  node({ id: "node_ykr7g35t3gzmgshc", name: "[OpenJobs-Data]-TiDB-1" }),
+  node({ id: "legend", name: "[cd]-LegendVPS-SG-EVO" }),
+  node({ id: "dmit-1", name: "[Metix]-DMIT-1" }),
+];
+
+test("the Node column is the longest measured name body plus the cell's fixed chrome", () => {
+  // 12px row padding + 8px dot + 8px gap + 187px name + 12px cell padding
+  // + 1px hairline: 228px on the live fleet, the number the spec records.
+  assert.equal(NAME_CELL_CHROME_PX, 12 + 8 + 8 + 12 + 1);
+  assert.equal(nameTrackMin(fleet, measured), 228);
+  // The widest row governs, whichever it is.
+  assert.equal(nameTrackMin(fleet, measured), Math.max(...fleet.map((n) => nameTrackMin([n], measured))));
+  assert.ok(nameTrackMin([fleet[5]!], measured) < 228);
+});
+
+test("the owner prefix no longer widens the Node column", () => {
+  // The same body behind [OpenJobs-Data] and bare measures the same: the
+  // prefix has a column of its own now, and the names line up at one x.
+  assert.equal(
+    nameTrackMin([node({ id: "p", name: "[OpenJobs-Data]-gomami-jpn-pulse-nano" })], measured),
+    nameTrackMin([node({ id: "b", name: "gomami-jpn-pulse-nano" })], measured),
   );
+  // A fractional measurement rounds up, never down into the hairline.
+  assert.equal(nameTrackMin([node({ id: "f", name: "frac" })], () => 200.2), 200 + NAME_CELL_CHROME_PX + 1);
+});
+
+test("without a measurer the per-character estimate stands in", () => {
+  // 8.3px a character leaves a little over Chrome's 8.1px: the estimate is
+  // never narrower than the measurement for the fleet's longest name.
+  assert.ok(estimateNameWidth("Akkocloud-UK-London-KVM") >= 187);
+  assert.equal(nameTrackMin(fleet), nameTrackMin(fleet, estimateNameWidth));
+  assert.ok(nameTrackMin(fleet) >= nameTrackMin(fleet, measured));
+  assert.ok(nameTrackMin(fleet) < 300, `${nameTrackMin(fleet)}px is more than the longest name needs`);
+  // CJK glyphs are square: one em each, wider than a Latin character.
+  assert.ok(estimateNameWidth("东京节点") > estimateNameWidth("tokyo"));
 });
 
 test("the name track stays inside its band", () => {
   assert.equal(nameTrackMin([]), NAME_TRACK_MIN_PX);
   assert.equal(nameTrackMin([node({ id: "a", name: "a" })]), NAME_TRACK_MIN_PX);
   assert.equal(nameTrackMin([node({ id: "x", name: "x".repeat(120) })]), NAME_TRACK_MAX_PX);
+  assert.equal(nameTrackMin([node({ id: "x", name: "x" })], () => 10_000), NAME_TRACK_MAX_PX);
   // The id stands in for a missing name, as it does in the cell.
   assert.ok(nameTrackMin([node({ id: "node_" + "k".repeat(40), name: "" })]) > NAME_TRACK_MIN_PX);
+});
+
+test("the owner is a column of its own, right after Node, sortable, chip-sized", () => {
+  const ids = NODE_TABLE_COLUMNS.map((c) => c.id);
+  assert.equal(ids.indexOf("owner"), ids.indexOf("name") + 1);
+  const owner = NODE_TABLE_COLUMNS.find((c) => c.id === "owner")!;
+  assert.equal(owner.labelKey, "fleet.nodes.table.colOwner");
+  // The widest live owner chip ("OpenJobs-Data") is 99px at the chip's 11px;
+  // the track holds it and no more. A longer owner truncates inside the chip.
+  assert.equal(owner.width, "104px");
+  assert.ok(trackMinPx(owner.width) >= 99);
+  assert.equal(owner.sortKey, "owner");
+  // Visible until hidden, and the column manager can hide it.
+  assert.equal(owner.optional, true);
+  assert.ok(!owner.defaultHidden);
+  assert.ok(visibleColumns(parseHiddenColumns(null)).some((c) => c.id === "owner"));
+  assert.ok(!visibleColumns(parseHiddenColumns("owner")).some((c) => c.id === "owner"));
+});
+
+test("sortNodes by owner groups the prefixes and puts unowned nodes last either way", () => {
+  const rows = [
+    node({ id: "1", name: "[Metix]-DMIT-1" }),
+    node({ id: "2", name: "bare" }),
+    node({ id: "3", name: "[cd]-homeserver" }),
+    node({ id: "4", name: "[OpenJobs-Data]-TiDB-1" }),
+    node({ id: "5", name: "[cd]-Akkocloud-UK-London-KVM" }),
+  ];
+  const asc = sortNodes(rows, { key: "owner", dir: "asc" }).map((n) => n.id);
+  assert.deepEqual(asc, ["5", "3", "1", "4", "2"]);
+  const desc = sortNodes(rows, { key: "owner", dir: "desc" }).map((n) => n.id);
+  assert.deepEqual(desc, ["4", "1", "5", "3", "2"]);
+  // Ties within an owner fall through to name.
+  assert.ok(asc.indexOf("5") < asc.indexOf("3"));
+  assert.equal(nextSortState({ key: "", dir: "asc" }, "owner").key, "owner");
 });
 
 test("the hostname is a column of its own, in the catalog and the column manager", () => {
   const hostname = NODE_TABLE_COLUMNS.find((c) => c.id === "hostname");
   assert.ok(hostname, "hostname column missing from the catalog");
   assert.equal(hostname.labelKey, "fleet.nodes.table.colHostname");
-  // Optional, so the column manager lists it; visible until hidden.
+  // Optional, so the column manager lists it. Out of the default set: its
+  // 200px floor is what the card's width budget could not hold.
   assert.equal(hostname.optional, true);
-  assert.ok(!hostname.defaultHidden);
-  assert.ok(visibleColumns(parseHiddenColumns(null)).some((c) => c.id === "hostname"));
+  assert.equal(hostname.defaultHidden, true);
+  assert.ok(!visibleColumns(parseHiddenColumns(null)).some((c) => c.id === "hostname"));
+  assert.ok(visibleColumns(parseHiddenColumns("")).some((c) => c.id === "hostname"));
   assert.ok(!visibleColumns(parseHiddenColumns("hostname")).some((c) => c.id === "hostname"));
   assert.equal(serializeHiddenColumns(new Set(["hostname"])), "hostname");
 });
@@ -197,19 +275,172 @@ test("one name minimum for the page, so grouped tables do not disagree on the co
   // different widths; the page's minimum is the widest group's.
   const london = [node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" })];
   const tokyo = [node({ id: "dmit-1", name: "[Metix]-DMIT-1" }), node({ id: "b", name: "b" })];
-  assert.notEqual(nameTrackMin(london), nameTrackMin(tokyo));
-  const page = nameTrackMin([...london, ...tokyo]);
-  assert.equal(page, Math.max(nameTrackMin(london), nameTrackMin(tokyo)));
+  assert.notEqual(nameTrackMin(london, measured), nameTrackMin(tokyo, measured));
+  const page = nameTrackMin([...london, ...tokyo], measured);
+  assert.equal(page, Math.max(nameTrackMin(london, measured), nameTrackMin(tokyo, measured)));
   // Order of the groups does not matter.
-  assert.equal(nameTrackMin([...tokyo, ...london]), page);
+  assert.equal(nameTrackMin([...tokyo, ...london], measured), page);
 });
 
-test("gridTemplate carries the content-derived name minimum into the name track", () => {
-  const template = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 260);
-  assert.ok(template.startsWith("minmax(260px,1.6fr) "), template);
-  assert.ok(gridTemplate(DEFAULT_HIDDEN_COLUMNS).startsWith(`minmax(${NAME_TRACK_MIN_PX}px,1.6fr) `));
+test("gridTemplate pins the Node track at the measured width, plus the checkbox when selectable", () => {
+  const template = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 228);
+  assert.ok(template.startsWith("228px 104px "), template);
+  assert.ok(gridTemplate(DEFAULT_HIDDEN_COLUMNS).startsWith(`${NAME_TRACK_MIN_PX}px `));
+  // The selection checkbox lives inside the pinned cell, not in a track of
+  // its own: 16px plus its 12px gap, 256px on the live fleet.
+  assert.equal(SELECT_CELL_PX, 28);
+  const selectable = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 228, true);
+  assert.ok(selectable.startsWith("256px 104px "), selectable);
+  assert.equal(selectable.split(" ").length, template.split(" ").length);
   // The other tracks are untouched by it.
   assert.equal(template.split(" ").slice(1).join(" "), gridTemplate(DEFAULT_HIDDEN_COLUMNS).split(" ").slice(1).join(" "));
+});
+
+test("the pinned Node cell is one opaque block on the card surface with a hairline edge", () => {
+  // The leak: two separately pinned cells with transparent padding and gap
+  // between them, painted on a different surface than the header. One cell,
+  // sticky at left 0, carrying the row's left padding, on --card, above the
+  // scrolling cells, with the hairline inset on its right edge.
+  const source = readFileSync(fileURLToPath(new URL("../../../components/common/NodeTable.vue", import.meta.url)), "utf8");
+  const cell = /const STICKY_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  const header = /const STICKY_HEADER_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  for (const [name, classes] of [["cell", cell], ["header", header]] as const) {
+    for (const required of ["sm:sticky", "sm:left-0", "h-full", "bg-card", "pl-3", "shadow-[inset_-1px_0_0_var(--border)]"]) {
+      assert.ok(classes.includes(required), `${name} lacks ${required}`);
+    }
+    assert.ok(!classes.includes("bg-background"), `${name} paints a second surface`);
+  }
+  assert.ok(/\bz-10\b/.test(cell) && /\bz-20\b/.test(header), "header must stack above the cells");
+  // Hover and selection tints are opaque mixes into the card, never into transparent.
+  assert.ok(cell.includes("var(--foreground)_3%,var(--card)"));
+  assert.ok(cell.includes("var(--primary)_8%,var(--card)"));
+  // The row leaves its padding to the pinned cells, the left one and the
+  // right one; a transparent strip at either edge is the leak.
+  assert.doesNotMatch(source, /class="group\/row grid [^"]*\b(?:px-3|pl-3|pr-3)\b/);
+  assert.doesNotMatch(source, /sm:left-15|sm:left-3/);
+});
+
+test("the Actions cell pins to the right edge on the same surface, hairline on its left, padding inside", () => {
+  // The three row buttons were the last track of a table that scrolls, so
+  // with the default set 261px wider than a 1440 card they sat off screen at
+  // rest. The cell is the Node cell's mirror: sticky at right 0, the card
+  // surface, the same tints, the hairline on the edge that faces the data,
+  // and the row's right padding carried inside so nothing scrolls through a
+  // strip beside the buttons.
+  const source = readFileSync(fileURLToPath(new URL("../../../components/common/NodeTable.vue", import.meta.url)), "utf8");
+  const cell = /const STICKY_ACTIONS_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  const header = /const STICKY_ACTIONS_HEADER_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  for (const [name, classes] of [["cell", cell], ["header", header]] as const) {
+    for (const required of ["sm:sticky", "sm:right-0", "h-full", "bg-card", "pr-3", "justify-end", "shadow-[inset_1px_0_0_var(--border)]"]) {
+      assert.ok(classes.includes(required), `${name} lacks ${required}`);
+    }
+    assert.ok(!classes.includes("bg-background"), `${name} paints a second surface`);
+    // Opaque at rest: the reveal belongs to the buttons, not the pinned surface.
+    assert.ok(!classes.includes("opacity-0"), `${name} fades with the buttons`);
+  }
+  assert.ok(/\bz-10\b/.test(cell) && /\bz-20\b/.test(header), "header must stack above the cells");
+  assert.ok(cell.includes("var(--foreground)_3%,var(--card)"));
+  assert.ok(cell.includes("var(--primary)_8%,var(--card)"));
+  // The focus ring's top, bottom and right segments, and the hairline survives focus.
+  const ring = /group-focus-visible\/row:shadow-\[([^\]]*)\]/.exec(cell);
+  assert.ok(ring, `cell lacks a focus shadow: ${cell}`);
+  const segments = ring[1]!.split(",");
+  assert.equal(segments.filter((s) => s.includes("var(--ring)")).length, 3, ring[1]);
+  assert.ok(segments.includes("inset_-2px_0_0_var(--ring)"), "the right segment is the cell's to draw");
+  assert.equal(segments.at(-1), "inset_1px_0_0_var(--border)", "the hairline must survive focus");
+  // The reveal is on a block inside the cell, and both cells are in the template.
+  assert.match(source, /<div :class="STICKY_ACTIONS_CELL">\s*<div\s+class="[^"]*\bopacity-0\b[^"]*group-hover\/row:opacity-100/);
+  assert.match(source, /:class="STICKY_ACTIONS_HEADER_CELL"/);
+});
+
+test("the default set fits a 1440 display with the sidebar collapsed, no horizontal scroll", () => {
+  // The card's scroller at 1440 is 1276px with the sidebar collapsed and
+  // 1100px with it open. The table scrolls when the sum of the visible track
+  // floors and gaps passes the scroller, so that sum, at the live fleet's
+  // measured Node width with the selection checkbox, is the budget. Before
+  // this the default set came to 1537px and the row actions sat off screen.
+  const nameMin = nameTrackMin(fleet, measured);
+  const budget = tableMinWidthPx(DEFAULT_HIDDEN_COLUMNS, nameMin, true);
+  assert.ok(budget <= 1276, `default set is ${budget}px, more than a 1276px scroller`);
+  // With the sidebar open too, with room to spare for a wider name.
+  assert.ok(budget <= 1100, `default set is ${budget}px, more than an 1100px scroller`);
+  // name 256 + owner 104 + status 112 + tags 120 + publicIp 150 + agentConfig 150
+  // + actions 116, six 12px gaps.
+  assert.equal(budget, 256 + 104 + 112 + 120 + 150 + 150 + 116 + 6 * 12);
+});
+
+test("the row spans the card whatever is hidden: one data track is flexible, both pinned ones fixed", () => {
+  // Both pinned tracks are px values: the Node one so it pins no more of the
+  // viewport than the longest name needs, the Actions one so the pinned
+  // surface is the buttons and not a stretch of empty card with a hairline
+  // down its far side. Hide Tags and Hostname and nothing else is flexible,
+  // so the template promotes the last data track before Actions; the spare
+  // width lands there, the row spans the card, and the actions sit at its
+  // edge instead of at the end of the tracks.
+  const everything = parseHiddenColumns(
+    NODE_TABLE_COLUMNS.filter((c) => c.optional)
+      .map((c) => c.id)
+      .join(","),
+  );
+  // A stored value is the operator's whole answer (see parseHiddenColumns),
+  // so "the default set without Tags" is the default set plus "tags".
+  const withoutTags = new Set([...DEFAULT_HIDDEN_COLUMNS, "tags"]);
+  const sets = [
+    DEFAULT_HIDDEN_COLUMNS,
+    withoutTags,
+    new Set([...DEFAULT_HIDDEN_COLUMNS, "tags", "agentConfig"]),
+    parseHiddenColumns("hostname,tags,cpu,memory,disk,lastSeen"),
+    everything,
+  ];
+  for (const hidden of sets) {
+    const tracks = gridTemplate(hidden, 228, true).split(" ");
+    assert.equal(tracks.at(-1), "116px", tracks.join(" "));
+    assert.match(tracks[0]!, /^\d+px$/, "the pinned track must stay fixed");
+    assert.equal(tracks.filter((t) => t.includes("1fr")).length >= 1, true, tracks.join(" "));
+  }
+  // The default set's flexible track is Tags, its own minmax; nothing is promoted.
+  assert.deepEqual(gridTemplate(DEFAULT_HIDDEN_COLUMNS, 228, true).split(" "), [
+    "256px", "104px", "112px", "minmax(120px,1fr)", "150px", "150px", "116px",
+  ]);
+  // Without Tags the last data track, Agent config, takes the spare width at its floor.
+  assert.equal(gridTemplate(withoutTags, 228, true).split(" ").at(-2), "minmax(150px,1fr)");
+  // Down to the required columns, Status is the one that stretches.
+  assert.deepEqual(gridTemplate(everything, 228, true).split(" "), ["256px", "minmax(112px,1fr)", "116px"]);
+  // The floor of every track is a px value the table's min-width can sum, so
+  // the grid overflows its scroller exactly when the tracks do.
+  assert.equal(trackMinPx("112px"), 112);
+  assert.equal(trackMinPx("minmax(116px,1fr)"), 116);
+  assert.equal(trackMinPx("minmax(200px, 1fr)"), 200);
+  for (const column of NODE_TABLE_COLUMNS) {
+    assert.ok(trackMinPx(column.width) > 0, `${column.id}: ${column.width} has no px floor`);
+  }
+  // name 256 (228 + checkbox) + status 112 + actions 116, two 12px gaps; the
+  // row's padding is inside the pinned tracks, so nothing is added for it.
+  assert.equal(tableMinWidthPx(everything, 228, true), 256 + 112 + 116 + 2 * 12);
+  assert.equal(tableMinWidthPx(everything, 228, false), 228 + 112 + 116 + 2 * 12);
+});
+
+test("keyboard focus on a row is a ring the pinned cell carries too", () => {
+  // The row's only focus mark was a 5% tint under outline-none, about 1.09:1
+  // against the card, and the pinned cell painted its opaque surface over
+  // even that for the leftmost 257px: the checkbox, dot, name and id. A
+  // focus indicator needs 3:1, and the cell has to draw its share of it.
+  const source = readFileSync(fileURLToPath(new URL("../../../components/common/NodeTable.vue", import.meta.url)), "utf8");
+  const row = /class="group\/row grid ([^"]*)"/.exec(source)![1]!;
+  // An inset ring: an outer one is clipped by the scroller on every side
+  // the row touches, which is all four for a full-width row.
+  for (const required of ["focus-visible:inset-ring-2", "focus-visible:inset-ring-ring"]) {
+    assert.ok(row.split(/\s+/).includes(required), `row lacks ${required}: ${row}`);
+  }
+  const cell = /const STICKY_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  // The tint the row applies, opaque on the cell, and the ring's top, bottom
+  // and left segments in --ring, with the hairline kept on the right edge.
+  assert.ok(cell.includes("group-focus-visible/row:bg-[color-mix(in_oklab,var(--foreground)_5%,var(--card))]"), cell);
+  const ring = /group-focus-visible\/row:shadow-\[([^\]]*)\]/.exec(cell);
+  assert.ok(ring, `cell lacks a focus shadow: ${cell}`);
+  const segments = ring[1]!.split(",");
+  assert.equal(segments.filter((s) => s.includes("var(--ring)")).length, 3, ring[1]);
+  assert.equal(segments.at(-1), "inset_-1px_0_0_var(--border)", "the hairline must survive focus");
 });
 
 test("sort-state persistence round-trips and rejects unknown keys", () => {
