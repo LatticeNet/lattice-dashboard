@@ -77,6 +77,10 @@ export interface FixtureNode {
   dropbear?: boolean;
   /** PasswordAuthentication as sshd -T prints it; undefined when the agent predates the sshd block. */
   password?: boolean;
+  /** The snapshot shows the inet lattice_knock table: the node runs the gate. */
+  knockGate?: boolean;
+  /** PermitRootLogin yes with passwords off: the posture the server calls partial. */
+  rootByPassword?: boolean;
 }
 
 const NOW = Date.now();
@@ -232,6 +236,16 @@ export function buildFixtureNodes(): FixtureNode[] {
   (out[26] as FixtureNode).observedAgoSec = 40 * 3600;
   (out[27] as FixtureNode).sshd = [];
   (out[31] as FixtureNode).password = undefined;
+  // The gate is on the five nodes that actually run it, as the production
+  // fleet does on 2026-09-04: four confirmed with a knock, and the one whose
+  // arm record was retired as superseded while the box kept knocking. The
+  // confirmed node hardened without knocking has no gate, and neither does
+  // the node whose window closed: its revert took the table with it.
+  for (const i of [7, 8, 12, 15, 24]) (out[i] as FixtureNode).knockGate = true;
+  // One confirmed node still permits root by password: passwords are off,
+  // so it is not open, and it is not key-only either. The server calls that
+  // partial, and the board has to have somewhere to show it.
+  (out[18] as FixtureNode).rootByPassword = true;
   return out;
 }
 
@@ -344,6 +358,7 @@ export function buildFixture(): FixtureState {
       { protocol: "udp", port: 51820, address: "0.0.0.0", process: "wireguard" },
       { protocol: "tcp", port: 2222, address: "127.0.0.1", process: "sshd" },
     ];
+    const foreignTables = n.knockGate ? ["inet lattice_knock"] : [];
     summaries.push({
       node_id: n.id,
       node_name: n.name,
@@ -356,7 +371,7 @@ export function buildFixture(): FixtureState {
       stale_after: iso((30 * 3600 - n.observedAgoSec) * 1000),
       listener_count: listeners.length,
       interface_count: 2,
-      foreign_table_count: 0,
+      foreign_table_count: foreignTables.length,
     });
     details.set(n.id, {
       node_id: n.id,
@@ -364,13 +379,14 @@ export function buildFixture(): FixtureState {
       listeners,
       interfaces: [{ name: "eth0", addresses: [`${n.publicIp}/24`] }],
       nft_version: "1.0.9",
+      foreign_tables: foreignTables,
       sshd:
         n.password === undefined || n.sshd.length === 0
           ? undefined
           : {
               password_authentication: n.password,
               pubkey_authentication: true,
-              permit_root_login: n.password ? "yes" : "prohibit-password",
+              permit_root_login: n.password || n.rootByPassword ? "yes" : "prohibit-password",
               max_auth_tries: 3,
               ports: n.sshd,
               observed_at: collected,

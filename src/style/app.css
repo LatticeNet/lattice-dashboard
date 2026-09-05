@@ -48,6 +48,11 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
+  /* The ink step of the three status colours (see the -text tokens below):
+     text-success-text and friends, for a status written as text. */
+  --color-success-text: var(--success-text);
+  --color-warning-text: var(--warning-text);
+  --color-info-text: var(--info-text);
 
   --color-border: var(--border);
   --color-input: var(--input);

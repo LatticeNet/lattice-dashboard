@@ -84,6 +84,7 @@ import type {
   SSHGuardPlanResponse,
   SSHGuardKnockStateResponse,
   SSHGuardKnockRevealResponse,
+  SSHGuardStatusResponse,
   SSOProvider,
   StaticObject,
   StepUpResponse,
@@ -600,6 +601,11 @@ export const api = {
       http.post<SSHGuardKnockStateResponse>("/api/sshguard/knock", { node_id }),
     revealKnock: (node_id: string, step_up_grant: string) =>
       http.post<SSHGuardKnockRevealResponse>("/api/sshguard/knock/reveal", { node_id, step_up_grant }),
+    // `status` is the board's per-node truth: the posture the server derives
+    // from the node's own sshd facts, whether the knock gate is on the node,
+    // and the approvals folded in as history. One call for the fleet.
+    status: (node_ids?: string[], opts?: RequestOptions) =>
+      http.post<SSHGuardStatusResponse>("/api/sshguard/status", node_ids?.length ? { node_ids } : {}, opts),
   },
 
   ddns: {

@@ -9,8 +9,25 @@ export default {
         notObserved: "no reality snapshot yet",
         nodes: "{n} nodes",
         confirmed: "{n} confirmed",
-        failedArms: "{n} failed arms",
+        failedArms: "{n} arms reverted or refused",
         reverting: "{n} reverting",
+        secured: "{n} secured",
+        passwordOpen: "{n} password open",
+        partial: "{n} partial",
+        postureUnknown: "{n} posture not reported",
+      },
+      // The row's primary word. It is what the node's own sshd -T says, never
+      // what became of the last arm approval: a key-only node whose arm was
+      // refused in August or reverted on its own is secure and reads so.
+      posture: {
+        secured: "secured",
+        securedTitle: "Password login is off, root cannot log in by password, and an authorized key is present, as the node's own sshd reported it.",
+        passwordOpen: "password open",
+        passwordOpenTitle: "sshd on this node accepts password login. This is the finding the board exists for: arm it.",
+        partial: "partial",
+        partialTitle: "Password login is off, but either root may still log in with a password (PermitRootLogin yes) or the facts show no key path in, so key-only cannot be claimed.",
+        unknown: "not reported",
+        unknownTitle: "The node has not reported sshd facts, so the board does not guess at its posture.",
       },
       actions: {
         armSelected: "Arm selected",
@@ -30,14 +47,27 @@ export default {
         windowNote: "{window} window, counted from when the arm was recorded as applied. The node's own timer started a little earlier, so treat this as the latest it can be.",
       },
       coverage: {
-        filterLabel: "Filter the fleet by coverage",
+        // The posture chips: the triage entry point. The words are the row
+        // words, so "Password open 4" means four rows read "password open".
+        postureLabel: "Filter the fleet by SSH posture",
+        posture: {
+          all: "All postures",
+          password_open: "Password open",
+          partial: "Partial",
+          unknown: "Not reported",
+          secured: "Secured",
+        },
+        // The arm-history chips: what is still in motion, and what became of
+        // past arms. A reverted or refused arm is history about the plan, not
+        // a verdict on the node, and the chip says so.
+        filterLabel: "Filter the fleet by arm history",
         filter: {
           all: "All",
           confirmed: "Confirmed",
           reverting: "Reverting",
           armPending: "Arm pending",
           open: "Not armed",
-          failed: "Failed",
+          failed: "Arm reverted or refused",
           excluded: "Excluded",
         },
         covers: {
@@ -49,6 +79,15 @@ export default {
       table: {
         node: "Node",
         stage: "Stage",
+        posture: "Posture",
+        postureTitle: "What the node's own sshd -T says, from its guard-reality snapshot. The line under it is what became of the last arm plan, which is history, not posture.",
+        lastArm: "last arm",
+        armConfirmed: "arm confirmed",
+        armHardened: "hardened, no confirm needed",
+        armHardenedTitle: "The arm installed no firewall and the host had a key, so the change is permanent and no revert timer was armed.",
+        armReverted: "arm reverted on its own at {time}",
+        armRevertedTitle: "The arm applied and nobody confirmed it within the window, so the node undid the change itself. The posture above is what sshd reports now.",
+        armDidNotApply: "arm did not apply",
         sshdNow: "SSHD now",
         password: "Password",
         knock: "Knock",
@@ -83,7 +122,6 @@ export default {
         scopeExcluded: "excluded",
         reasonExpand: "Show the full reason",
         reasonCollapse: "Show one line",
-        windowPassedAt: "window passed at {time}",
         confirmReverted: "The window passed at {time} and the node reverted on its own. There is nothing left to confirm; arm it again.",
       },
       knock: {
@@ -110,6 +148,7 @@ export default {
         title: "Knock sequence",
         description: "How to open SSH on this node. The sequence is a credential: it is the way in.",
         reveal: "Reveal sequence",
+        gateTitle: "This node runs the knock gate (nft table lattice_knock). Revealing the sequence needs a second factor and leaves an audit row.",
         hide: "Hide sequence",
         revealed: "Revealed. This is on your screen only; it is not written to any log.",
         sequenceLabel: "Sequence (UDP, in order)",
@@ -199,6 +238,19 @@ export default {
         knockOn: "knocking required",
         knockOff: "no knock",
         consequence: "If you do not confirm within {window}, each node reverts on its own.",
+        consequenceDurable: "The server marks this plan durable: nothing to confirm unless the apply finds no key on the host.",
+        // Durable is the server's word, never the console's: it is shown only
+        // when the status row attests a key path in on every node here and the
+        // plan installs no firewall, which is when the server's plan carries
+        // durable: true and its apply skips the revert timer.
+        durable: "The server reports a key path in on every node here and this plan installs no firewall, so the plan will carry durable: true. The sshd change stays on the node by itself and no confirm approval follows. The apply still checks the host for an authorized key first; if it finds none it arms the usual revert after all, the row says so, and that node then needs a confirm within {window}.",
+        firewallWindow: "This plan installs the knock firewall, which can lock you out, so it arms a revert. Confirm within {window} of the apply on each node, or the node undoes the firewall on its own.",
+        hardening: "Hardening only, but the server has not attested a key path in on {count} of the {total} nodes here (no status row, or its sshd facts show none), so the arm keeps its revert timer. Confirm within {window} of the apply on each node, or the node undoes the hardening on its own. | Hardening only, but the server has not attested a key path in on {count} of the {total} nodes here (no status row, or their sshd facts show none), so the arm keeps its revert timer. Confirm within {window} of the apply on each node, or the node undoes the hardening on its own.",
+        hardeningAll: "Hardening only, but the server has not attested a key path in on this node (no status row, or its sshd facts show none), so the arm keeps its revert timer. Confirm within {window} of the apply, or the node undoes the hardening on its own. | Hardening only, but the server has not attested a key path in on any of these {count} nodes (no status rows, or their sshd facts show none), so the arm keeps its revert timer. Confirm within {window} of the apply on each node, or the node undoes the hardening on its own.",
+        durableTitle: "Durable, as the server reads these nodes",
+        hardeningTitle: "Needs a confirm within the window",
+        firewallTitle: "Needs a confirm within the window",
+        confirmDeadline: "Confirm deadline: {window} after the arm applies, per node",
         method: "Files POST /api/sshguard/plan once per node, in this order. Each plan then needs approval under Operations / Approvals, and each node needs its own confirm.",
         controlPlaneRefused: "{name} is the control-plane host. Arm it on its own, after the rest of the fleet is confirmed.",
         notEnrolled: "{count} of these nodes is not in scope; the server will refuse its plan. Bring it into scope first. | {count} of these nodes are not in scope; the server will refuse their plans. Bring them into scope first.",
@@ -311,6 +363,7 @@ export default {
         fallbackHint: "Checked against what the node reports, not taken on trust. It lets a knock profile stand without a permanent address.",
         window: "Confirmation window (seconds)",
         windowHint: "How long you have to prove you can still get in before the revert runs. Minimum 120.",
+        windowHintDurable: "Used only if the apply finds no authorized key on the host and arms the revert after all. Minimum 120.",
       },
       errors: {
         node_required: "Pick a node.",
