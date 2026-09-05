@@ -73,7 +73,11 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   // the machine's own answer to "which box is this", so it gets a column of
   // its own; the line under the name is the short id, the one value that
   // still separates two machines sharing a name. Truncates with a title.
-  { id: "hostname", labelKey: "fleet.nodes.table.colHostname", width: "minmax(140px,1fr)", optional: true },
+  // The floor holds the fleet's longest hostnames (27 characters, the EC2
+  // "ip-10-0-12-237.ec2.internal" form, 195px at the cell's 12px mono); it is
+  // also what the table's min-width counts for the track, so it decides the
+  // width the column renders at whenever the table overflows its card.
+  { id: "hostname", labelKey: "fleet.nodes.table.colHostname", width: "minmax(200px,1fr)", optional: true },
   { id: "role", labelKey: "fleet.nodes.table.colRole", width: "104px", optional: true },
   { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true, defaultHidden: true },
   { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true, defaultHidden: true },
@@ -85,7 +89,14 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   { id: "network", labelKey: "fleet.nodes.table.colNetwork", width: "192px", optional: true, sortKey: "network", defaultDir: "desc", defaultHidden: true },
   { id: "lastSeen", labelKey: "fleet.nodes.table.colLastSeen", width: "112px", optional: true, sortKey: "lastSeen", defaultDir: "desc" },
   { id: "update", labelKey: "fleet.nodes.table.colUpdate", width: "116px", optional: true, defaultHidden: true },
-  { id: "actions", labelKey: "fleet.nodes.table.colActions", width: "116px", optional: false },
+  // The last track is the flexible one. With the Node track pinned at a px
+  // width, hiding Hostname left a template of nothing but px tracks, and the
+  // spare card width went nowhere: at 1440 with Hostname, CPU, Memory, Disk
+  // and Last seen hidden the table filled 761px of a 1342px scroller and the
+  // Actions header floated mid-card. This track absorbs the slack instead,
+  // right-aligned, so the row always spans the card and the actions sit at
+  // its edge; 116px is the floor the three icon buttons need.
+  { id: "actions", labelKey: "fleet.nodes.table.colActions", width: "minmax(116px,1fr)", optional: false },
 ];
 
 /**
@@ -333,6 +344,37 @@ export function gridTemplate(hidden: ReadonlySet<string>, nameMinPx = NAME_TRACK
   return visibleColumns(hidden)
     .map((c) => (c.id === "name" ? `${namePx}px` : c.width))
     .join(" ");
+}
+
+/**
+ * The px floor of a catalog track: the value of a fixed track, the minimum of
+ * a `minmax(Npx, ...)` one. 0 for anything else, which the catalog does not
+ * contain (the test over NODE_TABLE_COLUMNS keeps it that way).
+ */
+export function trackMinPx(width: string): number {
+  const m = /^(?:minmax\(\s*)?(\d+(?:\.\d+)?)px/.exec(width);
+  return m ? Number(m[1]) : 0;
+}
+
+/** The gap between tracks and the row's right padding (Tailwind `gap-3`, `pr-3`). */
+const TRACK_GAP_PX = 12;
+const ROW_PAD_RIGHT_PX = 12;
+
+/**
+ * The min-width of the grid for the visible column set: the sum of the track
+ * floors, the gaps and the row's right padding. The grid element is as wide
+ * as its scroller unless told otherwise, and then the tracks overflow the
+ * grid box while the row's background and border stop at the scroller's
+ * edge; the min-width makes the box follow the tracks, so the table scrolls
+ * exactly when the tracks need more than the card offers and not before.
+ */
+export function tableMinWidthPx(hidden: ReadonlySet<string>, nameMinPx = NAME_TRACK_MIN_PX, selectable = false): number {
+  const columns = visibleColumns(hidden);
+  let px = 0;
+  for (const column of columns) {
+    px += column.id === "name" ? nameMinPx + (selectable ? SELECT_CELL_PX : 0) : trackMinPx(column.width);
+  }
+  return px + (columns.length - 1) * TRACK_GAP_PX + ROW_PAD_RIGHT_PX;
 }
 
 export function parseSortState(raw: string | null): NodeSortState {

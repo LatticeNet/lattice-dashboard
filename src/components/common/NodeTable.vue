@@ -22,9 +22,9 @@ import { splitNamePrefix } from "@/lib/fleet";
 import { formatBytes, formatBytesPerSec, formatRelativeTime, shortId } from "@/lib/format";
 import { agentConfigBadges } from "@/lib/nodeFilterExpressions";
 import {
-  SELECT_CELL_PX,
   gridTemplate,
   nameTrackMin,
+  tableMinWidthPx,
   visibleColumns,
   type NodeSortState,
   type NodeTableColumn,
@@ -112,20 +112,9 @@ const allSelected = computed(() => selectionHeaderState(props.selectedIds, rowId
 function isSelected(node: Node): boolean {
   return props.selectedIds.has(node.id);
 }
-/** The min width shrinks as columns are hidden: roughly the sum of fixed
- *  tracks plus room for the flexible ones, the Node track at its measured width. */
-const minWidth = computed(() => {
-  let px = 0;
-  for (const column of columns.value) {
-    if (column.id === "name") {
-      px += nameMin.value + (props.selectable ? SELECT_CELL_PX : 0);
-      continue;
-    }
-    const fixed = /^(\d+)px$/.exec(column.width);
-    px += fixed ? Number(fixed[1]) : 200;
-  }
-  return `${px + (columns.value.length - 1) * 12 + 12}px`;
-});
+/** The min width follows the visible tracks' floors (see tableMinWidthPx),
+ *  the Node track at its measured width. */
+const minWidth = computed(() => `${tableMinWidthPx(props.hiddenColumns, nameMin.value, props.selectable)}px`);
 
 function show(id: string): boolean {
   return columns.value.some((c) => c.id === id);
@@ -175,10 +164,20 @@ function statusLabel(node: Node): string {
  *
  * The surface is the card, opaque, the same one the header cell paints; the
  * table sits inside a Card, and the earlier `bg-background` on the cells and
- * `bg-card` on the header put two surfaces in one column. Hover and selection
- * are opaque mixes of the same tints the row applies translucently, so the
- * pinned cell and the cell beside it read as one row. The cell is the full
- * row height and ends in an inset hairline, whatever passes under it.
+ * `bg-card` on the header put two surfaces in one column. Hover, selection
+ * and keyboard focus are opaque mixes of the same tints the row applies
+ * translucently, so the pinned cell and the cell beside it read as one row.
+ * The cell is the full row height and ends in an inset hairline, whatever
+ * passes under it.
+ *
+ * Focus is a ring, and the cell draws its share of it. The row's inset ring
+ * (an outer one is clipped by the scroller on every side a full-width row
+ * touches) passes under this opaque cell, which paints above it, so the cell
+ * draws the ring's top, bottom and left segments itself in the same colour
+ * and width; where the cell ends the row's own ring continues, and the
+ * hairline stays on the cell's right edge. Before this the row's only focus
+ * mark was a 5% tint, 1.09:1 against the card, and the cell covered even that
+ * for the checkbox, dot, name and id.
  *
  * From sm up only. Below it the pinned cell would be most of the viewport:
  * 256px of a 375px phone leaves 119px for everything else to scroll through.
@@ -187,7 +186,9 @@ function statusLabel(node: Node): string {
 const STICKY_CELL =
   "sm:sticky sm:left-0 z-10 flex h-full min-w-0 items-center bg-card pl-3 pr-3 shadow-[inset_-1px_0_0_var(--border)] " +
   "group-hover/row:bg-[color-mix(in_oklab,var(--foreground)_3%,var(--card))] " +
-  "group-aria-selected/row:bg-[color-mix(in_oklab,var(--primary)_8%,var(--card))]";
+  "group-aria-selected/row:bg-[color-mix(in_oklab,var(--primary)_8%,var(--card))] " +
+  "group-focus-visible/row:bg-[color-mix(in_oklab,var(--foreground)_5%,var(--card))] " +
+  "group-focus-visible/row:shadow-[inset_0_2px_0_var(--ring),inset_0_-2px_0_var(--ring),inset_2px_0_0_var(--ring),inset_-1px_0_0_var(--border)]";
 const STICKY_HEADER_CELL =
   "sm:sticky sm:left-0 z-20 flex h-full items-center gap-3 bg-card pl-3 pr-3 shadow-[inset_-1px_0_0_var(--border)]";
 
@@ -383,7 +384,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 pr-3 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 aria-selected:bg-primary/8 focus-visible:bg-foreground/5 focus-visible:outline-none"
+        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 pr-3 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 aria-selected:bg-primary/8 focus-visible:bg-foreground/5 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
         :style="gridStyle"
         :class="!isLive(node) && 'opacity-60'"
         role="button"

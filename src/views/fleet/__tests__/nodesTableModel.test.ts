@@ -20,6 +20,8 @@ import {
   serializeHiddenColumns,
   serializeSortState,
   sortNodes,
+  tableMinWidthPx,
+  trackMinPx,
   visibleColumns,
 } from "../nodesTableModel.ts";
 
@@ -304,6 +306,66 @@ test("the pinned Node cell is one opaque block on the card surface with a hairli
   assert.match(source, /class="group\/row grid [^"]*\bpr-3\b[^"]*"/);
   assert.doesNotMatch(source, /class="group\/row grid [^"]*\bpx-3\b/);
   assert.doesNotMatch(source, /sm:left-15|sm:left-3/);
+});
+
+test("the row spans the card whatever is hidden: the last track is flexible, the pinned one fixed", () => {
+  // Pinning the Node track at a px width took the last flexible track out of
+  // the common column sets: hide Hostname and every remaining track is a px
+  // value, so a 1440 card painted the table in its left 55% and left the
+  // Actions header floating mid-card. The spare width has to land somewhere,
+  // and the pinned track is the one place it must not (it would pin more of
+  // the viewport than it has to), so the trailing Actions track takes it and
+  // keeps its content right-aligned.
+  const everything = parseHiddenColumns(
+    NODE_TABLE_COLUMNS.filter((c) => c.optional)
+      .map((c) => c.id)
+      .join(","),
+  );
+  const sets = [
+    DEFAULT_HIDDEN_COLUMNS,
+    parseHiddenColumns("hostname"),
+    parseHiddenColumns("hostname,cpu,memory,disk,lastSeen"),
+    everything,
+  ];
+  for (const hidden of sets) {
+    const tracks = gridTemplate(hidden, 228, true).split(" ");
+    assert.equal(tracks.at(-1), "minmax(116px,1fr)", tracks.join(" "));
+    assert.match(tracks[0]!, /^\d+px$/, "the pinned track must stay fixed");
+  }
+  // The floor of every track is a px value the table's min-width can sum, so
+  // the grid overflows its scroller exactly when the tracks do.
+  assert.equal(trackMinPx("112px"), 112);
+  assert.equal(trackMinPx("minmax(116px,1fr)"), 116);
+  assert.equal(trackMinPx("minmax(200px, 1fr)"), 200);
+  for (const column of NODE_TABLE_COLUMNS) {
+    assert.ok(trackMinPx(column.width) > 0, `${column.id}: ${column.width} has no px floor`);
+  }
+  // name 256 (228 + checkbox) + status 112 + actions 116, two 12px gaps, 12px right padding.
+  assert.equal(tableMinWidthPx(everything, 228, true), 256 + 112 + 116 + 2 * 12 + 12);
+  assert.equal(tableMinWidthPx(everything, 228, false), 228 + 112 + 116 + 2 * 12 + 12);
+});
+
+test("keyboard focus on a row is a ring the pinned cell carries too", () => {
+  // The row's only focus mark was a 5% tint under outline-none, about 1.09:1
+  // against the card, and the pinned cell painted its opaque surface over
+  // even that for the leftmost 257px: the checkbox, dot, name and id. A
+  // focus indicator needs 3:1, and the cell has to draw its share of it.
+  const source = readFileSync(fileURLToPath(new URL("../../../components/common/NodeTable.vue", import.meta.url)), "utf8");
+  const row = /class="group\/row grid ([^"]*)"/.exec(source)![1]!;
+  // An inset ring: an outer one is clipped by the scroller on every side
+  // the row touches, which is all four for a full-width row.
+  for (const required of ["focus-visible:inset-ring-2", "focus-visible:inset-ring-ring"]) {
+    assert.ok(row.split(/\s+/).includes(required), `row lacks ${required}: ${row}`);
+  }
+  const cell = /const STICKY_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  // The tint the row applies, opaque on the cell, and the ring's top, bottom
+  // and left segments in --ring, with the hairline kept on the right edge.
+  assert.ok(cell.includes("group-focus-visible/row:bg-[color-mix(in_oklab,var(--foreground)_5%,var(--card))]"), cell);
+  const ring = /group-focus-visible\/row:shadow-\[([^\]]*)\]/.exec(cell);
+  assert.ok(ring, `cell lacks a focus shadow: ${cell}`);
+  const segments = ring[1]!.split(",");
+  assert.equal(segments.filter((s) => s.includes("var(--ring)")).length, 3, ring[1]);
+  assert.equal(segments.at(-1), "inset_-1px_0_0_var(--border)", "the hairline must survive focus");
 });
 
 test("sort-state persistence round-trips and rejects unknown keys", () => {
