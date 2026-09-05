@@ -40,8 +40,9 @@ export interface NodeTableColumn {
    * metric columns, last-seen and the row actions off the right edge: the
    * operator's first view of the fleet was name, status, role, tags and an IP,
    * and everything worth scanning for needed a horizontal scroll to reach.
-   * The default set is now the columns you triage by; the rest stay one click
-   * away in the column manager.
+   * The default set is budgeted to the card instead (see
+   * DEFAULT_HIDDEN_COLUMNS); the rest stay one click away in the column
+   * manager.
    */
   defaultHidden?: boolean;
   /** Set when the header toggles sorting. */
@@ -61,10 +62,13 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   // The bracketed prefix of the name ("[cd]-", "[OpenJobs-Data]-") used to sit
   // inside the Node cell as a badge before the name, so names started at a
   // different x on every row and the widest badge set the column. It is the
-  // owner of the machine, a value of its own, so it gets a column: 112px holds
-  // the widest owner in the fleet ("OpenJobs-Data", 81px at the chip's 11px
-  // plus chip and cell padding) and matches the Status track beside it.
-  { id: "owner", labelKey: "fleet.nodes.table.colOwner", width: "112px", optional: true, sortKey: "owner", defaultDir: "asc" },
+  // owner of the machine, a value of its own, so it gets a column. The track
+  // is chip-sized: the widest owner in the fleet ("OpenJobs-Data") is a 99px
+  // chip as Chrome on macOS draws it (85px of text at the chip's 11px medium,
+  // 6px of padding a side and the border), so 104px holds it with a little
+  // to spare, and a longer owner truncates inside the chip with the full
+  // text in its title. It was 112px, matched to the Status track.
+  { id: "owner", labelKey: "fleet.nodes.table.colOwner", width: "104px", optional: true, sortKey: "owner", defaultDir: "asc" },
   // 90px clipped the widest status pill ("never reported") to "never report...".
   // The track is sized to the longest word the column can hold, because a
   // status the operator has to guess at is the one thing this column exists for.
@@ -77,37 +81,42 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   // "ip-10-0-12-237.ec2.internal" form, 195px at the cell's 12px mono); it is
   // also what the table's min-width counts for the track, so it decides the
   // width the column renders at whenever the table overflows its card.
-  { id: "hostname", labelKey: "fleet.nodes.table.colHostname", width: "minmax(200px,1fr)", optional: true },
-  { id: "role", labelKey: "fleet.nodes.table.colRole", width: "104px", optional: true },
-  { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true, defaultHidden: true },
-  { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true, defaultHidden: true },
+  { id: "hostname", labelKey: "fleet.nodes.table.colHostname", width: "minmax(200px,1fr)", optional: true, defaultHidden: true },
+  { id: "role", labelKey: "fleet.nodes.table.colRole", width: "104px", optional: true, defaultHidden: true },
+  { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true },
+  { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true },
   { id: "archOs", labelKey: "fleet.nodes.table.colArchOs", width: "120px", optional: true, defaultHidden: true },
-  { id: "agentConfig", labelKey: "fleet.nodes.table.colAgentConfig", width: "150px", optional: true, defaultHidden: true },
-  { id: "cpu", labelKey: "fleet.nodes.metric.cpu", width: "84px", optional: true, sortKey: "cpu", defaultDir: "desc" },
-  { id: "memory", labelKey: "fleet.nodes.metric.memory", width: "160px", optional: true, sortKey: "memory", defaultDir: "desc" },
-  { id: "disk", labelKey: "fleet.nodes.metric.disk", width: "160px", optional: true, sortKey: "disk", defaultDir: "desc" },
+  { id: "agentConfig", labelKey: "fleet.nodes.table.colAgentConfig", width: "150px", optional: true },
+  { id: "cpu", labelKey: "fleet.nodes.metric.cpu", width: "84px", optional: true, sortKey: "cpu", defaultDir: "desc", defaultHidden: true },
+  { id: "memory", labelKey: "fleet.nodes.metric.memory", width: "160px", optional: true, sortKey: "memory", defaultDir: "desc", defaultHidden: true },
+  { id: "disk", labelKey: "fleet.nodes.metric.disk", width: "160px", optional: true, sortKey: "disk", defaultDir: "desc", defaultHidden: true },
   { id: "network", labelKey: "fleet.nodes.table.colNetwork", width: "192px", optional: true, sortKey: "network", defaultDir: "desc", defaultHidden: true },
-  { id: "lastSeen", labelKey: "fleet.nodes.table.colLastSeen", width: "112px", optional: true, sortKey: "lastSeen", defaultDir: "desc" },
+  { id: "lastSeen", labelKey: "fleet.nodes.table.colLastSeen", width: "112px", optional: true, sortKey: "lastSeen", defaultDir: "desc", defaultHidden: true },
   { id: "update", labelKey: "fleet.nodes.table.colUpdate", width: "116px", optional: true, defaultHidden: true },
-  // The last track is the flexible one. With the Node track pinned at a px
-  // width, hiding Hostname left a template of nothing but px tracks, and the
-  // spare card width went nowhere: at 1440 with Hostname, CPU, Memory, Disk
-  // and Last seen hidden the table filled 761px of a 1342px scroller and the
-  // Actions header floated mid-card. This track absorbs the slack instead,
-  // right-aligned, so the row always spans the card and the actions sit at
-  // its edge; 116px is the floor the three icon buttons need.
-  { id: "actions", labelKey: "fleet.nodes.table.colActions", width: "minmax(116px,1fr)", optional: false },
+  // The Actions track is pinned to the card's right edge, the mirror of the
+  // Node track, so the row's buttons stay on screen however far the table
+  // overflows. A pinned track is a fixed width for the same reason the Node
+  // one is: a flexible track that absorbed the card's spare width would pin
+  // a wide empty surface, hairline and all, in the middle of the card. 116px
+  // is the three 32px icon buttons with their two 4px gaps (104px) plus the
+  // row's 12px right padding, which the pinned cell carries inside itself so
+  // no transparent strip is left at the edge for a column to scroll through.
+  // The spare width goes to a flexible data track instead (see gridTemplate).
+  { id: "actions", labelKey: "fleet.nodes.table.colActions", width: "116px", optional: false },
 ];
 
 /**
  * Columns hidden on a console that has never been told otherwise.
  *
- * What survives is what a fleet is triaged by: which node, is it healthy, what
- * is it for, is it loaded, when did it last check in. Tags, addresses, arch and
- * update policy are lookup data - you go to them once you know which node you
- * care about, and the node page holds all of them. Keeping the default set
- * inside one screen width is what makes the metric columns visible at all;
- * before this they were 460px past the right edge.
+ * The default set is budgeted to the card: it has to fit a 1440px display
+ * with the sidebar collapsed (a 1276px scroller) without a horizontal scroll,
+ * because a first view that scrolls is the complaint this table was rebuilt
+ * over. What fits is identity and where to reach it: the node, its owner,
+ * its tags, its public address, its status, what the agent is configured to
+ * do, and the row actions. Hostname, role, the load metrics, last seen, arch
+ * and update policy are one click away in the column manager, and the node
+ * page holds all of them. The width test over this set is the budget's
+ * guard; the metric tracks alone are 404px, which is why they are not here.
  */
 export const DEFAULT_HIDDEN_COLUMNS: ReadonlySet<string> = new Set(
   NODE_TABLE_COLUMNS.filter((c) => c.defaultHidden).map((c) => c.id),
@@ -338,11 +347,28 @@ export function nameTrackMin(
  * catalog constant; with `selectable` the checkbox lives inside the same
  * pinned cell, so the track grows by the checkbox and its gap rather than
  * gaining a track of its own that the pinned surface would have to bridge.
+ *
+ * One track is always flexible. Both pinned tracks are fixed, so a visible
+ * set with no `1fr` column of its own (hide Tags and Hostname and every
+ * remaining track is a px value) would paint the table in the left part of
+ * the card and leave the pinned Actions cell floating at the end of the
+ * tracks rather than at the card's edge: sticky only ever pulls a cell back
+ * inside the scroller, never out to its edge. The last data track before
+ * Actions is promoted to `minmax(floor, 1fr)` in that case, so the spare
+ * width lands between the last value and the buttons, where an empty stretch
+ * reads as the end of the row, and the row spans the card whatever is hidden.
  */
 export function gridTemplate(hidden: ReadonlySet<string>, nameMinPx = NAME_TRACK_MIN_PX, selectable = false): string {
   const namePx = nameMinPx + (selectable ? SELECT_CELL_PX : 0);
-  return visibleColumns(hidden)
-    .map((c) => (c.id === "name" ? `${namePx}px` : c.width))
+  const columns = visibleColumns(hidden);
+  const flexible = columns.some((c) => c.width.includes("1fr"));
+  const absorb = flexible ? -1 : columns.length - 2;
+  return columns
+    .map((c, i) => {
+      if (c.id === "name") return `${namePx}px`;
+      if (i === absorb && i > 0) return `minmax(${trackMinPx(c.width)}px,1fr)`;
+      return c.width;
+    })
     .join(" ");
 }
 
@@ -356,15 +382,16 @@ export function trackMinPx(width: string): number {
   return m ? Number(m[1]) : 0;
 }
 
-/** The gap between tracks and the row's right padding (Tailwind `gap-3`, `pr-3`). */
+/** The gap between tracks (Tailwind `gap-3`). */
 const TRACK_GAP_PX = 12;
-const ROW_PAD_RIGHT_PX = 12;
 
 /**
  * The min-width of the grid for the visible column set: the sum of the track
- * floors, the gaps and the row's right padding. The grid element is as wide
- * as its scroller unless told otherwise, and then the tracks overflow the
- * grid box while the row's background and border stop at the scroller's
+ * floors and the gaps. The row has no padding of its own: the left padding
+ * rides inside the pinned Node cell and the right padding inside the pinned
+ * Actions cell, so both are already in the tracks. The grid element is as
+ * wide as its scroller unless told otherwise, and then the tracks overflow
+ * the grid box while the row's background and border stop at the scroller's
  * edge; the min-width makes the box follow the tracks, so the table scrolls
  * exactly when the tracks need more than the card offers and not before.
  */
@@ -374,7 +401,7 @@ export function tableMinWidthPx(hidden: ReadonlySet<string>, nameMinPx = NAME_TR
   for (const column of columns) {
     px += column.id === "name" ? nameMinPx + (selectable ? SELECT_CELL_PX : 0) : trackMinPx(column.width);
   }
-  return px + (columns.length - 1) * TRACK_GAP_PX + ROW_PAD_RIGHT_PX;
+  return px + (columns.length - 1) * TRACK_GAP_PX;
 }
 
 export function parseSortState(raw: string | null): NodeSortState {

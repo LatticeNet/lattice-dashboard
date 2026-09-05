@@ -192,6 +192,35 @@ const STICKY_CELL =
 const STICKY_HEADER_CELL =
   "sm:sticky sm:left-0 z-20 flex h-full items-center gap-3 bg-card pl-3 pr-3 shadow-[inset_-1px_0_0_var(--border)]";
 
+/**
+ * The Actions cell is the Node cell's mirror at the right edge.
+ *
+ * The three row buttons used to be the last track of a table that scrolls,
+ * which put them off screen at rest whenever the visible set outgrew the
+ * card: on a 1440 display with the sidebar open the buttons sat 250px past
+ * the scroller's edge, and reaching a node's terminal meant scrolling the
+ * row first. The cell pins at right 0 instead, on the same opaque card
+ * surface and with the same tints as the Node cell, with the hairline on its
+ * left edge and the row's right padding inside it, so the last data column
+ * scrolls up to the hairline and never through a transparent strip beside
+ * the buttons. The focus ring's top, bottom and right segments are the
+ * cell's to draw, as the left cell draws the left ones.
+ *
+ * The cell is opaque at rest; only the buttons inside it are the hover
+ * reveal. A cell that faded with its buttons would let the columns show
+ * through the pinned surface on every row the pointer is not on.
+ *
+ * Same breakpoint as the Node cell: from sm up.
+ */
+const STICKY_ACTIONS_CELL =
+  "sm:sticky sm:right-0 z-10 flex h-full min-w-0 items-center justify-end bg-card pr-3 shadow-[inset_1px_0_0_var(--border)] " +
+  "group-hover/row:bg-[color-mix(in_oklab,var(--foreground)_3%,var(--card))] " +
+  "group-aria-selected/row:bg-[color-mix(in_oklab,var(--primary)_8%,var(--card))] " +
+  "group-focus-visible/row:bg-[color-mix(in_oklab,var(--foreground)_5%,var(--card))] " +
+  "group-focus-visible/row:shadow-[inset_0_2px_0_var(--ring),inset_0_-2px_0_var(--ring),inset_-2px_0_0_var(--ring),inset_1px_0_0_var(--border)]";
+const STICKY_ACTIONS_HEADER_CELL =
+  "sm:sticky sm:right-0 z-20 flex h-full items-center justify-end bg-card pr-3 shadow-[inset_1px_0_0_var(--border)]";
+
 /** The server's one-sentence account, shown on hover so the word can be checked. */
 function statusTitle(node: Node): string {
   return nodeStatusReason(node) || t(info(node).hintKey);
@@ -323,7 +352,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
            and of every row pin to the left edge and the name stays readable
            while the metric columns pass underneath it. -->
       <div
-        class="grid h-8 items-center gap-3 border-b border-border bg-card pr-3 text-xs font-medium text-muted-foreground"
+        class="grid h-8 items-center gap-3 border-b border-border bg-card text-xs font-medium text-muted-foreground"
         :style="gridStyle"
         role="row"
       >
@@ -349,11 +378,15 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
               <ChevronDown v-else-if="sort.key === column.sortKey && sort.dir === 'desc'" class="size-3 text-foreground" aria-hidden="true" />
             </button>
           </div>
+          <!-- The Actions header pins with the Actions cells at the right
+               edge, the mirror of the Node header. -->
+          <div v-else-if="column.id === 'actions'" :class="STICKY_ACTIONS_HEADER_CELL">
+            <span>{{ headerLabel(column) }}</span>
+          </div>
           <button
             v-else-if="column.sortKey"
             type="button"
             class="inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
-            :class="column.id === 'actions' && 'justify-end'"
             :aria-sort="ariaSort(column)"
             :title="$t('common.table.sortBy', { column: headerLabel(column) })"
             @click="emit('toggle-sort', column.id)"
@@ -370,7 +403,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
               aria-hidden="true"
             />
           </button>
-          <span v-else :class="column.id === 'actions' && 'text-right'">{{ headerLabel(column) }}</span>
+          <span v-else>{{ headerLabel(column) }}</span>
         </template>
       </div>
 
@@ -384,7 +417,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
       <div
         v-for="node in nodes"
         :key="node.id"
-        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 pr-3 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 aria-selected:bg-primary/8 focus-visible:bg-foreground/5 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
+        class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 aria-selected:bg-primary/8 focus-visible:bg-foreground/5 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
         :style="gridStyle"
         :class="!isLive(node) && 'opacity-60'"
         role="button"
@@ -442,9 +475,21 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
 
         <!-- Owner. The bracketed prefix of the name, as a chip in a column of
              its own: inside the Node cell it started every name at a
-             different x. Empty when the name carries no prefix. -->
-        <div v-if="show('owner')" class="min-w-0" :title="namePrefix(node) || undefined">
-          <Badge v-if="namePrefix(node)" variant="outline" class="max-w-full truncate px-1.5 py-0 text-[11px] leading-4">{{ namePrefix(node) }}</Badge>
+             different x. Empty when the name carries no prefix. The track is
+             sized to the widest owner in the fleet; a longer one truncates
+             inside the chip, with the full text in the chip's title. The
+             ellipsis has to be on a block inside the chip: the chip is a flex
+             box, and text-overflow does nothing to the text it lays out
+             directly. -->
+        <div v-if="show('owner')" class="min-w-0">
+          <Badge
+            v-if="namePrefix(node)"
+            variant="outline"
+            class="max-w-full px-1.5 py-0 text-[11px] leading-4"
+            :title="namePrefix(node)"
+          >
+            <span class="truncate">{{ namePrefix(node) }}</span>
+          </Badge>
         </div>
 
         <!-- Status. A healthy node says so quietly: the dot beside the name
@@ -588,15 +633,19 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           </Badge>
         </div>
 
-        <!-- Actions (reuse the same intents NodeCard wires).
+        <!-- Actions (reuse the same intents NodeCard wires), in the cell
+             pinned to the right edge (see STICKY_ACTIONS_CELL).
              Revealed on row hover or keyboard focus rather than drawn on every
              row: three ghost buttons times a 200-node fleet is 600 controls
              competing with the data for attention, and none of them is the
              thing an operator came to read. They stay in the DOM and in the tab
-             order, so keyboard and screen-reader users lose nothing. -->
-        <div
-          class="flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-within:opacity-100"
-        >
+             order, so keyboard and screen-reader users lose nothing. The
+             reveal is on the button group, never on the pinned cell, which
+             stays opaque so nothing scrolls through it. -->
+        <div :class="STICKY_ACTIONS_CELL">
+          <div
+            class="flex items-center gap-1 opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-within:opacity-100"
+          >
           <Button
             v-if="canOpenTerminal"
             variant="ghost"
@@ -630,6 +679,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           >
             <Power :class="['size-4', !node.disabled && 'text-destructive']" aria-hidden="true" />
           </Button>
+          </div>
         </div>
       </div>
     </div>
