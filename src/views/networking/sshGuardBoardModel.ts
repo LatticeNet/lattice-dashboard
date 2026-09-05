@@ -11,11 +11,35 @@
  *
  * Pure functions only, like the sibling model: no i18n, no colours, no HTTP.
  */
-import type { ApprovalView, GuardNodeReality, GuardRealitySummary, Node } from "@/lib/api";
+import type {
+  ApprovalView,
+  GuardNodeReality,
+  GuardRealitySummary,
+  GuardSSHPosture,
+  Node,
+  SSHGuardKnockStateResponse,
+  SSHGuardNodeStatus,
+} from "@/lib/api";
 
 // Through the alias, not "./": the node test runner resolves only `@/`, and this
 // module now pulls values from its sibling, not only types.
-import { STAGE_ORDER, isSSHGuardApproval, revertWindowPassed, type Finding, type GuardStage, type NodeGuardState } from "@/views/networking/sshGuardModel";
+import {
+  DEFAULT_CONFIRM_WINDOW_SEC,
+  KNOCK_INSTALLED,
+  STAGE_ORDER,
+  armFailureText,
+  armRejection,
+  armSuperseded,
+  isSSHGuardApproval,
+  parseMgmtSources,
+  revertDeadline,
+  revertWindowPassed,
+  type Finding,
+  type GuardForm,
+  type GuardStage,
+  type KnockKnowledge,
+  type NodeGuardState,
+} from "@/views/networking/sshGuardModel";
 
 // ── coverage ────────────────────────────────────────────────────────────────
 
@@ -440,4 +464,179 @@ export function summarizeBatch(members: readonly BatchMember[]): BatchSummary {
 /** Members a file pass should still send: never one that already has an approval. */
 export function membersToFile(members: readonly BatchMember[], retryBlocked: boolean): BatchMember[] {
   return members.filter((m) => !m.outcome || (retryBlocked && m.outcome.kind === "blocked"));
+}
+
+// ── posture: what the row's badge says ──────────────────────────────────────
+
+/**
+ * The row's primary word is the node's SSH posture, not the last arm's
+ * disposition. An arm that reverted or was refused is history; a node whose
+ * own sshd says password login is off, root cannot log in by password and a
+ * key path is present is secure whatever happened to the plan, and must
+ * read so.
+ *
+ * The server derives the posture from the facts the agent reports and serves
+ * it on the status row. A server from before that endpoint serves nothing,
+ * and then the detail's own sshd block stands in, read the same way the
+ * server reads it: password on is `password_open`; password off with root
+ * still permitted by password, or with no key path shown, is `partial`;
+ * password off, root not by password and public-key auth on is `secured`.
+ * The console cannot see authorized_keys, so pubkey auth being on is the key
+ * evidence in the fallback, as it is on the server today. No facts at all is
+ * `unknown`, never a guess.
+ */
+export type SshPosture = GuardSSHPosture;
+export const SSH_POSTURES: readonly SshPosture[] = ["secured", "password_open", "partial", "unknown"];
+
+export function isSshPosture(value: unknown): value is SshPosture {
+  return typeof value === "string" && (SSH_POSTURES as readonly string[]).includes(value);
+}
+
+export function sshPosture(
+  status: Pick<SSHGuardNodeStatus, "posture"> | undefined,
+  detail: Pick<GuardNodeReality, "sshd"> | undefined,
+): SshPosture {
+  const served = status?.posture?.state;
+  if (isSshPosture(served)) return served;
+  const facts = detail?.sshd;
+  if (!facts) return "unknown";
+  if (facts.password_authentication) return "password_open";
+  const rootByPassword = (facts.permit_root_login ?? "").trim().toLowerCase() === "yes";
+  if (rootByPassword || !facts.pubkey_authentication) return "partial";
+  return "secured";
+}
+
+/**
+ * Whether the node runs the knock gate. Three sources agree on one fact and
+ * are read in order of authority: the status row, the knock state's
+ * `gate_present` (both the server's reading of the node's report), then the
+ * snapshot's own table list, where the agent names every nft table outside
+ * the managed one as "family name".
+ */
+export const KNOCK_TABLE = "inet lattice_knock";
+
+export function knockGate(
+  status: Pick<SSHGuardNodeStatus, "knock_gate"> | undefined,
+  knock: Pick<SSHGuardKnockStateResponse, "gate_present"> | undefined,
+  detail: Pick<GuardNodeReality, "foreign_tables"> | undefined,
+): boolean {
+  if (typeof status?.knock_gate === "boolean") return status.knock_gate;
+  if (typeof knock?.gate_present === "boolean") return knock.gate_present;
+  return (detail?.foreign_tables ?? []).some((t) => t.trim().toLowerCase() === KNOCK_TABLE);
+}
+
+/** How many rows read each posture, for the proof line. */
+export function postureCounts(postures: Iterable<SshPosture>): Record<SshPosture, number> {
+  const out: Record<SshPosture, number> = { secured: 0, password_open: 0, partial: 0, unknown: 0 };
+  for (const p of postures) out[p] += 1;
+  return out;
+}
+
+/**
+ * The badge variant per posture. `secured` is a calm positive: the outline
+ * badge in the success colour, not the filled one, because thirty green
+ * pills is noise and one amber one is the thing to see. `password_open` and
+ * `partial` are findings and read as warnings. `unknown` is muted: the node
+ * has not said, and the board does not fill in for it. No posture ever maps
+ * to the destructive badge; that badge was the bug.
+ */
+export type PostureTone = "secured" | "warning" | "muted";
+
+export function postureTone(posture: SshPosture): PostureTone {
+  if (posture === "secured") return "secured";
+  if (posture === "password_open" || posture === "partial") return "warning";
+  return "muted";
+}
+
+// ── arm history: the secondary line under the badge ────────────────────────
+
+/**
+ * What became of the last arm, as one line of plain history under the
+ * posture badge. Never a colour: a reverted or refused arm says something
+ * about the plan's paperwork, not about whether the box is safe, and the
+ * badge above already says that.
+ *
+ * `live` covers every stage where something is still in motion (an arm or
+ * confirm awaiting approval, a revert timer running) and keeps the stage
+ * word so the operator's next move is still on the row; `done` is a
+ * confirmed arm; `none` is a node nothing was ever planned for.
+ */
+export type ArmHistory =
+  | { kind: "none" }
+  | { kind: "done" }
+  /** A durable hardening-only arm applied: permanent, nothing to confirm. */
+  | { kind: "hardened" }
+  | { kind: "live"; stage: Exclude<GuardStage, "idle" | "confirmed" | "armFailed"> }
+  /** The window closed with no confirm; the box undid the arm at `at`. */
+  | { kind: "reverted"; at: number }
+  /** A person refused the plan; it never reached the box. */
+  | { kind: "rejected"; at: string; by?: string }
+  /** The server retired the record when a newer plan took over. */
+  | { kind: "superseded"; at: string }
+  /** The box could not apply it; `line` is the line the task died on. */
+  | { kind: "failed"; line: string; full: string }
+  /** Rejected on the wire with no reason recorded. */
+  | { kind: "failedNoReason" };
+
+export function armHistory(state: NodeGuardState, now: number): ArmHistory {
+  const stage = boardStage(state, now);
+  if (stage === "idle") return { kind: "none" };
+  if (stage === "confirmed") return state.durable ? { kind: "hardened" } : { kind: "done" };
+  if (stage === "reverted") return { kind: "reverted", at: revertDeadline(state)!.at };
+  if (stage !== "armFailed") return { kind: "live", stage };
+  const rejection = armRejection(state);
+  if (rejection) return rejection.by ? { kind: "rejected", at: rejection.at, by: rejection.by } : { kind: "rejected", at: rejection.at };
+  const superseded = armSuperseded(state);
+  if (superseded) return { kind: "superseded", at: superseded.at };
+  const failure = armFailureText(state);
+  if (failure) return { kind: "failed", line: failure.line, full: failure.full };
+  return { kind: "failedNoReason" };
+}
+
+// ── the reveal affordance ───────────────────────────────────────────────────
+
+/**
+ * Which control the row offers for the knock sequence.
+ *
+ * `reveal`: the node runs the gate (the snapshot shows lattice_knock), so
+ * an operator locked out of it needs the sequence, and the row says so in
+ * words with a button that runs the step-up reveal. Shown for every gated
+ * node, including one whose sequence the control plane does not hold: the
+ * dialog then says that in the server's words, which beats a row that hides
+ * the question. `icon`: the control plane holds a sequence but the snapshot
+ * shows no gate (planned, or a gate the agent has not reported yet), so the
+ * quiet key button stays. `none`: nothing to reveal.
+ */
+export type RevealAffordance = "reveal" | "icon" | "none";
+
+export function revealAffordance(gate: boolean, knowledge: KnockKnowledge): RevealAffordance {
+  if (gate) return "reveal";
+  return KNOCK_INSTALLED.has(knowledge) ? "icon" : "none";
+}
+
+// ── what an arm commits the operator to ─────────────────────────────────────
+
+/**
+ * Whether the plan installs a firewall, read the way the server's lint reads
+ * it: a profile with neither a management source nor a knock policy renders
+ * no nft table at all and only edits sshd. That split decides the ceremony.
+ * The sshd change is durable and needs no confirm. The knock firewall can
+ * lock the operator out, so it arms a revert and needs the confirm within
+ * the window.
+ */
+export function installsFirewall(form: Pick<GuardForm, "enableKnock" | "mgmtSources">): boolean {
+  return form.enableKnock || parseMgmtSources(form.mgmtSources).values.length > 0;
+}
+
+export interface ArmCommitment {
+  firewall: boolean;
+  /** The confirm window the arm would run with. Meaningful only when `firewall`. */
+  windowSec: number;
+}
+
+export function armCommitment(form: Pick<GuardForm, "enableKnock" | "mgmtSources" | "confirmWindowSec">): ArmCommitment {
+  return {
+    firewall: installsFirewall(form),
+    windowSec: form.confirmWindowSec > 0 ? form.confirmWindowSec : DEFAULT_CONFIRM_WINDOW_SEC,
+  };
 }

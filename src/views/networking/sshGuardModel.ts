@@ -47,6 +47,12 @@ export interface NodeGuardState {
   stage: GuardStage;
   /** True while an applied arm has no applied confirm: a revert is pending. */
   revertArmed: boolean;
+  /**
+   * The applied arm was durable: it installed no firewall and the host
+   * showed a key, so no timer was armed and no confirm follows. Reads as
+   * `confirmed` on the board, because the change is permanent either way.
+   */
+  durable?: boolean;
   /** The approval the operator most likely wants to open next, if any. */
   actionableApprovalId?: string;
   arm?: ApprovalView;
@@ -83,6 +89,12 @@ export function deriveNodeGuardState(approvals: ApprovalView[], nodeId: string):
   // Applied. A confirm that predates this arm belongs to an earlier attempt and
   // says nothing about this one.
   const current = confirm && after(confirm, arm) ? confirm : undefined;
+  // A durable arm armed no timer: the change is permanent and there is
+  // nothing to confirm. Unless the host found no key and armed the timer
+  // after all, which the server records on the approval.
+  if (armDurable(arm)) {
+    return { nodeId, stage: "confirmed", revertArmed: false, durable: true, arm, confirm: current };
+  }
   if (!current || (current.status !== "pending" && current.status !== "approved" && current.status !== "applied")) {
     return { nodeId, stage: "awaitingConfirm", revertArmed: true, arm, confirm: current };
   }
@@ -532,6 +544,25 @@ export function armFailureText(state: NodeGuardState): { line: string; full: str
   if (!full) return undefined;
   const lines = full.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   return { line: lines[lines.length - 1] ?? full, full };
+}
+
+/**
+ * The mark the server writes into a durable arm's reason when the host
+ * showed no authorized key and the apply armed the revert timer anyway.
+ */
+export const SSHGUARD_TIMER_ARMED_MARK = "revert timer armed after all: no authorized key was found on the host";
+
+/** Whether the arm plan claims to be durable: the `durable: true` header line RenderArmPlan writes. */
+export function parseArmDurable(plan: string | undefined): boolean {
+  return /^durable:\s*true\s*$/m.test(plan ?? "");
+}
+
+/**
+ * Whether an applied arm is permanent on its own: the plan claimed it and
+ * the host did not fall back to the timer.
+ */
+export function armDurable(arm: Pick<ApprovalView, "plan" | "reason">): boolean {
+  return parseArmDurable(arm.plan) && !(arm.reason ?? "").includes(SSHGUARD_TIMER_ARMED_MARK);
 }
 
 /** The confirm window the arm plan was rendered with, read back from its text. */

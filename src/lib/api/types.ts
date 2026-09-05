@@ -640,6 +640,95 @@ export interface SSHGuardKnockStateResponse {
    * Omitted otherwise.
    */
   previous_honoured?: boolean;
+  /** The node's own report lists the inet lattice_knock table right now. Absent on a server that predates it. */
+  gate_present?: boolean;
+}
+
+// ── SSH Guard status: posture first, approvals as history ───────────────────
+//
+// POST /api/sshguard/status. One row per node, driven by what the node
+// reports about its own sshd rather than by how its last approval ended. The
+// board reads the posture and the knock gate from here; the approvals it
+// already polls stay the source for the stage machine and the history line.
+
+/**
+ * What the node's own sshd says about who can log in, derived by the server
+ * from the facts the agent reports. `secured`: password authentication off,
+ * root not permitted by password, and a key path in. `password_open`: sshd
+ * accepts passwords. `partial`: passwords off but root may still log in with
+ * one, or no key path is shown, so key-only cannot be claimed. `unknown`: the
+ * node has not reported sshd facts.
+ */
+export type GuardSSHPosture = "secured" | "password_open" | "partial" | "unknown";
+
+export interface SSHGuardPostureView {
+  state: GuardSSHPosture;
+  /** The facts show a key path in; `key_evidence` says which fact backed it. */
+  key_access: boolean;
+  key_evidence?: "authorized_keys" | "pubkey_authentication" | string;
+  /** The server's own sentence for this posture. Rendered verbatim. */
+  reason: string;
+}
+
+/** One approval as the status row carries it: history, not state. */
+export interface SSHGuardApprovalRef {
+  approval_id: string;
+  status: string;
+  /** pending | approved | applied | rejected | dismissed | superseded */
+  outcome: string;
+  reason?: string;
+  created_at: string;
+  updated_at: string;
+  /** Arm only: the plan claims no confirm is needed (no firewall, key path shown). */
+  durable?: boolean;
+  gates_firewall?: boolean;
+  knock?: boolean;
+  confirm_window_sec?: number;
+}
+
+export type SSHGuardStatusStage =
+  | "idle"
+  | "arm_pending"
+  | "arm_approved"
+  | "arm_failed"
+  | "awaiting_confirm"
+  | "confirm_pending"
+  | "confirm_approved"
+  | "confirmed"
+  /** A durable hardening-only arm applied: no timer, nothing to confirm. */
+  | "hardened"
+  | "reverted"
+  /** The window closed unconfirmed, yet the node still reports the gate. */
+  | "in_force"
+  | string;
+
+export interface SSHGuardNodeStatus {
+  node_id: string;
+  node_name?: string;
+  enrolled: boolean;
+  /** Decides the row. Derived from `sshd`, never from the approvals. */
+  posture: SSHGuardPostureView;
+  sshd?: Pick<GuardSSHDFacts, "password_authentication" | "pubkey_authentication" | "permit_root_login" | "ports" | "observed_at">;
+  sshd_note?: string;
+  reality_collected_at?: string;
+  /** The node's report lists the inet lattice_knock table: the gate is on it right now. */
+  knock_gate: boolean;
+  stage: SSHGuardStatusStage;
+  /** The stage records a past attempt on a node that is secured anyway. */
+  stage_is_history: boolean;
+  revert_armed: boolean;
+  revert_deadline?: string;
+  actionable_approval_id?: string;
+  last_arm?: SSHGuardApprovalRef;
+  last_confirm?: SSHGuardApprovalRef;
+  knock: Pick<SSHGuardKnockStateResponse, "knowledge" | "revealable" | "requires_step_up" | "interactive_only" | "note" | "approval_id" | "confirmed">;
+}
+
+export interface SSHGuardStatusResponse {
+  ok: boolean;
+  /** Only when one node was asked for. */
+  node?: SSHGuardNodeStatus;
+  nodes: SSHGuardNodeStatus[];
 }
 
 export type SSHGuardKnockKnowledge = "installed" | "installed_superseded" | "planned" | "no_knock" | "unknown";
@@ -761,6 +850,7 @@ export interface GuardNodeReality {
   listeners?: GuardListener[];
   interfaces?: GuardInterface[];
   managed_sha?: string;
+  /** nft tables outside the managed one, as "family name" ("inet lattice_knock"). */
   foreign_tables?: string[];
   nft_version?: string;
   sshd?: GuardSSHDFacts;

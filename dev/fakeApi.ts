@@ -10,13 +10,17 @@
 import { ApiError } from "@/lib/api/client";
 import type {
   ApprovalView,
+  GuardSSHDFacts,
   Node,
   NodeCapability,
   Principal,
   SSHGuardFinding,
   SSHGuardKnockStateResponse,
+  SSHGuardNodeStatus,
   SSHGuardPlanRequest,
   SSHGuardPlanResponse,
+  SSHGuardPostureView,
+  SSHGuardStatusResponse,
 } from "@/lib/api/index";
 
 import { NO_KNOCK_NODE, SUPERSEDED_CODE, fixtureId, fixtureIso, toApiNodes } from "./sshGuardFixture";
@@ -34,6 +38,40 @@ function delay<T>(value: T): Promise<T> {
 
 function nodeByName(name: string) {
   return state.nodes.find((n) => n.name === name);
+}
+
+/** The node's report lists the knock table, as the server's sshGuardKnockGate reads it. */
+function gatePresent(nodeId: string): boolean {
+  return (state.details.get(nodeId)?.foreign_tables ?? []).includes("inet lattice_knock");
+}
+
+/**
+ * The server's DerivePosture, sentence for sentence, so the harness shows
+ * the reasons the API shows. Today's agent reports no authorized-key count,
+ * so pubkey authentication is the key evidence, as on the server.
+ */
+function derivePosture(facts: GuardSSHDFacts | undefined): SSHGuardPostureView {
+  if (!facts) {
+    return { state: "unknown", key_access: false, reason: "This node has not reported its sshd configuration, so nothing is claimed about who can log in." };
+  }
+  const out: SSHGuardPostureView = { state: "unknown", key_access: facts.pubkey_authentication, reason: "" };
+  if (out.key_access) out.key_evidence = "pubkey_authentication";
+  if (facts.password_authentication) {
+    out.state = "password_open";
+    out.reason = "sshd accepts password logins on this node. A brute force against it can succeed; harden it.";
+    return out;
+  }
+  if (facts.permit_root_login.trim().toLowerCase() === "yes") {
+    out.state = "partial";
+    out.reason = "Password authentication is off, but PermitRootLogin is yes, so root is not held to key-only login.";
+  } else if (!out.key_access) {
+    out.state = "partial";
+    out.reason = "Password authentication is off and the facts show no key path in, so key-only access cannot be claimed.";
+  } else {
+    out.state = "secured";
+    out.reason = "Password authentication is off, root cannot log in by password, and public-key authentication is on. Only a key opens this node.";
+  }
+  return out;
 }
 
 /** Stable per node so a reveal, a hide and a second reveal agree, and so a rotation's digest can be checked against it. */
@@ -78,6 +116,84 @@ const unimplemented = new Proxy(
     },
   },
 );
+
+/**
+ * The knock endpoint's answer without its latency, shared by the status
+ * rows so a fleet costs one delay rather than one per node.
+ */
+function knockStateNow(node_id: string): SSHGuardKnockStateResponse {
+    const node = state.nodes.find((n) => n.id === node_id);
+    if (!node) throw new ApiError(404, "not_found", "node not found");
+    const mine = state.approvals.filter((a) => a.node_id === node_id && a.plugin === "sshguard");
+    const arms = mine.filter((a) => a.action === "sshguard-arm:v1");
+    // The arm that governs the knock is the newest applied one that carried
+    // a firewall with a sequence, as the server's sshGuardKnockStateFor
+    // reads it: a hardening-only re-arm on top neither supplies nor
+    // retires a knock, so it is skipped and the earlier arm is named.
+    const appliedArms = arms.filter((a) => a.status === "applied" && planKnocks(a));
+    const applied = appliedArms.length ? appliedArms[appliedArms.length - 1] : undefined;
+    const confirmed = mine.some((a) => a.action === "sshguard-confirm:v1" && a.status === "applied");
+    // An arm retired as superseded still governs the node when a confirm
+    // was dispatched after it, which the server reads from the confirm's
+    // own retirement. The fixture files both together.
+    const supersededArm = arms.find((a) => a.stale_code === SUPERSEDED_CODE);
+    const supersededConfirm = mine.some((a) => a.action === "sshguard-confirm:v1" && a.stale_code === SUPERSEDED_CODE);
+    const previous = node.previousPorts?.length ? { previous_honoured: true as const } : {};
+    // One host in the fixture was hardened without knocking, so the "there
+    // is no sequence" copy has somewhere to render.
+    const noKnock = node.name === NO_KNOCK_NODE;
+    const gate = { gate_present: gatePresent(node_id) };
+    if (!arms.length) {
+      return {
+        ok: true, node_id, knowledge: "unknown" as const, revealable: false,
+        requires_step_up: true, interactive_only: true, ...gate,
+        note: "The control plane has no SSH Guard plan for this node, so it does not know a knock sequence. If this node knocks, it was configured outside Lattice and the sequence is only wherever that was recorded.",
+      };
+    }
+    if (noKnock) {
+      return {
+        ok: true, node_id, knowledge: "no_knock" as const, revealable: false,
+        requires_step_up: true, interactive_only: true, approval_id: arms[arms.length - 1]!.id, ...gate,
+        note: "SSH Guard is set up on this node without port knocking. There is no sequence to show; reach SSH from a management source.",
+      };
+    }
+    if (!applied && supersededArm && supersededConfirm) {
+      return {
+        ok: true, node_id, knowledge: "installed_superseded" as const, revealable: true,
+        requires_step_up: true, interactive_only: true, approval_id: supersededArm.id, confirmed: false, ...gate,
+        port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(supersededArm), ...previous,
+        note: "The control plane knows this node's knock sequence from an arm record that was later dismissed as superseded. The dismissal retired the record, not the change: the arm and a confirm after it were both approved and dispatched before apply results were recorded on approvals, so neither outcome was written back. No later plan has replaced the knock since. Treat this as the sequence the node was last told to run, and prove it with a knock before relying on it.",
+      };
+    }
+    // A rejected or dismissed arm governs nothing: its sequence was never
+    // written to the node. Only an arm still awaiting a decision is planned.
+    const live = arms.filter((a) => a.status === "pending" || a.status === "approved");
+    if (!applied && !live.length) {
+      return {
+        ok: true, node_id, knowledge: "unknown" as const, revealable: false,
+        requires_step_up: true, interactive_only: true, ...gate,
+        note: "Every SSH Guard plan for this node was rejected or dismissed, so none of their sequences ever reached it. The control plane knows no sequence that opens this node.",
+      };
+    }
+    if (!applied) {
+      return {
+        ok: true, node_id, knowledge: "planned" as const, revealable: true,
+        requires_step_up: true, interactive_only: true, approval_id: live[live.length - 1]!.id, ...gate,
+        port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(live[live.length - 1]),
+        note: "An SSH Guard plan for this node carries a knock sequence, but it has not been applied. The node is not knocking on it yet.",
+      };
+    }
+    return {
+      ok: true, node_id, knowledge: "installed" as const, revealable: true,
+      requires_step_up: true, interactive_only: true, approval_id: applied.id, ...gate,
+      applied_at: applied.updated_at, confirmed,
+      port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(applied),
+      ...(confirmed ? {} : previous),
+      note: confirmed
+        ? "The control plane knows this node's knock sequence. It was applied and confirmed, so it is the sequence the node is running."
+        : "The control plane knows the knock sequence from the arm that was applied. That arm was never confirmed, so its automatic revert may have removed it from the node since.",
+    };
+}
 
 export const api = {
   // Step-up, so the reveal's second factor can be exercised here. Any six
@@ -215,78 +331,51 @@ export const api = {
     // The knock endpoints, close enough to the server that every state the
     // page can render is reachable here: installed and confirmed, installed
     // but never confirmed, planned, knocking off, and nothing known at all.
-    knockState: async (node_id: string) => {
+    knockState: async (node_id: string): Promise<SSHGuardKnockStateResponse> => {
       await delay(undefined);
-      const node = state.nodes.find((n) => n.id === node_id);
-      if (!node) throw new ApiError(404, "not_found", "node not found");
-      const mine = state.approvals.filter((a) => a.node_id === node_id && a.plugin === "sshguard");
-      const arms = mine.filter((a) => a.action === "sshguard-arm:v1");
-      // The arm that governs the knock is the newest applied one that carried
-      // a firewall with a sequence, as the server's sshGuardKnockStateFor
-      // reads it: a hardening-only re-arm on top neither supplies nor
-      // retires a knock, so it is skipped and the earlier arm is named.
-      const appliedArms = arms.filter((a) => a.status === "applied" && planKnocks(a));
-      const applied = appliedArms.length ? appliedArms[appliedArms.length - 1] : undefined;
-      const confirmed = mine.some((a) => a.action === "sshguard-confirm:v1" && a.status === "applied");
-      // An arm retired as superseded still governs the node when a confirm
-      // was dispatched after it, which the server reads from the confirm's
-      // own retirement. The fixture files both together.
-      const supersededArm = arms.find((a) => a.stale_code === SUPERSEDED_CODE);
-      const supersededConfirm = mine.some((a) => a.action === "sshguard-confirm:v1" && a.stale_code === SUPERSEDED_CODE);
-      const previous = node.previousPorts?.length ? { previous_honoured: true as const } : {};
-      // One host in the fixture was hardened without knocking, so the "there
-      // is no sequence" copy has somewhere to render.
-      const noKnock = node.name === NO_KNOCK_NODE;
-      if (!arms.length) {
-        return {
-          ok: true, node_id, knowledge: "unknown" as const, revealable: false,
-          requires_step_up: true, interactive_only: true,
-          note: "The control plane has no SSH Guard plan for this node, so it does not know a knock sequence. If this node knocks, it was configured outside Lattice and the sequence is only wherever that was recorded.",
-        };
+      return knockStateNow(node_id);
+    },
+    // The status rows, as server_sshguard_status.go builds them: posture from
+    // the node's own sshd facts, the gate from its table list, the approvals
+    // folded in as history. One latency for the fleet, as one request costs.
+    status: async (node_ids?: string[]): Promise<SSHGuardStatusResponse> => {
+      await delay(undefined);
+      const wanted = node_ids?.length ? new Set(node_ids) : undefined;
+      const rows: SSHGuardNodeStatus[] = [];
+      for (const n of state.nodes) {
+        if (wanted && !wanted.has(n.id)) continue;
+        const detail = state.details.get(n.id);
+        const knock = knockStateNow(n.id);
+        const mine = state.approvals.filter((a) => a.node_id === n.id && a.plugin === "sshguard");
+        const arm = [...mine].reverse().find((a) => a.action === "sshguard-arm:v1");
+        const posture = derivePosture(detail?.sshd);
+        const reverted = n.stage === "awaitingConfirm" && (n.revertInSec ?? 0) < 0;
+        const stage =
+          n.stage === "confirmed" ? "confirmed"
+            : n.stage === "armFailed" ? "arm_failed"
+              : n.stage === "armPending" ? "arm_pending"
+                : n.stage === "awaitingConfirm" ? (reverted ? "reverted" : "awaiting_confirm")
+                  : "idle";
+        rows.push({
+          node_id: n.id,
+          node_name: n.name,
+          enrolled: n.scope === "enrolled",
+          posture,
+          sshd: detail?.sshd,
+          sshd_note: detail?.sshd_note,
+          reality_collected_at: detail?.collected_at,
+          knock_gate: gatePresent(n.id),
+          stage,
+          stage_is_history: posture.state === "secured" && (stage === "arm_failed" || stage === "reverted"),
+          revert_armed: stage === "awaiting_confirm",
+          last_arm: arm
+            ? { approval_id: arm.id, status: arm.status, outcome: arm.stale_code ? "superseded" : arm.status, reason: arm.reason, created_at: arm.created_at ?? "", updated_at: arm.updated_at ?? arm.created_at ?? "", knock: /^knock: true$/m.test(arm.plan ?? "") }
+            : undefined,
+          knock: { knowledge: knock.knowledge, revealable: knock.revealable, requires_step_up: true, interactive_only: true, note: knock.note, approval_id: knock.approval_id, confirmed: knock.confirmed },
+        });
       }
-      if (noKnock) {
-        return {
-          ok: true, node_id, knowledge: "no_knock" as const, revealable: false,
-          requires_step_up: true, interactive_only: true, approval_id: arms[arms.length - 1]!.id,
-          note: "SSH Guard is set up on this node without port knocking. There is no sequence to show; reach SSH from a management source.",
-        };
-      }
-      if (!applied && supersededArm && supersededConfirm) {
-        return {
-          ok: true, node_id, knowledge: "installed_superseded" as const, revealable: true,
-          requires_step_up: true, interactive_only: true, approval_id: supersededArm.id, confirmed: false,
-          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(supersededArm), ...previous,
-          note: "The control plane knows this node's knock sequence from an arm record that was later dismissed as superseded. The dismissal retired the record, not the change: the arm and a confirm after it were both approved and dispatched before apply results were recorded on approvals, so neither outcome was written back. No later plan has replaced the knock since. Treat this as the sequence the node was last told to run, and prove it with a knock before relying on it.",
-        };
-      }
-      // A rejected or dismissed arm governs nothing: its sequence was never
-      // written to the node. Only an arm still awaiting a decision is planned.
-      const live = arms.filter((a) => a.status === "pending" || a.status === "approved");
-      if (!applied && !live.length) {
-        return {
-          ok: true, node_id, knowledge: "unknown" as const, revealable: false,
-          requires_step_up: true, interactive_only: true,
-          note: "Every SSH Guard plan for this node was rejected or dismissed, so none of their sequences ever reached it. The control plane knows no sequence that opens this node.",
-        };
-      }
-      if (!applied) {
-        return {
-          ok: true, node_id, knowledge: "planned" as const, revealable: true,
-          requires_step_up: true, interactive_only: true, approval_id: live[live.length - 1]!.id,
-          port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(live[live.length - 1]),
-          note: "An SSH Guard plan for this node carries a knock sequence, but it has not been applied. The node is not knocking on it yet.",
-        };
-      }
-      return {
-        ok: true, node_id, knowledge: "installed" as const, revealable: true,
-        requires_step_up: true, interactive_only: true, approval_id: applied.id,
-        applied_at: applied.updated_at, confirmed,
-        port_count: 3, seq_timeout_sec: 15, open_for: "12h", ssh_port: planSshPort(applied),
-        ...(confirmed ? {} : previous),
-        note: confirmed
-          ? "The control plane knows this node's knock sequence. It was applied and confirmed, so it is the sequence the node is running."
-          : "The control plane knows the knock sequence from the arm that was applied. That arm was never confirmed, so its automatic revert may have removed it from the node since.",
-      };
+      rows.sort((a, b) => (a.node_id < b.node_id ? -1 : 1));
+      return { ok: true, nodes: rows };
     },
     revealKnock: async (node_id: string, step_up_grant: string) => {
       await delay(undefined);

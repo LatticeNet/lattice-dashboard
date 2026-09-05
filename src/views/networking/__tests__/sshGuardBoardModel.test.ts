@@ -3,8 +3,16 @@ import { test } from "node:test";
 
 import { buildFleetStates, type NodeGuardState } from "../sshGuardModel.ts";
 import {
+  armCommitment,
+  armHistory,
   batchRefusal,
   boardStage,
+  installsFirewall,
+  knockGate,
+  postureCounts,
+  postureTone,
+  revealAffordance,
+  sshPosture,
   controlPlaneNodeIds,
   coverageBucket,
   coverageCounts,
@@ -349,4 +357,148 @@ test("a knock answer requested against a fingerprint the node has moved past is 
   assert.deepEqual([...mergeKnockAnswers(aFirst, new Map([["n1", { print: "b", answer: "installed" }]]), asked)], [["n1", "installed"]]);
   // A stale refusal does not clear the fresh row.
   assert.deepEqual([...mergeKnockAnswers(afterB, new Map([["n1", { print: "a", answer: undefined }]]), asked)], [["n1", "installed"]]);
+});
+
+// ── posture ─────────────────────────────────────────────────────────────────
+
+// The point of the board: a node that is key-only with password login off
+// reads as secured whatever the last arm approval's disposition was. The
+// server's word wins when it gives one; the detail's own sshd facts stand in
+// for a server from before the field.
+test("the posture badge follows the server's status row, then the node's own sshd facts, and never guesses", () => {
+  const facts = (over: Record<string, unknown>) => ({
+    sshd: { password_authentication: false, pubkey_authentication: true, permit_root_login: "without-password", ports: [22], observed_at: "2026-09-04T00:00:00Z", ...over },
+  });
+  const served = (state: string) => ({ posture: { state, key_access: true, reason: "" } }) as never;
+  // Served by the server: read verbatim, whatever the facts say.
+  assert.equal(sshPosture(served("secured"), facts({ password_authentication: true })), "secured");
+  assert.equal(sshPosture(served("password_open"), undefined), "password_open");
+  assert.equal(sshPosture(served("partial"), facts({})), "partial");
+  assert.equal(sshPosture(served("unknown"), facts({})), "unknown");
+  // A value outside the contract is not trusted; the facts decide instead.
+  assert.equal(sshPosture(served("hardened"), facts({})), "secured");
+  // No status row: the fleet's actual state on 2026-09-04 reads secured.
+  assert.equal(sshPosture(undefined, facts({ permit_root_login: "without-password" })), "secured");
+  assert.equal(sshPosture(undefined, facts({ permit_root_login: "prohibit-password" })), "secured");
+  assert.equal(sshPosture(undefined, facts({ permit_root_login: "no" })), "secured");
+  // Password on is open however root login is set.
+  assert.equal(sshPosture(undefined, facts({ password_authentication: true })), "password_open");
+  assert.equal(sshPosture(undefined, facts({ password_authentication: true, permit_root_login: "no" })), "password_open");
+  // Root by password permitted, or no key path shown: partial, as the server reads it.
+  assert.equal(sshPosture(undefined, facts({ permit_root_login: "yes" })), "partial");
+  assert.equal(sshPosture(undefined, facts({ permit_root_login: "Yes " })), "partial");
+  assert.equal(sshPosture(undefined, facts({ pubkey_authentication: false })), "partial");
+  // Never reported, or an agent that predates the sshd block.
+  assert.equal(sshPosture(undefined, undefined), "unknown");
+  assert.equal(sshPosture(undefined, { sshd: undefined }), "unknown");
+});
+
+test("no posture maps to the destructive badge; secured is calm, password open and partial warn, unknown is muted", () => {
+  assert.equal(postureTone("secured"), "secured");
+  assert.equal(postureTone("password_open"), "warning");
+  assert.equal(postureTone("partial"), "warning");
+  assert.equal(postureTone("unknown"), "muted");
+  assert.deepEqual(postureCounts(["secured", "secured", "password_open", "partial", "unknown"]), { secured: 2, password_open: 1, partial: 1, unknown: 1 });
+  assert.deepEqual(postureCounts([]), { secured: 0, password_open: 0, partial: 0, unknown: 0 });
+});
+
+test("the knock gate is the status row's answer, then the knock state's, then the snapshot's own table list", () => {
+  assert.equal(knockGate({ knock_gate: true }, { gate_present: false }, { foreign_tables: [] }), true);
+  assert.equal(knockGate({ knock_gate: false }, { gate_present: true }, { foreign_tables: ["inet lattice_knock"] }), false);
+  assert.equal(knockGate(undefined, { gate_present: true }, { foreign_tables: [] }), true);
+  assert.equal(knockGate(undefined, { gate_present: false }, { foreign_tables: ["inet lattice_knock"] }), false);
+  assert.equal(knockGate(undefined, {}, { foreign_tables: ["inet filter", "inet lattice_knock"] }), true);
+  assert.equal(knockGate(undefined, undefined, { foreign_tables: ["INET Lattice_Knock "] }), true);
+  assert.equal(knockGate(undefined, undefined, { foreign_tables: ["inet lattice_guard"] }), false);
+  assert.equal(knockGate(undefined, undefined, undefined), false);
+});
+
+// A durable arm armed no timer: it reads as confirmed with its own history
+// word, and never as a countdown that ends in "reverted". Unless the host
+// found no key and armed the timer after all, which the server writes into
+// the approval's reason; then it is an ordinary applied arm.
+test("a durable arm is permanent history, not a revert countdown", () => {
+  const plan = "stage: arm\nssh_port: 0\nknock: false\ndurable: true\nconfirm_window_sec: 900\n";
+  const fleet = buildFleetStates(
+    [
+      approval({ id: "d1", node_id: "durable", status: "applied", plan }),
+      approval({ id: "d2", node_id: "fellback", status: "applied", plan, reason: "revert timer armed after all: no authorized key was found on the host" }),
+    ],
+    [{ id: "durable" }, { id: "fellback" }],
+  );
+  const durable = fleet.find((s) => s.nodeId === "durable")!;
+  assert.equal(durable.stage, "confirmed");
+  assert.equal(durable.revertArmed, false);
+  assert.equal(durable.durable, true);
+  assert.deepEqual(armHistory(durable, LATER), { kind: "hardened" });
+  assert.equal(boardStage(durable, LATER), "confirmed");
+  const fellback = fleet.find((s) => s.nodeId === "fellback")!;
+  assert.equal(fellback.stage, "awaitingConfirm");
+  assert.equal(fellback.revertArmed, true);
+  assert.equal(boardStage(fellback, LATER), "reverted");
+});
+
+// ── arm history: secondary, never the badge ─────────────────────────────────
+
+test("the last arm's outcome is history under the badge, one kind per row", () => {
+  const fleet = buildFleetStates(
+    [
+      approval({ id: "h1", node_id: "done", status: "applied", created_at: "2026-09-02T02:00:00Z" }),
+      approval({ id: "h2", node_id: "done", action: "sshguard-confirm:v1", status: "applied", created_at: "2026-09-02T02:30:00Z" }),
+      // Applied at 03:00 with the default window: reverts at 03:15.
+      approval({ id: "h3", node_id: "closed", status: "applied" }),
+      approval({ id: "h4", node_id: "pending", status: "pending" }),
+      approval({ id: "h5", node_id: "failed", status: "rejected", approved_by: "cdcd", reason: "step 3/6\nnft: Operation not supported" }),
+      approval({ id: "h6", node_id: "rejected", status: "rejected", reason: "Move sshd", rejected_by: "user_ops", rejected_at: "2026-08-12T09:00:00Z" }),
+      approval({ id: "h7", node_id: "refused", status: "rejected", reason: "Move sshd", updated_at: "2026-08-12T09:00:00Z" }),
+      approval({ id: "h8", node_id: "superseded", status: "dismissed", stale_code: "sshguard_approval_superseded", reason: "superseded", updated_at: "2026-08-30T00:00:00Z" }),
+      approval({ id: "h9", node_id: "noreason", status: "rejected", approved_by: "cdcd", reason: "  " }),
+    ],
+    [{ id: "done" }, { id: "closed" }, { id: "pending" }, { id: "failed" }, { id: "rejected" }, { id: "refused" }, { id: "superseded" }, { id: "noreason" }, { id: "idle" }],
+  );
+  const by = (id: string) => fleet.find((s) => s.nodeId === id)!;
+  assert.deepEqual(armHistory(by("idle"), LATER), { kind: "none" });
+  assert.deepEqual(armHistory(by("done"), LATER), { kind: "done" });
+  // Past the window the row reads reverted, with the moment the box undid it.
+  assert.deepEqual(armHistory(by("closed"), LATER), { kind: "reverted", at: Date.parse("2026-09-02T03:15:00Z") });
+  // Inside the window the same node is live and keeps its stage word.
+  assert.deepEqual(armHistory(by("closed"), NOW), { kind: "live", stage: "awaitingConfirm" });
+  assert.deepEqual(armHistory(by("pending"), LATER), { kind: "live", stage: "armPending" });
+  // The failed arm carries the line the task died on and the full text.
+  assert.deepEqual(armHistory(by("failed"), LATER), { kind: "failed", line: "nft: Operation not supported", full: "step 3/6\nnft: Operation not supported" });
+  // A rejection an operator made in August, with and without a recorded actor.
+  assert.deepEqual(armHistory(by("rejected"), LATER), { kind: "rejected", at: "2026-08-12T09:00:00Z", by: "user_ops" });
+  assert.deepEqual(armHistory(by("refused"), LATER), { kind: "rejected", at: "2026-08-12T09:00:00Z" });
+  assert.deepEqual(armHistory(by("superseded"), LATER), { kind: "superseded", at: "2026-08-30T00:00:00Z" });
+  assert.deepEqual(armHistory(by("noreason"), LATER), { kind: "failedNoReason" });
+});
+
+// ── the reveal affordance ───────────────────────────────────────────────────
+
+test("every node with a knock gate offers the reveal; the icon stays for a sequence held without a gate", () => {
+  assert.equal(revealAffordance(true, "installed"), "reveal");
+  assert.equal(revealAffordance(true, "installed_superseded"), "reveal");
+  // Gated but the control plane holds nothing: the dialog says so in words.
+  assert.equal(revealAffordance(true, "unknown"), "reveal");
+  assert.equal(revealAffordance(true, "no_knock"), "reveal");
+  assert.equal(revealAffordance(true, "planned"), "reveal");
+  assert.equal(revealAffordance(false, "installed"), "icon");
+  assert.equal(revealAffordance(false, "installed_superseded"), "icon");
+  assert.equal(revealAffordance(false, "planned"), "none");
+  assert.equal(revealAffordance(false, "no_knock"), "none");
+  assert.equal(revealAffordance(false, "unknown"), "none");
+});
+
+// ── what the arm commits the operator to ────────────────────────────────────
+
+test("hardening only is durable; a management source or a knock installs the firewall and the confirm window with it", () => {
+  assert.equal(installsFirewall({ enableKnock: false, mgmtSources: "" }), false);
+  assert.equal(installsFirewall({ enableKnock: false, mgmtSources: " , " }), false);
+  assert.equal(installsFirewall({ enableKnock: true, mgmtSources: "" }), true);
+  assert.equal(installsFirewall({ enableKnock: false, mgmtSources: "203.0.113.5" }), true);
+  // An invalid source alone installs nothing: the server would refuse it anyway.
+  assert.equal(installsFirewall({ enableKnock: false, mgmtSources: "not-an-address" }), false);
+  assert.deepEqual(armCommitment({ enableKnock: false, mgmtSources: "", confirmWindowSec: 300 }), { firewall: false, windowSec: 300 });
+  assert.deepEqual(armCommitment({ enableKnock: true, mgmtSources: "", confirmWindowSec: 0 }), { firewall: true, windowSec: 900 });
+  assert.deepEqual(armCommitment({ enableKnock: false, mgmtSources: "198.51.100.0/24", confirmWindowSec: 600 }), { firewall: true, windowSec: 600 });
 });
