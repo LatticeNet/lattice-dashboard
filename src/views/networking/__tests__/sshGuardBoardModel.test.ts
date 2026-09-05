@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { buildFleetStates, type NodeGuardState } from "../sshGuardModel.ts";
@@ -8,6 +9,8 @@ import {
   batchRefusal,
   boardStage,
   installsFirewall,
+  isPostureFilter,
+  filterByPosture,
   knockGate,
   postureCounts,
   postureTone,
@@ -35,6 +38,7 @@ import {
   summarizeBatch,
   type BatchMember,
   type ScopeState,
+  type SshPosture,
 } from "../sshGuardBoardModel.ts";
 
 function approval(over: Record<string, unknown>) {
@@ -491,14 +495,87 @@ test("every node with a knock gate offers the reveal; the icon stays for a seque
 
 // ── what the arm commits the operator to ────────────────────────────────────
 
-test("hardening only is durable; a management source or a knock installs the firewall and the confirm window with it", () => {
+test("a management source or a knock installs the firewall, and the firewall always keeps the confirm window", () => {
   assert.equal(installsFirewall({ enableKnock: false, mgmtSources: "" }), false);
   assert.equal(installsFirewall({ enableKnock: false, mgmtSources: " , " }), false);
   assert.equal(installsFirewall({ enableKnock: true, mgmtSources: "" }), true);
   assert.equal(installsFirewall({ enableKnock: false, mgmtSources: "203.0.113.5" }), true);
   // An invalid source alone installs nothing: the server would refuse it anyway.
   assert.equal(installsFirewall({ enableKnock: false, mgmtSources: "not-an-address" }), false);
-  assert.deepEqual(armCommitment({ enableKnock: false, mgmtSources: "", confirmWindowSec: 300 }), { firewall: false, windowSec: 300 });
-  assert.deepEqual(armCommitment({ enableKnock: true, mgmtSources: "", confirmWindowSec: 0 }), { firewall: true, windowSec: 900 });
-  assert.deepEqual(armCommitment({ enableKnock: false, mgmtSources: "198.51.100.0/24", confirmWindowSec: 600 }), { firewall: true, windowSec: 600 });
+  const attested = [{ nodeId: "a", keyAccess: true }];
+  assert.deepEqual(armCommitment({ enableKnock: true, mgmtSources: "", confirmWindowSec: 0 }, attested), { kind: "firewall", firewall: true, windowSec: 900, unattested: [] });
+  assert.deepEqual(armCommitment({ enableKnock: false, mgmtSources: "198.51.100.0/24", confirmWindowSec: 600 }, attested), { kind: "firewall", firewall: true, windowSec: 600, unattested: [] });
+});
+
+// ── the three findings closed on this branch ────────────────────────────────
+
+test("the arm sheet claims durable only when the server attested a key path on every member", () => {
+  const hardening = { enableKnock: false, mgmtSources: "", confirmWindowSec: 300 };
+  // A server from before the status endpoint attests nothing: the sheet keeps
+  // the confirm instruction and the window, because that server arms the
+  // revert timer before the first change on every arm.
+  assert.equal(armCommitment(hardening, []).kind, "hardening");
+  assert.equal(armCommitment(hardening, [{ nodeId: "a", keyAccess: undefined }]).kind, "hardening");
+  assert.deepEqual(armCommitment(hardening, [{ nodeId: "a", keyAccess: undefined }]).unattested, ["a"]);
+  // One member without the attestation makes the whole batch a confirm case:
+  // the sheet must not promise "nothing to confirm" for a node that will revert.
+  const mixed = armCommitment(hardening, [{ nodeId: "a", keyAccess: true }, { nodeId: "b", keyAccess: false }]);
+  assert.equal(mixed.kind, "hardening");
+  assert.deepEqual(mixed.unattested, ["b"]);
+  // Every member attested and no firewall: the plan will carry durable: true.
+  const durable = armCommitment(hardening, [{ nodeId: "a", keyAccess: true }, { nodeId: "b", keyAccess: true }]);
+  assert.equal(durable.kind, "durable");
+  assert.deepEqual(durable.unattested, []);
+  assert.equal(durable.windowSec, 300);
+  // A firewall keeps the confirm-or-revert path whatever the server attests.
+  const knock = armCommitment({ enableKnock: true, mgmtSources: "", confirmWindowSec: 0 }, [{ nodeId: "a", keyAccess: true }]);
+  assert.equal(knock.kind, "firewall");
+  assert.equal(knock.firewall, true);
+  assert.equal(knock.windowSec, 900);
+  assert.equal(durable.firewall, false);
+});
+
+test("a posture filter from the address bar is accepted only when it names a posture chip", () => {
+  assert.equal(isPostureFilter("password_open"), true);
+  assert.equal(isPostureFilter("all"), true);
+  assert.equal(isPostureFilter("failed"), false);
+  assert.equal(isPostureFilter(undefined), false);
+});
+
+const POSTURES: Record<string, SshPosture> = { broken: "password_open", never: "password_open", planned: "partial", "left-out": "unknown" };
+const postureOf = (id: string): SshPosture => POSTURES[id] ?? "secured";
+
+test("filtering by posture answers the board's real question: which nodes are not secure", () => {
+  assert.deepEqual(filterByPosture(FLEET, "password_open", postureOf).map((s) => s.nodeId).sort(), ["broken", "never"]);
+  assert.deepEqual(filterByPosture(FLEET, "partial", postureOf).map((s) => s.nodeId), ["planned"]);
+  assert.deepEqual(filterByPosture(FLEET, "unknown", postureOf).map((s) => s.nodeId), ["left-out"]);
+  assert.deepEqual(filterByPosture(FLEET, "secured", postureOf).map((s) => s.nodeId).sort(), ["broken-excluded", "done", "reverting"]);
+  assert.equal(filterByPosture(FLEET, "all", postureOf).length, FLEET.length);
+});
+
+test("the finding leads the table: posture ranks first, the arm stage breaks the tie", () => {
+  // Password open first, then partial, then not reported, then the calm green
+  // rows in their stage order. A secured node whose arm reverted or was
+  // refused sits with the secured, not above the one password-open node.
+  assert.deepEqual(
+    orderForBoard(FLEET, LATER, postureOf).map((s) => s.nodeId),
+    ["broken", "never", "planned", "left-out", "broken-excluded", "reverting", "done"],
+  );
+  // Without a posture lookup the order is the stage order it always was.
+  assert.deepEqual(orderForBoard(FLEET, LATER).map((s) => s.nodeId), ["planned", "broken", "broken-excluded", "reverting", "left-out", "never", "done"]);
+});
+
+test("the board writes status as ink, never as the fill token: the light-scheme fills fail 4.5:1 as text", () => {
+  // app.css: --success measures 3.4:1 and --warning 2.5:1 as text on the light
+  // card; --success-text and --warning-text are the ink step (5.6:1). A badge
+  // or a status line that takes the fill as its text colour is unreadable in
+  // light theme, and the harness renders dark by default, so this is checked
+  // at the source rather than trusted to the eye.
+  const source = readFileSync(new URL("../SshGuardView.vue", import.meta.url), "utf8");
+  const fillAsText = [...source.matchAll(/\btext-(success|warning|info)(?![-\w/])/g)].map((m) => m[0]);
+  assert.deepEqual(fillAsText, []);
+  const theme = readFileSync(new URL("../../../style/app.css", import.meta.url), "utf8");
+  for (const name of ["success", "warning", "info"]) {
+    assert.match(theme, new RegExp(`--color-${name}-text:\\s*var\\(--${name}-text\\)`), `${name}-text is not a Tailwind colour`);
+  }
 });

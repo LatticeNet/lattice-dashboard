@@ -101,6 +101,7 @@ import {
 } from "./sshGuardModel";
 import {
   COVERAGE_FILTERS,
+  POSTURE_FILTERS,
   armCommitment,
   armHistory,
   batchRefusal,
@@ -108,10 +109,12 @@ import {
   controlPlaneNodeIds,
   coverageCounts,
   filterByCoverage,
+  filterByPosture,
   foldReality,
   formatAge,
   formatCountdown,
   isCoverageFilter,
+  isPostureFilter,
   knockGate,
   membersToFile,
   newestObservation,
@@ -132,6 +135,7 @@ import {
   type BoardStage,
   type CoverageFilter,
   type KnockAnswer,
+  type PostureFilter,
   type PostureTone,
   type ScopeState,
   type SshPosture,
@@ -219,7 +223,7 @@ function knockCell(state: NodeGuardState): { text: string; title: string; tone: 
       row.knowledge === "installed"
         ? "text-foreground"
         : row.knowledge === "installed_superseded"
-          ? "text-warning"
+          ? "text-warning-text"
           : "text-muted-foreground",
     previousHonoured: row.previousHonoured,
   };
@@ -593,9 +597,14 @@ onBeforeUnmount(() => clearInterval(clock));
 /* Fleet state and the coverage board.                                  */
 /* ------------------------------------------------------------------ */
 
-const states = computed<NodeGuardState[]>(() =>
-  orderForBoard(buildFleetStates(approvals.value, nodesQuery.data.value ?? []), now.value),
-);
+/* The fleet as the approvals describe it, unordered. The table order needs
+   each row's posture, which is folded from this same list below, so the two
+   are kept apart rather than ordered in one step. */
+const fleet = computed<NodeGuardState[]>(() => buildFleetStates(approvals.value, nodesQuery.data.value ?? []));
+
+/* The table order: the finding first (password open, partial, not reported),
+   then the calm secured rows, each group in rollout order. */
+const states = computed<NodeGuardState[]>(() => orderForBoard(fleet.value, now.value, (id) => postureOf(id).posture));
 
 /*
  * What the server knows per row. The plan on this page can say whether an
@@ -673,8 +682,32 @@ const coverageFilter = computed<CoverageFilter>({
   },
 });
 
+/*
+ * The posture filter: the triage entry point. "password_open" answers the
+ * board's real question (which nodes are not secure) with exactly those
+ * rows, whatever became of their arms. It composes with the arm-history
+ * chips and lives in the address bar beside them.
+ */
+const postureFilter = computed<PostureFilter>({
+  get: () => (isPostureFilter(route.query.posture) ? route.query.posture : "all"),
+  set: (value) => {
+    const query = { ...route.query };
+    if (value === "all") delete query.posture;
+    else query.posture = value;
+    router.replace({ query }).catch(() => {});
+  },
+});
+
 const counts = computed(() => coverageCounts(states.value, scopeOf, now.value));
-const visibleStates = computed(() => filterByCoverage(states.value, coverageFilter.value, scopeOf, now.value));
+const postureChipCounts = computed<Record<PostureFilter, number>>(() => ({ all: states.value.length, ...postures.value }));
+const visibleStates = computed(() =>
+  filterByCoverage(
+    filterByPosture(states.value, postureFilter.value, (id) => postureOf(id).posture),
+    coverageFilter.value,
+    scopeOf,
+    now.value,
+  ),
+);
 
 const proof = computed(() => proofCounts(states.value, now.value));
 const observedAt = computed(() => newestObservation(realityQuery.data.value ?? []));
@@ -714,7 +747,7 @@ interface RowPosture {
 const rowPosture = computed(
   () =>
     new Map(
-      states.value.map((s) => {
+      fleet.value.map((s) => {
         const status = statusById.value.get(s.nodeId);
         const detail = realityDetails.value.get(s.nodeId);
         const row: RowPosture = {
@@ -745,7 +778,9 @@ const POSTURE_KEY: Record<SshPosture, string> = { secured: "secured", password_o
  * the destructive badge.
  */
 const POSTURE_CLASS: Record<PostureTone, string> = {
-  secured: "border-success/50 bg-success/10 text-success",
+  // The word takes the ink token, not the fill: app.css measures the
+  // light-scheme green fill at 3.4:1 as text, the -text step at 5.6:1.
+  secured: "border-success/50 bg-success/10 text-success-text",
   warning: "",
   muted: "",
 };
@@ -981,20 +1016,28 @@ const consequence = computed(() => {
     ? (form.keepLegacyPort ? t("networking.sshGuard.sheet.legacyKeep") : t("networking.sshGuard.sheet.legacyDrop"))
     : "";
   const knock = form.enableKnock ? t("networking.sshGuard.sheet.knockOn") : t("networking.sshGuard.sheet.knockOff");
-  const tail = commitment.value.firewall
-    ? t("networking.sshGuard.sheet.consequence", { window: formatDuration(commitment.value.windowSec) })
-    : t("networking.sshGuard.sheet.durable");
+  const tail = commitment.value.kind === "durable"
+    ? t("networking.sshGuard.sheet.consequenceDurable")
+    : t("networking.sshGuard.sheet.consequence", { window: formatDuration(commitment.value.windowSec) });
   return `${[what, legacy, knock].filter(Boolean).join(", ")}. ${tail}`;
 });
 
 /*
- * What the plan commits the operator to. A hardening-only plan (no
- * management source, no knock) installs no firewall: the sshd change is
- * durable and nothing needs confirming. A plan with a firewall can lock the
- * operator out, so it arms a revert and the confirm window applies. The
- * sheet says which, and shows the window only when it means something.
+ * What the plan commits the operator to. The durability claim is the
+ * server's: a hardening-only plan is durable only when the status row
+ * attests a key path in (posture.key_access) on every member, because that
+ * is the condition under which the server's plan says `durable: true` and
+ * its apply skips the revert timer. A server that serves no status rows, or
+ * one that attests no key on some member, arms the timer on every arm, so
+ * the sheet then keeps the confirm instruction and the window. A firewall
+ * always needs the confirm within the window.
  */
-const commitment = computed(() => armCommitment(form));
+const commitment = computed(() =>
+  armCommitment(
+    form,
+    members.value.map((m) => ({ nodeId: m.nodeId, keyAccess: statusById.value.get(m.nodeId)?.posture?.key_access })),
+  ),
+);
 
 const sheetTitle = computed(() =>
   members.value.length === 1
@@ -1163,7 +1206,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
     >
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-warning/40 px-4 py-3">
         <h2 class="flex items-center gap-2 text-sm font-semibold tracking-[-0.01em]">
-          <Timer class="size-4 text-warning" aria-hidden="true" />
+          <Timer class="size-4 text-warning-text" aria-hidden="true" />
           {{ $t('networking.sshGuard.urgent.title', { count: urgent.length }, urgent.length) }}
         </h2>
         <Button
@@ -1195,7 +1238,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
             :title="$t('networking.sshGuard.urgent.windowNote', { window: formatDuration(revertDeadline(state)!.windowSec) })"
           >
             <span class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.urgent.revertsIn') }}</span>
-            <span class="ml-2 text-base font-semibold text-warning">{{ formatCountdown(revertDeadline(state)!.at - now) }}</span>
+            <span class="ml-2 text-base font-semibold text-warning-text">{{ formatCountdown(revertDeadline(state)!.at - now) }}</span>
             <span class="ml-2 text-xs text-muted-foreground">
               {{ $t('networking.sshGuard.urgent.deadlineAt', { time: formatDateTime(revertDeadline(state)!.at) }) }}
             </span>
@@ -1219,11 +1262,44 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 
     <!-- Coverage chips: the filter and the count are the same control, so
          they can never disagree. -->
+    <!-- Two chip rows. Posture first: it is the triage entry point, and the
+         one password-open chip is what an operator asking "which nodes are
+         not secure" clicks. Arm history second: what is still in motion.
+         The two compose. -->
+    <div
+      v-if="states.length"
+      class="flex flex-wrap gap-1"
+      role="group"
+      :aria-label="$t('networking.sshGuard.coverage.postureLabel')"
+      data-testid="posture-chips"
+    >
+      <button
+        v-for="key in POSTURE_FILTERS"
+        :key="key"
+        type="button"
+        :aria-pressed="postureFilter === key"
+        :title="key === 'all' ? undefined : $t(`networking.sshGuard.posture.${POSTURE_KEY[key]}Title`)"
+        :class="cn(
+          'board-chip inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          postureFilter === key
+            ? 'border-primary bg-primary/10 text-primary'
+            : key === 'password_open' || key === 'partial'
+              ? 'border-warning/60 text-warning-text hover:bg-warning/10'
+              : 'border-border text-muted-foreground hover:bg-muted/40',
+        )"
+        :data-posture-filter="key"
+        @click="postureFilter = key"
+      >
+        {{ $t(`networking.sshGuard.coverage.posture.${key}`) }}
+        <span class="font-mono tabular">{{ postureChipCounts[key] }}</span>
+      </button>
+    </div>
     <div
       v-if="states.length"
       class="flex flex-wrap gap-1"
       role="group"
       :aria-label="$t('networking.sshGuard.coverage.filterLabel')"
+      data-testid="history-chips"
     >
       <button
         v-for="key in COVERAGE_FILTERS"
@@ -1387,7 +1463,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <p
                   v-else-if="historyOf(state).kind === 'live'"
                   class="mt-1 text-[11px]"
-                  :class="state.revertArmed ? 'text-warning' : 'text-muted-foreground'"
+                  :class="state.revertArmed ? 'text-warning-text' : 'text-muted-foreground'"
                   :title="$t(`networking.sshGuard.stage.${stageOf(state)}`)"
                   data-history="live"
                 >{{ $t(`networking.sshGuard.stageShort.${stageOf(state)}`) }}</p>
@@ -1455,7 +1531,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   <span v-if="evidence.get(state.nodeId)!.sshd!.kind === 'none'" class="text-muted-foreground" :title="$t('networking.sshGuard.table.noSshdTitle')">
                     {{ $t('networking.sshGuard.table.noSshd') }}
                   </span>
-                  <span v-else :class="evidence.get(state.nodeId)!.sshd!.kind === 'legacy' ? 'text-warning' : ''">
+                  <span v-else :class="evidence.get(state.nodeId)!.sshd!.kind === 'legacy' ? 'text-warning-text' : ''">
                     {{ evidence.get(state.nodeId)!.sshd!.text }}
                   </span>
                 </template>
@@ -1476,12 +1552,12 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               <td class="px-2 py-1 align-top font-mono text-xs tabular whitespace-nowrap max-sm:text-[11px]">
                 <template v-if="evidence.get(state.nodeId)?.password">
                   <span
-                    :class="evidence.get(state.nodeId)!.password!.enabled ? 'text-warning' : ''"
+                    :class="evidence.get(state.nodeId)!.password!.enabled ? 'text-warning-text' : ''"
                     :title="$t('networking.sshGuard.table.passwordObserved', { time: formatDateTime(evidence.get(state.nodeId)!.password!.observedAt) })"
                   >{{ evidence.get(state.nodeId)!.password!.enabled ? $t('networking.sshGuard.table.passwordOn') : $t('networking.sshGuard.table.passwordOff') }}</span>
                   <span
                     v-if="evidence.get(state.nodeId)!.status === 'stale'"
-                    class="ml-1 text-warning"
+                    class="ml-1 text-warning-text"
                     :title="$t('networking.sshGuard.table.staleTitle')"
                   >{{ $t('networking.sshGuard.table.staleSince', { time: formatDateTime(evidence.get(state.nodeId)!.staleSince) }) }}</span>
                 </template>
@@ -1526,7 +1602,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                      applied moment, and then no deadline is invented. -->
                 <span
                   v-if="knockCell(state).previousHonoured && rotationDeadline(state, knockRows.get(state.nodeId))"
-                  class="block font-mono text-[11px] tabular text-warning"
+                  class="block font-mono text-[11px] tabular text-warning-text"
                   :title="$t('networking.sshGuard.knock.confirmByTitle', { window: formatDuration(rotationDeadline(state, knockRows.get(state.nodeId))!.windowSec) })"
                   data-testid="confirm-by"
                 >{{ $t('networking.sshGuard.knock.confirmBy', { time: formatDateTime(rotationDeadline(state, knockRows.get(state.nodeId))!.at) }) }}</span>
@@ -1539,7 +1615,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   </span>
                   <span
                     v-if="evidence.get(state.nodeId)!.status === 'stale'"
-                    class="ml-1 text-warning"
+                    class="ml-1 text-warning-text"
                     :title="$t('networking.sshGuard.table.staleTitle')"
                   >{{ $t('networking.sshGuard.table.stale') }}</span>
                 </template>
@@ -1687,7 +1763,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   </div>
                   <span
                     v-if="member.outcome?.kind === 'filed'"
-                    class="font-mono text-xs text-success"
+                    class="font-mono text-xs text-success-text"
                   >
                     <RouterLink
                       :to="{ path: '/approvals', query: { selected: member.outcome.approvalId } }"
@@ -1763,34 +1839,49 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <Input id="sshguard-port" v-model="sshPortInput" type="number" min="1" max="65535" :placeholder="$t('networking.sshGuard.fields.sshPortKeep')" :disabled="!canAdmin || filing" />
                 <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.fields.sshPortHint') }}</p>
               </div>
-              <div v-if="commitment.firewall" class="grid gap-1.5">
+              <!-- Always shown: even a durable arm falls back to this window
+                   when the host check finds no key, and every other arm runs
+                   its revert timer on it. -->
+              <div class="grid gap-1.5">
                 <Label for="sshguard-window">{{ $t('networking.sshGuard.fields.window') }}</Label>
                 <Input id="sshguard-window" v-model.number="form.confirmWindowSec" type="number" min="120" max="3600" :disabled="!canAdmin || filing" />
-                <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.fields.windowHint') }}</p>
+                <p class="text-xs text-muted-foreground">
+                  {{ commitment.kind === 'durable' ? $t('networking.sshGuard.fields.windowHintDurable') : $t('networking.sshGuard.fields.windowHint') }}
+                </p>
               </div>
             </div>
 
-            <!-- What this plan commits the operator to. Hardening only is
-                 durable and needs no confirm; the knock firewall arms a revert
-                 and needs the confirm within the window. The deadline is
-                 stated only when there is one. -->
+            <!-- What this plan commits the operator to, in the server's
+                 terms. Durable only when the server attested a key path on
+                 every member and no firewall is installed; otherwise the
+                 arm keeps its revert timer and the confirm deadline is
+                 stated. -->
             <div
               class="rounded-md border px-3 py-2 text-sm"
-              :class="commitment.firewall ? 'border-warning/50 bg-warning/5' : 'border-success/40 bg-success/5'"
+              :class="commitment.kind === 'durable' ? 'border-success/40 bg-success/5' : 'border-warning/50 bg-warning/5'"
               data-testid="commitment"
+              :data-commitment="commitment.kind"
               :data-firewall="commitment.firewall"
             >
               <p class="flex items-center gap-2 font-medium">
-                <Timer v-if="commitment.firewall" class="size-4 text-warning" aria-hidden="true" />
-                <Lock v-else class="size-4 text-success" aria-hidden="true" />
-                {{ commitment.firewall ? $t('networking.sshGuard.sheet.firewallTitle') : $t('networking.sshGuard.sheet.durableTitle') }}
+                <Lock v-if="commitment.kind === 'durable'" class="size-4 text-success-text" aria-hidden="true" />
+                <Timer v-else class="size-4 text-warning-text" aria-hidden="true" />
+                {{ commitment.kind === 'firewall'
+                  ? $t('networking.sshGuard.sheet.firewallTitle')
+                  : commitment.kind === 'durable'
+                    ? $t('networking.sshGuard.sheet.durableTitle')
+                    : $t('networking.sshGuard.sheet.hardeningTitle') }}
               </p>
               <p class="mt-1 text-xs text-muted-foreground">
-                {{ commitment.firewall
+                {{ commitment.kind === 'firewall'
                   ? $t('networking.sshGuard.sheet.firewallWindow', { window: formatDuration(commitment.windowSec) })
-                  : $t('networking.sshGuard.sheet.durable') }}
+                  : commitment.kind === 'durable'
+                    ? $t('networking.sshGuard.sheet.durable', { window: formatDuration(commitment.windowSec) })
+                    : commitment.unattested.length >= members.length
+                      ? $t('networking.sshGuard.sheet.hardeningAll', { count: members.length, window: formatDuration(commitment.windowSec) }, members.length)
+                      : $t('networking.sshGuard.sheet.hardening', { count: commitment.unattested.length, total: members.length, window: formatDuration(commitment.windowSec) }, commitment.unattested.length) }}
               </p>
-              <p v-if="commitment.firewall" class="mt-1 font-mono text-xs tabular text-warning" data-testid="confirm-deadline">
+              <p v-if="commitment.kind !== 'durable'" class="mt-1 font-mono text-xs tabular text-warning-text" data-testid="confirm-deadline">
                 {{ $t('networking.sshGuard.sheet.confirmDeadline', { window: formatDuration(commitment.windowSec) }) }}
               </p>
             </div>
@@ -1922,7 +2013,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
           <span v-if="filing" class="me-auto font-mono text-xs tabular text-muted-foreground">
             {{ $t('networking.sshGuard.sheet.filing', { done: fileProgress.done, total: fileProgress.total }) }}
           </span>
-          <span v-else-if="fileProgress.total" class="me-auto font-mono text-xs tabular" :class="batch.blocked || batch.failed ? 'text-destructive' : 'text-success'">
+          <span v-else-if="fileProgress.total" class="me-auto font-mono text-xs tabular" :class="batch.blocked || batch.failed ? 'text-destructive' : 'text-success-text'">
             {{ $t('networking.sshGuard.sheet.summary', { ...batch }) }}
           </span>
           <Button type="button" variant="outline" :disabled="filing" @click="sheetOpen = false">
@@ -2017,13 +2108,13 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                    rather than repeating it underneath. -->
               <p
                 :class="knockUnconfirmed
-                  ? 'rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning'
+                  ? 'rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning-text'
                   : 'text-sm text-foreground'"
               >
                 {{ knockState.note }}
               </p>
 
-              <p v-if="knockState.plan_unreadable" class="text-xs text-warning">
+              <p v-if="knockState.plan_unreadable" class="text-xs text-warning-text">
                 {{ $t('networking.sshGuard.knock.unreadable') }}
               </p>
 
@@ -2153,7 +2244,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
             <!-- Nothing to rotate from: the reason, and no form. -->
             <p
               v-else-if="!rotateOpenable(rotateEligible)"
-              class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning"
+              class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning-text"
               data-testid="rotate-reason"
             >
               {{ rotateReason(rotateEligible) }}
@@ -2175,7 +2266,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 
               <p class="text-sm">{{ $t('networking.sshGuard.rotate.window', { window: rotateWindow }) }}</p>
 
-              <p v-if="rotateUnknown" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
+              <p v-if="rotateUnknown" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning-text">
                 {{ $t('networking.sshGuard.rotate.unknownOpen') }}
               </p>
               <p v-else class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.rotate.stepUp') }}</p>

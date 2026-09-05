@@ -121,16 +121,27 @@ export function revertingNodes(states: readonly NodeGuardState[], now: number): 
 }
 
 /**
- * The rollout order with the board stage applied: a reverted node no longer
- * leads the table as if it were urgent; it sits with the failed arms, which is
- * what it is. Ties break by id, like the model's own order.
+ * The table order. The board's one real question is which nodes are not
+ * secure, so posture ranks first: password open, then partial, then not
+ * reported, then the calm green rows. Within a posture the rollout order
+ * applies with the board stage: a reverted node no longer leads as if it
+ * were urgent; it sits with the failed arms, which is what it is. Ties break
+ * by id, like the model's own order. Without a posture lookup (the fleet
+ * before the status rows land) the order is the stage order alone.
  */
-export function orderForBoard(states: readonly NodeGuardState[], now: number): NodeGuardState[] {
-  const rank = (s: NodeGuardState) => {
+export function orderForBoard(
+  states: readonly NodeGuardState[],
+  now: number,
+  postureOf?: (nodeId: string) => SshPosture,
+): NodeGuardState[] {
+  const stageRank = (s: NodeGuardState) => {
     const stage = boardStage(s, now);
     return stage === "reverted" ? STAGE_ORDER.armFailed : STAGE_ORDER[stage];
   };
-  return [...states].sort((a, b) => rank(a) - rank(b) || a.nodeId.localeCompare(b.nodeId));
+  const postureRank = (s: NodeGuardState) => (postureOf ? POSTURE_ORDER[postureOf(s.nodeId)] : 0);
+  return [...states].sort(
+    (a, b) => postureRank(a) - postureRank(b) || stageRank(a) - stageRank(b) || a.nodeId.localeCompare(b.nodeId),
+  );
 }
 
 /** The numbers the proof line states. */
@@ -525,6 +536,32 @@ export function knockGate(
   return (detail?.foreign_tables ?? []).some((t) => t.trim().toLowerCase() === KNOCK_TABLE);
 }
 
+/** The finding first: the order the table and the posture chips use. */
+export const POSTURE_ORDER: Record<SshPosture, number> = { password_open: 0, partial: 1, unknown: 2, secured: 3 };
+
+/**
+ * The posture chips, in the table's order with "all" first. This is the
+ * triage entry point: an operator asking which nodes are not secure clicks
+ * "password open" and gets exactly those rows, whatever became of their
+ * arms. The arm-history chips beside it answer a different question (what is
+ * still in motion), and the two filters compose.
+ */
+export type PostureFilter = "all" | SshPosture;
+export const POSTURE_FILTERS: readonly PostureFilter[] = ["all", "password_open", "partial", "unknown", "secured"];
+
+export function isPostureFilter(value: unknown): value is PostureFilter {
+  return typeof value === "string" && (POSTURE_FILTERS as readonly string[]).includes(value);
+}
+
+export function filterByPosture<T extends Pick<NodeGuardState, "nodeId">>(
+  states: readonly T[],
+  filter: PostureFilter,
+  postureOf: (nodeId: string) => SshPosture,
+): T[] {
+  if (filter === "all") return [...states];
+  return states.filter((s) => postureOf(s.nodeId) === filter);
+}
+
 /** How many rows read each posture, for the proof line. */
 export function postureCounts(postures: Iterable<SshPosture>): Record<SshPosture, number> {
   const out: Record<SshPosture, number> = { secured: 0, password_open: 0, partial: 0, unknown: 0 };
@@ -619,24 +656,61 @@ export function revealAffordance(gate: boolean, knowledge: KnockKnowledge): Reve
 /**
  * Whether the plan installs a firewall, read the way the server's lint reads
  * it: a profile with neither a management source nor a knock policy renders
- * no nft table at all and only edits sshd. That split decides the ceremony.
- * The sshd change is durable and needs no confirm. The knock firewall can
- * lock the operator out, so it arms a revert and needs the confirm within
- * the window.
+ * no nft table at all and only edits sshd. That split decides half the
+ * ceremony: the knock firewall can lock the operator out, so it always arms
+ * a revert and needs the confirm within the window.
  */
 export function installsFirewall(form: Pick<GuardForm, "enableKnock" | "mgmtSources">): boolean {
   return form.enableKnock || parseMgmtSources(form.mgmtSources).values.length > 0;
 }
 
+/**
+ * What the sheet may say about the arm it is about to file.
+ *
+ * `firewall`: the plan installs the knock firewall; confirm within the
+ * window or the node undoes it.
+ *
+ * `durable`: no firewall, and the server attested a key path in on every
+ * member (posture.key_access on its status row). The server's plan then
+ * carries `durable: true` and its apply skips the revert timer, after
+ * checking the host for an authorized key itself; if that check fails the
+ * timer is armed after all and the row says so, which is why the window is
+ * still asked for.
+ *
+ * `hardening`: no firewall, but the server has not attested a key path on
+ * every member: a server from before the status endpoint attests nothing,
+ * and one that does may say no. Such a server arms the revert timer before
+ * the first change on every arm, so the sheet keeps the confirm instruction
+ * and the window. The durability claim is the server's to make, never the
+ * console's mirror of a lint that may not have shipped.
+ */
+export type ArmCommitmentKind = "firewall" | "durable" | "hardening";
+
 export interface ArmCommitment {
+  kind: ArmCommitmentKind;
+  /** True when the plan installs the knock firewall. */
   firewall: boolean;
-  /** The confirm window the arm would run with. Meaningful only when `firewall`. */
+  /** The confirm window the arm would run with. On a durable arm, the fallback window. */
   windowSec: number;
+  /** Members without a server-attested key path. Empty when durable or firewall. */
+  unattested: string[];
 }
 
-export function armCommitment(form: Pick<GuardForm, "enableKnock" | "mgmtSources" | "confirmWindowSec">): ArmCommitment {
-  return {
-    firewall: installsFirewall(form),
-    windowSec: form.confirmWindowSec > 0 ? form.confirmWindowSec : DEFAULT_CONFIRM_WINDOW_SEC,
-  };
+/** One member of the sheet, with what the server's status row says about its key path. */
+export interface ArmMember {
+  nodeId: string;
+  /** `posture.key_access` from the status row; undefined when the server served none. */
+  keyAccess: boolean | undefined;
+}
+
+export function armCommitment(
+  form: Pick<GuardForm, "enableKnock" | "mgmtSources" | "confirmWindowSec">,
+  members: readonly ArmMember[],
+): ArmCommitment {
+  const firewall = installsFirewall(form);
+  const windowSec = form.confirmWindowSec > 0 ? form.confirmWindowSec : DEFAULT_CONFIRM_WINDOW_SEC;
+  if (firewall) return { kind: "firewall", firewall, windowSec, unattested: [] };
+  const unattested = members.filter((m) => m.keyAccess !== true).map((m) => m.nodeId);
+  if (members.length > 0 && unattested.length === 0) return { kind: "durable", firewall, windowSec, unattested };
+  return { kind: "hardening", firewall, windowSec, unattested };
 }
