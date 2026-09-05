@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
@@ -65,6 +65,7 @@ import {
   compareNodeIdentity,
   nameTrackMin,
   nextSortState,
+  type NameMeasure,
   parseHiddenColumns,
   parseSortState,
   serializeHiddenColumns,
@@ -72,6 +73,7 @@ import {
   sortNodes,
   type NodeSortState,
 } from "./nodesTableModel";
+import { bodyFont, createTextMeasurer } from "@/lib/textWidth";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -260,10 +262,20 @@ const optionalColumns = computed(() =>
 
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
-/** One name-track minimum for every table on the page, from the whole fleet
- *  rather than each group's rows, so the name column does not change width
- *  between group sections or as a filter narrows the rows. */
-const nameMinPx = computed(() => nameTrackMin(nodes.value));
+/** One Node-column width for every table on the page, from the whole fleet
+ *  rather than each group's rows, so the column does not change width
+ *  between group sections or as a filter narrows the rows. Measured in the
+ *  cell's own font once the page has a canvas, and again once the fonts have
+ *  settled; until then, and wherever a canvas is refused, the estimate. */
+const nameMeasure = shallowRef<NameMeasure | undefined>(undefined);
+onMounted(() => {
+  const arm = () => {
+    nameMeasure.value = createTextMeasurer(bodyFont(500, 14));
+  };
+  arm();
+  document.fonts?.ready.then(arm).catch(() => undefined);
+});
+const nameMinPx = computed(() => nameTrackMin(nodes.value, nameMeasure.value));
 const updatePolicies = computed(() => agentUpdatesQuery.data.value ?? []);
 // Suspected-duplicate detection (NAT-safe; server-clustered). Polled lazily.
 const duplicatesQuery = useAsyncData((signal) => api.nodes.duplicates({ signal }).then((r) => r.groups), {

@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import type { Node } from "../../../lib/api/types.ts";
 import {
   DEFAULT_HIDDEN_COLUMNS,
+  NAME_CELL_CHROME_PX,
   NAME_TRACK_MAX_PX,
   NAME_TRACK_MIN_PX,
   NODE_TABLE_COLUMNS,
+  SELECT_CELL_PX,
+  estimateNameWidth,
   gridTemplate,
   nameTrackMin,
   nextSortState,
@@ -127,39 +130,100 @@ test("visibleColumns always keeps required columns and gridTemplate matches", ()
   assert.equal(gridTemplate(hidden).split(" ").length, visible.length);
 });
 
-test("the name track is at least as wide as the fleet's longest rendered name", () => {
-  // The live fleet's widest cells. Chrome on macOS draws
-  // "Akkocloud-UK-London-KVM" at 187px in 14px medium; with the dot, the [cd]
-  // badge and the gaps the cell wants 232px, which is more than the 180px
-  // floor and exactly why the name used to print as "Akkocloud-UK-Lond...".
-  const fleet = [
-    node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" }),
-    node({ id: "node_ykr7g35t3gzmgshc", name: "[OpenJobs-Data]-TiDB-1" }),
-    node({ id: "openjobs-data-scripts", name: "[OpenJobs-Data]-scripts" }),
-    node({ id: "node_fdlsvreyz4un2elo", name: "[Metix]-Aaitr-jp-softbank-NAT" }),
-    node({ id: "dmit-1", name: "[Metix]-DMIT-1" }),
-  ];
-  const min = nameTrackMin(fleet);
-  assert.ok(min >= 8 + 8 + 21 + 8 + 187, `${min}px is narrower than Akkocloud's cell`);
-  assert.ok(min < 300, `${min}px is more than the longest name needs`);
-  // The widest row governs, whichever it is: the [Metix] badge makes the
-  // 21-character softbank name wider than the 23-character Akkocloud one.
-  assert.equal(min, Math.max(...fleet.map((n) => nameTrackMin([n]))));
-  assert.ok(nameTrackMin([fleet[4]!]) < min);
-  // A wide prefix badge costs width too: the same body behind [OpenJobs-Data]
-  // needs a wider track than it does bare.
-  assert.ok(
-    nameTrackMin([node({ id: "p", name: "[OpenJobs-Data]-gomami-jpn-pulse-nano" })]) >
-      nameTrackMin([node({ id: "b", name: "gomami-jpn-pulse-nano" })]),
+/**
+ * The live fleet's six widest name bodies at 14px medium, as Chrome on macOS
+ * draws them (the Akkocloud figure) and as the system face measures them
+ * (the rest, from the design spec's PIL pass over SFNS.ttf).
+ */
+const MEASURED: Record<string, number> = {
+  "Akkocloud-UK-London-KVM": 187,
+  "gomami-jpn-pulse-nano": 152,
+  "Aaitr-jp-softbank-NAT": 149,
+  "gomami-hk-turin-mini": 137,
+  "gomami-jp-pulse-mini": 137,
+  "LegendVPS-SG-EVO": 132,
+};
+const measured = (body: string) => MEASURED[body] ?? body.length * 8;
+
+const fleet = [
+  node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" }),
+  node({ id: "node_5cuasrdombv", name: "[cd]-gomami-jpn-pulse-nano" }),
+  node({ id: "node_fdlsvreyz4un2elo", name: "[Metix]-Aaitr-jp-softbank-NAT" }),
+  node({ id: "node_ykr7g35t3gzmgshc", name: "[OpenJobs-Data]-TiDB-1" }),
+  node({ id: "legend", name: "[cd]-LegendVPS-SG-EVO" }),
+  node({ id: "dmit-1", name: "[Metix]-DMIT-1" }),
+];
+
+test("the Node column is the longest measured name body plus the cell's fixed chrome", () => {
+  // 12px row padding + 8px dot + 8px gap + 187px name + 12px cell padding
+  // + 1px hairline: 228px on the live fleet, the number the spec records.
+  assert.equal(NAME_CELL_CHROME_PX, 12 + 8 + 8 + 12 + 1);
+  assert.equal(nameTrackMin(fleet, measured), 228);
+  // The widest row governs, whichever it is.
+  assert.equal(nameTrackMin(fleet, measured), Math.max(...fleet.map((n) => nameTrackMin([n], measured))));
+  assert.ok(nameTrackMin([fleet[5]!], measured) < 228);
+});
+
+test("the owner prefix no longer widens the Node column", () => {
+  // The same body behind [OpenJobs-Data] and bare measures the same: the
+  // prefix has a column of its own now, and the names line up at one x.
+  assert.equal(
+    nameTrackMin([node({ id: "p", name: "[OpenJobs-Data]-gomami-jpn-pulse-nano" })], measured),
+    nameTrackMin([node({ id: "b", name: "gomami-jpn-pulse-nano" })], measured),
   );
+  // A fractional measurement rounds up, never down into the hairline.
+  assert.equal(nameTrackMin([node({ id: "f", name: "frac" })], () => 200.2), 200 + NAME_CELL_CHROME_PX + 1);
+});
+
+test("without a measurer the per-character estimate stands in", () => {
+  // 8.3px a character leaves a little over Chrome's 8.1px: the estimate is
+  // never narrower than the measurement for the fleet's longest name.
+  assert.ok(estimateNameWidth("Akkocloud-UK-London-KVM") >= 187);
+  assert.equal(nameTrackMin(fleet), nameTrackMin(fleet, estimateNameWidth));
+  assert.ok(nameTrackMin(fleet) >= nameTrackMin(fleet, measured));
+  assert.ok(nameTrackMin(fleet) < 300, `${nameTrackMin(fleet)}px is more than the longest name needs`);
+  // CJK glyphs are square: one em each, wider than a Latin character.
+  assert.ok(estimateNameWidth("东京节点") > estimateNameWidth("tokyo"));
 });
 
 test("the name track stays inside its band", () => {
   assert.equal(nameTrackMin([]), NAME_TRACK_MIN_PX);
   assert.equal(nameTrackMin([node({ id: "a", name: "a" })]), NAME_TRACK_MIN_PX);
   assert.equal(nameTrackMin([node({ id: "x", name: "x".repeat(120) })]), NAME_TRACK_MAX_PX);
+  assert.equal(nameTrackMin([node({ id: "x", name: "x" })], () => 10_000), NAME_TRACK_MAX_PX);
   // The id stands in for a missing name, as it does in the cell.
   assert.ok(nameTrackMin([node({ id: "node_" + "k".repeat(40), name: "" })]) > NAME_TRACK_MIN_PX);
+});
+
+test("the owner is a column of its own, right after Node, sortable, 112px", () => {
+  const ids = NODE_TABLE_COLUMNS.map((c) => c.id);
+  assert.equal(ids.indexOf("owner"), ids.indexOf("name") + 1);
+  const owner = NODE_TABLE_COLUMNS.find((c) => c.id === "owner")!;
+  assert.equal(owner.labelKey, "fleet.nodes.table.colOwner");
+  assert.equal(owner.width, "112px");
+  assert.equal(owner.sortKey, "owner");
+  // Visible until hidden, and the column manager can hide it.
+  assert.equal(owner.optional, true);
+  assert.ok(!owner.defaultHidden);
+  assert.ok(visibleColumns(parseHiddenColumns(null)).some((c) => c.id === "owner"));
+  assert.ok(!visibleColumns(parseHiddenColumns("owner")).some((c) => c.id === "owner"));
+});
+
+test("sortNodes by owner groups the prefixes and puts unowned nodes last either way", () => {
+  const rows = [
+    node({ id: "1", name: "[Metix]-DMIT-1" }),
+    node({ id: "2", name: "bare" }),
+    node({ id: "3", name: "[cd]-homeserver" }),
+    node({ id: "4", name: "[OpenJobs-Data]-TiDB-1" }),
+    node({ id: "5", name: "[cd]-Akkocloud-UK-London-KVM" }),
+  ];
+  const asc = sortNodes(rows, { key: "owner", dir: "asc" }).map((n) => n.id);
+  assert.deepEqual(asc, ["5", "3", "1", "4", "2"]);
+  const desc = sortNodes(rows, { key: "owner", dir: "desc" }).map((n) => n.id);
+  assert.deepEqual(desc, ["4", "1", "5", "3", "2"]);
+  // Ties within an owner fall through to name.
+  assert.ok(asc.indexOf("5") < asc.indexOf("3"));
+  assert.equal(nextSortState({ key: "", dir: "asc" }, "owner").key, "owner");
 });
 
 test("the hostname is a column of its own, in the catalog and the column manager", () => {
@@ -197,19 +261,49 @@ test("one name minimum for the page, so grouped tables do not disagree on the co
   // different widths; the page's minimum is the widest group's.
   const london = [node({ id: "node_4ol55vwphys3rgdt", name: "[cd]-Akkocloud-UK-London-KVM" })];
   const tokyo = [node({ id: "dmit-1", name: "[Metix]-DMIT-1" }), node({ id: "b", name: "b" })];
-  assert.notEqual(nameTrackMin(london), nameTrackMin(tokyo));
-  const page = nameTrackMin([...london, ...tokyo]);
-  assert.equal(page, Math.max(nameTrackMin(london), nameTrackMin(tokyo)));
+  assert.notEqual(nameTrackMin(london, measured), nameTrackMin(tokyo, measured));
+  const page = nameTrackMin([...london, ...tokyo], measured);
+  assert.equal(page, Math.max(nameTrackMin(london, measured), nameTrackMin(tokyo, measured)));
   // Order of the groups does not matter.
-  assert.equal(nameTrackMin([...tokyo, ...london]), page);
+  assert.equal(nameTrackMin([...tokyo, ...london], measured), page);
 });
 
-test("gridTemplate carries the content-derived name minimum into the name track", () => {
-  const template = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 260);
-  assert.ok(template.startsWith("minmax(260px,1.6fr) "), template);
-  assert.ok(gridTemplate(DEFAULT_HIDDEN_COLUMNS).startsWith(`minmax(${NAME_TRACK_MIN_PX}px,1.6fr) `));
+test("gridTemplate pins the Node track at the measured width, plus the checkbox when selectable", () => {
+  const template = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 228);
+  assert.ok(template.startsWith("228px 112px "), template);
+  assert.ok(gridTemplate(DEFAULT_HIDDEN_COLUMNS).startsWith(`${NAME_TRACK_MIN_PX}px `));
+  // The selection checkbox lives inside the pinned cell, not in a track of
+  // its own: 16px plus its 12px gap, 256px on the live fleet.
+  assert.equal(SELECT_CELL_PX, 28);
+  const selectable = gridTemplate(DEFAULT_HIDDEN_COLUMNS, 228, true);
+  assert.ok(selectable.startsWith("256px 112px "), selectable);
+  assert.equal(selectable.split(" ").length, template.split(" ").length);
   // The other tracks are untouched by it.
   assert.equal(template.split(" ").slice(1).join(" "), gridTemplate(DEFAULT_HIDDEN_COLUMNS).split(" ").slice(1).join(" "));
+});
+
+test("the pinned Node cell is one opaque block on the card surface with a hairline edge", () => {
+  // The leak: two separately pinned cells with transparent padding and gap
+  // between them, painted on a different surface than the header. One cell,
+  // sticky at left 0, carrying the row's left padding, on --card, above the
+  // scrolling cells, with the hairline inset on its right edge.
+  const source = readFileSync(fileURLToPath(new URL("../../../components/common/NodeTable.vue", import.meta.url)), "utf8");
+  const cell = /const STICKY_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  const header = /const STICKY_HEADER_CELL =\s*([\s\S]*?);/.exec(source)![1]!;
+  for (const [name, classes] of [["cell", cell], ["header", header]] as const) {
+    for (const required of ["sm:sticky", "sm:left-0", "h-full", "bg-card", "pl-3", "shadow-[inset_-1px_0_0_var(--border)]"]) {
+      assert.ok(classes.includes(required), `${name} lacks ${required}`);
+    }
+    assert.ok(!classes.includes("bg-background"), `${name} paints a second surface`);
+  }
+  assert.ok(/\bz-10\b/.test(cell) && /\bz-20\b/.test(header), "header must stack above the cells");
+  // Hover and selection tints are opaque mixes into the card, never into transparent.
+  assert.ok(cell.includes("var(--foreground)_3%,var(--card)"));
+  assert.ok(cell.includes("var(--primary)_8%,var(--card)"));
+  // The row leaves its left padding to the cell; a transparent strip there is the leak.
+  assert.match(source, /class="group\/row grid [^"]*\bpr-3\b[^"]*"/);
+  assert.doesNotMatch(source, /class="group\/row grid [^"]*\bpx-3\b/);
+  assert.doesNotMatch(source, /sm:left-15|sm:left-3/);
 });
 
 test("sort-state persistence round-trips and rejects unknown keys", () => {

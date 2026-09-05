@@ -9,6 +9,7 @@ import { NODE_STATUSES, nodeStatus } from "@/lib/nodeStatus";
 
 export type NodeSortKey =
   | "name"
+  | "owner"
   | "status"
   | "cpu"
   | "memory"
@@ -51,9 +52,19 @@ export interface NodeTableColumn {
 }
 
 export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
-  // The name track's minimum is not this constant: gridTemplate() sizes it
-  // from the longest name in the rows (nameTrackMin), so this is the floor.
-  { id: "name", labelKey: "fleet.nodes.table.colName", width: "minmax(180px,1.6fr)", optional: false, sortKey: "name", defaultDir: "asc" },
+  // The Node track is not this constant: gridTemplate() sizes it from the
+  // longest name in the rows (nameTrackMin), so this is the floor. It is the
+  // pinned column, so it is a fixed width rather than a flexible track: the
+  // operator asked for "a little wider than the longest name", and a column
+  // that grows with spare width pins more of the viewport than it has to.
+  { id: "name", labelKey: "fleet.nodes.table.colName", width: "228px", optional: false, sortKey: "name", defaultDir: "asc" },
+  // The bracketed prefix of the name ("[cd]-", "[OpenJobs-Data]-") used to sit
+  // inside the Node cell as a badge before the name, so names started at a
+  // different x on every row and the widest badge set the column. It is the
+  // owner of the machine, a value of its own, so it gets a column: 112px holds
+  // the widest owner in the fleet ("OpenJobs-Data", 81px at the chip's 11px
+  // plus chip and cell padding) and matches the Status track beside it.
+  { id: "owner", labelKey: "fleet.nodes.table.colOwner", width: "112px", optional: true, sortKey: "owner", defaultDir: "asc" },
   // 90px clipped the widest status pill ("never reported") to "never report...".
   // The track is sized to the longest word the column can hold, because a
   // status the operator has to guess at is the one thing this column exists for.
@@ -145,16 +156,35 @@ export function compareNodeIdentity(a: Node, b: Node): number {
   return (a.name || a.id).localeCompare(b.name || b.id) || a.id.localeCompare(b.id);
 }
 
+/**
+ * Owners sort by the bracketed prefix; nodes without one go last in either
+ * direction, so the unowned rows read as one block at the bottom rather than
+ * as the alphabetically first owner. `sign` is the caller's direction: the
+ * "last" answer is pre-multiplied by it so the flip the caller applies
+ * afterwards cancels out.
+ */
+function compareOwner(a: Node, b: Node, sign: 1 | -1): number {
+  const pa = splitNamePrefix(a).prefix;
+  const pb = splitNamePrefix(b).prefix;
+  if (!pa && !pb) return 0;
+  if (!pa) return sign;
+  if (!pb) return -sign;
+  return pa.localeCompare(pb);
+}
+
 function lastSeenMillis(node: Node): number {
   const t = node.last_seen ? Date.parse(node.last_seen as unknown as string) : NaN;
   return Number.isNaN(t) ? 0 : t;
 }
 
-/** Ascending comparator for the given key; callers flip for desc. */
-function compareAsc(a: Node, b: Node, key: NodeSortKey): number {
+/** Ascending comparator for the given key; callers flip for desc, and pass
+ *  the flip in so a key can keep its empty values last either way. */
+function compareAsc(a: Node, b: Node, key: NodeSortKey, sign: 1 | -1): number {
   switch (key) {
     case "name":
       return (a.name || a.id).localeCompare(b.name || b.id);
+    case "owner":
+      return compareOwner(a, b, sign);
     case "status":
       return statusRank(a) - statusRank(b);
     case "cpu":
@@ -185,9 +215,9 @@ function compareAsc(a: Node, b: Node, key: NodeSortKey): number {
 export function sortNodes(nodes: readonly Node[], state: NodeSortState): Node[] {
   if (!state.key) return [...nodes];
   const key = state.key;
-  const sign = state.dir === "desc" ? -1 : 1;
+  const sign: 1 | -1 = state.dir === "desc" ? -1 : 1;
   return [...nodes].sort((a, b) => {
-    const primary = compareAsc(a, b, key) * sign;
+    const primary = compareAsc(a, b, key, sign) * sign;
     if (primary !== 0) return primary;
     return compareNodeIdentity(a, b);
   });
@@ -225,27 +255,29 @@ export function visibleColumns(hidden: ReadonlySet<string>): NodeTableColumn[] {
 }
 
 /**
- * The name track's minimum width, from the longest name in the rows.
+ * The Node column's width, from the longest name body in the rows.
  *
- * The name is how an operator tells two nodes apart, so it never truncates.
- * A grid track cannot promise that on its own: a `minmax(180px, 1.6fr)` track
- * sits at 180px whenever the table is pinned at its minimum width, which on a
- * 1440 screen with the sidebar open is always, and the fleet's longest names
- * need more than that. So the minimum follows the content: the status dot,
- * the prefix badge and the gaps between them, plus the name body at the width
- * 14px medium text takes in the console's system face (Chrome on macOS
- * draws "Akkocloud-UK-London-KVM" at 187px, 8.1px a character; 8.3 leaves a
- * little to spare). Beyond the minimum the table scrolls horizontally, so a
- * wider name pushes the metric columns right rather than folding.
+ * The name is how an operator tells two nodes apart, so it never truncates,
+ * and the column is pinned while the rest of the row scrolls under it, so its
+ * width has to be known rather than left to the grid. It follows the content:
+ * the fixed chrome of the cell (the row's 12px left padding, the 8px status
+ * dot, the 8px gap, the 12px right padding and the 1px hairline that ends the
+ * pinned column) plus the widest name body on the page. The owner prefix is
+ * not part of it any more; it has its own column.
  *
- * An estimate, not a measurement: the fixed-height rows cannot wait for a
- * layout pass, and a text measurement would need a canvas the strict CSP
- * would rather not see. The band keeps a single absurd name from turning the
- * whole table into a scroll; past the cap the cell truncates (NodeTable's
- * name class list), the last resort rather than the mechanism.
+ * `measure` is the text measurer: the width of one name body at the cell's
+ * font, 14px medium in the console's system face. The browser supplies a
+ * canvas measurement (see `@/lib/textWidth`); without one, or under a CSP
+ * that refuses a canvas context, the per-character estimate stands in
+ * (Chrome on macOS draws "Akkocloud-UK-London-KVM" at 187px, 8.1px a
+ * character; 8.3 leaves a little to spare).
+ *
+ * The band keeps a single absurd name from turning the whole table into a
+ * scroll; past the cap the cell truncates (NodeTable's name class list), the
+ * last resort rather than the mechanism.
  *
  * Pass every node on the page, not one group's rows: a grouped Nodes view
- * renders one table per group, and a minimum taken per group makes the name
+ * renders one table per group, and a width taken per group makes the Node
  * column jump between adjacent sections.
  */
 export const NAME_TRACK_MIN_PX = 180;
@@ -253,33 +285,53 @@ export const NAME_TRACK_MAX_PX = 440;
 const NAME_CHAR_PX = 8.3;
 /** CJK and other full-width glyphs are square: one em at 14px. */
 const WIDE_CHAR_PX = 14;
-const PREFIX_CHAR_PX = 6;
-/** Status dot, then the gap-2 between each of dot, badge and name. */
+/** The row's left padding, carried inside the pinned cell so nothing scrolls
+ *  through a transparent strip to its left. */
+const CELL_PAD_LEFT_PX = 12;
+/** Status dot, then the gap between it and the name. */
 const DOT_PX = 8;
 const GAP_PX = 8;
-/** px-1 either side plus the badge border. */
-const BADGE_PAD_PX = 10;
+/** Room between the name and the hairline, and the hairline itself. */
+const CELL_PAD_RIGHT_PX = 12;
+const HAIRLINE_PX = 1;
+/** Everything in the cell that is not the name. */
+export const NAME_CELL_CHROME_PX = CELL_PAD_LEFT_PX + DOT_PX + GAP_PX + CELL_PAD_RIGHT_PX + HAIRLINE_PX;
+/** The selection checkbox (16px) and its gap, inside the same pinned cell. */
+export const SELECT_CELL_PX = 16 + 12;
 
-export function nameTrackMin(nodes: readonly Pick<Node, "id" | "name">[]): number {
+export type NameMeasure = (body: string) => number;
+
+/** The fallback measurer: a per-character estimate at 14px medium. */
+export function estimateNameWidth(body: string): number {
+  let px = 0;
+  for (const ch of body) px += (ch.codePointAt(0) ?? 0) > 0x2e7f ? WIDE_CHAR_PX : NAME_CHAR_PX;
+  return px;
+}
+
+export function nameTrackMin(
+  nodes: readonly Pick<Node, "id" | "name">[],
+  measure: NameMeasure = estimateNameWidth,
+): number {
   let widest = 0;
   for (const node of nodes) {
-    const { prefix, body } = splitNamePrefix(node);
-    let px = DOT_PX + GAP_PX;
-    for (const ch of body) px += (ch.codePointAt(0) ?? 0) > 0x2e7f ? WIDE_CHAR_PX : NAME_CHAR_PX;
-    if (prefix) px += prefix.length * PREFIX_CHAR_PX + BADGE_PAD_PX + GAP_PX;
+    const px = measure(splitNamePrefix(node).body);
     if (px > widest) widest = px;
   }
-  return Math.min(NAME_TRACK_MAX_PX, Math.max(NAME_TRACK_MIN_PX, Math.ceil(widest)));
+  const track = widest > 0 ? Math.ceil(widest + NAME_CELL_CHROME_PX) : 0;
+  return Math.min(NAME_TRACK_MAX_PX, Math.max(NAME_TRACK_MIN_PX, track));
 }
 
 /**
- * CSS grid-template-columns for the currently visible column set. The name
- * track takes its minimum from the rows (see nameTrackMin) rather than the
- * catalog constant.
+ * CSS grid-template-columns for the currently visible column set. The Node
+ * track takes its width from the rows (see nameTrackMin) rather than the
+ * catalog constant; with `selectable` the checkbox lives inside the same
+ * pinned cell, so the track grows by the checkbox and its gap rather than
+ * gaining a track of its own that the pinned surface would have to bridge.
  */
-export function gridTemplate(hidden: ReadonlySet<string>, nameMinPx = NAME_TRACK_MIN_PX): string {
+export function gridTemplate(hidden: ReadonlySet<string>, nameMinPx = NAME_TRACK_MIN_PX, selectable = false): string {
+  const namePx = nameMinPx + (selectable ? SELECT_CELL_PX : 0);
   return visibleColumns(hidden)
-    .map((c) => (c.id === "name" ? `minmax(${nameMinPx}px,1.6fr)` : c.width))
+    .map((c) => (c.id === "name" ? `${namePx}px` : c.width))
     .join(" ");
 }
 

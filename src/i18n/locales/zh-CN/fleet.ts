@@ -146,6 +146,7 @@ export default {
       },
       table: {
         colName: "节点",
+        colOwner: "归属",
         colStatus: "状态",
         colHostname: "主机名",
         colRole: "角色",

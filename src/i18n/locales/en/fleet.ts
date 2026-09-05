@@ -148,6 +148,7 @@ export default {
       },
       table: {
         colName: "Node",
+        colOwner: "Owner",
         colStatus: "Status",
         colHostname: "Hostname",
         colRole: "Role",
