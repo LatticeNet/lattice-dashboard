@@ -217,6 +217,26 @@ export function originTarget(record: PublishingRecord): string {
   return record.origin === "plugin" ? (record.share_id ?? record.bucket) : record.bucket;
 }
 
+/**
+ * What the Serves cell says for the target.
+ *
+ * A plugin route's target is a share id, and the Shares lens names the same
+ * share by its slug, so the one share read as two different things depending
+ * on the tab. When the share list is known the slug is used here too, in the
+ * `/slug` form the Shares lens prints; the id stays the link's title. With no
+ * list, or an id the list does not have, the id is shown rather than guessed
+ * at.
+ */
+export function originTargetLabel(
+  record: PublishingRecord,
+  shareSlugById?: ReadonlyMap<string, string>,
+): string {
+  const target = originTarget(record);
+  if (record.origin !== "plugin") return target;
+  const slug = shareSlugById?.get(target);
+  return slug ? `/${slug}` : target;
+}
+
 /** Sort: origin first in display order, then host, then path. */
 export function sortRecords(records: PublishingRecord[]): PublishingRecord[] {
   const rank = (origin: string) => {

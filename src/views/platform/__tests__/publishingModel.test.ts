@@ -14,6 +14,7 @@ import {
   isServing,
   lensOrigin,
   originTarget,
+  originTargetLabel,
   publishablePlugins,
   publishingPlaneEmpty,
   publishingState,
@@ -80,6 +81,17 @@ test("a route on every host says so rather than showing an empty hostname", () =
 test("a plugin route points at its share, not at a bucket name", () => {
   assert.equal(originTarget(record({ origin: "plugin", bucket: "share_1", share_id: "share_1" })), "share_1");
   assert.equal(originTarget(record()), "site");
+});
+
+test("a plugin route is named by its share's slug the way the Shares lens names it", () => {
+  const route = record({ origin: "plugin", bucket: "share_1", share_id: "share_1" });
+  const slugs = new Map([["share_1", "team-nodes"]]);
+  assert.equal(originTargetLabel(route, slugs), "/team-nodes");
+  // No list, or an id the list does not have: the id, not a guess.
+  assert.equal(originTargetLabel(route), "share_1");
+  assert.equal(originTargetLabel(route, new Map([["share_2", "other"]])), "share_1");
+  // Buckets are never renamed by the share list.
+  assert.equal(originTargetLabel(record(), new Map([["site", "nope"]])), "site");
 });
 
 test("routes group by origin so the table does not interleave them", () => {

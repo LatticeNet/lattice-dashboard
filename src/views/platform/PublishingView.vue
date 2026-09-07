@@ -15,7 +15,7 @@ import { useI18n } from "vue-i18n";
 import { Globe, Link2, RefreshCw, ShieldAlert, Trash2 } from "lucide-vue-next";
 import { RouterLink, useRoute } from "vue-router";
 
-import { api, type PublishingRecord, type StorageKind } from "@/lib/api";
+import { api, type PublishingRecord, type StorageKind, type SubscriptionShareView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useRouteTab } from "@/composables/useRouteTab";
 import { useAuthStore } from "@/stores/auth";
@@ -31,6 +31,7 @@ import {
   arrivedFromWorkers,
   hasShareCreateDeepLink,
   originTarget,
+  originTargetLabel,
   publishingPlaneEmpty,
   publishingState,
   recordsForLens,
@@ -116,12 +117,28 @@ const planeEmpty = computed(() =>
   }),
 );
 
+/**
+ * The share list, read here only to name plugin routes on the whole-plane
+ * table the way the Shares lens names them, by slug. The pane keeps its own
+ * polling query because it is unmounted whenever this table is on screen,
+ * and it owns create, rotate and delete against that list. The list is read
+ * by the callers who may see the share lens at all; anyone else sees the id.
+ */
+const canSeeShares = computed(() => auth.can("proxy:admin"));
+const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
+  async (signal) => (canSeeShares.value ? api.subscriptionShares.list({ signal }) : undefined),
+);
+const shareSlugById = computed(() => {
+  if (sharesQuery.error.value || !sharesQuery.data.value) return undefined;
+  return new Map(sharesQuery.data.value.map((share) => [share.id, share.slug]));
+});
+
 const sharesPane = ref<InstanceType<typeof PublishingSharesPane> | null>(null);
 const refreshing = computed(() => recordsQuery.refreshing.value);
 
 /** One Refresh for the page: the plane, and the share pane when it is open. */
 async function refreshAll(): Promise<void> {
-  await Promise.all([recordsQuery.refresh(), sharesPane.value?.refresh()]);
+  await Promise.all([recordsQuery.refresh(), sharesQuery.refresh(), sharesPane.value?.refresh()]);
 }
 
 const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
@@ -287,13 +304,16 @@ watch(() => route.fullPath, scrollToHash);
               <span class="text-xs">{{ $t(`platform.publishing.origin.${row.origin}`) }}</span>
             </template>
             <template #cell-target="{ row }">
+              <!-- Named by slug, as the Shares lens names it; the id stays on
+                   the title and in the link. -->
               <RouterLink
                 v-if="row.origin === 'plugin'"
                 :to="{ path: '/platform/publishing', query: { origin: 'share', share: originTarget(row) } }"
                 class="inline-flex items-center gap-1 rounded-sm font-mono text-xs text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                :title="originTarget(row)"
               >
                 <Link2 aria-hidden="true" class="size-3" />
-                {{ originTarget(row) }}
+                {{ originTargetLabel(row, shareSlugById) }}
               </RouterLink>
               <span v-else class="font-mono text-xs">{{ originTarget(row) }}</span>
             </template>

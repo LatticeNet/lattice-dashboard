@@ -38,6 +38,7 @@ import {
 import { api, ApiError } from "@/lib/api";
 import type {
   PluginView,
+  ProxyUserView,
   ShareSource,
   SubscriptionShareCreateRequest,
   SubscriptionShareView,
@@ -138,6 +139,37 @@ function rendererPluginId(share: SubscriptionShareView): string {
   return share.source.kind === "plugin" ? share.source.plugin_id : "";
 }
 
+/**
+ * The proxy users the server has, for the same two questions about the other
+ * source kind: which users a new share may point at, and whether the user
+ * behind an existing share is still there. The share API accepts any
+ * non-empty id and serves a dangling share as an empty 404, so this list is
+ * the only place the console can tell. It is read only by a caller who may
+ * (the endpoint wants proxy:read, which proxy:admin does not imply), and a
+ * list that was not read or failed stays unknown: the dialog falls back to a
+ * free-text id and no share is called unresolved on a guess.
+ */
+const canReadProxyUsers = computed(() => auth.can("proxy:read"));
+const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
+  async (signal) => (await api.proxy.users({ signal })).users,
+  { immediate: false },
+);
+const proxyUsers = computed(() => (proxyUsersQuery.error.value ? undefined : proxyUsersQuery.data.value));
+const knownProxyUsers = computed(() => (proxyUsers.value ? new Set(proxyUsers.value.map((user) => user.id)) : undefined));
+
+async function loadProxyUsers(): Promise<void> {
+  if (canReadProxyUsers.value) await proxyUsersQuery.refresh();
+}
+
+/** The state a row and its detail show: the share alone, checked against the users actually read. */
+function shareState(share: SubscriptionShareView): PublishedState {
+  return publishedState(share, Date.now(), knownProxyUsers.value);
+}
+
+function serving(share: SubscriptionShareView): boolean {
+  return isServing(share, Date.now(), knownProxyUsers.value);
+}
+
 /** The sentence the disabled refresh button and the detail notice both carry. */
 function rendererReason(share: SubscriptionShareView): string {
   switch (rendererState(share)) {
@@ -201,10 +233,11 @@ const stateVariant: Record<PublishedState, "default" | "secondary" | "destructiv
   expiring: "outline",
   expired: "destructive",
   paused: "outline",
+  unresolved: "destructive",
 };
 
 async function refresh(): Promise<void> {
-  await Promise.all([sharesQuery.refresh(), routesQuery.refresh(), pluginsQuery.refresh()]);
+  await Promise.all([sharesQuery.refresh(), routesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
 }
 
 // The page-level Refresh button reloads this pane too, so one control means
@@ -320,6 +353,8 @@ function openPublish(): void {
   now.value = Date.now();
   publishOpen.value = true;
   void loadRecords();
+  // Re-read once per opening, so a user created since the pane loaded is offered.
+  void loadProxyUsers();
 }
 
 async function publish(): Promise<void> {
@@ -488,15 +523,33 @@ async function copy(text: string, message: string): Promise<void> {
 
 // ── table ──────────────────────────────────────────────────────────────────
 
+/**
+ * At xl the detail column sits beside the table, selected or not, and leaves
+ * it about 700px. Format and Last rotated pushed Serves, with its
+ * renderer-absent marker, out of view at that width, so at xl they leave the
+ * table: both are in the detail, and below xl the detail stacks under a
+ * full-width table that has room for them. They are hidden rather than
+ * removed from the column list, so a sort on Last rotated survives, and they
+ * are hidden whether or not a share is selected, so a click on a row does not
+ * pull two columns out from under it.
+ *
+ * Slug and Serves carry `max-w-0`: in an auto-layout table a nowrap span
+ * claims its whole text as the column's minimum, so the token path alone
+ * held Slug at 460px and the table overflowed whatever else was hidden. A zero
+ * max-width makes the two columns share what the fixed ones leave and lets
+ * the truncation inside them actually truncate.
+ */
+const FOLDED_BESIDE_DETAIL = "xl:hidden";
+
 const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
-  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true },
+  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true, class: "max-w-0" },
   {
     key: "state",
     label: t("networking.shares.columns.state"),
     sortable: true,
     filterable: true,
     class: "w-[7.5rem]",
-    value: (row) => publishedState(row),
+    value: (row) => shareState(row),
   },
   {
     key: "source",
@@ -504,13 +557,14 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
     sortable: true,
     searchable: true,
     filterAliases: ["plugin", "record"],
+    class: "max-w-0",
     value: (row) => sourceLabel(row),
   },
   {
     key: "format",
     label: t("networking.shares.columns.format"),
     sortable: true,
-    class: "w-[8rem]",
+    class: cn("w-[8rem]", FOLDED_BESIDE_DETAIL),
     value: (row) => row.default_format || "",
   },
   {
@@ -518,7 +572,7 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
     label: t("networking.shares.columns.rotated"),
     sortable: true,
     align: "right",
-    class: "w-[9rem]",
+    class: cn("w-[9rem]", FOLDED_BESIDE_DETAIL),
     value: (row) => row.rotated_at || row.created_at,
   },
 ]);
@@ -546,7 +600,7 @@ async function applyDeepLink(): Promise<void> {
 }
 
 onMounted(async () => {
-  await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh()]);
+  await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
   await applyDeepLink();
 });
 watch(() => route.query, applyDeepLink);
@@ -570,7 +624,10 @@ watch(() => route.query, applyDeepLink);
       </template>
     </PageHeader>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
+    <!-- The single column below xl is minmax(0,1fr) too: an implicit auto track
+         grows to the token path's unbreakable width and pushed the whole pane
+         past a phone's edge. -->
+    <div class="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
       <DataTable
         state-key="shares"
         :columns="columns"
@@ -599,8 +656,8 @@ watch(() => route.query, applyDeepLink);
         </template>
 
         <template #cell-state="{ row }">
-          <Badge :variant="stateVariant[publishedState(row)]">
-            {{ $t('networking.shares.state.' + publishedState(row)) }}
+          <Badge :variant="stateVariant[shareState(row)]">
+            {{ $t('networking.shares.state.' + shareState(row)) }}
           </Badge>
         </template>
 
@@ -647,8 +704,8 @@ watch(() => route.query, applyDeepLink);
               <p class="truncate font-medium" :title="`/${selected.slug}`">/{{ selected.slug }}</p>
               <p class="truncate text-xs text-muted-foreground" :title="sourceLabel(selected)">{{ sourceLabel(selected) }}</p>
             </div>
-            <Badge :variant="stateVariant[publishedState(selected)]">
-              {{ $t('networking.shares.state.' + publishedState(selected)) }}
+            <Badge :variant="stateVariant[shareState(selected)]">
+              {{ $t('networking.shares.state.' + shareState(selected)) }}
             </Badge>
           </div>
 
@@ -662,7 +719,18 @@ watch(() => route.query, applyDeepLink);
               <p class="mt-1.5 text-xs text-muted-foreground">{{ $t('networking.shares.tokenNote') }}</p>
             </div>
 
-            <div v-if="!isServing(selected)" class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs">
+            <!-- A dangling proxy user is one specific reason for a 404, and it
+                 gets its own sentence in place of the general one. -->
+            <div
+              v-if="shareState(selected) === 'unresolved'"
+              class="rounded-md border-l-2 border-destructive bg-muted/40 px-3 py-2 text-xs"
+            >
+              {{ $t('networking.shares.unresolvedHint') }}
+            </div>
+            <div
+              v-else-if="!serving(selected)"
+              class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
+            >
               {{ $t('networking.shares.notServing') }}
             </div>
 
@@ -836,7 +904,32 @@ watch(() => route.query, applyDeepLink);
 
           <div v-else class="grid gap-2">
             <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
-            <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" />
+            <!-- A choice from the users the server has, like the record picker
+                 above. Only when the list could not be read does this fall
+                 back to a typed id, and it says so: a picker that blocked on a
+                 failed list would make one unreadable endpoint stop publishing. -->
+            <template v-if="proxyUsersQuery.loading.value || proxyUsers">
+              <Select v-model="draft.proxyUserId" :disabled="proxyUsersQuery.loading.value || !proxyUsers?.length">
+                <SelectTrigger id="share-proxy-user">
+                  <SelectValue
+                    :placeholder="proxyUsersQuery.loading.value ? $t('common.state.loading') : $t('networking.shares.proxyUserPlaceholder')"
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="user in proxyUsers" :key="user.id" :value="user.id">
+                    <span>{{ user.name || user.id }}</span>
+                    <span v-if="user.name && user.name !== user.id" class="ml-2 font-mono text-xs text-muted-foreground">{{ user.id }}</span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="!proxyUsersQuery.loading.value && !proxyUsers?.length" class="text-xs text-muted-foreground">
+                {{ $t('networking.shares.noProxyUsers') }}
+              </p>
+            </template>
+            <template v-else>
+              <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" spellcheck="false" />
+              <p class="text-xs text-muted-foreground">{{ $t('networking.shares.proxyUsersUnread') }}</p>
+            </template>
           </div>
 
           <div class="grid gap-2">

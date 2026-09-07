@@ -9,7 +9,7 @@
  */
 import type { SubscriptionShareView } from "@/lib/api";
 
-export type PublishedState = "live" | "paused" | "expired" | "expiring";
+export type PublishedState = "live" | "paused" | "expired" | "expiring" | "unresolved";
 
 /** How soon an expiry counts as worth warning about. */
 export const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
@@ -18,22 +18,44 @@ export const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
  * A disabled share and an expired one both stop serving, but only one of them
  * is a decision someone made. Keeping them apart is the difference between
  * "you turned this off" and "this lapsed while you weren't looking".
+ *
+ * `unresolved` is a share whose proxy user the server does not have. The share
+ * API accepts any non-empty id, and the URL of such a share answers the same
+ * empty 404 a prober gets, so this console is the only place the fact can
+ * show. It is claimed only against `knownProxyUsers`, the set of ids the
+ * caller actually read from the server: with no set the list is unknown or
+ * failed to load, and calling a share broken over a failed read would be the
+ * confident wrong answer this page exists to avoid. It outranks expiring as
+ * well as live, because both of those say the URL answers today and it does
+ * not; paused and expired still win, since they already say it does not.
  */
-export function publishedState(share: SubscriptionShareView, now: number = Date.now()): PublishedState {
+export function publishedState(
+  share: SubscriptionShareView,
+  now: number = Date.now(),
+  knownProxyUsers?: ReadonlySet<string>,
+): PublishedState {
   if (!share.enabled) return "paused";
-  if (share.expires_at) {
-    const expiry = Date.parse(share.expires_at);
-    if (Number.isFinite(expiry)) {
-      if (expiry <= now) return "expired";
-      if (expiry - now <= EXPIRING_SOON_MS) return "expiring";
-    }
+  const expiry = share.expires_at ? Date.parse(share.expires_at) : Number.NaN;
+  const expires = Number.isFinite(expiry);
+  if (expires && expiry <= now) return "expired";
+  if (
+    knownProxyUsers &&
+    share.source.kind === "core.proxy_user" &&
+    !knownProxyUsers.has(share.source.proxy_user_id)
+  ) {
+    return "unresolved";
   }
+  if (expires && expiry - now <= EXPIRING_SOON_MS) return "expiring";
   return "live";
 }
 
 /** Only a live URL is worth handing to a client. */
-export function isServing(share: SubscriptionShareView, now: number = Date.now()): boolean {
-  const state = publishedState(share, now);
+export function isServing(
+  share: SubscriptionShareView,
+  now: number = Date.now(),
+  knownProxyUsers?: ReadonlySet<string>,
+): boolean {
+  const state = publishedState(share, now, knownProxyUsers);
   return state === "live" || state === "expiring";
 }
 

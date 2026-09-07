@@ -75,12 +75,16 @@ const steps = computed<{ key: string; to: RouteLocationRaw }[]>(() => [
     <div class="flex min-h-10 items-center gap-3 px-4 py-2">
       <BookOpen aria-hidden="true" class="size-4 shrink-0 text-muted-foreground" />
       <h2 class="shrink-0 text-sm font-medium">{{ title }}</h2>
-      <!-- Collapsed is one line: the title and the sentence, nothing else. -->
-      <p v-if="!expanded" class="min-w-0 flex-1 truncate text-sm text-muted-foreground" :title="what">{{ what }}</p>
-      <span v-else class="flex-1" aria-hidden="true" />
+      <!-- Collapsed is one line: the title and the sentence, nothing else. On a
+           phone the title and the toggle leave the sentence about ten pixels,
+           which rendered as its first letter, so there the line is title and
+           toggle only; the sentence is a tap away. -->
+      <p v-if="!expanded" class="hidden min-w-0 flex-1 truncate text-sm text-muted-foreground sm:block" :title="what">{{ what }}</p>
+      <!-- ml-auto keeps the toggle at the right edge whether the sentence is
+           there to fill the row or not. -->
       <button
         type="button"
-        class="inline-flex shrink-0 items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        class="ml-auto inline-flex shrink-0 items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
         :aria-expanded="expanded"
         :aria-controls="bodyId"
         @click="toggle"
