@@ -211,7 +211,6 @@ export default {
       "network-ddns": "动态 DNS",
       "network-tunnels": "隧道",
       "network-ssh-guard": "SSH 加固",
-      "network-subscription-shares": "订阅分享",
       "platform-plugins": "插件",
       "platform-publishing": "发布",
       "platform-store": "存储",

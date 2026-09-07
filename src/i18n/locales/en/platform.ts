@@ -120,6 +120,10 @@ export default {
       },
       unnamedToken: "an unnamed token",
       openAgentUpdates: "Open Agent Updates",
+      guide: {
+        title: "How Store works",
+        what: "Store lists every bucket this server holds, KV and Static, with what each holds and who wrote it.",
+      },
     },
     kv: {
       title: "KV Store",
@@ -214,26 +218,76 @@ export default {
         unknown: "This server reported an origin this console does not know, so its access rule is not shown rather than guessed.",
       },
       accessLegendTitle: "What the access column means",
-      primerTitle: "The three origins",
-      primerDescription:
-        "Nothing is published yet. A route decides the URL; the origin decides where the bytes come from and who may fetch them.",
-      primer: {
-        kv: "A KV route serves the values held in one key/value bucket. It is not public hosting: a reader has to present a storage token on every request, GET included, so this origin is for a caller you issued a token to.",
-        static: "A static route serves the objects in one static bucket over plain anonymous HTTP. Anyone who knows the URL can fetch it, so nothing a token was protecting belongs behind one.",
-        plugin: "A plugin route is a subscription share, mounted under the reserved sub/ path. Its bearer token is part of the URL, which is what makes the link unguessable and what makes rotating the share the way to revoke it.",
-      },
       workersRemoved:
         "Workers was removed in a87: nothing routed to it and it had no job of its own. Publishing owns the job it was held for, serving content at a URL, so old Workers links land here.",
       searchRoutes: "Search routes",
       emptyTitle: "Nothing is published",
-      emptyDescription: "No route is bound yet. Add a host binding below, or publish a subscription share.",
+      emptyDescription: "No route on this lens yet. Bind a host under the KV or Static lens, or publish a share under Shares.",
       noOriginsVisible: "You cannot read any publishing origin, so this list is empty because of your scopes rather than because nothing is published.",
-      originPickerLabel: "Manage",
-      reservedHint: "This route is reserved. The URL is already in use by a client this server does not control, so it cannot be moved or deleted here.",
+      reservedHint: "This route is owned by its share, so it cannot be moved or deleted as a route. The share itself is managed on the Shares lens.",
       shareRouteTitle: "Published route",
-      shareRouteDescription: "Where this share is reachable, read from the same publishing records the Publishing page lists.",
+      shareRouteDescription: "Where this share is reachable, read from the same publishing records the routes table lists.",
       openPublishing: "Open Publishing",
       movedFromStorage: "Host bindings and access tokens moved to the Publishing page, so one page owns every published URL.",
+      lensLabel: "Origin",
+      lens: {
+        all: "All origins",
+        kv: "KV",
+        static: "Static",
+        share: "Shares",
+      },
+      renderer: {
+        missing: "Renderer not installed",
+        inactive: "Renderer not active",
+        missingHint:
+          "The {plugin} plugin renders this share and is not installed on this server. Refresh is unavailable until it is installed again.",
+        inactiveHint:
+          "The {plugin} plugin renders this share and is installed but not active. Refresh is unavailable until it is enabled on Plugins.",
+        createUnavailable:
+          "No active plugin declares subscription:serve, so a plugin-backed share cannot be created here. A proxy-user share can: it is served by this server itself.",
+        openPlugins: "Open Plugins",
+      },
+      guide: {
+        title: "How Publishing works",
+        what: "Publishing lists every URL this server answers on, the origin that produces its bytes, and who may read it.",
+        show: "Show guide",
+        hide: "Hide guide",
+        relationLabel: "Store and Publishing",
+        relation:
+          "Store holds bytes. Publishing gives bytes a URL and an access mode. A share is a Publishing record whose bytes are rendered on request rather than stored.",
+        writersLabel: "Who writes here today, besides this console",
+        writers: {
+          kvLabel: "KV",
+          kv: "The Sub-Store plugin (kv:read, kv:write), and no other plugin. The server keeps its own line identity map under vpnmeta/.",
+          staticLabel: "Static",
+          static: "No non-console writer. It exists for files the operator publishes.",
+          shareLabel: "Shares",
+          share: "Created here for proxy users, and through Sub-Store's deep link.",
+        },
+        walkthroughLabel: "Publish a file, in four steps",
+        steps: {
+          bucket: {
+            title: "Register the bucket",
+            detail: "Publishing, Static lens, Buckets form. Host bindings and access tokens attach to this record; the server refuses a binding for a bucket without one.",
+            link: "Open the Buckets form",
+          },
+          object: {
+            title: "Put an object in it",
+            detail: "Store, Static, select the bucket, New object. A write into an unregistered name creates the bucket but not the record a binding needs.",
+            link: "Open Store",
+          },
+          binding: {
+            title: "Bind a host and path to it",
+            detail: "Publishing, Static lens, Host bindings form. The route is the host plus the path prefix; the object path follows it.",
+            link: "Open Host bindings",
+          },
+          fetch: {
+            title: "Fetch it",
+            detail: "GET the host, the path prefix, then the object path. A Static route answers anyone. A KV route needs a storage token from the Access tokens form on every request.",
+            link: "Open Access tokens",
+          },
+        },
+      },
     },
     storage: {
       title: "Publishing and access",
@@ -309,7 +363,7 @@ export default {
     },
     evidence: {
       title: "Evidence",
-      description: "What the nodes actually did: sing-box connections assembled from the log store, and the raw log lines they came from",
+      description: "Logs and connection trace from the nodes: sing-box connections assembled from the log store, and the raw log lines they came from",
       lensConnections: "Connections",
       lensLog: "Raw log",
     },

@@ -25,8 +25,6 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "network-ddns": () => import("@/views/networking/DdnsView.vue"),
   "network-ssh-guard": () => import("@/views/networking/SshGuardView.vue"),
   "network-tunnels": () => import("@/views/networking/TunnelsView.vue"),
-  "network-subscription-shares": () =>
-    import("@/views/networking/SubscriptionSharesView.vue"),
   // Platform
   "platform-plugins": () => import("@/views/platform/PluginsView.vue"),
   "platform-publishing": () => import("@/views/platform/PublishingView.vue"),

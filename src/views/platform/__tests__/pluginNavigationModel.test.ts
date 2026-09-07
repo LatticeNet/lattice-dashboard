@@ -95,3 +95,22 @@ test("the evidence area is navigable from a plugin with its lens and filter keys
   assert.equal(isPluginNavigableRoute("/platform/evidence?apply=1"), false);
   assert.equal(isPluginNavigableRoute("/platform/logs?node_id=n"), false);
 });
+
+// Shares moved from /network/subscription-shares to the share lens of
+// Publishing (DESIGN-PROGRAM-2026-09 §9). The installed Sub-Store release still
+// links to the old path, which redirects, so both entries hold until the plugin
+// is re-pointed; then the old one and the redirect go together.
+test("publishing is navigable from a plugin with the lens and the create keys only", () => {
+  assert.equal(isPluginNavigableRoute("/platform/publishing"), true);
+  assert.equal(isPluginNavigableRoute("/platform/publishing?origin=share"), true);
+  assert.equal(isPluginNavigableRoute("/platform/publishing?origin=share&create=1&for=openjobs-host"), true);
+  assert.equal(isPluginNavigableRoute("/platform/publishing?create=1&for=openjobs-host"), true);
+  // `share` selects a row and is the operator's to set, not a frame's.
+  assert.equal(isPluginNavigableRoute("/platform/publishing?origin=share&share=share_1"), false);
+  assert.equal(isPluginNavigableRoute("/platform/publishing?bucket=site"), false);
+});
+
+test("the retired shares path stays navigable until the plugin is re-pointed", () => {
+  assert.equal(isPluginNavigableRoute("/network/subscription-shares?create=1&for=openjobs-host"), true);
+  assert.equal(isPluginNavigableRoute("/network/subscription-shares?origin=share"), false);
+});

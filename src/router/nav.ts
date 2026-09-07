@@ -14,7 +14,6 @@ import {
   Route,
   RefreshCw,
   Cable,
-  Link2,
   Blocks,
   Database,
   Waypoints,
@@ -107,17 +106,9 @@ export const NAV: NavSection[] = [
       // Shrinking SSH exposure is a two-approval flow, so the page needs the
       // plan scope as well as the capability's own.
       { name: "network-ssh-guard", title: "SSH Guard", path: "/network/ssh-guard", icon: ShieldCheck, scopes: ["sshguard:admin"] },
-      // Shares are the public subscription URLs. proxy:admin is what the
-      // server requires on /api/subscription-shares.
-      //
-      // The entry stays in Networking rather than moving under Platform >
-      // Publishing, even though a share is one of that plane's three origins.
-      // Two reasons: this page is also the only home for proxy-user shares,
-      // which have no plugin behind them, and the subscription a share serves
-      // is Sub-Store's domain knowledge, which the placement rule keeps with
-      // its plugin. What was missing was not the position but the sentence
-      // saying the two pages are one plane; that now sits on both pages.
-      { name: "network-subscription-shares", title: "Subscription Shares", path: "/network/subscription-shares", icon: Link2, scopes: ["proxy:admin"] },
+      // Subscription Shares is no longer an entry: a share is a Publishing
+      // record, managed on that page's share lens (DESIGN-PROGRAM-2026-09 §9,
+      // Decision A). The old path redirects there with its query intact.
     ],
   },
   {
@@ -127,8 +118,10 @@ export const NAV: NavSection[] = [
     items: [
       { name: "platform-plugins", title: "Plugins", path: "/platform/plugins", icon: Blocks, scopes: ["audit:read", "plugin:admin", "plugin:verify"] },
       // One page owns what URL content is visible at and who may read it, for
-      // every origin. Each origin still enforces its own admin scope, so this
-      // entry lists all of them rather than inventing a publishing scope.
+      // every origin, shares included: proxy:admin is what the server requires
+      // on /api/subscription-shares. Each origin still enforces its own admin
+      // scope, so this entry lists all of them rather than inventing a
+      // publishing scope.
       { name: "platform-publishing", title: "Publishing", path: "/platform/publishing", icon: Globe, scopes: ["kv:read", "static:read", "proxy:admin"] },
       // KV and Static are one kind-parameterised store on the server: one
       // bucket record, one binding, one access-token type, one handler set

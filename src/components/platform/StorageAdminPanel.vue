@@ -286,7 +286,9 @@ async function revokeToken(token: StorageTokenView) {
       </Button>
     </div>
 
-    <Card>
+    <!-- The ids are what the Publishing and Store guides link to; the view
+         scrolls to them because the document scrolls inside the layout. -->
+    <Card id="publishing-buckets">
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
           <Database v-if="!isStatic" aria-hidden="true" class="size-4 text-muted-foreground" />
@@ -378,7 +380,7 @@ async function revokeToken(token: StorageTokenView) {
     </Card>
 
     <div v-if="canAdmin" class="grid gap-4 xl:grid-cols-2">
-      <Card>
+      <Card id="publishing-bindings">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Globe2 aria-hidden="true" class="size-4 text-muted-foreground" />
@@ -471,7 +473,7 @@ async function revokeToken(token: StorageTokenView) {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="publishing-tokens">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <KeyRound aria-hidden="true" class="size-4 text-muted-foreground" />
