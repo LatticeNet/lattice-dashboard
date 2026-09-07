@@ -87,8 +87,8 @@ const manualChildRoutes: RouteRecordRaw[] = [
   },
   {
     // Subscription Shares folded into Publishing as the share lens
-    // (DESIGN-PROGRAM-2026-09 §9, Decision A). The query rides through so
-    // Sub-Store's ?create=1&for=<record> deep link keeps opening the dialog
+    // (DESIGN-PROGRAM-2026-09 §9, Decision A). `create` and `for` ride through
+    // so Sub-Store's ?create=1&for=<record> deep link keeps opening the dialog
     // until the plugin is re-pointed, at which point this redirect and the old
     // bridge allowlist entry go together.
     path: "network/subscription-shares",

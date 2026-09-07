@@ -99,19 +99,22 @@ export function withoutShareDeepLink(
 /**
  * Where the retired /network/subscription-shares path lands.
  *
- * The query rides through whole, so Sub-Store's existing deep link keeps
- * working with no plugin release: `create` and `for` arrive on the share lens
- * exactly as they arrived on the old page. The old bridge allowlist entry and
- * this redirect go together once the plugin points at the new path.
+ * Only `create` and `for` ride through: that is the pair the old bridge
+ * allowlist declared for the path, so Sub-Store's existing deep link keeps
+ * working with no plugin release, and nothing else the old URL might carry
+ * (a stale lens, a filter the old page understood) lands in the new address
+ * bar. The old bridge allowlist entry and this redirect go together once the
+ * plugin points at the new path.
  */
 export const SHARES_REDIRECT_PATH = "/platform/publishing";
+const SHARES_REDIRECT_KEYS: ReadonlySet<string> = new Set([SHARE_CREATE_PARAM, SHARE_CREATE_FOR_PARAM]);
 
 export function sharesRedirectTarget(
   query: Record<string, QueryValue | undefined>,
 ): { path: string; query: Record<string, QueryValue> } {
   const next: Record<string, QueryValue> = {};
   for (const [key, value] of Object.entries(query)) {
-    if (value === undefined) continue;
+    if (value === undefined || !SHARES_REDIRECT_KEYS.has(key)) continue;
     next[key] = value;
   }
   next[PUBLISHING_LENS_PARAM] = "share";
