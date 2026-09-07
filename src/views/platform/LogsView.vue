@@ -27,7 +27,7 @@ import {
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
-import { formatBytes, formatDateTime, shortId } from "@/lib/format";
+import { formatBytes, formatDateTime, isZeroTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { useRoute } from "vue-router";
@@ -65,7 +65,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { logSourceFeeds, logViewerEmptyState, sortLogSources } from "./logsModel";
+import {
+  logSourceFeeds,
+  logSourceNameTaken,
+  logSourceNamesNode,
+  logViewerEmptyState,
+  sortLogSources,
+} from "./logsModel";
 
 const MAX_LINE_BYTES_DEFAULT = 16384;
 const MAX_LINE_BYTES_CAP = 65536;
@@ -291,6 +297,12 @@ const viewerEmptySubject = computed(() => ({
   name: selectedSource.value?.name || selectedSource.value?.id || "",
   node: selectedSource.value ? nodeName(selectedSource.value.node_id) : "",
 }));
+// Server-owned sources are named after their node, so "{name} on {node}"
+// read "sing-box - X on X". The sentence names the node only when the name
+// does not already.
+const viewerEmptyNamesNode = computed(() =>
+  logSourceNamesNode(selectedSource.value, viewerEmptySubject.value.node),
+);
 const viewerEmptyTitle = computed(() => {
   switch (viewerEmpty.value.kind) {
     case "no-sources":
@@ -309,19 +321,26 @@ const viewerEmptyTitle = computed(() => {
 });
 const viewerEmptyDescription = computed(() => {
   const subject = viewerEmptySubject.value;
+  const namesNode = viewerEmptyNamesNode.value;
   switch (viewerEmpty.value.kind) {
     case "no-sources":
       return t("platform.logs.viewerNoSourcesDescription");
     case "no-selection":
       return t("platform.logs.viewerNoSelectionDescription");
     case "source-disabled":
-      return t("platform.logs.sourceDisabledDescription", subject);
+      return namesNode
+        ? t("platform.logs.sourceDisabledDescription", subject)
+        : t("platform.logs.sourceDisabledDescriptionNodeNamed", subject);
     case "source-empty":
-      return t("platform.logs.sourceEmptyDescription", subject);
+      return namesNode
+        ? t("platform.logs.sourceEmptyDescription", subject)
+        : t("platform.logs.sourceEmptyDescriptionNodeNamed", subject);
     case "nothing-matched":
       return t("platform.logs.linesEmptyDescription");
     default:
-      return t("platform.logs.viewerUnknownEmptyDescription", subject);
+      return namesNode
+        ? t("platform.logs.viewerUnknownEmptyDescription", subject)
+        : t("platform.logs.viewerUnknownEmptyDescriptionNodeNamed", subject);
   }
 });
 const feeds = computed(() => logSourceFeeds(sources.value, statsQuery.data.value ?? []));
@@ -378,9 +397,23 @@ const pathValid = computed(() => {
   return p.startsWith("/") && p.startsWith(PATH_PREFIX) && !p.includes("..");
 });
 
+// The server takes a second source with the same name on the same node
+// without complaint, so the form refuses it here, under the field, the way
+// the share form refuses a taken slug. The source being edited is not its
+// own collision.
+const nameError = computed(() => {
+  const taken = logSourceNameTaken(sources.value, {
+    name: form.value.name,
+    nodeId: form.value.node_id,
+    excludeId: editingId.value,
+  });
+  return taken ? t("platform.logs.nameTaken", { name: form.value.name.trim() }) : "";
+});
+
 const canSubmit = computed(
   () =>
     !!form.value.name.trim() &&
+    !nameError.value &&
     !!form.value.node_id &&
     pathValid.value &&
     Number(form.value.max_line_bytes) >= 1 &&
@@ -463,7 +496,11 @@ function refreshAll(): void {
       </template>
     </PageHeader>
 
-    <div class="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
+    <!-- grid-cols-1 is minmax(0, 1fr), not the implicit auto column: an auto
+         column is sized by its content, and one server-owned source name
+         held as a single line was enough to make it 453px wide in a 375px
+         viewport, with Edit and Delete off screen. -->
+    <div class="grid grid-cols-1 gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
       <!-- Source list -->
       <Card>
         <CardHeader>
@@ -502,34 +539,40 @@ function refreshAll(): void {
                   :aria-pressed="selectedSourceId === source.id"
                   @click="selectedSourceId = source.id"
                 >
-                  <div class="flex items-start justify-between gap-2">
-                    <span class="truncate font-medium" :title="source.name || source.id">{{ source.name || source.id }}</span>
-                    <Badge :variant="source.enabled ? 'success' : 'secondary'">
-                      {{ source.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-                    </Badge>
-                  </div>
+                  <!-- The name has the line to itself. It shared it with the
+                       enabled badge, and neither could shrink, so a long
+                       server-owned name pushed the whole card wider than a
+                       phone. -->
+                  <span class="block truncate font-medium" :title="source.name || source.id">{{ source.name || source.id }}</span>
                   <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
                     {{ source.path }}
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">{{ nodeName(source.node_id) }}</p>
                 </button>
-                <!-- The server owns its synthetic sources and refuses to edit or
-                     delete them; drawing the controls only produced a failing click. -->
-                <p v-if="source.managed" class="mt-2 text-right text-xs text-muted-foreground" :title="$t('platform.logs.managedSourceHint')">
-                  {{ $t('platform.logs.managedSource') }}
-                </p>
-                <div v-else-if="canAdmin" class="mt-2 flex justify-end gap-1">
-                  <Button variant="ghost" size="icon-sm" :aria-label="$t('platform.logs.editSourceAria')" @click="openEdit(source)">
-                    <Pencil class="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    :aria-label="$t('platform.logs.deleteSourceAria')"
-                    @click="deleteTarget = source"
-                  >
-                    <Trash2 class="size-4 text-destructive" />
-                  </Button>
+                <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex flex-wrap items-center gap-1">
+                    <Badge :variant="source.enabled ? 'success' : 'secondary'">
+                      {{ source.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+                    </Badge>
+                    <!-- The server owns its synthetic sources and refuses to edit or
+                         delete them; drawing the controls only produced a failing click. -->
+                    <Badge v-if="source.managed" variant="outline" :title="$t('platform.logs.managedSourceHint')">
+                      {{ $t('platform.logs.managedSource') }}
+                    </Badge>
+                  </div>
+                  <div v-if="!source.managed && canAdmin" class="flex gap-1">
+                    <Button variant="ghost" size="icon-sm" :aria-label="$t('platform.logs.editSourceAria')" @click="openEdit(source)">
+                      <Pencil class="size-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      :aria-label="$t('platform.logs.deleteSourceAria')"
+                      @click="deleteTarget = source"
+                    >
+                      <Trash2 class="size-4 text-destructive" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -566,17 +609,20 @@ function refreshAll(): void {
                   {{ $t('platform.logs.limitsValue', { bytes: selectedSource.max_line_bytes, lines: selectedSource.max_batch_lines }) }}
                 </p>
               </div>
+              <!-- A source that never shipped a line carries Go's zero time in
+                   these three, not an absent field; isZeroTime reads it as
+                   "none" instead of a date in year 1. -->
               <div class="rounded-md border border-border p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statFirstSeen') }}</p>
-                <p class="mt-1 text-sm">{{ selectedStats?.first_at ? formatDateTime(selectedStats.first_at) : $t('common.misc.none') }}</p>
+                <p class="mt-1 text-sm">{{ isZeroTime(selectedStats?.first_at) ? $t('common.misc.none') : formatDateTime(selectedStats?.first_at) }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLastLine') }}</p>
-                <p class="mt-1 text-sm">{{ selectedStats?.last_at ? formatDateTime(selectedStats.last_at) : $t('common.misc.none') }}</p>
+                <p class="mt-1 text-sm">{{ isZeroTime(selectedStats?.last_at) ? $t('common.misc.none') : formatDateTime(selectedStats?.last_at) }}</p>
               </div>
               <div class="rounded-md border border-border p-3">
                 <p class="text-xs text-muted-foreground">{{ $t('platform.logs.statLastIngest') }}</p>
-                <p class="mt-1 text-sm">{{ selectedStats?.last_ingest_at ? formatDateTime(selectedStats.last_ingest_at) : $t('common.misc.none') }}</p>
+                <p class="mt-1 text-sm">{{ isZeroTime(selectedStats?.last_ingest_at) ? $t('common.misc.none') : formatDateTime(selectedStats?.last_ingest_at) }}</p>
               </div>
             </div>
           </CardContent>
@@ -727,7 +773,14 @@ function refreshAll(): void {
           <div class="grid gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="src-name">{{ $t('platform.logs.nameLabel') }}</Label>
-              <Input id="src-name" v-model="form.name" required placeholder="nginx-access" />
+              <Input
+                id="src-name"
+                v-model="form.name"
+                required
+                placeholder="nginx-access"
+                :aria-invalid="!!nameError"
+              />
+              <p v-if="nameError" class="text-xs text-destructive">{{ nameError }}</p>
             </div>
             <div class="grid gap-2">
               <Label for="src-node">{{ $t('platform.logs.nodeLabel') }}</Label>

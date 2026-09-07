@@ -364,6 +364,15 @@ export default {
       viewerUnknownEmptyTitle: "No lines to show",
       viewerUnknownEmptyDescription:
         "The query returned nothing for {name} on {node}. Refresh, or load older lines if the button is offered.",
+      // The same three sentences without "on {node}", for a source whose name
+      // already carries the node: server-owned sources are named after it, and
+      // "sing-box - hk-1 on hk-1" said the node twice.
+      sourceDisabledDescriptionNodeNamed:
+        "{name} is disabled, so the node's agent does not tail it and no line arrives. Enable the source to resume.",
+      sourceEmptyDescriptionNodeNamed:
+        "{name} is enabled and the store holds no line for it. Lines arrive as the file receives them and the agent pushes each batch.",
+      viewerUnknownEmptyDescriptionNodeNamed:
+        "The query returned nothing for {name}. Refresh, or load older lines if the button is offered.",
       feedsTitle: "Sources that exist, and the node feeding each",
       feedHeld: "{count} lines held",
       feedHeldUnknown: "lines held not read",
@@ -380,6 +389,7 @@ export default {
       formHint:
         "Name a file for the node's own agent to tail and push. This server never opens the file itself. Paths must be absolute and under {path}.",
       nameLabel: "Name",
+      nameTaken: "A source named {name} already exists on this node.",
       nodeLabel: "Node",
       selectNode: "Select a node",
       nodeIdPlaceholder: "node-a",
@@ -455,6 +465,8 @@ export default {
       resultsEmptyTitle: "No connections in this window",
       resultsEmptyDescription:
         "Nothing matched these filters. Widen the time range, or drop a filter.",
+      // What the table says when the reason for its emptiness leads the tab.
+      resultsNoRows: "No rows to show. The reason is above the filters.",
       nothingMatchedDescription:
         "The store holds records for these nodes, but none match this filter. Widen the time range, or drop a filter.",
       nothingMatchedNewestDescription:
@@ -474,8 +486,10 @@ export default {
       policyNoRecordsTitle: "Collection is on, no record yet",
       policyNoRecordsDescription:
         "The trace store holds no connection record yet for the nodes you can see. A node with its policy enabled produces a record once its agent has picked the policy up and a connection passes through it.",
+      // Pluralised on {total}: "1 of 1 nodes have one" was the fleet the
+      // review ran on.
       policyCoverage:
-        "Connection records are assembled only where a node's trace policy is enabled; {enabled} of {total} nodes have one.",
+        "Connection records are assembled only where a node's trace policy is enabled; {enabled} of {total} node has one. | Connection records are assembled only where a node's trace policy is enabled; {enabled} of {total} nodes have one.",
       policyCoverageUnknown:
         "Connection records are assembled only where a node's trace policy is enabled. The policy list could not be read, so how many nodes have one is not known.",
       openPolicyTab: "Collection policy",

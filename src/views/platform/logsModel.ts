@@ -54,6 +54,49 @@ export function logViewerEmptyState(input: LogViewerEmptyInput): LogViewerEmptyS
   return input.filterActive ? { kind: "nothing-matched" } : { kind: "unknown" };
 }
 
+/**
+ * Whether the empty sentence should say "on {node}" after the source name.
+ *
+ * The server names the sources it owns after the node they tail, so
+ * "sing-box - hk-1 on hk-1 is enabled" said the node twice; an operator who
+ * names a source by hand after its node gets the same stutter. The clause is
+ * dropped for a server-owned source and for any name that already carries the
+ * node's name, compared without case. With no source there is nothing to
+ * qualify, and with no node name the clause would be empty.
+ */
+export function logSourceNamesNode(
+  source: Pick<LogSource, "name" | "managed"> | undefined,
+  nodeName: string,
+): boolean {
+  if (!source || source.managed) return false;
+  const node = nodeName.trim().toLowerCase();
+  if (!node) return false;
+  return !source.name.toLowerCase().includes(node);
+}
+
+/**
+ * Whether a source with this name already exists on this node.
+ *
+ * The server accepted a second source with the same name, node and path
+ * without a word, so an operator who clicked Create twice ended up with two
+ * identical sources tailing one file and no way to tell them apart in the
+ * list. The form refuses the name inline before the request goes out. An
+ * edit excludes the source being edited, so keeping its own name is not a
+ * collision. Exact match after trimming: the server's identity is the name
+ * as written.
+ */
+export function logSourceNameTaken(
+  sources: readonly LogSource[],
+  draft: { name: string; nodeId: string; excludeId?: string },
+): boolean {
+  const name = draft.name.trim();
+  if (!name || !draft.nodeId) return false;
+  return sources.some(
+    (source) =>
+      source.id !== draft.excludeId && source.node_id === draft.nodeId && source.name === name,
+  );
+}
+
 /** One source as the empty state lists it: what exists, which node feeds it, and what it holds. */
 export interface LogSourceFeed {
   id: string;

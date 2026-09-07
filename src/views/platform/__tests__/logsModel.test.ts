@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { LogSource, LogSourceStatsView } from "../../../lib/api/types.ts";
-import { logSourceFeeds, logViewerEmptyState, sortLogSources } from "../logsModel.ts";
+import {
+  logSourceFeeds,
+  logSourceNameTaken,
+  logSourceNamesNode,
+  logViewerEmptyState,
+  sortLogSources,
+} from "../logsModel.ts";
 
 function source(partial: Partial<LogSource> & { id: string }): LogSource {
   return {
@@ -78,6 +84,36 @@ test("sources sort enabled first, then by name, in the list and in the empty sta
   ];
   assert.deepEqual(sortLogSources(sources).map((s) => s.id), ["alpha", "beta", "zeta"]);
   assert.deepEqual(logSourceFeeds(sources).map((f) => f.id), ["alpha", "beta", "zeta"]);
+});
+
+test("the empty sentence drops 'on {node}' when the name already says which node", () => {
+  // A server-owned source is named after its node: "sing-box - hk-1 on hk-1"
+  // would say the node twice.
+  assert.equal(logSourceNamesNode(source({ id: "s", name: "sing-box - hk-1", managed: true }), "hk-1"), false);
+  // A hand-made name that carries the node name gets the same treatment, case aside.
+  assert.equal(logSourceNamesNode(source({ id: "s", name: "nginx-HK-1" }), "hk-1"), false);
+  // A name that does not say the node keeps the clause: it is the only place the node appears.
+  assert.equal(logSourceNamesNode(source({ id: "s", name: "nginx-access" }), "hk-1"), true);
+  // Nothing to qualify, or nothing to qualify it with.
+  assert.equal(logSourceNamesNode(undefined, "hk-1"), false);
+  assert.equal(logSourceNamesNode(source({ id: "s", name: "nginx-access" }), ""), false);
+});
+
+test("a name already used on the same node is taken; the same name on another node is not", () => {
+  const sources = [
+    source({ id: "a", name: "singbox-hk-turin", node_id: "node-a" }),
+    source({ id: "b", name: "nginx", node_id: "node-b" }),
+  ];
+  assert.equal(logSourceNameTaken(sources, { name: "singbox-hk-turin", nodeId: "node-a" }), true);
+  // Whitespace an operator typed around the name does not make it a new name.
+  assert.equal(logSourceNameTaken(sources, { name: "  singbox-hk-turin ", nodeId: "node-a" }), true);
+  assert.equal(logSourceNameTaken(sources, { name: "singbox-hk-turin", nodeId: "node-b" }), false);
+  assert.equal(logSourceNameTaken(sources, { name: "nginx", nodeId: "node-a" }), false);
+  // Editing a source keeps its own name without colliding with itself.
+  assert.equal(logSourceNameTaken(sources, { name: "singbox-hk-turin", nodeId: "node-a", excludeId: "a" }), false);
+  // An unfinished form is not a collision: the other fields have their own checks.
+  assert.equal(logSourceNameTaken(sources, { name: "", nodeId: "node-a" }), false);
+  assert.equal(logSourceNameTaken(sources, { name: "singbox-hk-turin", nodeId: "" }), false);
 });
 
 test("feeds name the node, the state and what is held, and leave an unread count undefined", () => {
