@@ -184,12 +184,13 @@ export default {
       origin: {
         kv: "KV",
         static: "静态资源",
-        plugin: "插件",
+        plugin: "分享",
       },
       state: {
         serving: "服务中",
         disabled: "已停用",
         expired: "已过期",
+        unresolved: "未解析",
       },
       access: {
         anonymous: "匿名",
@@ -344,7 +345,7 @@ export default {
     },
     evidence: {
       title: "证据",
-      description: "来自节点的日志与连接追踪:从日志存储拼出的 sing-box 连接,以及它们来自的原始日志行",
+      description: "来自节点的日志与连接追踪：从日志存储拼出的 sing-box 连接，以及它们来自的原始日志行",
       lensConnections: "连接",
       lensLog: "原始日志",
     },

@@ -22,11 +22,13 @@ import {
   recordsForShare,
   routeLabel,
   routePath,
+  routeState,
   shareCreateTarget,
   shareRefreshable,
   shareRendererState,
   sharesRedirectTarget,
   sortRecords,
+  unresolvedShareIds,
   withoutShareDeepLink,
 } from "../publishingModel.ts";
 
@@ -58,6 +60,37 @@ test("expiry is exclusive at the boundary, matching the server", () => {
   // route whose expiry is exactly now reads as expired here too.
   assert.equal(publishingState(record({ expires_at: NOW.toISOString() }), NOW), "expired");
   assert.equal(isServing(record({ expires_at: NOW.toISOString() }), NOW), false);
+});
+
+test("a share route whose proxy user is gone reads unresolved on the plane, as it does on the Shares lens", () => {
+  // The whole-plane table badged /openjobs-mobile "Serving" while the Shares
+  // lens badged the same share "unresolved": the record knows nothing about
+  // the share's user. Both now read one set of unresolved share ids.
+  const shareRoute = record({ origin: "plugin", bucket: "share_1", share_id: "share_1" });
+  const users = new Set(["u-present"]);
+  const shares = [
+    { id: "share_1", enabled: true, source: { kind: "core.proxy_user", proxy_user_id: "u-gone" } },
+    { id: "share_2", enabled: true, source: { kind: "core.proxy_user", proxy_user_id: "u-present" } },
+    { id: "share_3", enabled: true, source: { kind: "plugin", plugin_id: "p", subscription_id: "s" } },
+    // Paused already says the URL does not answer; it is not re-labelled.
+    { id: "share_4", enabled: false, source: { kind: "core.proxy_user", proxy_user_id: "u-gone" } },
+  ] as never[];
+
+  const gone = unresolvedShareIds(shares, users, NOW.getTime());
+  assert.deepEqual([...(gone ?? [])], ["share_1"]);
+  assert.equal(routeState(shareRoute, gone, NOW), "unresolved");
+  assert.equal(routeState(record({ origin: "plugin", bucket: "share_2", share_id: "share_2" }), gone, NOW), "serving");
+
+  // Honesty rule: with the users or the shares unknown, nothing is unresolved.
+  assert.equal(unresolvedShareIds(shares, undefined), undefined);
+  assert.equal(unresolvedShareIds(undefined, users), undefined);
+  assert.equal(routeState(shareRoute, undefined, NOW), "serving");
+
+  // A bucket route is never a share, whatever the set says.
+  assert.equal(routeState(record({ bucket: "share_1" }), gone, NOW), "serving");
+  // The record's own state still applies when the share resolves.
+  assert.equal(routeState(record({ origin: "plugin", share_id: "share_2", enabled: false }), gone, NOW), "disabled");
+  assert.equal(routeState(shareRoute, gone, NOW), "unresolved");
 });
 
 test("a path is always rooted and never carries a trailing slash", () => {

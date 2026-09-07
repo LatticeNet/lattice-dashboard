@@ -198,12 +198,13 @@ export default {
       origin: {
         kv: "KV",
         static: "Static",
-        plugin: "Plugin",
+        plugin: "Share",
       },
       state: {
         serving: "Serving",
         disabled: "Disabled",
         expired: "Expired",
+        unresolved: "unresolved",
       },
       access: {
         anonymous: "Anonymous",
