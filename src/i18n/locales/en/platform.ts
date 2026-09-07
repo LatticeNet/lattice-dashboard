@@ -773,6 +773,7 @@ export default {
       testBodyLabel: "Body",
       testBodyPlaceholder: "Notification channel verified.",
       testThroughConfigHint: "Tests deliver through the config entered above (not a stored channel).",
+      sendScopeMissing: "Sending a test requires the notify:send scope; this session holds only notify:admin.",
       enterRequiredFields: "Enter the required config fields before testing.",
       testDelivered: "Test delivered via {channel}",
       testDeliveryFailed: "Test delivery failed",

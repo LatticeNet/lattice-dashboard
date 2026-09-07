@@ -715,6 +715,7 @@ export default {
       testBodyLabel: "正文",
       testBodyPlaceholder: "通知渠道已校验。",
       testThroughConfigHint: "测试通过上方输入的配置发送(而非已存储的渠道)。",
+      sendScopeMissing: "发送测试需要 notify:send 权限,当前会话只持有 notify:admin。",
       enterRequiredFields: "测试前请填写必填的配置字段。",
       testDelivered: "测试已通过 {channel} 送达",
       testDeliveryFailed: "测试投递失败",

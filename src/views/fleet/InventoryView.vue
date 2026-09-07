@@ -127,7 +127,7 @@ const vendorsQuery = useAsyncData(
   (signal) => api.machineVendors.list({ signal }).then((r) => (Array.isArray(r) ? r : (r.vendors ?? []))),
   { pollInterval: 60000 },
 );
-const canManageNotifications = computed(() => auth.can("notify:send"));
+const canManageNotifications = computed(() => auth.can("notify:admin"));
 const notifyChannelsQuery = useAsyncData(
   (signal) => (canManageNotifications.value ? api.notify.channels({ signal }) : Promise.resolve([] as NotifyChannelView[])),
   { pollInterval: 30000 },

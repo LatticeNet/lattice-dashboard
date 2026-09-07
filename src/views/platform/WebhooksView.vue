@@ -75,7 +75,7 @@ import {
 
 const { t } = useI18n();
 const auth = useAuthStore();
-const canSend = computed(() => auth.can("notify:send"));
+const canManage = computed(() => auth.can("notify:admin"));
 
 const webhooksQuery = useAsyncData((signal) => api.notify.webhooks({ signal }), {
   pollInterval: 15000,
@@ -184,7 +184,7 @@ function onFormOpenChange(next: boolean): void {
 }
 
 function openCreate(): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   editingId.value = undefined;
   formName.value = "";
   formEvent.value = "";
@@ -195,7 +195,7 @@ function openCreate(): void {
 }
 
 function openEdit(hook: NotifyWebhookView): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   editingId.value = hook.id;
   formName.value = hook.name;
   formEvent.value = hook.event_type;
@@ -206,7 +206,7 @@ function openEdit(hook: NotifyWebhookView): void {
 }
 
 async function submitForm(): Promise<void> {
-  if (!canSubmit.value || !canSend.value) return;
+  if (!canSubmit.value || !canManage.value) return;
   saving.value = true;
   try {
     const req: NotifyWebhookUpsertRequest = {
@@ -281,14 +281,14 @@ const confirmMatches = computed(
 );
 
 function openRotate(hook: NotifyWebhookView): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   rotateTarget.value = hook;
   confirmText.value = "";
   confirmError.value = false;
 }
 
 function openDelete(hook: NotifyWebhookView): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   deleteTarget.value = hook;
   confirmText.value = "";
   confirmError.value = false;
@@ -319,7 +319,7 @@ function runConfirm(): void {
 }
 
 async function doRotate(): Promise<void> {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   const target = rotateTarget.value;
   if (!target) return;
   pending.value = true;
@@ -337,7 +337,7 @@ async function doRotate(): Promise<void> {
 }
 
 async function doDelete(): Promise<void> {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   const target = deleteTarget.value;
   if (!target) return;
   pending.value = true;
@@ -362,7 +362,7 @@ const testing = ref(false);
 const testParsed = computed(() => parseFieldLines(testInput.value));
 
 function openTest(): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   if (!selected.value) return;
   // Prefill the fields the templates ask for, so the operator fills in values
   // rather than guessing the field names back out of the template.
@@ -371,7 +371,7 @@ function openTest(): void {
 }
 
 async function runTest(): Promise<void> {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   if (!selected.value || testParsed.value.error) return;
   testing.value = true;
   try {
@@ -407,7 +407,7 @@ async function runTest(): Promise<void> {
           <RefreshCw class="size-4" />
           {{ $t("common.actions.refresh") }}
         </Button>
-        <Button v-if="canSend" size="sm" @click="openCreate">
+        <Button v-if="canManage" size="sm" @click="openCreate">
           <Plus class="size-4" />
           {{ $t("platform.webhooks.newWebhook") }}
         </Button>
@@ -478,7 +478,7 @@ async function runTest(): Promise<void> {
               { title: $t('platform.webhooks.step3Title'), detail: $t('platform.webhooks.step3Detail') },
             ]"
           >
-            <Button v-if="canSend" size="sm" @click="openCreate">
+            <Button v-if="canManage" size="sm" @click="openCreate">
               <Plus class="size-4" />
               {{ $t("platform.webhooks.newWebhook") }}
             </Button>
@@ -573,7 +573,7 @@ async function runTest(): Promise<void> {
             ><code>{{ selectedCurl }}</code></pre>
           </div>
 
-          <div v-if="canSend" class="flex flex-wrap gap-2 border-t border-border pt-3">
+          <div v-if="canManage" class="flex flex-wrap gap-2 border-t border-border pt-3">
             <Button variant="outline" size="sm" @click="openTest">
               <Send class="size-4" />
               {{ $t("platform.webhooks.sendTest") }}

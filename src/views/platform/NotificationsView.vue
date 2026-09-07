@@ -115,6 +115,9 @@ function kindBadgeVariant(kind: string): "info" | "secondary" | "default" | "war
 
 const { t } = useI18n();
 const auth = useAuthStore();
+// The notify split (2026-09): notify:admin governs channels, rules and
+// webhooks; notify:send is dispatch only and gates just the test-send below.
+const canManage = computed(() => auth.can("notify:admin"));
 const canSend = computed(() => auth.can("notify:send"));
 
 // BARE ARRAY endpoint: do NOT unwrap.
@@ -177,7 +180,7 @@ function resetConfigForKind(): void {
 }
 
 function openCreate(): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   editingId.value = undefined;
   editingKind.value = undefined;
   formName.value = "";
@@ -192,7 +195,7 @@ function openCreate(): void {
 }
 
 function openEdit(channel: NotifyChannelView): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   editingId.value = channel.id;
   formName.value = channel.name;
   formKind.value = (KIND_OPTIONS.includes(channel.kind as NotifyKind)
@@ -246,7 +249,7 @@ function buildConfig(): Record<string, string> {
 }
 
 async function submitForm(): Promise<void> {
-  if (!canSubmit.value || !canSend.value) return;
+  if (!canSubmit.value || !canManage.value) return;
   saving.value = true;
   try {
     const req: NotifyChannelUpsertRequest = {
@@ -324,7 +327,7 @@ const deleteRuleTarget = ref<NotifyRuleView | undefined>();
 const deletingRule = ref(false);
 
 function openRuleCreate(): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   ruleEditingId.value = undefined;
   ruleName.value = "";
   ruleEvents.value = "monitor.down";
@@ -336,7 +339,7 @@ function openRuleCreate(): void {
 }
 
 function openRulePreset(preset: RulePreset): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   ruleEditingId.value = undefined;
   ruleName.value = t(`platform.notifications.presets.${preset.key}`);
   ruleEvents.value = preset.events;
@@ -348,7 +351,7 @@ function openRulePreset(preset: RulePreset): void {
 }
 
 function openRuleEdit(rule: NotifyRuleView): void {
-  if (!canSend.value) return;
+  if (!canManage.value) return;
   ruleEditingId.value = rule.id;
   ruleName.value = rule.name;
   ruleEvents.value = (rule.event_types ?? ["*"]).join(", ");
@@ -380,7 +383,7 @@ const canSubmitRule = computed(
 );
 
 async function submitRule(): Promise<void> {
-  if (!canSubmitRule.value || !canSend.value) return;
+  if (!canSubmitRule.value || !canManage.value) return;
   ruleSaving.value = true;
   try {
     const req: NotifyRuleUpsertRequest = {
@@ -435,11 +438,11 @@ async function confirmDeleteRule(): Promise<void> {
           <RefreshCw aria-hidden="true" :class="cn('size-4', (channelsQuery.refreshing.value || rulesQuery.refreshing.value) && 'animate-spin')" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canSend" variant="outline" size="sm" @click="openRuleCreate">
+        <Button v-if="canManage" variant="outline" size="sm" @click="openRuleCreate">
           <GitBranch aria-hidden="true" class="size-4" />
           {{ $t('platform.notifications.newRule') }}
         </Button>
-        <Button v-if="canSend" size="sm" @click="openCreate">
+        <Button v-if="canManage" size="sm" @click="openCreate">
           <Plus aria-hidden="true" class="size-4" />
           {{ $t('platform.notifications.newChannel') }}
         </Button>
@@ -457,7 +460,7 @@ async function confirmDeleteRule(): Promise<void> {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div v-if="canSend" class="mb-4 rounded-md border border-border p-3">
+        <div v-if="canManage" class="mb-4 rounded-md border border-border p-3">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p class="text-sm font-medium">{{ $t('platform.notifications.presetsTitle') }}</p>
@@ -529,7 +532,7 @@ async function confirmDeleteRule(): Promise<void> {
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button
-                v-if="canSend"
+                v-if="canManage"
                 variant="ghost"
                 size="icon-sm"
                 :aria-label="$t('platform.notifications.editChannelAria')"
@@ -538,7 +541,7 @@ async function confirmDeleteRule(): Promise<void> {
                 <Pencil class="size-4" />
               </Button>
               <Button
-                v-if="canSend"
+                v-if="canManage"
                 variant="ghost"
                 size="icon-sm"
                 :aria-label="$t('platform.notifications.deleteChannelAria')"
@@ -608,7 +611,7 @@ async function confirmDeleteRule(): Promise<void> {
           <template #cell-actions="{ row }">
             <div class="flex justify-end gap-1">
               <Button
-                v-if="canSend"
+                v-if="canManage"
                 variant="ghost"
                 size="icon-sm"
                 :aria-label="$t('platform.notifications.editRuleAria')"
@@ -617,7 +620,7 @@ async function confirmDeleteRule(): Promise<void> {
                 <Pencil class="size-4" />
               </Button>
               <Button
-                v-if="canSend"
+                v-if="canManage"
                 variant="ghost"
                 size="icon-sm"
                 :aria-label="$t('platform.notifications.deleteRuleAria')"
@@ -742,7 +745,8 @@ async function confirmDeleteRule(): Promise<void> {
               type="button"
               variant="outline"
               size="sm"
-              :disabled="testing || !configComplete"
+              :disabled="testing || !configComplete || !canSend"
+              :title="!canSend ? $t('platform.notifications.sendScopeMissing') : undefined"
               @click="sendTest"
             >
               <RefreshCw v-if="testing" aria-hidden="true" class="size-4 animate-spin" />
