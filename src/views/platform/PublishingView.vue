@@ -15,7 +15,13 @@ import { useI18n } from "vue-i18n";
 import { Globe, Link2, RefreshCw, ShieldAlert, Trash2 } from "lucide-vue-next";
 import { RouterLink, useRoute } from "vue-router";
 
-import { api, type PublishingRecord, type StorageKind, type SubscriptionShareView } from "@/lib/api";
+import {
+  api,
+  type ProxyUserView,
+  type PublishingRecord,
+  type StorageKind,
+  type SubscriptionShareView,
+} from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useRouteTab } from "@/composables/useRouteTab";
 import { useAuthStore } from "@/stores/auth";
@@ -26,6 +32,7 @@ import {
   PUBLISHING_LENS_PARAM,
   type PublishingAccessMode,
   type PublishingLens,
+  type RouteState,
   accessLegend,
   accessMode,
   arrivedFromWorkers,
@@ -33,10 +40,11 @@ import {
   originTarget,
   originTargetLabel,
   publishingPlaneEmpty,
-  publishingState,
   recordsForLens,
   routeLabel,
+  routeState,
   sortRecords,
+  unresolvedShareIds,
 } from "./publishingModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -128,17 +136,37 @@ const canSeeShares = computed(() => auth.can("proxy:admin"));
 const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
   async (signal) => (canSeeShares.value ? api.subscriptionShares.list({ signal }) : undefined),
 );
-const shareSlugById = computed(() => {
-  if (sharesQuery.error.value || !sharesQuery.data.value) return undefined;
-  return new Map(sharesQuery.data.value.map((share) => [share.id, share.slug]));
+const shares = computed(() => (sharesQuery.error.value ? undefined : sharesQuery.data.value));
+const shareSlugById = computed(() =>
+  shares.value ? new Map(shares.value.map((share) => [share.id, share.slug])) : undefined,
+);
+
+/**
+ * The proxy users, read once like the share list, so a share route whose user
+ * is gone is badged here the way the Shares lens badges the share. Without the
+ * list (not allowed, not yet loaded, failed) nothing is called unresolved.
+ */
+const canReadProxyUsers = computed(() => auth.can("proxy:read"));
+const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
+  async (signal) => (canReadProxyUsers.value ? (await api.proxy.users({ signal })).users : undefined),
+);
+const knownProxyUsers = computed(() => {
+  const users = proxyUsersQuery.error.value ? undefined : proxyUsersQuery.data.value;
+  return users ? new Set(users.map((user) => user.id)) : undefined;
 });
+const unresolvedShares = computed(() => unresolvedShareIds(shares.value, knownProxyUsers.value));
 
 const sharesPane = ref<InstanceType<typeof PublishingSharesPane> | null>(null);
 const refreshing = computed(() => recordsQuery.refreshing.value);
 
 /** One Refresh for the page: the plane, and the share pane when it is open. */
 async function refreshAll(): Promise<void> {
-  await Promise.all([recordsQuery.refresh(), sharesQuery.refresh(), sharesPane.value?.refresh()]);
+  await Promise.all([
+    recordsQuery.refresh(),
+    sharesQuery.refresh(),
+    proxyUsersQuery.refresh(),
+    sharesPane.value?.refresh(),
+  ]);
 }
 
 const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
@@ -179,11 +207,16 @@ function accessVariant(record: Pick<PublishingRecord, "origin">) {
   return accessModeVariant(accessMode(record));
 }
 
+function recordState(record: PublishingRecord): RouteState {
+  return routeState(record, unresolvedShares.value);
+}
+
 function stateVariant(record: PublishingRecord) {
-  switch (publishingState(record)) {
+  switch (recordState(record)) {
     case "serving":
       return "default";
     case "expired":
+    case "unresolved":
       return "destructive";
     default:
       return "secondary";
@@ -324,7 +357,7 @@ watch(() => route.fullPath, scrollToHash);
             </template>
             <template #cell-state="{ row }">
               <Badge :variant="stateVariant(row)">
-                {{ $t(`platform.publishing.state.${publishingState(row)}`) }}
+                {{ $t(`platform.publishing.state.${recordState(row)}`) }}
               </Badge>
               <span v-if="row.expires_at" class="ml-2 text-xs text-muted-foreground">
                 {{ formatDateTime(row.expires_at) }}

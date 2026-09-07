@@ -39,6 +39,7 @@ import { api, ApiError } from "@/lib/api";
 import type {
   PluginView,
   ProxyUserView,
+  PublishingRecord,
   ShareSource,
   SubscriptionShareCreateRequest,
   SubscriptionShareView,
@@ -50,13 +51,14 @@ import { cn } from "@/lib/utils";
 import {
   hasShareCreateDeepLink,
   publishablePlugins as pickPublishablePlugins,
-  publishingState,
   recordsForShare,
   routeLabel,
+  routeState,
   shareCreateTarget,
   shareRefreshable,
   shareRendererState,
   withoutShareDeepLink,
+  type RouteState,
   type ShareRendererState,
 } from "@/views/platform/publishingModel";
 import { SHARE_SLUG_RE, suggestShareSlug } from "@/views/networking/subscriptionSharesModel";
@@ -215,6 +217,12 @@ const routesQuery = useAsyncData((signal) => api.publishing.records({ signal }),
 const selectedRoutes = computed(() =>
   selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
 );
+/** The selected share's routes carry its unresolved state, as the routes table does. */
+function selectedRouteState(record: PublishingRecord): RouteState {
+  const unresolved =
+    selected.value && shareState(selected.value) === "unresolved" ? new Set([selected.value.id]) : undefined;
+  return routeState(record, unresolved);
+}
 
 /** The origin the browser is on is the origin the share is served from, so the
  *  displayed URL is the real one rather than a guess at LATTICE_PUBLIC_URL. */
@@ -755,7 +763,11 @@ watch(() => route.query, applyDeepLink);
                 class="mt-2 flex flex-wrap items-center gap-2 text-xs"
               >
                 <code class="rounded bg-muted px-2 py-1 font-mono">{{ routeLabel(record, $t('platform.publishing.anyHost')) }}</code>
-                <Badge variant="outline">{{ $t(`platform.publishing.state.${publishingState(record)}`) }}</Badge>
+                <!-- The same rule the routes table applies, so this badge cannot
+                     say Serving under a callout saying the URL returns 404. -->
+                <Badge :variant="selectedRouteState(record) === 'unresolved' ? 'destructive' : 'outline'">
+                  {{ $t(`platform.publishing.state.${selectedRouteState(record)}`) }}
+                </Badge>
                 <Badge v-if="record.reserved" variant="outline" :title="$t('platform.publishing.reservedHint')">
                   {{ $t('platform.publishing.reserved') }}
                 </Badge>

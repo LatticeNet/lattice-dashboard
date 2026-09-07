@@ -1,5 +1,6 @@
 import type { PluginView, PublishingRecord, SubscriptionShareView } from "@/lib/api";
 import type { QueryValue } from "@/components/common/tableUrlState";
+import { publishedState } from "@/views/networking/publishedModel";
 
 /**
  * The publishing plane answers one question for the whole console: what URL is
@@ -190,6 +191,47 @@ export function publishingState(record: PublishingRecord, now: Date = new Date()
 
 export function isServing(record: PublishingRecord, now: Date = new Date()): boolean {
   return publishingState(record, now) === "serving";
+}
+
+/**
+ * The state the routes table badges, which is the record's own state plus the
+ * one fact a route cannot know about itself: a share route whose proxy user
+ * is gone answers an empty 404, and the Shares lens already calls that share
+ * `unresolved`. The whole-plane table read the same object as `serving`.
+ *
+ * The set is built by {@link unresolvedShareIds} from the share list and the
+ * proxy users actually read. No set, because either list is unknown or
+ * failed, marks nothing: a route is only called unresolved on evidence.
+ */
+export type RouteState = PublishingState | "unresolved";
+
+export function routeState(
+  record: PublishingRecord,
+  unresolvedShares?: ReadonlySet<string>,
+  now: Date = new Date(),
+): RouteState {
+  if (record.origin === "plugin" && record.share_id && unresolvedShares?.has(record.share_id)) {
+    return "unresolved";
+  }
+  return publishingState(record, now);
+}
+
+/**
+ * The shares whose proxy user does not exist, by id, or undefined while the
+ * proxy user list has not been read. The same rule the Shares lens applies per
+ * share, so the two tables cannot disagree about one share.
+ */
+export function unresolvedShareIds(
+  shares: readonly SubscriptionShareView[] | undefined,
+  knownProxyUsers: ReadonlySet<string> | undefined,
+  now: number = Date.now(),
+): ReadonlySet<string> | undefined {
+  if (!shares || !knownProxyUsers) return undefined;
+  return new Set(
+    shares
+      .filter((share) => publishedState(share, now, knownProxyUsers) === "unresolved")
+      .map((share) => share.id),
+  );
 }
 
 /** The path a route answers on, always rooted and without a trailing slash. */

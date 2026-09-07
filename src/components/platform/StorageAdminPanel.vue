@@ -379,7 +379,10 @@ async function revokeToken(token: StorageTokenView) {
       </CardContent>
     </Card>
 
-    <div v-if="canAdmin" class="grid gap-4 xl:grid-cols-2">
+    <!-- The single track is pinned to the viewport: an implicit auto track
+         grows to the widest nowrap row inside, and the two cards then ran past
+         the right edge at 375 while the cards above them did not. -->
+    <div v-if="canAdmin" class="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-2">
       <Card id="publishing-bindings">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
