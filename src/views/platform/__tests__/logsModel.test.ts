@@ -109,6 +109,9 @@ test("a name already used on the same node is taken; the same name on another no
   assert.equal(logSourceNameTaken(sources, { name: "  singbox-hk-turin ", nodeId: "node-a" }), true);
   assert.equal(logSourceNameTaken(sources, { name: "singbox-hk-turin", nodeId: "node-b" }), false);
   assert.equal(logSourceNameTaken(sources, { name: "nginx", nodeId: "node-a" }), false);
+  // The server stores names verbatim, so a name that differs only in case is a
+  // different source; the check matches exactly rather than folding case.
+  assert.equal(logSourceNameTaken(sources, { name: "Singbox-HK-Turin", nodeId: "node-a" }), false);
   // Editing a source keeps its own name without colliding with itself.
   assert.equal(logSourceNameTaken(sources, { name: "singbox-hk-turin", nodeId: "node-a", excludeId: "a" }), false);
   // An unfinished form is not a collision: the other fields have their own checks.
