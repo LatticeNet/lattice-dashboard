@@ -120,6 +120,10 @@ export default {
       },
       unnamedToken: "an unnamed token",
       openAgentUpdates: "Open Agent Updates",
+      guide: {
+        title: "How Store works",
+        what: "Store lists every bucket this server holds, KV and Static, with what each holds and who wrote it.",
+      },
     },
     kv: {
       title: "KV Store",
@@ -194,12 +198,13 @@ export default {
       origin: {
         kv: "KV",
         static: "Static",
-        plugin: "Plugin",
+        plugin: "Share",
       },
       state: {
         serving: "Serving",
         disabled: "Disabled",
         expired: "Expired",
+        unresolved: "unresolved",
       },
       access: {
         anonymous: "Anonymous",
@@ -214,26 +219,76 @@ export default {
         unknown: "This server reported an origin this console does not know, so its access rule is not shown rather than guessed.",
       },
       accessLegendTitle: "What the access column means",
-      primerTitle: "The three origins",
-      primerDescription:
-        "Nothing is published yet. A route decides the URL; the origin decides where the bytes come from and who may fetch them.",
-      primer: {
-        kv: "A KV route serves the values held in one key/value bucket. It is not public hosting: a reader has to present a storage token on every request, GET included, so this origin is for a caller you issued a token to.",
-        static: "A static route serves the objects in one static bucket over plain anonymous HTTP. Anyone who knows the URL can fetch it, so nothing a token was protecting belongs behind one.",
-        plugin: "A plugin route is a subscription share, mounted under the reserved sub/ path. Its bearer token is part of the URL, which is what makes the link unguessable and what makes rotating the share the way to revoke it.",
-      },
       workersRemoved:
         "Workers was removed in a87: nothing routed to it and it had no job of its own. Publishing owns the job it was held for, serving content at a URL, so old Workers links land here.",
       searchRoutes: "Search routes",
       emptyTitle: "Nothing is published",
-      emptyDescription: "No route is bound yet. Add a host binding below, or publish a subscription share.",
+      emptyDescription: "No route on this lens yet. Bind a host under the KV or Static lens, or publish a share under Shares.",
       noOriginsVisible: "You cannot read any publishing origin, so this list is empty because of your scopes rather than because nothing is published.",
-      originPickerLabel: "Manage",
-      reservedHint: "This route is reserved. The URL is already in use by a client this server does not control, so it cannot be moved or deleted here.",
+      reservedHint: "This route is owned by its share, so it cannot be moved or deleted as a route. The share itself is managed on the Shares lens.",
       shareRouteTitle: "Published route",
-      shareRouteDescription: "Where this share is reachable, read from the same publishing records the Publishing page lists.",
+      shareRouteDescription: "Where this share is reachable, read from the same publishing records the routes table lists.",
       openPublishing: "Open Publishing",
       movedFromStorage: "Host bindings and access tokens moved to the Publishing page, so one page owns every published URL.",
+      lensLabel: "Origin",
+      lens: {
+        all: "All origins",
+        kv: "KV",
+        static: "Static",
+        share: "Shares",
+      },
+      renderer: {
+        missing: "Renderer not installed",
+        inactive: "Renderer not active",
+        missingHint:
+          "The {plugin} plugin renders this share and is not installed on this server. Refresh is unavailable until it is installed again.",
+        inactiveHint:
+          "The {plugin} plugin renders this share and is installed but not active. Refresh is unavailable until it is enabled on Plugins.",
+        createUnavailable:
+          "No active plugin declares subscription:serve, so a plugin-backed share cannot be created here. A proxy-user share can: it is served by this server itself.",
+        openPlugins: "Open Plugins",
+      },
+      guide: {
+        title: "How Publishing works",
+        what: "Publishing lists every URL this server answers on, the origin that produces its bytes, and who may read it.",
+        show: "Show guide",
+        hide: "Hide guide",
+        relationLabel: "Store and Publishing",
+        relation:
+          "Store holds bytes. Publishing gives bytes a URL and an access mode. A share is a Publishing record whose bytes are rendered on request rather than stored.",
+        writersLabel: "Who writes here today, besides this console",
+        writers: {
+          kvLabel: "KV",
+          kv: "The Sub-Store plugin (kv:read, kv:write), and no other plugin. The server keeps its own line identity map under vpnmeta/.",
+          staticLabel: "Static",
+          static: "No non-console writer. It exists for files the operator publishes.",
+          shareLabel: "Shares",
+          share: "Created here for proxy users, and through Sub-Store's deep link.",
+        },
+        walkthroughLabel: "Publish a file, in four steps",
+        steps: {
+          bucket: {
+            title: "Register the bucket",
+            detail: "Publishing, Static lens, Buckets form. Host bindings and access tokens attach to this record; the server refuses a binding for a bucket without one.",
+            link: "Open the Buckets form",
+          },
+          object: {
+            title: "Put an object in it",
+            detail: "Store, Static, select the bucket, New object. A write into an unregistered name creates the bucket but not the record a binding needs.",
+            link: "Open Store",
+          },
+          binding: {
+            title: "Bind a host and path to it",
+            detail: "Publishing, Static lens, Host bindings form. The route is the host plus the path prefix; the object path follows it.",
+            link: "Open Host bindings",
+          },
+          fetch: {
+            title: "Fetch it",
+            detail: "GET the host, the path prefix, then the object path. A Static route answers anyone. A KV route needs a storage token from the Access tokens form on every request.",
+            link: "Open Access tokens",
+          },
+        },
+      },
     },
     storage: {
       title: "Publishing and access",
@@ -309,7 +364,10 @@ export default {
     },
     evidence: {
       title: "Evidence",
-      description: "What the nodes actually did: sing-box connections assembled from the log store, and the raw log lines they came from",
+      // The gloss the design brief gives the entry (§9 Decision C) leads the
+      // sentence. The nav table carries no description field, so the page header
+      // is where the abstract label explains itself.
+      description: "Logs and connection trace from the nodes: sing-box connections assembled from the log store, and the raw log lines they came from",
       lensConnections: "Connections",
       lensLog: "Raw log",
     },
@@ -344,6 +402,36 @@ export default {
       loadOlderFailed: "Load older failed",
       linesEmptyTitle: "No lines",
       linesEmptyDescription: "No log lines match the current filter for this source.",
+      // The viewer's empty states. Each names a different next step, and the
+      // last one admits the console cannot tell which it is.
+      viewerNoSourcesTitle: "No log source exists",
+      viewerNoSourcesDescription:
+        "No source is registered, so no node ships lines here and there is nothing to view. A source names one file on one node for that node's agent to tail.",
+      viewerNoSourcesNeedsAdmin: "Registering a source needs the {scope} scope.",
+      viewerNoSelectionTitle: "No source selected",
+      viewerNoSelectionDescription: "Pick a source from the list to view its lines.",
+      sourceDisabledTitle: "This source is disabled",
+      sourceDisabledDescription:
+        "{name} on {node} is disabled, so the node's agent does not tail it and no line arrives. Enable the source to resume.",
+      sourceEmptyTitle: "Nothing shipped yet",
+      sourceEmptyDescription:
+        "{name} on {node} is enabled and the store holds no line for it. Lines arrive as the file receives them and the agent pushes each batch.",
+      viewerUnknownEmptyTitle: "No lines to show",
+      viewerUnknownEmptyDescription:
+        "The query returned nothing for {name} on {node}. Refresh, or load older lines if the button is offered.",
+      // The same three sentences without "on {node}", for a source whose name
+      // already carries the node: server-owned sources are named after it, and
+      // "sing-box - hk-1 on hk-1" said the node twice.
+      sourceDisabledDescriptionNodeNamed:
+        "{name} is disabled, so the node's agent does not tail it and no line arrives. Enable the source to resume.",
+      sourceEmptyDescriptionNodeNamed:
+        "{name} is enabled and the store holds no line for it. Lines arrive as the file receives them and the agent pushes each batch.",
+      viewerUnknownEmptyDescriptionNodeNamed:
+        "The query returned nothing for {name}. Refresh, or load older lines if the button is offered.",
+      feedsTitle: "Sources that exist, and the node feeding each",
+      feedHeld: "{count} lines held",
+      feedHeldUnknown: "lines held not read",
+      feedSelected: "selected",
       colSeq: "Seq",
       colTime: "Time",
       colLine: "Line",
@@ -356,6 +444,7 @@ export default {
       formHint:
         "Name a file for the node's own agent to tail and push. This server never opens the file itself. Paths must be absolute and under {path}.",
       nameLabel: "Name",
+      nameTaken: "A source named {name} already exists on this node.",
       nodeLabel: "Node",
       selectNode: "Select a node",
       nodeIdPlaceholder: "node-a",
@@ -431,6 +520,8 @@ export default {
       resultsEmptyTitle: "No connections in this window",
       resultsEmptyDescription:
         "Nothing matched these filters. Widen the time range, or drop a filter.",
+      // What the table says when the reason for its emptiness leads the tab.
+      resultsNoRows: "No rows to show. The reason is above the filters.",
       nothingMatchedDescription:
         "The store holds records for these nodes, but none match this filter. Widen the time range, or drop a filter.",
       nothingMatchedNewestDescription:
@@ -441,9 +532,27 @@ export default {
       nothingCollectedTitle: "Nothing has been collected",
       nothingCollectedDescription:
         "The trace store holds no connection record at all for the nodes you can see, so no filter will find one. Collection is set per node and is off until you switch it on.",
-      nothingCollectedHint:
-        "A node only produces connection records while its collection policy is enabled.",
+      // The dependency, named (design brief §9 Decision C). Trace policies are
+      // off on every production node today (KI-10), so an empty table that did
+      // not say this sent operators to widen filters that could never match.
+      noPolicyTitle: "Nothing is being collected",
+      noPolicyDescription:
+        "The trace store holds no connection record for the nodes you can see, and no node is producing one. Switch the policy on per node under Collection policy; the node's agent picks it up on its next poll.",
+      policyNoRecordsTitle: "Collection is on, no record yet",
+      policyNoRecordsDescription:
+        "The trace store holds no connection record yet for the nodes you can see. A node with its policy enabled produces a record once its agent has picked the policy up and a connection passes through it.",
+      // Pluralised on {total}: "1 of 1 nodes have one" was the fleet the
+      // review ran on.
+      policyCoverage:
+        "Connection records are assembled only where a node's trace policy is enabled; {enabled} of {total} node has one. | Connection records are assembled only where a node's trace policy is enabled; {enabled} of {total} nodes have one.",
+      policyCoverageUnknown:
+        "Connection records are assembled only where a node's trace policy is enabled. The policy list could not be read, so how many nodes have one is not known.",
       openPolicyTab: "Collection policy",
+      // Row cells link into vpn-core when it is installed and readable. The
+      // host hands the plugin only its route, so the link lands on the page,
+      // not on the row; the title says which page.
+      openVpnCoreLines: "Lines in vpn-core",
+      openVpnCoreUsers: "Users in vpn-core",
       searchPlaceholder: "Search loaded rows…",
       sortHint:
         "Search and sort apply to the rows loaded so far. The query endpoint pages by cursor and takes no sort order.",

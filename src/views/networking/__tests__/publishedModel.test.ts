@@ -40,6 +40,41 @@ test("only a serving share is worth handing to a client", () => {
   assert.equal(isServing(share({ expires_at: "2026-08-17T00:00:00Z" }), NOW), false);
 });
 
+const proxyShare = (overrides: Record<string, unknown> = {}) =>
+  share({ source: { kind: "core.proxy_user", proxy_user_id: "pu-1" }, ...overrides });
+
+test("a share pointing at a proxy user the server does not have is unresolved", () => {
+  // The share API accepts any id, and the URL 404s like an unknown path, so
+  // the row is the only place the dangling binding can be seen.
+  assert.equal(publishedState(proxyShare(), NOW, new Set(["pu-2"])), "unresolved");
+  assert.equal(publishedState(proxyShare(), NOW, new Set()), "unresolved");
+  assert.equal(publishedState(proxyShare(), NOW, new Set(["pu-1", "pu-2"])), "live");
+  assert.equal(isServing(proxyShare(), NOW, new Set(["pu-2"])), false);
+  assert.equal(isServing(proxyShare(), NOW, new Set(["pu-1"])), true);
+});
+
+test("an unknown user list never produces unresolved", () => {
+  // No set means the list was not read or failed to load. Live over a failed
+  // read is the honest answer; unresolved would be a confident wrong one.
+  assert.equal(publishedState(proxyShare(), NOW), "live");
+  assert.equal(publishedState(proxyShare(), NOW, undefined), "live");
+  assert.equal(isServing(proxyShare(), NOW, undefined), true);
+});
+
+test("a plugin share has no proxy user to resolve", () => {
+  assert.equal(publishedState(share(), NOW, new Set()), "live");
+  assert.equal(publishedState(share({ expires_at: "2026-08-20T00:00:00Z" }), NOW, new Set()), "expiring");
+});
+
+test("unresolved outranks the serving states and yields to the stopped ones", () => {
+  const missing = new Set<string>();
+  // Expiring claims the URL answers today; for a dangling share it does not.
+  assert.equal(publishedState(proxyShare({ expires_at: "2026-08-20T00:00:00Z" }), NOW, missing), "unresolved");
+  // Paused is the operator's own decision and expired already says it stopped.
+  assert.equal(publishedState(proxyShare({ enabled: false }), NOW, missing), "paused");
+  assert.equal(publishedState(proxyShare({ expires_at: "2026-08-17T00:00:00Z" }), NOW, missing), "expired");
+});
+
 test("the source says who produces the bytes, with the id kept", () => {
   assert.equal(sourceLabel(share()), "latticenet.sub-store · home");
   assert.equal(

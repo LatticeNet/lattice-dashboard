@@ -66,6 +66,23 @@ export function setFormatLocale(locale: string | undefined): void {
   rtf = new Intl.RelativeTimeFormat(activeLocale, { numeric: "auto" });
 }
 
+/**
+ * True for a timestamp that means "never happened".
+ *
+ * Go marshals a zero time.Time as "0001-01-01T00:00:00Z", and `omitempty`
+ * does not drop it because a struct is never empty, so a source that has not
+ * shipped a line arrives with a first_at that is a non-empty string. The
+ * truthiness guard the views used let it through, and formatDateTime turned
+ * it into "Jan 1, 1, 12:00 AM". Absent counts as never too. The year is read
+ * in UTC so a zero time serialised in another zone still resolves to year 1
+ * or 0 rather than to a real date.
+ */
+export function isZeroTime(value?: string): boolean {
+  if (!value) return true;
+  const ms = Date.parse(value);
+  return !Number.isNaN(ms) && new Date(ms).getUTCFullYear() <= 1;
+}
+
 export function formatRelativeTime(input?: string | number | Date): string {
   // No timestamp is the same absence a missing byte count is, and gets the same
   // mark. It used to answer the English word "never" whatever the locale.

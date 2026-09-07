@@ -16,7 +16,7 @@ withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false });
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import {
   Activity,
   CircleSlash,
@@ -41,6 +41,7 @@ import {
   type TraceSession,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { usePluginContributions } from "@/composables/usePluginContributions";
 import { useRouteTab } from "@/composables/useRouteTab";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -87,8 +88,9 @@ import {
   USER_KINDS,
   activeFilterCount,
   appendConnPage,
-  connEmptyNewestAt,
-  connEmptyReason,
+  connEmptyLeadsFilters,
+  connEmptyNamesPolicy,
+  connEmptyState,
   clampTraceTtlSeconds,
   connCloseCell,
   connRecordKey,
@@ -97,13 +99,18 @@ import {
   destinationText,
   emptyConnTracePaging,
   hopConfidenceDisplay,
+  identityLinkTarget,
   isStalled,
+  lineLinkTarget,
   readConnTraceFilters,
   traceBytesCell,
   traceBytesCoverage,
   traceDurationCell,
+  tracePolicyCoverage,
   userCellDisplay,
+  vpnCoreRowLinks,
   writeConnTraceFilters,
+  type ConnEmptyState,
   type ConnTraceFilters,
   type ConnTracePaging,
   type TraceRange,
@@ -285,33 +292,104 @@ const visibleNodes = computed(() => ({
   count: nodes.value.length,
 }));
 
-const emptyReason = computed(() =>
-  loadedOnce.value ? connEmptyReason(paging.value, visibleNodes.value) : "",
+/**
+ * The dependency this lens has and did not name: a node produces connection
+ * records only while its trace policy is enabled, and on production every
+ * policy is off (KI-10). The policy list below is one row per node the
+ * operator may see, so it yields both counts of "N of M nodes have one". The
+ * same query feeds the Collection policy tab further down.
+ */
+const policyQuery = useAsyncData(
+  (signal) =>
+    canRead.value
+      ? api.trace.policy(undefined, { signal }).then((r) => r.policies ?? [])
+      : Promise.resolve([] as TracePolicy[]),
+  { pollInterval: 30000, immediate: canRead.value },
 );
-const nothingCollected = computed(() => emptyReason.value === "nothing-collected");
-const noVisibleNodes = computed(() => emptyReason.value === "no-visible-nodes");
+const policyCoverage = computed(() => tracePolicyCoverage(policyQuery.data.value));
+
+const emptyState = computed<ConnEmptyState>(() =>
+  loadedOnce.value
+    ? connEmptyState(paging.value, visibleNodes.value, policyCoverage.value)
+    : { kind: "rows" },
+);
+const namesPolicy = computed(() => connEmptyNamesPolicy(emptyState.value));
+/**
+ * Where the empty state renders. With nothing in the store the reason leads
+ * the tab, above the filters, and the table says only that it has no rows;
+ * otherwise the table carries it, under the filters an operator should touch.
+ * One block, one place, chosen here.
+ */
+const emptyLeads = computed(() => connEmptyLeadsFilters(emptyState.value));
+
 const resultsEmptyTitle = computed(() => {
-  if (noVisibleNodes.value) return t("platform.trace.noVisibleNodesTitle");
-  if (nothingCollected.value) return t("platform.trace.nothingCollectedTitle");
-  return t("platform.trace.resultsEmptyTitle");
+  switch (emptyState.value.kind) {
+    case "no-visible-nodes":
+      return t("platform.trace.noVisibleNodesTitle");
+    case "no-policy":
+      return t("platform.trace.noPolicyTitle");
+    case "policy-no-records":
+      return t("platform.trace.policyNoRecordsTitle");
+    case "nothing-collected":
+      return t("platform.trace.nothingCollectedTitle");
+    default:
+      return t("platform.trace.resultsEmptyTitle");
+  }
 });
 // How far to widen. Telling an operator to widen the range without saying how
 // far is what makes them step through 6h, 24h and 7d over a store whose newest
 // record is days older than any of them. When the server names that record,
 // the empty state names it too.
-const emptyNewestAt = computed(() => connEmptyNewestAt(paging.value));
 const resultsEmptyDescription = computed(() => {
-  if (noVisibleNodes.value) return t("platform.trace.noVisibleNodesDescription");
-  if (nothingCollected.value) return t("platform.trace.nothingCollectedDescription");
-  if (emptyReason.value === "nothing-matched") {
-    return emptyNewestAt.value
-      ? t("platform.trace.nothingMatchedNewestDescription", {
-          newest: formatDateTime(emptyNewestAt.value),
-        })
-      : t("platform.trace.nothingMatchedDescription");
+  const state = emptyState.value;
+  switch (state.kind) {
+    case "no-visible-nodes":
+      return t("platform.trace.noVisibleNodesDescription");
+    case "no-policy":
+      return t("platform.trace.noPolicyDescription");
+    case "policy-no-records":
+      return t("platform.trace.policyNoRecordsDescription");
+    case "nothing-collected":
+      return t("platform.trace.nothingCollectedDescription");
+    case "nothing-matched":
+      return state.newestAt
+        ? t("platform.trace.nothingMatchedNewestDescription", {
+            newest: formatDateTime(state.newestAt),
+          })
+        : t("platform.trace.nothingMatchedDescription");
+    default:
+      return t("platform.trace.resultsEmptyDescription");
   }
-  return t("platform.trace.resultsEmptyDescription");
 });
+
+/**
+ * The sentence under every empty table that names the dependency, with the
+ * count when the policy list was read and an admission when it was not. Empty
+ * while the list is still loading: a count that is about to arrive is better
+ * than a sentence that is about to be replaced.
+ */
+const policyCoverageText = computed(() => {
+  const coverage = policyCoverage.value;
+  if (coverage.known) {
+    // The third argument picks the plural form on the fleet size, so one node
+    // reads "1 of 1 node has one".
+    return t(
+      "platform.trace.policyCoverage",
+      { enabled: coverage.enabled, total: coverage.total },
+      coverage.total,
+    );
+  }
+  return policyQuery.error.value ? t("platform.trace.policyCoverageUnknown") : "";
+});
+
+/**
+ * Where the line and identity cells link. vpn-core owns both objects; the
+ * host's contribution list says whether it is installed, active, and readable
+ * by this operator, and gives the path the sidebar itself would use. With no
+ * entry the cells are plain identifiers.
+ */
+const { navContributions } = usePluginContributions();
+const rowLinks = computed(() => vpnCoreRowLinks(navContributions.value));
 
 interface ConnRowView {
   user: ReturnType<typeof userCellDisplay>;
@@ -322,11 +400,16 @@ interface ConnRowView {
   destination: string;
   node: string;
   stalled: boolean;
+  /** vpn-core page for this row's line, "" for a plain identifier. */
+  lineTo: string;
+  /** vpn-core page for this row's identity, "" for a plain name. */
+  identityTo: string;
 }
 
 function buildRowView(row: ConnRecord): ConnRowView {
+  const user = userCellDisplay(row, userNames.value);
   return {
-    user: userCellDisplay(row, userNames.value),
+    user,
     close: connCloseCell(row),
     upload: traceBytesCell(row.upload, row.bytes_known),
     download: traceBytesCell(row.download, row.bytes_known),
@@ -334,6 +417,8 @@ function buildRowView(row: ConnRecord): ConnRowView {
     destination: destinationText(row),
     node: nodeLabel(row.node_id),
     stalled: isStalled(row),
+    lineTo: lineLinkTarget(row, rowLinks.value),
+    identityTo: identityLinkTarget(user, rowLinks.value),
   };
 }
 
@@ -726,13 +811,7 @@ interface PolicyDraft {
   budget: number;
 }
 
-const policyQuery = useAsyncData(
-  (signal) =>
-    canRead.value
-      ? api.trace.policy(undefined, { signal }).then((r) => r.policies ?? [])
-      : Promise.resolve([] as TracePolicy[]),
-  { pollInterval: 30000, immediate: canRead.value },
-);
+// `policyQuery` itself is declared beside the empty-state coverage above.
 const policies = computed(() => policyQuery.data.value ?? []);
 const policyDrafts = ref<Record<string, PolicyDraft>>({});
 const savingPolicyNode = ref("");
@@ -853,14 +932,42 @@ onBeforeUnmount(() => {
     </Card>
 
     <Tabs v-else v-model="tab">
+      <!-- Three English labels at text-sm need 344px and a phone track offers
+           327, so the last trigger spilled out of the rounded track. Below sm
+           the triggers drop to text-xs with tighter padding, which fits both
+           locales with room to spare; the labels never wrap or scroll. -->
       <TabsList class="w-full sm:w-auto">
-        <TabsTrigger value="connections">{{ $t('platform.trace.tabConnections') }}</TabsTrigger>
-        <TabsTrigger value="sessions">{{ $t('platform.trace.tabSessions') }}</TabsTrigger>
-        <TabsTrigger value="policy">{{ $t('platform.trace.tabPolicy') }}</TabsTrigger>
+        <TabsTrigger value="connections" class="px-1.5 text-xs sm:px-2 sm:text-sm">{{ $t('platform.trace.tabConnections') }}</TabsTrigger>
+        <TabsTrigger value="sessions" class="px-1.5 text-xs sm:px-2 sm:text-sm">{{ $t('platform.trace.tabSessions') }}</TabsTrigger>
+        <TabsTrigger value="policy" class="px-1.5 text-xs sm:px-2 sm:text-sm">{{ $t('platform.trace.tabPolicy') }}</TabsTrigger>
       </TabsList>
 
       <!-- ── Connections ─────────────────────────────────────────────── -->
       <TabsContent value="connections" class="space-y-6">
+        <!--
+          When the store holds nothing, the reason leads the tab. It used to
+          sit in the table under a card of ten filter controls, below the fold
+          on a laptop, and the filters are the one thing an operator in this
+          state should not be sent to. The policy sentence and the button to
+          the per-node control come with it; the table below only says it has
+          no rows. When a filter is what emptied the table, nothing moves and
+          the table says so under the filters.
+        -->
+        <Card v-if="emptyLeads">
+          <CardContent class="p-6">
+            <EmptyState :title="resultsEmptyTitle" :description="resultsEmptyDescription">
+              <template v-if="namesPolicy && policyCoverageText" #notice>
+                <p class="tabular">{{ policyCoverageText }}</p>
+              </template>
+              <template v-if="namesPolicy" #default>
+                <Button variant="outline" size="sm" @click="tab = 'policy'">
+                  {{ $t('platform.trace.openPolicyTab') }}
+                </Button>
+              </template>
+            </EmptyState>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
@@ -1090,14 +1197,37 @@ onBeforeUnmount(() => {
               @retry="loadNewest"
               @row-select="openRecord"
             >
+              <!-- The reason is already at the top of the tab; repeating the
+                   same title here would make two panels say one thing. -->
+              <template v-if="emptyLeads" #empty>
+                <p class="py-6 text-center text-sm text-muted-foreground">
+                  {{ $t('platform.trace.resultsNoRows') }}
+                </p>
+              </template>
+
               <template #cell-started_at="{ row }">
                 <span class="whitespace-nowrap text-xs tabular">{{ formatDateTime(row.started_at) }}</span>
               </template>
 
               <template #cell-user="{ row }">
                 <div class="flex min-w-0 flex-col gap-0.5">
+                  <!-- A managed identity is a vpn-core object; the cell links to
+                       that plugin's Users page when it is installed and readable,
+                       and stays a plain name otherwise. DataTable ignores clicks
+                       inside an anchor, so the link does not also open the row. -->
+                  <RouterLink
+                    v-if="rowView(row).user.primary && rowView(row).identityTo"
+                    :to="rowView(row).identityTo"
+                    :title="$t('platform.trace.openVpnCoreUsers')"
+                    :class="cn(
+                      'truncate rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      rowView(row).user.monospace && 'font-mono text-xs',
+                    )"
+                  >
+                    {{ rowView(row).user.primary }}
+                  </RouterLink>
                   <span
-                    v-if="rowView(row).user.primary"
+                    v-else-if="rowView(row).user.primary"
                     :class="cn('truncate', rowView(row).user.monospace && 'font-mono text-xs')"
                   >
                     {{ rowView(row).user.primary }}
@@ -1121,7 +1251,15 @@ onBeforeUnmount(() => {
               </template>
 
               <template #cell-line_uuid="{ row }">
-                <span v-if="row.line_uuid" class="font-mono text-xs text-muted-foreground">
+                <RouterLink
+                  v-if="rowView(row).lineTo"
+                  :to="rowView(row).lineTo"
+                  :title="$t('platform.trace.openVpnCoreLines')"
+                  class="rounded-sm font-mono text-xs text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {{ shortId(row.line_uuid ?? '', 10) }}
+                </RouterLink>
+                <span v-else-if="row.line_uuid" class="font-mono text-xs text-muted-foreground">
                   {{ shortId(row.line_uuid, 10) }}
                 </span>
                 <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
@@ -1199,16 +1337,20 @@ onBeforeUnmount(() => {
             </DataTable>
 
             <!--
-              The one action that changes a "nothing collected" answer. It is
-              on the same card as the empty table because sending an operator
-              to hunt for a tab is how the old copy failed them.
+              The dependency, named under an empty table the filters may have
+              caused, with the one action that changes the answer beside it.
+              It is on the same card as the table because sending an operator
+              to hunt for a tab is how the old copy failed them. The count
+              comes from the same policy list the tab edits, so the two cannot
+              disagree. When nothing was collected the same sentence and
+              button sit in the block at the top of the tab instead.
             -->
             <div
-              v-if="nothingCollected"
+              v-if="namesPolicy && !emptyLeads"
               class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 p-3"
             >
-              <p class="text-xs text-muted-foreground">
-                {{ $t('platform.trace.nothingCollectedHint') }}
+              <p class="text-xs text-muted-foreground tabular">
+                {{ policyCoverageText }}
               </p>
               <Button variant="outline" size="sm" @click="tab = 'policy'">
                 {{ $t('platform.trace.openPolicyTab') }}

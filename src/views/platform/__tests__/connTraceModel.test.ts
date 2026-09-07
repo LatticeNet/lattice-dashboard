@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ConnRecord } from "../../../lib/api/types.ts";
+import type { ConnRecord, TracePolicy } from "../../../lib/api/types.ts";
 import {
   CLOSE_REASONS,
   DEFAULT_CONN_TRACE_FILTERS,
@@ -11,27 +11,35 @@ import {
   TRACE_TTL_MAX_SECONDS,
   TRACE_TTL_MIN_SECONDS,
   USER_KINDS,
+  VPN_CORE_PLUGIN_ID,
   activeFilterCount,
   appendConnPage,
   clampTraceTtlSeconds,
   closeReasonDisplay,
   connCloseCell,
+  connEmptyLeadsFilters,
+  connEmptyNamesPolicy,
   connEmptyNewestAt,
   connEmptyReason,
+  connEmptyState,
   connRecordKey,
   connTraceFiltersEqual,
   connectionsRequestParams,
   destinationText,
   emptyConnTracePaging,
   hopConfidenceDisplay,
+  identityLinkTarget,
   isDefaultConnTraceFilters,
   isStalled,
+  lineLinkTarget,
   readConnTraceFilters,
   resolveTraceWindow,
   traceBytesCell,
   traceBytesCoverage,
   traceDurationCell,
+  tracePolicyCoverage,
   userCellDisplay,
+  vpnCoreRowLinks,
   writeConnTraceFilters,
   type ConnTraceFilters,
 } from "../connTraceModel.ts";
@@ -521,6 +529,161 @@ test("collection totals describe the store, so a later page updates them and an 
 
   const refreshed = appendConnPage(older, { records: [], collected_total: 14 });
   assert.equal(refreshed.collectedTotal, 14);
+});
+
+/* ---------------------------- policy coverage ---------------------------- */
+
+function policy(partial: Partial<TracePolicy> & { node_id: string }): TracePolicy {
+  return { enabled: false, level: "info", budget_lines_per_sec: 200, ...partial };
+}
+
+test("policy coverage counts enabled nodes over the list the server answered", () => {
+  // GET /api/trace/policy answers one row per node the caller holds log:read
+  // for, so both numbers of "N of M" come from one list and describe the same
+  // nodes.
+  const coverage = tracePolicyCoverage([
+    policy({ node_id: "a", enabled: true }),
+    policy({ node_id: "b" }),
+    policy({ node_id: "c" }),
+  ]);
+  assert.deepEqual(coverage, { known: true, enabled: 1, total: 3 });
+  assert.deepEqual(tracePolicyCoverage([]), { known: true, enabled: 0, total: 0 });
+});
+
+test("an unread policy list is unknown, not a fleet with nothing enabled", () => {
+  assert.deepEqual(tracePolicyCoverage(undefined), { known: false, enabled: 0, total: 0 });
+});
+
+test("an empty store separates 'no policy is on' from 'policies are on, nothing yet'", () => {
+  // KI-10: every production policy is off. "Nothing has been collected" was
+  // true and sent the operator nowhere; the dependency is what the page owes
+  // them, and which side of it they are on.
+  const empty = appendConnPage(emptyConnTracePaging(), { records: [], collected_total: 0 });
+  const nodes = { known: true, count: 3 };
+
+  assert.deepEqual(connEmptyState(empty, nodes, { known: true, enabled: 0, total: 3 }), {
+    kind: "no-policy",
+    enabled: 0,
+    total: 3,
+  });
+  assert.deepEqual(connEmptyState(empty, nodes, { known: true, enabled: 2, total: 3 }), {
+    kind: "policy-no-records",
+    enabled: 2,
+    total: 3,
+  });
+  // Policy list not read: the page says what it knows and no more.
+  assert.deepEqual(connEmptyState(empty, nodes, { known: false, enabled: 0, total: 0 }), {
+    kind: "nothing-collected",
+  });
+  assert.deepEqual(connEmptyState(empty, nodes), { kind: "nothing-collected" });
+});
+
+test("the policy list settles the visible-node question on its own", () => {
+  // It is filtered per node on log:read, the scope this page runs on. A known
+  // list with no row means no node is visible here, whatever /api/nodes said
+  // or whether it was read at all.
+  const empty = appendConnPage(emptyConnTracePaging(), { records: [], collected_total: 0 });
+  assert.deepEqual(connEmptyState(empty, { known: false, count: 0 }, { known: true, enabled: 0, total: 0 }), {
+    kind: "no-visible-nodes",
+  });
+  assert.deepEqual(connEmptyState(empty, { known: true, count: 0 }, { known: true, enabled: 1, total: 1 }), {
+    kind: "no-visible-nodes",
+  });
+});
+
+test("rows, nothing matched and a silent server keep their own answers", () => {
+  const coverage = { known: true, enabled: 0, total: 2 };
+  const rows = appendConnPage(emptyConnTracePaging(), {
+    records: [record()],
+    collected_total: 0,
+  });
+  assert.deepEqual(connEmptyState(rows, undefined, coverage), { kind: "rows" });
+
+  const matchedNone = appendConnPage(emptyConnTracePaging(), {
+    records: [],
+    collected_total: 9,
+    collected_newest_at: "2026-08-27T05:59:00Z",
+  });
+  assert.deepEqual(connEmptyState(matchedNone, undefined, coverage), {
+    kind: "nothing-matched",
+    newestAt: "2026-08-27T05:59:00Z",
+  });
+
+  const silent = appendConnPage(emptyConnTracePaging(), { records: [] });
+  assert.deepEqual(connEmptyState(silent, undefined, coverage), { kind: "unknown" });
+});
+
+test("every empty state names the policy except the one with no node to switch on", () => {
+  assert.equal(connEmptyNamesPolicy({ kind: "rows" }), false);
+  assert.equal(connEmptyNamesPolicy({ kind: "no-visible-nodes" }), false);
+  assert.equal(connEmptyNamesPolicy({ kind: "no-policy", enabled: 0, total: 3 }), true);
+  assert.equal(connEmptyNamesPolicy({ kind: "policy-no-records", enabled: 1, total: 3 }), true);
+  assert.equal(connEmptyNamesPolicy({ kind: "nothing-collected" }), true);
+  assert.equal(connEmptyNamesPolicy({ kind: "nothing-matched", newestAt: "" }), true);
+  assert.equal(connEmptyNamesPolicy({ kind: "unknown" }), true);
+});
+
+test("the explanation leads the filters only when the filters are not the cause", () => {
+  // Nothing in the store: no filter change can help, so the answer goes
+  // above the filter card instead of below the fold under it.
+  assert.equal(connEmptyLeadsFilters({ kind: "no-visible-nodes" }), true);
+  assert.equal(connEmptyLeadsFilters({ kind: "no-policy", enabled: 0, total: 3 }), true);
+  assert.equal(connEmptyLeadsFilters({ kind: "policy-no-records", enabled: 1, total: 3 }), true);
+  assert.equal(connEmptyLeadsFilters({ kind: "nothing-collected" }), true);
+  // Records exist and this filter missed them: the filters are the fix, and
+  // the table keeps saying so right under them.
+  assert.equal(connEmptyLeadsFilters({ kind: "nothing-matched", newestAt: "" }), false);
+  // A silent server cannot clear the filters of blame, so nothing moves.
+  assert.equal(connEmptyLeadsFilters({ kind: "unknown" }), false);
+  assert.equal(connEmptyLeadsFilters({ kind: "rows" }), false);
+});
+
+/* ---------------------------- vpn-core links ----------------------------- */
+
+const VPN_CORE_NAV = [
+  { pluginId: VPN_CORE_PLUGIN_ID, route: "lines", to: `/plugins/${VPN_CORE_PLUGIN_ID}/lines` },
+  { pluginId: VPN_CORE_PLUGIN_ID, route: "users", to: `/plugins/${VPN_CORE_PLUGIN_ID}/users` },
+  { pluginId: VPN_CORE_PLUGIN_ID, route: "usage", to: `/plugins/${VPN_CORE_PLUGIN_ID}/usage` },
+  { pluginId: "latticenet.sub-store", route: "sub-store", to: "/plugins/latticenet.sub-store/sub-store" },
+];
+
+test("row links come from the host's contribution list and only from vpn-core", () => {
+  // The list is already gated on active, allow-listed route and the operator's
+  // scopes, and carries the path the sidebar uses. Another plugin's entries
+  // are not vpn-core's, whatever their route is called.
+  assert.deepEqual(vpnCoreRowLinks(VPN_CORE_NAV), {
+    lines: "/plugins/latticenet.vpn-core/lines",
+    users: "/plugins/latticenet.vpn-core/users",
+  });
+  assert.deepEqual(vpnCoreRowLinks([{ pluginId: "other.plugin", route: "lines", to: "/plugins/other.plugin/lines" }]), {
+    lines: "",
+    users: "",
+  });
+  // Plugin absent: nothing links, nothing breaks.
+  assert.deepEqual(vpnCoreRowLinks([]), { lines: "", users: "" });
+});
+
+test("a line cell links only when the record names a line and the page is reachable", () => {
+  const links = vpnCoreRowLinks(VPN_CORE_NAV);
+  assert.equal(lineLinkTarget(record({ line_uuid: "line-9" }), links), links.lines);
+  assert.equal(lineLinkTarget(record({}), links), "");
+  assert.equal(lineLinkTarget(record({ line_uuid: "  " }), links), "");
+  assert.equal(lineLinkTarget(record({ line_uuid: "line-9" }), { lines: "", users: "" }), "");
+});
+
+test("an identity cell links only for a managed user, the one kind vpn-core holds", () => {
+  const links = vpnCoreRowLinks(VPN_CORE_NAV);
+  const managed = userCellDisplay(record({ user_kind: "managed", user_id: "user-1", user_name: "u_a1" }));
+  assert.equal(identityLinkTarget(managed, links), links.users);
+
+  // A discovered name or a legacy label has no record on the Users page.
+  for (const kind of USER_KINDS.filter((k) => k !== "managed")) {
+    const cell = userCellDisplay(record({ user_kind: kind, user_id: "user-1", user_name: "label" }));
+    assert.equal(identityLinkTarget(cell, links), "", kind);
+  }
+  // Managed but the server sent no id: nothing to land on.
+  assert.equal(identityLinkTarget(userCellDisplay(record({ user_kind: "managed", user_name: "u_a1" })), links), "");
+  assert.equal(identityLinkTarget(managed, { lines: "/x", users: "" }), "");
 });
 
 test("an empty page ends the walk without touching what is on screen", () => {

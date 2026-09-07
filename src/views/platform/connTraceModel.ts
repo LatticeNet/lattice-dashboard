@@ -16,7 +16,7 @@
  */
 import { formatBytes, formatDuration } from "../../lib/format.ts";
 import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState";
-import type { ConnRecord } from "@/lib/api/types";
+import type { ConnRecord, TracePolicy } from "@/lib/api/types";
 
 /* ------------------------------------------------------------------ */
 /* Filters                                                             */
@@ -706,6 +706,189 @@ export function connEmptyReason(
 export function connEmptyNewestAt(state: ConnTracePaging): string {
   if (connEmptyReason(state) !== "nothing-matched") return "";
   return state.collectedNewestAt;
+}
+
+/* ------------------------------------------------------------------ */
+/* Collection policy coverage                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How many of the nodes this operator may see have a trace policy enabled.
+ *
+ * Source: GET /api/trace/policy. The server answers one row per node the
+ * caller holds log:read for, carrying that node's stored policy, so `enabled`
+ * and `total` are counted over the same list and "N of M" is always about the
+ * same nodes. M is the log:read fleet, which is the fleet whose evidence this
+ * page can show; /api/nodes is filtered on node:read and may differ.
+ *
+ * `known` is false when the list was never read: the request failed, or has
+ * not answered yet. An unread list is not a fleet with nothing enabled, and
+ * the empty state must not print "0 of 0" over it.
+ */
+export interface TracePolicyCoverage {
+  known: boolean;
+  enabled: number;
+  total: number;
+}
+
+export function tracePolicyCoverage(
+  policies: readonly TracePolicy[] | undefined,
+): TracePolicyCoverage {
+  if (policies === undefined) return { known: false, enabled: 0, total: 0 };
+  let enabled = 0;
+  for (const policy of policies) if (policy.enabled) enabled++;
+  return { known: true, enabled, total: policies.length };
+}
+
+/**
+ * What the empty connections table should say, with the collection policy
+ * taken into account.
+ *
+ * connEmptyReason settles whether the store holds anything. This adds the
+ * question the operator asks next when it holds nothing: is anything being
+ * collected at all? Trace policies are off on every production node today
+ * (PROGRAM.md KI-10), so "nothing has been collected" was true and unhelpful;
+ * the page can now say which of two things it is:
+ *
+ * - "no-policy": the store holds nothing and no visible node has its policy
+ *   enabled. The dependency is unmet, and no filter or wait will change it.
+ * - "policy-no-records": the store holds nothing although `enabled` nodes
+ *   have a policy on. Collection is on and has yet to deliver a record.
+ * - "nothing-collected": the store holds nothing and the policy list was not
+ *   read, so the dependency cannot be counted and the page says only what it
+ *   knows.
+ *
+ * The policy list also settles the visible-node question on its own: it is
+ * filtered per node on log:read, so a known list with no row means this
+ * caller can see no node for this page, whether or not /api/nodes was read.
+ *
+ * Returns "rows" while rows are on screen.
+ */
+export type ConnEmptyState =
+  | { kind: "rows" }
+  | { kind: "no-visible-nodes" }
+  | { kind: "no-policy"; enabled: number; total: number }
+  | { kind: "policy-no-records"; enabled: number; total: number }
+  | { kind: "nothing-collected" }
+  | { kind: "nothing-matched"; newestAt: string }
+  | { kind: "unknown" };
+
+const NO_POLICY_KNOWLEDGE: TracePolicyCoverage = { known: false, enabled: 0, total: 0 };
+
+export function connEmptyState(
+  state: ConnTracePaging,
+  nodes: ConnVisibleNodes = NO_NODE_KNOWLEDGE,
+  coverage: TracePolicyCoverage = NO_POLICY_KNOWLEDGE,
+): ConnEmptyState {
+  const reason = connEmptyReason(state, nodes);
+  if (reason === "") return { kind: "rows" };
+  if (reason === "no-visible-nodes" || (coverage.known && coverage.total === 0)) {
+    return { kind: "no-visible-nodes" };
+  }
+  if (reason === "nothing-matched") {
+    return { kind: "nothing-matched", newestAt: connEmptyNewestAt(state) };
+  }
+  if (reason === "unknown") return { kind: "unknown" };
+  if (!coverage.known) return { kind: "nothing-collected" };
+  const { enabled, total } = coverage;
+  return enabled === 0
+    ? { kind: "no-policy", enabled, total }
+    : { kind: "policy-no-records", enabled, total };
+}
+
+/**
+ * Whether the empty state owes the operator the dependency sentence and the
+ * link to the per-node control. Every empty state except "you can see no
+ * node" does: with no node in sight there is no policy to switch on, and the
+ * sentence would point at a control that is empty for the same reason.
+ */
+export function connEmptyNamesPolicy(state: ConnEmptyState): boolean {
+  return state.kind !== "rows" && state.kind !== "no-visible-nodes";
+}
+
+/**
+ * Whether the empty state explains itself above the filters instead of in
+ * the table beneath them.
+ *
+ * When the store holds nothing for the nodes the operator can see, the
+ * filters are not the cause and no change to them can help, yet the answer
+ * sat in the table under a card of ten filter controls, below the fold on a
+ * laptop. Those states lead the tab. When the store holds records and this
+ * filter selected none, the filters are exactly what to change, so the table
+ * keeps saying so where the filters are. "unknown" stays there too: the page
+ * cannot vouch that the filters are innocent.
+ */
+export function connEmptyLeadsFilters(state: ConnEmptyState): boolean {
+  switch (state.kind) {
+    case "no-visible-nodes":
+    case "no-policy":
+    case "policy-no-records":
+    case "nothing-collected":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Links into vpn-core                                                 */
+/* ------------------------------------------------------------------ */
+
+export const VPN_CORE_PLUGIN_ID = "latticenet.vpn-core";
+
+/** One plugin-contributed sidebar destination, as usePluginContributions resolves it. */
+export interface PluginNavTarget {
+  pluginId: string;
+  route: string;
+  /** Absolute dashboard path, /plugins/<pluginId>/<route>. */
+  to: string;
+}
+
+/**
+ * Where a connection row's line and identity cells may send the operator.
+ *
+ * vpn-core owns lines and identities; this console owns the evidence about
+ * them. The host's contribution list is the gate: an entry exists there only
+ * for an active plugin whose nav route passed the allow-list and whose scopes
+ * the operator holds, and its `to` is the path the sidebar itself uses. With
+ * no such entry the cell stays a plain identifier, which is the plugin-absent
+ * test: the row is still true, it simply links nowhere.
+ *
+ * The host hands the frame only its route. A query on the host URL never
+ * reaches the plugin document, so the link lands on the Lines or Users page
+ * rather than on the row itself; the identifier stays printed for that reason.
+ */
+export interface ConnRowLinks {
+  /** Path of vpn-core's Lines page, "" when it is not reachable. */
+  lines: string;
+  /** Path of vpn-core's Users page, "" when it is not reachable. */
+  users: string;
+}
+
+export function vpnCoreRowLinks(entries: readonly PluginNavTarget[]): ConnRowLinks {
+  let lines = "";
+  let users = "";
+  for (const entry of entries) {
+    if (entry.pluginId !== VPN_CORE_PLUGIN_ID) continue;
+    if (entry.route === "lines") lines = entry.to;
+    else if (entry.route === "users") users = entry.to;
+  }
+  return { lines, users };
+}
+
+/** The line cell links when the record names a line and the Lines page is reachable. */
+export function lineLinkTarget(record: ConnRecord, links: ConnRowLinks): string {
+  return record.line_uuid?.trim() && links.lines ? links.lines : "";
+}
+
+/**
+ * The identity cell links only for a managed user, which is the one kind that
+ * is a vpn-core identity. A discovered name or a legacy label has no record on
+ * the Users page, and a link that lands on a list that does not contain what
+ * was clicked would be a small lie.
+ */
+export function identityLinkTarget(cell: UserCellDisplay, links: ConnRowLinks): string {
+  return cell.kind === "managed" && cell.userId && links.users ? links.users : "";
 }
 
 /**

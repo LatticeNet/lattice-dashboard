@@ -78,6 +78,7 @@ import type {
   PluginVerifyResponse,
   PluginView,
   Principal,
+  ProxyUserView,
   PublishingRecordList,
   RenewalReminderFire,
   SSHGuardPlanRequest,
@@ -858,6 +859,15 @@ export const api = {
     create: (input: TokenCreateRequest) => http.post<TokenCreateResponse>("/api/tokens", input),
     revoke: (token_id: string) => http.post<TokenView>("/api/tokens/revoke", { token_id }),
     delete: (token_id: string) => http.post<{ ok: boolean }>("/api/tokens/delete", { token_id }),
+  },
+
+  proxy: {
+    // Every proxy user the server has, read with proxy:read. The share API
+    // accepts any non-empty proxy_user_id, and a share bound to a user that
+    // does not exist serves the same empty 404 as an unknown path, so this list
+    // is what lets the console offer a choice and mark a dangling share.
+    users: (opts?: RequestOptions) =>
+      http.get<{ users: ProxyUserView[] }>("/api/proxy/users", undefined, opts),
   },
 
   subscriptionShares: {

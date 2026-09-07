@@ -46,6 +46,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import PlaneGuide from "@/components/platform/PlaneGuide.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,6 +122,19 @@ const inventory = computed<StorageBucketInventoryEntry[]>(() => {
     reserved: false,
   }));
 });
+
+/**
+ * Whether this store kind holds nothing at all, which is when the guide opens
+ * on its own. A load that failed or has not returned is not evidence of an
+ * empty store; the bucket list owns those states.
+ */
+const storeEmpty = computed(
+  () =>
+    canRead.value &&
+    inventoryQuery.data.value !== undefined &&
+    !inventoryQuery.error.value &&
+    inventory.value.length === 0,
+);
 
 /**
  * The bucket the page is showing. The URL wins so a link is honoured even for
@@ -399,6 +413,13 @@ async function submitPut() {
         </Button>
       </template>
     </PageHeader>
+
+    <PlaneGuide
+      page="store"
+      :plane-empty="storeEmpty"
+      :title="$t('platform.store.guide.title')"
+      :what="$t('platform.store.guide.what')"
+    />
 
     <!-- Which store. One control, because the two are one store server-side. -->
     <div class="inline-flex rounded-lg border border-border p-1" role="group" :aria-label="$t('platform.store.kindLabel')">

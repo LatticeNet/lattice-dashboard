@@ -7,7 +7,7 @@
  * The hosted iframe runs with `connect-src 'none'`, so postMessage is its
  * only outbound channel. A plugin that wants to send the operator somewhere
  * else in the dashboard (e.g. Sub-Store's "publish a share for this
- * subscription" button → /network/subscription-shares?create=1&for=…) cannot
+ * subscription" button → /platform/publishing?origin=share&create=1&for=…) cannot
  * navigate itself; it posts a `{type: "lattice:navigate", route}` message and
  * the host performs the route change. The worst a confused or malicious frame
  * can do here is move the host to another dashboard page, so the privilege is
@@ -51,12 +51,19 @@ export function isInternalDashboardRoute(route: string): boolean {
  * cannot be driven from a frame until someone adds it to this map, and adding
  * to this map is the moment to ask whether it should act on arrival at all.
  *
- * Today this has one entry, which is the whole of the real usage: Sub-Store's
- * "publish a share for this subscription" button, whose route opens the create
- * form with a record pre-chosen. It opens a form; it does not submit one.
+ * The first entry was the whole of the real usage: Sub-Store's "publish a
+ * share for this subscription" button, whose route opens the create form with
+ * a record pre-chosen. It opens a form; it does not submit one.
  */
 const PLUGIN_PARAMETERIZED_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  // The retired path. It redirects to /platform/publishing with its query, so
+  // the installed Sub-Store release keeps working; the entry goes, with the
+  // redirect, once the plugin points at the new path.
   ["/network/subscription-shares", new Set(["create", "for"])],
+  // Where shares live now (DESIGN-PROGRAM-2026-09 §9). `origin` picks the lens
+  // the page opens on; `create` and `for` open the same dialog they always
+  // did. Nothing here acts on arrival.
+  ["/platform/publishing", new Set(["origin", "create", "for"])],
   // vpn-core's "show me the evidence for this line": the Evidence area opened
   // on a lens with a node and a line pre-filtered. It opens a read view; it
   // changes nothing.

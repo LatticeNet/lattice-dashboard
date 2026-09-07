@@ -804,8 +804,6 @@ export default {
       description:
         "A subscription is the record that produces the config. A share is the public URL this server serves it on. Any path that is not a live share returns an empty 404, so a prober cannot tell an existing share from a missing one.",
       publish: "Publish",
-      plane:
-        "A share is the plugin origin of the publishing plane that also carries the KV and Static origins: the URL and who may fetch it belong to the platform, while the subscription behind it belongs to the Sub-Store plugin.",
       publishTitle: "Publish a subscription",
       publishDescription:
         "Pick the record to serve. The URL is live the moment it is created, and its token is what makes it unguessable.",
@@ -826,10 +824,12 @@ export default {
         expiring: "expiring",
         expired: "expired",
         paused: "paused",
+        unresolved: "unresolved",
       },
       url: "Subscription URL",
       tokenNote: "The token is part of the URL. Anyone who has it can fetch this subscription.",
       notServing: "This URL is not being served right now, so clients using it get a 404.",
+      unresolvedHint: "The proxy user this share points at does not exist, so the URL returns an empty 404.",
       clientLinks: "One URL per client",
       clientLinksHint:
         "Without a client named, the served configuration is chosen from the fetching client's User-Agent, a guess that fails for curl and anything unfamiliar.",
@@ -896,15 +896,16 @@ export default {
       recordPlaceholder: "Choose what to serve",
       recordsFailed: "This plugin's records could not be read.",
       noRecords: "This plugin has no records to publish yet.",
-      proxyUser: "Proxy user id",
+      proxyUser: "Proxy user",
+      proxyUserPlaceholder: "Choose a proxy user",
+      noProxyUsers: "The server has no proxy users yet, so there is nothing for a share to point at.",
+      proxyUsersUnread: "The proxy user list could not be read, so this id is not checked against it.",
       slug: "Slug",
       slugHint: "Appears in the URL and in reverse-proxy logs, so it is a label rather than a secret.",
       slugRule: "Lowercase letters, digits and hyphens, starting with a letter or digit.",
       slugTaken: "A share with this slug already exists.",
       defaultFormat: "Encoding",
       clipboardUnavailable: "The clipboard is unavailable, select the URL and copy it manually.",
-      alsoPublishes: "This server also publishes",
-      staticLink: "Static objects",
     },
 
     tunnels: {

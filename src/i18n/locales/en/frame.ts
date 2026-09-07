@@ -215,7 +215,6 @@ export default {
       "network-ddns": "DDNS",
       "network-tunnels": "Tunnels",
       "network-ssh-guard": "SSH Guard",
-      "network-subscription-shares": "Subscription Shares",
       "platform-plugins": "Plugins",
       "platform-publishing": "Publishing",
       "platform-store": "Store",

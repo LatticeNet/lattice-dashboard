@@ -1,43 +1,45 @@
 <script setup lang="ts">
 /**
- * Published subscriptions: the public URLs this server serves.
+ * The share lens of Publishing: the subscription URLs this server serves, and
+ * everything that manages them.
  *
- * This lives in the dashboard rather than in a plugin because shares are
- * core-owned: the route, the token comparison, the rate limit and the audit
- * trail belong to the server, and a plugin frame runs with `connect-src 'none'`
- * and can only reach methods its signed manifest declares. Giving it the share
- * API would hand token management to plugin code.
- *
- * What changed here is the shape, not the ownership. The page used to be a row
- * of bare inputs asking the operator to type a plugin id and a subscription id
- * copied from another screen, above a stack of naked URLs. Publishing now picks
- * the record from the plugin that owns it, and the list is a table like every
- * other high-cardinality surface in this console.
+ * This used to be a Networking page of its own. It lives here because a share
+ * is a Publishing record, one whose bytes are rendered on request rather than
+ * read from a bucket, and because it is core-owned: the route, the token
+ * comparison, the rate limit and the audit trail belong to the server, and a
+ * plugin frame runs with `connect-src 'none'` and can only reach methods its
+ * signed manifest declares. Giving it the share API would hand token
+ * management to plugin code (DESIGN-PROGRAM-2026-09 §9, Decision A).
  *
  * The token is shown in full, permanently, and the server returns it
  * deliberately: the URL is copied out of here repeatedly, and a credential that
  * is visible only once gets written down somewhere worse.
+ *
+ * Plugin absent: a share whose renderer plugin is not installed says so on its
+ * row and in its detail, and refresh is disabled with that reason. Creating a
+ * new plugin-backed share is unavailable with the reason. Proxy-user shares
+ * are server-native and unaffected.
  */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
-  Copy,
-  ExternalLink,
   CalendarClock,
   KeyRound,
   Link2,
   MonitorSmartphone,
   Plus,
+  PlugZap,
   RefreshCw,
   Trash2,
 } from "lucide-vue-next";
 
-import { api, ApiError, unwrap } from "@/lib/api";
-import { publishingState, recordsForShare, routeLabel } from "@/views/platform/publishingModel";
+import { api, ApiError } from "@/lib/api";
 import type {
   PluginView,
+  ProxyUserView,
+  PublishingRecord,
   ShareSource,
   SubscriptionShareCreateRequest,
   SubscriptionShareView,
@@ -46,7 +48,20 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { SHARE_SLUG_RE, suggestShareSlug } from "./subscriptionSharesModel";
+import {
+  hasShareCreateDeepLink,
+  publishablePlugins as pickPublishablePlugins,
+  recordsForShare,
+  routeLabel,
+  routeState,
+  shareCreateTarget,
+  shareRefreshable,
+  shareRendererState,
+  withoutShareDeepLink,
+  type RouteState,
+  type ShareRendererState,
+} from "@/views/platform/publishingModel";
+import { SHARE_SLUG_RE, suggestShareSlug } from "@/views/networking/subscriptionSharesModel";
 import {
   emptyExpiryForm,
   expiryCreateValue,
@@ -54,7 +69,7 @@ import {
   expiryFormFor,
   expiryUpdateBody,
   type ExpiryForm,
-} from "./shareExpiryModel";
+} from "@/views/networking/shareExpiryModel";
 import {
   SHARE_TARGETS,
   clientUrl,
@@ -63,7 +78,7 @@ import {
   sharePath,
   sourceLabel,
   type PublishedState,
-} from "./publishedModel";
+} from "@/views/networking/publishedModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -92,6 +107,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+/** The query key that selects a share, so a detail panel is a link. */
+const SHARE_SELECT_PARAM = "share";
+
 const { t } = useI18n();
 const auth = useAuthStore();
 const route = useRoute();
@@ -105,20 +123,106 @@ const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
 );
 const shares = computed(() => sharesQuery.data.value ?? []);
 
+/**
+ * The plugin list answers two questions on this pane: which plugins a new share
+ * may be created against, and whether the plugin behind an existing share is
+ * still there to render it. One read, both answers, so they cannot disagree.
+ */
+const pluginsQuery = useAsyncData<PluginView[] | undefined>((signal) => api.plugins.list({ signal }));
+const plugins = computed(() => (pluginsQuery.error.value ? undefined : pluginsQuery.data.value));
+const publishablePlugins = computed(() => pickPublishablePlugins(plugins.value));
+const pluginShareAvailable = computed(() => publishablePlugins.value.length > 0);
+
+function rendererState(share: SubscriptionShareView): ShareRendererState {
+  return shareRendererState(share, plugins.value);
+}
+
+function rendererPluginId(share: SubscriptionShareView): string {
+  return share.source.kind === "plugin" ? share.source.plugin_id : "";
+}
+
+/**
+ * The proxy users the server has, for the same two questions about the other
+ * source kind: which users a new share may point at, and whether the user
+ * behind an existing share is still there. The share API accepts any
+ * non-empty id and serves a dangling share as an empty 404, so this list is
+ * the only place the console can tell. It is read only by a caller who may
+ * (the endpoint wants proxy:read, which proxy:admin does not imply), and a
+ * list that was not read or failed stays unknown: the dialog falls back to a
+ * free-text id and no share is called unresolved on a guess.
+ */
+const canReadProxyUsers = computed(() => auth.can("proxy:read"));
+const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
+  async (signal) => (await api.proxy.users({ signal })).users,
+  { immediate: false },
+);
+const proxyUsers = computed(() => (proxyUsersQuery.error.value ? undefined : proxyUsersQuery.data.value));
+const knownProxyUsers = computed(() => (proxyUsers.value ? new Set(proxyUsers.value.map((user) => user.id)) : undefined));
+
+async function loadProxyUsers(): Promise<void> {
+  if (canReadProxyUsers.value) await proxyUsersQuery.refresh();
+}
+
+/** The state a row and its detail show: the share alone, checked against the users actually read. */
+function shareState(share: SubscriptionShareView): PublishedState {
+  return publishedState(share, Date.now(), knownProxyUsers.value);
+}
+
+function serving(share: SubscriptionShareView): boolean {
+  return isServing(share, Date.now(), knownProxyUsers.value);
+}
+
+/** The sentence the disabled refresh button and the detail notice both carry. */
+function rendererReason(share: SubscriptionShareView): string {
+  switch (rendererState(share)) {
+    case "native":
+      return t("networking.shares.refreshPluginOnly");
+    case "missing":
+      return t("platform.publishing.renderer.missingHint", { plugin: rendererPluginId(share) });
+    case "inactive":
+      return t("platform.publishing.renderer.inactiveHint", { plugin: rendererPluginId(share) });
+    default:
+      return t("networking.shares.refreshHint");
+  }
+}
 
 const busyId = ref("");
-const selectedId = ref("");
+
+// ── selection lives in the URL ─────────────────────────────────────────────
+// The routes table on the whole plane links a plugin route to its share, and a
+// selected share is what an operator sends to another. Selecting refines the
+// page rather than leaving it, so it replaces the entry like a table filter.
+const selectedId = computed(() => {
+  const raw = route.query[SHARE_SELECT_PARAM];
+  const value = Array.isArray(raw) ? raw.find((entry) => typeof entry === "string") : raw;
+  return typeof value === "string" ? value : "";
+});
 const selected = computed(() => shares.value.find((share) => share.id === selectedId.value));
+
+function select(id: string): void {
+  if (id === selectedId.value) return;
+  const query = { ...route.query };
+  if (id) query[SHARE_SELECT_PARAM] = id;
+  else delete query[SHARE_SELECT_PARAM];
+  router.replace({ query }).catch(() => {});
+}
+
 /**
- * Where a share is reachable comes from the publishing plane, so this page and
- * the Publishing page cannot drift into two different answers about the same
- * URL. The share still owns its token, its default format and its per-client
- * links, because those belong to the origin rather than to the route.
+ * Where a share is reachable comes from the publishing records, so this pane
+ * and the routes table above it cannot drift into two different answers about
+ * the same URL. The share still owns its token, its default format and its
+ * per-client links, because those belong to the origin rather than to the route.
  */
 const routesQuery = useAsyncData((signal) => api.publishing.records({ signal }), { pollInterval: 20000 });
 const selectedRoutes = computed(() =>
   selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
 );
+/** The selected share's routes carry its unresolved state, as the routes table does. */
+function selectedRouteState(record: PublishingRecord): RouteState {
+  const unresolved =
+    selected.value && shareState(selected.value) === "unresolved" ? new Set([selected.value.id]) : undefined;
+  return routeState(record, unresolved);
+}
 
 /** The origin the browser is on is the origin the share is served from, so the
  *  displayed URL is the real one rather than a guess at LATTICE_PUBLIC_URL. */
@@ -137,15 +241,21 @@ const stateVariant: Record<PublishedState, "default" | "secondary" | "destructiv
   expiring: "outline",
   expired: "destructive",
   paused: "outline",
+  unresolved: "destructive",
 };
+
+async function refresh(): Promise<void> {
+  await Promise.all([sharesQuery.refresh(), routesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
+}
+
+// The page-level Refresh button reloads this pane too, so one control means
+// one thing for the whole page.
+defineExpose({ refresh });
 
 // ── publish ────────────────────────────────────────────────────────────────
 //
-// The old form asked for a plugin id and a subscription id as free text, with
-// the hint "as listed in the plugin's Subscriptions tab", an instruction to go
-// to another screen, copy an identifier, and come back. The dialog reads the
-// plugin's own records instead, so publishing is a choice rather than a
-// transcription.
+// The dialog reads the plugin's own records rather than asking for ids as free
+// text, so publishing is a choice rather than a transcription.
 
 const publishOpen = ref(false);
 const publishing = ref(false);
@@ -178,15 +288,6 @@ interface PluginRecord {
   display_name?: string;
   kind?: string;
 }
-
-const pluginsQuery = useAsyncData<PluginView[] | undefined>((signal) => api.plugins.list({ signal }));
-/** Plugins that can actually back a share: the capability is what makes a
- *  plugin able to produce a subscription body the core serves. */
-const publishablePlugins = computed(() =>
-  (pluginsQuery.data.value ?? []).filter((plugin) =>
-    (plugin.capabilities ?? []).includes("subscription:serve"),
-  ),
-);
 
 const records = ref<PluginRecord[]>([]);
 const recordsLoading = ref(false);
@@ -239,14 +340,17 @@ const slugError = computed(() => {
 const canPublish = computed(() => {
   if (!draft.value.slug.trim() || slugError.value || publishing.value) return false;
   if (expiryFormError(draft.value.expiry, now.value)) return false;
-  return draft.value.kind === "plugin"
-    ? !!draft.value.pluginId && !!draft.value.subscriptionId
-    : !!draft.value.proxyUserId.trim();
+  if (draft.value.kind === "plugin") {
+    return pluginShareAvailable.value && !!draft.value.pluginId && !!draft.value.subscriptionId;
+  }
+  return !!draft.value.proxyUserId.trim();
 });
 
 function openPublish(): void {
+  // Plugin absent: the dialog opens on the kind that can still be created, and
+  // the plugin kind stays in the picker, disabled, with the reason beside it.
   draft.value = {
-    kind: "plugin",
+    kind: pluginShareAvailable.value ? "plugin" : "core.proxy_user",
     pluginId: publishablePlugins.value[0]?.id ?? "",
     subscriptionId: "",
     proxyUserId: "",
@@ -257,6 +361,8 @@ function openPublish(): void {
   now.value = Date.now();
   publishOpen.value = true;
   void loadRecords();
+  // Re-read once per opening, so a user created since the pane loaded is offered.
+  void loadProxyUsers();
 }
 
 async function publish(): Promise<void> {
@@ -280,8 +386,8 @@ async function publish(): Promise<void> {
     const created = await api.subscriptionShares.create(body);
     toast.success(t("networking.shares.published", { slug: created.slug }));
     publishOpen.value = false;
-    selectedId.value = created.id;
-    await sharesQuery.refresh();
+    select(created.id);
+    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
   } catch (error) {
     toast.error(describe(error, t("networking.shares.publishFailed")));
   } finally {
@@ -312,7 +418,7 @@ async function saveExpiry(): Promise<void> {
     await api.subscriptionShares.update(share.id, expiryUpdateBody(expiryDraft.value, now.value));
     toast.success(t("networking.shares.expiry.saved"));
     expiryOpen.value = false;
-    await sharesQuery.refresh();
+    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
   } catch (error) {
     toast.error(describe(error, t("networking.shares.expiry.saveFailed")));
   } finally {
@@ -386,8 +492,8 @@ async function remove(): Promise<void> {
     await api.subscriptionShares.remove(share.id);
     toast.success(t("networking.shares.deleted", { slug: share.slug }));
     deleteTarget.value = null;
-    if (selectedId.value === share.id) selectedId.value = "";
-    await sharesQuery.refresh();
+    if (selectedId.value === share.id) select("");
+    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
   } catch (error) {
     toast.error(describe(error, t("networking.shares.deleteFailed")));
   } finally {
@@ -396,6 +502,7 @@ async function remove(): Promise<void> {
 }
 
 async function refreshSource(share: SubscriptionShareView): Promise<void> {
+  if (!shareRefreshable(rendererState(share))) return;
   busyId.value = share.id;
   try {
     // The endpoint answers 200 even when the provider failed and the previous
@@ -424,15 +531,33 @@ async function copy(text: string, message: string): Promise<void> {
 
 // ── table ──────────────────────────────────────────────────────────────────
 
+/**
+ * At xl the detail column sits beside the table, selected or not, and leaves
+ * it about 700px. Format and Last rotated pushed Serves, with its
+ * renderer-absent marker, out of view at that width, so at xl they leave the
+ * table: both are in the detail, and below xl the detail stacks under a
+ * full-width table that has room for them. They are hidden rather than
+ * removed from the column list, so a sort on Last rotated survives, and they
+ * are hidden whether or not a share is selected, so a click on a row does not
+ * pull two columns out from under it.
+ *
+ * Slug and Serves carry `max-w-0`: in an auto-layout table a nowrap span
+ * claims its whole text as the column's minimum, so the token path alone
+ * held Slug at 460px and the table overflowed whatever else was hidden. A zero
+ * max-width makes the two columns share what the fixed ones leave and lets
+ * the truncation inside them actually truncate.
+ */
+const FOLDED_BESIDE_DETAIL = "xl:hidden";
+
 const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
-  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true },
+  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true, class: "max-w-0" },
   {
     key: "state",
     label: t("networking.shares.columns.state"),
     sortable: true,
     filterable: true,
     class: "w-[7.5rem]",
-    value: (row) => publishedState(row),
+    value: (row) => shareState(row),
   },
   {
     key: "source",
@@ -440,13 +565,14 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
     sortable: true,
     searchable: true,
     filterAliases: ["plugin", "record"],
+    class: "max-w-0",
     value: (row) => sourceLabel(row),
   },
   {
     key: "format",
     label: t("networking.shares.columns.format"),
     sortable: true,
-    class: "w-[8rem]",
+    class: cn("w-[8rem]", FOLDED_BESIDE_DETAIL),
     value: (row) => row.default_format || "",
   },
   {
@@ -454,7 +580,7 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
     label: t("networking.shares.columns.rotated"),
     sortable: true,
     align: "right",
-    class: "w-[9rem]",
+    class: cn("w-[9rem]", FOLDED_BESIDE_DETAIL),
     value: (row) => row.rotated_at || row.created_at,
   },
 ]);
@@ -463,19 +589,17 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
 
 /**
  * The Sub-Store frame asks the host to navigate here with
- * ?create=1&for=<record>. The dialog opens with that record already chosen, so
- * the operator lands on a decision instead of a blank form.
+ * ?create=1&for=<record>, today through the redirect from the retired path.
+ * The dialog opens with that record already chosen, so the operator lands on a
+ * decision instead of a blank form. The keys are consumed so a reload does not
+ * reopen it, and the lens stays pinned so this pane stays mounted.
  */
 async function applyDeepLink(): Promise<void> {
-  if (route.query.create !== "1") return;
-  const raw = route.query.for;
-  const name = (Array.isArray(raw) ? raw[0] : raw)?.trim();
-  const query = { ...route.query };
-  delete query.create;
-  delete query.for;
-  void router.replace({ query });
+  if (!hasShareCreateDeepLink(route.query)) return;
+  const name = shareCreateTarget(route.query);
+  void router.replace({ query: withoutShareDeepLink(route.query) });
   openPublish();
-  if (!name) return;
+  if (!name || !pluginShareAvailable.value) return;
   await nextTick();
   // The record may be identified by id or by name depending on the caller.
   const match = records.value.find((record) => record.id === name || record.name === name);
@@ -484,15 +608,16 @@ async function applyDeepLink(): Promise<void> {
 }
 
 onMounted(async () => {
-  await sharesQuery.refresh();
+  await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
   await applyDeepLink();
 });
 watch(() => route.query, applyDeepLink);
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <section class="space-y-4">
     <PageHeader
+      level="section"
       :title="$t('networking.shares.title')"
       :description="$t('networking.shares.description')"
     >
@@ -500,10 +625,6 @@ watch(() => route.query, applyDeepLink);
         <FreshnessLabel :last-updated="sharesQuery.lastUpdated.value" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="sharesQuery.refreshing.value" @click="sharesQuery.refresh">
-          <RefreshCw :class="cn('size-4', sharesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          {{ $t('common.actions.refresh') }}
-        </Button>
         <Button v-if="canAdmin" size="sm" @click="openPublish">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('networking.shares.publish') }}
@@ -511,22 +632,10 @@ watch(() => route.query, applyDeepLink);
       </template>
     </PageHeader>
 
-    <!--
-      Where this page sits. Shares and the Publishing page were two nav entries
-      over one plane, and nothing on either said so: a share is the plugin
-      origin of the same publishing plane that carries the KV and Static
-      origins, which is why the route below is read from the publishing
-      records rather than from a second private idea of where a share lives.
-    -->
-    <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-      {{ $t('networking.shares.plane') }}
-      <RouterLink
-        to="/platform/publishing"
-        class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
-    </p>
-
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
+    <!-- The single column below xl is minmax(0,1fr) too: an implicit auto track
+         grows to the token path's unbreakable width and pushed the whole pane
+         past a phone's edge. -->
+    <div class="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
       <DataTable
         state-key="shares"
         :columns="columns"
@@ -539,7 +648,7 @@ watch(() => route.query, applyDeepLink);
         :search-placeholder="$t('networking.shares.searchPlaceholder')"
         :empty-title="$t('networking.shares.emptyTitle')"
         :empty-description="$t('networking.shares.emptyDescription')"
-        @row-select="selectedId = $event.id"
+        @row-select="select($event.id)"
         @retry="sharesQuery.refresh"
       >
         <template #cell-slug="{ row }">
@@ -555,13 +664,25 @@ watch(() => route.query, applyDeepLink);
         </template>
 
         <template #cell-state="{ row }">
-          <Badge :variant="stateVariant[publishedState(row)]">
-            {{ $t('networking.shares.state.' + publishedState(row)) }}
+          <Badge :variant="stateVariant[shareState(row)]">
+            {{ $t('networking.shares.state.' + shareState(row)) }}
           </Badge>
         </template>
 
         <template #cell-source="{ row }">
-          <span class="truncate text-sm" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span>
+          <div class="min-w-0">
+            <span class="block truncate text-sm" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span>
+            <!-- Plugin absent, said on the row: the share exists, its renderer
+                 does not, and the two facts read together. -->
+            <span
+              v-if="rendererState(row) === 'missing' || rendererState(row) === 'inactive'"
+              class="mt-0.5 flex items-center gap-1 text-xs text-warning"
+              :title="rendererReason(row)"
+            >
+              <PlugZap class="size-3 shrink-0" aria-hidden="true" />
+              {{ $t(`platform.publishing.renderer.${rendererState(row)}`) }}
+            </span>
+          </div>
         </template>
 
         <template #cell-format="{ row }">
@@ -591,8 +712,8 @@ watch(() => route.query, applyDeepLink);
               <p class="truncate font-medium" :title="`/${selected.slug}`">/{{ selected.slug }}</p>
               <p class="truncate text-xs text-muted-foreground" :title="sourceLabel(selected)">{{ sourceLabel(selected) }}</p>
             </div>
-            <Badge :variant="stateVariant[publishedState(selected)]">
-              {{ $t('networking.shares.state.' + publishedState(selected)) }}
+            <Badge :variant="stateVariant[shareState(selected)]">
+              {{ $t('networking.shares.state.' + shareState(selected)) }}
             </Badge>
           </div>
 
@@ -606,8 +727,31 @@ watch(() => route.query, applyDeepLink);
               <p class="mt-1.5 text-xs text-muted-foreground">{{ $t('networking.shares.tokenNote') }}</p>
             </div>
 
-            <div v-if="!isServing(selected)" class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs">
+            <!-- A dangling proxy user is one specific reason for a 404, and it
+                 gets its own sentence in place of the general one. -->
+            <div
+              v-if="shareState(selected) === 'unresolved'"
+              class="rounded-md border-l-2 border-destructive bg-muted/40 px-3 py-2 text-xs"
+            >
+              {{ $t('networking.shares.unresolvedHint') }}
+            </div>
+            <div
+              v-else-if="!serving(selected)"
+              class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
+            >
               {{ $t('networking.shares.notServing') }}
+            </div>
+
+            <div
+              v-if="rendererState(selected) === 'missing' || rendererState(selected) === 'inactive'"
+              class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
+            >
+              <p class="font-medium">{{ $t(`platform.publishing.renderer.${rendererState(selected)}`) }}</p>
+              <p class="mt-1 text-muted-foreground">{{ rendererReason(selected) }}</p>
+              <RouterLink
+                to="/platform/plugins"
+                class="mt-1 inline-block rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >{{ $t('platform.publishing.renderer.openPlugins') }}</RouterLink>
             </div>
 
             <div v-if="selectedRoutes.length">
@@ -619,14 +763,14 @@ watch(() => route.query, applyDeepLink);
                 class="mt-2 flex flex-wrap items-center gap-2 text-xs"
               >
                 <code class="rounded bg-muted px-2 py-1 font-mono">{{ routeLabel(record, $t('platform.publishing.anyHost')) }}</code>
-                <Badge variant="outline">{{ $t(`platform.publishing.state.${publishingState(record)}`) }}</Badge>
+                <!-- The same rule the routes table applies, so this badge cannot
+                     say Serving under a callout saying the URL returns 404. -->
+                <Badge :variant="selectedRouteState(record) === 'unresolved' ? 'destructive' : 'outline'">
+                  {{ $t(`platform.publishing.state.${selectedRouteState(record)}`) }}
+                </Badge>
                 <Badge v-if="record.reserved" variant="outline" :title="$t('platform.publishing.reservedHint')">
                   {{ $t('platform.publishing.reserved') }}
                 </Badge>
-                <RouterLink
-                  to="/platform/publishing"
-                  class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
               </div>
             </div>
 
@@ -680,10 +824,8 @@ watch(() => route.query, applyDeepLink);
             <Button
               variant="outline"
               size="sm"
-              :disabled="busyId === selected.id || selected.source.kind !== 'plugin'"
-              :title="selected.source.kind === 'plugin'
-                ? $t('networking.shares.refreshHint')
-                : $t('networking.shares.refreshPluginOnly')"
+              :disabled="busyId === selected.id || !shareRefreshable(rendererState(selected))"
+              :title="rendererReason(selected)"
               @click="refreshSource(selected)"
             >
               <RefreshCw :class="cn('size-4', busyId === selected.id && 'animate-spin')" aria-hidden="true" />
@@ -709,20 +851,6 @@ watch(() => route.query, applyDeepLink);
             </Button>
           </div>
         </div>
-
-        <!-- The other two ways this server publishes. Naming them here is what
-             keeps an operator from assuming subscriptions are a special case. -->
-        <div class="rounded-lg border border-border p-4">
-          <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.alsoPublishes') }}</p>
-          <div class="mt-2 flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" as-child>
-              <RouterLink to="/platform/store?kind=static">
-                <ExternalLink class="size-3.5" aria-hidden="true" />
-                {{ $t('networking.shares.staticLink') }}
-              </RouterLink>
-            </Button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -740,10 +868,15 @@ watch(() => route.query, applyDeepLink);
             <Select v-model="draft.kind">
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="plugin">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
+                <SelectItem value="plugin" :disabled="!pluginShareAvailable">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
                 <SelectItem value="core.proxy_user">{{ $t('networking.shares.kindProxyUser') }}</SelectItem>
               </SelectContent>
             </Select>
+            <!-- Plugin absent: the option is there and disabled, and this is why. -->
+            <p v-if="!pluginShareAvailable" class="flex items-start gap-1.5 text-xs text-muted-foreground">
+              <PlugZap class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+              {{ $t('platform.publishing.renderer.createUnavailable') }}
+            </p>
           </div>
 
           <template v-if="draft.kind === 'plugin'">
@@ -783,7 +916,32 @@ watch(() => route.query, applyDeepLink);
 
           <div v-else class="grid gap-2">
             <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
-            <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" />
+            <!-- A choice from the users the server has, like the record picker
+                 above. Only when the list could not be read does this fall
+                 back to a typed id, and it says so: a picker that blocked on a
+                 failed list would make one unreadable endpoint stop publishing. -->
+            <template v-if="proxyUsersQuery.loading.value || proxyUsers">
+              <Select v-model="draft.proxyUserId" :disabled="proxyUsersQuery.loading.value || !proxyUsers?.length">
+                <SelectTrigger id="share-proxy-user">
+                  <SelectValue
+                    :placeholder="proxyUsersQuery.loading.value ? $t('common.state.loading') : $t('networking.shares.proxyUserPlaceholder')"
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="user in proxyUsers" :key="user.id" :value="user.id">
+                    <span>{{ user.name || user.id }}</span>
+                    <span v-if="user.name && user.name !== user.id" class="ml-2 font-mono text-xs text-muted-foreground">{{ user.id }}</span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p v-if="!proxyUsersQuery.loading.value && !proxyUsers?.length" class="text-xs text-muted-foreground">
+                {{ $t('networking.shares.noProxyUsers') }}
+              </p>
+            </template>
+            <template v-else>
+              <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" spellcheck="false" />
+              <p class="text-xs text-muted-foreground">{{ $t('networking.shares.proxyUsersUnread') }}</p>
+            </template>
           </div>
 
           <div class="grid gap-2">
@@ -822,7 +980,7 @@ watch(() => route.query, applyDeepLink);
       </DialogContent>
     </Dialog>
 
-    <!-- ── rotate / delete confirmation ────────────────────────────────── -->
+    <!-- ── expiry ──────────────────────────────────────────────────────── -->
     <!-- Editing the expiry is not destructive, so it does not go through
          ConfirmDialog: nothing a client holds stops working because of it, and
          the URL is untouched. -->
@@ -848,6 +1006,7 @@ watch(() => route.query, applyDeepLink);
       </DialogContent>
     </Dialog>
 
+    <!-- ── rotate / delete confirmation ────────────────────────────────── -->
     <ConfirmDialog
       :open="!!rotateTarget || !!deleteTarget"
       :title="rotateTarget ? $t('networking.shares.rotateTitle') : $t('networking.shares.deleteTitle')"
@@ -878,5 +1037,5 @@ watch(() => route.query, applyDeepLink);
         </p>
       </div>
     </ConfirmDialog>
-  </div>
+  </section>
 </template>

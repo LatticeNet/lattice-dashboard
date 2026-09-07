@@ -6,7 +6,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
-import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
+import { WORKERS_REDIRECT_TO, sharesRedirectTarget } from "@/views/platform/publishingModel";
 
 /**
  * Build the authenticated child routes from the nav IA so every NAV item has a
@@ -84,6 +84,15 @@ const manualChildRoutes: RouteRecordRaw[] = [
     // where the feature went instead of silently showing a different one.
     path: "platform/workers",
     redirect: () => ({ path: WORKERS_REDIRECT_TO.path, query: { ...WORKERS_REDIRECT_TO.query } }),
+  },
+  {
+    // Subscription Shares folded into Publishing as the share lens
+    // (DESIGN-PROGRAM-2026-09 §9, Decision A). `create` and `for` ride through
+    // so Sub-Store's ?create=1&for=<record> deep link keeps opening the dialog
+    // until the plugin is re-pointed, at which point this redirect and the old
+    // bridge allowlist entry go together.
+    path: "network/subscription-shares",
+    redirect: (to) => sharesRedirectTarget(to.query),
   },
   {
     // Plugin-contributed view (design-10). The route stays open (scopes: []) so a

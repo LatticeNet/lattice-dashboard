@@ -2,8 +2,9 @@
  * Share slug suggestion for the subscription → share deep link.
  *
  * When the Sub-Store frame sends the operator to
- * /network/subscription-shares?create=1&for=<name>, the create form prefills
- * the subscription id and offers a slug derived from the record name. The
+ * /platform/publishing?origin=share&create=1&for=<name> (or to the retired
+ * /network/subscription-shares path, which redirects there), the create form
+ * prefills the subscription id and offers a slug derived from the record name. The
  * suggestion is only a starting point: it must already satisfy the server's
  * slug rule and must not collide with an existing share, otherwise the field
  * stays empty and the operator picks one. A wrong-guess slug that silently
