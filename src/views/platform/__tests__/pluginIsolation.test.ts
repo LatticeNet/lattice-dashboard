@@ -6,6 +6,16 @@ function source(relative: string): string {
   return readFileSync(new URL(relative, import.meta.url), "utf8");
 }
 
+/**
+ * The one native proxy read the host keeps. A share with a core.proxy_user
+ * source renders from the server's ProxyUser store, and the Publish dialog
+ * offers that store as a picker and marks a share whose user is gone
+ * (DESIGN-PROGRAM-2026-09 §9, Decision A). vpn-core's users RPC lists a
+ * different record, VpnUser, and cannot answer that question. Only the GET is
+ * allowed; every write under /api/proxy/ stays plugin-owned.
+ */
+const SHARE_TARGET_READ = /http\.get<[^(]*\(\s*"\/api\/proxy\/users"/;
+
 test("the dashboard host contains no plugin-owned pages or API fallbacks", () => {
   for (const relative of [
     "../../networking/GuardView.vue",
@@ -41,7 +51,11 @@ test("the dashboard host contains no plugin-owned pages or API fallbacks", () =>
     assert.equal(contents.includes("proxy.substore"), false, `${name} retains the native component key`);
     assert.equal(contents.includes("/api/substore/"), false, `${name} retains the native API fallback`);
     assert.equal(contents.includes("latticenet.vpn-core"), false, `${name} hard-codes vpn-core`);
-    assert.equal(contents.includes("/api/proxy/"), false, `${name} retains a vpn-core REST fallback`);
+    assert.equal(
+      contents.replace(SHARE_TARGET_READ, "").includes("/api/proxy/"),
+      false,
+      `${name} retains a vpn-core REST fallback`,
+    );
     assert.equal(contents.includes("/api/netguard/"), false, `${name} retains a NetGuard REST fallback`);
     assert.equal(contents.includes("/api/network/wireguard"), false, `${name} retains a WireGuard REST fallback`);
   }

@@ -2151,6 +2151,35 @@ export interface TokenCreateResponse {
   view: TokenView;
 }
 
+// ── proxy users ─────────────────────────────────────────────────────────────
+
+/**
+ * A proxy user as GET /api/proxy/users lists it. Field names mirror
+ * proxyUserView in the server's server_proxy.go; the has_* flags say whether a
+ * credential exists and never what it is. This is the record a core.proxy_user
+ * share renders from, and the console reads the list only to offer those
+ * records as share targets and to check that the one a share names exists.
+ * The vpn-core plugin's Users page manages a different record (VpnUser), so
+ * this list is not that page's.
+ */
+export interface ProxyUserView {
+  id: string;
+  name: string;
+  enabled: boolean;
+  has_uuid: boolean;
+  has_password: boolean;
+  has_sub_token: boolean;
+  inbound_ids?: string[];
+  traffic_limit_bytes?: number;
+  /** Go time.Time under omitempty, which keeps the zero instant: an unset expiry arrives as year 0001. */
+  expires_at?: string;
+  used_bytes: number;
+  last_seen_at?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── subscription shares ─────────────────────────────────────────────────────
 
 /**
