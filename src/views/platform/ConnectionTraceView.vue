@@ -88,6 +88,7 @@ import {
   USER_KINDS,
   activeFilterCount,
   appendConnPage,
+  connEmptyLeadsFilters,
   connEmptyNamesPolicy,
   connEmptyState,
   clampTraceTtlSeconds,
@@ -313,6 +314,13 @@ const emptyState = computed<ConnEmptyState>(() =>
     : { kind: "rows" },
 );
 const namesPolicy = computed(() => connEmptyNamesPolicy(emptyState.value));
+/**
+ * Where the empty state renders. With nothing in the store the reason leads
+ * the tab, above the filters, and the table says only that it has no rows;
+ * otherwise the table carries it, under the filters an operator should touch.
+ * One block, one place, chosen here.
+ */
+const emptyLeads = computed(() => connEmptyLeadsFilters(emptyState.value));
 
 const resultsEmptyTitle = computed(() => {
   switch (emptyState.value.kind) {
@@ -363,10 +371,13 @@ const resultsEmptyDescription = computed(() => {
 const policyCoverageText = computed(() => {
   const coverage = policyCoverage.value;
   if (coverage.known) {
-    return t("platform.trace.policyCoverage", {
-      enabled: coverage.enabled,
-      total: coverage.total,
-    });
+    // The third argument picks the plural form on the fleet size, so one node
+    // reads "1 of 1 node has one".
+    return t(
+      "platform.trace.policyCoverage",
+      { enabled: coverage.enabled, total: coverage.total },
+      coverage.total,
+    );
   }
   return policyQuery.error.value ? t("platform.trace.policyCoverageUnknown") : "";
 });
@@ -921,14 +932,42 @@ onBeforeUnmount(() => {
     </Card>
 
     <Tabs v-else v-model="tab">
+      <!-- Three English labels at text-sm need 344px and a phone track offers
+           327, so the last trigger spilled out of the rounded track. Below sm
+           the triggers drop to text-xs with tighter padding, which fits both
+           locales with room to spare; the labels never wrap or scroll. -->
       <TabsList class="w-full sm:w-auto">
-        <TabsTrigger value="connections">{{ $t('platform.trace.tabConnections') }}</TabsTrigger>
-        <TabsTrigger value="sessions">{{ $t('platform.trace.tabSessions') }}</TabsTrigger>
-        <TabsTrigger value="policy">{{ $t('platform.trace.tabPolicy') }}</TabsTrigger>
+        <TabsTrigger value="connections" class="px-1.5 text-xs sm:px-2 sm:text-sm">{{ $t('platform.trace.tabConnections') }}</TabsTrigger>
+        <TabsTrigger value="sessions" class="px-1.5 text-xs sm:px-2 sm:text-sm">{{ $t('platform.trace.tabSessions') }}</TabsTrigger>
+        <TabsTrigger value="policy" class="px-1.5 text-xs sm:px-2 sm:text-sm">{{ $t('platform.trace.tabPolicy') }}</TabsTrigger>
       </TabsList>
 
       <!-- ── Connections ─────────────────────────────────────────────── -->
       <TabsContent value="connections" class="space-y-6">
+        <!--
+          When the store holds nothing, the reason leads the tab. It used to
+          sit in the table under a card of ten filter controls, below the fold
+          on a laptop, and the filters are the one thing an operator in this
+          state should not be sent to. The policy sentence and the button to
+          the per-node control come with it; the table below only says it has
+          no rows. When a filter is what emptied the table, nothing moves and
+          the table says so under the filters.
+        -->
+        <Card v-if="emptyLeads">
+          <CardContent class="p-6">
+            <EmptyState :title="resultsEmptyTitle" :description="resultsEmptyDescription">
+              <template v-if="namesPolicy && policyCoverageText" #notice>
+                <p class="tabular">{{ policyCoverageText }}</p>
+              </template>
+              <template v-if="namesPolicy" #default>
+                <Button variant="outline" size="sm" @click="tab = 'policy'">
+                  {{ $t('platform.trace.openPolicyTab') }}
+                </Button>
+              </template>
+            </EmptyState>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
@@ -1158,6 +1197,14 @@ onBeforeUnmount(() => {
               @retry="loadNewest"
               @row-select="openRecord"
             >
+              <!-- The reason is already at the top of the tab; repeating the
+                   same title here would make two panels say one thing. -->
+              <template v-if="emptyLeads" #empty>
+                <p class="py-6 text-center text-sm text-muted-foreground">
+                  {{ $t('platform.trace.resultsNoRows') }}
+                </p>
+              </template>
+
               <template #cell-started_at="{ row }">
                 <span class="whitespace-nowrap text-xs tabular">{{ formatDateTime(row.started_at) }}</span>
               </template>
@@ -1290,14 +1337,16 @@ onBeforeUnmount(() => {
             </DataTable>
 
             <!--
-              The dependency, named under every empty table, with the one
-              action that changes the answer beside it. It is on the same card
-              as the table because sending an operator to hunt for a tab is how
-              the old copy failed them. The count comes from the same policy
-              list the tab edits, so the two cannot disagree.
+              The dependency, named under an empty table the filters may have
+              caused, with the one action that changes the answer beside it.
+              It is on the same card as the table because sending an operator
+              to hunt for a tab is how the old copy failed them. The count
+              comes from the same policy list the tab edits, so the two cannot
+              disagree. When nothing was collected the same sentence and
+              button sit in the block at the top of the tab instead.
             -->
             <div
-              v-if="namesPolicy"
+              v-if="namesPolicy && !emptyLeads"
               class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 p-3"
             >
               <p class="text-xs text-muted-foreground tabular">

@@ -17,6 +17,7 @@ import {
   clampTraceTtlSeconds,
   closeReasonDisplay,
   connCloseCell,
+  connEmptyLeadsFilters,
   connEmptyNamesPolicy,
   connEmptyNewestAt,
   connEmptyReason,
@@ -620,6 +621,21 @@ test("every empty state names the policy except the one with no node to switch o
   assert.equal(connEmptyNamesPolicy({ kind: "nothing-collected" }), true);
   assert.equal(connEmptyNamesPolicy({ kind: "nothing-matched", newestAt: "" }), true);
   assert.equal(connEmptyNamesPolicy({ kind: "unknown" }), true);
+});
+
+test("the explanation leads the filters only when the filters are not the cause", () => {
+  // Nothing in the store: no filter change can help, so the answer goes
+  // above the filter card instead of below the fold under it.
+  assert.equal(connEmptyLeadsFilters({ kind: "no-visible-nodes" }), true);
+  assert.equal(connEmptyLeadsFilters({ kind: "no-policy", enabled: 0, total: 3 }), true);
+  assert.equal(connEmptyLeadsFilters({ kind: "policy-no-records", enabled: 1, total: 3 }), true);
+  assert.equal(connEmptyLeadsFilters({ kind: "nothing-collected" }), true);
+  // Records exist and this filter missed them: the filters are the fix, and
+  // the table keeps saying so right under them.
+  assert.equal(connEmptyLeadsFilters({ kind: "nothing-matched", newestAt: "" }), false);
+  // A silent server cannot clear the filters of blame, so nothing moves.
+  assert.equal(connEmptyLeadsFilters({ kind: "unknown" }), false);
+  assert.equal(connEmptyLeadsFilters({ kind: "rows" }), false);
 });
 
 /* ---------------------------- vpn-core links ----------------------------- */

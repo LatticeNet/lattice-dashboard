@@ -806,6 +806,30 @@ export function connEmptyNamesPolicy(state: ConnEmptyState): boolean {
   return state.kind !== "rows" && state.kind !== "no-visible-nodes";
 }
 
+/**
+ * Whether the empty state explains itself above the filters instead of in
+ * the table beneath them.
+ *
+ * When the store holds nothing for the nodes the operator can see, the
+ * filters are not the cause and no change to them can help, yet the answer
+ * sat in the table under a card of ten filter controls, below the fold on a
+ * laptop. Those states lead the tab. When the store holds records and this
+ * filter selected none, the filters are exactly what to change, so the table
+ * keeps saying so where the filters are. "unknown" stays there too: the page
+ * cannot vouch that the filters are innocent.
+ */
+export function connEmptyLeadsFilters(state: ConnEmptyState): boolean {
+  switch (state.kind) {
+    case "no-visible-nodes":
+    case "no-policy":
+    case "policy-no-records":
+    case "nothing-collected":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Links into vpn-core                                                 */
 /* ------------------------------------------------------------------ */
