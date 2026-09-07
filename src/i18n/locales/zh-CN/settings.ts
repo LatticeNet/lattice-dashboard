@@ -25,6 +25,9 @@ export default {
       impact: "{allow} 台在范围内 · {refuse} 台会被拒绝",
       state: { enforced: "已生效", open: "未生效" },
       confinedNotice: "全舰队策略:你的令牌被限定在特定节点,无法更改能力准入的启用状态。",
+      globalScopesTitle: "能力准入不是唯一的全舰队面",
+      globalScopesBody:
+        "令牌的节点白名单无法收窄作用于舰队级对象的权限: node:admin 的舰队级动作(包括这些开关)、notify:send / notify:admin、oidc:admin,以及 kv 与 static 存储。netpolicy:admin 的组策略写入是唯一按可达性检查的情形:令牌必须能触及组内每个节点。",
       turnOn: "打开",
       turnOff: "关闭",
       saved: "已更新 {capability}",

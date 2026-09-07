@@ -279,6 +279,27 @@ export const SCOPE_MODEL_GAPS = [
   "A proxy grant satisfies vpncore and substore during the migration; the reverse does not hold.",
 ] as const;
 
+/**
+ * Scopes whose actions ignore a token's node allowlist, because the objects
+ * they govern carry no node id for the server to check it against. A confined
+ * token holding one of these is either refused the write outright (the
+ * 2026-09-01 audit's fleet-write rule) or, for group policy, must reach every
+ * member of the group. Surfaced on the scope picker and the capabilities page
+ * so an operator learns it while issuing the token, not from a 403.
+ *
+ * Kept as label plus explanation rather than bare scope strings, because
+ * "node:admin" is only partly global (per-node actions stay confined) and a
+ * list that flattened that difference would be lying in the other direction.
+ */
+export const ALWAYS_GLOBAL_SCOPE_NOTES: readonly { label: string; detail: string }[] = [
+  { label: "node:admin fleet actions", detail: "capability gates and other no-node writes; per-node actions stay confined" },
+  { label: "notify:send / notify:admin", detail: "channels, rules, webhooks and dispatch are fleet objects" },
+  { label: "oidc:admin", detail: "an SSO provider rewrites authentication for every operator" },
+  { label: "netpolicy:admin group writes", detail: "allowed only when the token reaches every member of the group" },
+  { label: "kv:read/write/admin", detail: "buckets and entries carry no node id" },
+  { label: "static:read/write/admin", detail: "objects, buckets and storage tokens carry no node id" },
+] as const;
+
 export const SCOPE_CATALOG = SCOPE_GROUPS.flatMap((group) => group.scopes.map((entry) => entry.scope));
 
 /** Lookup from scope string to its catalog entry. */

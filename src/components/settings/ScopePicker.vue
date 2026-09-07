@@ -30,7 +30,7 @@ import Badge from "@/components/ui/badge/Badge.vue";
 import Checkbox from "@/components/ui/checkbox/Checkbox.vue";
 import Input from "@/components/ui/input/Input.vue";
 import { cn } from "@/lib/utils";
-import { SCOPE_GROUPS, SCOPE_INDEX, SCOPE_MODEL_GAPS, type ScopeEntry } from "@/lib/scopes";
+import { ALWAYS_GLOBAL_SCOPE_NOTES, SCOPE_GROUPS, SCOPE_INDEX, SCOPE_MODEL_GAPS, type ScopeEntry } from "@/lib/scopes";
 
 const props = defineProps<{
   /** Currently selected scopes. */
@@ -212,6 +212,27 @@ const sensitiveChosen = computed(() =>
           {{ sensitiveChosen.map((entry) => entry?.scope).join(", ") }}
         </span>
       </p>
+    </div>
+
+    <!--
+      Where a node allowlist does not confine. Always visible, unlike the
+      read/admin gaps below: an operator restricting a token to some nodes is
+      exactly the operator who needs to know which of these scopes ignore that
+      restriction, and a disclosure behind a toggle is not a disclosure at the
+      moment of issuing.
+    -->
+    <div class="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+      <p class="font-semibold">A node allowlist does not narrow these scopes</p>
+      <p class="mt-0.5 text-muted-foreground">
+        They act on fleet-wide objects with no node id to check, so the server refuses a
+        node-restricted token instead of confining it.
+      </p>
+      <ul class="mt-1.5 grid gap-1">
+        <li v-for="entry in ALWAYS_GLOBAL_SCOPE_NOTES" :key="entry.label" class="flex flex-wrap items-baseline gap-x-2">
+          <span class="font-mono">{{ entry.label }}</span>
+          <span class="text-muted-foreground">{{ entry.detail }}</span>
+        </li>
+      </ul>
     </div>
 
     <!-- The model's own inconsistencies, stated rather than left to be discovered. -->

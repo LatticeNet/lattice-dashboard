@@ -27,6 +27,9 @@ export default {
       impact: "{allow} in scope · {refuse} would be refused",
       state: { enforced: "Enforced", open: "Open" },
       confinedNotice: "Fleet-wide policy: your token is restricted to specific nodes, so it cannot change capability enforcement.",
+      globalScopesTitle: "Capability gates are not the only fleet-wide surface",
+      globalScopesBody:
+        "A token's node allowlist does not narrow scopes that act on fleet objects: node:admin fleet actions (including these gates), notify:send / notify:admin, oidc:admin, and the kv and static stores. netpolicy:admin group-policy writes are the one reach-checked case: they require the token to reach every member of the group.",
       turnOn: "Turn on",
       turnOff: "Turn off",
       saved: "Gate updated for {capability}",
