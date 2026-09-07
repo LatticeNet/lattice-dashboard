@@ -2171,7 +2171,11 @@ export interface ProxyUserView {
   has_sub_token: boolean;
   inbound_ids?: string[];
   traffic_limit_bytes?: number;
-  /** Go time.Time under omitempty, which keeps the zero instant: an unset expiry arrives as year 0001. */
+  /**
+   * Go time.Time under omitempty, which keeps the zero instant: an unset expiry
+   * arrives as year 0001. Guard with `isZeroTime` from `@/lib/format` before
+   * rendering it as a date.
+   */
   expires_at?: string;
   used_bytes: number;
   last_seen_at?: string;
