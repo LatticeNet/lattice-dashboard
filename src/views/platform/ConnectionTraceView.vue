@@ -295,10 +295,16 @@ const visibleNodes = computed(() => ({
  * The dependency this lens has and did not name: a node produces connection
  * records only while its trace policy is enabled, and on production every
  * policy is off (KI-10). The policy list below is one row per node the
- * operator may see, so it yields both counts of "N of M nodes have one".
- * `policyQuery` is declared with the policy tab further down; the getter runs
- * at render, after setup, so the order of declaration does not matter.
+ * operator may see, so it yields both counts of "N of M nodes have one". The
+ * same query feeds the Collection policy tab further down.
  */
+const policyQuery = useAsyncData(
+  (signal) =>
+    canRead.value
+      ? api.trace.policy(undefined, { signal }).then((r) => r.policies ?? [])
+      : Promise.resolve([] as TracePolicy[]),
+  { pollInterval: 30000, immediate: canRead.value },
+);
 const policyCoverage = computed(() => tracePolicyCoverage(policyQuery.data.value));
 
 const emptyState = computed<ConnEmptyState>(() =>
@@ -794,13 +800,7 @@ interface PolicyDraft {
   budget: number;
 }
 
-const policyQuery = useAsyncData(
-  (signal) =>
-    canRead.value
-      ? api.trace.policy(undefined, { signal }).then((r) => r.policies ?? [])
-      : Promise.resolve([] as TracePolicy[]),
-  { pollInterval: 30000, immediate: canRead.value },
-);
+// `policyQuery` itself is declared beside the empty-state coverage above.
 const policies = computed(() => policyQuery.data.value ?? []);
 const policyDrafts = ref<Record<string, PolicyDraft>>({});
 const savingPolicyNode = ref("");
