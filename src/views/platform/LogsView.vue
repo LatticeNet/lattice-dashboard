@@ -34,6 +34,7 @@ import { useRoute } from "vue-router";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -63,6 +64,8 @@ import {
   DialogScrollContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+
+import { logSourceFeeds, logViewerEmptyState, sortLogSources } from "./logsModel";
 
 const MAX_LINE_BYTES_DEFAULT = 16384;
 const MAX_LINE_BYTES_CAP = 65536;
@@ -97,12 +100,7 @@ const nodesQuery = useAsyncData(
 const sources = computed(() => sourcesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
-const sortedSources = computed(() =>
-  [...sources.value].sort((a, b) => {
-    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-    return (a.name || a.id).localeCompare(b.name || b.id);
-  }),
-);
+const sortedSources = computed(() => sortLogSources(sources.value));
 
 const route = useRoute();
 const selectedSourceId = ref("");
@@ -141,6 +139,8 @@ const nextBeforeSeq = ref<number | undefined>();
 const loadingLines = ref(false);
 const loadingOlder = ref(false);
 const viewerError = ref<string | undefined>();
+/** The filter the loaded lines answer to. The input may be edited without being applied. */
+const appliedQuery = ref("");
 
 // Display newest-first. Reverse ONCE via a cached computed (recomputes only when
 // `lines` changes) instead of copying+reversing the whole array on every render.
@@ -172,14 +172,16 @@ async function loadNewest(): Promise<void> {
   }
   loadingLines.value = true;
   viewerError.value = undefined;
+  const q = queryText.value.trim();
   try {
     const res = await api.logs.query({
       source_id: source.id,
-      q: queryText.value.trim() || undefined,
+      q: q || undefined,
       limit: clampLimit(),
     });
     // API returns lines ascending by seq; keep oldest→newest for display.
     lines.value = [...res.lines].sort((a, b) => a.seq - b.seq);
+    appliedQuery.value = q;
     truncated.value = res.truncated;
     nextBeforeSeq.value = res.next_before_seq;
   } catch (error) {
@@ -253,20 +255,76 @@ function applyFilter(): void {
 }
 
 // ── Stats ────────────────────────────────────────────────────────────────────
+// Stats for every visible source in one request, not only the selected one:
+// the empty state lists what each source holds, and the selected source's
+// figures are the same rows picked by id.
 const statsQuery = useAsyncData(
   (signal) => {
-    if (!canRead.value || !selectedSourceId.value) return Promise.resolve([] as LogSourceStatsView[]);
-    return api.logs.stats(selectedSourceId.value, { signal }).then((r) => unwrap(r, "stats"));
+    if (!canRead.value) return Promise.resolve([] as LogSourceStatsView[]);
+    return api.logs.stats(undefined, { signal }).then((r) => unwrap(r, "stats"));
   },
   { pollInterval: 15000, immediate: canRead.value },
 );
-const selectedStats = computed<LogSourceStatsView | undefined>(
-  () => (statsQuery.data.value ?? [])[0],
+const selectedStats = computed<LogSourceStatsView | undefined>(() =>
+  (statsQuery.data.value ?? []).find((entry) => entry.source_id === selectedSourceId.value),
 );
 
 watch(selectedSourceId, () => {
   if (canRead.value) statsQuery.refresh();
 });
+
+// ── Viewer empty state ───────────────────────────────────────────────────────
+// "No log lines match the current filter" was printed whether a source
+// existed, whether it was enabled, and whether it had ever shipped a line.
+// Each is a different next step, so the viewer says which one it is, and lists
+// the sources that exist with the node feeding each.
+const viewerEmpty = computed(() =>
+  logViewerEmptyState({
+    sourcesKnown: sourcesQuery.data.value !== undefined,
+    sourceCount: sources.value.length,
+    selected: selectedSource.value,
+    heldLines: selectedStats.value?.lines,
+    filterActive: appliedQuery.value !== "",
+  }),
+);
+const viewerEmptySubject = computed(() => ({
+  name: selectedSource.value?.name || selectedSource.value?.id || "",
+  node: selectedSource.value ? nodeName(selectedSource.value.node_id) : "",
+}));
+const viewerEmptyTitle = computed(() => {
+  switch (viewerEmpty.value.kind) {
+    case "no-sources":
+      return t("platform.logs.viewerNoSourcesTitle");
+    case "no-selection":
+      return t("platform.logs.viewerNoSelectionTitle");
+    case "source-disabled":
+      return t("platform.logs.sourceDisabledTitle");
+    case "source-empty":
+      return t("platform.logs.sourceEmptyTitle");
+    case "nothing-matched":
+      return t("platform.logs.linesEmptyTitle");
+    default:
+      return t("platform.logs.viewerUnknownEmptyTitle");
+  }
+});
+const viewerEmptyDescription = computed(() => {
+  const subject = viewerEmptySubject.value;
+  switch (viewerEmpty.value.kind) {
+    case "no-sources":
+      return t("platform.logs.viewerNoSourcesDescription");
+    case "no-selection":
+      return t("platform.logs.viewerNoSelectionDescription");
+    case "source-disabled":
+      return t("platform.logs.sourceDisabledDescription", subject);
+    case "source-empty":
+      return t("platform.logs.sourceEmptyDescription", subject);
+    case "nothing-matched":
+      return t("platform.logs.linesEmptyDescription");
+    default:
+      return t("platform.logs.viewerUnknownEmptyDescription", subject);
+  }
+});
+const feeds = computed(() => logSourceFeeds(sources.value, statsQuery.data.value ?? []));
 
 // ── Source create / edit dialog ──────────────────────────────────────────────
 const PATH_PREFIX = "/var/log";
@@ -559,14 +617,53 @@ function refreshAll(): void {
             </form>
 
             <DataState
-              :loading="loadingLines && lines.length === 0"
+              :loading="(loadingLines && lines.length === 0) || (sourcesQuery.loading.value && !selectedSource)"
               :error="viewerError ? new Error(viewerError) : null"
               :has-data="lines.length > 0"
               :is-empty="!selectedSource || lines.length === 0"
-              :empty-title="$t('platform.logs.linesEmptyTitle')"
-              :empty-description="$t('platform.logs.linesEmptyDescription')"
+              :empty-title="viewerEmptyTitle"
+              :empty-description="viewerEmptyDescription"
               @retry="loadNewest"
             >
+              <template #empty>
+                <EmptyState :title="viewerEmptyTitle" :description="viewerEmptyDescription">
+                  <!--
+                    Which sources exist and which node feeds each, as a proof
+                    line per source. Read from the same list the left card
+                    renders, so the two cannot disagree; a count the server did
+                    not send is said to be unread, never printed as zero.
+                  -->
+                  <template v-if="feeds.length > 0" #notice>
+                    <p class="text-xs font-medium">{{ $t('platform.logs.feedsTitle') }}</p>
+                    <ul class="mt-2 space-y-1 font-mono text-xs tabular">
+                      <li
+                        v-for="feed in feeds"
+                        :key="feed.id"
+                        class="flex flex-wrap items-center gap-x-2 gap-y-0.5"
+                      >
+                        <span class="text-foreground">{{ feed.name }}</span>
+                        <span>· {{ nodeName(feed.nodeId) }}</span>
+                        <span>· {{ feed.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}</span>
+                        <span>
+                          · {{ feed.heldLines === undefined ? $t('platform.logs.feedHeldUnknown') : $t('platform.logs.feedHeld', { count: feed.heldLines }) }}
+                        </span>
+                        <Badge v-if="feed.id === selectedSourceId" variant="outline">{{ $t('platform.logs.feedSelected') }}</Badge>
+                      </li>
+                    </ul>
+                  </template>
+                  <!-- Where a source is created, from the state that has none. -->
+                  <template v-if="viewerEmpty.kind === 'no-sources'" #default>
+                    <Button v-if="canAdmin" size="sm" @click="openCreate">
+                      <Plus aria-hidden="true" class="size-4" />
+                      {{ $t('platform.logs.newSource') }}
+                    </Button>
+                    <p v-else class="text-xs text-muted-foreground">
+                      {{ $t('platform.logs.viewerNoSourcesNeedsAdmin', { scope: 'log:admin' }) }}
+                    </p>
+                  </template>
+                </EmptyState>
+              </template>
+
               <div class="space-y-3">
                 <div v-if="nextBeforeSeq !== undefined" class="flex justify-center">
                   <Button variant="outline" size="sm" :disabled="loadingOlder" @click="loadOlder">
