@@ -199,7 +199,17 @@ export const SCOPE_GROUPS: readonly ScopeGroup[] = [
         grants: "Manage log sources, including deleting them.",
         note: "Three levels here (read, write, admin) where most resources have two.",
       },
-      { scope: "notify:send", grants: "Manage notification channels and rules, and send test notifications.", note: "Named for a verb, but it governs channel and rule administration too." },
+      {
+        scope: "notify:send",
+        grants: "Send a test notification through a channel config supplied inline. Dispatch only.",
+        note: "Before the 2026-09 split this scope also governed channels and rules; that management is now notify:admin, and older send-only tokens lost it.",
+      },
+      {
+        scope: "notify:admin",
+        grants: "Manage notification channels, rules and inbound webhooks, including reading their config and delivery history.",
+        sensitive: true,
+        note: "Channels route fleet-wide security telemetry outward, so these objects have no node dimension and writes require an unrestricted node allowlist. Does not grant dispatch.",
+      },
     ],
   },
   {
@@ -263,10 +273,31 @@ export const SCOPE_MODEL_GAPS = [
   "ddns, dns, tunnel, token, user and oidc have an admin scope with no read counterpart, so seeing those lists requires the scope that can change them.",
   "kv, log and static have three levels (read, write, admin) where every other resource has two.",
   "network:plan and network:apply are verbs that cross resources rather than naming one, so a network action needs a verb scope and a resource scope together.",
-  "notify:send is named for a verb but governs channel and rule administration.",
+  "notify:send is dispatch only since the 2026-09 split; channel, rule and webhook administration is notify:admin, and neither implies the other.",
   "audit:read gates the installed plugin listing, which belongs with plugin rather than audit.",
   "terminal:open and task:run are effectively shell access on a node and have no read-only variant.",
   "A proxy grant satisfies vpncore and substore during the migration; the reverse does not hold.",
+] as const;
+
+/**
+ * Scopes whose actions ignore a token's node allowlist, because the objects
+ * they govern carry no node id for the server to check it against. A confined
+ * token holding one of these is either refused the write outright (the
+ * 2026-09-01 audit's fleet-write rule) or, for group policy, must reach every
+ * member of the group. Surfaced on the scope picker and the capabilities page
+ * so an operator learns it while issuing the token, not from a 403.
+ *
+ * Kept as label plus explanation rather than bare scope strings, because
+ * "node:admin" is only partly global (per-node actions stay confined) and a
+ * list that flattened that difference would be lying in the other direction.
+ */
+export const ALWAYS_GLOBAL_SCOPE_NOTES: readonly { label: string; detail: string }[] = [
+  { label: "node:admin fleet actions", detail: "capability gates and other no-node writes; per-node actions stay confined" },
+  { label: "notify:send / notify:admin", detail: "channels, rules, webhooks and dispatch are fleet objects" },
+  { label: "oidc:admin", detail: "an SSO provider rewrites authentication for every operator" },
+  { label: "netpolicy:admin group writes", detail: "allowed only when the token reaches every member of the group" },
+  { label: "kv:read/write/admin", detail: "buckets and entries carry no node id" },
+  { label: "static:read/write/admin", detail: "objects, buckets and storage tokens carry no node id" },
 ] as const;
 
 export const SCOPE_CATALOG = SCOPE_GROUPS.flatMap((group) => group.scopes.map((entry) => entry.scope));

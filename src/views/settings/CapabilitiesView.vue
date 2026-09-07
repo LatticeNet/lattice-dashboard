@@ -140,6 +140,18 @@ async function applyToggle() {
 
     <MetricStrip :metrics="summary" :columns="3" />
 
+    <!--
+      The honesty note (2026-09-01 audit follow-up): this page is where an
+      operator meets the fleet-wide-write rule for the first time, so it also
+      names the other scopes the same rule covers. Kept above the table rather
+      than in a tooltip: the point is to be read before a confined token is
+      minted, not after one hits a 403.
+    -->
+    <div class="rounded-md border border-border bg-muted/30 px-4 py-3 text-xs">
+      <p class="font-semibold">{{ $t('settings.capabilities.globalScopesTitle') }}</p>
+      <p class="mt-1 text-muted-foreground">{{ $t('settings.capabilities.globalScopesBody') }}</p>
+    </div>
+
     <Card>
       <CardHeader>
         <CardTitle>{{ $t('settings.capabilities.gatesTitle') }}</CardTitle>
