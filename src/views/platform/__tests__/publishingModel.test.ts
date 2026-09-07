@@ -213,8 +213,13 @@ test("the retired shares path lands on the share lens with its query intact", ()
     path: "/platform/publishing",
     query: { origin: "share" },
   });
-  // A bookmark carrying its own lens is corrected: the old page had one origin.
-  assert.deepEqual(sharesRedirectTarget({ origin: "kv", q: "team" }).query, { q: "team", origin: "share" });
+  // Only the deep-link pair rides through. A bookmark carrying its own lens is
+  // corrected (the old page had one origin) and anything else the old URL held
+  // is dropped rather than parked in the new address bar.
+  assert.deepEqual(sharesRedirectTarget({ origin: "kv", q: "team", create: "1" }).query, {
+    create: "1",
+    origin: "share",
+  });
 });
 
 test("the router wires the old path through the redirect helper", () => {
