@@ -309,7 +309,10 @@ export default {
     },
     evidence: {
       title: "Evidence",
-      description: "What the nodes actually did: sing-box connections assembled from the log store, and the raw log lines they came from",
+      // The one-line gloss the design brief gives the nav entry (§9 Decision
+      // C). The nav table carries no description field, so the page header is
+      // where the abstract label gets its sentence.
+      description: "Logs and connection trace from the nodes",
       lensConnections: "Connections",
       lensLog: "Raw log",
     },
@@ -344,6 +347,27 @@ export default {
       loadOlderFailed: "Load older failed",
       linesEmptyTitle: "No lines",
       linesEmptyDescription: "No log lines match the current filter for this source.",
+      // The viewer's empty states. Each names a different next step, and the
+      // last one admits the console cannot tell which it is.
+      viewerNoSourcesTitle: "No log source exists",
+      viewerNoSourcesDescription:
+        "No source is registered, so no node ships lines here and there is nothing to view. A source names one file on one node for that node's agent to tail.",
+      viewerNoSourcesNeedsAdmin: "Registering a source needs the {scope} scope.",
+      viewerNoSelectionTitle: "No source selected",
+      viewerNoSelectionDescription: "Pick a source from the list to view its lines.",
+      sourceDisabledTitle: "This source is disabled",
+      sourceDisabledDescription:
+        "{name} on {node} is disabled, so the node's agent does not tail it and no line arrives. Enable the source to resume.",
+      sourceEmptyTitle: "Nothing shipped yet",
+      sourceEmptyDescription:
+        "{name} on {node} is enabled and the store holds no line for it. Lines arrive as the file receives them and the agent pushes each batch.",
+      viewerUnknownEmptyTitle: "No lines to show",
+      viewerUnknownEmptyDescription:
+        "The query returned nothing for {name} on {node}. Refresh, or load older lines if the button is offered.",
+      feedsTitle: "Sources that exist, and the node feeding each",
+      feedHeld: "{count} lines held",
+      feedHeldUnknown: "lines held not read",
+      feedSelected: "selected",
       colSeq: "Seq",
       colTime: "Time",
       colLine: "Line",
@@ -441,9 +465,25 @@ export default {
       nothingCollectedTitle: "Nothing has been collected",
       nothingCollectedDescription:
         "The trace store holds no connection record at all for the nodes you can see, so no filter will find one. Collection is set per node and is off until you switch it on.",
-      nothingCollectedHint:
-        "A node only produces connection records while its collection policy is enabled.",
+      // The dependency, named (design brief §9 Decision C). Trace policies are
+      // off on every production node today (KI-10), so an empty table that did
+      // not say this sent operators to widen filters that could never match.
+      noPolicyTitle: "Nothing is being collected",
+      noPolicyDescription:
+        "The trace store holds no connection record for the nodes you can see, and no node is producing one. Switch the policy on per node under Collection policy; the node's agent picks it up on its next poll.",
+      policyNoRecordsTitle: "Collection is on, no record yet",
+      policyNoRecordsDescription:
+        "The trace store holds no connection record yet for the nodes you can see. A node with its policy enabled produces a record once its agent has picked the policy up and a connection passes through it.",
+      policyCoverage:
+        "Connection records are assembled only where a node's trace policy is enabled; {enabled} of {total} nodes have one.",
+      policyCoverageUnknown:
+        "Connection records are assembled only where a node's trace policy is enabled. The policy list could not be read, so how many nodes have one is not known.",
       openPolicyTab: "Collection policy",
+      // Row cells link into vpn-core when it is installed and readable. The
+      // host hands the plugin only its route, so the link lands on the page,
+      // not on the row; the title says which page.
+      openVpnCoreLines: "Lines in vpn-core",
+      openVpnCoreUsers: "Users in vpn-core",
       searchPlaceholder: "Search loaded rows…",
       sortHint:
         "Search and sort apply to the rows loaded so far. The query endpoint pages by cursor and takes no sort order.",
