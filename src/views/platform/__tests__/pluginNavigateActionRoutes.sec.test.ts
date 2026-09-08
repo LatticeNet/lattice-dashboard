@@ -40,7 +40,7 @@ test("a plugin frame cannot navigate the host into a route that acts on arrival"
 test("an inert deep link is still accepted", () => {
   const verdict = classifyPluginNavigateMessage({
     type: "lattice:navigate",
-    route: "/network/subscription-shares?create=1&for=my-record",
+    route: "/platform/publishing?origin=share&create=1&for=my-record",
   });
   assert.equal(verdict.kind, "navigate");
 });
@@ -58,7 +58,7 @@ test("a frame may still be sent to any page, it just cannot arm one", () => {
 
 test("an undeclared parameter is refused even on a page that declares others", () => {
   for (const route of [
-    "/network/subscription-shares?create=1&for=x&node_id=node-1",
+    "/platform/publishing?create=1&for=x&node_id=node-1",
     "/nodes?view=list",
     "/operations/approvals?bucket=pending",
   ]) {
@@ -68,9 +68,9 @@ test("an undeclared parameter is refused even on a page that declares others", (
 
 test("an encoded dot segment cannot borrow an allowed path's permission", () => {
   for (const route of [
-    "/network/subscription-shares/%2e%2e/terminal?create=1&for=x",
-    "/network/subscription-shares/../terminal?create=1&for=x",
-    "/network/subscription-shares/%2e%2e%2fterminal?create=1&for=x",
+    "/platform/publishing/%2e%2e/terminal?create=1&for=x",
+    "/platform/publishing/../terminal?create=1&for=x",
+    "/platform/publishing/%2e%2e%2fterminal?create=1&for=x",
   ]) {
     assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "invalid", route);
   }

@@ -106,9 +106,9 @@ export const NAV: NavSection[] = [
       // Shrinking SSH exposure is a two-approval flow, so the page needs the
       // plan scope as well as the capability's own.
       { name: "network-ssh-guard", title: "SSH Guard", path: "/network/ssh-guard", icon: ShieldCheck, scopes: ["sshguard:admin"] },
-      // Subscription Shares is no longer an entry: a share is a Publishing
-      // record, managed on that page's share lens (DESIGN-PROGRAM-2026-09 §9,
-      // Decision A). The old path redirects there with its query intact.
+      // Subscription Shares is not an entry: a share is a Publishing record,
+      // managed on that page's share lens (DESIGN-PROGRAM-2026-09 §9,
+      // Decision A).
     ],
   },
   {
