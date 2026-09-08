@@ -1,6 +1,6 @@
 import type { PluginView, PublishingRecord, SubscriptionShareView } from "@/lib/api";
 import type { QueryValue } from "@/components/common/tableUrlState";
-import { publishedState } from "@/views/networking/publishedModel";
+import { publishedState } from "@/views/platform/publishedModel";
 
 /**
  * The publishing plane answers one question for the whole console: what URL is
@@ -51,7 +51,7 @@ export function recordsForLens(records: readonly PublishingRecord[], lens: Publi
   return origin ? records.filter((record) => record.origin === origin) : [...records];
 }
 
-// ── the share deep link and the old path ─────────────────────────────────────
+// ── the share deep link ──────────────────────────────────────────────────────
 
 /**
  * The Sub-Store frame sends the operator here with `?create=1&for=<record>`,
@@ -95,31 +95,6 @@ export function withoutShareDeepLink(
   }
   next[PUBLISHING_LENS_PARAM] = "share";
   return next;
-}
-
-/**
- * Where the retired /network/subscription-shares path lands.
- *
- * Only `create` and `for` ride through: that is the pair the old bridge
- * allowlist declared for the path, so Sub-Store's existing deep link keeps
- * working with no plugin release, and nothing else the old URL might carry
- * (a stale lens, a filter the old page understood) lands in the new address
- * bar. The old bridge allowlist entry and this redirect go together once the
- * plugin points at the new path.
- */
-export const SHARES_REDIRECT_PATH = "/platform/publishing";
-const SHARES_REDIRECT_KEYS: ReadonlySet<string> = new Set([SHARE_CREATE_PARAM, SHARE_CREATE_FOR_PARAM]);
-
-export function sharesRedirectTarget(
-  query: Record<string, QueryValue | undefined>,
-): { path: string; query: Record<string, QueryValue> } {
-  const next: Record<string, QueryValue> = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (value === undefined || !SHARES_REDIRECT_KEYS.has(key)) continue;
-    next[key] = value;
-  }
-  next[PUBLISHING_LENS_PARAM] = "share";
-  return { path: SHARES_REDIRECT_PATH, query: next };
 }
 
 // ── who renders a share ──────────────────────────────────────────────────────

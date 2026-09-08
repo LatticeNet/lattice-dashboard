@@ -12,11 +12,11 @@ import {
 test("a well-formed navigate message with an internal route is accepted", () => {
   const verdict = classifyPluginNavigateMessage({
     type: PLUGIN_NAVIGATE_MESSAGE_TYPE,
-    route: "/network/subscription-shares?create=1&for=openjobs-host",
+    route: "/platform/publishing?origin=share&create=1&for=openjobs-host",
   });
   assert.deepEqual(verdict, {
     kind: "navigate",
-    route: "/network/subscription-shares?create=1&for=openjobs-host",
+    route: "/platform/publishing?origin=share&create=1&for=openjobs-host",
   });
 });
 
@@ -28,7 +28,7 @@ test("bridge protocol traffic and non-objects are not navigation", () => {
     42,
     { type: "lattice.plugin.ready", nonce: "abc" },
     { type: "lattice.plugin.call", nonce: "abc", id: "1" },
-    { route: "/network/subscription-shares" }, // missing type
+    { route: "/platform/publishing" }, // missing type
   ]) {
     assert.equal(classifyPluginNavigateMessage(data).kind, "not-navigation", JSON.stringify(data));
   }
@@ -48,11 +48,11 @@ test("anything that is not a strictly internal path is rejected", () => {
   const rejected = [
     "https://evil.example/phish",
     "//evil.example/phish",
-    "network/subscription-shares", // no leading slash
-    "/network/%2e%2e/x:y", // colon is outside the charset
-    " /network/subscription-shares", // leading whitespace
-    "/network/subscription shares", // inner whitespace
-    "/network/subscription-shares?for=a;b", // semicolon outside charset
+    "platform/publishing", // no leading slash
+    "/platform/%2e%2e/x:y", // colon is outside the charset
+    " /platform/publishing", // leading whitespace
+    "/platform/publish ing", // inner whitespace
+    "/platform/publishing?for=a;b", // semicolon outside charset
     "/EVIL<script>", // angle brackets
   ];
   for (const route of rejected) {
@@ -68,8 +68,8 @@ test("anything that is not a strictly internal path is rejected", () => {
 test("internal paths with query strings pass the charset", () => {
   for (const route of [
     "/",
-    "/network/subscription-shares",
-    "/network/subscription-shares?create=1&for=openjobs-host",
+    "/platform/publishing",
+    "/platform/publishing?origin=share&create=1&for=openjobs-host",
     "/operations/approvals?bucket=pending&q=a%20b",
     "/X-9_?=&%", // uppercase and the full allowed punctuation set
   ]) {
@@ -96,10 +96,9 @@ test("the evidence area is navigable from a plugin with its lens and filter keys
   assert.equal(isPluginNavigableRoute("/platform/logs?node_id=n"), false);
 });
 
-// Shares moved from /network/subscription-shares to the share lens of
-// Publishing (DESIGN-PROGRAM-2026-09 §9). The installed Sub-Store release still
-// links to the old path, which redirects, so both entries hold until the plugin
-// is re-pointed; then the old one and the redirect go together.
+// Shares live on Publishing's share lens (DESIGN-PROGRAM-2026-09 §9), and
+// Sub-Store's "publish a share" button links there. It is the one path a
+// frame may hand a create argument to.
 test("publishing is navigable from a plugin with the lens and the create keys only", () => {
   assert.equal(isPluginNavigableRoute("/platform/publishing"), true);
   assert.equal(isPluginNavigableRoute("/platform/publishing?origin=share"), true);
@@ -110,7 +109,21 @@ test("publishing is navigable from a plugin with the lens and the create keys on
   assert.equal(isPluginNavigableRoute("/platform/publishing?bucket=site"), false);
 });
 
-test("the retired shares path stays navigable until the plugin is re-pointed", () => {
-  assert.equal(isPluginNavigableRoute("/network/subscription-shares?create=1&for=openjobs-host"), true);
+test("the retired shares path no longer takes arguments from a frame", () => {
+  // The Networking path held an allowlist entry only while the installed
+  // Sub-Store release still linked to it. The plugin now links to Publishing,
+  // the redirect is gone, and default-deny does the rest: the bare path is
+  // still an internal address a frame may name, but handing it `create` and
+  // `for` is refused like any parameter to an undeclared path, and a frame
+  // posting the old deep link gets nothing.
+  assert.equal(isPluginNavigableRoute("/network/subscription-shares"), true);
+  assert.equal(isPluginNavigableRoute("/network/subscription-shares?create=1&for=openjobs-host"), false);
   assert.equal(isPluginNavigableRoute("/network/subscription-shares?origin=share"), false);
+  assert.deepEqual(
+    classifyPluginNavigateMessage({
+      type: PLUGIN_NAVIGATE_MESSAGE_TYPE,
+      route: "/network/subscription-shares?create=1&for=openjobs-host",
+    }),
+    { kind: "invalid" },
+  );
 });

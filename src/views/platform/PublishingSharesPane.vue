@@ -61,7 +61,7 @@ import {
   type RouteState,
   type ShareRendererState,
 } from "@/views/platform/publishingModel";
-import { SHARE_SLUG_RE, suggestShareSlug } from "@/views/networking/subscriptionSharesModel";
+import { SHARE_SLUG_RE, suggestShareSlug } from "@/views/platform/subscriptionSharesModel";
 import {
   emptyExpiryForm,
   expiryCreateValue,
@@ -69,7 +69,7 @@ import {
   expiryFormFor,
   expiryUpdateBody,
   type ExpiryForm,
-} from "@/views/networking/shareExpiryModel";
+} from "@/views/platform/shareExpiryModel";
 import {
   SHARE_TARGETS,
   clientUrl,
@@ -78,7 +78,7 @@ import {
   sharePath,
   sourceLabel,
   type PublishedState,
-} from "@/views/networking/publishedModel";
+} from "@/views/platform/publishedModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";

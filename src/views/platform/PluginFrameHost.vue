@@ -228,7 +228,7 @@ function armSession() {
 
 function onMessage(event: MessageEvent) {
   // Plugin-requested host navigation (e.g. Sub-Store's "publish a share"
-  // button → the subscription-shares deep link). The frame runs connect-src
+  // button → Publishing's share-create deep link). The frame runs connect-src
   // 'none', so postMessage is its only outbound channel and the host performs
   // the route change for it. Identity is pinned to the armed frame window and
   // its (opaque, sandboxed) origin; the route must be a strictly internal

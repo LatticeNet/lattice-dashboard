@@ -4,7 +4,6 @@ import { test } from "node:test";
 
 import {
   PUBLISHING_LENSES,
-  SHARES_REDIRECT_PATH,
   WORKERS_REDIRECT_TO,
   accessLegend,
   accessMode,
@@ -26,7 +25,6 @@ import {
   shareCreateTarget,
   shareRefreshable,
   shareRendererState,
-  sharesRedirectTarget,
   sortRecords,
   unresolvedShareIds,
   withoutShareDeepLink,
@@ -244,35 +242,16 @@ test("each lens narrows the table to one origin, and all passes the plane throug
   assert.deepEqual(recordsForLens(rows, "share").map((r) => r.id), ["p"]);
 });
 
-test("the retired shares path lands on the share lens with its query intact", () => {
-  // Sub-Store's "publish a share for this subscription" button still sends the
-  // operator to /network/subscription-shares?create=1&for=<record>. The
-  // redirect has to carry both keys, or the plugin needs a release for the
-  // dialog to keep opening on the right record.
-  assert.equal(SHARES_REDIRECT_PATH, "/platform/publishing");
-  assert.deepEqual(sharesRedirectTarget({ create: "1", for: "openjobs-host" }), {
-    path: "/platform/publishing",
-    query: { create: "1", for: "openjobs-host", origin: "share" },
-  });
-  assert.deepEqual(sharesRedirectTarget({}), {
-    path: "/platform/publishing",
-    query: { origin: "share" },
-  });
-  // Only the deep-link pair rides through. A bookmark carrying its own lens is
-  // corrected (the old page had one origin) and anything else the old URL held
-  // is dropped rather than parked in the new address bar.
-  assert.deepEqual(sharesRedirectTarget({ origin: "kv", q: "team", create: "1" }).query, {
-    create: "1",
-    origin: "share",
-  });
-});
-
-test("the router wires the old path through the redirect helper", () => {
-  // The helper above is only worth its test if the route table actually uses
-  // it. Read the router source rather than boot Vue for one line.
+test("the router no longer knows the old shares path", () => {
+  // Shares live on Publishing's share lens (DESIGN-PROGRAM-2026-09 §9,
+  // Decision A). The redirect from the Networking path was a bridge for the
+  // Sub-Store release that still linked there; the plugin now links to
+  // /platform/publishing itself, so the bridge is gone and the old URL falls
+  // through to the catch-all like any other retired address. Read the router
+  // source rather than boot Vue for one line.
   const router = readFileSync(new URL("../../../router/index.ts", import.meta.url), "utf8");
-  assert.match(router, /path: "network\/subscription-shares"/);
-  assert.match(router, /sharesRedirectTarget\(to\.query\)/);
+  assert.doesNotMatch(router, /subscription-shares/);
+  assert.doesNotMatch(router, /sharesRedirectTarget/);
 });
 
 test("the create deep link is recognised by its exact marker and consumed onto the share lens", () => {

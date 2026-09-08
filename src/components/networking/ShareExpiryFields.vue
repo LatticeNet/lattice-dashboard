@@ -26,7 +26,7 @@ import {
   expiryInstant,
   type DurationUnit,
   type ExpiryForm,
-} from "@/views/networking/shareExpiryModel";
+} from "@/views/platform/shareExpiryModel";
 import { formatDateTime } from "@/lib/format";
 
 const form = defineModel<ExpiryForm>({ required: true });

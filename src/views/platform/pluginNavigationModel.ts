@@ -51,18 +51,14 @@ export function isInternalDashboardRoute(route: string): boolean {
  * cannot be driven from a frame until someone adds it to this map, and adding
  * to this map is the moment to ask whether it should act on arrival at all.
  *
- * The first entry was the whole of the real usage: Sub-Store's "publish a
+ * The first entry is the whole of the real usage: Sub-Store's "publish a
  * share for this subscription" button, whose route opens the create form with
  * a record pre-chosen. It opens a form; it does not submit one.
  */
 const PLUGIN_PARAMETERIZED_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  // The retired path. It redirects to /platform/publishing with its query, so
-  // the installed Sub-Store release keeps working; the entry goes, with the
-  // redirect, once the plugin points at the new path.
-  ["/network/subscription-shares", new Set(["create", "for"])],
-  // Where shares live now (DESIGN-PROGRAM-2026-09 §9). `origin` picks the lens
-  // the page opens on; `create` and `for` open the same dialog they always
-  // did. Nothing here acts on arrival.
+  // Shares live on Publishing's share lens (DESIGN-PROGRAM-2026-09 §9).
+  // `origin` picks the lens the page opens on; `create` and `for` open the
+  // create dialog on a record. Nothing here acts on arrival.
   ["/platform/publishing", new Set(["origin", "create", "for"])],
   // vpn-core's "show me the evidence for this line": the Evidence area opened
   // on a lens with a node and a line pre-filtered. It opens a read view; it
