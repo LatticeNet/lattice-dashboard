@@ -20,7 +20,8 @@ plugin-specific API routes, and
 appears. When you are looking for a proxy or firewall screen and cannot find it
 here, that is the reason: it lives in the plugin repository.
 
-See `LATTICE-OVERVIEW.md` at the workspace root for the whole system.
+See `lattice/docs/architecture.md` in the umbrella repository for the
+whole system. The workspace desk map is `AGENTS.md` at the workspace root.
 
 The Operations -> Terminal page uses `@xterm/xterm` for a real shell surface.
 Modern agents should run terminal transport `stream`: the browser attaches to a
