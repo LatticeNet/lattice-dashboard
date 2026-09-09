@@ -398,3 +398,25 @@ export function previousAppliedPlan(current: ApprovalView, rows: readonly Approv
   }
   return best?.plan ?? "";
 }
+
+/**
+ * First non-empty string from a route param or query value. Vue Router may
+ * pass the same key as string[].
+ */
+function approvalRouteString(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return approvalRouteString(value[0]);
+  return "";
+}
+
+/**
+ * The approval a deep link names.
+ *
+ * The page has always opened a row via /approvals?selected=<id>. Bark and the
+ * control plane emit /approvals/{id} instead. Prefer the query so that form
+ * keeps working, including when both spellings appear on one URL; otherwise
+ * take the path id.
+ */
+export function approvalDeepLinkId(querySelected: unknown, pathId: unknown = ""): string {
+  return approvalRouteString(querySelected) || approvalRouteString(pathId);
+}

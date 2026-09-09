@@ -46,6 +46,7 @@ import {
   agentUpdatePlanParams,
   agentUpdateRowsNeedingPlans,
   appendHistoryPage,
+  approvalDeepLinkId,
   approvalDigest,
   baselineKey,
   baselineParams,
@@ -557,7 +558,9 @@ watch(
 );
 
 /**
- * Deep-link: /approvals?selected=<id> lands on that approval.
+ * Deep-link: /approvals?selected=<id> lands on that approval. /approvals/:id
+ * is rewritten to that query (Bark), and is also read here so a path landing
+ * selects the same row if the rewrite has not run yet.
  *
  * A caller that just created an approval knows its id, so handing over a bare
  * /approvals and letting the operator hunt for it in a list of hundreds is a
@@ -568,9 +571,9 @@ watch(
  */
 const seededSelection = ref<string | undefined>(undefined);
 watch(
-  [() => approvalsQuery.data.value, () => route.query.selected],
-  ([active, queryId]) => {
-    const id = typeof queryId === "string" ? queryId : undefined;
+  [() => approvalsQuery.data.value, () => route.query.selected, () => route.params.id],
+  ([active, queryId, paramId]) => {
+    const id = approvalDeepLinkId(queryId, paramId);
     if (!id || id === seededSelection.value || active === undefined) return;
     void revealApproval(id).then((found) => {
       if (found) seededSelection.value = id;

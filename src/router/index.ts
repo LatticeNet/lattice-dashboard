@@ -6,6 +6,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
+import { approvalIdRoute } from "./approvalIdRoute";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
 
 /**
@@ -39,6 +40,7 @@ const childRoutes: RouteRecordRaw[] = NAV.flatMap((section) =>
  * guard's scope check and the breadcrumb logic keep working unchanged.
  */
 const manualChildRoutes: RouteRecordRaw[] = [
+  approvalIdRoute,
   {
     path: "nodes/:id",
     name: "node-detail",

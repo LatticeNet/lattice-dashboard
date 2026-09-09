@@ -12,6 +12,7 @@ import {
   agentUpdateStaleParams,
   agentUpdateRowsNeedingPlans,
   appendHistoryPage,
+  approvalDeepLinkId,
   approvalDigest,
   baselineKey,
   baselineParams,
@@ -332,4 +333,18 @@ test("the diff baseline is the newest earlier applied plan on the same node, plu
   ];
   assert.equal(previousAppliedPlan(current, rows), "second");
   assert.equal(previousAppliedPlan(current, [current]), "");
+});
+
+// ── Bark /approvals/{id} is the same deep link as ?selected= ─────────────────
+
+test("a path id is the same deep link as ?selected=", () => {
+  assert.equal(approvalDeepLinkId(undefined, "ap-1"), "ap-1");
+  assert.equal(approvalDeepLinkId(undefined, ["ap-1"]), "ap-1");
+  assert.equal(approvalDeepLinkId("", "ap-1"), "ap-1");
+});
+
+test("?selected= keeps working, including when a path id is also present", () => {
+  assert.equal(approvalDeepLinkId("ap-query", "ap-path"), "ap-query");
+  assert.equal(approvalDeepLinkId(["ap-query"], "ap-path"), "ap-query");
+  assert.equal(approvalDeepLinkId(undefined, undefined), "");
 });
