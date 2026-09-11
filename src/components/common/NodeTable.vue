@@ -516,7 +516,9 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         <div v-if="show('role')" class="min-w-0">
           <!-- An unset role renders as nothing, matching every other role
                surface; a column of "none" was noise wearing a label. -->
-          <Badge v-if="node.role" variant="secondary" class="max-w-full truncate">{{ node.role }}</Badge>
+          <Badge v-if="node.role" variant="secondary" class="max-w-full justify-start">
+            <span class="truncate">{{ node.role }}</span>
+          </Badge>
         </div>
 
         <!-- Tags. Capped at two on one line with a count for the rest, and the
@@ -527,13 +529,19 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           class="flex min-w-0 items-center gap-1 overflow-hidden"
           :title="sortedTags(node).join(', ')"
         >
+          <!-- The ellipsis sits on a span inside the chip. Badge is a centred
+               flex box, and text-overflow does nothing to text a flex box lays
+               out directly, so a long tag used to lose characters at both ends
+               ("enJobs-D" for OpenJobs-Data) instead of ending in an ellipsis.
+               The first chip keeps its width and the second absorbs a short
+               cell, so "hub" never shrinks to "h..." beside a long neighbour. -->
           <Badge
-            v-for="tag in sortedTags(node).slice(0, 2)"
+            v-for="(tag, index) in sortedTags(node).slice(0, 2)"
             :key="tag"
             variant="outline"
-            class="max-w-full shrink truncate"
+            :class="['max-w-full justify-start', index === 0 ? 'shrink-0' : 'min-w-0 shrink']"
           >
-            {{ tag }}
+            <span class="truncate">{{ tag }}</span>
           </Badge>
           <Badge v-if="sortedTags(node).length > 2" variant="secondary" class="shrink-0">
             +{{ sortedTags(node).length - 2 }}
@@ -558,13 +566,16 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           class="flex min-w-0 items-center gap-1 overflow-hidden"
           :title="agentBadges(node).join(', ')"
         >
+          <!-- Same chips as Tags: inner-span ellipsis, the first chip keeps its
+               width. Muted, because the same flags repeat down most of the
+               fleet and read as texture beside the tags an operator chose. -->
           <Badge
-            v-for="badge in agentBadges(node).slice(0, 2)"
+            v-for="(badge, index) in agentBadges(node).slice(0, 2)"
             :key="`${node.id}:${badge}`"
             variant="outline"
-            class="max-w-full shrink truncate"
+            :class="['max-w-full justify-start text-muted-foreground', index === 0 ? 'shrink-0' : 'min-w-0 shrink']"
           >
-            {{ badge }}
+            <span class="truncate">{{ badge }}</span>
           </Badge>
           <Badge v-if="agentBadges(node).length > 2" variant="secondary" class="shrink-0">
             +{{ agentBadges(node).length - 2 }}
@@ -628,8 +639,8 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           class="min-w-0"
           :title="updatePolicy(node)?.target_version || undefined"
         >
-          <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full truncate">
-            {{ updateLabel(updatePolicy(node)) }}
+          <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full justify-start">
+            <span class="truncate">{{ updateLabel(updatePolicy(node)) }}</span>
           </Badge>
         </div>
 
