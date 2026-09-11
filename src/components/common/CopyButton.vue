@@ -9,6 +9,8 @@ const props = withDefaults(
   defineProps<{
     value: string;
     label?: string;
+    /** Accessible name when several copy buttons share one visible label. */
+    ariaLabel?: string;
     size?: string;
   }>(),
   {},
@@ -43,7 +45,7 @@ onBeforeUnmount(() => {
     type="button"
     variant="ghost"
     :size="label ? 'sm' : 'icon-sm'"
-    :aria-label="copied ? $t('common.actions.copied') : (label ?? $t('common.actions.copy'))"
+    :aria-label="copied ? $t('common.actions.copied') : (ariaLabel ?? label ?? $t('common.actions.copy'))"
     @click="copy"
   >
     <Check v-if="copied" class="text-success" aria-hidden="true" />
