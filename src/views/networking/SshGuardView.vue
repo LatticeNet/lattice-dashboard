@@ -2162,12 +2162,35 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                     <code class="block break-all font-mono text-sm tabular text-foreground">{{ knockRevealed.previous_ports.join(' ') }}</code>
                   </div>
 
-                  <div>
-                    <div class="mb-1 flex items-center justify-between gap-2">
-                      <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.commandLabel') }}</p>
-                      <CopyButton :value="knockRevealed.command" :label="$t('networking.sshGuard.knock.copyCommand')" />
+                  <!-- One server renderer feeds these blocks and the arm plan, so
+                       the page and the plan cannot spell the knock two ways. The
+                       knock client leads because it is the one to keep using; the
+                       bash form covers a machine that does not have it. -->
+                  <div class="space-y-2">
+                    <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.commandLabel') }}</p>
+                    <div
+                      v-for="entry in knockRevealed.commands"
+                      :key="entry.id"
+                      class="space-y-1.5 rounded border border-border bg-background/70 p-2.5"
+                      :data-testid="`knock-command-${entry.id}`"
+                    >
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="text-xs font-medium text-foreground">
+                          {{ entry.id === 'knock' ? $t('networking.sshGuard.knock.commandKnock') : $t('networking.sshGuard.knock.commandBash') }}
+                        </p>
+                        <CopyButton :value="entry.command" :label="$t('networking.sshGuard.knock.copyCommand')" />
+                      </div>
+                      <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-foreground">{{ entry.command }}</pre>
+                      <p class="text-xs text-muted-foreground">
+                        {{ entry.id === 'knock' ? $t('networking.sshGuard.knock.commandKnockHint') : $t('networking.sshGuard.knock.commandBashHint') }}
+                      </p>
+                      <ul v-if="entry.install?.length" class="space-y-0.5">
+                        <li v-for="step in entry.install" :key="step.platform" class="flex flex-wrap items-baseline gap-x-2 text-xs">
+                          <span class="min-w-24 text-muted-foreground">{{ step.platform }}</span>
+                          <code class="font-mono text-foreground">{{ step.command }}</code>
+                        </li>
+                      </ul>
                     </div>
-                    <pre class="max-h-40 overflow-auto rounded bg-background/70 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-all">{{ knockRevealed.command }}</pre>
                   </div>
 
                   <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.sameSource') }}</p>

@@ -734,6 +734,19 @@ export interface SSHGuardStatusResponse {
 export type SSHGuardKnockKnowledge = "installed" | "installed_superseded" | "planned" | "no_knock" | "unknown";
 
 /**
+ * One way to open the gate and log in. The server renders these with the same
+ * function that writes the arm plan's "How to knock" section.
+ */
+export interface SSHGuardKnockCommand {
+  /** "knock" for the packaged knock client, "bash" for the form that needs nothing installed. */
+  id: string;
+  /** How to get the tool the command runs; absent when it needs only bash. */
+  install?: { platform: string; command: string }[];
+  /** One line: the knock, then ssh, joined by &&. */
+  command: string;
+}
+
+/**
  * The sequence itself. Returned once, to an interactive session that has
  * satisfied a second factor, and never written anywhere but the response.
  */
@@ -747,8 +760,8 @@ export interface SSHGuardKnockRevealResponse {
   open_for: string;
   ssh_port: number;
   address: string;
-  /** The shell that opens the gate, identical to the arm plan's. */
-  command: string;
+  /** The knock client first, then the bash form; both identical to the arm plan's. */
+  commands: SSHGuardKnockCommand[];
   /** The same sentence the state endpoint shows, so a sequence read out of a superseded record carries its caveat. */
   note: string;
   confirmed: boolean;
