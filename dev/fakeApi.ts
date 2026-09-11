@@ -394,7 +394,21 @@ export const api = {
         ok: true, node_id, knowledge: stateNow.knowledge, approval_id: stateNow.approval_id ?? fixtureId("apr"),
         note: stateNow.note, confirmed: stateNow.confirmed ?? false,
         ports, seq_timeout_sec: 15, open_for: "12h", ssh_port: sshPort, address: addr,
-        command: `for p in ${ports.join(" ")}; do printf k | nc -u -w1 ${addr} $p; sleep 1; done\nssh -p ${sshPort} root@${addr}`,
+        commands: [
+          {
+            id: "knock",
+            install: [
+              { platform: "macOS", command: "brew install knock" },
+              { platform: "Debian, Ubuntu", command: "sudo apt install knockd" },
+              { platform: "Fedora", command: "sudo dnf install knock" },
+            ],
+            command: `knock -u -d 500 ${addr} ${ports.join(" ")} && ssh -p ${sshPort} root@${addr}`,
+          },
+          {
+            id: "bash",
+            command: `bash -c 'for p in ${ports.join(" ")}; do printf k >/dev/udp/${addr}/$p; sleep 0.5; done' && ssh -p ${sshPort} root@${addr}`,
+          },
+        ],
         sequence_sha256: digest,
         ...(stateNow.previous_honoured && node.previousPorts ? { previous_ports: node.previousPorts } : {}),
       };
