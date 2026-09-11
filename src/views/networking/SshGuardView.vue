@@ -2154,12 +2154,12 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                     <!-- Selectable text, not only a copy button: a browser can
                          refuse the clipboard, and an operator who is locked out
                          must still be able to read the value off the screen. -->
-                    <code class="block break-all font-mono text-sm tabular text-foreground">{{ knockRevealed.ports.join(' ') }}</code>
+                    <code class="block break-words font-mono text-sm tabular text-foreground">{{ knockRevealed.ports.join(' ') }}</code>
                   </div>
 
                   <div v-if="knockRevealed.previous_ports?.length">
                     <p class="mb-1 text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.previousSequenceLabel') }}</p>
-                    <code class="block break-all font-mono text-sm tabular text-foreground">{{ knockRevealed.previous_ports.join(' ') }}</code>
+                    <code class="block break-words font-mono text-sm tabular text-foreground">{{ knockRevealed.previous_ports.join(' ') }}</code>
                   </div>
 
                   <!-- One server renderer feeds these blocks and the arm plan, so
@@ -2178,9 +2178,16 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                         <p class="text-xs font-medium text-foreground">
                           {{ entry.id === 'knock' ? $t('networking.sshGuard.knock.commandKnock') : $t('networking.sshGuard.knock.commandBash') }}
                         </p>
-                        <CopyButton :value="entry.command" :label="$t('networking.sshGuard.knock.copyCommand')" />
+                        <CopyButton
+                          :value="entry.command"
+                          :label="$t('networking.sshGuard.knock.copyCommand')"
+                          :aria-label="entry.id === 'knock' ? $t('networking.sshGuard.knock.copyKnockCommand') : $t('networking.sshGuard.knock.copyBashCommand')"
+                        />
                       </div>
-                      <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-all text-foreground">{{ entry.command }}</pre>
+                      <!-- break-words, not break-all: lines wrap at the spaces between
+                           ports, so a port is never split across a line end where its
+                           tail would read as a port of its own. -->
+                      <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">{{ entry.command }}</pre>
                       <p class="text-xs text-muted-foreground">
                         {{ entry.id === 'knock' ? $t('networking.sshGuard.knock.commandKnockHint') : $t('networking.sshGuard.knock.commandBashHint') }}
                       </p>
