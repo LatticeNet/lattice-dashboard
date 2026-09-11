@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink, useRoute } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -44,6 +44,14 @@ import {
   shortId,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import {
+  DEFAULT_INVENTORY_GROUP,
+  INVENTORY_GROUPS,
+  orderForGroup,
+  orderMachines,
+  parseInventoryGroup,
+  type InventoryGroupBy,
+} from "./inventoryGroupingModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -84,7 +92,7 @@ import {
 
 type RenewalTone = "default" | "success" | "warning" | "destructive";
 type BillingCategory = "renewalIncomplete" | "recurring" | "onetime" | "free" | "unpriced" | "unprofiled";
-type GroupBy = "none" | "billing" | "vendor" | "region" | "renewal";
+type GroupBy = InventoryGroupBy;
 
 // Approx. days per month, used to normalise custom-day billing cycles to a
 // monthly-equivalent figure (365.25 / 12).
@@ -110,6 +118,7 @@ function s(value: unknown): string {
 const auth = useAuthStore();
 const { t } = useI18n();
 const route = useRoute();
+const router = useRouter();
 const INVENTORY_GUIDE_URL = "https://latticenet.github.io/guide/operations#machine-inventory";
 const NOTIFICATIONS_ROUTE = "/platform/notifications";
 const FX_TARGET_KEY = "lattice:inventory:fx-target";
@@ -142,7 +151,20 @@ const notifyRulesQuery = useAsyncData(
 
 // ── View state ──────────────────────────────────────────────────────────────
 const search = ref("");
-const groupBy = ref<GroupBy>("billing");
+const groupBy = ref<GroupBy>(parseInventoryGroup(route.query.group));
+// The grouping lives in the address bar (see inventoryGroupingModel), so the
+// Renewal view survives a reload and back/forward restores it.
+watch(groupBy, (group) => {
+  const wanted = group === DEFAULT_INVENTORY_GROUP ? undefined : group;
+  if (route.query.group === wanted) return;
+  router.replace({ query: { ...route.query, group: wanted } }).catch(() => {});
+});
+watch(
+  () => route.query.group,
+  (value) => {
+    groupBy.value = parseInventoryGroup(value);
+  },
+);
 
 // ── Edit dialog state ─────────────────────────────────────────────────────────
 const editOpen = ref(false);
@@ -443,15 +465,6 @@ const filteredMachines = computed(() => {
   );
 });
 
-function sortMachines(list: MachineView[]): MachineView[] {
-  return [...list].sort((a, b) => {
-    const aProfile = !!a.id;
-    const bProfile = !!b.id;
-    if (aProfile !== bProfile) return aProfile ? -1 : 1;
-    return displayName(a).localeCompare(displayName(b));
-  });
-}
-
 type MachineGroup = {
   key: string;
   label: string;
@@ -465,10 +478,11 @@ const groups = computed<MachineGroup[]>(() => {
   const list = filteredMachines.value;
   if (list.length === 0) return [];
 
+  const order = orderForGroup(groupBy.value);
   const build = (key: string, labelText: string, items: MachineView[]): MachineGroup => ({
     key,
     label: labelText,
-    machines: sortMachines(items),
+    machines: orderMachines(items, order, displayName, (machine) => !!renewalDate(machine)),
     spend: aggregateSpend(items),
   });
 
@@ -525,7 +539,7 @@ const groups = computed<MachineGroup[]>(() => {
     .map(([key, items]) => build(key, key === "__unknown__" ? unknownLabel : key, items));
 });
 
-const groupOptions: GroupBy[] = ["billing", "renewal", "vendor", "region", "none"];
+const groupOptions = INVENTORY_GROUPS;
 
 // ── Deep-link (?node=<id>) opens that node's editor once the list loads ───────
 const seededNodeQuery = ref<string | undefined>(undefined);
@@ -1413,6 +1427,12 @@ async function runReminders(selectedOnly: boolean) {
                 >
                   {{ renewalLabel(machine) }}
                 </Badge>
+                <!-- The date beside the countdown: "12d left" says how soon, the
+                     date says when, and a renewal view is read for both. -->
+                <span
+                  v-if="renewalDate(machine) && !renewalSetupIncomplete(machine) && machine.days_until_renewal !== undefined"
+                  class="self-center font-mono text-xs tabular text-muted-foreground"
+                >{{ renewalDate(machine) }}</span>
               </div>
 
               <div class="mt-3 grid gap-1.5 text-xs text-muted-foreground">
