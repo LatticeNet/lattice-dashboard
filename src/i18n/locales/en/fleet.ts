@@ -204,7 +204,6 @@ export default {
       },
       list: {
         title: "Fleet",
-        description: "{online} of {total} enrolled nodes are online and enabled",
         emptyTitle: "No nodes enrolled yet",
         emptyDescription: "Create an enrollment token to bring your first node online.",
         enrollCta: "Enroll a node",
