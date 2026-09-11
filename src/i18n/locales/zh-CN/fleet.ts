@@ -201,7 +201,6 @@ export default {
       },
       list: {
         title: "机群",
-        description: "{total} 个在册节点中有 {online} 个在线且未停用",
         emptyTitle: "尚未接入任何节点",
         emptyDescription: "生成接入令牌,让第一个节点上线。",
         enrollCta: "接入节点",

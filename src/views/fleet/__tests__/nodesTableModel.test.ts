@@ -362,11 +362,12 @@ test("the default set fits a 1440 display with the sidebar collapsed, no horizon
   const nameMin = nameTrackMin(fleet, measured);
   const budget = tableMinWidthPx(DEFAULT_HIDDEN_COLUMNS, nameMin, true);
   assert.ok(budget <= 1276, `default set is ${budget}px, more than a 1276px scroller`);
-  // With the sidebar open too, with room to spare for a wider name.
+  // With the sidebar open too. Agent config at 164px, wide enough for its usual
+  // pair of chips, leaves 6px of the 1100 to spare.
   assert.ok(budget <= 1100, `default set is ${budget}px, more than an 1100px scroller`);
-  // name 256 + owner 104 + status 112 + tags 120 + publicIp 150 + agentConfig 150
+  // name 256 + owner 104 + status 112 + tags 120 + publicIp 150 + agentConfig 164
   // + actions 116, six 12px gaps.
-  assert.equal(budget, 256 + 104 + 112 + 120 + 150 + 150 + 116 + 6 * 12);
+  assert.equal(budget, 256 + 104 + 112 + 120 + 150 + 164 + 116 + 6 * 12);
 });
 
 test("the row spans the card whatever is hidden: one data track is flexible, both pinned ones fixed", () => {
@@ -400,10 +401,10 @@ test("the row spans the card whatever is hidden: one data track is flexible, bot
   }
   // The default set's flexible track is Tags, its own minmax; nothing is promoted.
   assert.deepEqual(gridTemplate(DEFAULT_HIDDEN_COLUMNS, 228, true).split(" "), [
-    "256px", "104px", "112px", "minmax(120px,1fr)", "150px", "150px", "116px",
+    "256px", "104px", "112px", "minmax(120px,1fr)", "150px", "164px", "116px",
   ]);
   // Without Tags the last data track, Agent config, takes the spare width at its floor.
-  assert.equal(gridTemplate(withoutTags, 228, true).split(" ").at(-2), "minmax(150px,1fr)");
+  assert.equal(gridTemplate(withoutTags, 228, true).split(" ").at(-2), "minmax(164px,1fr)");
   // Down to the required columns, Status is the one that stretches.
   assert.deepEqual(gridTemplate(everything, 228, true).split(" "), ["256px", "minmax(112px,1fr)", "116px"]);
   // The floor of every track is a px value the table's min-width can sum, so

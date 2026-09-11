@@ -516,29 +516,41 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         <div v-if="show('role')" class="min-w-0">
           <!-- An unset role renders as nothing, matching every other role
                surface; a column of "none" was noise wearing a label. -->
-          <Badge v-if="node.role" variant="secondary" class="max-w-full truncate">{{ node.role }}</Badge>
+          <Badge v-if="node.role" variant="secondary" class="max-w-full justify-start">
+            <span class="truncate">{{ node.role }}</span>
+          </Badge>
         </div>
 
         <!-- Tags. Capped at two on one line with a count for the rest, and the
              full list in the cell tooltip. Wrapping this cell is what made row
              heights uneven across the table. -->
-        <div
-          v-if="show('tags')"
-          class="flex min-w-0 items-center gap-1 overflow-hidden"
-          :title="sortedTags(node).join(', ')"
-        >
-          <Badge
-            v-for="tag in sortedTags(node).slice(0, 2)"
-            :key="tag"
-            variant="outline"
-            class="max-w-full shrink truncate"
-          >
-            {{ tag }}
-          </Badge>
-          <Badge v-if="sortedTags(node).length > 2" variant="secondary" class="shrink-0">
-            +{{ sortedTags(node).length - 2 }}
-          </Badge>
-          <span v-if="sortedTags(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
+        <!-- The cell is a size container. Below 13rem it shows one chip and a
+             "+N" for the rest, from 13rem two chips; the count never shrinks
+             and the chips do, so "+N" stays visible however long the first
+             tag is. The ellipsis sits on a span inside each chip: Badge is a
+             centred flex box and text-overflow does nothing to text a flex box
+             lays out directly, which is how a long tag used to lose characters
+             at both ends ("enJobs-D" for OpenJobs-Data). -->
+        <div v-if="show('tags')" class="@container min-w-0" :title="sortedTags(node).join(', ')">
+          <div class="flex min-w-0 items-center gap-1 overflow-hidden">
+            <Badge v-if="sortedTags(node)[0]" variant="outline" class="min-w-0 max-w-full shrink justify-start">
+              <span class="truncate">{{ sortedTags(node)[0] }}</span>
+            </Badge>
+            <Badge
+              v-if="sortedTags(node)[1]"
+              variant="outline"
+              class="hidden min-w-0 shrink-[3] justify-start @min-[13rem]:inline-flex"
+            >
+              <span class="truncate">{{ sortedTags(node)[1] }}</span>
+            </Badge>
+            <Badge v-if="sortedTags(node).length > 1" variant="secondary" class="shrink-0 @min-[13rem]:hidden">
+              +{{ sortedTags(node).length - 1 }}
+            </Badge>
+            <Badge v-if="sortedTags(node).length > 2" variant="secondary" class="hidden shrink-0 @min-[13rem]:inline-flex">
+              +{{ sortedTags(node).length - 2 }}
+            </Badge>
+            <span v-if="sortedTags(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
+          </div>
         </div>
 
         <!-- Public IPv4 (other addresses in the tooltip) -->
@@ -553,23 +565,34 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         </div>
 
         <!-- Agent runtime capabilities -->
-        <div
-          v-if="show('agentConfig')"
-          class="flex min-w-0 items-center gap-1 overflow-hidden"
-          :title="agentBadges(node).join(', ')"
-        >
-          <Badge
-            v-for="badge in agentBadges(node).slice(0, 2)"
-            :key="`${node.id}:${badge}`"
-            variant="outline"
-            class="max-w-full shrink truncate"
-          >
-            {{ badge }}
-          </Badge>
-          <Badge v-if="agentBadges(node).length > 2" variant="secondary" class="shrink-0">
-            +{{ agentBadges(node).length - 2 }}
-          </Badge>
-          <span v-if="agentBadges(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
+        <!-- The same size-container chips as Tags, a little tighter, with two
+             from 9rem so the usual pair fits its 164px track whole. Muted,
+             because the same flags repeat down most of the fleet and read as
+             texture beside the tags an operator chose. -->
+        <div v-if="show('agentConfig')" class="@container min-w-0" :title="agentBadges(node).join(', ')">
+          <div class="flex min-w-0 items-center gap-1 overflow-hidden">
+            <Badge
+              v-if="agentBadges(node)[0]"
+              variant="outline"
+              class="min-w-0 max-w-full shrink justify-start px-1.5 text-muted-foreground"
+            >
+              <span class="truncate">{{ agentBadges(node)[0] }}</span>
+            </Badge>
+            <Badge
+              v-if="agentBadges(node)[1]"
+              variant="outline"
+              class="hidden min-w-0 shrink-[3] justify-start px-1.5 text-muted-foreground @min-[9rem]:inline-flex"
+            >
+              <span class="truncate">{{ agentBadges(node)[1] }}</span>
+            </Badge>
+            <Badge v-if="agentBadges(node).length > 1" variant="secondary" class="shrink-0 px-1.5 @min-[9rem]:hidden">
+              +{{ agentBadges(node).length - 1 }}
+            </Badge>
+            <Badge v-if="agentBadges(node).length > 2" variant="secondary" class="hidden shrink-0 px-1.5 @min-[9rem]:inline-flex">
+              +{{ agentBadges(node).length - 2 }}
+            </Badge>
+            <span v-if="agentBadges(node).length === 0" class="text-muted-foreground">{{ $t('common.misc.none') }}</span>
+          </div>
         </div>
 
         <!-- CPU / Memory / Disk mini-bars -->
@@ -628,8 +651,8 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
           class="min-w-0"
           :title="updatePolicy(node)?.target_version || undefined"
         >
-          <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full truncate">
-            {{ updateLabel(updatePolicy(node)) }}
+          <Badge :variant="updateVariant(updatePolicy(node))" class="max-w-full justify-start">
+            <span class="truncate">{{ updateLabel(updatePolicy(node)) }}</span>
           </Badge>
         </div>
 

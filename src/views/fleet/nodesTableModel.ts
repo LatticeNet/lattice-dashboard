@@ -86,7 +86,10 @@ export const NODE_TABLE_COLUMNS: readonly NodeTableColumn[] = [
   { id: "tags", labelKey: "fleet.nodes.table.colTags", width: "minmax(120px,1fr)", optional: true },
   { id: "publicIp", labelKey: "fleet.nodes.table.colPublicIp", width: "150px", optional: true },
   { id: "archOs", labelKey: "fleet.nodes.table.colArchOs", width: "120px", optional: true, defaultHidden: true },
-  { id: "agentConfig", labelKey: "fleet.nodes.table.colAgentConfig", width: "150px", optional: true },
+  // 164px holds the fleet's usual pair of flags whole ("exec" and
+  // "terminal:poll" with a "+1"); at 150px the second one ended in an
+  // ellipsis on every row while Tags beside it held mostly "none".
+  { id: "agentConfig", labelKey: "fleet.nodes.table.colAgentConfig", width: "164px", optional: true },
   { id: "cpu", labelKey: "fleet.nodes.metric.cpu", width: "84px", optional: true, sortKey: "cpu", defaultDir: "desc", defaultHidden: true },
   { id: "memory", labelKey: "fleet.nodes.metric.memory", width: "160px", optional: true, sortKey: "memory", defaultDir: "desc", defaultHidden: true },
   { id: "disk", labelKey: "fleet.nodes.metric.disk", width: "160px", optional: true, sortKey: "disk", defaultDir: "desc", defaultHidden: true },

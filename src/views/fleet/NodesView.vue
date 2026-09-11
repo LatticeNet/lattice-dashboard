@@ -1293,12 +1293,11 @@ function openTerminal(node: Node) {
       </CardContent>
     </Card>
 
-    <Card>
-      <CardHeader>
-        <CardTitle>{{ $t('fleet.nodes.list.title') }}</CardTitle>
-        <CardDescription>{{ $t('fleet.nodes.list.description', { online: statusCounts.online, total: statusCounts.total }) }}</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <!-- The fleet sits on the page, not inside a card. The table draws its own
+         hairline frame, so the card was a second border and 24px of padding
+         around the one thing this page is for, and its header repeated what the
+         metric strip above already says. -->
+    <section :aria-label="$t('fleet.nodes.list.title')">
         <!-- Search / status / tag filters over the polled list (client-side). -->
         <div v-if="nodes.length > 0" class="mb-4 space-y-3">
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1733,8 +1732,7 @@ function openTerminal(node: Node) {
             </section>
           </div>
         </DataState>
-      </CardContent>
-    </Card>
+    </section>
 
     <!-- The count is what the batch would really change, not the selection
          size: picking six when two are already off is a four-node change. -->
