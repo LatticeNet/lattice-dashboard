@@ -53,7 +53,14 @@ import {
   parseInventoryGroup,
   type InventoryGroupBy,
 } from "./inventoryGroupingModel";
-import { advanceRenewal, daysBetween, formatDay, monthlyEquivalentCents } from "./inventoryEditorModel";
+import {
+  advanceRenewal,
+  daysBetween,
+  formatDay,
+  monthlyEquivalentCents,
+  parseReminderDaysInput,
+  rollForwardPast,
+} from "./inventoryEditorModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -233,7 +240,7 @@ const editMachine = computed(() =>
 const editHasProfile = computed(() => !!profileId.value);
 const calculatedNextRenewal = computed(() => calculateNextRenewalFromPurchase());
 const customCycleValid = computed(
-  () => renewalCycle.value !== "custom_days" || Number(s(cycleDays.value)) > 0,
+  () => renewalCycle.value !== "custom_days" || (Number.isInteger(Number(s(cycleDays.value))) && Number(s(cycleDays.value)) > 0),
 );
 const hasEffectiveNextRenewal = computed(() => !!(nextRenewal.value || calculatedNextRenewal.value));
 const renewalSetupComplete = computed(
@@ -241,12 +248,14 @@ const renewalSetupComplete = computed(
     !needsRenewal.value ||
     (!!renewalCycle.value && customCycleValid.value && hasEffectiveNextRenewal.value),
 );
+/** Reminder offsets as typed; what is not a whole day in range is named, not dropped. */
+const draftReminderDays = computed(() => parseReminderDaysInput(s(remindDays.value)));
 const renewalBlocksSave = computed(
   () =>
     needsRenewal.value &&
     (!customCycleValid.value ||
       (autoRoll.value && !renewalCycle.value) ||
-      (remindersEnabled.value && !hasEffectiveNextRenewal.value)),
+      (remindersEnabled.value && (!hasEffectiveNextRenewal.value || draftReminderDays.value.days.length === 0))),
 );
 const renewalDraftIncomplete = computed(() => needsRenewal.value && !renewalSetupComplete.value);
 const canSave = computed(
@@ -830,26 +839,26 @@ function renewalCountdown(day: string): string {
 }
 
 /**
- * The form read back as one line, in the words the list uses, so what a save
- * would write can be checked without scrolling the form. It is the editor's
- * proof line and changes as the fields change.
+ * The form read back as one line, in the words the list's cards use ("Free",
+ * "One-time", "not priced"), so what a save would write can be checked
+ * without scrolling the form. It is the editor's proof line and changes as
+ * the fields change.
  */
 const draftSummary = computed(() => {
-  const parts = [
-    draftPriceCents.value > 0
-      ? formatMoney(draftPriceCents.value, draftCurrency.value)
-      : t("fleet.inventory.profile.summaryNoPrice"),
-  ];
+  const cents = draftPriceCents.value;
+  const price = cents > 0 ? formatMoney(cents, draftCurrency.value) : t("fleet.inventory.price.notPriced");
   if (!needsRenewal.value) {
-    parts.push(t("fleet.inventory.profile.summaryOneTime"));
-    return parts;
+    return cents > 0 ? [price, t("fleet.inventory.billing.onetime")] : [t("fleet.inventory.billing.free")];
   }
-  if (renewalCycle.value) {
+  const parts = [price];
+  if (renewalCycle.value === "custom_days") {
     parts.push(
-      renewalCycle.value === "custom_days"
+      customCycleValid.value
         ? t("fleet.inventory.cycleLabel.customDays", { days: draftCycleDays.value })
-        : t(`fleet.inventory.profile.cycle.${renewalCycle.value}`),
+        : t("fleet.inventory.profile.cycleDaysMissing"),
     );
+  } else if (renewalCycle.value) {
+    parts.push(t(`fleet.inventory.profile.cycle.${renewalCycle.value}`));
   }
   if (draftMonthlyLabel.value) parts.push(draftMonthlyLabel.value);
   const next = draftNextRenewal.value;
@@ -859,21 +868,17 @@ const draftSummary = computed(() => {
   } else {
     parts.push(t("fleet.inventory.renewal.incomplete"));
   }
-  const offsets = parseReminderDays();
-  parts.push(
-    remindersEnabled.value && offsets.length
-      ? t("fleet.inventory.profile.summaryRemindersOn", { days: offsets.join(", ") })
-      : t("fleet.inventory.profile.summaryRemindersOff"),
-  );
+  if (!remindersEnabled.value) {
+    parts.push(t("fleet.inventory.profile.summaryRemindersOff"));
+  } else if (draftReminderDays.value.days.length) {
+    parts.push(t("fleet.inventory.profile.summaryRemindersOn", { days: draftReminderDays.value.days.join(", ") }));
+  } else {
+    parts.push(t("fleet.inventory.profile.summaryRemindersNoDays"));
+  }
   return parts;
 });
 
-/**
- * What a save would send, plus the vendor fields saved beside it.
- * `withoutNextRenewal` masks the one field Record renewal is allowed to carry.
- */
-function formFingerprint(withoutNextRenewal = false): string {
-  const input = buildInput();
+function fingerprintOf(input: MachineProfileInput, withoutNextRenewal = false): string {
   return JSON.stringify({
     ...input,
     next_renewal: withoutNextRenewal ? null : input.next_renewal,
@@ -883,32 +888,74 @@ function formFingerprint(withoutNextRenewal = false): string {
   });
 }
 
-const formSnapshot = ref<{ full: string; withoutNextRenewal: string }>();
-const discardOpen = ref(false);
-
 /**
- * Taken after the watchers a form load sets off have run (the vendor sync, the
- * calculated renewal date), so opening an untouched profile is never dirty.
+ * What a save would send, plus the vendor fields saved beside it.
+ * `withoutNextRenewal` masks the one field Record renewal is allowed to carry.
  */
-async function snapshotForm(): Promise<void> {
-  await nextTick();
-  formSnapshot.value = { full: formFingerprint(), withoutNextRenewal: formFingerprint(true) };
+function formFingerprint(withoutNextRenewal = false): string {
+  return fingerprintOf(buildInput(), withoutNextRenewal);
 }
 
-const formDirty = computed(() => !!formSnapshot.value && formFingerprint() !== formSnapshot.value.full);
+/**
+ * Two baselines, taken once the watchers a form load sets off have run.
+ *
+ * `saved` is what the server holds: Save is enabled, and Record renewal waits,
+ * when the form differs from it. `opened` is the form as it first appeared,
+ * suggestions included: closing asks before discarding only when something
+ * changed since then. They differ when the form fills in a next renewal the
+ * profile never saved (a Setup needed machine). That date is a suggestion the
+ * operator must be able to save as it stands, and to walk away from without a
+ * prompt.
+ */
+const formSnapshot = ref<{ saved: string; savedWithoutNextRenewal: string; opened: string; savedNextRenewal: string }>();
+const discardOpen = ref(false);
+
+async function snapshotForm(machine: MachineView): Promise<void> {
+  await nextTick();
+  const current = buildInput();
+  const savedNextRenewal = renewalDate(machine);
+  const saved: MachineProfileInput = {
+    ...current,
+    next_renewal: needsRenewal.value && savedNextRenewal ? (isoDate(savedNextRenewal) ?? null) : null,
+  };
+  formSnapshot.value = {
+    saved: fingerprintOf(saved),
+    savedWithoutNextRenewal: fingerprintOf(saved, true),
+    opened: fingerprintOf(current),
+    savedNextRenewal,
+  };
+}
+
+const formDirty = computed(() => !!formSnapshot.value && formFingerprint() !== formSnapshot.value.saved);
 const draftBeyondNextRenewal = computed(
-  () => !!formSnapshot.value && formFingerprint(true) !== formSnapshot.value.withoutNextRenewal,
+  () => !!formSnapshot.value && formFingerprint(true) !== formSnapshot.value.savedWithoutNextRenewal,
+);
+const editedSinceOpen = computed(() => !!formSnapshot.value && formFingerprint() !== formSnapshot.value.opened);
+
+/** The next renewal on screen is one the form filled in, not one the profile has saved. */
+const nextRenewalIsSuggestion = computed(
+  () =>
+    editHasProfile.value &&
+    needsRenewal.value &&
+    !!nextRenewal.value &&
+    !!formSnapshot.value &&
+    !formSnapshot.value.savedNextRenewal,
 );
 
 watch(editOpen, (open) => {
   if (open) return;
   formSnapshot.value = undefined;
   discardOpen.value = false;
+  // A ?node= deep link opened the editor; left behind, it reopens the editor
+  // on the next reload.
+  if (route.query.node !== undefined) {
+    router.replace({ query: { ...route.query, node: undefined } }).catch(() => {});
+  }
 });
 
 /** Every way out of the editor comes through here: Escape, the overlay, the close button and Cancel. */
 function requestEditOpen(open: boolean): void {
-  if (!open && formDirty.value) {
+  if (!open && editedSinceOpen.value) {
     discardOpen.value = true;
     return;
   }
@@ -921,6 +968,17 @@ function discardChanges(): void {
 }
 
 /**
+ * Focus lands on the dialog's heading, not its first field. The first field
+ * is Label, and focusing an input that holds a value selects it, so the first
+ * key typed would replace the machine's name; with nothing focused inside,
+ * the focus trap has nothing to hold and Tab walks the page behind the overlay.
+ */
+function focusEditorOnOpen(event: Event): void {
+  event.preventDefault();
+  document.getElementById("machine-editor-title")?.focus({ preventScroll: true });
+}
+
+/**
  * Recording a renewal writes to the saved profile and reloads the form from
  * the server's answer, so it waits until other edits are saved or discarded.
  * With auto-roll off it takes the date typed above, the one edit it may carry.
@@ -930,17 +988,37 @@ const canRecordRenewal = computed(
   () =>
     editHasProfile.value &&
     needsRenewal.value &&
+    customCycleValid.value &&
     !renewBlockedByDraft.value &&
     (autoRoll.value ? !!nextRenewal.value && !!renewalCycle.value : !!nextRenewal.value),
 );
+
+/**
+ * With auto-roll off, recording a renewal keeps the date typed above. When
+ * that date is today or already past, this is the first renewal after today,
+ * rolled forward by the cycle, offered beside the preview.
+ */
+const renewRollForwardDate = computed(() => {
+  if (autoRoll.value || !needsRenewal.value || !nextRenewal.value || renewBlockedByDraft.value) return undefined;
+  return rollForwardPast(nextRenewal.value, renewalCycle.value, draftCycleDays.value, formatDay(new Date()));
+});
+
 const renewPreview = computed(() => {
   if (!editHasProfile.value || !needsRenewal.value) return "";
   if (renewBlockedByDraft.value) return t("fleet.inventory.profile.recordRenewalSaveFirst");
+  const today = formatDay(new Date());
   if (autoRoll.value) {
     const to = advanceRenewal(nextRenewal.value, renewalCycle.value, draftCycleDays.value);
-    return to ? t("fleet.inventory.profile.recordRenewalAutoRoll", { from: nextRenewal.value, to }) : "";
+    if (!to) return "";
+    const stillPast = (daysBetween(today, to) ?? 0) < 0;
+    return stillPast
+      ? t("fleet.inventory.profile.recordRenewalAutoRollStillPast", { from: nextRenewal.value, to })
+      : t("fleet.inventory.profile.recordRenewalAutoRoll", { from: nextRenewal.value, to });
   }
-  return nextRenewal.value ? t("fleet.inventory.profile.recordRenewalManual", { date: nextRenewal.value }) : "";
+  if (!nextRenewal.value) return "";
+  return (daysBetween(today, nextRenewal.value) ?? 0) < 0
+    ? t("fleet.inventory.profile.recordRenewalManualPast", { date: nextRenewal.value })
+    : t("fleet.inventory.profile.recordRenewalManual", { date: nextRenewal.value });
 });
 
 const storedLinkCount = computed(
@@ -1021,6 +1099,19 @@ async function revealMachineLink(machine: MachineView, kind: "console" | "detail
 }
 
 // ── Edit dialog form lifecycle ────────────────────────────────────────────────
+/**
+ * The vendor directory fields as they were last filled in from a saved vendor.
+ * When the name stops matching that vendor, the fields still holding those
+ * values are cleared, so typing past "DMIT" to "DMIT Cloud" or to another name
+ * does not carry DMIT's URL and notes to a different vendor. A field the
+ * operator changed since the fill is theirs and stays.
+ */
+const vendorAutofill = ref<{ url: string; logo: string; description: string }>();
+
+function rememberVendorAutofill() {
+  vendorAutofill.value = { url: vendorUrl.value, logo: vendorLogoUrl.value, description: vendorDescription.value };
+}
+
 function loadForm(machine: MachineView) {
   profileId.value = machine.id || "";
   nodeId.value = machine.node_id;
@@ -1031,6 +1122,7 @@ function loadForm(machine: MachineView) {
   vendorUrl.value = vendorProfile?.url || "";
   vendorLogoUrl.value = vendorProfile?.logo_url || "";
   vendorDescription.value = vendorProfile?.description || "";
+  rememberVendorAutofill();
   region.value = machine.region || "";
   notes.value = machine.notes || "";
   priceMajor.value = machine.price_cents ? (machine.price_cents / 100).toFixed(2) : "";
@@ -1061,19 +1153,27 @@ function syncVendorDetailsFromSelection() {
   const selected = selectedVendorProfile.value;
   if (!selected) {
     vendorProfileId.value = "";
+    const filled = vendorAutofill.value;
+    if (filled) {
+      if (vendorUrl.value === filled.url) vendorUrl.value = "";
+      if (vendorLogoUrl.value === filled.logo) vendorLogoUrl.value = "";
+      if (vendorDescription.value === filled.description) vendorDescription.value = "";
+      vendorAutofill.value = undefined;
+    }
     return;
   }
   vendorProfileId.value = selected.id.startsWith("derived:") ? "" : selected.id;
   vendorUrl.value = selected.url || "";
   vendorLogoUrl.value = selected.logo_url || "";
   vendorDescription.value = selected.description || "";
+  rememberVendorAutofill();
 }
 
 function openEdit(machine: MachineView) {
   editKey.value = machineKey(machine);
   loadForm(machine);
   editOpen.value = true;
-  void snapshotForm();
+  void snapshotForm(machine);
 }
 
 function parsePriceCents(): number | undefined {
@@ -1085,14 +1185,7 @@ function parsePriceCents(): number | undefined {
 }
 
 function parseReminderDays(): number[] {
-  return [
-    ...new Set(
-      s(remindDays.value)
-        .split(",")
-        .map((item) => Number(item.trim()))
-        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 365),
-    ),
-  ].sort((a, b) => b - a);
+  return draftReminderDays.value.days;
 }
 
 function buildInput(): MachineProfileInput {
@@ -1218,7 +1311,9 @@ async function deleteProfile() {
 }
 
 async function renewProfile() {
-  if (!profileId.value) return;
+  // The button is disabled on the same condition; checked here as well so no
+  // other caller can record a renewal over unsaved edits.
+  if (!profileId.value || !canRecordRenewal.value) return;
   renewPending.value = true;
   try {
     const renewed = await api.machines.renew(
@@ -1227,7 +1322,7 @@ async function renewProfile() {
     );
     toast.success(t("fleet.inventory.toast.renewalRecorded"));
     loadForm(renewed);
-    void snapshotForm();
+    void snapshotForm(renewed);
     await refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.renewalFailed"));
@@ -1290,7 +1385,10 @@ async function runReminders(selectedOnly: boolean) {
     </datalist>
 
     <!-- KPI board -->
-    <div class="grid auto-rows-[8rem] gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <!-- min-w-0 on every card: a grid item's minimum is its content, so at 375
+         the spend card's longest line pushed the page 20px wider than the
+         viewport instead of truncating. -->
+    <div class="grid auto-rows-[8rem] gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
       <StatCard :label="$t('fleet.inventory.stats.machines')" :value="machines.length" :icon="Boxes"
         :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })"
         class="h-full py-0" hint-placement="bottom" />
@@ -1599,7 +1697,9 @@ async function runReminders(selectedOnly: boolean) {
                 >
                   {{ $t('fleet.inventory.purityBadge', { percent: nodeInventoryFor(machine.node_id)?.purity_percent }) }}
                 </Badge>
+                <!-- Left out when the billing chip already says "Renewal setup needed". -->
                 <Badge
+                  v-if="billingCategory(machine) !== 'renewalIncomplete'"
                   :variant="renewalTone(machine) === 'destructive' ? 'destructive' : renewalTone(machine) === 'warning' ? 'warning' : 'secondary'"
                 >
                   {{ renewalLabel(machine) }}
@@ -1682,15 +1782,15 @@ async function runReminders(selectedOnly: boolean) {
          goes through requestEditOpen, which asks before unsaved edits are
          thrown away. -->
     <Dialog :open="editOpen" @update:open="requestEditOpen">
-      <!-- No auto-focus into the form: the first field is Label, and focusing
-           an input with a value selects it, so the first key typed would
-           replace the machine's name. Tab still enters the form from the top. -->
+      <!-- Focus goes to the title on open (focusEditorOnOpen): inside the
+           dialog so the trap holds, and not on the first field, which would
+           select the machine's label. -->
       <DialogContent
         class="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
-        @open-auto-focus.prevent
+        @open-auto-focus="focusEditorOnOpen"
       >
         <DialogHeader class="gap-1.5 border-b border-border px-5 pt-5 pr-12 pb-4 text-left sm:px-6">
-          <DialogTitle class="flex min-w-0 items-center gap-2">
+          <DialogTitle id="machine-editor-title" tabindex="-1" class="flex min-w-0 items-center gap-2 outline-none">
             <Pencil class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span class="truncate">{{ editMachine ? displayName(editMachine) : $t('fleet.inventory.profile.title') }}</span>
           </DialogTitle>
@@ -1873,7 +1973,7 @@ async function runReminders(selectedOnly: boolean) {
               </div>
             </div>
             <p class="text-xs text-muted-foreground">
-              {{ $t('fleet.inventory.profile.priceHint') }}
+              {{ needsRenewal ? $t('fleet.inventory.profile.priceHint') : $t('fleet.inventory.profile.priceHintOneTime') }}
               <span v-if="draftMonthlyLabel" class="font-mono text-foreground tabular">{{ draftMonthlyLabel }}</span>
             </p>
             <div v-if="needsRenewal" class="grid gap-3 sm:grid-cols-2">
@@ -1895,7 +1995,18 @@ async function runReminders(selectedOnly: boolean) {
               </div>
               <div v-if="renewalCycle === 'custom_days'" class="grid content-start gap-2">
                 <Label for="machine-cycle-days">{{ $t('fleet.inventory.profile.cycleDays') }}</Label>
-                <Input id="machine-cycle-days" v-model="cycleDays" type="number" min="1" step="1" />
+                <Input
+                  id="machine-cycle-days"
+                  v-model="cycleDays"
+                  type="number"
+                  min="1"
+                  step="1"
+                  :aria-invalid="!customCycleValid || undefined"
+                  :aria-describedby="customCycleValid ? undefined : 'machine-cycle-days-error'"
+                />
+                <p v-if="!customCycleValid" id="machine-cycle-days-error" class="text-xs text-destructive">
+                  {{ $t('fleet.inventory.profile.cycleDaysInvalid') }}
+                </p>
               </div>
             </div>
           </section>
@@ -1921,29 +2032,65 @@ async function runReminders(selectedOnly: boolean) {
                   {{ $t('fleet.inventory.profile.useCalculatedDate', { date: calculatedNextRenewal }) }}
                 </Button>
               </div>
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.nextRenewalHint') }}</p>
+              <!-- Said in place: Save is enabled for this date though nobody typed it. -->
+              <p v-if="nextRenewalIsSuggestion" class="text-xs text-warning-text">
+                {{ $t('fleet.inventory.profile.nextRenewalSuggested') }}
+              </p>
+              <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.nextRenewalHint') }}</p>
             </div>
 
-            <label class="flex items-start gap-2 text-sm">
-              <Checkbox v-model="autoRoll" class="mt-0.5" :disabled="!renewalCycle" />
-              <span>
-                {{ $t('fleet.inventory.profile.autoRoll') }}
-                <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.autoRollHint') }}</span>
-              </span>
-            </label>
+            <!-- A label per checkbox and the hint linked by aria-describedby, so
+                 the accessible name is the option, not the option and its
+                 explanation run together. -->
+            <div class="flex items-start gap-2 text-sm">
+              <Checkbox
+                id="machine-auto-roll"
+                v-model="autoRoll"
+                class="mt-0.5"
+                :disabled="!renewalCycle"
+                aria-describedby="machine-auto-roll-hint"
+              />
+              <div>
+                <label for="machine-auto-roll">{{ $t('fleet.inventory.profile.autoRoll') }}</label>
+                <p id="machine-auto-roll-hint" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.autoRollHint') }}</p>
+              </div>
+            </div>
 
             <div class="grid gap-2">
-              <label class="flex items-start gap-2 text-sm">
-                <Checkbox v-model="remindersEnabled" class="mt-0.5" :disabled="!hasEffectiveNextRenewal" />
-                <span>
-                  {{ $t('fleet.inventory.profile.enableReminders') }}
-                  <span class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.enableRemindersHint') }}</span>
-                </span>
-              </label>
+              <div class="flex items-start gap-2 text-sm">
+                <Checkbox
+                  id="machine-reminders-enabled"
+                  v-model="remindersEnabled"
+                  class="mt-0.5"
+                  :disabled="!hasEffectiveNextRenewal"
+                  aria-describedby="machine-reminders-enabled-hint"
+                />
+                <div>
+                  <label for="machine-reminders-enabled">{{ $t('fleet.inventory.profile.enableReminders') }}</label>
+                  <p id="machine-reminders-enabled-hint" class="text-xs text-muted-foreground">
+                    {{ $t('fleet.inventory.profile.enableRemindersHint') }}
+                  </p>
+                </div>
+              </div>
               <div v-if="remindersEnabled" class="grid gap-2 pl-6">
                 <Label for="machine-reminders">{{ $t('fleet.inventory.profile.remindersBefore') }}</Label>
-                <Input id="machine-reminders" v-model="remindDays" class="sm:w-56" placeholder="14,7,1" />
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.remindersBeforeHint') }}</p>
+                <Input
+                  id="machine-reminders"
+                  v-model="remindDays"
+                  class="sm:w-56"
+                  placeholder="14,7,1"
+                  :aria-invalid="draftReminderDays.days.length === 0 || undefined"
+                  aria-describedby="machine-reminders-hint"
+                />
+                <p v-if="draftReminderDays.days.length === 0" id="machine-reminders-hint" class="text-xs text-destructive">
+                  {{ $t('fleet.inventory.profile.reminderDaysEmpty') }}
+                </p>
+                <p v-else-if="draftReminderDays.ignored.length" id="machine-reminders-hint" class="text-xs text-warning-text">
+                  {{ $t('fleet.inventory.profile.reminderDaysIgnored', { values: draftReminderDays.ignored.join(', ') }) }}
+                </p>
+                <p v-else id="machine-reminders-hint" class="text-xs text-muted-foreground">
+                  {{ $t('fleet.inventory.profile.remindersBeforeHint') }}
+                </p>
                 <div v-if="canManageNotifications && !renewalNotificationReady" :class="warningPanelClass">
                   {{ $t('fleet.inventory.profile.reminderNoRoute') }}
                   <RouterLink :to="NOTIFICATIONS_ROUTE" class="font-medium underline underline-offset-2">
@@ -1970,6 +2117,15 @@ async function runReminders(selectedOnly: boolean) {
                  it will do before it does it. -->
             <div v-if="editHasProfile" class="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2">
               <p class="min-w-0 flex-1 text-xs text-muted-foreground" data-testid="machine-renew-preview">{{ renewPreview }}</p>
+              <Button
+                v-if="renewRollForwardDate"
+                type="button"
+                variant="ghost"
+                size="sm"
+                @click="nextRenewal = renewRollForwardDate"
+              >
+                {{ $t('fleet.inventory.profile.useRolledForwardDate', { date: renewRollForwardDate }) }}
+              </Button>
               <Button type="button" variant="outline" size="sm" :disabled="renewPending || !canRecordRenewal" @click="renewProfile">
                 <RefreshCw v-if="renewPending" class="size-4 animate-spin" aria-hidden="true" />
                 <CalendarClock v-else class="size-4" aria-hidden="true" />

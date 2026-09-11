@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { advanceRenewal, daysBetween, monthlyEquivalentCents, parseDay } from "../inventoryEditorModel.ts";
+import {
+  advanceRenewal,
+  daysBetween,
+  monthlyEquivalentCents,
+  parseDay,
+  parseReminderDaysInput,
+  rollForwardPast,
+} from "../inventoryEditorModel.ts";
 
 test("a price per cycle becomes a monthly figure", () => {
   // CHY 804.60 every six months, the production AaiTr box.
@@ -44,4 +51,33 @@ test("days between two form dates, negative when overdue", () => {
   assert.equal(daysBetween("2026-09-11", "2026-09-11"), 0);
   assert.equal(daysBetween("2026-09-11", ""), undefined);
   assert.equal(parseDay(" 2026-09-11 ")?.toISOString(), "2026-09-11T00:00:00.000Z");
+});
+
+test("reminder offsets keep whole days in range and name what they ignore", () => {
+  assert.deepEqual(parseReminderDaysInput("14,7,1"), { days: [14, 7, 1], ignored: [] });
+  assert.deepEqual(parseReminderDaysInput(" 1, 30 ,7,7 "), { days: [30, 7, 1], ignored: [] });
+  assert.deepEqual(parseReminderDaysInput("30, 7, abc, -1, 400, 2.5"), {
+    days: [30, 7],
+    ignored: ["abc", "-1", "400", "2.5"],
+  });
+});
+
+test("a blank or comma-only entry has no days and ignores nothing", () => {
+  assert.deepEqual(parseReminderDaysInput(""), { days: [], ignored: [] });
+  assert.deepEqual(parseReminderDaysInput(" , ,"), { days: [], ignored: [] });
+  assert.deepEqual(parseReminderDaysInput("0"), { days: [0], ignored: [] });
+});
+
+test("a passed renewal rolls forward to the first date after today", () => {
+  // The Overdue machine in the design review: annual, recorded 2026-09-05.
+  assert.equal(rollForwardPast("2026-09-05", "annual", 0, "2026-09-11"), "2027-09-05");
+  assert.equal(rollForwardPast("2026-06-01", "monthly", 0, "2026-09-11"), "2026-10-01");
+  assert.equal(rollForwardPast("2026-09-11", "monthly", 0, "2026-09-11"), "2026-10-11");
+  assert.equal(rollForwardPast("2026-08-01", "custom_days", 30, "2026-09-11"), "2026-09-30");
+});
+
+test("nothing to roll when the date is still ahead or there is no cycle", () => {
+  assert.equal(rollForwardPast("2026-09-12", "monthly", 0, "2026-09-11"), undefined);
+  assert.equal(rollForwardPast("2026-09-05", "", 0, "2026-09-11"), undefined);
+  assert.equal(rollForwardPast("2026-09-05", "custom_days", 0, "2026-09-11"), undefined);
 });

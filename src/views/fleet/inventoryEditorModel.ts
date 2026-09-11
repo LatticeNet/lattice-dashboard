@@ -61,3 +61,41 @@ export function daysBetween(from: string, to: string): number | undefined {
   if (!a || !b) return undefined;
   return Math.round((b.getTime() - a.getTime()) / DAY_MS);
 }
+
+/**
+ * Reminder offsets as typed: whole days from 0 to 365, comma separated, most
+ * days first. Blank entries are skipped; anything else that is not a whole
+ * day in range comes back in `ignored`, so the form can name it instead of
+ * dropping it without a word.
+ */
+export function parseReminderDaysInput(text: string): { days: number[]; ignored: string[] } {
+  const days = new Set<number>();
+  const ignored: string[] = [];
+  for (const raw of text.split(",")) {
+    const item = raw.trim();
+    if (!item) continue;
+    if (/^\d+$/.test(item) && Number(item) <= 365) days.add(Number(item));
+    else ignored.push(item);
+  }
+  return { days: [...days].sort((a, b) => b - a), ignored };
+}
+
+/**
+ * The first renewal after `today`, rolling `day` forward one cycle at a time,
+ * for a recorded next renewal that is today or already past. Undefined when
+ * `day` is still ahead or there is no usable cycle.
+ */
+export function rollForwardPast(day: string, cycle: string, cycleDays: number, today: string): string | undefined {
+  const start = parseDay(day);
+  const now = parseDay(today);
+  if (!start || !now || start.getTime() > now.getTime()) return undefined;
+  let next = day;
+  for (let guard = 0; guard < 1000; guard += 1) {
+    const advanced = advanceRenewal(next, cycle, cycleDays);
+    const date = advanced ? parseDay(advanced) : undefined;
+    if (!advanced || !date) return undefined;
+    next = advanced;
+    if (date.getTime() > now.getTime()) return next;
+  }
+  return undefined;
+}
