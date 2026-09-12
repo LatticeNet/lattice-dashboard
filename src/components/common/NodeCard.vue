@@ -331,7 +331,10 @@ function onGroup(id: string) {
         // grid at 1440 too, not only on a phone.
         '@container group/card rounded-lg border border-border bg-background/40 transition-colors',
         compact ? 'p-3' : 'p-4',
-        isLive ? 'hover:bg-muted/40' : 'opacity-60',
+        // An inactive node is dimmed, not faded out: at 60% its muted id
+        // measured 3.29:1 on the card; 80% keeps secondary text above 4.5:1
+        // while the row still reads as not reporting.
+        isLive ? 'hover:bg-muted/40' : 'opacity-80',
         selectable &&
           'cursor-pointer hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         props.class,
