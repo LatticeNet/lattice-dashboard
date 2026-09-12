@@ -1394,7 +1394,13 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <span class="cursor-help underline decoration-dotted underline-offset-4" :title="$t('networking.sshGuard.table.notReportedTitle')">{{ $t('networking.sshGuard.table.knock') }}</span>
               </th>
               <th scope="col" class="px-2 py-2 text-left font-medium">{{ $t('networking.sshGuard.table.observed') }}</th>
-              <th scope="col" class="px-2 py-2 text-right font-medium">{{ $t('networking.sshGuard.table.actions') }}</th>
+              <!-- Pinned to the right edge from md up, the mirror of the Node
+                   column, so a row's actions stay on screen when the table is
+                   wider than its scroller: at 1440 the table ran 125px past it
+                   and cut 76px off the Reveal sequence button. Not below md: at
+                   375 the two pinned columns (136px and up to 282px) are wider
+                   than the 349px scroller and would cover each other. -->
+              <th scope="col" class="px-2 py-2 text-right font-medium md:sticky md:right-0 md:z-10 md:bg-background md:shadow-[inset_1px_0_0_var(--border)]">{{ $t('networking.sshGuard.table.actions') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -1622,7 +1628,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                 <span v-else class="text-muted-foreground">{{ canReadReality ? $t('networking.sshGuard.table.noSnapshot') : $t('networking.sshGuard.table.noAccess') }}</span>
               </td>
 
-              <td class="px-2 py-1 text-right align-top whitespace-nowrap">
+              <td class="px-2 py-1 text-right align-top whitespace-nowrap md:sticky md:right-0 md:z-10 md:bg-background md:shadow-[inset_1px_0_0_var(--border)]">
                 <span class="inline-flex items-center justify-end gap-1">
                   <!-- Past the window the Confirm stays where it was, disabled,
                        with the reason: the revert already ran and there is
