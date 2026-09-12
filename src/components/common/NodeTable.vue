@@ -419,7 +419,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
         :key="node.id"
         class="group/row grid h-(--row-h) items-center gap-3 border-b border-border/60 text-sm transition-colors last:border-b-0 hover:bg-foreground/3 aria-selected:bg-primary/8 focus-visible:bg-foreground/5 focus-visible:outline-none focus-visible:inset-ring-2 focus-visible:inset-ring-ring"
         :style="gridStyle"
-        :class="!isLive(node) && 'opacity-60'"
+        :class="!isLive(node) && 'opacity-80'"
         role="button"
         :tabindex="0"
         :aria-label="node.name || node.id"
