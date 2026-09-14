@@ -398,7 +398,12 @@ export const api = {
           {
             id: "knock",
             install: [
-              { platform: "macOS", command: "brew install knock" },
+              { platform: "This control plane", command: "curl -fsSL https://lattice.example.test/tools/knock/install.sh | sh" },
+              {
+                platform: "GitHub",
+                command: `curl -fsSL https://raw.githubusercontent.com/LatticeNet/lattice-knock/v0.1.0-alpha.1/install.sh | sh -s -- --sha256 ${"98471ed033d12a61d24324ca9f4c0bba46d72b482557db803f73cd23fb5cf682"}`,
+              },
+              { platform: "macOS (Homebrew)", command: "brew install knock" },
               { platform: "Debian, Ubuntu", command: "sudo apt install knockd" },
               { platform: "Fedora", command: "sudo dnf install knock" },
             ],
