@@ -2197,10 +2197,23 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                       <p class="text-xs text-muted-foreground">
                         {{ entry.id === 'knock' ? $t('networking.sshGuard.knock.commandKnockHint') : $t('networking.sshGuard.knock.commandBashHint') }}
                       </p>
-                      <ul v-if="entry.install?.length" class="space-y-0.5">
-                        <li v-for="step in entry.install" :key="step.platform" class="flex flex-wrap items-baseline gap-x-2 text-xs">
-                          <span class="min-w-24 text-muted-foreground">{{ step.platform }}</span>
-                          <code class="font-mono text-foreground">{{ step.command }}</code>
+                      <ul v-if="entry.install?.length" class="space-y-2">
+                        <li
+                          v-for="step in entry.install"
+                          :key="step.platform"
+                          class="grid gap-0.5 text-xs"
+                          :data-testid="`knock-install-${step.platform}`"
+                        >
+                          <div class="flex items-center justify-between gap-2">
+                            <span class="text-muted-foreground">{{ step.platform }}</span>
+                            <CopyButton
+                              :value="step.command"
+                              :aria-label="$t('networking.sshGuard.knock.copyInstallCommand', { platform: step.platform })"
+                            />
+                          </div>
+                          <!-- A URL and a sha256 have no spaces to wrap at, and nothing in
+                               them is a port, so these lines may break anywhere. -->
+                          <code class="block font-mono break-all text-foreground">{{ step.command }}</code>
                         </li>
                       </ul>
                     </div>
@@ -2209,6 +2222,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.sameSource') }}</p>
                   <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.tunNote') }}</p>
                   <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.payloadNote') }}</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.knock.historyNote') }}</p>
                 </div>
               </div>
 
