@@ -22,11 +22,17 @@ import type { ConnRecord, TracePolicy } from "@/lib/api/types";
 /* Filters                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Relative windows an operator picks from, plus the explicit escape hatch. */
-export const TRACE_RANGES = ["15m", "1h", "6h", "24h", "7d", "custom"] as const;
+/**
+ * Relative windows an operator picks from, "all" for everything the store
+ * holds, plus the explicit escape hatch. "all" exists because a store whose
+ * newest record is weeks old has nothing in any preset window, and stepping
+ * through 6h, 24h and 7d to find that out is the walk the empty state is
+ * meant to spare the operator.
+ */
+export const TRACE_RANGES = ["15m", "1h", "6h", "24h", "7d", "all", "custom"] as const;
 export type TraceRange = (typeof TRACE_RANGES)[number];
 
-const RANGE_SECONDS: Record<Exclude<TraceRange, "custom">, number> = {
+const RANGE_SECONDS: Record<Exclude<TraceRange, "custom" | "all">, number> = {
   "15m": 900,
   "1h": 3600,
   "6h": 21600,
@@ -275,6 +281,7 @@ export function resolveTraceWindow(
   if (filters.range === "custom") {
     return { since: filters.since, until: filters.until };
   }
+  if (filters.range === "all") return { since: "", until: "" };
   const seconds = RANGE_SECONDS[filters.range];
   return { since: new Date(nowMs - seconds * 1000).toISOString(), until: "" };
 }

@@ -1,0 +1,862 @@
+/**
+ * Pure model for the Evidence area: its three layers and where old links land,
+ * the one query field and its tokens, the per-node coverage an Overview leads
+ * with, and the last-hour summary drawn from records the connections endpoint
+ * already returns. Kept free of Vue so `node --test` covers it directly (house
+ * *Model.ts pattern).
+ *
+ * The layering (design 22, section 7): Overview says what is being collected
+ * and offers the one action that changes it, Explore asks one question of
+ * what was collected, Collection holds the per-node policy and the capture
+ * history. Every filter stays in the address bar under the names the HTTP
+ * contract uses (connTraceModel owns those); the field is a rendering of them.
+ */
+import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState";
+import type {
+  ConnRecord,
+  LogSource,
+  LogSourceStatsView,
+  TracePolicy,
+  TraceSession,
+  TraceSessionCreateRequest,
+} from "@/lib/api/types";
+import {
+  CLOSE_REASONS,
+  CONN_TRACE_PARAMS,
+  USER_KINDS,
+  readConnTraceFilters,
+  writeConnTraceFilters,
+  type ConnTraceFilters,
+} from "./connTraceModel.ts";
+
+/* ------------------------------------------------------------------ */
+/* Layers and lenses                                                   */
+/* ------------------------------------------------------------------ */
+
+export const EVIDENCE_LAYERS = ["overview", "explore", "collection"] as const;
+export type EvidenceLayer = (typeof EVIDENCE_LAYERS)[number];
+
+export const EVIDENCE_LENSES = ["connections", "log"] as const;
+export type EvidenceLens = (typeof EVIDENCE_LENSES)[number];
+
+/** Query keys the area owns besides the connection filters. */
+export const EVIDENCE_PARAM = {
+  layer: "view",
+  lens: "lens",
+  /** Free text: a substring for the raw log, a row search for connections. */
+  text: "q",
+  /** The raw log source the log lens reads. */
+  source: "source",
+  /** The connection open in the side panel, as connRecordKey spells it. */
+  conn: "conn",
+  /** The inner tab of the old Connections lens; read once, never written. */
+  legacyTab: "tab",
+} as const;
+
+/**
+ * Keys that only mean something inside Explore. A link carrying any of them
+ * without saying which layer it wants was made for the old page, where these
+ * filtered the table the page opened on, so it lands in Explore.
+ */
+export const EVIDENCE_EXPLORE_PARAMS: readonly string[] = [
+  ...CONN_TRACE_PARAMS,
+  EVIDENCE_PARAM.lens,
+  EVIDENCE_PARAM.text,
+  EVIDENCE_PARAM.source,
+  EVIDENCE_PARAM.conn,
+];
+
+function readParam(query: QueryRecord, key: string): string {
+  const raw = query[key];
+  const value = Array.isArray(raw) ? raw.find((entry) => typeof entry === "string") : raw;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function hasExploreParams(query: QueryRecord): boolean {
+  return EVIDENCE_EXPLORE_PARAMS.some((key) => readParam(query, key) !== "");
+}
+
+/**
+ * The old Connections lens had its own tab row: connections, sessions,
+ * policy. Sessions and policy became the Collection layer, connections became
+ * Explore. vpn-core may still send `tab`, since its allowlist entry names it.
+ */
+const LEGACY_TAB_LAYER: Record<string, EvidenceLayer> = {
+  connections: "explore",
+  sessions: "collection",
+  policy: "collection",
+};
+
+/**
+ * Which layer a query asks for.
+ *
+ * An explicit `view` wins. Without one, the old inner tab decides, then any
+ * Explore parameter, and only a query that names nothing lands on Overview.
+ * That order keeps every link the console and vpn-core ever minted working:
+ * `?node_id=n` (vpn-core's Connections link) opens Explore on that node,
+ * `?lens=log` (the /platform/logs redirect) opens the raw log, and
+ * `?tab=policy` opens Collection.
+ */
+export function resolveEvidenceLayer(query: QueryRecord): EvidenceLayer {
+  const view = readParam(query, EVIDENCE_PARAM.layer).toLowerCase();
+  if ((EVIDENCE_LAYERS as readonly string[]).includes(view)) return view as EvidenceLayer;
+  const legacy = LEGACY_TAB_LAYER[readParam(query, EVIDENCE_PARAM.legacyTab).toLowerCase()];
+  if (legacy) return legacy;
+  return hasExploreParams(query) ? "explore" : "overview";
+}
+
+export function resolveEvidenceLens(query: QueryRecord): EvidenceLens {
+  return readParam(query, EVIDENCE_PARAM.lens).toLowerCase() === "log" ? "log" : "connections";
+}
+
+/**
+ * The canonical spelling of an Evidence query.
+ *
+ * The layer is written out whenever leaving it off would resolve to a
+ * different one: Overview is the bare URL only when no Explore parameter is
+ * present, so an operator who steps from Explore to Overview keeps the
+ * question in the address bar and gets it back on return. The legacy `tab`
+ * is dropped once read, and the default lens is never spelled. Idempotent,
+ * so the view may apply it on every navigation without looping.
+ */
+export function normalizeEvidenceQuery(query: QueryRecord): Record<string, QueryValue> {
+  const layer = resolveEvidenceLayer(query);
+  const lens = resolveEvidenceLens(query);
+  const next: Record<string, QueryValue> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined) continue;
+    if (key === EVIDENCE_PARAM.layer || key === EVIDENCE_PARAM.legacyTab || key === EVIDENCE_PARAM.lens) continue;
+    next[key] = value;
+  }
+  if (lens !== "connections") next[EVIDENCE_PARAM.lens] = lens;
+  if (layer !== "overview" || hasExploreParams(next)) next[EVIDENCE_PARAM.layer] = layer;
+  return next;
+}
+
+/** Move to a layer, keeping everything else in the query. */
+export function writeEvidenceLayer(query: QueryRecord, layer: EvidenceLayer): Record<string, QueryValue> {
+  return normalizeEvidenceQuery({ ...query, [EVIDENCE_PARAM.layer]: layer, [EVIDENCE_PARAM.legacyTab]: undefined });
+}
+
+/** True when two queries carry the same keys and values. Guards redundant replaces. */
+export function evidenceQueryEqual(a: QueryRecord, b: QueryRecord): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (JSON.stringify(a[key] ?? null) !== JSON.stringify(b[key] ?? null)) return false;
+  }
+  return true;
+}
+
+/**
+ * Where the two retired routes land. /platform/logs was the raw log page and
+ * /platform/trace the connections page with its three tabs; both keep their
+ * query, so a bookmark still shows the node and filter it named.
+ */
+export function legacyEvidenceQuery(route: "logs" | "trace", query: QueryRecord): Record<string, QueryValue> {
+  if (route === "logs") return normalizeEvidenceQuery({ ...query, [EVIDENCE_PARAM.lens]: "log" });
+  return normalizeEvidenceQuery(query);
+}
+
+/* ------------------------------------------------------------------ */
+/* The query field                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Token keys the field understands. A word is a token only when the text
+ * before its first colon is one of these, so `example.com:443` and an IPv6
+ * address stay free text.
+ */
+export const EVIDENCE_TOKEN_KEYS = ["node", "user", "line", "dest", "reason", "kind", "session", "source"] as const;
+export type EvidenceTokenKey = (typeof EVIDENCE_TOKEN_KEYS)[number];
+
+/** Bare words that switch a flag on. `is:stalled` and `is:open` read the same. */
+export const EVIDENCE_TOKEN_FLAGS = ["stalled", "open"] as const;
+
+/** Keys the raw log lens cannot apply; the view says so instead of ignoring them silently. */
+export const CONNECTION_ONLY_TOKENS: readonly EvidenceTokenKey[] = ["user", "line", "dest", "reason", "kind", "session"];
+
+/** Everything the one field can say, resolved to the identifiers requests carry. */
+export interface EvidenceQuery {
+  nodeId: string;
+  userId: string;
+  lineUuid: string;
+  sessionId: string;
+  dst: string;
+  closeReasons: string[];
+  userKinds: string[];
+  stalledOnly: boolean;
+  includeOpen: boolean;
+  sourceId: string;
+  text: string;
+}
+
+export const EMPTY_EVIDENCE_QUERY: EvidenceQuery = {
+  nodeId: "",
+  userId: "",
+  lineUuid: "",
+  sessionId: "",
+  dst: "",
+  closeReasons: [],
+  userKinds: [],
+  stalledOnly: false,
+  includeOpen: false,
+  sourceId: "",
+  text: "",
+};
+
+/**
+ * Names in, identifiers out, and back. An operator types `node:legend-sg`;
+ * the request carries the node id. Each resolver returns undefined for a value
+ * it does not know, and the parser then keeps the value as typed (it may be an
+ * id) and reports it, rather than dropping a filter the operator asked for.
+ */
+export interface EvidenceTokenResolvers {
+  nodeId?: (value: string) => string | undefined;
+  nodeLabel?: (id: string) => string;
+  userId?: (value: string) => string | undefined;
+  userLabel?: (id: string) => string;
+  sourceId?: (value: string) => string | undefined;
+  sourceLabel?: (id: string) => string;
+}
+
+export type EvidenceTokenProblemKind = "empty-value" | "unknown-value" | "unresolved";
+
+export interface EvidenceTokenProblem {
+  token: string;
+  kind: EvidenceTokenProblemKind;
+}
+
+export interface ParsedEvidenceQuery {
+  query: EvidenceQuery;
+  problems: EvidenceTokenProblem[];
+}
+
+/**
+ * Split the field into words. Double quotes group a value with spaces
+ * (`dest:"a b"`); an unclosed quote runs to the end rather than failing.
+ */
+export function tokenizeEvidenceQuery(input: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+  for (const ch of input) {
+    if (ch === '"') {
+      quoted = !quoted;
+      started = true;
+      continue;
+    }
+    if (!quoted && /\s/.test(ch)) {
+      if (started) words.push(current);
+      current = "";
+      started = false;
+      continue;
+    }
+    current += ch;
+    started = true;
+  }
+  if (started) words.push(current);
+  return words.filter((word) => word !== "");
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Read the field. Unknown enum values (a close reason this build does not
+ * know) are reported and left out, because the server would reject them and
+ * a filter nobody can satisfy reads as a quiet network.
+ */
+export function parseEvidenceQuery(input: string, resolvers: EvidenceTokenResolvers = {}): ParsedEvidenceQuery {
+  const query: EvidenceQuery = { ...EMPTY_EVIDENCE_QUERY, closeReasons: [], userKinds: [] };
+  const problems: EvidenceTokenProblem[] = [];
+  const text: string[] = [];
+  const reasons = new Set<string>();
+  const kinds = new Set<string>();
+
+  const resolveList = (
+    word: string,
+    value: string,
+    resolve: ((value: string) => string | undefined) | undefined,
+  ): string => {
+    const out: string[] = [];
+    for (const part of splitList(value)) {
+      const id = resolve?.(part);
+      if (resolve && id === undefined) problems.push({ token: word, kind: "unresolved" });
+      out.push(id ?? part);
+    }
+    return out.join(",");
+  };
+
+  for (const word of tokenizeEvidenceQuery(input)) {
+    const lower = word.toLowerCase();
+    const bare = lower.startsWith("is:") ? lower.slice(3) : lower;
+    if (bare === "stalled") {
+      query.stalledOnly = true;
+      continue;
+    }
+    if (bare === "open" && (lower === "open" || lower === "is:open")) {
+      query.includeOpen = true;
+      continue;
+    }
+    const colon = word.indexOf(":");
+    const key = colon > 0 ? word.slice(0, colon).toLowerCase() : "";
+    if (!(EVIDENCE_TOKEN_KEYS as readonly string[]).includes(key)) {
+      text.push(word);
+      continue;
+    }
+    const value = word.slice(colon + 1).trim();
+    if (!value) {
+      problems.push({ token: word, kind: "empty-value" });
+      continue;
+    }
+    switch (key as EvidenceTokenKey) {
+      case "node":
+        query.nodeId = resolveList(word, value, resolvers.nodeId);
+        break;
+      case "user":
+        query.userId = resolveList(word, value, resolvers.userId);
+        break;
+      case "source": {
+        const id = resolvers.sourceId?.(value);
+        if (resolvers.sourceId && id === undefined) problems.push({ token: word, kind: "unresolved" });
+        query.sourceId = id ?? value;
+        break;
+      }
+      case "line":
+        query.lineUuid = splitList(value).join(",");
+        break;
+      case "session":
+        query.sessionId = splitList(value).join(",");
+        break;
+      case "dest":
+        query.dst = value;
+        break;
+      case "reason":
+        for (const part of splitList(value.toLowerCase())) {
+          if ((CLOSE_REASONS as readonly string[]).includes(part)) reasons.add(part);
+          else problems.push({ token: word, kind: "unknown-value" });
+        }
+        break;
+      case "kind":
+        for (const part of splitList(value.toLowerCase())) {
+          if ((USER_KINDS as readonly string[]).includes(part)) kinds.add(part);
+          else problems.push({ token: word, kind: "unknown-value" });
+        }
+        break;
+    }
+  }
+
+  // Canonical order, so parsing and writing back is idempotent.
+  query.closeReasons = CLOSE_REASONS.filter((reason) => reasons.has(reason));
+  query.userKinds = USER_KINDS.filter((kind) => kinds.has(kind));
+  query.text = text.join(" ");
+  return { query, problems };
+}
+
+function quote(value: string): string {
+  return /[\s"]/.test(value) ? `"${value.replace(/"/g, "")}"` : value;
+}
+
+function labelList(value: string, label: ((id: string) => string) | undefined): string {
+  return splitList(value)
+    .map((id) => label?.(id) || id)
+    .join(",");
+}
+
+/**
+ * Write the field. Identifiers the console can name are shown by name, so
+ * the field reads the way the operator would have typed it, and parsing it
+ * back with the same resolvers yields the same query.
+ */
+export function formatEvidenceQuery(query: EvidenceQuery, resolvers: EvidenceTokenResolvers = {}): string {
+  const parts: string[] = [];
+  if (query.nodeId) parts.push(`node:${quote(labelList(query.nodeId, resolvers.nodeLabel))}`);
+  if (query.sourceId) parts.push(`source:${quote(resolvers.sourceLabel?.(query.sourceId) || query.sourceId)}`);
+  if (query.userId) parts.push(`user:${quote(labelList(query.userId, resolvers.userLabel))}`);
+  if (query.lineUuid) parts.push(`line:${quote(query.lineUuid)}`);
+  if (query.sessionId) parts.push(`session:${quote(query.sessionId)}`);
+  if (query.dst) parts.push(`dest:${quote(query.dst)}`);
+  if (query.closeReasons.length) parts.push(`reason:${query.closeReasons.join(",")}`);
+  if (query.userKinds.length) parts.push(`kind:${query.userKinds.join(",")}`);
+  if (query.stalledOnly) parts.push("stalled");
+  if (query.includeOpen) parts.push("open");
+  if (query.text) parts.push(query.text);
+  return parts.join(" ");
+}
+
+/** The field's state as the address bar holds it. */
+export function readEvidenceQuery(query: QueryRecord): EvidenceQuery {
+  const filters = readConnTraceFilters(query);
+  return {
+    nodeId: filters.nodeId,
+    userId: filters.userId,
+    lineUuid: filters.lineUuid,
+    sessionId: filters.sessionId,
+    dst: filters.dst,
+    closeReasons: filters.closeReasons,
+    userKinds: filters.userKinds,
+    stalledOnly: filters.stalledOnly,
+    includeOpen: filters.includeOpen,
+    sourceId: readParam(query, EVIDENCE_PARAM.source),
+    text: readParam(query, EVIDENCE_PARAM.text),
+  };
+}
+
+/**
+ * Put the field's state into the address bar. The time range is not the
+ * field's; it is carried from `range` (the toolbar's own control), so a
+ * query change never resets the window.
+ */
+export function writeEvidenceQuery(
+  query: QueryRecord,
+  next: EvidenceQuery,
+  range: Pick<ConnTraceFilters, "range" | "since" | "until"> = readConnTraceFilters(query),
+): Record<string, QueryValue> {
+  const filters: ConnTraceFilters = {
+    range: range.range,
+    since: range.since,
+    until: range.until,
+    nodeId: next.nodeId,
+    userId: next.userId,
+    lineUuid: next.lineUuid,
+    sessionId: next.sessionId,
+    dst: next.dst,
+    closeReasons: [...next.closeReasons],
+    userKinds: [...next.userKinds],
+    stalledOnly: next.stalledOnly,
+    includeOpen: next.includeOpen,
+  };
+  const written = writeConnTraceFilters(query, filters);
+  delete written[EVIDENCE_PARAM.source];
+  delete written[EVIDENCE_PARAM.text];
+  if (next.sourceId) written[EVIDENCE_PARAM.source] = next.sourceId;
+  if (next.text) written[EVIDENCE_PARAM.text] = next.text;
+  return written;
+}
+
+/** True when the field says nothing: no token and no text. */
+export function isEmptyEvidenceQuery(query: EvidenceQuery): boolean {
+  return formatEvidenceQuery(query) === "";
+}
+
+/** Tokens present that the raw log lens cannot apply, for the one sentence that says so. */
+export function connectionOnlyTokens(query: EvidenceQuery): EvidenceTokenKey[] {
+  const out: EvidenceTokenKey[] = [];
+  if (query.userId) out.push("user");
+  if (query.lineUuid) out.push("line");
+  if (query.dst) out.push("dest");
+  if (query.closeReasons.length) out.push("reason");
+  if (query.userKinds.length) out.push("kind");
+  if (query.sessionId) out.push("session");
+  return out;
+}
+
+/**
+ * Free text over the fields a connection row shows. Every word must appear
+ * somewhere, case-insensitive: "legend 443" finds a legend-sg row to port 443.
+ */
+export function connMatchesText(fields: readonly string[], text: string): boolean {
+  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const haystack = fields.join(" ").toLowerCase();
+  return words.every((word) => haystack.includes(word));
+}
+
+/* ------------------------------------------------------------------ */
+/* The side panel address                                              */
+/* ------------------------------------------------------------------ */
+
+export interface ConnKeyParts {
+  node_id: string;
+  core_generation: number;
+  log_id: number;
+  started_at: string;
+}
+
+/**
+ * Read `?conn=` back into the key the hops endpoint takes. connRecordKey
+ * spells it node:generation:log:started_at, and the start time carries colons
+ * of its own, so only the first three separators split.
+ */
+export function parseConnKey(raw: string): ConnKeyParts | null {
+  const parts = raw.trim().split(":");
+  if (parts.length < 4) return null;
+  const [node, generation, log, ...rest] = parts;
+  const core = Number(generation);
+  const logId = Number(log);
+  if (!node || !Number.isInteger(core) || core < 0 || !Number.isInteger(logId) || logId < 0) return null;
+  const startedAt = rest.join(":");
+  return { node_id: node, core_generation: core, log_id: logId, started_at: startedAt };
+}
+
+/* ------------------------------------------------------------------ */
+/* Coverage                                                            */
+/* ------------------------------------------------------------------ */
+
+/** A raw log source is stale when its node has not shipped a line for this long. */
+export const RAW_LOG_STALE_MS = 24 * 3_600_000;
+
+function instantMs(value?: string): number | undefined {
+  if (!value) return undefined;
+  const ms = Date.parse(value);
+  // Go's zero time arrives as year 1 on a source that never shipped a line.
+  if (Number.isNaN(ms) || ms <= 0) return undefined;
+  return ms;
+}
+
+export interface CoverageSource {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** Lines held; undefined when stats were not read. */
+  lines?: number;
+  /** Last ingest, "" when the source never shipped a line. */
+  lastIngestAt: string;
+  /** No line for longer than RAW_LOG_STALE_MS, or never one at all. */
+  stale: boolean;
+}
+
+export interface CoverageRow {
+  nodeId: string;
+  name: string;
+  /** The stored policy; undefined when the policy list did not include this node. */
+  trace?: { enabled: boolean; level: string };
+  /** Running captures that include this node. */
+  capturing: number;
+  /** When the soonest of those captures ends, "" when none runs. */
+  captureEndsAt: string;
+  sources: CoverageSource[];
+  /** Lines held across the node's sources; undefined when any count is unread. */
+  heldLines?: number;
+  /** Connections this node recorded in the last-hour sample; undefined when no sample was read. */
+  lastHour?: number;
+  /** Trace off, no capture, no raw log source and nothing held: the row says nothing new. */
+  quiet: boolean;
+}
+
+export interface CoverageInput {
+  nodes: readonly { id: string; name?: string }[];
+  /** undefined when the policy list was not read. */
+  policies?: readonly TracePolicy[];
+  sessions: readonly TraceSession[];
+  sources: readonly LogSource[];
+  stats: readonly LogSourceStatsView[];
+  lastHourByNode?: ReadonlyMap<string, number>;
+  nowMs: number;
+}
+
+/** Running sessions that include a node. An empty node list is the whole fleet. */
+export function sessionCoversNode(session: TraceSession, nodeId: string): boolean {
+  if (session.state !== "running") return false;
+  const targets = session.filter?.node_ids ?? [];
+  return targets.length === 0 || targets.includes(nodeId);
+}
+
+/**
+ * One row per node the operator may see: its trace policy, the captures that
+ * include it, its raw log sources with their freshness, and what is held.
+ *
+ * The node set is the policy list (one row per node the caller holds log:read
+ * for, the fleet whose evidence this page can show) with the node list and the
+ * source list folded in, so a node with a source but no policy row still
+ * appears. Nodes that are doing something sort first.
+ */
+export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
+  const names = new Map<string, string>();
+  for (const node of input.nodes) names.set(node.id, node.name || node.id);
+
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  const add = (id: string) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  if (input.policies) for (const policy of input.policies) add(policy.node_id);
+  else for (const node of input.nodes) add(node.id);
+  for (const source of input.sources) add(source.node_id);
+
+  const policyBy = new Map<string, TracePolicy>();
+  for (const policy of input.policies ?? []) policyBy.set(policy.node_id, policy);
+  const statsBy = new Map<string, LogSourceStatsView>();
+  for (const entry of input.stats) statsBy.set(entry.source_id, entry);
+  const running = input.sessions.filter((session) => session.state === "running");
+
+  const rows = ids.map<CoverageRow>((nodeId) => {
+    const policy = policyBy.get(nodeId);
+    const covering = running.filter((session) => sessionCoversNode(session, nodeId));
+    const ends = covering
+      .map((session) => session.expires_at)
+      .filter(Boolean)
+      .sort();
+    const sources = input.sources
+      .filter((source) => source.node_id === nodeId)
+      .map<CoverageSource>((source) => {
+        const stat = statsBy.get(source.id);
+        const last = instantMs(stat?.last_ingest_at);
+        return {
+          id: source.id,
+          name: source.name || source.id,
+          enabled: source.enabled,
+          lines: stat?.lines,
+          lastIngestAt: last === undefined ? "" : (stat?.last_ingest_at ?? ""),
+          stale: last === undefined || input.nowMs - last > RAW_LOG_STALE_MS,
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const heldLines = sources.some((source) => source.lines === undefined)
+      ? undefined
+      : sources.reduce((sum, source) => sum + (source.lines ?? 0), 0);
+    const lastHour = input.lastHourByNode ? (input.lastHourByNode.get(nodeId) ?? 0) : undefined;
+    const tracing = policy?.enabled === true;
+    return {
+      nodeId,
+      name: names.get(nodeId) ?? nodeId,
+      trace: policy ? { enabled: policy.enabled, level: policy.level } : undefined,
+      capturing: covering.length,
+      captureEndsAt: ends[0] ?? "",
+      sources,
+      heldLines,
+      lastHour,
+      quiet: !tracing && covering.length === 0 && sources.length === 0 && !lastHour,
+    };
+  });
+
+  const rank = (row: CoverageRow) =>
+    row.capturing > 0 ? 0 : row.trace?.enabled ? 1 : (row.lastHour ?? 0) > 0 ? 2 : row.sources.length > 0 ? 3 : 4;
+  return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+/** Nodes collecting connection records right now: policy on, or inside a running capture. */
+export function collectingNodeCount(rows: readonly CoverageRow[]): number {
+  return rows.filter((row) => row.trace?.enabled || row.capturing > 0).length;
+}
+
+/* ------------------------------------------------------------------ */
+/* The store proof line                                                */
+/* ------------------------------------------------------------------ */
+
+/** /api/trace/stats, either the full answer or the scoped one a narrow operator gets. */
+export interface TraceStoreStats {
+  scoped?: boolean;
+  records?: number;
+  size_bytes?: number;
+  max_bytes?: number;
+  cipher_enabled?: boolean;
+  newest_record_at?: string;
+}
+
+export interface StoreProof {
+  /** Records held; undefined when neither stats nor a page said. */
+  records?: number;
+  /** undefined when stats were not read. */
+  encrypted?: boolean;
+  /** Size cap in bytes; undefined when the answer was scoped or unread. */
+  capBytes?: number;
+  collecting: number;
+  /** Nodes the coverage counts over; undefined while the list is unread. */
+  total?: number;
+}
+
+/**
+ * The numbers the proof line states. The full stats answer covers the whole
+ * store and only reaches an operator who sees every node; anyone narrower gets
+ * `scoped` and no counts, and then the count comes from the connections page,
+ * whose `collected_total` is always over the nodes this caller may see.
+ */
+export function evidenceStoreProof(input: {
+  stats?: TraceStoreStats;
+  collectedTotal?: number;
+  rows: readonly CoverageRow[];
+  coverageKnown: boolean;
+}): StoreProof {
+  const { stats } = input;
+  const full = stats && !stats.scoped;
+  return {
+    records: full && typeof stats.records === "number" ? stats.records : input.collectedTotal,
+    encrypted: stats ? stats.cipher_enabled === true : undefined,
+    capBytes: full && stats.max_bytes ? stats.max_bytes : undefined,
+    collecting: collectingNodeCount(input.rows),
+    total: input.coverageKnown ? input.rows.length : undefined,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* The last hour                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Close reasons that mean the connection failed, in the order the bars list them. */
+export const FAILURE_REASONS = [
+  "dial_failed",
+  "auth_failed",
+  "handshake_failed",
+  "reset",
+  "timeout",
+  "core_restart",
+] as const;
+
+export interface CountedValue {
+  value: string;
+  count: number;
+}
+
+export interface LastHourSummary {
+  /** Records in the sample. */
+  total: number;
+  /** True when the sample stopped at its cap and the real count is higher. */
+  capped: boolean;
+  failures: CountedValue[];
+  failureTotal: number;
+  /** Most frequent destinations, by host without the port. */
+  destinations: CountedValue[];
+  byNode: Map<string, number>;
+}
+
+/** Where a connection went, for grouping: the sniffed name first, then the logged host. */
+export function destinationKey(record: ConnRecord): string {
+  return (record.sniffed_domain || record.dst_host || record.dst_ip || "").trim().toLowerCase();
+}
+
+/**
+ * Summarise the last hour from the records the connections endpoint returned
+ * for it. The endpoint pages at most 1000 records at a time; when the sample
+ * stopped with a cursor still pending, `capped` says the total is a floor.
+ */
+export function summarizeLastHour(records: readonly ConnRecord[], capped: boolean, topN = 5): LastHourSummary {
+  const failures = new Map<string, number>();
+  const destinations = new Map<string, number>();
+  const byNode = new Map<string, number>();
+  for (const record of records) {
+    byNode.set(record.node_id, (byNode.get(record.node_id) ?? 0) + 1);
+    const reason = (record.close_reason ?? "").trim().toLowerCase();
+    if (!record.open && (FAILURE_REASONS as readonly string[]).includes(reason)) {
+      failures.set(reason, (failures.get(reason) ?? 0) + 1);
+    }
+    const dest = destinationKey(record);
+    if (dest) destinations.set(dest, (destinations.get(dest) ?? 0) + 1);
+  }
+  const failureList = FAILURE_REASONS.filter((reason) => failures.has(reason)).map((reason) => ({
+    value: reason,
+    count: failures.get(reason) ?? 0,
+  }));
+  const destinationList = [...destinations.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+    .slice(0, topN);
+  return {
+    total: records.length,
+    capped,
+    failures: failureList,
+    failureTotal: failureList.reduce((sum, entry) => sum + entry.count, 0),
+    destinations: destinationList,
+    byNode,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Capture                                                             */
+/* ------------------------------------------------------------------ */
+
+/** Durations the Overview offers, in seconds. The server caps a capture at two hours. */
+export const CAPTURE_DURATIONS = [900, 1800, 3600, 7200] as const;
+export const DEFAULT_CAPTURE_SECONDS = 3600;
+
+/** Server limits on concurrent captures (server_trace.go), checked here to say why before asking. */
+export const MAX_ACTIVE_CAPTURES = 16;
+export const MAX_CAPTURES_PER_NODE = 8;
+
+export type CaptureBlock =
+  | ""
+  | "needs-admin"
+  | "store-off"
+  | "no-nodes"
+  | "limit-total"
+  | "limit-node";
+
+/**
+ * Why the capture action cannot run, or "" when it can. The action stays on
+ * screen when blocked and says which of these it is.
+ *
+ * - needs-admin: a capture reads user traffic metadata and the server gates it
+ *   on log:admin for every targeted node.
+ * - store-off: the server answered 503, connection tracing is not enabled.
+ * - no-nodes: nothing chosen yet.
+ * - limit-total / limit-node: the server would refuse with 409.
+ */
+export function captureBlock(input: {
+  canAdmin: boolean;
+  storeReady: boolean;
+  nodeIds: readonly string[];
+  sessions: readonly TraceSession[];
+}): CaptureBlock {
+  if (!input.canAdmin) return "needs-admin";
+  if (!input.storeReady) return "store-off";
+  if (input.nodeIds.length === 0) return "no-nodes";
+  const running = input.sessions.filter((session) => session.state === "running");
+  if (running.length >= MAX_ACTIVE_CAPTURES) return "limit-total";
+  for (const nodeId of input.nodeIds) {
+    const count = running.filter((session) => (session.filter?.node_ids ?? []).includes(nodeId)).length;
+    if (count >= MAX_CAPTURES_PER_NODE) return "limit-node";
+  }
+  return "";
+}
+
+/**
+ * A name for a capture started from the Overview, which asks the operator for
+ * nodes and a duration and nothing else. It says where and when, which is
+ * what the history table needs to tell captures apart.
+ */
+export function captureSessionName(nodeNames: readonly string[], now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())} ${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}Z`;
+  const shown = nodeNames.slice(0, 3).join(", ");
+  const more = nodeNames.length > 3 ? ` +${nodeNames.length - 3}` : "";
+  return `capture ${shown}${more} ${stamp}`;
+}
+
+/**
+ * The request the capture action sends. Level debug because sing-box logs
+ * every close line at debug and none at info (server_trace.go
+ * traceDefaultLevel), and a capture exists to see connections finish.
+ */
+export function captureRequest(nodeIds: readonly string[], ttlSeconds: number, name: string): TraceSessionCreateRequest {
+  return {
+    name,
+    level: "debug",
+    ttl_seconds: ttlSeconds,
+    filter: { node_ids: [...nodeIds] },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Raw log lens                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which source the raw log lens reads: the one the query names, else the first
+ * on the node the query names, else the first source overall (enabled first,
+ * then by name, the order the Collection list uses). A node with no source
+ * gets none: showing another node's lines under `node:X` would answer a
+ * question the operator did not ask.
+ */
+export function pickLogSource(
+  sources: readonly LogSource[],
+  want: { sourceId: string; nodeId: string },
+): LogSource | undefined {
+  const sorted = [...sources].sort((a, b) => {
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    return (a.name || a.id).localeCompare(b.name || b.id);
+  });
+  if (want.sourceId) {
+    const named = sorted.find((source) => source.id === want.sourceId);
+    if (named) return named;
+  }
+  const nodes = splitList(want.nodeId);
+  if (nodes.length) return sorted.find((source) => nodes.includes(source.node_id));
+  return sorted[0];
+}

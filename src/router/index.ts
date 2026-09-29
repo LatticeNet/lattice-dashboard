@@ -7,6 +7,7 @@ import { useAuthStore } from "@/stores/auth";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
+import { legacyEvidenceQuery } from "@/views/platform/evidenceModel";
 
 /**
  * Build the authenticated child routes from the nav IA so every NAV item has a
@@ -55,14 +56,15 @@ const manualChildRoutes: RouteRecordRaw[] = [
     meta: { title: "Monitoring", section: "Fleet", scopes: ["monitor:read"] },
   },
   {
-    // Logs and Trace became two lenses of one Evidence area. Old links and
-    // bookmarks land on the right lens with their query intact.
+    // Logs and Trace became one Evidence area with three layers. Old links and
+    // bookmarks land on the layer and lens they meant, with their query intact
+    // (evidenceModel.legacyEvidenceQuery).
     path: "platform/logs",
-    redirect: (to) => ({ path: "/platform/evidence", query: { ...to.query, lens: "log" } }),
+    redirect: (to) => ({ path: "/platform/evidence", query: legacyEvidenceQuery("logs", to.query) }),
   },
   {
     path: "platform/trace",
-    redirect: (to) => ({ path: "/platform/evidence", query: to.query }),
+    redirect: (to) => ({ path: "/platform/evidence", query: legacyEvidenceQuery("trace", to.query) }),
   },
   {
     // KV and Static became one Store page with the kind in the query. Old
