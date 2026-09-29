@@ -41,6 +41,7 @@ import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
 import NodeCard from "@/components/common/NodeCard.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import GettingStarted from "@/components/common/GettingStarted.vue";
+import UpcomingPanel from "@/components/fleet/UpcomingPanel.vue";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -482,10 +483,13 @@ function refreshAll() {
       </CardContent>
     </Card>
 
-    <!-- Main grid -->
-    <div class="grid gap-6 lg:grid-cols-3">
+    <!-- Main grid. grid-cols-1 below lg so a long row in either column
+         truncates instead of widening the page past a phone screen. -->
+    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      <!-- Left column: what is wrong now, then what runs out next. -->
+      <div class="min-w-0 space-y-6 lg:col-span-2">
       <!-- Fleet -->
-      <Card class="lg:col-span-2">
+      <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Server class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -566,6 +570,12 @@ function refreshAll() {
           </DataState>
         </CardContent>
       </Card>
+
+      <!-- Upcoming: renewals, VPN users, shares and certificates due in the
+           next 30 days. Below the fleet on purpose: something broken now
+           outranks something that runs out next week. -->
+      <UpcomingPanel />
+      </div>
 
       <!-- Right column -->
       <div class="space-y-6">

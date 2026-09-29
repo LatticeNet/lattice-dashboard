@@ -204,6 +204,7 @@ export default {
       groups: "Groups",
       map: "Map",
       inventory: "Inventory",
+      upcoming: "Upcoming",
       monitoring: "Monitoring",
       approvals: "Approvals",
       tasks: "Tasks",

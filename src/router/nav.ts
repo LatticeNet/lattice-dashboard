@@ -18,6 +18,7 @@ import {
   Database,
   Waypoints,
   Bell,
+  CalendarClock,
   KeyRound,
   Fingerprint,
   Ticket,
@@ -28,6 +29,7 @@ import {
   CircleArrowUp,
   Webhook,
 } from "lucide-vue-next";
+import { UPCOMING_SCOPES } from "@/views/fleet/upcomingModel";
 
 /** A single navigable destination in the sidebar. */
 export type NavItem = {
@@ -73,6 +75,13 @@ export const NAV: NavSection[] = [
       { name: "groups", title: "Groups", path: "/groups", icon: FolderTree, scopes: ["group:read"] },
       { name: "map", title: "Map", path: "/map", icon: Globe, scopes: ["node:read"] },
       { name: "inventory", title: "Inventory", path: "/inventory", icon: Boxes, scopes: ["inventory:read"] },
+      // What runs out, across machine renewals, VPN users, shares and TLS
+      // certificates. It sits beside Inventory because the list is about the
+      // objects and their dates, and most of its rows are machine renewals;
+      // Notifications is about how a message travels, and a reminder is only
+      // one of the things it routes. The server hides and counts the rows a
+      // session cannot read, so any one of the kinds' read scopes opens it.
+      { name: "upcoming", title: "Upcoming", path: "/upcoming", icon: CalendarClock, scopes: UPCOMING_SCOPES },
       { name: "monitoring", title: "Monitoring", path: "/monitoring", icon: Activity, scopes: ["monitor:read", "monitor:admin"] },
     ],
   },

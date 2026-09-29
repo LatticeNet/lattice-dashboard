@@ -13,6 +13,13 @@ import type { ExpiringItem, ExpiringResponse, ExpiringTotal } from "@/lib/api/ty
 /** The kinds the console knows how to name and filter, in the order the chips show them. */
 export const EXPIRING_KINDS = ["machine_renewal", "vpn_user", "share", "tls_certificate"] as const;
 
+/**
+ * Each kind needs the read scope of its own list (inventory, proxy users,
+ * shares, monitors), and the server counts what a session cannot read in
+ * `hidden`. Any one of them makes the page worth opening.
+ */
+export const UPCOMING_SCOPES = ["inventory:read", "proxy:read", "proxy:admin", "monitor:read"];
+
 /** Home shows the next 30 days; the full list looks 90 days ahead. Overdue rows come either way. */
 export const PANEL_WITHIN_DAYS = 30;
 export const LIST_WITHIN_DAYS = 90;

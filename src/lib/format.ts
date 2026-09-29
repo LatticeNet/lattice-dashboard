@@ -122,6 +122,17 @@ export function formatMoney(cents?: number, currency = "USD"): string {
   }
 }
 
+/** "43s", "2m", "3h", "2d". The floor is zero: an age is never negative. */
+export function formatAge(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 /** Short, copy-friendly id (first 8 chars). */
 export function shortId(id?: string, len = 8): string {
   if (!id) return NO_VALUE;

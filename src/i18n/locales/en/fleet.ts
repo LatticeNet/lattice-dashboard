@@ -924,6 +924,59 @@ export default {
       },
     },
 
+    upcoming: {
+      title: "Upcoming",
+      description: "Everything with a date that runs out: machine renewals, VPN users, shares and TLS certificates.",
+      panelTitle: "Upcoming",
+      proof: {
+        generated: "generated {age} ago",
+        items: "{n} item | {n} items",
+        noPrices: "no prices recorded",
+        within: "next {days} days",
+      },
+      group: {
+        overdue: "Overdue",
+        thisWeek: "This week",
+        nextWeek: "Next week",
+        weekOf: "Week of {date}",
+      },
+      days: {
+        today: "today",
+        future: "in {n}d",
+        overdue: "{n}d overdue",
+      },
+      auto: "renews by itself",
+      reminderOff: "Reminder off",
+      kinds: {
+        machine_renewal: "Machine renewal",
+        vpn_user: "VPN user",
+        share: "Share",
+        tls_certificate: "TLS certificate",
+        other: "Other",
+      },
+      filter: {
+        label: "Kind",
+        all: "All",
+        machine_renewal: "Machines",
+        vpn_user: "VPN users",
+        share: "Shares",
+        tls_certificate: "TLS certificates",
+      },
+      empty: {
+        title: "Nothing runs out in the next {days} days",
+        description: "Machine renewals, VPN users, shares and TLS certificates with a date are listed here once one comes within range.",
+        filteredTitle: "Nothing of the selected kinds runs out in the next {days} days",
+        showAll: "Show all kinds",
+      },
+      hidden: "{n} item hidden by your scopes | {n} items hidden by your scopes",
+      unsupported: {
+        title: "This list needs a newer server",
+        description: "The control plane does not serve the expiring list yet, so nothing here says whether anything is due. Renewal dates are on the Inventory page.",
+        action: "Open Inventory",
+      },
+      failed: "Could not load what runs out.",
+      stale: "Could not refresh. Showing the list from {age} ago.",
+    },
     monitoring: {
       title: "Monitoring",
       description:

@@ -367,16 +367,9 @@ export function mergeKnockAnswers<T>(
 
 // ── time on screen ──────────────────────────────────────────────────────────
 
-/** "43s", "2m", "3h", "2d". The floor is zero: an age is never negative. */
-export function formatAge(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 48) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
+// The Upcoming panel's proof line prints ages the same way, so the helper
+// lives with the other formatters now.
+export { formatAge } from "@/lib/format";
 
 /** "07:41", "1:02:03". Past deadlines read 00:00 rather than counting up. */
 export function formatCountdown(ms: number): string {
