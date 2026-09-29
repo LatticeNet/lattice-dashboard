@@ -15,6 +15,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
+import { useNow } from "@vueuse/core";
 import { CircleStop, Play, Plus, RefreshCw, X } from "lucide-vue-next";
 
 import { api } from "@/lib/api";
@@ -41,7 +42,9 @@ import {
   captureBlock,
   captureRequest,
   captureSessionName,
+  isActiveSession,
   readEvidenceQuery,
+  seedCaptureNodes,
   writeEvidenceLayer,
   writeEvidenceQuery,
   type EvidenceQuery,
@@ -70,19 +73,28 @@ function exploreTo(partial: Partial<EvidenceQuery>, range: TraceRange = "1h") {
 /* ------------------------------------------------------------------ */
 
 const sessionsKnown = computed(() => ctx.sessions.data.value !== undefined && !ctx.sessions.error.value);
-const running = computed(() => (ctx.sessions.data.value ?? []).filter((session) => session.state === "running"));
+/** Ticks so a capture that passes its deadline between polls stops counting. */
+const now = useNow({ interval: 15000 });
+const running = computed(() => (ctx.sessions.data.value ?? []).filter((session) => isActiveSession(session, now.value.getTime())));
 const collecting = computed(() => ctx.storeProof.value.collecting);
 
 /** Nodes offered to the capture, named, in the coverage table's order. */
 const nodeChoices = computed(() => ctx.coverageRows.value.map((row) => ({ id: row.nodeId, name: row.name })));
 
 // A question already asked in Explore names the node it is about; start
-// from there rather than from nothing.
-const chosen = ref<string[]>(
-  readEvidenceQuery(route.query)
-    .nodeId.split(",")
-    .map((id) => id.trim())
-    .filter(Boolean),
+// from there rather than from nothing, but only with nodes that can be
+// chosen, once the list of them has loaded.
+const chosen = ref<string[]>([]);
+const seedParam = readEvidenceQuery(route.query).nodeId;
+let seeded = seedParam === "";
+watch(
+  nodeChoices,
+  (choices) => {
+    if (seeded || choices.length === 0) return;
+    seeded = true;
+    chosen.value = seedCaptureNodes(seedParam, choices);
+  },
+  { immediate: true },
 );
 const duration = ref(String(DEFAULT_CAPTURE_SECONDS));
 const pickerOpen = ref(false);
@@ -111,6 +123,8 @@ const block = computed(() =>
     storeReady: ctx.storeReady.value,
     nodeIds: chosen.value,
     sessions: ctx.sessions.data.value ?? [],
+    sessionsKnown: sessionsKnown.value,
+    nowMs: now.value.getTime(),
   }),
 );
 
@@ -120,6 +134,10 @@ const blockReason = computed(() => {
       return t("platform.evidence.capture.blockAdmin", { scope: "log:admin" });
     case "store-off":
       return t("platform.evidence.capture.blockStoreOff");
+    case "sessions-unread":
+      return ctx.sessions.error.value
+        ? t("platform.evidence.capture.blockSessionsFailed")
+        : t("platform.evidence.capture.blockSessionsLoading");
     case "no-nodes":
       return t("platform.evidence.capture.blockNoNodes");
     case "limit-total":

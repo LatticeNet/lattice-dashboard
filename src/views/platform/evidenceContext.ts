@@ -70,6 +70,12 @@ export interface EvidenceContext {
   coverageKnown: ComputedRef<boolean>;
   storeProof: ComputedRef<StoreProof>;
   resolvers: ComputedRef<EvidenceTokenResolvers>;
+  /**
+   * Every list a name in the query field resolves against has answered
+   * (loaded or failed). Before that, `node:legend-sg` would be sent as a
+   * literal id and match nothing.
+   */
+  namesReady: ComputedRef<boolean>;
   /** Bumped by the page's Refresh button, for lists that do not poll. */
   refreshTick: Ref<number>;
   refreshAll: () => void;
@@ -209,6 +215,14 @@ export function provideEvidenceContext(): EvidenceContext {
     }),
   );
 
+  const settled = (query: AsyncData<unknown>) => query.data.value !== undefined || !!query.error.value;
+  const namesReady = computed(
+    () =>
+      (!canReadNodes.value || settled(nodesQuery)) &&
+      (!canReadUsers.value || settled(usersQuery)) &&
+      (!canRead.value || (settled(policies) && settled(sources))),
+  );
+
   const resolvers = computed<EvidenceTokenResolvers>(() => {
     const byName = new Map<string, string>();
     const ids = new Set<string>();
@@ -270,6 +284,7 @@ export function provideEvidenceContext(): EvidenceContext {
     coverageKnown,
     storeProof,
     resolvers,
+    namesReady,
     refreshTick,
     refreshAll,
   };

@@ -232,32 +232,66 @@ export interface ParsedEvidenceQuery {
   problems: EvidenceTokenProblem[];
 }
 
+/** One word of the field, and how much of it was typed outside quotes. */
+export interface EvidenceWord {
+  word: string;
+  /**
+   * Characters of `word` before the first quoted segment; the whole length
+   * when nothing was quoted. A key only counts when its colon falls in this
+   * prefix, so `"node:x"` is text and `dest:"a b"` is a token.
+   */
+  bare: number;
+}
+
 /**
  * Split the field into words. Double quotes group a value with spaces
- * (`dest:"a b"`); an unclosed quote runs to the end rather than failing.
+ * (`dest:"a b"`), and inside quotes \" and \\ stand for a quote and a
+ * backslash, so any value can be written and read back. An unclosed quote
+ * runs to the end rather than failing.
  */
-export function tokenizeEvidenceQuery(input: string): string[] {
-  const words: string[] = [];
+export function scanEvidenceQuery(input: string): EvidenceWord[] {
+  const words: EvidenceWord[] = [];
   let current = "";
+  let bare = -1;
   let quoted = false;
   let started = false;
+  let escaped = false;
+  const close = () => {
+    if (started && current !== "") words.push({ word: current, bare: bare < 0 ? current.length : bare });
+    current = "";
+    bare = -1;
+    started = false;
+  };
   for (const ch of input) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      continue;
+    }
+    if (quoted && ch === "\\") {
+      escaped = true;
+      continue;
+    }
     if (ch === '"') {
+      if (!quoted && bare < 0) bare = current.length;
       quoted = !quoted;
       started = true;
       continue;
     }
     if (!quoted && /\s/.test(ch)) {
-      if (started) words.push(current);
-      current = "";
-      started = false;
+      close();
       continue;
     }
     current += ch;
     started = true;
   }
-  if (started) words.push(current);
-  return words.filter((word) => word !== "");
+  close();
+  return words;
+}
+
+/** The words alone. */
+export function tokenizeEvidenceQuery(input: string): string[] {
+  return scanEvidenceQuery(input).map((entry) => entry.word);
 }
 
 function splitList(value: string): string[] {
@@ -293,19 +327,19 @@ export function parseEvidenceQuery(input: string, resolvers: EvidenceTokenResolv
     return out.join(",");
   };
 
-  for (const word of tokenizeEvidenceQuery(input)) {
-    const lower = word.toLowerCase();
-    const bare = lower.startsWith("is:") ? lower.slice(3) : lower;
-    if (bare === "stalled") {
+  for (const { word, bare } of scanEvidenceQuery(input)) {
+    // A quoted word is always what it says: "open" searches for the word.
+    const flag = bare === word.length ? flagOf(word) : "";
+    if (flag === "stalled") {
       query.stalledOnly = true;
       continue;
     }
-    if (bare === "open" && (lower === "open" || lower === "is:open")) {
+    if (flag === "open") {
       query.includeOpen = true;
       continue;
     }
     const colon = word.indexOf(":");
-    const key = colon > 0 ? word.slice(0, colon).toLowerCase() : "";
+    const key = colon > 0 && colon < bare ? word.slice(0, colon).toLowerCase() : "";
     if (!(EVIDENCE_TOKEN_KEYS as readonly string[]).includes(key)) {
       text.push(word);
       continue;
@@ -359,8 +393,37 @@ export function parseEvidenceQuery(input: string, resolvers: EvidenceTokenResolv
   return { query, problems };
 }
 
+/** The flag a bare word switches on, or "". */
+function flagOf(word: string): "" | "stalled" | "open" {
+  const lower = word.toLowerCase();
+  const name = lower.startsWith("is:") ? lower.slice(3) : lower;
+  return name === "stalled" || name === "open" ? name : "";
+}
+
+/** A value in quotes, escaped so the scanner reads it back unchanged. */
+function wrap(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** Quote a value only when it needs it. */
 function quote(value: string): string {
-  return /[\s"]/.test(value) ? `"${value.replace(/"/g, "")}"` : value;
+  return value !== "" && !/[\s"\\]/.test(value) ? value : wrap(value);
+}
+
+/**
+ * Free text back into the field. A word that would read as a token or a flag
+ * (`node:x`, `open`) is quoted, so text stays text on the next parse.
+ */
+function formatText(text: string): string {
+  return text
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const colon = word.indexOf(":");
+      const keyLike = colon > 0 && (EVIDENCE_TOKEN_KEYS as readonly string[]).includes(word.slice(0, colon).toLowerCase());
+      return keyLike || flagOf(word) || /["\\]/.test(word) ? wrap(word) : word;
+    })
+    .join(" ");
 }
 
 function labelList(value: string, label: ((id: string) => string) | undefined): string {
@@ -386,7 +449,7 @@ export function formatEvidenceQuery(query: EvidenceQuery, resolvers: EvidenceTok
   if (query.userKinds.length) parts.push(`kind:${query.userKinds.join(",")}`);
   if (query.stalledOnly) parts.push("stalled");
   if (query.includeOpen) parts.push("open");
-  if (query.text) parts.push(query.text);
+  if (query.text) parts.push(formatText(query.text));
   return parts.join(" ");
 }
 
@@ -561,6 +624,17 @@ export interface CoverageInput {
   nowMs: number;
 }
 
+/**
+ * A capture that is still collecting: running and not past its deadline. The
+ * server counts the same way (ActiveTraceSessions(now)); a session the last
+ * poll reported as running may have expired since.
+ */
+export function isActiveSession(session: TraceSession, nowMs: number): boolean {
+  if (session.state !== "running") return false;
+  const ends = Date.parse(session.expires_at);
+  return Number.isNaN(ends) || ends > nowMs;
+}
+
 /** Running sessions that include a node. An empty node list is the whole fleet. */
 export function sessionCoversNode(session: TraceSession, nodeId: string): boolean {
   if (session.state !== "running") return false;
@@ -596,7 +670,7 @@ export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
   for (const policy of input.policies ?? []) policyBy.set(policy.node_id, policy);
   const statsBy = new Map<string, LogSourceStatsView>();
   for (const entry of input.stats) statsBy.set(entry.source_id, entry);
-  const running = input.sessions.filter((session) => session.state === "running");
+  const running = input.sessions.filter((session) => isActiveSession(session, input.nowMs));
 
   const rows = ids.map<CoverageRow>((nodeId) => {
     const policy = policyBy.get(nodeId);
@@ -779,6 +853,7 @@ export type CaptureBlock =
   | ""
   | "needs-admin"
   | "store-off"
+  | "sessions-unread"
   | "no-nodes"
   | "limit-total"
   | "limit-node";
@@ -790,6 +865,8 @@ export type CaptureBlock =
  * - needs-admin: a capture reads user traffic metadata and the server gates it
  *   on log:admin for every targeted node.
  * - store-off: the server answered 503, connection tracing is not enabled.
+ * - sessions-unread: the capture list has not loaded or failed, so the
+ *   server's limits cannot be checked; an unread list is not an empty one.
  * - no-nodes: nothing chosen yet.
  * - limit-total / limit-node: the server would refuse with 409.
  */
@@ -798,17 +875,31 @@ export function captureBlock(input: {
   storeReady: boolean;
   nodeIds: readonly string[];
   sessions: readonly TraceSession[];
+  /** False while the capture list is loading or after it failed. */
+  sessionsKnown: boolean;
+  nowMs: number;
 }): CaptureBlock {
   if (!input.canAdmin) return "needs-admin";
   if (!input.storeReady) return "store-off";
+  if (!input.sessionsKnown) return "sessions-unread";
   if (input.nodeIds.length === 0) return "no-nodes";
-  const running = input.sessions.filter((session) => session.state === "running");
+  const running = input.sessions.filter((session) => isActiveSession(session, input.nowMs));
   if (running.length >= MAX_ACTIVE_CAPTURES) return "limit-total";
   for (const nodeId of input.nodeIds) {
     const count = running.filter((session) => (session.filter?.node_ids ?? []).includes(nodeId)).length;
     if (count >= MAX_CAPTURES_PER_NODE) return "limit-node";
   }
   return "";
+}
+
+/**
+ * The nodes a capture starts with when the page was opened on a question
+ * (`?node_id=`): only ids the operator can actually choose, once each, so a
+ * stale or foreign id in the address bar never becomes a capture target.
+ */
+export function seedCaptureNodes(nodeParam: string, choices: readonly { id: string }[]): string[] {
+  const known = new Set(choices.map((choice) => choice.id));
+  return [...new Set(splitList(nodeParam))].filter((id) => known.has(id));
 }
 
 /**

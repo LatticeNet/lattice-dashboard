@@ -133,11 +133,30 @@ function applyQuery(next: EvidenceQuery): void {
  */
 const submittedProblems = ref<typeof parsed.value.problems>([]);
 
+/**
+ * A search submitted before the node, user and source lists have answered
+ * waits for them, then resolves; sending `node:legend-sg` on as a literal id
+ * would search for a node that does not exist.
+ */
+const pendingSubmit = ref(false);
+
 function submit(): void {
+  if (!ctx.namesReady.value) {
+    pendingSubmit.value = true;
+    return;
+  }
+  pendingSubmit.value = false;
   const { query, problems } = parsed.value;
   applyQuery(query);
   submittedProblems.value = problems;
 }
+
+watch(
+  () => ctx.namesReady.value,
+  (ready) => {
+    if (ready && pendingSubmit.value) submit();
+  },
+);
 
 function clearQuery(): void {
   submittedProblems.value = [];
@@ -385,6 +404,9 @@ function onRecordsLoaded(lookup: (key: string) => ConnRecord | undefined): void 
       </div>
     </form>
 
+    <p v-if="pendingSubmit" class="text-xs text-muted-foreground" aria-live="polite">
+      {{ $t('platform.evidence.explore.resolvingNames') }}
+    </p>
     <ul v-if="problems.length" class="space-y-0.5 text-xs text-warning-text" aria-live="polite">
       <li v-for="problem in problems" :key="problem">{{ problem }}</li>
     </ul>

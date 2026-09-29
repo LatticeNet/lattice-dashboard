@@ -15,12 +15,14 @@ import {
   evidenceQueryEqual,
   evidenceStoreProof,
   formatEvidenceQuery,
+  isActiveSession,
   legacyEvidenceQuery,
   normalizeEvidenceQuery,
   parseConnKey,
   parseEvidenceQuery,
   pickLogSource,
   readEvidenceQuery,
+  seedCaptureNodes,
   resolveEvidenceLayer,
   resolveEvidenceLens,
   summarizeLastHour,
@@ -198,6 +200,38 @@ test("problems are reported, and a value that does not resolve is kept as typed"
     { token: "dest:", kind: "empty-value" },
     { token: "source:x", kind: "unresolved" },
   ]);
+});
+
+test("quotes group values, escape themselves, and keep quoted words as text", () => {
+  assert.deepEqual(tokenizeEvidenceQuery('dest:"a \\"b\\" c" x'), ['dest:a "b" c', "x"]);
+  assert.deepEqual(tokenizeEvidenceQuery('dest:"back\\\\slash"'), ["dest:back\\slash"]);
+  const { query, problems } = parseEvidenceQuery('"node:x" "open" "stalled" open', resolvers);
+  assert.deepEqual(problems, []);
+  assert.equal(query.nodeId, "");
+  assert.equal(query.text, "node:x open stalled");
+  assert.equal(query.includeOpen, true);
+  assert.equal(query.stalledOnly, false);
+});
+
+test("values with colons, quotes and non-ASCII round-trip through the field", () => {
+  const cases = [
+    { ...EMPTY_EVIDENCE_QUERY, dst: "[2001:db8::1]:443" },
+    { ...EMPTY_EVIDENCE_QUERY, dst: 'say "hi"' },
+    { ...EMPTY_EVIDENCE_QUERY, dst: "a\\b" },
+    { ...EMPTY_EVIDENCE_QUERY, dst: "東京.example" },
+    { ...EMPTY_EVIDENCE_QUERY, text: "node:x open stalled is:open plain" },
+    { ...EMPTY_EVIDENCE_QUERY, text: 'quote"inside' },
+  ];
+  for (const query of cases) {
+    const text = formatEvidenceQuery(query);
+    assert.deepEqual(parseEvidenceQuery(text).query, query, text);
+  }
+  assert.equal(formatEvidenceQuery({ ...EMPTY_EVIDENCE_QUERY, text: "node:x open plain" }), '"node:x" "open" plain');
+});
+
+test("a node name in any script resolves", () => {
+  const unicode: EvidenceTokenResolvers = { nodeId: (value) => (value === "東京-1" ? "nod_tokyo" : undefined) };
+  assert.equal(parseEvidenceQuery("node:東京-1", unicode).query.nodeId, "nod_tokyo");
 });
 
 test("is:stalled and is:open read like the bare flags", () => {
@@ -527,15 +561,43 @@ test("the last hour counts failures by reason and the top destinations", () => {
 /* ------------------------------------------------------------------ */
 
 test("the capture action says why it cannot run", () => {
-  const base = { canAdmin: true, storeReady: true, nodeIds: ["a"], sessions: [] as TraceSession[] };
+  const base = { canAdmin: true, storeReady: true, nodeIds: ["a"], sessions: [] as TraceSession[], sessionsKnown: true, nowMs: NOW };
   assert.equal(captureBlock(base), "");
   assert.equal(captureBlock({ ...base, canAdmin: false }), "needs-admin");
   assert.equal(captureBlock({ ...base, storeReady: false }), "store-off");
+  // An unread capture list is not an empty one: the limits cannot be checked.
+  assert.equal(captureBlock({ ...base, sessionsKnown: false }), "sessions-unread");
   assert.equal(captureBlock({ ...base, nodeIds: [] }), "no-nodes");
   const many = Array.from({ length: 16 }, (_, i) => session(`s${i}`, [`n${i}`]));
   assert.equal(captureBlock({ ...base, sessions: many }), "limit-total");
   const onA = Array.from({ length: 8 }, (_, i) => session(`s${i}`, ["a"]));
   assert.equal(captureBlock({ ...base, sessions: onA }), "limit-node");
+  // Past their deadline they no longer count, as ActiveTraceSessions(now) on the server.
+  assert.equal(captureBlock({ ...base, sessions: onA, nowMs: Date.parse("2026-09-29T09:00:00Z") }), "");
+});
+
+test("a running capture past its deadline is not active", () => {
+  const s = session("s1", ["a"]);
+  assert.equal(isActiveSession(s, NOW), true);
+  assert.equal(isActiveSession(s, Date.parse("2026-09-29T08:30:00Z")), false);
+  assert.equal(isActiveSession({ ...s, state: "stopped" }, NOW), false);
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [policy("a")],
+    sessions: [s],
+    sources: [],
+    stats: [],
+    nowMs: Date.parse("2026-09-29T09:00:00Z"),
+  });
+  assert.equal(rows[0]?.capturing, 0);
+  assert.equal(rows[0]?.quiet, true);
+});
+
+test("a capture seeded from the address bar keeps only nodes the operator can choose", () => {
+  const choices = [{ id: "a" }, { id: "b" }];
+  assert.deepEqual(seedCaptureNodes("a, b ,a,ghost", choices), ["a", "b"]);
+  assert.deepEqual(seedCaptureNodes("", choices), []);
+  assert.deepEqual(seedCaptureNodes("a", []), []);
 });
 
 test("a capture is named for its nodes and time and asks for debug on exactly those nodes", () => {

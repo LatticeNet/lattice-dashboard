@@ -468,6 +468,9 @@ export default {
           "Records connection metadata on {count} node for {duration}, then stops · needs log:admin · audited as trace.session.start | Records connection metadata on {count} nodes for {duration}, then stops · needs log:admin · audited as trace.session.start",
         blockAdmin: "Starting a capture needs the {scope} scope, because it records user traffic metadata.",
         blockStoreOff: "Connection tracing is not enabled on this server, so there is nowhere to keep records.",
+        blockSessionsFailed:
+          "The capture list did not load, so the server's limits on running captures cannot be checked. Retry above first.",
+        blockSessionsLoading: "Reading the running captures before a new one can start.",
         blockNoNodes: "Choose at least one node to capture on.",
         blockLimitTotal: "16 captures are already running, which is the server's limit. Stop one first.",
         blockLimitNode: "A chosen node already has 8 captures running, which is the server's limit per node.",
@@ -488,6 +491,7 @@ export default {
         apply: "Search",
         filtersHint: "Each choice becomes a token in the query field.",
         stateLabel: "Connection state",
+        resolvingNames: "Reading the node, user and source lists so the names in the query resolve; the search runs when they arrive.",
         problemEmpty: "{token} has no value, so it was left out.",
         problemUnknown: "{token} names a value this console does not know, so it was left out.",
         problemUnresolved: "{token} does not name a known item; searching for it as typed.",
