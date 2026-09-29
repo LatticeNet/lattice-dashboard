@@ -88,4 +88,6 @@ test("a page-state write never scrolls the console or cancels a navigation", () 
   // closed when the router has no tracker.
   assert.match(host, /planPluginStateWrite\(\{/, "the host must decide writes through planPluginStateWrite");
   assert.match(host, /navigationPending: navigation\?\.isPending\(\) \?\? true,/, "no tracker must mean hold, never write");
+  // A held state is retried only if the operator did not change the query meanwhile.
+  assert.match(host, /heldPluginStateStillApplies\(\{/, "the retry must check the query the state was held against");
 });

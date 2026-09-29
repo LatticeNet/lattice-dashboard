@@ -6,6 +6,7 @@ import {
   PAGE_STATE_RESERVED_KEYS,
   PluginBridgeSession,
   bridgeInterfaceFingerprint,
+  heldPluginStateStillApplies,
   interfaceMethodScopes,
   planPluginStateWrite,
   pluginPageStateFromQuery,
@@ -621,4 +622,22 @@ test("a state write is held while a navigation is pending, and applies only on i
   assert.deepEqual(plan({ current: { ...current, name: "overview" } }), { kind: "skip" }, "not the plugin route");
   assert.deepEqual(plan({ current: { ...current, path: "/plugins/latticenet.vpn-core/users" } }), { kind: "skip" }, "another plugin page");
   assert.deepEqual(plan({ state: { view: "lines" } }), { kind: "skip" }, "nothing to change");
+});
+
+test("a held state is dropped when the operator changed the query while it waited", () => {
+  const queryWhenHeld = { view: "lines" };
+  const applies = (currentQuery: Record<string, unknown>, ownWrite: PluginPageState | null = null) =>
+    heldPluginStateStillApplies({ currentQuery, queryWhenHeld, ownWrite });
+
+  assert.equal(applies({ view: "lines" }), true, "the navigation was aborted or went elsewhere");
+  assert.equal(applies({ view: "users" }), false, "the operator's change on this page wins");
+  assert.equal(applies({ view: "users" }, { view: "users" }), true, "the pending navigation was the plugin's own write");
+  assert.equal(applies({ view: "users" }, { view: "lines", open: "a" }), false, "an older write of its own does not count");
+  assert.equal(applies({}), false, "a cleared query is a change");
+  assert.equal(applies({ view: ["lines", "users"] }), false, "a repeated key is not the single value");
+  assert.equal(
+    heldPluginStateStillApplies({ currentQuery: { b: "2", a: "1" }, queryWhenHeld: { a: "1", b: "2" }, ownWrite: null }),
+    true,
+    "key order does not matter",
+  );
 });

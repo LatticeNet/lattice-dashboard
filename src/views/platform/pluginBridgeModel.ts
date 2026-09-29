@@ -226,13 +226,40 @@ export function pluginStateLocation(
   current: PluginRouteLocation,
   state: PluginPageState,
 ): { path: string; query: PluginPageState; hash: string } | null {
-  const currentKeys = Object.keys(current.query);
-  const stateKeys = Object.keys(state);
-  const same =
-    currentKeys.length === stateKeys.length &&
-    stateKeys.every((key) => current.query[key] === state[key]);
-  if (same) return null;
+  if (sameQuery(current.query, state)) return null;
   return { path: current.path, query: { ...state }, hash: current.hash ?? "" };
+}
+
+/**
+ * Two route queries say the same thing: the same keys with the same values,
+ * in any order. A repeated key (an array) equals only the same array.
+ */
+function sameQuery(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(b, key) && JSON.stringify(a[key]) === JSON.stringify(b[key]));
+}
+
+/**
+ * Whether a state held during a navigation may still be written when that
+ * navigation ends.
+ *
+ * The plugin is not told about a query change it did not make (init is sent
+ * once), so its held state knows nothing of one. If the operator changed the
+ * query on this same page while the state was held, writing it would undo
+ * their change. The held state applies only when the query is still what it
+ * was when the state was held (the navigation was aborted or went elsewhere),
+ * or is exactly what the plugin's own last write asked for (the pending
+ * navigation was that write).
+ */
+export function heldPluginStateStillApplies(input: {
+  currentQuery: Record<string, unknown>;
+  queryWhenHeld: Record<string, unknown>;
+  ownWrite: PluginPageState | null;
+}): boolean {
+  if (sameQuery(input.currentQuery, input.queryWhenHeld)) return true;
+  return input.ownWrite !== null && sameQuery(input.currentQuery, input.ownWrite);
 }
 
 /** What the frame host does with a page state the bridge accepted. */

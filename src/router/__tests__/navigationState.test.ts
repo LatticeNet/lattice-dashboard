@@ -9,7 +9,7 @@ import {
   pendingNavigationOf,
   trackPendingNavigation,
 } from "../navigationState.ts";
-import { planPluginStateWrite } from "@/views/platform/pluginBridgeModel";
+import { heldPluginStateStillApplies, planPluginStateWrite } from "@/views/platform/pluginBridgeModel";
 
 // ── scroll ──────────────────────────────────────────────────────────────────
 
@@ -211,4 +211,44 @@ test("a state write on the plugin route, with nothing pending, replaces the quer
   await router.replace(plan.location);
   assert.equal(router.currentRoute.value.fullPath, "/plugins/vpn-core/lines?view=users#top");
   assert.equal(tracker.isPending(), false, "the write's own navigation ended");
+});
+
+test("a state held during the operator's same-page query change does not overwrite it", async () => {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/plugins/:pluginId/:route(.*)*", name: PLUGIN_VIEW_ROUTE_NAME, component: {} }],
+  });
+  const tracker = trackPendingNavigation(router);
+  // A guard that waits, as the session guard does before bootstrap.
+  let release: (result?: false) => void = () => {};
+  let block = false;
+  router.beforeEach(() => (block ? new Promise<false | undefined>((resolve) => { release = resolve; }) : undefined));
+  const framePath = "/plugins/vpn-core/lines";
+  await router.push({ path: framePath, query: { view: "lines" } });
+
+  const holdDuring = async (operatorGo: () => Promise<unknown>, outcome?: false) => {
+    block = true;
+    const click = operatorGo();
+    await tick();
+    const current = router.currentRoute.value;
+    const plan = planPluginStateWrite({
+      current: { name: current.name, path: current.path, query: current.query, hash: current.hash },
+      framePath,
+      navigationPending: tracker.isPending(),
+      state: { view: "lines", open: "line_1" },
+    });
+    assert.deepEqual(plan, { kind: "hold" });
+    const queryWhenHeld = current.query;
+    block = false;
+    release(outcome);
+    await click;
+    return heldPluginStateStillApplies({ currentQuery: router.currentRoute.value.query, queryWhenHeld, ownWrite: null });
+  };
+
+  // The operator switches this page's view by hand: the held state is dropped.
+  assert.equal(await holdDuring(() => router.push({ path: framePath, query: { view: "users" } })), false);
+  assert.equal(router.currentRoute.value.fullPath, "/plugins/vpn-core/lines?view=users");
+  // An aborted navigation leaves the query as it was: the held state still applies.
+  assert.equal(await holdDuring(() => router.push({ path: framePath, query: { view: "topology" } }), false), true);
+  assert.equal(router.currentRoute.value.fullPath, "/plugins/vpn-core/lines?view=users");
 });
