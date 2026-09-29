@@ -87,41 +87,66 @@ function requestParams(beforeSeq?: number) {
   };
 }
 
+/**
+ * Every answer is checked against the question it was asked for. A source or
+ * window change while the tail poll or "load older" is in flight would
+ * otherwise land source A's lines under source B's name: the old request
+ * is aborted, and a late answer whose question no longer matches is dropped.
+ */
+let newestController: AbortController | undefined;
+let olderController: AbortController | undefined;
+
 async function loadNewest(): Promise<void> {
+  const key = requestKey.value;
+  newestController?.abort();
+  olderController?.abort();
   if (!source.value) {
     lines.value = [];
     nextBeforeSeq.value = undefined;
     truncated.value = false;
     loadedOnce.value = true;
+    loading.value = false;
     return;
   }
+  const mine = new AbortController();
+  newestController = mine;
   loading.value = true;
   loadError.value = null;
   try {
-    const res = await api.logs.query(requestParams());
+    const res = await api.logs.query(requestParams(), { signal: mine.signal });
+    if (newestController !== mine || key !== requestKey.value) return;
     lines.value = [...res.lines].sort((a, b) => a.seq - b.seq);
     truncated.value = res.truncated;
     nextBeforeSeq.value = res.next_before_seq;
     loadedOnce.value = true;
   } catch (error) {
+    if ((error as Error)?.name === "AbortError" || newestController !== mine) return;
     loadError.value = error instanceof Error ? error : new Error(t("platform.logs.queryFailed"));
   } finally {
-    loading.value = false;
+    if (newestController === mine) loading.value = false;
   }
 }
 
 async function loadOlder(): Promise<void> {
-  if (!source.value || nextBeforeSeq.value === undefined) return;
+  const before = nextBeforeSeq.value;
+  if (!source.value || before === undefined || loadingOlder.value) return;
+  const key = requestKey.value;
+  const mine = new AbortController();
+  olderController = mine;
   loadingOlder.value = true;
   try {
-    const res = await api.logs.query(requestParams(nextBeforeSeq.value));
+    const res = await api.logs.query(requestParams(before), { signal: mine.signal });
+    // The page belongs to the walk it continued; a newer question or a
+    // reload since then owns the list now.
+    if (olderController !== mine || key !== requestKey.value || nextBeforeSeq.value !== before) return;
     const seen = new Set(lines.value.map((line) => line.seq));
     lines.value = [...res.lines.filter((line) => !seen.has(line.seq)), ...lines.value].sort((a, b) => a.seq - b.seq);
     nextBeforeSeq.value = res.next_before_seq;
   } catch (error) {
+    if ((error as Error)?.name === "AbortError" || olderController !== mine) return;
     toast.error(error instanceof Error ? error.message : t("platform.logs.loadOlderFailed"));
   } finally {
-    loadingOlder.value = false;
+    if (olderController === mine) loadingOlder.value = false;
   }
 }
 
@@ -146,13 +171,24 @@ const requestKey = computed(() =>
 watch(
   requestKey,
   () => {
+    // A new question starts from nothing, so a failed load never leaves the
+    // previous source's or window's lines on screen under the new one.
+    lines.value = [];
+    nextBeforeSeq.value = undefined;
+    truncated.value = false;
+    loadedOnce.value = false;
+    loadError.value = null;
     void loadNewest();
     startTail();
   },
   { immediate: true },
 );
 watch(ctx.refreshTick, () => void loadNewest());
-onBeforeUnmount(stopTail);
+onBeforeUnmount(() => {
+  stopTail();
+  newestController?.abort();
+  olderController?.abort();
+});
 
 /* ------------------------------------------------------------------ */
 /* What the source is, and why the viewer is empty                     */

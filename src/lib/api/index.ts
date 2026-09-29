@@ -738,7 +738,7 @@ export const api = {
       until?: string;
       limit?: number;
       before_seq?: number;
-    }) => http.get<LogQueryResponse>("/api/logs/query", params as Record<string, unknown>),
+    }, opts?: RequestOptions) => http.get<LogQueryResponse>("/api/logs/query", params as Record<string, unknown>, opts),
     stats: (source_id?: string, opts?: RequestOptions) =>
       http.get<{ stats: LogSourceStatsView[] }>(
         "/api/logs/stats",

@@ -10,7 +10,7 @@
  * still lands on it. A hop path short of "exact" says in words that it was
  * inferred before it shows anything.
  */
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { api, type ConnRecord, type HopPath, type TraceLine } from "@/lib/api";
@@ -60,24 +60,47 @@ const selectedClose = computed(() => (selected.value ? connCloseCell(selected.va
 const selectedUser = computed(() => (selected.value ? userCellDisplay(selected.value, ctx.userNames.value) : null));
 const hopConfidence = computed(() => hopConfidenceDisplay(hopPath.value?.confidence));
 
-async function loadHops(key: NonNullable<ReturnType<typeof parseConnKey>>): Promise<void> {
+/**
+ * Each request belongs to the connection it was made for. Opening row A then
+ * row B before A's answers arrive must not show A's hops or lines under B,
+ * so the previous requests are aborted and a late answer for a key that is
+ * no longer open is dropped.
+ */
+let hopsController: AbortController | undefined;
+let linesController: AbortController | undefined;
+
+function stillOpen(key: string): boolean {
+  return props.connKey === key;
+}
+
+async function loadHops(connKey: string): Promise<void> {
+  const parts = parseConnKey(connKey);
+  if (!parts) return;
+  hopsController?.abort();
+  const mine = new AbortController();
+  hopsController = mine;
   hopLoading.value = true;
   hopError.value = null;
   try {
-    const res = await api.trace.hops({
-      node_id: key.node_id,
-      core_generation: key.core_generation,
-      log_id: key.log_id,
-      // Without the start time a reused log id resolves to whichever
-      // connection the server ordered first.
-      started_at: key.started_at || undefined,
-    });
+    const res = await api.trace.hops(
+      {
+        node_id: parts.node_id,
+        core_generation: parts.core_generation,
+        log_id: parts.log_id,
+        // Without the start time a reused log id resolves to whichever
+        // connection the server ordered first.
+        started_at: parts.started_at || undefined,
+      },
+      { signal: mine.signal },
+    );
+    if (hopsController !== mine || !stillOpen(connKey)) return;
     hopPath.value = res.path ?? null;
     hopRecords.value = res.records ?? [];
   } catch (error) {
+    if ((error as Error)?.name === "AbortError" || hopsController !== mine || !stillOpen(connKey)) return;
     hopError.value = error as Error;
   } finally {
-    hopLoading.value = false;
+    if (hopsController === mine) hopLoading.value = false;
   }
 }
 
@@ -86,43 +109,60 @@ async function loadHops(key: NonNullable<ReturnType<typeof parseConnKey>>): Prom
  * for one connection are found by asking each session that captured it and
  * keeping the lines carrying this node and this log id.
  */
-async function loadLines(row: ConnRecord): Promise<void> {
+async function loadLines(row: ConnRecord, connKey: string): Promise<void> {
   const sessionIds = row.session_ids ?? [];
+  linesController?.abort();
   recordLines.value = [];
   linesError.value = null;
+  linesLoading.value = false;
   if (sessionIds.length === 0) return;
+  const mine = new AbortController();
+  linesController = mine;
   linesLoading.value = true;
   try {
-    const pages = await Promise.all(sessionIds.map((id) => api.trace.lines({ session_id: id, limit: 1000 })));
+    const pages = await Promise.all(
+      sessionIds.map((id) => api.trace.lines({ session_id: id, limit: 1000 }, { signal: mine.signal })),
+    );
+    if (linesController !== mine || !stillOpen(connKey)) return;
     recordLines.value = pages
       .flatMap((page) => page.lines ?? [])
       .filter((line) => line.node_id === row.node_id && line.log_id === row.log_id)
       .sort((a, b) => a.seq - b.seq);
   } catch (error) {
+    if ((error as Error)?.name === "AbortError" || linesController !== mine || !stillOpen(connKey)) return;
     linesError.value = error as Error;
   } finally {
-    linesLoading.value = false;
+    if (linesController === mine) linesLoading.value = false;
   }
 }
 
 watch(
   () => [props.connKey, props.record] as const,
   async ([key, record], before) => {
-    if (!key) return;
+    if (!key) {
+      hopsController?.abort();
+      linesController?.abort();
+      return;
+    }
     if (before && before[0] === key && selected.value) return;
-    const parts = parseConnKey(key);
     selected.value = record && connRecordKey(record) === key ? record : null;
     hopPath.value = null;
     hopRecords.value = [];
-    if (!parts) return;
-    await loadHops(parts);
+    recordLines.value = [];
+    await loadHops(key);
+    if (!stillOpen(key)) return;
     if (!selected.value) {
       selected.value = hopRecords.value.find((candidate) => connRecordKey(candidate) === key) ?? null;
     }
-    if (selected.value) void loadLines(selected.value);
+    if (selected.value) void loadLines(selected.value, key);
   },
   { immediate: true },
 );
+
+onBeforeUnmount(() => {
+  hopsController?.abort();
+  linesController?.abort();
+});
 
 function hopRecordFor(key: { node_id: string; core_generation: number; log_id: number }): ConnRecord | undefined {
   return hopRecords.value.find(
@@ -158,7 +198,7 @@ const title = computed(() =>
           :skeleton-rows="6"
           :empty-title="$t('platform.evidence.panel.missingTitle')"
           :empty-description="$t('platform.evidence.panel.missingDescription')"
-          @retry="() => { const parts = parseConnKey(connKey); if (parts) loadHops(parts); }"
+          @retry="() => loadHops(connKey)"
         >
           <div v-if="selected" class="space-y-6">
             <!-- Identity -->
@@ -300,7 +340,7 @@ const title = computed(() =>
                 :skeleton-rows="2"
                 :empty-title="$t('platform.trace.hopsEmptyTitle')"
                 :empty-description="$t('platform.trace.hopsEmptyDescription')"
-                @retry="() => { const parts = parseConnKey(connKey); if (parts) loadHops(parts); }"
+                @retry="() => loadHops(connKey)"
               >
                 <div v-if="hopPath" class="space-y-2">
                   <div class="flex flex-wrap items-center gap-2">
@@ -348,7 +388,7 @@ const title = computed(() =>
                 :skeleton-rows="2"
                 :empty-title="$t('platform.trace.linesEmptyTitle')"
                 :empty-description="$t('platform.trace.linesEmptyDescription')"
-                @retry="() => selected && loadLines(selected)"
+                @retry="() => selected && loadLines(selected, connKey)"
               >
                 <div class="relative overflow-x-auto rounded-md border border-border bg-muted/10">
                   <table class="w-full text-xs">
