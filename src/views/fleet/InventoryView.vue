@@ -584,6 +584,12 @@ const groupOptions = INVENTORY_GROUPS;
 // card and scrolls to it, so a reader still lands on the row they followed.
 const seededNodeQuery = ref<string | undefined>(undefined);
 const highlightedKey = ref<string | undefined>(undefined);
+/**
+ * The card a ?machine= link opened the editor for. Nothing was clicked, so
+ * the dialog has no trigger to hand focus back to on close; this names the
+ * row that should get it.
+ */
+const openedFromLink = ref<string | undefined>(undefined);
 watch(
   [machines, () => route.query.node, () => route.query.machine],
   ([list, nodeQ, machineQ]) => {
@@ -597,6 +603,7 @@ watch(
     if (!m) return;
     if (canAdminInventory.value) {
       openEdit(m);
+      if (profileId) openedFromLink.value = machineKey(m);
     } else if (profileId) {
       const cardKey = machineKey(m);
       highlightedKey.value = cardKey;
@@ -1019,7 +1026,26 @@ function discardChanges(): void {
  */
 function focusEditorOnOpen(event: Event): void {
   event.preventDefault();
-  document.getElementById("machine-editor-title")?.focus({ preventScroll: true });
+  // Arriving from the Upcoming list is about the renewal, so start there
+  // rather than at Label and Region with Delete in view.
+  const renewal = openedFromLink.value ? document.getElementById("machine-section-renewal") : null;
+  if (renewal) {
+    renewal.focus({ preventScroll: true });
+    renewal.scrollIntoView({ block: "start" });
+    return;
+  }
+  document.querySelector<HTMLElement>("[data-editor-title]")?.focus({ preventScroll: true });
+}
+
+/** Back to the row a ?machine= link opened; a clicked Edit gets focus back from the dialog itself. */
+function restoreFocusOnClose(event: Event): void {
+  const key = openedFromLink.value;
+  if (!key) return;
+  event.preventDefault();
+  openedFromLink.value = undefined;
+  document
+    .querySelector<HTMLElement>(`[data-machine-key="${CSS.escape(key)}"] [data-edit-button]`)
+    ?.focus();
 }
 
 /**
@@ -1215,6 +1241,7 @@ function syncVendorDetailsFromSelection() {
 }
 
 function openEdit(machine: MachineView) {
+  openedFromLink.value = undefined;
   editKey.value = machineKey(machine);
   loadForm(machine);
   editOpen.value = true;
@@ -1712,6 +1739,7 @@ async function runReminders(selectedOnly: boolean) {
                   <Button
                     variant="outline"
                     size="sm"
+                    data-edit-button
                     @click="openEdit(machine)"
                   >
                     <component :is="canAdminInventory ? (machine.id ? Pencil : Plus) : Eye" class="size-3.5" aria-hidden="true" />
@@ -1868,9 +1896,12 @@ async function runReminders(selectedOnly: boolean) {
       <DialogContent
         class="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
         @open-auto-focus="focusEditorOnOpen"
+        @close-auto-focus="restoreFocusOnClose"
       >
         <DialogHeader class="gap-1.5 border-b border-border px-5 pt-5 pr-12 pb-4 text-left sm:px-6">
-          <DialogTitle id="machine-editor-title" tabindex="-1" class="flex min-w-0 items-center gap-2 outline-none">
+          <!-- No id here: reka names the dialog by its own title id, and
+               overriding it left the dialog unnamed (and warning). -->
+          <DialogTitle data-editor-title tabindex="-1" class="flex min-w-0 items-center gap-2 outline-none">
             <Pencil class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span class="truncate">{{ editMachine ? displayName(editMachine) : $t('fleet.inventory.profile.title') }}</span>
           </DialogTitle>
@@ -2092,7 +2123,7 @@ async function runReminders(selectedOnly: boolean) {
           </section>
 
           <section v-if="needsRenewal" class="space-y-3" aria-labelledby="machine-section-renewal">
-            <h3 id="machine-section-renewal" class="font-mono text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <h3 id="machine-section-renewal" tabindex="-1" class="scroll-mt-4 font-mono text-[11px] font-medium tracking-wide text-muted-foreground uppercase outline-none">
               {{ $t('fleet.inventory.profile.sectionRenewal') }}
             </h3>
             <div class="grid gap-2">
