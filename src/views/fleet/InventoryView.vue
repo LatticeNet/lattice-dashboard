@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
+  BellOff,
   BookOpen,
   Boxes,
   CalendarClock,
@@ -61,6 +62,8 @@ import {
   parseReminderDaysInput,
   rollForwardPast,
 } from "./inventoryEditorModel";
+import { DEFAULT_REMIND_DAYS, hasRenewalDate, nextReminder } from "./reminderModel";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -207,7 +210,13 @@ const cycleDays = ref("");
 const nextRenewal = ref("");
 const autoRoll = ref(false);
 const remindersEnabled = ref(false);
-const remindDays = ref("14,7,1");
+/**
+ * Reminders are on by default for a machine with a renewal date (design 22).
+ * A profile loaded without a date cannot have had them on, so its "off" is not
+ * a choice: the box follows the date until the operator touches it.
+ */
+const remindersFollowDate = ref(false);
+const remindDays = ref(DEFAULT_REMIND_DAYS.join(","));
 const consoleUrl = ref("");
 const detailUrl = ref("");
 const clearConsoleUrl = ref(false);
@@ -568,19 +577,40 @@ const groups = computed<MachineGroup[]>(() => {
 
 const groupOptions = INVENTORY_GROUPS;
 
-// ── Deep-link (?node=<id>) opens that node's editor once the list loads ───────
+// ── Deep-link (?node=<id>, or ?machine=<profile id> as the Upcoming list
+// links a renewal) opens that machine's editor once the list loads ──────────
 const seededNodeQuery = ref<string | undefined>(undefined);
 watch(
-  [machines, () => route.query.node],
-  ([list, nodeQ]) => {
-    const id = typeof nodeQ === "string" ? nodeQ : undefined;
-    if (!id || id === seededNodeQuery.value || list.length === 0) return;
-    const m = list.find((x) => x.node_id === id);
-    seededNodeQuery.value = id;
+  [machines, () => route.query.node, () => route.query.machine],
+  ([list, nodeQ, machineQ]) => {
+    const nodeId = typeof nodeQ === "string" ? nodeQ : undefined;
+    const profileId = typeof machineQ === "string" ? machineQ : undefined;
+    const key = nodeId ? `node:${nodeId}` : profileId ? `machine:${profileId}` : undefined;
+    if (!key || key === seededNodeQuery.value || list.length === 0) return;
+    const m = list.find((x) => (nodeId ? x.node_id === nodeId : x.id === profileId));
+    seededNodeQuery.value = key;
     if (m && canAdminInventory.value) openEdit(m);
   },
   { immediate: true },
 );
+
+// ── Reminder indicator ─────────────────────────────────────────────────────
+function reminderWhen(inDays: number, at: string): string {
+  if (inDays <= 0) return t("fleet.inventory.list.whenToday");
+  if (inDays === 1) return t("fleet.inventory.list.whenTomorrow");
+  return t("fleet.inventory.list.whenDate", { date: at });
+}
+
+/** The row's reminder in one sentence: off, or when the next one goes out. */
+function reminderHint(machine: MachineView): string {
+  if (!machine.reminders_enabled) return t("fleet.inventory.list.reminderOffHint");
+  const next = nextReminder(machine, formatDay(new Date()));
+  if (!next) return t("fleet.inventory.list.reminderNone");
+  const when = reminderWhen(next.inDays, next.at);
+  if (next.offset >= 0) return t("fleet.inventory.list.reminderNext", { when, offset: next.offset, renewal: next.renewal });
+  if (next.inDays > 0) return t("fleet.inventory.list.reminderNextAfterDate", { when, renewal: next.renewal });
+  return t("fleet.inventory.list.reminderNextOverdue", { renewal: next.renewal, until: next.repeatsUntil });
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function machineKey(machine: MachineView): string {
@@ -946,10 +976,10 @@ watch(editOpen, (open) => {
   if (open) return;
   formSnapshot.value = undefined;
   discardOpen.value = false;
-  // A ?node= deep link opened the editor; left behind, it reopens the editor
-  // on the next reload.
-  if (route.query.node !== undefined) {
-    router.replace({ query: { ...route.query, node: undefined } }).catch(() => {});
+  // A ?node= or ?machine= deep link opened the editor; left behind, it
+  // reopens the editor on the next reload.
+  if (route.query.node !== undefined || route.query.machine !== undefined) {
+    router.replace({ query: { ...route.query, node: undefined, machine: undefined } }).catch(() => {});
   }
 });
 
@@ -1140,7 +1170,8 @@ function loadForm(machine: MachineView) {
   nextRenewal.value = formatDate(machine.next_renewal);
   autoRoll.value = !!machine.auto_roll;
   remindersEnabled.value = !!machine.reminders_enabled;
-  remindDays.value = (machine.remind_days_before?.length ? machine.remind_days_before : [14, 7, 1]).join(
+  remindersFollowDate.value = !hasRenewalDate(machine);
+  remindDays.value = (machine.remind_days_before?.length ? machine.remind_days_before : DEFAULT_REMIND_DAYS).join(
     ",",
   );
   consoleUrl.value = "";
@@ -1243,6 +1274,7 @@ watch(renewalCycle, (cycle) => {
 
 watch([nextRenewal, calculatedNextRenewal], () => {
   if (!hasEffectiveNextRenewal.value) remindersEnabled.value = false;
+  else if (remindersFollowDate.value) remindersEnabled.value = true;
 });
 
 watch([purchasedAt, renewalCycle, cycleDays, needsRenewal], () => {
@@ -1706,10 +1738,31 @@ async function runReminders(selectedOnly: boolean) {
                 </Badge>
                 <!-- The date beside the countdown: "12d left" says how soon, the
                      date says when, and a renewal view is read for both. -->
+                <!-- The date and its bell wrap as one piece, so a narrow card
+                     never strands the bell on a line of its own. -->
+                <span class="inline-flex items-center gap-1 self-center">
                 <span
                   v-if="renewalDate(machine) && !renewalSetupIncomplete(machine) && machine.days_until_renewal !== undefined"
-                  class="self-center font-mono text-xs tabular text-muted-foreground"
+                  class="font-mono text-xs tabular text-muted-foreground"
                 >{{ renewalDate(machine) }}</span>
+                <!-- Whether this renewal reminds anyone: a bell, struck through
+                     when off, and the next reminder on hover or focus. -->
+                <Tooltip v-if="machine.id && hasRenewalDate(machine)">
+                  <TooltipTrigger as-child>
+                    <span
+                      tabindex="0"
+                      role="img"
+                      :aria-label="reminderHint(machine)"
+                      data-testid="reminder-indicator"
+                      class="inline-flex rounded-sm p-0.5 text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    >
+                      <Bell v-if="machine.reminders_enabled" class="size-3.5" aria-hidden="true" />
+                      <BellOff v-else class="size-3.5 opacity-60" aria-hidden="true" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent class="max-w-64">{{ reminderHint(machine) }}</TooltipContent>
+                </Tooltip>
+                </span>
               </div>
 
               <div class="mt-3 grid gap-1.5 text-xs text-muted-foreground">
@@ -1727,7 +1780,7 @@ async function runReminders(selectedOnly: boolean) {
                 </div>
               </div>
 
-              <div v-if="machine.has_console_url || machine.has_detail_url || machine.reminders_enabled" class="mt-3 flex flex-wrap gap-1.5">
+              <div v-if="machine.has_console_url || machine.has_detail_url" class="mt-3 flex flex-wrap gap-1.5">
                 <Button
                   v-if="machine.has_console_url && canAdminInventory"
                   type="button"
@@ -1761,10 +1814,6 @@ async function runReminders(selectedOnly: boolean) {
                 <Badge v-else-if="machine.has_detail_url" variant="info">
                   <LinkIcon class="size-3" aria-hidden="true" />
                   {{ $t('fleet.inventory.list.detailLinkStored') }}
-                </Badge>
-                <Badge v-if="machine.reminders_enabled" variant="outline">
-                  <Bell class="size-3" aria-hidden="true" />
-                  {{ $t('fleet.inventory.list.reminders') }}
                 </Badge>
               </div>
             </div>
@@ -2064,10 +2113,12 @@ async function runReminders(selectedOnly: boolean) {
                   class="mt-0.5"
                   :disabled="!hasEffectiveNextRenewal"
                   aria-describedby="machine-reminders-enabled-hint"
+                  @update:model-value="remindersFollowDate = false"
                 />
                 <div>
                   <label for="machine-reminders-enabled">{{ $t('fleet.inventory.profile.enableReminders') }}</label>
                   <p id="machine-reminders-enabled-hint" class="text-xs text-muted-foreground">
+                    {{ $t('fleet.inventory.profile.remindersDefault') }}
                     {{ $t('fleet.inventory.profile.enableRemindersHint') }}
                   </p>
                 </div>
@@ -2078,7 +2129,7 @@ async function runReminders(selectedOnly: boolean) {
                   id="machine-reminders"
                   v-model="remindDays"
                   class="sm:w-56"
-                  placeholder="14,7,1"
+                  placeholder="14,7,3,1,0"
                   :aria-invalid="draftReminderDays.days.length === 0 || undefined"
                   aria-describedby="machine-reminders-hint"
                 />
