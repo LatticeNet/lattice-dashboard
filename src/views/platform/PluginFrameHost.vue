@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
@@ -8,7 +8,13 @@ import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PluginBridgeSession, resolvePluginFrameURL, type BridgeHostMessage } from "./pluginBridgeModel";
+import {
+  PluginBridgeSession,
+  pluginStateLocation,
+  resolvePluginFrameURL,
+  type BridgeHostMessage,
+  type PluginPageState,
+} from "./pluginBridgeModel";
 import {
   PluginFrameLifecycle,
   pluginFrameIsBusy,
@@ -33,7 +39,27 @@ const HANDSHAKE_TIMEOUT_MS = 8_000;
 
 const lifecycle = new PluginFrameLifecycle({ createNonce });
 const router = useRouter();
+const route = useRoute();
 const { t } = useI18n();
+
+/**
+ * The console path this frame was mounted for. AppLayout keys the view by
+ * route.path, so a path change remounts the view and with it this frame; a
+ * query change does not, which is what lets the plugin's page state live in
+ * the query without reloading the frame or re-sending init.
+ */
+const framePath = route.path;
+
+/**
+ * Put the plugin's page state in the address: history replace, same path,
+ * query only. A write that arrives after the operator has moved to another
+ * page is dropped rather than applied there.
+ */
+function writePageState(state: PluginPageState) {
+  if (route.path !== framePath) return;
+  const next = pluginStateLocation({ path: route.path, query: route.query, hash: route.hash }, state);
+  if (next) void router.replace(next);
+}
 
 const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
@@ -223,6 +249,8 @@ function armSession() {
     post: postToFrame,
     ready: markReady,
     clipboard: copyForFrame,
+    pageState: () => route.query,
+    state: writePageState,
   });
 }
 
