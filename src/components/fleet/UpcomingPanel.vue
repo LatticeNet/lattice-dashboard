@@ -34,7 +34,7 @@ const canOpenList = computed(() => auth.canAny(UPCOMING_SCOPES));
         <RouterLink
           v-if="canOpenList"
           :to="{ name: 'upcoming' }"
-          class="ms-auto text-xs font-normal text-muted-foreground transition-colors hover:text-foreground"
+          class="ms-auto rounded-sm text-xs font-normal text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card"
         >
           {{ $t('common.actions.viewAll') }}
         </RouterLink>

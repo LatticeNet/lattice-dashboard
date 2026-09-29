@@ -106,7 +106,7 @@ const ROW =
             :is="rowHref(item) ? RouterLink : 'div'"
             v-bind="rowHref(item) ? { to: rowHref(item) } : {}"
             :aria-label="rowName(item)"
-            :class="cn(ROW, rowHref(item) && 'transition-colors hover:bg-muted/40 focus-visible:bg-muted/50 focus-visible:outline-none')"
+            :class="cn(ROW, rowHref(item) && 'transition-colors outline-none hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset')"
           >
             <component
               :is="kindIcon(item.kind)"

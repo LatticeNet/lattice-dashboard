@@ -64,7 +64,8 @@ const toneClass: Record<MetricTone, string> = {
   default: "text-foreground",
   muted: "text-muted-foreground",
   success: "text-success",
-  warning: "text-warning",
+  // The darker text step: the fill-strength amber is under 3:1 on a light card.
+  warning: "text-warning-text",
   destructive: "text-destructive",
 };
 
@@ -98,7 +99,7 @@ const gridClass = computed(
       :to="metric.to"
       :class="cn(
         'flex min-w-0 items-center gap-2.5 bg-card px-3.5 py-3',
-        metric.to && 'transition-colors hover:bg-foreground/3 focus-visible:outline-none focus-visible:bg-foreground/5',
+        metric.to && 'transition-colors outline-none hover:bg-foreground/3 focus-visible:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset',
         metric.class,
       )"
       :title="metric.hint ? `${metric.label}: ${metric.value} (${metric.hint})` : undefined"

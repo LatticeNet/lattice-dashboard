@@ -1772,10 +1772,12 @@ async function runReminders(selectedOnly: boolean) {
                       role="img"
                       :aria-label="reminderHint(machine)"
                       data-testid="reminder-indicator"
-                      class="inline-flex rounded-sm p-0.5 text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      class="inline-flex rounded-sm p-0.5 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
+                      <!-- Full muted-foreground for both: the strike-through
+                           says off, and a dimmed icon fell under 3:1 in light. -->
                       <Bell v-if="machine.reminders_enabled" class="size-3.5" aria-hidden="true" />
-                      <BellOff v-else class="size-3.5 opacity-60" aria-hidden="true" />
+                      <BellOff v-else class="size-3.5" aria-hidden="true" />
                     </span>
                   </TooltipTrigger>
                   <!-- On the popover surface the console's data hovers use, and
