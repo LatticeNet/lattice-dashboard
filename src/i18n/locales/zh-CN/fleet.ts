@@ -936,7 +936,7 @@ export default {
         stale: "上次刷新失败",
       },
       proof: {
-        generated: "{age} 前生成",
+        generated: "{age}前生成",
         items: "{n} 项 | {n} 项",
         noPrices: "未记录价格",
         within: "未来 {days} 天",
@@ -945,7 +945,7 @@ export default {
         overdue: "已逾期",
         thisWeek: "本周",
         nextWeek: "下周",
-        weekOf: "{date} 当周",
+        weekOf: "{date} 起一周",
       },
       days: {
         today: "今天",
@@ -990,7 +990,8 @@ export default {
         action: "打开资产",
       },
       failed: "无法加载到期列表。",
-      stale: "刷新失败，当前显示的是 {age} 前的列表。",
+      stale: "刷新失败，下面是服务端上次生成的列表。",
+      quota: "已用 {percent}%，共 {quota}",
     },
     monitoring: {
       title: "监控",

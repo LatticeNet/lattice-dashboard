@@ -4,8 +4,9 @@ import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { BellOff, CalendarClock, Link2, LockKeyhole, RefreshCw, Server, UserRound } from "lucide-vue-next";
 import type { ExpiringItem } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { formatAmount, formatTotals, isOverdue, rowHref, type WeekGroup } from "@/views/fleet/upcomingModel";
+import { formatAmount, formatTotals, isOverdue, quotaPercent, rowHref, type WeekGroup } from "@/views/fleet/upcomingModel";
 
 /**
  * The rows of the expiring list, grouped by week. Home's Upcoming panel and
@@ -67,6 +68,26 @@ function groupLabel(group: WeekGroup): string {
   return t("fleet.upcoming.group.weekOf", { date: sameYear ? start.slice(5) : start });
 }
 
+/**
+ * The line under the title. The server sends data only (vendor and region,
+ * an email, a record name, an issuer), so the words come from here: the kind
+ * for anything that is not a machine (a server icon already says machine),
+ * and a VPN user's quota.
+ */
+function details(item: ExpiringItem): string[] {
+  const parts: string[] = [];
+  if (item.subtitle) parts.push(item.subtitle);
+  const percent = quotaPercent(item);
+  if (percent !== undefined) {
+    parts.push(t("fleet.upcoming.quota", { percent, quota: formatBytes(item.quota_bytes) }));
+  }
+  return parts;
+}
+
+function subtitle(item: ExpiringItem): string {
+  return [...(item.kind === "machine_renewal" ? [] : [kindLabel(item.kind)]), ...details(item)].join(" · ");
+}
+
 function cost(item: ExpiringItem): string {
   return item.cost_cents > 0 && item.currency ? formatAmount(item.cost_cents, item.currency) : "";
 }
@@ -76,7 +97,7 @@ function rowName(item: ExpiringItem): string {
   return [
     kindLabel(item.kind),
     item.title,
-    item.subtitle,
+    ...details(item),
     item.due_at?.slice(0, 10),
     daysText(item),
     item.state === "auto" ? t("fleet.upcoming.auto") : "",
@@ -116,7 +137,7 @@ const ROW =
             <div class="row-span-2 flex min-w-0 flex-col sm:row-span-1 sm:flex-row sm:items-baseline sm:gap-2">
               <span class="truncate text-sm font-medium" :title="item.title">{{ item.title }}</span>
               <span class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                <span v-if="item.subtitle" class="truncate" :title="item.subtitle">{{ item.subtitle }}</span>
+                <span v-if="subtitle(item)" class="truncate" :title="subtitle(item)">{{ subtitle(item) }}</span>
                 <!-- Icon only at 375, where the words would squeeze out the vendor. -->
                 <span v-if="item.state === 'auto'" class="inline-flex shrink-0 items-center gap-1" :title="$t('fleet.upcoming.auto')">
                   <RefreshCw class="size-3" aria-hidden="true" /><span class="hidden sm:inline">{{ $t('fleet.upcoming.auto') }}</span>

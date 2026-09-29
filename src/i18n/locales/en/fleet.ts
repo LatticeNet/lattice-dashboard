@@ -1002,7 +1002,8 @@ export default {
         action: "Open Inventory",
       },
       failed: "Could not load what runs out.",
-      stale: "Could not refresh. Showing the list from {age} ago.",
+      stale: "Could not refresh. This is the last list the server generated.",
+      quota: "{percent}% of {quota} used",
     },
     monitoring: {
       title: "Monitoring",

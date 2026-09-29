@@ -17,7 +17,7 @@ const props = defineProps<{
   now: number;
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const line = computed(() => {
   const data = props.data;
@@ -26,7 +26,7 @@ const line = computed(() => {
   const generated = Date.parse(data.generated_at);
   const totals = sumTotals(rows);
   return [
-    Number.isNaN(generated) ? "" : t("fleet.upcoming.proof.generated", { age: formatAge(props.now - generated) }),
+    Number.isNaN(generated) ? "" : t("fleet.upcoming.proof.generated", { age: formatAge(props.now - generated, locale.value) }),
     t("fleet.upcoming.proof.within", { days: data.within_days }),
     t("fleet.upcoming.proof.items", { n: rows.length }, rows.length),
     rows.length === 0 ? "" : totals.length ? formatTotals(totals) : t("fleet.upcoming.proof.noPrices"),

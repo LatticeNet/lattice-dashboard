@@ -1095,6 +1095,11 @@ export interface ExpiringItem {
   kind: ExpiringKind | string;
   id: string;
   title: string;
+  /**
+   * Data only, never words: `<vendor> · <region>` for a machine, the email or
+   * name for a VPN user, the record name for a share, the issuer for TLS. The
+   * console adds the localised kind and quota phrase.
+   */
   subtitle?: string;
   due_at: string;
   /** Whole UTC days from today to `due_at`; negative once past. */
@@ -1107,6 +1112,9 @@ export interface ExpiringItem {
   reminder?: { enabled: boolean; next_offset_days?: number };
   /** A console route that opens the object. */
   href?: string;
+  /** VPN users with a quota: bytes used and the quota, so the console writes the phrase. */
+  used_bytes?: number;
+  quota_bytes?: number;
 }
 
 export interface ExpiringTotal {

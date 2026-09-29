@@ -12,6 +12,7 @@ import {
   kindCounts,
   kindFilterQuery,
   parseKindFilter,
+  quotaPercent,
   rowHref,
   sumTotals,
   todayOf,
@@ -186,4 +187,11 @@ test("home's signal counts overdue rows and rows due this week that need a hand"
   ];
   assert.deepEqual(dueSoonCounts(rows), { overdue: 1, due: 2 });
   assert.deepEqual(dueSoonCounts([]), { overdue: 0, due: 0 });
+});
+
+test("a VPN user's quota is a whole percent, and absent without a quota", () => {
+  assert.equal(quotaPercent({ used_bytes: 164, quota_bytes: 200 }), 82);
+  assert.equal(quotaPercent({ quota_bytes: 200 }), 0);
+  assert.equal(quotaPercent({ used_bytes: 5 }), undefined);
+  assert.equal(quotaPercent({ used_bytes: 5, quota_bytes: 0 }), undefined);
 });

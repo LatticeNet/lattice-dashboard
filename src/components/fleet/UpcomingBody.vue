@@ -4,7 +4,6 @@ import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { AlertTriangle, Boxes, CalendarClock, Lock } from "lucide-vue-next";
 import { ApiError, type ExpiringItem, type ExpiringResponse } from "@/lib/api";
-import { formatAge } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EXPIRING_KINDS, groupByWeek, hiddenKindsOf, todayOf, upcomingState } from "@/views/fleet/upcomingModel";
 
@@ -69,7 +68,6 @@ const hiddenSentence = computed(() => {
   const sentence = t("fleet.upcoming.hiddenKinds", { kinds: list });
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 });
-const staleAge = computed(() => (props.lastUpdated ? formatAge(props.now - props.lastUpdated) : ""));
 /** Inside a card the states line up with the card's text; on a page they take the full width. */
 const inset = computed(() => (props.framed ? "mx-4 sm:mx-6" : ""));
 const serverDetail = computed(() =>
@@ -119,7 +117,7 @@ const serverDetail = computed(() =>
       >
         <p class="flex items-center gap-2 text-xs text-muted-foreground">
           <AlertTriangle class="size-3.5 shrink-0 text-warning" aria-hidden="true" />
-          {{ $t('fleet.upcoming.stale', { age: staleAge }) }}
+          {{ $t('fleet.upcoming.stale') }}
         </p>
         <Button variant="ghost" size="sm" class="h-7 shrink-0 px-2 text-xs" @click="emit('retry')">
           {{ $t('common.actions.retry') }}

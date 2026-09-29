@@ -188,7 +188,9 @@ function machineItems(): ExpiringItem[] {
 }
 
 function otherItems(): ExpiringItem[] {
-  const row = (kind: string, id: string, title: string, subtitle: string, days: number, href: string): ExpiringItem => ({
+  // Subtitles are data only (an email or name, a record name, an issuer),
+  // as the server sends them; the console adds the kind and the quota words.
+  const row = (kind: string, id: string, title: string, subtitle: string, days: number, href: string, extra: Partial<ExpiringItem> = {}): ExpiringItem => ({
     kind,
     id,
     title,
@@ -199,16 +201,19 @@ function otherItems(): ExpiringItem[] {
     cost_cents: 0,
     currency: "",
     href,
+    ...extra,
   });
   const users = "/plugins/latticenet.vpn-core/users";
+  const GiB = 1024 ** 3;
   return [
-    row("vpn_user", "pu_guest", "guest-oct-trip", "VPN user · 41% of 50 GB used", -2, users),
-    row("vpn_user", "pu_shenzhen", "openjobs-shenzhen", "VPN user · 82% of 200 GB used", 5, users),
-    row("vpn_user", "pu_family", "cdcd-family", "VPN user · 12% of 300 GB used", 40, users),
-    row("tls_certificate", "mon_tls_sub", "sub.example.net", "TLS monitor · Let's Encrypt R11", 6, "/monitoring/mon_tls_sub"),
+    row("vpn_user", "pu_guest", "guest-oct-trip", "guest@openjobs.example", -2, users, { used_bytes: 20.5 * GiB, quota_bytes: 50 * GiB }),
+    row("vpn_user", "pu_shenzhen", "openjobs-shenzhen", "shenzhen-office", 5, users, { used_bytes: 164 * GiB, quota_bytes: 200 * GiB }),
+    // No quota: the server leaves both byte fields out.
+    row("vpn_user", "pu_family", "cdcd-family", "family@cdcd.example", 40, users),
+    row("tls_certificate", "mon_tls_sub", "sub.example.net", "Let's Encrypt R11", 6, "/monitoring/mon_tls_sub"),
     // No subtitle: the server leaves the key out when it has nothing to say.
     row("tls_certificate", "mon_tls_console", "lattice.example.net", "", 45, "/monitoring/mon_tls_console"),
-    row("share", "shr_cdcd", "/s/cdcd", "Share of for-cdcd-loon", 33, "/platform/publishing?origin=share&share=shr_cdcd"),
+    row("share", "shr_cdcd", "/s/cdcd", "for-cdcd-loon", 33, "/platform/publishing?origin=share&share=shr_cdcd"),
   ];
 }
 

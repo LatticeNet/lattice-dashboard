@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NO_VALUE, formatDateTime, isZeroTime } from "../format.ts";
+import { NO_VALUE, formatAge, formatDateTime, isZeroTime } from "../format.ts";
 
 const GO_ZERO = "0001-01-01T00:00:00Z";
 
@@ -34,4 +34,13 @@ test("formatDateTime alone would print the zero time as a year-1 date, which is 
   // Pins the failure the guard prevents, so a future formatter that starts
   // treating year 1 as absent would make this test say so.
   assert.notEqual(formatDateTime(GO_ZERO), NO_VALUE);
+});
+
+test("an age reads in Chinese units for a zh locale and stays compact otherwise", () => {
+  assert.equal(formatAge(13_000), "13s");
+  assert.equal(formatAge(13_000, "en"), "13s");
+  assert.equal(formatAge(13_000, "zh-CN"), "13 秒");
+  assert.equal(formatAge(5 * 60_000, "zh-CN"), "5 分钟");
+  assert.equal(formatAge(3 * 3_600_000, "zh-CN"), "3 小时");
+  assert.equal(formatAge(50 * 3_600_000, "zh-CN"), "2 天");
 });

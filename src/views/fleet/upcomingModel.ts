@@ -242,6 +242,14 @@ export function kindCounts(items: readonly Pick<ExpiringItem, "kind">[]): Record
   return counts;
 }
 
+/** Whole percent of a VPN user's quota used, or undefined without a quota. */
+export function quotaPercent(item: Pick<ExpiringItem, "used_bytes" | "quota_bytes">): number | undefined {
+  const quota = item.quota_bytes;
+  if (!(typeof quota === "number" && quota > 0)) return undefined;
+  const used = typeof item.used_bytes === "number" && item.used_bytes > 0 ? item.used_bytes : 0;
+  return Math.round((used / quota) * 100);
+}
+
 // ── where a row goes ────────────────────────────────────────────────────────
 
 // Where each kind lives when a row arrives without an href. The server sends
