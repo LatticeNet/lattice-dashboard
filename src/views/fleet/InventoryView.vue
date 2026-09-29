@@ -1757,7 +1757,18 @@ async function runReminders(selectedOnly: boolean) {
                       <BellOff v-else class="size-3.5 opacity-60" aria-hidden="true" />
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent class="max-w-64">{{ reminderHint(machine) }}</TooltipContent>
+                  <!-- On the popover surface the console's data hovers use, and
+                       below the bell, so it never sits on the card's title
+                       or its Node and Edit buttons. -->
+                  <TooltipContent
+                    side="bottom"
+                    align="start"
+                    :side-offset="6"
+                    :collision-padding="8"
+                    class="max-w-64 border border-border bg-popover text-popover-foreground shadow-(--shadow-overlay)"
+                  >
+                    {{ reminderHint(machine) }}
+                  </TooltipContent>
                 </Tooltip>
                 </span>
               </div>
