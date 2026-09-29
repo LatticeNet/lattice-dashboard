@@ -938,6 +938,15 @@ export default {
       title: "Upcoming",
       description: "Everything with a date that runs out: machine renewals, VPN users, shares and TLS certificates.",
       panelTitle: "Upcoming",
+      tile: {
+        label: "Runs out",
+        overdue: "{n} overdue",
+        due: "{n} within 7 days",
+        none: "Nothing due in 7 days",
+        failed: "Could not load",
+        unsupported: "Needs a newer server",
+        stale: "last refresh failed",
+      },
       proof: {
         generated: "generated {age} ago",
         items: "{n} item | {n} items",

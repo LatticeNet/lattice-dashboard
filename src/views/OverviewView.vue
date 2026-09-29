@@ -6,6 +6,7 @@ import {
   Activity,
   ArrowDown,
   ArrowUp,
+  CalendarClock,
   CircleDashed,
   Cpu,
   Globe,
@@ -23,7 +24,8 @@ import {
   WifiOff,
 } from "lucide-vue-next";
 import { api, unwrap, isActionablePendingApproval } from "@/lib/api";
-import type { Node, ApprovalCounts, ApprovalView, TaskView, AuditEvent } from "@/lib/api";
+import type { Node, ApprovalCounts, ApprovalView, TaskView, AuditEvent, ExpiringResponse } from "@/lib/api";
+import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, dueSoonCounts, isUnsupported } from "@/views/fleet/upcomingModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
@@ -83,6 +85,13 @@ const approvals = useAsyncData<ApprovalView[] | undefined>(
 const tasks = useAsyncData<TaskView[] | undefined>(
   (signal) => api.tasks.list({ signal }).then((r) => unwrap(r, "tasks")),
   { pollInterval: 10000 },
+);
+
+// What runs out: one read for the summary tile and the Upcoming panel below.
+// Dates move once a day, so a minute between polls is plenty.
+const expiring = useAsyncData<ExpiringResponse>(
+  (signal) => api.expiring.list(PANEL_WITHIN_DAYS, { signal }),
+  { pollInterval: 60_000 },
 );
 
 const audit = useAsyncData<AuditEvent[] | undefined>(
@@ -246,7 +255,37 @@ const fleetMetrics = computed<Metric[]>(() => {
   ];
 });
 
-/** The operator's own queue: what waits on a decision, what waits on a node. */
+/**
+ * "What runs out" above the fold: overdue rows and rows due this week that
+ * need a hand, each in its own tone. Nothing due is quiet; a failed read or a
+ * server without the list says so rather than printing zero.
+ */
+const runsOutMetric = computed<Metric>(() => {
+  const base = {
+    key: "runs_out",
+    label: t("fleet.upcoming.tile.label"),
+    icon: CalendarClock,
+    to: auth.canAny(UPCOMING_SCOPES) ? { name: "upcoming" } : undefined,
+    // Two columns on a phone: this third segment takes a whole row rather
+    // than leaving a blank cell beside it.
+    class: "col-span-2 lg:col-span-1",
+  };
+  const data = expiring.data.value;
+  const error = expiring.error.value;
+  if (isUnsupported(error)) return { ...base, value: t("fleet.upcoming.tile.unsupported"), tone: "muted" };
+  if (!data) {
+    return { ...base, value: error ? t("fleet.upcoming.tile.failed") : t("common.misc.unknown"), tone: "muted" };
+  }
+  const { overdue, due } = dueSoonCounts(data.items);
+  const hint = error ? t("fleet.upcoming.tile.stale") : undefined;
+  if (overdue === 0 && due === 0) return { ...base, value: t("fleet.upcoming.tile.none"), tone: "muted", hint };
+  const parts: NonNullable<Metric["parts"]> = [];
+  if (overdue > 0) parts.push({ text: t("fleet.upcoming.tile.overdue", { n: overdue }), tone: "destructive" });
+  if (due > 0) parts.push({ text: t("fleet.upcoming.tile.due", { n: due }), tone: "warning" });
+  return { ...base, value: parts.map((p) => p.text).join(" · "), parts, hint };
+});
+
+/** The operator's own queue: what waits on a decision, what waits on a node, what runs out. */
 const kpiMetrics = computed<Metric[]>(() => [
   {
     key: "approvals",
@@ -263,6 +302,7 @@ const kpiMetrics = computed<Metric[]>(() => [
     icon: Terminal,
     to: { name: "tasks", query: { status: "queued" } },
   },
+  runsOutMetric.value,
 ]);
 
 /**
@@ -307,6 +347,7 @@ function refreshAll() {
   approvalCounts.refresh();
   approvals.refresh();
   tasks.refresh();
+  expiring.refresh();
   audit.refresh();
 }
 </script>
@@ -336,7 +377,7 @@ function refreshAll() {
     <!-- Fleet band: total and the five status words, one caliber, then the
          operator's own queue. See MetricStrip for why these are not cards. -->
     <MetricStrip :metrics="fleetMetrics" :columns="6" />
-    <MetricStrip :metrics="kpiMetrics" :columns="2" />
+    <MetricStrip :metrics="kpiMetrics" :columns="3" />
 
     <!-- Fleet health: live aggregate resource + bandwidth roll-up across the
          fleet, so the operator sees overall pressure without scanning cards. -->
@@ -574,7 +615,7 @@ function refreshAll() {
       <!-- Upcoming: renewals, VPN users, shares and certificates due in the
            next 30 days. Below the fleet on purpose: something broken now
            outranks something that runs out next week. -->
-      <UpcomingPanel />
+      <UpcomingPanel :query="expiring" />
       </div>
 
       <!-- Right column -->

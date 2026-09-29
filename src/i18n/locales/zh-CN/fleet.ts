@@ -926,6 +926,15 @@ export default {
       title: "即将到期",
       description: "所有带到期日的对象：机器续费、VPN 用户、订阅分享和 TLS 证书。",
       panelTitle: "即将到期",
+      tile: {
+        label: "到期",
+        overdue: "逾期 {n} 项",
+        due: "7 天内 {n} 项",
+        none: "7 天内无到期",
+        failed: "加载失败",
+        unsupported: "需要更新服务端",
+        stale: "上次刷新失败",
+      },
       proof: {
         generated: "{age} 前生成",
         items: "{n} 项 | {n} 项",

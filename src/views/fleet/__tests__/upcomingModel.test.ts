@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { ExpiringItem } from "@/lib/api/types";
 import {
+  dueSoonCounts,
   filterByKinds,
   hiddenKindsOf,
   formatAmount,
@@ -171,4 +172,17 @@ test("hidden kinds are named in chip order, and an old server's row count is ign
   assert.deepEqual(hiddenKindsOf({ hidden: 3 } as never), []);
   assert.deepEqual(hiddenKindsOf(undefined), []);
   assert.deepEqual(hiddenKindsOf({ hidden_kinds: null } as never), []);
+});
+
+test("home's signal counts overdue rows and rows due this week that need a hand", () => {
+  const rows = [
+    item("late", "2026-09-27"),
+    item("jp-nat", "2026-10-06", { state: "due" }),
+    item("vpn", "2026-10-04", { kind: "vpn_user", state: "due" }),
+    // Auto-roll inside the week renews by itself: not a call to act.
+    item("auto", "2026-10-02", { state: "auto" }),
+    item("far", "2026-10-20"),
+  ];
+  assert.deepEqual(dueSoonCounts(rows), { overdue: 1, due: 2 });
+  assert.deepEqual(dueSoonCounts([]), { overdue: 0, due: 0 });
 });

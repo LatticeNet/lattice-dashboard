@@ -3,10 +3,10 @@ import { computed } from "vue";
 import { RouterLink } from "vue-router";
 import { useNow } from "@vueuse/core";
 import { CalendarClock } from "lucide-vue-next";
-import { api } from "@/lib/api";
-import { useAsyncData } from "@/composables/useAsyncData";
+import type { ExpiringResponse } from "@/lib/api";
+import type { AsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
-import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES } from "@/views/fleet/upcomingModel";
+import { UPCOMING_SCOPES } from "@/views/fleet/upcomingModel";
 
 import UpcomingBody from "./UpcomingBody.vue";
 import UpcomingProof from "./UpcomingProof.vue";
@@ -14,10 +14,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 /**
  * Home's view of what runs out in the next 30 days, grouped by week, with the
- * cost it adds up to. Dates move once a day, so a minute between polls is
- * plenty; the proof line's age ticks on its own.
+ * cost it adds up to. Home owns the read (PANEL_WITHIN_DAYS, once a minute)
+ * because its top summary counts the same rows; the proof line's age ticks
+ * on its own.
  */
-const query = useAsyncData((signal) => api.expiring.list(PANEL_WITHIN_DAYS, { signal }), { pollInterval: 60_000 });
+const props = defineProps<{ query: AsyncData<ExpiringResponse> }>();
+const query = props.query;
 const now = useNow({ interval: 1000 });
 const auth = useAuthStore();
 const canOpenList = computed(() => auth.canAny(UPCOMING_SCOPES));

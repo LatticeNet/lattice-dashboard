@@ -221,6 +221,21 @@ export function hiddenKindsOf(data: Pick<ExpiringResponse, "hidden_kinds"> | und
   return [...known, ...unknown];
 }
 
+/**
+ * Home's one-line signal: rows past due, and rows due within the week that
+ * need a hand (`due`). Auto-roll rows inside the week are left out on
+ * purpose: they renew and are charged without anyone acting.
+ */
+export function dueSoonCounts(items: readonly Pick<ExpiringItem, "days" | "state">[]): { overdue: number; due: number } {
+  let overdue = 0;
+  let due = 0;
+  for (const item of items) {
+    if (isOverdue(item)) overdue += 1;
+    else if (item.state === "due" && item.days >= 0 && item.days <= 7) due += 1;
+  }
+  return { overdue, due };
+}
+
 export function kindCounts(items: readonly Pick<ExpiringItem, "kind">[]): Record<KnownKind, number> {
   const counts = Object.fromEntries(EXPIRING_KINDS.map((kind) => [kind, 0])) as Record<KnownKind, number>;
   for (const item of items) if (isKnownKind(item.kind)) counts[item.kind] += 1;
