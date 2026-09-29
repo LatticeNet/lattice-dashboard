@@ -63,6 +63,19 @@ interface PolicyDraft {
 }
 
 const policies = computed(() => ctx.policies.data.value ?? []);
+
+/**
+ * Idle nodes (policy off, no capture, no raw log source, nothing held) read
+ * the same on every row, so they collapse into one line with a toggle, as on
+ * Overview. A row being edited stays out, so a change is never hidden before
+ * it is saved, and every node stays one click away.
+ */
+const showIdlePolicies = ref(false);
+const idleNodeIds = computed(() => new Set(ctx.coverageRows.value.filter((row) => row.quiet).map((row) => row.nodeId)));
+const idlePolicies = computed(() => policies.value.filter((row) => idleNodeIds.value.has(row.node_id) && !dirty(row)));
+const shownPolicies = computed(() =>
+  showIdlePolicies.value ? policies.value : policies.value.filter((row) => !idleNodeIds.value.has(row.node_id) || dirty(row)),
+);
 const drafts = ref<Record<string, PolicyDraft>>({});
 const savingNode = ref("");
 
@@ -291,7 +304,7 @@ async function startFiltered(): Promise<void> {
         :empty-description="$t('platform.trace.policyEmptyDescription')"
         @retry="ctx.policies.refresh"
       >
-        <div class="relative overflow-x-auto rounded-md border border-border">
+        <div v-if="shownPolicies.length" class="relative overflow-x-auto rounded-md border border-border">
           <table class="w-full min-w-[720px] text-sm">
             <thead>
               <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -304,7 +317,7 @@ async function startFiltered(): Promise<void> {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in policies" :key="row.node_id" class="border-b border-border last:border-b-0">
+              <tr v-for="row in shownPolicies" :key="row.node_id" class="border-b border-border last:border-b-0">
                 <th scope="row" class="sticky left-0 z-10 max-w-48 bg-background px-3 py-2 text-left font-medium">
                   <span class="block truncate" :title="row.node_id">{{ ctx.nodeLabel(row.node_id) }}</span>
                 </th>
@@ -360,6 +373,20 @@ async function startFiltered(): Promise<void> {
               </tr>
             </tbody>
           </table>
+        </div>
+        <div v-if="idlePolicies.length" class="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1">
+          <p class="text-sm text-muted-foreground">
+            {{ showIdlePolicies
+              ? $t('platform.evidence.overview.quietShown', { count: idlePolicies.length }, idlePolicies.length)
+              : shownPolicies.length
+                ? $t('platform.evidence.overview.quietRows', { count: idlePolicies.length }, idlePolicies.length)
+                : $t('platform.evidence.overview.quietAll', { count: idlePolicies.length }, idlePolicies.length) }}
+          </p>
+          <Button variant="ghost" size="sm" :aria-expanded="showIdlePolicies" @click="showIdlePolicies = !showIdlePolicies">
+            {{ showIdlePolicies
+              ? $t('platform.evidence.overview.hideQuiet')
+              : $t('platform.evidence.overview.showQuiet', { count: idlePolicies.length }, idlePolicies.length) }}
+          </Button>
         </div>
         <p class="mt-2 text-xs text-muted-foreground">
           {{ $t('platform.trace.budgetHint') }}
