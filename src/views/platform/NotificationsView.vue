@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
   CalendarClock,
   GitBranch,
+  TriangleAlert,
   Pencil,
   Plus,
   RefreshCw,
@@ -152,24 +154,33 @@ function reminderWhen(inDays: number, at: string): string {
   return t("fleet.inventory.list.whenDate", { date: at });
 }
 
-/** One line for a rule that routes renewals: whom it reaches and what goes out next. */
-function renewalLine(rule: NotifyRuleView): string {
-  if (!canReadInventory.value) return t("platform.notifications.renewals.noAccess");
+/**
+ * One line for a rule that routes renewals: whom it reaches and what goes out
+ * next. `warn` marks an enabled rule through which no reminder will go out
+ * (no dated machine, every reminder off, or nothing scheduled): the fix is in
+ * Inventory, so the line says so there instead of reading as healthy.
+ */
+function renewalLine(rule: NotifyRuleView): { text: string; warn: boolean } {
+  if (!canReadInventory.value) return { text: t("platform.notifications.renewals.noAccess"), warn: false };
   const c = coverage.value;
   if (!c) {
-    return machinesQuery.error.value
-      ? t("platform.notifications.renewals.failed")
-      : t("platform.notifications.renewals.loading");
+    return {
+      text: machinesQuery.error.value
+        ? t("platform.notifications.renewals.failed")
+        : t("platform.notifications.renewals.loading"),
+      warn: false,
+    };
   }
-  if (c.covered === 0 && c.off > 0) return t("platform.notifications.renewals.noneOn", { n: c.off });
+  if (c.covered === 0 && c.off > 0) return { text: t("platform.notifications.renewals.noneOn", { n: c.off }), warn: rule.enabled };
+  if (c.covered === 0) return { text: t("platform.notifications.renewals.noDates"), warn: rule.enabled };
   const covers = rule.enabled ? "platform.notifications.renewals.covers" : "platform.notifications.renewals.coversDisabled";
   const parts = [t(covers, { n: c.covered }, c.covered)];
   if (c.off > 0) parts.push(t("platform.notifications.renewals.off", { n: c.off }, c.off));
   // Nothing goes out through a disabled rule, so it has no next reminder to name.
-  if (!rule.enabled) return parts.join(" ");
+  if (!rule.enabled) return { text: parts.join(" "), warn: false };
   if (!c.next) {
-    if (c.covered > 0) parts.push(t("platform.notifications.renewals.none"));
-    return parts.join(" ");
+    parts.push(t("platform.notifications.renewals.none"));
+    return { text: parts.join(" "), warn: true };
   }
   const { machine, reminder } = c.next;
   const args = {
@@ -184,7 +195,7 @@ function renewalLine(rule: NotifyRuleView): string {
   } else {
     parts.push(t(c.sameDay > 1 ? "platform.notifications.renewals.nextMany" : "platform.notifications.renewals.next", args));
   }
-  return parts.join(" ");
+  return { text: parts.join(" "), warn: false };
 }
 
 const sortedChannels = computed(() =>
@@ -650,9 +661,20 @@ async function confirmDeleteRule(): Promise<void> {
             <div class="mt-1 font-mono text-xs text-muted-foreground">{{ row.id }}</div>
           </template>
           <template #row-detail="{ row }">
-            <p class="flex items-start gap-2 text-xs text-muted-foreground" data-testid="renewal-coverage">
-              <CalendarClock class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              <span>{{ renewalLine(row) }}</span>
+            <p
+              :class="cn('flex items-start gap-2 text-xs', renewalLine(row).warn ? 'text-warning-text' : 'text-muted-foreground')"
+              data-testid="renewal-coverage"
+            >
+              <TriangleAlert v-if="renewalLine(row).warn" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <CalendarClock v-else class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                {{ renewalLine(row).text }}
+                <RouterLink
+                  v-if="renewalLine(row).warn"
+                  :to="{ name: 'inventory', query: { group: 'renewal' } }"
+                  class="rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >{{ $t('platform.notifications.renewals.openInventory') }}</RouterLink>
+              </span>
             </p>
           </template>
           <template #cell-event_types="{ row }">

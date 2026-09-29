@@ -277,6 +277,9 @@ const runsOutMetric = computed<Metric>(() => {
     return { ...base, value: error ? t("fleet.upcoming.tile.failed") : t("common.misc.unknown"), tone: "muted" };
   }
   const { overdue, due } = dueSoonCounts(data.items);
+  // The label already says what is counted (window in the phrases, kinds and
+  // the auto-renewal exclusion in the label), so the hint is only for a
+  // failed refresh.
   const hint = error ? t("fleet.upcoming.tile.stale") : undefined;
   if (overdue === 0 && due === 0) return { ...base, value: t("fleet.upcoming.tile.none"), tone: "muted", hint };
   const parts: NonNullable<Metric["parts"]> = [];

@@ -669,7 +669,7 @@ export default {
         monthlySpend: "Monthly spend",
         coverage: "Coverage",
         profiledHint: "{profiled} profiled · {missing} need a profile",
-        overdueHint: "{count} overdue",
+        overdueHint: "machines renewing within 14 days · {count} overdue",
         needsProfileHint: "{count} nodes need a profile",
       },
       actions: {
@@ -939,9 +939,9 @@ export default {
       description: "Everything with a date that runs out: machine renewals, VPN users, shares and TLS certificates.",
       panelTitle: "Upcoming",
       tile: {
-        label: "Runs out",
+        label: "Runs out: all kinds, auto-renewals excluded",
         overdue: "{n} overdue",
-        due: "{n} within 7 days",
+        due: "{n} due within 7 days",
         none: "Nothing due in 7 days",
         failed: "Could not load",
         unsupported: "Needs a newer server",

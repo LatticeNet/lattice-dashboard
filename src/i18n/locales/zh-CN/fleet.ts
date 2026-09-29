@@ -658,7 +658,7 @@ export default {
         monthlySpend: "每月支出",
         coverage: "覆盖率",
         profiledHint: "{profiled} 已建档 · {missing} 待建档",
-        overdueHint: "{count} 台逾期",
+        overdueHint: "14 天内续费的机器 · {count} 台逾期",
         needsProfileHint: "{count} 个节点待建档",
       },
       actions: {
@@ -927,9 +927,9 @@ export default {
       description: "所有带到期日的对象：机器续费、VPN 用户、订阅分享和 TLS 证书。",
       panelTitle: "即将到期",
       tile: {
-        label: "到期",
+        label: "到期：全部类型，不含自动续费",
         overdue: "逾期 {n} 项",
-        due: "7 天内 {n} 项",
+        due: "7 天内到期 {n} 项",
         none: "7 天内无到期",
         failed: "加载失败",
         unsupported: "需要更新服务端",

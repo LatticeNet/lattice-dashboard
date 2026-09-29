@@ -923,6 +923,8 @@ export default {
         nextAfterDate: "Next reminder {when}: {name}, the day after {renewal} if it is not renewed.",
         none: "No reminder is scheduled.",
         noneOn: "None of the {n} machines with a renewal date has its reminder on, so no renewal reminder goes out.",
+        noDates: "No machine has a renewal date, so no renewal reminder goes out.",
+        openInventory: "Open Inventory",
         loading: "Counting machines.",
         failed: "Could not read the machines, so coverage is unknown.",
         noAccess: "Counting machines needs read access to Inventory.",
