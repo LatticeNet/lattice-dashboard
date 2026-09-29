@@ -71,3 +71,21 @@ test("init is sent only in answer to the plugin's ready", () => {
     "init is posted from the ready case and nowhere else",
   );
 });
+
+test("a page-state write never scrolls the console or cancels a navigation", () => {
+  const router = source("../../../router/index.ts");
+  // A query-only replace keeps the scroll position (consoleScrollBehavior).
+  assert.match(router, /scrollBehavior: consoleScrollBehavior,/, "the router must scroll through consoleScrollBehavior");
+  assert.doesNotMatch(router, /scrollBehavior\(\)\s*\{\s*return \{ top: 0 \}/, "an unconditional top scroll jumps on every state write");
+  // The tracker must see a navigation before the session guard awaits.
+  const tracker = router.indexOf("trackPendingNavigation(router);");
+  const firstGuard = router.indexOf("router.beforeEach(");
+  assert.ok(tracker > 0, "the router must install the pending-navigation tracker");
+  assert.ok(firstGuard > 0 && tracker < firstGuard, "the tracker must be installed before any other beforeEach");
+
+  const host = source("../PluginFrameHost.vue");
+  // Decided against the router's current route and the tracker, failing
+  // closed when the router has no tracker.
+  assert.match(host, /planPluginStateWrite\(\{/, "the host must decide writes through planPluginStateWrite");
+  assert.match(host, /navigationPending: navigation\?\.isPending\(\) \?\? true,/, "no tracker must mean hold, never write");
+});

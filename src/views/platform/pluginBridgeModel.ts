@@ -1,3 +1,5 @@
+import { PLUGIN_VIEW_ROUTE_NAME } from "@/router/navigationState";
+
 export interface BridgeInterfaceMethod {
   name: string;
   effect: "read" | "write" | "plan" | string;
@@ -117,19 +119,65 @@ export const PAGE_STATE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,23}$/;
 export const PAGE_STATE_MAX_VALUE_LENGTH = 256;
 
 /**
+ * Query keys the console itself reads: the login redirect, the SSO callback,
+ * the TOTP challenge, the MFA gate. They never cross the bridge. Init leaves
+ * them out of pageState, and a plugin state naming one is dropped whole, so a
+ * plugin can neither read a code or token that happens to be in the address
+ * nor plant one for the console to act on.
+ */
+export const PAGE_STATE_RESERVED_KEYS: readonly string[] = Object.freeze([
+  "redirect",
+  "next",
+  "code",
+  "state",
+  "token",
+  "sso_error",
+  "totp_challenge",
+  "mfa",
+]);
+
+function isPageStateKey(key: string): boolean {
+  return PAGE_STATE_KEY_PATTERN.test(key) && !PAGE_STATE_RESERVED_KEYS.includes(key);
+}
+
+function isPageStateValue(value: unknown): value is string {
+  return typeof value === "string" && value.length <= PAGE_STATE_MAX_VALUE_LENGTH;
+}
+
+/**
+ * A plain object as structured clone delivers one: its prototype is
+ * Object.prototype or null. A Map, Set, Date or class instance survives the
+ * clone with its own prototype and no own enumerable keys, so without this it
+ * would read as an empty state and clear the query.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
  * The state a plugin sent, or null when anything about it breaks the rules:
- * not a plain object, more than 16 keys, a key outside the pattern, or a value
- * that is not a string of at most 256 characters. One bad entry drops the
- * whole message, so the address never holds half of what the plugin meant.
+ * not a plain object, more than 16 keys, a key outside the pattern or on the
+ * reserved list, or a value that is not a string of at most 256 characters.
+ * One bad entry drops the whole message, so the address never holds half of
+ * what the plugin meant.
+ *
+ * One pass, stopping at the 17th key or the first bad entry: a state with a
+ * million keys costs no more to refuse than one with seventeen. (The browser
+ * has already paid for cloning it; the rate limit bounds how often.)
  */
 export function validatePluginPageState(value: unknown): PluginPageState | null {
-  if (!isRecord(value)) return null;
-  const entries = Object.entries(value);
-  if (entries.length > PAGE_STATE_MAX_KEYS) return null;
+  if (!isPlainObject(value)) return null;
   const state: PluginPageState = {};
-  for (const [key, entry] of entries) {
-    if (!PAGE_STATE_KEY_PATTERN.test(key)) return null;
-    if (typeof entry !== "string" || entry.length > PAGE_STATE_MAX_VALUE_LENGTH) return null;
+  let count = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    count += 1;
+    if (count > PAGE_STATE_MAX_KEYS) return null;
+    if (!isPageStateKey(key)) return null;
+    const entry = value[key];
+    if (!isPageStateValue(entry)) return null;
     state[key] = entry;
   }
   return state;
@@ -141,14 +189,15 @@ export function validatePluginPageState(value: unknown): PluginPageState | null 
  * may hold anything a hand or an old link put there, so entries that break
  * the rules are left out one by one (a repeated key, which the router hands
  * over as an array, among them) and at most 16 are kept, in query order.
+ * Reserved console keys are always left out.
  */
 export function pluginPageStateFromQuery(query: Record<string, unknown>): PluginPageState {
   const state: PluginPageState = {};
   let kept = 0;
   for (const [key, entry] of Object.entries(query)) {
     if (kept >= PAGE_STATE_MAX_KEYS) break;
-    if (!PAGE_STATE_KEY_PATTERN.test(key)) continue;
-    if (typeof entry !== "string" || entry.length > PAGE_STATE_MAX_VALUE_LENGTH) continue;
+    if (!isPageStateKey(key)) continue;
+    if (!isPageStateValue(entry)) continue;
     state[key] = entry;
     kept += 1;
   }
@@ -167,6 +216,11 @@ export interface PluginRouteLocation {
  * the state as the whole query, or null when the query already says exactly
  * that. The path never changes, so the view is not remounted and the frame is
  * not reloaded; the caller applies it with a history replace, not a push.
+ *
+ * The state replaces the whole query. That is safe only because no console
+ * key lives on a plugin route today (the reserved keys belong to login, SSO
+ * and the MFA gate, which never render a plugin). Keep it that way: a console
+ * parameter added to plugin routes would be erased by the plugin's next write.
  */
 export function pluginStateLocation(
   current: PluginRouteLocation,
@@ -179,6 +233,37 @@ export function pluginStateLocation(
     stateKeys.every((key) => current.query[key] === state[key]);
   if (same) return null;
   return { path: current.path, query: { ...state }, hash: current.hash ?? "" };
+}
+
+/** What the frame host does with a page state the bridge accepted. */
+export type PluginStateWrite =
+  | { kind: "replace"; location: { path: string; query: PluginPageState; hash: string } }
+  | { kind: "hold" }
+  | { kind: "skip" };
+
+/**
+ * Decide a page-state write against the console's current route.
+ *
+ * While any navigation is pending the write is held, never applied: a history
+ * replace started then would cancel it, and the operator's click would be
+ * lost. The route the operator is still looking at is not where they are
+ * going, so nothing about it can make the write safe. The caller keeps the
+ * newest held state and asks again when the navigation ends.
+ *
+ * Otherwise the write applies only on the plugin route, on the path the frame
+ * was mounted for, and only when it changes the query.
+ */
+export function planPluginStateWrite(input: {
+  current: PluginRouteLocation & { name: unknown };
+  framePath: string;
+  navigationPending: boolean;
+  state: PluginPageState;
+}): PluginStateWrite {
+  if (input.navigationPending) return { kind: "hold" };
+  const { current } = input;
+  if (current.name !== PLUGIN_VIEW_ROUTE_NAME || current.path !== input.framePath) return { kind: "skip" };
+  const location = pluginStateLocation(current, input.state);
+  return location ? { kind: "replace", location } : { kind: "skip" };
 }
 
 export interface BridgeMessageEvent {

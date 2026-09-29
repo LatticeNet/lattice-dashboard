@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   PAGE_STATE_MAX_KEYS,
+  PAGE_STATE_RESERVED_KEYS,
   PluginBridgeSession,
   bridgeInterfaceFingerprint,
   interfaceMethodScopes,
+  planPluginStateWrite,
   pluginPageStateFromQuery,
   pluginStateLocation,
   resolvePluginFrameURL,
@@ -563,4 +565,60 @@ test("a state write keeps the path and hash, replaces the whole query, and skips
     { path: "/p", query: { view: "a" }, hash: "" },
     "a repeated key is not the same as one value",
   );
+});
+
+test("reserved console keys never cross the bridge, in either direction", () => {
+  assert.deepEqual(
+    [...PAGE_STATE_RESERVED_KEYS],
+    ["redirect", "next", "code", "state", "token", "sso_error", "totp_challenge", "mfa"],
+  );
+  // Plugin to host: a state naming one is dropped whole, like any broken rule.
+  for (const key of PAGE_STATE_RESERVED_KEYS) {
+    assert.equal(validatePluginPageState({ view: "lines", [key]: "x" }), null, key);
+  }
+  // Host to plugin: left out one by one, and they do not use up the 16.
+  const query: Record<string, unknown> = Object.fromEntries(PAGE_STATE_RESERVED_KEYS.map((key) => [key, "secret"]));
+  for (const key of range(16)) query[key] = "v";
+  query.view = "lines";
+  const state = pluginPageStateFromQuery(query);
+  for (const key of PAGE_STATE_RESERVED_KEYS) assert.equal(key in state, false, key);
+  assert.deepEqual(Object.keys(state), range(16));
+  assert.deepEqual(pluginPageStateFromQuery({ code: "oauth-code", token: "t", view: "lines" }), { view: "lines" });
+});
+
+test("only a plain object is a page state: a cloned Map, Set or Date is refused, not read as empty", () => {
+  // What structured clone delivers from the frame, prototypes and all.
+  for (const value of [new Map([["view", "lines"]]), new Set(["view"]), new Date(0)]) {
+    assert.equal(validatePluginPageState(structuredClone(value)), null, Object.prototype.toString.call(value));
+  }
+  assert.equal(validatePluginPageState(new Map()), null, "an empty Map would otherwise clear the query");
+  // A class instance does not survive the clone as one, but the rule holds.
+  assert.equal(validatePluginPageState(new (class State { view = "lines"; })()), null);
+  assert.deepEqual(validatePluginPageState(structuredClone({ view: "lines" })), { view: "lines" });
+  const bare = Object.assign(Object.create(null) as Record<string, unknown>, { view: "lines" });
+  assert.deepEqual(validatePluginPageState(bare), { view: "lines" }, "a null-prototype object is plain");
+});
+
+test("an oversized state is refused at the 17th key, without reading the rest", () => {
+  let reads = 0;
+  const huge: Record<string, unknown> = {};
+  for (let i = 0; i < 5_000; i += 1) {
+    Object.defineProperty(huge, `k${i}`, { enumerable: true, get: () => { reads += 1; return "v"; } });
+  }
+  assert.equal(validatePluginPageState(huge), null);
+  assert.equal(reads, PAGE_STATE_MAX_KEYS, "sixteen values read, then the count stops it");
+});
+
+test("a state write is held while a navigation is pending, and applies only on its own plugin page", () => {
+  const framePath = "/plugins/latticenet.vpn-core/lines";
+  const current = { name: "plugin-view", path: framePath, query: { view: "lines" }, hash: "" };
+  const plan = (over: Partial<Parameters<typeof planPluginStateWrite>[0]>) =>
+    planPluginStateWrite({ current, framePath, navigationPending: false, state: { view: "users" }, ...over });
+
+  assert.deepEqual(plan({}), { kind: "replace", location: { path: framePath, query: { view: "users" }, hash: "" } });
+  // The route still reads as this page while the operator's click is in flight.
+  assert.deepEqual(plan({ navigationPending: true }), { kind: "hold" });
+  assert.deepEqual(plan({ current: { ...current, name: "overview" } }), { kind: "skip" }, "not the plugin route");
+  assert.deepEqual(plan({ current: { ...current, path: "/plugins/latticenet.vpn-core/users" } }), { kind: "skip" }, "another plugin page");
+  assert.deepEqual(plan({ state: { view: "lines" } }), { kind: "skip" }, "nothing to change");
 });

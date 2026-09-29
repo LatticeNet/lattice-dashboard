@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   PluginBridgeSession,
-  pluginStateLocation,
+  planPluginStateWrite,
   resolvePluginFrameURL,
   type BridgeHostMessage,
   type PluginPageState,
@@ -23,6 +23,7 @@ import {
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
 import { PLUGIN_TOKEN_NAMES } from "./pluginTokenContract";
 import { claimViewportPane } from "@/layout/viewportPane";
+import { pendingNavigationOf } from "@/router/navigationState";
 import { copyForFrame as hostCopy } from "./pluginClipboard";
 
 const props = defineProps<{
@@ -51,15 +52,45 @@ const { t } = useI18n();
 const framePath = route.path;
 
 /**
+ * The router's pending-navigation tracker (installed in router/index.ts).
+ * Without one the host cannot tell whether a replace would cancel the
+ * operator's navigation, so it holds every write and applies none.
+ */
+const navigation = pendingNavigationOf(router);
+
+/** The newest state that arrived while a navigation was pending. */
+let heldState: PluginPageState | null = null;
+
+/**
  * Put the plugin's page state in the address: history replace, same path,
- * query only. A write that arrives after the operator has moved to another
- * page is dropped rather than applied there.
+ * query only. While a navigation is pending the newest state is held and
+ * tried again when it ends; on another page, or another route, it is dropped
+ * rather than applied there.
  */
 function writePageState(state: PluginPageState) {
-  if (route.path !== framePath) return;
-  const next = pluginStateLocation({ path: route.path, query: route.query, hash: route.hash }, state);
-  if (next) void router.replace(next);
+  const current = router.currentRoute.value;
+  const plan = planPluginStateWrite({
+    current: { name: current.name, path: current.path, query: current.query, hash: current.hash },
+    framePath,
+    navigationPending: navigation?.isPending() ?? true,
+    state,
+  });
+  heldState = plan.kind === "hold" ? state : null;
+  if (plan.kind === "replace") {
+    const next = plan.location;
+    void router.replace(next);
+  }
 }
+
+// Retried outside the router's own hook loop, against the route the
+// navigation left behind: a click that landed elsewhere drops it, a click
+// that was aborted lets it through.
+const stopHeldStateRetry = navigation?.onSettled(() => {
+  if (!heldState) return;
+  void Promise.resolve().then(() => {
+    if (heldState) writePageState(heldState);
+  });
+});
 
 const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
@@ -335,6 +366,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopHeldStateRetry?.();
+  heldState = null;
   releaseViewportPane?.();
   releaseViewportPane = undefined;
   window.removeEventListener("message", onMessage);

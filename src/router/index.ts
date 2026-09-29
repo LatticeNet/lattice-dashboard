@@ -7,6 +7,11 @@ import { useAuthStore } from "@/stores/auth";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
+import {
+  PLUGIN_VIEW_ROUTE_NAME,
+  consoleScrollBehavior,
+  trackPendingNavigation,
+} from "./navigationState";
 
 /**
  * Build the authenticated child routes from the nav IA so every NAV item has a
@@ -91,7 +96,7 @@ const manualChildRoutes: RouteRecordRaw[] = [
     // page rather than a redirect; PluginView enforces the contribution's own
     // scopes (and the server re-checks them on every gateway call).
     path: "plugins/:pluginId/:route(.*)*",
-    name: "plugin-view",
+    name: PLUGIN_VIEW_ROUTE_NAME,
     component: () => import("@/views/platform/PluginView.vue"),
     meta: { title: "Plugin", section: "Platform", scopes: [] },
   },
@@ -115,10 +120,13 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior() {
-    return { top: 0 };
-  },
+  scrollBehavior: consoleScrollBehavior,
 });
+
+// First, before any other guard: the session guard below awaits, and a
+// navigation waiting there must already count as pending (PluginFrameHost
+// holds a plugin's page-state write until it ends).
+trackPendingNavigation(router);
 
 const chunkReloadKey = "lattice:chunk-reload-attempted";
 let chunkReloadAttempted = false;
