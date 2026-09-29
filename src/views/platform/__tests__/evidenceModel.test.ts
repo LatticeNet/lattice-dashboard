@@ -419,6 +419,31 @@ test("an unread stats answer leaves the held count unknown, not zero", () => {
   assert.equal(rows[0]?.sources[0]?.lines, undefined);
 });
 
+test("a node whose policy or sources were not read is never called idle", () => {
+  const noPolicies = evidenceCoverageRows({
+    nodes: [{ id: "a", name: "a" }],
+    policies: undefined,
+    sessions: [],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(noPolicies[0]?.quiet, false);
+  assert.equal(noPolicies[0]?.trace, undefined);
+  const noSources = evidenceCoverageRows({
+    nodes: [],
+    policies: [policy("a")],
+    sessions: [],
+    sources: [],
+    sourcesKnown: false,
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(noSources[0]?.quiet, false);
+  assert.equal(noSources[0]?.sourcesKnown, false);
+  assert.equal(noSources[0]?.heldLines, undefined);
+});
+
 test("the proof line uses full stats when it has them and the page count otherwise", () => {
   const rows = evidenceCoverageRows({
     nodes: [],
@@ -465,21 +490,23 @@ test("the last hour counts failures by reason and the top destinations", () => {
     record("b", "dial_failed", "api.x.com"),
     record("b", "dial_failed", "API.X.COM"),
     record("b", "timeout", "", { sniffed_domain: "cdn.y.net", dst_ip: "1.2.3.4" }),
+    record("b", "timeout", "cdn.y.net"),
     record("b", "timeout", "", { open: true }),
   ];
   const summary = summarizeLastHour(records, true, 2);
-  assert.equal(summary.total, 6);
+  assert.equal(summary.total, 7);
   assert.equal(summary.capped, true);
+  // Most frequent first.
   assert.deepEqual(summary.failures, [
+    { value: "timeout", count: 3 },
     { value: "dial_failed", count: 2 },
-    { value: "timeout", count: 2 },
   ]);
-  assert.equal(summary.failureTotal, 4);
+  assert.equal(summary.failureTotal, 5);
   assert.deepEqual(summary.destinations, [
     { value: "api.x.com", count: 2 },
-    { value: "google.com", count: 2 },
+    { value: "cdn.y.net", count: 2 },
   ]);
-  assert.deepEqual([...summary.byNode.entries()], [["a", 2], ["b", 4]]);
+  assert.deepEqual([...summary.byNode.entries()], [["a", 2], ["b", 5]]);
 });
 
 /* ------------------------------------------------------------------ */
@@ -523,4 +550,15 @@ test("the raw log lens reads the named source, then the node's, and never anothe
   assert.equal(pickLogSource(sources, { sourceId: "", nodeId: "" })?.id, "src_other");
   assert.equal(pickLogSource(sources, { sourceId: "", nodeId: "nod_none" }), undefined);
   assert.equal(pickLogSource([], { sourceId: "", nodeId: "" }), undefined);
+});
+
+test("with stats, the raw log lens opens on the source that shipped most recently", () => {
+  const stale: LogSource = { ...SOURCE, id: "src_a", name: "a-stale", node_id: "nod_dmit" };
+  const fresh: LogSource = { ...SOURCE, id: "src_z", name: "z-fresh" };
+  const stats = [
+    { ...STATS, source_id: "src_a", last_ingest_at: "2026-08-27T10:00:00Z" },
+    { ...STATS, source_id: "src_z", last_ingest_at: "2026-09-29T07:59:00Z" },
+  ];
+  assert.equal(pickLogSource([stale, fresh], { sourceId: "", nodeId: "" }, stats)?.id, "src_z");
+  assert.equal(pickLogSource([stale, fresh], { sourceId: "", nodeId: "" })?.id, "src_a");
 });

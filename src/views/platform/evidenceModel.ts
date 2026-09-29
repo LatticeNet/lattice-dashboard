@@ -19,6 +19,7 @@ import type {
   TracePolicy,
   TraceSession,
   TraceSessionCreateRequest,
+  TraceStatsResponse,
 } from "@/lib/api/types";
 import {
   CLOSE_REASONS,
@@ -531,11 +532,17 @@ export interface CoverageRow {
   /** When the soonest of those captures ends, "" when none runs. */
   captureEndsAt: string;
   sources: CoverageSource[];
+  /** False when the source list was not read; an empty `sources` then means unknown, not none. */
+  sourcesKnown: boolean;
   /** Lines held across the node's sources; undefined when any count is unread. */
   heldLines?: number;
   /** Connections this node recorded in the last-hour sample; undefined when no sample was read. */
   lastHour?: number;
-  /** Trace off, no capture, no raw log source and nothing held: the row says nothing new. */
+  /**
+   * Trace read as off, no capture, the source list read and empty, nothing
+   * held: the row says nothing new. A row whose policy or sources were not
+   * read is never quiet, because "off" and "none" would then be guesses.
+   */
   quiet: boolean;
 }
 
@@ -545,6 +552,8 @@ export interface CoverageInput {
   policies?: readonly TracePolicy[];
   sessions: readonly TraceSession[];
   sources: readonly LogSource[];
+  /** False when the source list failed or has not loaded. Defaults to true. */
+  sourcesKnown?: boolean;
   stats: readonly LogSourceStatsView[];
   lastHourByNode?: ReadonlyMap<string, number>;
   nowMs: number;
@@ -613,7 +622,7 @@ export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
       ? undefined
       : sources.reduce((sum, source) => sum + (source.lines ?? 0), 0);
     const lastHour = input.lastHourByNode ? (input.lastHourByNode.get(nodeId) ?? 0) : undefined;
-    const tracing = policy?.enabled === true;
+    const sourcesKnown = input.sourcesKnown ?? true;
     return {
       nodeId,
       name: names.get(nodeId) ?? nodeId,
@@ -621,9 +630,10 @@ export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
       capturing: covering.length,
       captureEndsAt: ends[0] ?? "",
       sources,
-      heldLines,
+      sourcesKnown,
+      heldLines: sourcesKnown ? heldLines : undefined,
       lastHour,
-      quiet: !tracing && covering.length === 0 && sources.length === 0 && !lastHour,
+      quiet: policy?.enabled === false && sourcesKnown && covering.length === 0 && sources.length === 0 && !lastHour,
     };
   });
 
@@ -642,14 +652,7 @@ export function collectingNodeCount(rows: readonly CoverageRow[]): number {
 /* ------------------------------------------------------------------ */
 
 /** /api/trace/stats, either the full answer or the scoped one a narrow operator gets. */
-export interface TraceStoreStats {
-  scoped?: boolean;
-  records?: number;
-  size_bytes?: number;
-  max_bytes?: number;
-  cipher_enabled?: boolean;
-  newest_record_at?: string;
-}
+export type TraceStoreStats = TraceStatsResponse;
 
 export interface StoreProof {
   /** Records held; undefined when neither stats nor a page said. */
@@ -690,7 +693,7 @@ export function evidenceStoreProof(input: {
 /* The last hour                                                       */
 /* ------------------------------------------------------------------ */
 
-/** Close reasons that mean the connection failed, in the order the bars list them. */
+/** Close reasons that mean the connection failed; ties in the bars keep this order. */
 export const FAILURE_REASONS = [
   "dial_failed",
   "auth_failed",
@@ -740,10 +743,10 @@ export function summarizeLastHour(records: readonly ConnRecord[], capped: boolea
     const dest = destinationKey(record);
     if (dest) destinations.set(dest, (destinations.get(dest) ?? 0) + 1);
   }
-  const failureList = FAILURE_REASONS.filter((reason) => failures.has(reason)).map((reason) => ({
-    value: reason,
-    count: failures.get(reason) ?? 0,
-  }));
+  // Most frequent first; ties keep the canonical order.
+  const failureList = FAILURE_REASONS.filter((reason) => failures.has(reason))
+    .map((reason) => ({ value: reason, count: failures.get(reason) ?? 0 }))
+    .sort((a, b) => b.count - a.count);
   const destinationList = [...destinations.entries()]
     .map(([value, count]) => ({ value, count }))
     .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
@@ -838,18 +841,26 @@ export function captureRequest(nodeIds: readonly string[], ttlSeconds: number, n
 /* ------------------------------------------------------------------ */
 
 /**
- * Which source the raw log lens reads: the one the query names, else the first
- * on the node the query names, else the first source overall (enabled first,
- * then by name, the order the Collection list uses). A node with no source
- * gets none: showing another node's lines under `node:X` would answer a
- * question the operator did not ask.
+ * Which source the raw log lens reads: the one the query names, else the
+ * freshest on the node the query names, else the freshest source there is.
+ * Freshest is the enabled source whose node shipped a line most recently, so
+ * the lens opens on lines that are arriving rather than on whichever name
+ * sorts first; with no stats it falls back to the Collection list order
+ * (enabled first, then by name). A node with no source gets none: showing
+ * another node's lines under `node:X` would answer a question the operator
+ * did not ask.
  */
 export function pickLogSource(
   sources: readonly LogSource[],
   want: { sourceId: string; nodeId: string },
+  stats: readonly LogSourceStatsView[] = [],
 ): LogSource | undefined {
+  const ingest = new Map<string, number>();
+  for (const entry of stats) ingest.set(entry.source_id, instantMs(entry.last_ingest_at) ?? 0);
   const sorted = [...sources].sort((a, b) => {
     if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    const fresh = (ingest.get(b.id) ?? 0) - (ingest.get(a.id) ?? 0);
+    if (fresh !== 0) return fresh;
     return (a.name || a.id).localeCompare(b.name || b.id);
   });
   if (want.sourceId) {
