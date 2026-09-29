@@ -1081,6 +1081,49 @@ export interface RenewalReminderFire {
   next_renewal: string;
 }
 
+/** What `GET /api/expiring` lists: everything with a date that runs out. */
+export type ExpiringKind = "machine_renewal" | "vpn_user" | "share" | "tls_certificate";
+
+/**
+ * `overdue` is past its date and renewed by hand, `due` is within seven days,
+ * `upcoming` is further out, and `auto` is an auto-roll machine whose date
+ * moves by itself (it is charged, so it is never overdue).
+ */
+export type ExpiringState = "overdue" | "due" | "upcoming" | "auto";
+
+export interface ExpiringItem {
+  kind: ExpiringKind | string;
+  id: string;
+  title: string;
+  subtitle?: string;
+  due_at: string;
+  /** Whole UTC days from today to `due_at`; negative once past. */
+  days: number;
+  state: ExpiringState | string;
+  /** 0 and "" when the object has no price. */
+  cost_cents: number;
+  currency: string;
+  /** Machine renewals only. */
+  reminder?: { enabled: boolean; next_offset_days?: number };
+  /** A console route that opens the object. */
+  href?: string;
+}
+
+export interface ExpiringTotal {
+  currency: string;
+  cost_cents: number;
+  count: number;
+}
+
+export interface ExpiringResponse {
+  generated_at: string;
+  within_days: number;
+  items: ExpiringItem[];
+  totals: ExpiringTotal[];
+  /** Rows left out because the session lacks the scope to read that kind. */
+  hidden: number;
+}
+
 export interface StepUpResponse {
   ok: boolean;
   grant: string;

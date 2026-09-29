@@ -22,6 +22,7 @@ import type {
   DNSPlanResponse,
   DNSPublishResponse,
   EnrollTokenResponse,
+  ExpiringResponse,
   GeoRouting,
   GeoRoutingPlanView,
   GeoRoutingUpsertRequest,
@@ -499,6 +500,15 @@ export const api = {
       http.post<{ fired: RenewalReminderFire[] }>("/api/machines/reminders/run", id ? { id } : {}),
     revealLink: (id: string, kind: "console" | "detail", step_up_grant: string) =>
       http.post<MachineLinkRevealResponse>("/api/machines/reveal-link", { id, kind, step_up_grant }),
+  },
+
+  // One sorted list of what runs out across machine renewals, VPN users,
+  // shares and TLS certificates. A server older than the endpoint answers a
+  // plain 404, which the console reads as "needs a newer server", never as
+  // "nothing is due".
+  expiring: {
+    list: (within?: number, opts?: RequestOptions) =>
+      http.get<ExpiringResponse>("/api/expiring", { within }, opts),
   },
 
   machineVendors: {
