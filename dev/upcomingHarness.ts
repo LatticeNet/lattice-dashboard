@@ -70,6 +70,7 @@ const router = createRouter({
     { path: "/audit", name: "audit", component: placeholder("Audit") },
     { path: "/monitoring/:id?", name: "monitoring", component: placeholder("Monitoring") },
     { path: "/platform/publishing", name: "platform-publishing", component: placeholder("Publishing") },
+    { path: "/plugins/:rest(.*)", name: "plugin-view", component: placeholder("Plugin view") },
     { path: "/settings/security", name: "settings-security", component: placeholder("Security") },
     { path: "/:rest(.*)", redirect: "/" },
   ],

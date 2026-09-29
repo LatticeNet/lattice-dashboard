@@ -156,8 +156,9 @@ test("no filter shows every row, kinds the console does not know included", () =
 });
 
 test("a row opens the server's path on this origin, or the page that owns its kind", () => {
-  assert.equal(rowHref({ kind: "machine_renewal", href: "/inventory?machine=mch_1" }), "/inventory?machine=mch_1");
+  assert.equal(rowHref({ kind: "machine_renewal", href: "/inventory?node=node_001" }), "/inventory?node=node_001");
   assert.equal(rowHref({ kind: "machine_renewal", href: "//evil.example/x" }), "/inventory?group=renewal");
-  assert.equal(rowHref({ kind: "share", href: "https://evil.example/" }), "/platform/publishing");
-  assert.equal(rowHref({ kind: "vpn_user" }), undefined);
+  assert.equal(rowHref({ kind: "share", href: "https://evil.example/" }), "/platform/publishing?origin=share");
+  assert.equal(rowHref({ kind: "vpn_user" }), "/plugins/latticenet.vpn-core/users");
+  assert.equal(rowHref({ kind: "provider_subscription" }), undefined);
 });

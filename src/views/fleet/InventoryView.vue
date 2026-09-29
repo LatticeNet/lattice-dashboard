@@ -577,18 +577,15 @@ const groups = computed<MachineGroup[]>(() => {
 
 const groupOptions = INVENTORY_GROUPS;
 
-// ── Deep-link (?node=<id>, or ?machine=<profile id> as the Upcoming list
-// links a renewal) opens that machine's editor once the list loads ──────────
+// ── Deep-link (?node=<id>) opens that node's editor once the list loads ───────
 const seededNodeQuery = ref<string | undefined>(undefined);
 watch(
-  [machines, () => route.query.node, () => route.query.machine],
-  ([list, nodeQ, machineQ]) => {
-    const nodeId = typeof nodeQ === "string" ? nodeQ : undefined;
-    const profileId = typeof machineQ === "string" ? machineQ : undefined;
-    const key = nodeId ? `node:${nodeId}` : profileId ? `machine:${profileId}` : undefined;
-    if (!key || key === seededNodeQuery.value || list.length === 0) return;
-    const m = list.find((x) => (nodeId ? x.node_id === nodeId : x.id === profileId));
-    seededNodeQuery.value = key;
+  [machines, () => route.query.node],
+  ([list, nodeQ]) => {
+    const id = typeof nodeQ === "string" ? nodeQ : undefined;
+    if (!id || id === seededNodeQuery.value || list.length === 0) return;
+    const m = list.find((x) => x.node_id === id);
+    seededNodeQuery.value = id;
     if (m && canAdminInventory.value) openEdit(m);
   },
   { immediate: true },
@@ -976,10 +973,10 @@ watch(editOpen, (open) => {
   if (open) return;
   formSnapshot.value = undefined;
   discardOpen.value = false;
-  // A ?node= or ?machine= deep link opened the editor; left behind, it
-  // reopens the editor on the next reload.
-  if (route.query.node !== undefined || route.query.machine !== undefined) {
-    router.replace({ query: { ...route.query, node: undefined, machine: undefined } }).catch(() => {});
+  // A ?node= deep link opened the editor; left behind, it reopens the editor
+  // on the next reload.
+  if (route.query.node !== undefined) {
+    router.replace({ query: { ...route.query, node: undefined } }).catch(() => {});
   }
 });
 

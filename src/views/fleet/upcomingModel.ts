@@ -217,9 +217,13 @@ export function kindCounts(items: readonly Pick<ExpiringItem, "kind">[]): Record
 
 // ── where a row goes ────────────────────────────────────────────────────────
 
+// Where each kind lives when a row arrives without an href. The server sends
+// `/inventory?node=<id>`, `/plugins/latticenet.vpn-core/users`,
+// `/platform/publishing?origin=share&share=<id>` and `/monitoring/<id>`.
 const FALLBACK_HREF: Partial<Record<string, string>> = {
   machine_renewal: "/inventory?group=renewal",
-  share: "/platform/publishing",
+  vpn_user: "/plugins/latticenet.vpn-core/users",
+  share: "/platform/publishing?origin=share",
   tls_certificate: "/monitoring",
 };
 

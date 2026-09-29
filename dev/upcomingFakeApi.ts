@@ -163,28 +163,32 @@ function machineItems(): ExpiringItem[] {
     .map((m) => {
       const days = m.days_until_renewal!;
       const next = nextReminder(m, today);
-      return {
+      const subtitle = [m.vendor, m.region].filter(Boolean).join(" · ");
+      // The server omits optional fields instead of sending null, so the
+      // fixture leaves the keys out too.
+      const item: ExpiringItem = {
         kind: "machine_renewal",
         id: m.id!,
         title: m.label ?? m.node_name ?? m.node_id,
-        subtitle: [m.vendor, m.region].filter(Boolean).join(" · "),
         due_at: m.next_renewal!,
         days,
         state: m.auto_roll ? "auto" : days < 0 ? "overdue" : days <= 7 ? "due" : "upcoming",
         cost_cents: m.price_cents ?? 0,
         currency: m.price_cents ? (m.currency ?? "") : "",
-        reminder: { enabled: !!m.reminders_enabled, next_offset_days: next && next.offset >= 0 ? next.offset : undefined },
-        href: `/inventory?machine=${m.id}`,
+        reminder: next && next.offset >= 0 ? { enabled: !!m.reminders_enabled, next_offset_days: next.offset } : { enabled: !!m.reminders_enabled },
+        href: `/inventory?node=${m.node_id}`,
       };
+      if (subtitle) item.subtitle = subtitle;
+      return item;
     });
 }
 
 function otherItems(): ExpiringItem[] {
-  const row = (kind: string, id: string, title: string, subtitle: string, days: number, href?: string): ExpiringItem => ({
+  const row = (kind: string, id: string, title: string, subtitle: string, days: number, href: string): ExpiringItem => ({
     kind,
     id,
     title,
-    subtitle,
+    ...(subtitle ? { subtitle } : {}),
     due_at: dateIn(days),
     days,
     state: days < 0 ? "overdue" : days <= 7 ? "due" : "upcoming",
@@ -192,13 +196,15 @@ function otherItems(): ExpiringItem[] {
     currency: "",
     href,
   });
+  const users = "/plugins/latticenet.vpn-core/users";
   return [
-    row("vpn_user", "pu_guest", "guest-oct-trip", "VPN user · 41% of 50 GB used", -2),
-    row("vpn_user", "pu_shenzhen", "openjobs-shenzhen", "VPN user · 82% of 200 GB used", 5),
-    row("vpn_user", "pu_family", "cdcd-family", "VPN user · 12% of 300 GB used", 40),
+    row("vpn_user", "pu_guest", "guest-oct-trip", "VPN user · 41% of 50 GB used", -2, users),
+    row("vpn_user", "pu_shenzhen", "openjobs-shenzhen", "VPN user · 82% of 200 GB used", 5, users),
+    row("vpn_user", "pu_family", "cdcd-family", "VPN user · 12% of 300 GB used", 40, users),
     row("tls_certificate", "mon_tls_sub", "sub.example.net", "TLS monitor · Let's Encrypt R11", 6, "/monitoring/mon_tls_sub"),
-    row("tls_certificate", "mon_tls_console", "lattice.example.net", "TLS monitor · Let's Encrypt E6", 45, "/monitoring/mon_tls_console"),
-    row("share", "shr_cdcd", "/s/cdcd", "Share of for-cdcd-loon", 33, "/platform/publishing?lens=shares"),
+    // No subtitle: the server leaves the key out when it has nothing to say.
+    row("tls_certificate", "mon_tls_console", "lattice.example.net", "", 45, "/monitoring/mon_tls_console"),
+    row("share", "shr_cdcd", "/s/cdcd", "Share of for-cdcd-loon", 33, "/platform/publishing?origin=share&share=shr_cdcd"),
   ];
 }
 
