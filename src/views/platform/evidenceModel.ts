@@ -554,6 +554,8 @@ export interface CoverageInput {
   sources: readonly LogSource[];
   /** False when the source list failed or has not loaded. Defaults to true. */
   sourcesKnown?: boolean;
+  /** The server runs without a trace store (503), so no node can trace whatever its policy says. */
+  traceUnavailable?: boolean;
   stats: readonly LogSourceStatsView[];
   lastHourByNode?: ReadonlyMap<string, number>;
   nowMs: number;
@@ -633,7 +635,7 @@ export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
       sourcesKnown,
       heldLines: sourcesKnown ? heldLines : undefined,
       lastHour,
-      quiet: policy?.enabled === false && sourcesKnown && covering.length === 0 && sources.length === 0 && !lastHour,
+      quiet: (policy?.enabled === false || input.traceUnavailable === true) && sourcesKnown && covering.length === 0 && sources.length === 0 && !lastHour,
     };
   });
 

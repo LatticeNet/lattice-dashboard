@@ -259,7 +259,7 @@ const coverageLoading = computed(
             {{ $t('platform.evidence.overview.policyTitle', { count: collecting }, collecting) }}
           </template>
           <template v-else-if="headline === 'unread'">{{ $t('platform.evidence.overview.unreadTitle') }}</template>
-          <template v-else-if="headline === 'storeoff'">{{ $t('platform.evidence.proof.storeOff') }}</template>
+          <template v-else-if="headline === 'storeoff'">{{ $t('platform.evidence.overview.storeOffTitle') }}</template>
           <template v-else-if="headline === 'loading'">{{ $t('platform.evidence.overview.loadingTitle') }}</template>
           <template v-else>{{ $t('platform.evidence.overview.idleTitle') }}</template>
         </h2>
@@ -577,8 +577,8 @@ const coverageLoading = computed(
                   {{ $t('platform.evidence.overview.traceOn') }}
                   <span class="font-mono text-xs text-muted-foreground">{{ row.trace.level }}</span>
                 </span>
-                <span v-else-if="row.trace" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
                 <span v-else-if="!ctx.storeReady.value" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.traceServerOff') }}</span>
+                <span v-else-if="row.trace" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
                 <span v-else class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
               </td>
               <td class="px-3 py-2">

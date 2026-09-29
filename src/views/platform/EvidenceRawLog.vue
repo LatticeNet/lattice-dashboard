@@ -274,7 +274,16 @@ const nothingCollected = computed(
       </template>
 
       <div class="space-y-3">
-        <div class="relative overflow-x-auto rounded-md border border-border">
+        <!-- Phone width: each line gets the full width under its time and
+             sequence; a table column there left the line about 100px. -->
+        <ol class="divide-y divide-border rounded-md border border-border sm:hidden">
+          <li v-for="line in rendered" :key="line.seq" class="space-y-1 px-3 py-2">
+            <p class="font-mono text-[11px] tabular text-muted-foreground">{{ formatDateTime(line.at) }} · {{ line.seq }}</p>
+            <p class="font-mono text-xs break-all whitespace-pre-wrap">{{ line.line }}</p>
+            <Badge v-if="line.truncated" variant="warning">{{ $t('platform.logs.lineTruncated') }}</Badge>
+          </li>
+        </ol>
+        <div class="relative hidden overflow-x-auto rounded-md border border-border sm:block">
           <table class="w-full min-w-[560px] text-xs">
             <thead>
               <tr class="border-b border-border text-left text-muted-foreground">

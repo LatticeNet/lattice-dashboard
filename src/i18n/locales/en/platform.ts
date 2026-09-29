@@ -402,6 +402,7 @@ export default {
         unreadTitle: "Collection could not be read",
         unreadBody:
           "The policy list or the capture list did not load, so this page cannot say which nodes collect. Nothing below is a zero.",
+        storeOffTitle: "Connection tracing is not enabled on this server",
         storeOffBody:
           "This server runs without its trace store, so no connection record can be kept and no capture can start. Raw log sources still ship lines.",
         traceServerOff: "off on server",

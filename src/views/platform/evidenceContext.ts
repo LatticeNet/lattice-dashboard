@@ -194,6 +194,7 @@ export function provideEvidenceContext(): EvidenceContext {
       sessions: sessions.data.value ?? [],
       sources: sources.data.value ?? [],
       sourcesKnown: sources.data.value !== undefined && !sources.error.value,
+      traceUnavailable: !storeReady.value,
       stats: logStats.data.value ?? [],
       lastHourByNode: lastHourSummary.value?.byNode ?? (lastHour.data.value ? new Map() : undefined),
       nowMs: Date.now(),

@@ -375,6 +375,7 @@ export default {
         loadingTitle: "正在读取采集状态",
         unreadTitle: "采集状态读取失败",
         unreadBody: "策略列表或抓取列表没有加载成功，这个页面没法判断哪些节点在采集。下面的内容都不能当作零来看。",
+        storeOffTitle: "这台服务器没有开启连接追踪",
         storeOffBody: "这台服务器没有启用追踪存储，无法保存连接记录，也不能开始抓取。原始日志源仍会照常上报。",
         traceServerOff: "服务器未启用",
         hourTitle: "最近一小时",

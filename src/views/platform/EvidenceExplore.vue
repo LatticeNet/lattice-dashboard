@@ -126,11 +126,21 @@ function applyQuery(next: EvidenceQuery): void {
   router.replace({ query }).catch(() => {});
 }
 
+/**
+ * What the last search dropped or could not resolve. Submitting rewrites the
+ * field in its canonical spelling, which no longer contains the dropped
+ * token, so the note is kept until the operator edits the field again.
+ */
+const submittedProblems = ref<typeof parsed.value.problems>([]);
+
 function submit(): void {
-  applyQuery(parsed.value.query);
+  const { query, problems } = parsed.value;
+  applyQuery(query);
+  submittedProblems.value = problems;
 }
 
 function clearQuery(): void {
+  submittedProblems.value = [];
   applyQuery({ ...EMPTY_EVIDENCE_QUERY, closeReasons: [], userKinds: [] });
 }
 
@@ -145,7 +155,7 @@ const PROBLEM_KEY = {
   unresolved: "platform.evidence.explore.problemUnresolved",
 } as const;
 const problems = computed(() =>
-  parsed.value.problems.map((problem) => t(PROBLEM_KEY[problem.kind], { token: problem.token })),
+  (editing.value ? parsed.value.problems : submittedProblems.value).map((problem) => t(PROBLEM_KEY[problem.kind], { token: problem.token })),
 );
 
 /** Tokens that only mean something for connections, present while reading the raw log. */

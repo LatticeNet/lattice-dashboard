@@ -444,6 +444,19 @@ test("a node whose policy or sources were not read is never called idle", () => 
   assert.equal(noSources[0]?.heldLines, undefined);
 });
 
+test("with no trace store on the server, nodes without a source collapse as idle", () => {
+  const rows = evidenceCoverageRows({
+    nodes: [{ id: "a", name: "a" }, { id: "nod_legend", name: "legend-sg" }],
+    policies: undefined,
+    sessions: [],
+    sources: [SOURCE],
+    stats: [STATS],
+    traceUnavailable: true,
+    nowMs: NOW,
+  });
+  assert.deepEqual(rows.map((row) => [row.nodeId, row.quiet]), [["nod_legend", false], ["a", true]]);
+});
+
 test("the proof line uses full stats when it has them and the page count otherwise", () => {
   const rows = evidenceCoverageRows({
     nodes: [],

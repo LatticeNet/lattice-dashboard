@@ -145,7 +145,7 @@ const title = computed(() =>
   <Dialog :open="open" @update:open="(value) => { if (!value) emit('close'); }">
     <SheetContent :aria-describedby="undefined">
       <header class="space-y-1 border-b border-border px-5 pt-5 pb-4 pr-12">
-        <DialogTitle class="truncate font-mono text-base font-semibold tracking-[-0.01em]" :title="title">{{ title }}</DialogTitle>
+        <DialogTitle :class="cn('truncate text-base font-semibold tracking-[-0.01em]', selected && destinationText(selected) && 'font-mono')" :title="title">{{ title }}</DialogTitle>
         <DialogDescription class="font-mono text-xs break-all text-muted-foreground">{{ connKey }}</DialogDescription>
       </header>
 
