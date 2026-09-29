@@ -1,15 +1,15 @@
 /**
- * Mounts the three platform pages inside the app's own providers (router,
+ * Mounts the Publishing and Store pages inside the app's own providers (router,
  * pinia, i18n, theme) against the in-memory API in ./platformFakeApi.ts.
  *
  *   LATTICE_HARNESS=platform pnpm exec vite --config vite.harness.config.ts
  *   open http://127.0.0.1:5185/dev/platform.html#/publishing
  *
- * Three routes rather than three harnesses: Publishing, Store and Evidence are
- * one plane in the IA and the questions asked of them are comparative (does
- * the access legend say the same thing the badge says, does Store gate the
- * bucket it says the server owns, does Evidence say how far back the newest
- * record is), so they share one fixture and one shell.
+ * Two routes rather than two harnesses: Publishing and Store are one plane in
+ * the IA and the questions asked of them are comparative (does the access
+ * legend say the same thing the badge says, does Store gate the bucket it
+ * says the server owns), so they share one fixture and one shell. Evidence
+ * has its own harness (dev/evidence.html) with a fixture per collection state.
  *
  * Hash history: the page is served as a static file by vite, so a path history
  * would 404 on reload at every route but the first.
@@ -23,7 +23,6 @@ import { useAuthStore } from "@/stores/auth";
 import { useThemeStore } from "@/stores/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import ConnectionTraceView from "@/views/platform/ConnectionTraceView.vue";
 import PublishingView from "@/views/platform/PublishingView.vue";
 import StoreView from "@/views/platform/StoreView.vue";
 
@@ -34,7 +33,6 @@ const LINKS = [
   ["/store", "Store"],
   ["/store?kind=kv&bucket=vpnmeta%2Flineuuid", "Store: line identity map"],
   ["/store?kind=kv&bucket=line-secrets", "Store: reserved bucket"],
-  ["/evidence", "Evidence"],
 ] as const;
 
 const Shell = defineComponent({
@@ -62,7 +60,6 @@ const router = createRouter({
   routes: [
     { path: "/publishing", name: "publishing", component: PublishingView },
     { path: "/store", name: "store", component: StoreView },
-    { path: "/evidence", name: "evidence", component: ConnectionTraceView },
     { path: "/:rest(.*)", redirect: "/publishing" },
   ],
 });
