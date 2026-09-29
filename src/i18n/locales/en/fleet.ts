@@ -978,7 +978,15 @@ export default {
         filteredTitle: "Nothing of the selected kinds runs out in the next {days} days",
         showAll: "Show all kinds",
       },
-      hidden: "{n} item hidden by your scopes | {n} items hidden by your scopes",
+      kindsInSentence: {
+        machine_renewal: "machine renewals",
+        vpn_user: "VPN users",
+        share: "shares",
+        tls_certificate: "TLS certificates",
+      },
+      hiddenKinds: "{kinds} are not shown for your scopes.",
+      listSeparator: ", ",
+      listAnd: "{head} and {last}",
       unsupported: {
         title: "This list needs a newer server",
         description: "The control plane does not serve the expiring list yet, so nothing here says whether anything is due. Renewal dates are on the Inventory page.",

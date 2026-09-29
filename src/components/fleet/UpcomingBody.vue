@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { AlertTriangle, Boxes, CalendarClock, Lock } from "lucide-vue-next";
 import { ApiError, type ExpiringItem, type ExpiringResponse } from "@/lib/api";
 import { formatAge } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { groupByWeek, todayOf, upcomingState } from "@/views/fleet/upcomingModel";
+import { EXPIRING_KINDS, groupByWeek, hiddenKindsOf, todayOf, upcomingState } from "@/views/fleet/upcomingModel";
 
 import EmptyState from "@/components/common/EmptyState.vue";
 import UpcomingList from "./UpcomingList.vue";
@@ -48,7 +49,26 @@ const view = computed(() =>
 const today = computed(() => todayOf(props.data, props.lastUpdated ?? Date.now()));
 const groups = computed(() => groupByWeek(rows.value, today.value));
 const within = computed(() => props.data?.within_days ?? 30);
-const hidden = computed(() => props.data?.hidden ?? 0);
+const { t } = useI18n();
+
+/**
+ * "VPN users and shares are not shown for your scopes": the kinds, never a
+ * count, since a count of unreadable rows tells a confined session how big
+ * the fleet is.
+ */
+const hiddenSentence = computed(() => {
+  const kinds = hiddenKindsOf(props.data);
+  if (!kinds.length) return "";
+  const names = kinds.map((kind) =>
+    (EXPIRING_KINDS as readonly string[]).includes(kind) ? t(`fleet.upcoming.kindsInSentence.${kind}`) : kind,
+  );
+  const list =
+    names.length === 1
+      ? names[0]
+      : t("fleet.upcoming.listAnd", { head: names.slice(0, -1).join(t("fleet.upcoming.listSeparator")), last: names[names.length - 1] });
+  const sentence = t("fleet.upcoming.hiddenKinds", { kinds: list });
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+});
 const staleAge = computed(() => (props.lastUpdated ? formatAge(props.now - props.lastUpdated) : ""));
 /** Inside a card the states line up with the card's text; on a page they take the full width. */
 const inset = computed(() => (props.framed ? "mx-4 sm:mx-6" : ""));
@@ -108,9 +128,9 @@ const serverDetail = computed(() =>
 
       <!-- Above the rows, not after them: on a long list the last line is
            the one nobody scrolls to. -->
-      <p v-if="hidden > 0" :class="cn('mb-3 flex items-center gap-2 text-xs text-muted-foreground', inset)" data-testid="upcoming-hidden">
+      <p v-if="hiddenSentence" :class="cn('mb-3 flex items-center gap-2 text-xs text-muted-foreground', inset)" data-testid="upcoming-hidden">
         <Lock class="size-3.5 shrink-0" aria-hidden="true" />
-        {{ $t('fleet.upcoming.hidden', { n: hidden }, hidden) }}
+        {{ hiddenSentence }}
       </p>
 
       <div v-if="view.state === 'empty'" :class="inset">

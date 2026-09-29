@@ -14,7 +14,7 @@
  *   failing          500 on every read
  *   stale            the first read works, every later one fails (keeps the rows, says their age)
  *   old              a server that predates the endpoint: plain 404
- *   hidden           a session without proxy:read and monitor:read: those rows are counted in `hidden`
+ *   hidden           a session without proxy:read and monitor:read: those kinds are named in `hidden_kinds`
  * `?reminders=off` puts the machines back the way production had them before
  * the default-on migration: reminders off everywhere.
  *
@@ -225,7 +225,6 @@ function expiring(within: number): Promise<ExpiringResponse> {
   }
   const all = FIXTURE === "empty" ? [] : [...machineItems(), ...otherItems()];
   const inRange = all.filter((item) => item.days <= within);
-  const hidden = FIXTURE === "hidden" ? inRange.filter((item) => HIDDEN_KINDS.has(item.kind)).length : 0;
   const items = (FIXTURE === "hidden" ? inRange.filter((item) => !HIDDEN_KINDS.has(item.kind)) : inRange).sort(
     (a, b) => a.days - b.days || a.title.localeCompare(b.title),
   );
@@ -234,7 +233,8 @@ function expiring(within: number): Promise<ExpiringResponse> {
     within_days: within,
     items,
     totals: sumTotals(items),
-    hidden,
+    // Kinds only: the server never says how many rows it left out.
+    hidden_kinds: FIXTURE === "hidden" ? [...HIDDEN_KINDS] : [],
   });
 }
 

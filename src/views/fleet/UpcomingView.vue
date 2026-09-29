@@ -10,6 +10,7 @@ import {
   EXPIRING_KINDS,
   LIST_WITHIN_DAYS,
   filterByKinds,
+  hiddenKindsOf,
   isUnsupported,
   kindCounts,
   kindFilterQuery,
@@ -43,6 +44,11 @@ const counts = computed(() => kindCounts(allItems.value));
 // and a server without the list has nothing for the chips to filter.
 const loaded = computed(() => query.data.value !== undefined);
 const unsupported = computed(() => isUnsupported(query.error.value));
+// A kind the session cannot read gets no chip: it would only ever count zero.
+const chipKinds = computed(() => {
+  const hidden = hiddenKindsOf(query.data.value);
+  return EXPIRING_KINDS.filter((kind) => !hidden.includes(kind));
+});
 
 function setKinds(next: KnownKind[]): void {
   const wanted = kindFilterQuery(next);
@@ -84,7 +90,7 @@ const chipClass = (active: boolean) =>
           <span v-if="loaded" class="font-mono tabular text-muted-foreground">{{ allItems.length }}</span>
         </button>
         <button
-          v-for="kind in EXPIRING_KINDS"
+          v-for="kind in chipKinds"
           :key="kind"
           type="button"
           :aria-pressed="kinds.includes(kind)"

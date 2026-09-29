@@ -966,7 +966,15 @@ export default {
         filteredTitle: "所选类型在未来 {days} 天内没有到期项",
         showAll: "显示全部类型",
       },
-      hidden: "还有 {n} 项超出当前权限范围，未显示 | 还有 {n} 项超出当前权限范围，未显示",
+      kindsInSentence: {
+        machine_renewal: "机器续费",
+        vpn_user: "VPN 用户",
+        share: "订阅分享",
+        tls_certificate: "TLS 证书",
+      },
+      hiddenKinds: "{kinds}超出当前权限范围，未显示。",
+      listSeparator: "、",
+      listAnd: "{head}、{last}",
       unsupported: {
         title: "此列表需要更新版本的服务端",
         description: "控制面尚未提供到期列表，因此这里无法判断是否有到期项。续费日期可在资产页面查看。",

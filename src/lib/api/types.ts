@@ -1120,8 +1120,13 @@ export interface ExpiringResponse {
   within_days: number;
   items: ExpiringItem[];
   totals: ExpiringTotal[];
-  /** Rows left out because the session lacks the scope to read that kind. */
-  hidden: number;
+  /**
+   * Kinds this session cannot read at all. Names only, never counts: a count
+   * of unreadable rows would tell a confined session how big the fleet is.
+   */
+  hidden_kinds?: string[];
+  /** Sent by servers built against the first draft of the contract; ignored. */
+  hidden?: number;
 }
 
 export interface StepUpResponse {

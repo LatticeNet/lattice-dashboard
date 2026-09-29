@@ -209,6 +209,18 @@ export function filterByKinds<T extends Pick<ExpiringItem, "kind">>(items: reado
   return items.filter((item) => (kinds as readonly string[]).includes(item.kind));
 }
 
+/**
+ * The kinds the session cannot read, in chip order, then any kind the console
+ * does not know yet. An older server's `hidden` row count is not read: the
+ * contract dropped it because a count leaks fleet size.
+ */
+export function hiddenKindsOf(data: Pick<ExpiringResponse, "hidden_kinds"> | undefined): string[] {
+  const raw = Array.isArray(data?.hidden_kinds) ? data.hidden_kinds.filter((k): k is string => typeof k === "string" && k !== "") : [];
+  const known = EXPIRING_KINDS.filter((kind) => raw.includes(kind));
+  const unknown = [...new Set(raw.filter((kind) => !isKnownKind(kind)))];
+  return [...known, ...unknown];
+}
+
 export function kindCounts(items: readonly Pick<ExpiringItem, "kind">[]): Record<KnownKind, number> {
   const counts = Object.fromEntries(EXPIRING_KINDS.map((kind) => [kind, 0])) as Record<KnownKind, number>;
   for (const item of items) if (isKnownKind(item.kind)) counts[item.kind] += 1;

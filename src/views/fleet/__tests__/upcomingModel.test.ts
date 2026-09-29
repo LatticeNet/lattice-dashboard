@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { ExpiringItem } from "@/lib/api/types";
 import {
   filterByKinds,
+  hiddenKindsOf,
   formatAmount,
   formatTotals,
   groupByWeek,
@@ -161,4 +162,13 @@ test("a row opens the server's path on this origin, or the page that owns its ki
   assert.equal(rowHref({ kind: "share", href: "https://evil.example/" }), "/platform/publishing?origin=share");
   assert.equal(rowHref({ kind: "vpn_user" }), "/plugins/latticenet.vpn-core/users");
   assert.equal(rowHref({ kind: "provider_subscription" }), undefined);
+});
+
+test("hidden kinds are named in chip order, and an old server's row count is ignored", () => {
+  assert.deepEqual(hiddenKindsOf({ hidden_kinds: ["share", "vpn_user", "share"] }), ["vpn_user", "share"]);
+  assert.deepEqual(hiddenKindsOf({ hidden_kinds: ["provider_subscription", "tls_certificate"] }), ["tls_certificate", "provider_subscription"]);
+  // The first draft sent `hidden: 3`; a count leaks fleet size, so it is never shown.
+  assert.deepEqual(hiddenKindsOf({ hidden: 3 } as never), []);
+  assert.deepEqual(hiddenKindsOf(undefined), []);
+  assert.deepEqual(hiddenKindsOf({ hidden_kinds: null } as never), []);
 });
