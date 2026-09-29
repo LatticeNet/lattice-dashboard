@@ -119,6 +119,12 @@ const props = withDefaults(
      * read at the table's width rather than at its column's.
      */
     rowExpanded?: (row: T) => boolean;
+    /**
+     * The "Showing X of Y" line. A caller that states its own count (Evidence
+     * says how many rows were loaded and how many the query kept) turns it
+     * off so the page does not say the same number twice.
+     */
+    showSummary?: boolean;
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
   }>(),
@@ -148,6 +154,7 @@ const props = withDefaults(
     clearSelectionLabel: undefined,
     selectRowLabel: undefined,
     rowExpanded: undefined,
+    showSummary: true,
     stateKey: undefined,
   },
 );
@@ -647,7 +654,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
 
     <!-- Showing X of Y -->
     <div
-      v-if="!loading && !error && !isEmpty"
+      v-if="showSummary && !loading && !error && !isEmpty"
       class="flex items-center justify-between text-xs text-muted-foreground"
     >
       <span>{{ label.showing.value }} {{ shownCount }} {{ label.of.value }} {{ totalCount }}</span>
