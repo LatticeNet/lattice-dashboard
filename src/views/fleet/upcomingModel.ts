@@ -245,10 +245,9 @@ export function kindCounts(items: readonly Pick<ExpiringItem, "kind">[]): Record
 // ── where a row goes ────────────────────────────────────────────────────────
 
 // Where each kind lives when a row arrives without an href. The server sends
-// `/inventory?node=<id>`, `/plugins/latticenet.vpn-core/users`,
+// `/inventory?machine=<profile id>`, `/plugins/latticenet.vpn-core/users`,
 // `/platform/publishing?origin=share&share=<id>` and `/monitoring/<id>`.
 const FALLBACK_HREF: Partial<Record<string, string>> = {
-  machine_renewal: "/inventory?group=renewal",
   vpn_user: "/plugins/latticenet.vpn-core/users",
   share: "/platform/publishing?origin=share",
   tls_certificate: "/monitoring",
@@ -258,8 +257,11 @@ const FALLBACK_HREF: Partial<Record<string, string>> = {
  * The console route a row opens: the server's `href` when it is a path on
  * this origin, otherwise the page that owns the kind, otherwise nothing.
  */
-export function rowHref(item: Pick<ExpiringItem, "href" | "kind">): string | undefined {
+export function rowHref(item: Pick<ExpiringItem, "href" | "kind"> & { id?: string }): string | undefined {
   const href = item.href?.trim();
   if (href && href.startsWith("/") && !href.startsWith("//")) return href;
+  if (item.kind === "machine_renewal") {
+    return item.id ? `/inventory?machine=${encodeURIComponent(item.id)}` : "/inventory?group=renewal";
+  }
   return FALLBACK_HREF[item.kind];
 }

@@ -15,6 +15,8 @@
  *   stale            the first read works, every later one fails (keeps the rows, says their age)
  *   old              a server that predates the endpoint: plain 404
  *   hidden           a session without proxy:read and monitor:read: those kinds are named in `hidden_kinds`
+ * `?role=reader` drops inventory:admin, so a ?machine= link marks the card
+ * instead of opening the editor.
  * `?reminders=off` puts the machines back the way production had them before
  * the default-on migration: reminders off everywhere.
  *
@@ -46,6 +48,8 @@ const LATENCY_MS = 90;
 const params = new URLSearchParams(window.location.search);
 const FIXTURE = params.get("fixture") ?? "dense";
 const REMINDERS_OFF = params.get("reminders") === "off";
+/** `?role=reader`: a session with inventory:read but not inventory:admin. */
+const READER = params.get("role") === "reader";
 
 function delay<T>(value: T, ms = LATENCY_MS): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), ms));
@@ -176,7 +180,7 @@ function machineItems(): ExpiringItem[] {
         cost_cents: m.price_cents ?? 0,
         currency: m.price_cents ? (m.currency ?? "") : "",
         reminder: next && next.offset >= 0 ? { enabled: !!m.reminders_enabled, next_offset_days: next.offset } : { enabled: !!m.reminders_enabled },
-        href: `/inventory?node=${m.node_id}`,
+        href: `/inventory?machine=${m.id}`,
       };
       if (subtitle) item.subtitle = subtitle;
       return item;
@@ -285,7 +289,7 @@ const principal: Principal = {
     "task:read",
     "audit:read",
     "inventory:read",
-    "inventory:admin",
+    ...(READER ? [] : ["inventory:admin"]),
     "notify:admin",
     "notify:send",
     "proxy:read",

@@ -577,16 +577,33 @@ const groups = computed<MachineGroup[]>(() => {
 
 const groupOptions = INVENTORY_GROUPS;
 
-// ── Deep-link (?node=<id>) opens that node's editor once the list loads ───────
+// ── Deep links, once the list loads ──────────────────────────────────────────
+// ?node=<node id> opens that node's editor for an admin, as it always has.
+// ?machine=<profile id> is the link the Upcoming list gives a renewal: it
+// opens the editor for an admin, and for anyone else it marks the machine's
+// card and scrolls to it, so a reader still lands on the row they followed.
 const seededNodeQuery = ref<string | undefined>(undefined);
+const highlightedKey = ref<string | undefined>(undefined);
 watch(
-  [machines, () => route.query.node],
-  ([list, nodeQ]) => {
-    const id = typeof nodeQ === "string" ? nodeQ : undefined;
-    if (!id || id === seededNodeQuery.value || list.length === 0) return;
-    const m = list.find((x) => x.node_id === id);
-    seededNodeQuery.value = id;
-    if (m && canAdminInventory.value) openEdit(m);
+  [machines, () => route.query.node, () => route.query.machine],
+  ([list, nodeQ, machineQ]) => {
+    const nodeId = typeof nodeQ === "string" ? nodeQ : undefined;
+    const profileId = typeof machineQ === "string" ? machineQ : undefined;
+    const key = nodeId ? `node:${nodeId}` : profileId ? `machine:${profileId}` : undefined;
+    if (!profileId) highlightedKey.value = undefined;
+    if (!key || key === seededNodeQuery.value || list.length === 0) return;
+    const m = list.find((x) => (nodeId ? x.node_id === nodeId : x.id === profileId));
+    seededNodeQuery.value = key;
+    if (!m) return;
+    if (canAdminInventory.value) {
+      openEdit(m);
+    } else if (profileId) {
+      const cardKey = machineKey(m);
+      highlightedKey.value = cardKey;
+      void nextTick(() =>
+        document.querySelector(`[data-machine-key="${CSS.escape(cardKey)}"]`)?.scrollIntoView({ block: "center" }),
+      );
+    }
   },
   { immediate: true },
 );
@@ -973,10 +990,10 @@ watch(editOpen, (open) => {
   if (open) return;
   formSnapshot.value = undefined;
   discardOpen.value = false;
-  // A ?node= deep link opened the editor; left behind, it reopens the editor
-  // on the next reload.
-  if (route.query.node !== undefined) {
-    router.replace({ query: { ...route.query, node: undefined } }).catch(() => {});
+  // A ?node= or ?machine= deep link opened the editor; left behind, it
+  // reopens the editor on the next reload.
+  if (route.query.node !== undefined || route.query.machine !== undefined) {
+    router.replace({ query: { ...route.query, node: undefined, machine: undefined } }).catch(() => {});
   }
 });
 
@@ -1666,7 +1683,11 @@ async function runReminders(selectedOnly: boolean) {
             <div
               v-for="machine in group.machines"
               :key="machineKey(machine)"
-              class="flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-primary/40"
+              :data-machine-key="machineKey(machine)"
+              :class="cn(
+                'flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-primary/40',
+                highlightedKey === machineKey(machine) && 'border-primary ring-2 ring-primary/30',
+              )"
             >
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
