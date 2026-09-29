@@ -1096,8 +1096,9 @@ export interface ExpiringItem {
   id: string;
   title: string;
   /**
-   * Data only, never words: `<vendor> · <region>` for a machine, the email or
-   * name for a VPN user, the record name for a share, the issuer for TLS. The
+   * Data only, never words: `<vendor> · <region>` for a machine, the user's
+   * name for a VPN user (left out when it equals the title), the Sub-Store
+   * record's display name for a share, the target `host:port` for TLS. The
    * console adds the localised kind and quota phrase.
    */
   subtitle?: string;

@@ -188,8 +188,9 @@ function machineItems(): ExpiringItem[] {
 }
 
 function otherItems(): ExpiringItem[] {
-  // Subtitles are data only (an email or name, a record name, an issuer),
-  // as the server sends them; the console adds the kind and the quota words.
+  // Subtitles are data only, as the server sends them (db6955e): a VPN user's
+  // name, left out when it equals the title; a share's record display name; a
+  // TLS monitor's target host:port. The console adds the kind and quota words.
   const row = (kind: string, id: string, title: string, subtitle: string, days: number, href: string, extra: Partial<ExpiringItem> = {}): ExpiringItem => ({
     kind,
     id,
@@ -206,14 +207,14 @@ function otherItems(): ExpiringItem[] {
   const users = "/plugins/latticenet.vpn-core/users";
   const GiB = 1024 ** 3;
   return [
-    row("vpn_user", "pu_guest", "guest-oct-trip", "guest@openjobs.example", -2, users, { used_bytes: 20.5 * GiB, quota_bytes: 50 * GiB }),
-    row("vpn_user", "pu_shenzhen", "openjobs-shenzhen", "shenzhen-office", 5, users, { used_bytes: 164 * GiB, quota_bytes: 200 * GiB }),
+    row("vpn_user", "pu_guest", "guest-oct-trip", "Guest, October trip", -2, users, { used_bytes: 20.5 * GiB, quota_bytes: 50 * GiB }),
+    // The name equals the title, so the server leaves the subtitle out.
+    row("vpn_user", "pu_shenzhen", "openjobs-shenzhen", "", 5, users, { used_bytes: 164 * GiB, quota_bytes: 200 * GiB }),
     // No quota: the server leaves both byte fields out.
-    row("vpn_user", "pu_family", "cdcd-family", "family@cdcd.example", 40, users),
-    row("tls_certificate", "mon_tls_sub", "sub.example.net", "Let's Encrypt R11", 6, "/monitoring/mon_tls_sub"),
-    // No subtitle: the server leaves the key out when it has nothing to say.
-    row("tls_certificate", "mon_tls_console", "lattice.example.net", "", 45, "/monitoring/mon_tls_console"),
-    row("share", "shr_cdcd", "/s/cdcd", "for-cdcd-loon", 33, "/platform/publishing?origin=share&share=shr_cdcd"),
+    row("vpn_user", "pu_family", "cdcd-family", "Family phones", 40, users),
+    row("tls_certificate", "mon_tls_sub", "sub.example.net", "sub.example.net:443", 6, "/monitoring/mon_tls_sub"),
+    row("tls_certificate", "mon_tls_console", "Lattice console", "lattice.example.net:8443", 45, "/monitoring/mon_tls_console"),
+    row("share", "shr_cdcd", "/s/cdcd", "cdcd Loon", 33, "/platform/publishing?origin=share&share=shr_cdcd"),
   ];
 }
 

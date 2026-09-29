@@ -70,7 +70,7 @@ function groupLabel(group: WeekGroup): string {
 
 /**
  * The line under the title. The server sends data only (vendor and region,
- * an email, a record name, an issuer), so the words come from here: the kind
+ * a user's name, a record name, a host:port), so the words come from here: the kind
  * for anything that is not a machine (a server icon already says machine),
  * and a VPN user's quota.
  */
