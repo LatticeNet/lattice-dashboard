@@ -21,6 +21,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import QueryBar, { type QueryFilterGroup } from "@/components/common/QueryBar.vue";
+import { QUERY_NAME_WAIT_MS } from "@/components/common/chassisModel";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { cn } from "@/lib/utils";
@@ -92,6 +93,8 @@ function setBound(which: "since" | "until", iso: string): void {
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
 const applied = computed(() => readEvidenceQuery(owned.query()));
 const appliedText = computed(() => formatEvidenceQuery(applied.value, ctx.resolvers.value));
+/** The applied query itself, which does not change when a name list loads and respells an id. */
+const appliedKey = computed(() => JSON.stringify(applied.value));
 
 function applyQuery(next: EvidenceQuery): void {
   const query = writeEvidenceQuery(owned.query(), next);
@@ -119,8 +122,13 @@ const PROBLEM_KEY = {
 } as const;
 
 function problemsFor(text: string): string[] {
+  // "does not name a known item" is only true when the list was read; with a
+  // list that failed or never answered, the name was not checked at all.
+  const unchecked = ctx.namesUnchecked.value;
   return parseEvidenceQuery(text, ctx.resolvers.value).problems.map((problem) =>
-    t(PROBLEM_KEY[problem.kind], { token: problem.token }),
+    t(unchecked && problem.kind === "unresolved" ? "platform.evidence.explore.problemUnchecked" : PROBLEM_KEY[problem.kind], {
+      token: problem.token,
+    }),
   );
 }
 
@@ -267,6 +275,7 @@ function onRecordsLoaded(lookup: (key: string) => ConnRecord | undefined): void 
       ref="bar"
       testid="evidence-query-bar"
       :applied-text="appliedText"
+      :applied-key="appliedKey"
       :label="$t('platform.evidence.explore.queryLabel')"
       :placeholder="lens === 'log' ? $t('platform.evidence.explore.queryPlaceholderLog') : $t('platform.evidence.explore.queryPlaceholder')"
       :ready="ctx.namesReady.value"
@@ -281,7 +290,7 @@ function onRecordsLoaded(lookup: (key: string) => ConnRecord | undefined): void 
       :filter-count="filterCount"
       :filter-groups="filterGroups"
       :filters-hint="$t('platform.evidence.explore.filtersHint')"
-      :resolving-text="$t('platform.evidence.explore.resolvingNames')"
+      :resolving-text="$t('platform.evidence.explore.resolvingNames', { seconds: QUERY_NAME_WAIT_MS / 1000 })"
       @submit="submit"
       @clear="clearQuery"
       @update:range="setRange"

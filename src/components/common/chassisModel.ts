@@ -106,6 +106,18 @@ export function destructiveTreatment(kind: DestructiveClass): { destructive: boo
 }
 
 /* ------------------------------------------------------------------ */
+/* QueryBar (3.9)                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How long a submitted search waits for the lists its names resolve against.
+ * A list that failed counts as answered at once; this bounds the wait on one
+ * that never answers, after which the search runs and the page reports the
+ * names it could not check.
+ */
+export const QUERY_NAME_WAIT_MS = 5000;
+
+/* ------------------------------------------------------------------ */
 /* NodeLabel (3.10)                                                    */
 /* ------------------------------------------------------------------ */
 

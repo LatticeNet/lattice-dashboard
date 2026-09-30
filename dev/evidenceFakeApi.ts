@@ -20,7 +20,9 @@
  *   failing  Every trace and log endpoint answers 500.
  *   storeoff The server has connection tracing disabled (503 on /api/trace).
  *
- * Add `&readonly` to drop log:admin from the principal.
+ * Add `&readonly` to drop log:admin from the principal. Add `&names=fail` to
+ * make the node list answer 500, or `&names=hang` to make it never answer:
+ * the Explore field resolves node names against that list.
  */
 import { ApiError } from "@/lib/api/client";
 import type {
@@ -44,6 +46,7 @@ export * from "@/lib/api/index";
 const flags = new URLSearchParams(location.search);
 const FIXTURE = flags.get("fixture") ?? "empty";
 const READONLY = flags.has("readonly");
+const NAMES = flags.get("names");
 
 const NOW = Date.now();
 const MIN = 60_000;
@@ -507,7 +510,11 @@ export const api = {
   },
 
   nodes: {
-    list: () => delay({ nodes: nodes.map((n) => ({ ...n })) } as never),
+    list: () => {
+      if (NAMES === "fail") return fail(500, "internal", "store: list nodes: database is locked");
+      if (NAMES === "hang") return new Promise<never>(() => {});
+      return delay({ nodes: nodes.map((n) => ({ ...n })) } as never);
+    },
   },
 
   users: {

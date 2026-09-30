@@ -7,14 +7,22 @@
  *
  * The page owns the grammar and the address bar; the bar owns the draft.
  * The field shows the applied query until the operator edits it; Escape puts
- * the applied query back. A search submitted before the lists that names
- * resolve against have answered waits for them (`ready`), because sending
- * `node:legend-sg` on as a literal id would search for a node that does not
- * exist. Problems (a value that does not resolve, an unknown enum value) are
- * named per token while typing, and kept after Apply until the next edit,
- * since the canonical spelling Apply writes back no longer holds the token.
+ * the applied query back. If the applied query changes under an edit (Back,
+ * Forward, another control), the draft is kept and a line says so, with a way
+ * back to the applied one: Apply would otherwise write a stale draft over it
+ * without a word, and wiping the draft would lose the operator's typing.
+ *
+ * A search submitted before the lists that names resolve against have
+ * answered waits for them (`ready`), because sending `node:legend-sg` on as a
+ * literal id would search for a node that does not exist. The page counts a
+ * list that failed as answered, and its `problems` then say which names could
+ * not be checked; a list that never answers is waited on for
+ * QUERY_NAME_WAIT_MS, then the search runs without it. Problems (a value that
+ * does not resolve, an unknown enum value) are named per token while typing,
+ * and kept after Apply until the next edit, since the canonical spelling
+ * Apply writes back no longer holds the token.
  */
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { Search, SlidersHorizontal, X } from "lucide-vue-next";
@@ -23,6 +31,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+import { QUERY_NAME_WAIT_MS } from "./chassisModel";
 
 export interface QueryFilterOption {
   key: string;
@@ -47,10 +57,16 @@ const props = withDefaults(
   defineProps<{
     /** The applied query in the field's canonical spelling. */
     appliedText: string;
+    /**
+     * What the applied query is, when its spelling can change without the
+     * query changing (an id respelled as a name once the node list loads).
+     * An edit is warned about only when this changes. Defaults to appliedText.
+     */
+    appliedKey?: string;
     /** Accessible label for the field. */
     label: string;
     placeholder?: string;
-    /** Names resolve now; a submit before this waits. */
+    /** The name lists have answered, successfully or not; a submit before this waits. */
     ready?: boolean;
     /** Problems with a draft, one sentence each, for the page's grammar. */
     problems?: (text: string) => string[];
@@ -79,6 +95,7 @@ const props = withDefaults(
   }>(),
   {
     placeholder: undefined,
+    appliedKey: undefined,
     ready: true,
     problems: undefined,
     canonical: undefined,
@@ -110,22 +127,49 @@ const { t } = useI18n();
 /** What the field shows. It follows the applied query until the operator edits it. */
 const draft = ref(props.appliedText);
 const editing = ref(false);
+/** The applied query changed while the operator was editing. */
+const appliedMoved = ref(false);
 watch(
   () => props.appliedText,
   (text) => {
     if (!editing.value) draft.value = text;
   },
 );
+watch(
+  () => props.appliedKey ?? props.appliedText,
+  () => {
+    if (editing.value) appliedMoved.value = true;
+  },
+);
 
 const submittedProblems = ref<string[]>([]);
 const pendingSubmit = ref(false);
+let waitTimer: ReturnType<typeof setTimeout> | undefined;
+
+function stopWaiting(): void {
+  pendingSubmit.value = false;
+  if (waitTimer) clearTimeout(waitTimer);
+  waitTimer = undefined;
+}
+onBeforeUnmount(stopWaiting);
 
 function submit(): void {
   if (!props.ready) {
     pendingSubmit.value = true;
+    if (!waitTimer) {
+      waitTimer = setTimeout(() => {
+        waitTimer = undefined;
+        if (pendingSubmit.value) run();
+      }, QUERY_NAME_WAIT_MS);
+    }
     return;
   }
-  pendingSubmit.value = false;
+  run();
+}
+
+function run(): void {
+  stopWaiting();
+  appliedMoved.value = false;
   const text = draft.value;
   submittedProblems.value = props.problems?.(text) ?? [];
   editing.value = false;
@@ -136,14 +180,15 @@ function submit(): void {
 /** Show a query the page applied on its own (a Filters checkbox). */
 function settle(text: string): void {
   editing.value = false;
-  pendingSubmit.value = false;
+  appliedMoved.value = false;
+  stopWaiting();
   draft.value = text;
 }
 
 watch(
   () => props.ready,
   (ready) => {
-    if (ready && pendingSubmit.value) submit();
+    if (ready && pendingSubmit.value) run();
   },
 );
 
@@ -153,14 +198,16 @@ function onInput(): void {
 
 function revert(): void {
   editing.value = false;
-  pendingSubmit.value = false;
+  appliedMoved.value = false;
+  stopWaiting();
   draft.value = props.appliedText;
 }
 
 function clear(): void {
   submittedProblems.value = [];
-  pendingSubmit.value = false;
+  stopWaiting();
   editing.value = false;
+  appliedMoved.value = false;
   draft.value = "";
   emit("clear");
 }
@@ -289,8 +336,18 @@ defineExpose({ draft, submit, revert, settle });
       </div>
     </form>
 
+    <p v-if="appliedMoved && editing" class="text-xs text-warning-text" aria-live="polite" :data-testid="`${testid}-moved`">
+      {{ t('common.query.appliedChanged') }}
+      <button
+        type="button"
+        class="ms-1 rounded-sm font-medium underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        @click="revert"
+      >
+        {{ t('common.query.showApplied') }}
+      </button>
+    </p>
     <p v-if="pendingSubmit" class="text-xs text-muted-foreground" aria-live="polite">
-      {{ resolvingText ?? t('common.query.resolvingNames') }}
+      {{ resolvingText ?? t('common.query.resolvingNames', { seconds: QUERY_NAME_WAIT_MS / 1000 }) }}
     </p>
     <ul v-if="shownProblems.length" class="space-y-0.5 text-xs text-warning-text" aria-live="polite">
       <li v-for="problem in shownProblems" :key="problem">{{ problem }}</li>

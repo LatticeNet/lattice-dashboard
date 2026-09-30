@@ -69,7 +69,9 @@ export default {
       apply: "Search",
       since: "From",
       until: "To",
-      resolvingNames: "Reading the lists the names in the query resolve against; the search runs when they arrive.",
+      resolvingNames: "Reading the lists the names in the query resolve against; the search runs when they arrive, or in {seconds} seconds without them.",
+      appliedChanged: "The applied search changed while you were typing (Back, Forward or another control). Search runs what is typed here.",
+      showApplied: "Show the applied search",
     },
     table: {
       columns: "Columns",

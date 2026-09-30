@@ -67,7 +67,9 @@ export default {
       apply: "搜索",
       since: "从",
       until: "到",
-      resolvingNames: "正在读取查询中名称所需的列表；读完后自动搜索。",
+      resolvingNames: "正在读取查询中名称所需的列表；读完后自动搜索，{seconds} 秒内没读到则直接搜索。",
+      appliedChanged: "输入期间已应用的查询变了（后退、前进或其他控件）。点搜索会按这里输入的内容执行。",
+      showApplied: "显示已应用的查询",
     },
     table: {
       columns: "列",
