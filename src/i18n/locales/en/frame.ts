@@ -353,6 +353,20 @@ export default {
       disabled: "Disabled",
       approvals: "Pending approvals",
       monitors: "Monitors",
+      // The Tasks tile reads GET /api/tasks/counts. Each state says what is
+      // true; a read that succeeded always prints its counts.
+      tasksReading: "reading…",
+      tasksNotRead: "not read",
+      tasksNoAccess: "no access",
+      tasksOldServer: "server too old",
+      tasksOldServerHint: "needs GET /api/tasks/counts",
+      tasksStale: "refresh failed",
+      tasksPart: {
+        queued: "{n} queued",
+        running: "{n} running",
+        stalled: "{n} stalled",
+        failed_24h: "{n} failed in 24h",
+      },
     },
     fleet: "Fleet",
     fleetHealth: "Fleet health",

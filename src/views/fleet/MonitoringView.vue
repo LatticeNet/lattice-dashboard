@@ -394,8 +394,12 @@ const latencyTrend = computed<number[]>(() =>
     .filter((value): value is number => value !== undefined && Number.isFinite(value)),
 );
 
+/**
+ * The number alone: TrendChart appends its `unit` ("ms") to whatever this
+ * returns, and a unit here too printed "min 118msms".
+ */
 function formatTrendLatency(n: number): string {
-  return `${Math.round(n)}ms`;
+  return String(Math.round(n));
 }
 
 watch(

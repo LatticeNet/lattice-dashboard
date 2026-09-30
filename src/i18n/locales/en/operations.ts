@@ -510,6 +510,9 @@ export default {
       description: "Search security decisions and verify the append-only audit chain",
       returned: "Returned",
       totalMatch: "Total match",
+      // The server stops counting at its scan cap; the count is then a floor.
+      atLeast: "at least {n}",
+      scanStopped: "scan stopped after the newest {n} events",
       chain: "Chain",
       chainOk: "OK",
       chainBad: "Broken",

@@ -175,6 +175,25 @@ const tagsExpr = ref("");
   }
 }
 
+// The filter lives in the address both ways. It was read once and never
+// written, so a reload after changing it brought the old filter back, and
+// a copied link did not carry what was on screen. "all" is the bare URL.
+watch(statusFilter, (value) => {
+  const want = value === "all" ? undefined : value;
+  if ((route.query.status ?? undefined) === want) return;
+  const query = { ...route.query };
+  if (want) query.status = want;
+  else delete query.status;
+  router.replace({ query }).catch(() => {});
+});
+watch(
+  () => route.query.status,
+  (raw) => {
+    const next: StatusFilter = isNodeStatus(raw) ? raw : "all";
+    if (statusFilter.value !== next) statusFilter.value = next;
+  },
+);
+
 /* ----------------------------------------------------------------- */
 /* Card / list view mode. Persisted to localStorage AND reflected in  */
 /* `?view=` (mirrors the `?status=` seeding) so it is shareable and    */

@@ -27,6 +27,7 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import DataState from "@/components/common/DataState.vue";
 import { Badge } from "@/components/ui/badge";
@@ -187,6 +188,33 @@ async function submitBinding() {
   }
 }
 
+/**
+ * Deleting a binding takes a live URL offline, so it is the outside-breaking
+ * class of design 23, section 3.8: the dialog says what stops working and
+ * the operator types the address before it can go. It was one click.
+ */
+const pendingBinding = ref<StorageBinding | null>(null);
+
+function bindingAddress(binding: StorageBinding): string {
+  return binding.path_prefix ? `${binding.hostname}/${binding.path_prefix}` : binding.hostname;
+}
+
+const bindingImpact = computed(() => {
+  const binding = pendingBinding.value;
+  if (!binding) return [];
+  return [
+    t("platform.storage.deleteBindingImpactUrl", { url: `https://${bindingAddress(binding)}`, bucket: binding.bucket }),
+    t("platform.storage.deleteBindingImpactKept"),
+  ];
+});
+
+async function confirmDeleteBinding() {
+  const binding = pendingBinding.value;
+  if (!binding) return;
+  await deleteBinding(binding);
+  pendingBinding.value = null;
+}
+
 async function deleteBinding(binding: StorageBinding) {
   deletingBindingId.value = binding.id;
   try {
@@ -246,6 +274,38 @@ async function submitToken() {
   } finally {
     tokenSaving.value = false;
   }
+}
+
+/**
+ * Revoking a token breaks every client holding it, the same outside-breaking
+ * class as a binding: impact lines and the token's name typed first.
+ */
+const pendingToken = ref<StorageTokenView | null>(null);
+
+const tokenImpact = computed(() => {
+  const token = pendingToken.value;
+  if (!token) return [];
+  const lines = [
+    t("platform.storage.revokeTokenImpactClients", {
+      name: token.name,
+      access: token.access,
+      buckets: token.buckets?.join(", ") || "-",
+    }),
+    t("platform.storage.revokeTokenImpactFinal"),
+  ];
+  lines.push(
+    token.last_used_at
+      ? t("platform.storage.revokeTokenImpactUsed", { time: formatDateTime(token.last_used_at) })
+      : t("platform.storage.revokeTokenImpactUnused"),
+  );
+  return lines;
+});
+
+async function confirmRevokeToken() {
+  const token = pendingToken.value;
+  if (!token) return;
+  await revokeToken(token);
+  pendingToken.value = null;
 }
 
 async function revokeToken(token: StorageTokenView) {
@@ -454,9 +514,9 @@ async function revokeToken(token: StorageTokenView) {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          :aria-label="$t('platform.storage.deleteBinding')"
+                          :aria-label="$t('platform.storage.deleteBindingFor', { url: bindingAddress(binding) })"
                           :disabled="deletingBindingId === binding.id"
-                          @click="deleteBinding(binding)"
+                          @click="pendingBinding = binding"
                         >
                           <RefreshCw v-if="deletingBindingId === binding.id" class="size-4 animate-spin" />
                           <Trash2 v-else class="size-4" />
@@ -568,9 +628,9 @@ async function revokeToken(token: StorageTokenView) {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          :aria-label="$t('platform.storage.revokeToken')"
+                          :aria-label="$t('platform.storage.revokeTokenFor', { name: token.name })"
                           :disabled="!!token.revoked_at || revokingTokenId === token.id"
-                          @click="revokeToken(token)"
+                          @click="pendingToken = token"
                         >
                           <RefreshCw v-if="revokingTokenId === token.id" class="size-4 animate-spin" />
                           <Trash2 v-else class="size-4" />
@@ -585,5 +645,28 @@ async function revokeToken(token: StorageTokenView) {
         </CardContent>
       </Card>
     </div>
+
+    <ConfirmDialog
+      :open="!!pendingBinding"
+      :title="pendingBinding ? $t('platform.storage.deleteBindingTitle', { url: bindingAddress(pendingBinding) }) : ''"
+      :impact="bindingImpact"
+      :typed-confirm="pendingBinding ? bindingAddress(pendingBinding) : undefined"
+      :confirm-label="$t('platform.storage.deleteBinding')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!pendingBinding && deletingBindingId === pendingBinding.id"
+      @update:open="(open) => { if (!open) pendingBinding = null; }"
+      @confirm="confirmDeleteBinding"
+    />
+    <ConfirmDialog
+      :open="!!pendingToken"
+      :title="pendingToken ? $t('platform.storage.revokeTokenTitle', { name: pendingToken.name }) : ''"
+      :impact="tokenImpact"
+      :typed-confirm="pendingToken?.name"
+      :confirm-label="$t('platform.storage.revokeToken')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!pendingToken && revokingTokenId === pendingToken.id"
+      @update:open="(open) => { if (!open) pendingToken = null; }"
+      @confirm="confirmRevokeToken"
+    />
   </section>
 </template>

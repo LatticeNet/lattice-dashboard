@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const action = ref("");
@@ -100,6 +100,17 @@ const auditQuery = useAsyncData(
 
 const events = computed<AuditEvent[]>(() => auditQuery.data.value?.events ?? []);
 const total = computed(() => auditQuery.data.value?.total ?? events.value.length);
+/**
+ * Whether `total` counts the whole log. The server stops walking at a cap and
+ * says so with `complete: false`; the count is then a lower bound and is
+ * printed as "at least N", never as the total. An older server that sends no
+ * flag is taken at its word.
+ */
+const totalComplete = computed(() => auditQuery.data.value?.complete !== false);
+const totalText = computed(() => {
+  const n = total.value.toLocaleString(locale.value);
+  return totalComplete.value ? n : t("operations.audit.atLeast", { n });
+});
 
 const columns = computed<DataTableColumn<AuditEvent>[]>(() => [
   { key: "decision", label: t("operations.audit.decision"), sortable: true },
@@ -353,7 +364,15 @@ function openTrace(correlationId: string) {
  */
 const auditMetrics = computed<Metric[]>(() => [
   { key: "returned", label: t("operations.audit.returned"), value: events.value.length, icon: ScrollText },
-  { key: "total", label: t("operations.audit.totalMatch"), value: total.value, icon: ShieldCheck },
+  {
+    key: "total",
+    label: t("operations.audit.totalMatch"),
+    value: totalText.value,
+    hint: totalComplete.value
+      ? undefined
+      : t("operations.audit.scanStopped", { n: (auditQuery.data.value?.scanned ?? total.value).toLocaleString(locale.value) }),
+    icon: ShieldCheck,
+  },
   {
     key: "chain",
     label: t("operations.audit.chain"),
@@ -611,7 +630,7 @@ const auditMetrics = computed<Metric[]>(() => [
 
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
           <span class="text-muted-foreground">
-            {{ $t('operations.audit.showingRange', { from: rangeStart, to: rangeEnd, total }) }}
+            {{ $t('operations.audit.showingRange', { from: rangeStart, to: rangeEnd, total: totalText }) }}
           </span>
           <div class="flex items-center gap-2">
             <Button variant="outline" size="sm" :disabled="!hasPrev || auditQuery.loading.value" @click="prevPage">

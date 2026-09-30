@@ -101,6 +101,7 @@ import type {
   SubscriptionShareUpdateRequest,
   SubscriptionShareView,
   TOTPEnrollResponse,
+  TaskCounts,
   TaskResult,
   TaskScriptRevealResponse,
   TaskView,
@@ -362,6 +363,8 @@ export const api = {
 
   tasks: {
     list: (opts?: RequestOptions) => http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", undefined, opts),
+    // The queue's health as numbers; home reads this instead of every task.
+    counts: (opts?: RequestOptions) => http.get<TaskCounts>("/api/tasks/counts", undefined, opts),
     // One node's tasks, filtered by the server. The unfiltered list is fine for
     // a fleet-wide screen but grows with the fleet, and a node page only ever
     // wants its own rows.
