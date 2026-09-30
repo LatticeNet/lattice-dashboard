@@ -58,13 +58,15 @@ export interface ToolbarInput {
 }
 
 /**
- * Whether the table draws its toolbar. With no rows and no filter there is
- * nothing to search: the search box, the expression field and its help line
- * above "No resolvers registered" only pushed the empty state's own action
- * down. A filter that emptied the table keeps the toolbar, so it can be
- * cleared.
+ * Whether the table draws its own search and expression fields. With no rows
+ * and no filter there is nothing to search: the search box, the expression
+ * field and its help line above "No resolvers registered" only pushed the
+ * empty state's own action down. A filter that emptied the table keeps them,
+ * so it can be cleared. The page's own toolbar slot is always drawn: a page
+ * that filters upstream and hands the table zero rows needs its control to
+ * clear that filter.
  */
-export function tableToolbarVisible(input: ToolbarInput): boolean {
+export function tableSearchVisible(input: ToolbarInput): boolean {
   return input.rowCount > 0 || input.filterActive;
 }
 

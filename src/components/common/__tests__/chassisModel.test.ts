@@ -6,7 +6,7 @@ import {
   metricCapWarning,
   nodeDisplay,
   rowMenuSections,
-  tableToolbarVisible,
+  tableSearchVisible,
   typedConfirmMatches,
 } from "../chassisModel.ts";
 
@@ -29,10 +29,10 @@ test("dangerous menu items sit last and hidden ones are dropped", () => {
   assert.deepEqual(sections.danger.map((i) => i.key), ["delete", "revoke"]);
 });
 
-test("a table with no rows and no filter draws no toolbar; a filter that emptied it keeps one", () => {
-  assert.equal(tableToolbarVisible({ rowCount: 0, filterActive: false }), false);
-  assert.equal(tableToolbarVisible({ rowCount: 0, filterActive: true }), true);
-  assert.equal(tableToolbarVisible({ rowCount: 3, filterActive: false }), true);
+test("a table with no rows and no filter draws no search; a filter that emptied it keeps it", () => {
+  assert.equal(tableSearchVisible({ rowCount: 0, filterActive: false }), false);
+  assert.equal(tableSearchVisible({ rowCount: 0, filterActive: true }), true);
+  assert.equal(tableSearchVisible({ rowCount: 3, filterActive: false }), true);
 });
 
 test("the typed name must match exactly once the ends are trimmed", () => {

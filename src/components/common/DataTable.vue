@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
-import { tableToolbarVisible } from "./chassisModel";
+import { tableSearchVisible } from "./chassisModel";
 import {
   readTableUrlState,
   tableStateParams,
@@ -293,11 +293,30 @@ function pinnedEnd(column: DataTableColumn<T>): boolean {
   return props.narrowLayout === "scroll" && column.pin === "end";
 }
 
+/**
+ * The gutters pin with the column beside them. Without it a sideways scroll
+ * slid the selection checkbox under the pinned first cell, and a pinned
+ * actions column slid over the row chevron. Pinned cells paint the row's
+ * `--row-bg`, so hover, the open row and a selected row tint all the way
+ * across instead of stopping at the pin.
+ */
+const pinsEnd = computed(() => props.narrowLayout === "scroll" && props.columns.some((column) => column.pin === "end"));
+const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--background))]";
+
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
-  if (pinned(index)) return "pin-start [--pin-max:38vw] group-hover:bg-(--row-hover) group-data-[active]:bg-muted";
-  if (pinnedEnd(column)) return "pin-end group-hover:bg-(--row-hover) group-data-[active]:bg-muted";
+  if (pinned(index)) return cn("pin-start [--pin-max:38vw]", props.selectable && "[--pin-left:2.5rem]");
+  if (pinnedEnd(column)) return cn("pin-end", props.rowTo && "[--pin-right:2rem]");
   return undefined;
 }
+
+/** The selection checkbox: pinned at the left edge, ahead of the first column. */
+const selectGutterClass = computed(() => (props.narrowLayout === "scroll" ? `${PINNED_GUTTER} left-0` : undefined));
+
+/** The row chevron: pinned at the right edge, after any pinned actions column. */
+const chevronGutterClass = computed(() => {
+  if (props.narrowLayout !== "scroll") return undefined;
+  return pinsEnd.value ? `${PINNED_GUTTER} right-0` : "pin-end";
+});
 
 function isActive(row: T): boolean {
   return !!props.activeRowId && props.rowKey(row) === props.activeRowId;
@@ -640,11 +659,13 @@ function clearSelection(): void {
 /* ----------------------------- view state ----------------------------- */
 const isEmpty = computed(() => props.rows.length === 0);
 /**
- * No toolbar over nothing: with zero rows and no filter the empty state
+ * No search over nothing: with zero rows and no filter the empty state
  * carries the create action, and a search box above it only pushes it down.
+ * The page's #toolbar slot is not gated: it may hold the upstream filter that
+ * emptied the rows, and hiding it would strand the operator.
  */
-const toolbarShown = computed(() =>
-  tableToolbarVisible({
+const searchShown = computed(() =>
+  tableSearchVisible({
     rowCount: props.rows.length,
     filterActive: searchInput.value.trim() !== "" || expressionInput.value.trim() !== "",
   }),
@@ -663,9 +684,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
 <template>
   <div :class="cn('space-y-4', props.class)">
     <!-- Toolbar -->
-    <div v-if="toolbarShown && (showSearch || showExpression || $slots.toolbar)" class="space-y-2">
+    <div v-if="(searchShown && (showSearch || showExpression)) || $slots.toolbar" class="space-y-2">
       <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-        <div class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
+        <div v-if="searchShown && (showSearch || showExpression)" class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
           <div v-if="showSearch" class="relative min-w-0 sm:min-w-[220px]">
             <Search
               class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
@@ -711,11 +732,11 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             </button>
           </div>
         </div>
-        <div class="flex shrink-0 items-center gap-2">
+        <div v-if="$slots.toolbar" class="flex shrink-0 items-center gap-2 lg:ml-auto">
           <slot name="toolbar" />
         </div>
       </div>
-      <p v-if="showExpression" class="text-xs" :class="expressionError ? 'text-destructive' : 'text-muted-foreground'">
+      <p v-if="searchShown && showExpression" class="text-xs" :class="expressionError ? 'text-destructive' : 'text-muted-foreground'">
         {{ expressionError || expressionHelpText }}
       </p>
     </div>
@@ -777,16 +798,24 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
            absolutely positioned in a cell: screen-reader text is position:
            absolute, and with the containing block outside the scroller it
            escaped the overflow clip and widened the page (NetGuard measured
-           886 px at 375). It is also a size container, so a row-detail
-           sentence can be held to the visible width below. -->
+           886 px at 375). A table with row detail is also a size
+           container, so the detail sentence can be held to the visible
+           width below. Only that table: containment is a cost every other
+           table has no use for. (Measured in Chrome: a position:fixed child
+           of this container still lands on the viewport, so the container
+           does not capture fixed menus. A non-portaled absolute menu in a
+           cell is clipped by the scroller's overflow either way; the
+           console's menus are portaled.) -->
       <div
-        :class="narrowLayout === 'scroll' ? 'relative overflow-x-auto' : 'relative hidden overflow-x-auto md:block'"
-        class="[container-type:inline-size]"
+        :class="[
+          narrowLayout === 'scroll' ? 'relative overflow-x-auto' : 'relative hidden overflow-x-auto md:block',
+          $slots['row-detail'] && '[container-type:inline-size]',
+        ]"
       >
         <table class="w-full min-w-[640px] text-sm">
           <thead class="sticky top-0 z-10 bg-background">
             <tr class="border-b border-border text-xs text-muted-foreground">
-              <th v-if="selectable" scope="col" class="w-10 px-3 py-2">
+              <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2', selectGutterClass)">
                 <Checkbox
                   :model-value="headerCheckboxState"
                   :aria-label="label.selectAll.value"
@@ -829,15 +858,15 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 </button>
                 <span v-else>{{ column.label }}</span>
               </th>
-              <th v-if="rowTo" scope="col" class="w-8 px-2" aria-hidden="true"></th>
+              <th v-if="rowTo" scope="col" :class="cn('w-8 px-2', chevronGutterClass)" aria-hidden="true"></th>
             </tr>
           </thead>
           <tbody>
             <template v-for="row in pagedRows" :key="rowKey(row)">
             <tr
-              class="group border-b border-border last:border-0 [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:bg-(--row-hover) data-[active]:bg-muted"
+              class="group border-b border-border last:border-0 bg-(--row-bg) [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:[--row-bg:var(--row-hover)] data-[active]:[--row-bg:var(--muted)]"
               :class="{
-                'bg-muted/30': selectable && isRowSelected(row),
+                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--background))]': selectable && isRowSelected(row),
                 'cursor-pointer focus-row': rowActivatable,
               }"
               :data-row-key="rowKey(row)"
@@ -847,7 +876,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               @click="rowActivatable && onRowActivate(row, $event)"
               @keydown="rowActivatable && onRowKeydown(row, $event)"
             >
-              <td v-if="selectable" class="px-3 py-3 align-top">
+              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-top', selectGutterClass)">
                 <Checkbox
                   :model-value="isRowSelected(row)"
                   :aria-label="label.selectRow.value"
@@ -867,7 +896,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                   {{ textOf(rawValue(row, column)) }}
                 </slot>
               </td>
-              <td v-if="rowTo" class="w-8 px-2 text-right align-middle">
+              <td v-if="rowTo" :class="cn('w-8 px-2 text-right align-middle', chevronGutterClass)">
                 <ChevronRight
                   class="ms-auto size-4 text-muted-foreground opacity-40 transition-opacity group-hover:opacity-90"
                   aria-hidden="true"

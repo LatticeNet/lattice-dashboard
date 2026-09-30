@@ -215,6 +215,29 @@ const eventRows: EventRow[] = [
   { id: "e2", what: "agentupdate 0.3.6 to 0.3.9 on 34 nodes", who: "cdcd", when: "1d ago" },
   { id: "e3", what: "ssh-guard arm on [Metix]-Vultr-SG", who: "cdcd", when: "3d ago" },
 ];
+/* A selectable table whose rows go somewhere: both gutters pin at 375. */
+const selectColumns: DataTableColumn<GalleryNode>[] = [
+  { key: "name", label: "Node" },
+  { key: "status", label: "Status" },
+  { key: "ip", label: "Address", class: "font-mono text-xs" },
+  { key: "agent", label: "Agent", class: "font-mono text-xs" },
+  { key: "tags", label: "Tags", value: (row) => row.tags.join(", ") },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
+];
+const selectRows = GALLERY_NODES.slice(0, 4);
+const selectedNodes = ref(new Set([selectRows[1]!.id]));
+
+/* A page that filters before the table: zero rows must keep the page's control. */
+const upstreamColumns: DataTableColumn<GalleryNode>[] = [
+  { key: "name", label: "Node", searchable: true },
+  { key: "status", label: "Status" },
+  { key: "ip", label: "Address", class: "font-mono text-xs" },
+];
+const upstreamStatus = ref<"all" | "online" | "offline" | "draining">("draining");
+const upstreamRows = computed(() =>
+  upstreamStatus.value === "all" ? selectRows : selectRows.filter((row) => row.status === upstreamStatus.value),
+);
+
 const eventColumns: DataTableColumn<EventRow>[] = [
   { key: "what", label: "Change" },
   { key: "who", label: "Actor" },
@@ -413,6 +436,57 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
         </template>
         <template #cell-actions="{ row }">
           <RowMenu :name="row.name" :items="menuFor(row)" />
+        </template>
+      </DataTable>
+
+      <p class="text-xs text-muted-foreground">
+        Selectable, with a row link and a pinned menu. At 375 the checkbox pins ahead of the first column and the chevron after
+        the menu; the selected row's tint runs under the pinned cells.
+      </p>
+      <DataTable
+        data-gallery="select-table"
+        :columns="selectColumns"
+        :rows="selectRows"
+        :row-key="(row) => row.id"
+        selectable
+        v-model:selected="selectedNodes"
+        :row-to="(row) => ({ query: { ...route.query, open: row.id } })"
+        :show-summary="false"
+      >
+        <template #cell-name="{ row }">
+          <span class="font-medium">{{ row.name }}</span>
+        </template>
+        <template #cell-actions="{ row }">
+          <RowMenu :name="row.name" :items="menuFor(row)" />
+        </template>
+      </DataTable>
+
+      <p class="text-xs text-muted-foreground">
+        Filtered before the table: the page's own control stays when its filter leaves zero rows, so the filter can be cleared.
+      </p>
+      <DataTable
+        data-gallery="upstream-table"
+        :columns="upstreamColumns"
+        :rows="upstreamRows"
+        :row-key="(row) => row.id"
+        searchable
+        :show-summary="false"
+        empty-title="No draining nodes"
+      >
+        <template #toolbar>
+          <div class="flex items-center gap-1 text-xs" role="group" aria-label="Status">
+            <Button
+              v-for="value in ['all', 'online', 'offline', 'draining'] as const"
+              :key="value"
+              size="sm"
+              type="button"
+              :variant="upstreamStatus === value ? 'secondary' : 'ghost'"
+              :aria-pressed="upstreamStatus === value"
+              @click="upstreamStatus = value"
+            >
+              {{ value }}
+            </Button>
+          </div>
         </template>
       </DataTable>
 

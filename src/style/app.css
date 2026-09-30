@@ -657,16 +657,21 @@
    The first column is capped at 38% of the viewport so the data keeps most of
    a phone's width; `--pin-max` sets the cap on a wide screen (12rem unless a
    table says otherwise). Below 48rem, where the middle actually scrolls, a
-   hairline marks each pinned edge so the pin reads as one. */
+   hairline marks each pinned edge so the pin reads as one.
+
+   `--pin-left` and `--pin-right` offset a pinned cell past a pinned gutter
+   (DataTable's selection checkbox, its row chevron). A row that is hovered,
+   selected or open sets `--row-bg` to an opaque tint, and the pinned cells
+   paint it, so the row reads as one band instead of stopping at the pin. */
 @utility pin-start {
   position: sticky;
-  left: 0;
+  left: var(--pin-left, 0);
   z-index: 10;
   max-width: min(var(--pin-max, 12rem), 38vw);
   /* The cap is a hard edge: whatever does not fit wraps or is clipped here,
      never drawn under the next column. */
   overflow: hidden;
-  background-color: var(--background);
+  background-color: var(--row-bg, var(--background));
 
   @media (width < 48rem) {
     box-shadow: inset -1px 0 0 var(--border);
@@ -675,9 +680,9 @@
 
 @utility pin-end {
   position: sticky;
-  right: 0;
+  right: var(--pin-right, 0);
   z-index: 10;
-  background-color: var(--background);
+  background-color: var(--row-bg, var(--background));
 
   @media (width < 48rem) {
     box-shadow: inset 1px 0 0 var(--border);
