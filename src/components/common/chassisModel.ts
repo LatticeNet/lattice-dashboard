@@ -68,8 +68,6 @@ export function tableToolbarVisible(input: ToolbarInput): boolean {
   return input.rowCount > 0 || input.filterActive;
 }
 
-/** Column keys that pin to the table's end in the scroll layout. */
-export const PINNED_END_KEYS: readonly string[] = ["actions"];
 
 /* ------------------------------------------------------------------ */
 /* ConfirmDialog (3.8)                                                 */

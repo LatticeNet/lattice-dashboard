@@ -8,10 +8,11 @@ const COUNTS = { queued: 0, running: 0, stalled: 1, failed_24h: 5, finished_24h:
 test("production on 2026-09-30: nothing queued, one stalled, five failed in a day", () => {
   const tile = taskCountsTile({ data: COUNTS });
   assert.equal(tile.state, "ready");
+  // Worst first, so a narrow tile that truncates keeps what needs a hand.
   assert.deepEqual(tile.parts, [
-    { key: "queued", n: 0, tone: "default" },
     { key: "stalled", n: 1, tone: "warning" },
     { key: "failed_24h", n: 5, tone: "destructive" },
+    { key: "queued", n: 0, tone: "default" },
   ]);
   assert.equal(tile.status, "stalled");
   assert.equal(tile.stale, false);

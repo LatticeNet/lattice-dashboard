@@ -159,7 +159,8 @@ const taskTile = computed(() => taskCountsTile({ data: taskCounts.data.value, er
  */
 const tasksMetric = computed<Metric>(() => {
   const tile = taskTile.value;
-  const base = { key: "tasks", label: t("nav.items.tasks"), icon: Terminal };
+  // A whole row on a phone, like "Runs out": the counts do not fit half of one.
+  const base = { key: "tasks", label: t("nav.items.tasks"), icon: Terminal, class: "col-span-2 lg:col-span-1" };
   switch (tile.state) {
     case "reading":
       return { ...base, value: t("overview.kpi.tasksReading"), tone: "muted" };
@@ -328,6 +329,8 @@ const kpiMetrics = computed<Metric[]>(() => [
     tone: pendingApprovalCount.value > 0 ? "warning" : "default",
     icon: ShieldCheck,
     to: { name: "approvals" },
+    // Full rows on a phone, so no segment sits beside an empty cell.
+    class: "col-span-2 lg:col-span-1",
   },
   tasksMetric.value,
   runsOutMetric.value,

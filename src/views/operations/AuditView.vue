@@ -363,7 +363,6 @@ function openTrace(correlationId: string) {
  * computed, because a broken chain is the page's most important fact.
  */
 const auditMetrics = computed<Metric[]>(() => [
-  { key: "returned", label: t("operations.audit.returned"), value: events.value.length, icon: ScrollText },
   {
     key: "total",
     label: t("operations.audit.totalMatch"),
@@ -372,7 +371,10 @@ const auditMetrics = computed<Metric[]>(() => [
       ? undefined
       : t("operations.audit.scanStopped", { n: (auditQuery.data.value?.scanned ?? total.value).toLocaleString(locale.value) }),
     icon: ShieldCheck,
+    // A whole row on a phone: "at least 50,000" and why do not fit half.
+    class: "col-span-2 lg:col-span-1",
   },
+  { key: "returned", label: t("operations.audit.returned"), value: events.value.length, icon: ScrollText },
   {
     key: "chain",
     label: t("operations.audit.chain"),

@@ -119,8 +119,11 @@ function onConfirm() {
 
 <template>
   <Dialog :open="open" @update:open="setOpen">
-    <DialogScrollContent class="sm:max-w-md">
-      <DialogHeader>
+    <!-- A 16 px gutter on a phone, and a title that stops short of the close
+         button: a long name ("Revoke the storage token edge-config reader?")
+         ran under it at 375. -->
+    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md">
+      <DialogHeader class="pe-6">
         <DialogTitle>{{ title }}</DialogTitle>
         <DialogDescription v-if="description">
           {{ description }}

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
-import { PINNED_END_KEYS, tableToolbarVisible } from "./chassisModel";
+import { tableToolbarVisible } from "./chassisModel";
 import {
   readTableUrlState,
   tableStateParams,
@@ -42,8 +42,11 @@ export interface DataTableColumn<Row> {
   value?: (row: Row) => unknown;
   /**
    * Pins the column to the table's end in the scroll layout, so the row's
-   * actions stay in reach while the columns between scroll. A column keyed
-   * `actions` pins without asking.
+   * menu stays in reach while the columns between scroll. Opt-in, for a
+   * column that holds a RowMenu: a cell of two to four inline buttons pinned
+   * at 375 left 60 px for the scrolling middle (DNS) or none at all
+   * (Geo-Routing), and an empty cell for a read-only operator still took its
+   * width (Notifications).
    */
   pin?: "end";
 }
@@ -143,8 +146,9 @@ const props = withDefaults(
     /**
      * What the table becomes below 768px. "scroll" (the default, design 23
      * section 3.7) keeps the columns, lets the table scroll sideways, pins
-     * the first column (capped at 38vw) and the actions column: rows are
-     * compared down a column, which a stack of cards makes impossible.
+     * the first column (capped at 38vw) and any column marked `pin: "end"`:
+     * rows are compared down a column, which a stack of cards makes
+     * impossible.
      * "cards" stacks each row as a card of label and value pairs; opt into it
      * only for lists whose rows are read one at a time.
      */
@@ -284,9 +288,9 @@ function pinned(index: number): boolean {
   return props.narrowLayout === "scroll" && index === 0;
 }
 
-/** The actions column pins to the end in the scroll layout. */
+/** A column that asked for it pins to the end in the scroll layout. */
 function pinnedEnd(column: DataTableColumn<T>): boolean {
-  return props.narrowLayout === "scroll" && (column.pin === "end" || PINNED_END_KEYS.includes(column.key));
+  return props.narrowLayout === "scroll" && column.pin === "end";
 }
 
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
@@ -662,7 +666,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
     <div v-if="toolbarShown && (showSearch || showExpression || $slots.toolbar)" class="space-y-2">
       <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
-          <div v-if="showSearch" class="relative min-w-[220px]">
+          <div v-if="showSearch" class="relative min-w-0 sm:min-w-[220px]">
             <Search
               class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
               aria-hidden="true"
@@ -683,7 +687,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               <X class="size-4" aria-hidden="true" />
             </button>
           </div>
-          <div v-if="showExpression" class="relative min-w-[240px]">
+          <div v-if="showExpression" class="relative min-w-0 sm:min-w-[240px]">
             <Funnel
               class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
               aria-hidden="true"
@@ -769,7 +773,16 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
       </template>
 
       <!-- Desktop / tablet: real table (and phones too, in scroll layout) -->
-      <div :class="narrowLayout === 'scroll' ? 'overflow-x-auto' : 'hidden relative overflow-x-auto md:block'">
+      <!-- The scroller is the containing block (relative) for anything
+           absolutely positioned in a cell: screen-reader text is position:
+           absolute, and with the containing block outside the scroller it
+           escaped the overflow clip and widened the page (NetGuard measured
+           886 px at 375). It is also a size container, so a row-detail
+           sentence can be held to the visible width below. -->
+      <div
+        :class="narrowLayout === 'scroll' ? 'relative overflow-x-auto' : 'relative hidden overflow-x-auto md:block'"
+        class="[container-type:inline-size]"
+      >
         <table class="w-full min-w-[640px] text-sm">
           <thead class="sticky top-0 z-10 bg-background">
             <tr class="border-b border-border text-xs text-muted-foreground">
@@ -863,7 +876,12 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             </tr>
             <tr v-if="isRowExpanded(row)" class="border-b border-border bg-muted/20 last:border-0">
               <td :colspan="spannedColumns" class="px-3 pb-3 pt-0">
-                <slot name="row-detail" :row="row" />
+                <!-- The cell spans every column, so it is as wide as the
+                     table; the sentence stays on the visible part while the
+                     columns scroll, and wraps to it. -->
+                <div class="sticky left-3 max-w-[calc(100cqw-1.5rem)]">
+                  <slot name="row-detail" :row="row" />
+                </div>
               </td>
             </tr>
             </template>

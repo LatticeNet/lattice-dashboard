@@ -23,7 +23,10 @@ export interface TaskTilePart {
 
 export interface TaskTile {
   state: TaskTileState;
-  /** The counts worth saying, queued always, the rest only when non-zero. */
+  /**
+   * The counts worth saying, worst first: stalled and failed lead so a
+   * narrow tile that truncates keeps them; queued is always said.
+   */
   parts: TaskTilePart[];
   /** A refresh failed after a good read; the parts are the last good ones. */
   stale: boolean;
@@ -46,10 +49,11 @@ export function taskCountsTile(input: { data?: TaskCounts; error?: unknown }): T
     if (input.error) return { state: code === 403 ? "forbidden" : "failed", parts: [], stale: false };
     return { state: "reading", parts: [], stale: false };
   }
-  const parts: TaskTilePart[] = [{ key: "queued", n: data.queued, tone: "default" }];
-  if (data.running > 0) parts.push({ key: "running", n: data.running, tone: "default" });
+  const parts: TaskTilePart[] = [];
   if (data.stalled > 0) parts.push({ key: "stalled", n: data.stalled, tone: "warning" });
   if (data.failed_24h > 0) parts.push({ key: "failed_24h", n: data.failed_24h, tone: "destructive" });
+  parts.push({ key: "queued", n: data.queued, tone: "default" });
+  if (data.running > 0) parts.push({ key: "running", n: data.running, tone: "default" });
   const status = data.stalled > 0 ? "stalled" : data.queued > 0 ? "queued" : data.running > 0 ? "leased" : undefined;
   return { state: "ready", parts, stale: !!input.error, status };
 }

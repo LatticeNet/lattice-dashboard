@@ -1329,21 +1329,21 @@ const taskMetrics = computed<Metric[]>(() => [
             <CardTitle>{{ $t('operations.tasks.history') }}</CardTitle>
             <CardDescription>{{ $t('operations.tasks.historyHint') }}</CardDescription>
           </div>
-          <div class="flex flex-wrap gap-2">
-            <div class="relative">
+          <div class="flex w-full flex-wrap gap-2 sm:w-auto">
+            <div class="relative w-full sm:w-auto">
               <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
               <Input
                 v-model="taskSearch"
-                class="w-72 pl-8"
+                class="w-full pl-8 sm:w-72"
                 :placeholder="$t('operations.tasks.searchPlaceholder')"
                 :aria-label="$t('operations.tasks.searchLabel')"
               />
             </div>
-            <div class="relative">
+            <div class="relative w-full sm:w-auto">
               <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
               <Input
                 v-model="taskExpression"
-                class="w-80 pl-8 font-mono text-xs"
+                class="w-full pl-8 font-mono text-xs sm:w-80"
                 :class="taskExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
                 :placeholder="$t('operations.tasks.expressionPlaceholder')"
                 :aria-label="$t('operations.tasks.expressionLabel')"

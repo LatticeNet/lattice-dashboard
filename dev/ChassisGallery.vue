@@ -162,7 +162,7 @@ const nodeColumns: DataTableColumn<GalleryNode>[] = [
   { key: "lastSeen", label: "Last seen", sortable: true, value: (row) => row.lastSeenSec },
   { key: "cpu", label: "CPU", align: "right", sortable: true },
   { key: "tags", label: "Tags", searchable: true, value: (row) => row.tags.join(" ") },
-  { key: "actions", label: "", class: "w-12" },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ];
 
 const confirm = ref<null | "disable" | "delete">(null);

@@ -1562,6 +1562,9 @@ const approvalMetrics = computed<Metric[]>(() => [
               </div>
             </div>
 
+            <!-- Cards on a phone: the inbox is read one plan at a time, and in
+                 the scroll layout the pinned first column is the status badge,
+                 so the change and its target scrolled out of sight. -->
             <DataTable
               state-key="approvals"
               v-else
@@ -1569,6 +1572,7 @@ const approvalMetrics = computed<Metric[]>(() => [
               :columns="approvalColumns"
               :rows="filteredApprovals"
               :row-key="(row) => row.id"
+              narrow-layout="cards"
               :page-size="25"
               :expression-filter="false"
               selectable
