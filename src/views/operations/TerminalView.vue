@@ -12,7 +12,6 @@
  * Every decision that does not need the DOM lives in ./terminalModel.ts.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -30,6 +29,7 @@ import { ChevronRight, ChevronsUpDown, Maximize2, Minimize2, Power, RefreshCw, S
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { describeNodeStatus } from "@/lib/nodeStatus";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { useAuthStore } from "@/stores/auth";
 import { claimViewportPane } from "@/layout/viewportPane";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -71,7 +71,7 @@ const DEFAULT_ROWS = 34;
 const TRANSPORT_STORAGE_KEY = "lattice.terminal.transport";
 const SHELLS = ["bash", "sh", "/bin/zsh"] as const;
 
-const route = useRoute();
+const ownedRoute = useOwnedRoute();
 const { t } = useI18n();
 const auth = useAuthStore();
 
@@ -121,9 +121,11 @@ function displayNode(id: unknown): string {
 
 // A deep link (`?node_id=`) chooses the node the way a click would, once per
 // route change. It is not a default: without the query nothing is chosen.
-const routeNodeId = computed(() => queryString(route.query.node_id));
-const routeConnect = computed(() => queryFlag(route.query.connect));
-const routeSessionId = computed(() => queryString(route.query.session_id));
+// Read through the owned route: while Terminal is leaving, the router already
+// points at the next page, whose ?node_id= must not select a node here.
+const routeNodeId = computed(() => queryString(ownedRoute.query().node_id));
+const routeConnect = computed(() => queryFlag(ownedRoute.query().connect));
+const routeSessionId = computed(() => queryString(ownedRoute.query().session_id));
 let appliedRouteNodeId = "";
 let routeConnectAttempted = false;
 watch(
