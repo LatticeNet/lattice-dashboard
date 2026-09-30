@@ -79,7 +79,7 @@ const chipClass = (active: boolean) =>
     </PageHeader>
 
     <!-- Kind chips: a segmented row that scrolls sideways at 375 rather than wrapping into a wall. -->
-    <div v-if="!unsupported" class="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+    <div v-if="!unsupported" class="-mx-4 relative overflow-x-auto px-4 sm:mx-0 sm:px-0">
       <div
         class="inline-flex gap-1 rounded-lg border border-border bg-muted/30 p-1"
         role="group"

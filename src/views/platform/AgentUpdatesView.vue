@@ -688,7 +688,7 @@ watch(
           </p>
         </div>
 
-        <div v-else-if="artifacts.length" class="overflow-x-auto">
+        <div v-else-if="artifacts.length" class="relative overflow-x-auto">
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">

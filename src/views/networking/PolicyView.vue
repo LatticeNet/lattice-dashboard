@@ -1099,7 +1099,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
 
                 <!-- Hub-and-spoke node-link diagram, clustered by region -->
-                <div class="overflow-x-auto rounded-lg border border-border bg-muted/10 p-2">
+                <div class="relative overflow-x-auto rounded-lg border border-border bg-muted/10 p-2">
                   <svg
                     :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`"
                     class="mx-auto block h-[540px] w-full max-w-[860px]"
@@ -1253,7 +1253,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
 
                 <!-- Externals adjacency table -->
-                <div v-if="externals.length" class="overflow-x-auto rounded-lg border border-border">
+                <div v-if="externals.length" class="relative overflow-x-auto rounded-lg border border-border">
                   <table class="w-full text-sm">
                     <thead>
                       <tr class="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">

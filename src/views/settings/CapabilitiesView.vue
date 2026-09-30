@@ -169,7 +169,7 @@ async function applyToggle() {
         >
           <!-- A real table, so the four things an operator compares across rows
                line up in columns instead of being flung to opposite edges. -->
-          <div class="overflow-x-auto">
+          <div class="relative overflow-x-auto">
             <table class="data-grid min-w-[40rem]">
               <thead>
                 <tr>

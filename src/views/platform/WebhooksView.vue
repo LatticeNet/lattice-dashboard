@@ -569,7 +569,7 @@ async function runTest(): Promise<void> {
               <CopyButton :value="selectedCurl" :label="$t('common.actions.copy')" />
             </div>
             <pre
-              class="overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
+              class="relative overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
             ><code>{{ selectedCurl }}</code></pre>
           </div>
 
@@ -751,7 +751,7 @@ async function runTest(): Promise<void> {
             <CopyButton :value="revealedCurl" :label="$t('common.actions.copy')" />
           </div>
           <pre
-            class="overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
+            class="relative overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
           ><code>{{ revealedCurl }}</code></pre>
         </div>
 

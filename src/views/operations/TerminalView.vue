@@ -696,7 +696,7 @@ onMounted(() => {
         v-if="tabs.length"
         role="tablist"
         :aria-label="$t('operations.terminal.tabs.label')"
-        class="-mb-4 flex shrink-0 items-end gap-1 overflow-x-auto px-4 sm:px-0"
+        class="-mb-4 flex shrink-0 items-end gap-1 relative overflow-x-auto px-4 sm:px-0"
       >
         <div
           v-for="(tab, index) in tabs"

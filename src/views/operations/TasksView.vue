@@ -1547,10 +1547,10 @@ const taskMetrics = computed<Metric[]>(() => [
                     <span class="font-mono" :title="detailTask.script_sha256">{{ shortId(detailTask.script_sha256 ?? "", 16) }}</span>
                     <CopyButton :value="detailTask.script_sha256 ?? ''" />
                   </div>
-                  <pre class="max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[detailTask.id] }}</pre>
+                  <pre class="max-h-64 relative overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[detailTask.id] }}</pre>
                 </div>
 
-                <div  class="overflow-x-auto rounded-lg border border-border">
+                <div  class="relative overflow-x-auto rounded-lg border border-border">
                   <table class="w-full min-w-[760px] text-sm">
                     <thead class="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
@@ -1641,9 +1641,9 @@ const taskMetrics = computed<Metric[]>(() => [
                                   <span v-if="attempt.task.rerun_of_node_id">{{ $t('operations.tasks.nodeRerunBadge') }}</span>
                                   <span>{{ formatDateTime(attempt.result?.finished_at || attempt.task.created_at) }}</span>
                                 </div>
-                                <pre v-if="attempt.result?.stdout" class="max-h-56 overflow-auto rounded bg-muted p-3 text-xs">{{ attempt.result.stdout }}</pre>
-                                <pre v-if="attempt.result?.stderr" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.stderr }}</pre>
-                                <pre v-if="attempt.result?.error" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.error }}</pre>
+                                <pre v-if="attempt.result?.stdout" class="max-h-56 relative overflow-auto rounded bg-muted p-3 text-xs">{{ attempt.result.stdout }}</pre>
+                                <pre v-if="attempt.result?.stderr" class="mt-2 max-h-56 relative overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.stderr }}</pre>
+                                <pre v-if="attempt.result?.error" class="mt-2 max-h-56 relative overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.error }}</pre>
                                 <p v-if="!attempt.result" class="text-xs text-muted-foreground">{{ $t('operations.tasks.noResultYet') }}</p>
                               </div>
                             </div>

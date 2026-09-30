@@ -563,7 +563,7 @@ const auditMetrics = computed<Metric[]>(() => [
                 </Button>
               </div>
             </div>
-            <pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-background/80 p-3 font-mono text-xs">{{ offBoxAnchorRecord }}</pre>
+            <pre class="max-h-48 relative overflow-auto whitespace-pre-wrap rounded-md bg-background/80 p-3 font-mono text-xs">{{ offBoxAnchorRecord }}</pre>
           </div>
         </div>
       </CardContent>
@@ -613,7 +613,7 @@ const auditMetrics = computed<Metric[]>(() => [
                 {{ $t('operations.audit.corrPrefix') }} {{ row.correlation_id }}
               </button>
             </div>
-            <pre v-if="metadataText(row)" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-left font-mono text-xs">{{ metadataText(row) }}</pre>
+            <pre v-if="metadataText(row)" class="mt-2 max-h-48 relative overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-left font-mono text-xs">{{ metadataText(row) }}</pre>
           </template>
 
           <template #cell-at="{ row }">

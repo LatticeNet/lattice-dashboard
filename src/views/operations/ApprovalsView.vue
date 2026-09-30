@@ -1909,7 +1909,7 @@ const approvalMetrics = computed<Metric[]>(() => [
               </div>
               <PlanDiff :before="previousPlan" :after="selected.plan || ''" />
             </template>
-            <pre v-else class="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
+            <pre v-else class="max-h-[520px] relative overflow-auto whitespace-pre-wrap rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
           </div>
 
           <div v-if="digestCache[selected.id]" class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">

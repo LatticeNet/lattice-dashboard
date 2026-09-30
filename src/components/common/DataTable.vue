@@ -769,7 +769,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
       </template>
 
       <!-- Desktop / tablet: real table (and phones too, in scroll layout) -->
-      <div :class="narrowLayout === 'scroll' ? 'overflow-x-auto' : 'hidden overflow-x-auto md:block'">
+      <div :class="narrowLayout === 'scroll' ? 'overflow-x-auto' : 'hidden relative overflow-x-auto md:block'">
         <table class="w-full min-w-[640px] text-sm">
           <thead class="sticky top-0 z-10 bg-background">
             <tr class="border-b border-border text-xs text-muted-foreground">

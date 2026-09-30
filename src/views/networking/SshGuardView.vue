@@ -1379,7 +1379,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 
       <!-- The table scrolls sideways inside itself at narrow widths and keeps
            the node column pinned; the page stays the only vertical scroller. -->
-      <div v-else class="overflow-x-auto rounded-md border border-border">
+      <div v-else class="relative overflow-x-auto rounded-md border border-border">
         <table class="w-full border-collapse text-sm">
           <thead class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>

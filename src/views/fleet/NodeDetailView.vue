@@ -1951,7 +1951,7 @@ async function resolveGeo() {
                     {{ $t('fleet.nodes.enroll.platformManual') }}
                   </button>
                 </div>
-                <code class="block overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
+                <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
                   {{ reconfigureCommand }}
                 </code>
               </div>
@@ -2432,7 +2432,7 @@ async function resolveGeo() {
               </div>
               <CopyButton :value="rotatedToken.token" :label="$t('fleet.nodes.rotated.copyToken')" />
             </div>
-            <code class="block overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">{{ rotatedToken.token }}</code>
+            <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">{{ rotatedToken.token }}</code>
           </div>
 
           <!-- Agent diagnostics / debug -->

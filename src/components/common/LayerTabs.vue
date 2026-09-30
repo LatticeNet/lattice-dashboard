@@ -48,7 +48,7 @@ const COUNT_TONE = { default: "text-muted-foreground", warning: "text-warning-te
 
 <template>
   <TabsRoot v-model="model" activation-mode="manual" :class="props.class">
-    <div ref="strip" class="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <div ref="strip" class="-mx-4 relative overflow-x-auto px-4 sm:mx-0 sm:px-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <TabsList
         :aria-label="label"
         class="flex w-max min-w-full items-stretch gap-1 border-b border-border"

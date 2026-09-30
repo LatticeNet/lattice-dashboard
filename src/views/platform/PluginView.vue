@@ -530,7 +530,7 @@ function confirmAction() {
           :empty-description="$t('pluginViews.emptyDescription')"
           @retry="sourceQuery.refresh"
         >
-          <pre class="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-4 font-mono text-xs text-foreground">{{ markdownText }}</pre>
+          <pre class="relative overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-4 font-mono text-xs text-foreground">{{ markdownText }}</pre>
         </DataState>
       </CardContent>
     </Card>

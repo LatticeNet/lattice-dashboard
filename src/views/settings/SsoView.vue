@@ -468,7 +468,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             <li>{{ $t("settings.sso.form.stepCreateApp") }}</li>
             <li>
               {{ $t("settings.sso.form.stepRedirect") }}
-              <code class="block mt-1 overflow-x-auto rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
+              <code class="block mt-1 relative overflow-x-auto rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
                 {{ redirectUri }}
               </code>
             </li>

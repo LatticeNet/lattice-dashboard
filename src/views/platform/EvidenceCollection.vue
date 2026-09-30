@@ -582,7 +582,7 @@ async function startFiltered(): Promise<void> {
           </p>
         </div>
         <p v-if="tailError" class="text-xs text-destructive">{{ tailError.message }}</p>
-        <div class="max-h-96 overflow-auto rounded-md border border-border bg-muted/10">
+        <div class="max-h-96 relative overflow-auto rounded-md border border-border bg-muted/10">
           <table class="w-full text-xs">
             <tbody class="font-mono">
               <tr v-for="line in tailLines" :key="`${line.session_id}:${line.seq}`" class="border-b border-border align-top last:border-b-0">

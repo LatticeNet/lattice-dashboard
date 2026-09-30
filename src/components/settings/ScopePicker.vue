@@ -132,7 +132,7 @@ const sensitiveChosen = computed(() =>
     <div
       :class="
         cn(
-          'max-h-80 overflow-auto rounded-md border border-border',
+          'relative max-h-80 overflow-auto rounded-md border border-border',
           invalid && 'border-destructive',
         )
       "

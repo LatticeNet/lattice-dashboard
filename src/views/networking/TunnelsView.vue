@@ -353,7 +353,7 @@ async function openPlan(tunnel: TunnelView) {
               </Button>
             </EmptyState>
           </template>
-          <div class="overflow-x-auto">
+          <div class="relative overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -616,7 +616,7 @@ async function openPlan(tunnel: TunnelView) {
               <span class="text-sm font-medium">config.yml</span>
               <CopyButton :value="approval.plan || ''" />
             </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ approval.plan }}</pre>
+            <pre class="max-h-[420px] relative overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ approval.plan }}</pre>
           </div>
 
           <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">

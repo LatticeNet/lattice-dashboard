@@ -404,7 +404,7 @@ async function revokeToken(token: StorageTokenView) {
           :empty-description="$t('platform.storage.noBucketsDescription')"
           @retry="bucketsQuery.refresh"
         >
-          <div class="overflow-x-auto">
+          <div class="relative overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -487,7 +487,7 @@ async function revokeToken(token: StorageTokenView) {
             :empty-description="$t('platform.storage.noBindingsDescription')"
             @retry="bindingsQuery.refresh"
           >
-            <div class="overflow-x-auto">
+            <div class="relative overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -587,7 +587,7 @@ async function revokeToken(token: StorageTokenView) {
               </div>
               <CopyButton :value="createdToken.token" :label="$t('common.actions.copy')" />
             </div>
-            <code class="mt-3 block overflow-x-auto rounded-md bg-background p-2 text-xs">{{ createdToken.token }}</code>
+            <code class="mt-3 block relative overflow-x-auto rounded-md bg-background p-2 text-xs">{{ createdToken.token }}</code>
           </div>
 
           <DataState
@@ -598,7 +598,7 @@ async function revokeToken(token: StorageTokenView) {
             :empty-description="$t('platform.storage.noTokensDescription')"
             @retry="tokensQuery.refresh"
           >
-            <div class="overflow-x-auto">
+            <div class="relative overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">

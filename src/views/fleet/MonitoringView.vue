@@ -842,7 +842,7 @@ async function deleteMonitor() {
                 :skeleton-rows="2"
                 @retry="nodesQuery.refresh"
               >
-                <div class="grid max-h-64 gap-2 overflow-auto rounded-md border border-border p-2">
+                <div class="grid max-h-64 gap-2 relative overflow-auto rounded-md border border-border p-2">
                   <label
                     v-for="node in nodes"
                     :key="node.id"
@@ -1013,7 +1013,7 @@ async function deleteMonitor() {
                   : $t('fleet.monitoring.log.showingOf', { count: displayResults.length, total: logMatchTotal }) }}
               </span>
             </div>
-            <div class="overflow-x-auto rounded-lg border border-border">
+            <div class="relative overflow-x-auto rounded-lg border border-border">
               <div class="min-w-[640px]">
                 <div class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
                   <span>{{ $t('fleet.monitoring.history.colNode') }}</span>
