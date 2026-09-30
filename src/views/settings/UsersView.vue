@@ -53,9 +53,10 @@ const grantableScopes = computed(() =>
   isSuperuser.value ? [...SCOPE_CATALOG] : SCOPE_CATALOG.filter((scope) => auth.canGrant(scope)),
 );
 
-const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")), {
-  pollInterval: 15000,
-});
+// Operator-only data changes only when an operator changes it, here or in
+// another tab; it is read once and on Refresh, never polled (design 23,
+// section 3.10).
+const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")));
 const users = computed(() => usersQuery.data.value ?? []);
 const sortedUsers = computed(() =>
   [...users.value].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || "")),

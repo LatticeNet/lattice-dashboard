@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useMagicKeys, useActiveElement } from "@vueuse/core";
 import {
@@ -12,7 +12,7 @@ import {
 import { Menu, Palette, LogOut, User, KeyRound, Search } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { resolvePluginBreadcrumb } from "@/layout/headerModel";
+import { breadcrumbTrail, resolvePluginBreadcrumb, type Crumb } from "@/layout/headerModel";
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "@/router/nav";
 import { usePluginContributions } from "@/composables/usePluginContributions";
@@ -101,6 +101,23 @@ const sectionLabel = computed(() => {
   return section && section.id !== "overview" ? t("nav.sections." + section.id) : "";
 });
 
+/**
+ * The trail for a console route: Section / Collection / Object, each earlier
+ * crumb a link (design 23, section 3.10). Plugin views keep the plugin name
+ * as their section, as text.
+ */
+const trail = computed<Crumb[]>(() => {
+  if (pluginCtx.value) return [];
+  const name = route.name ? String(route.name) : "overview";
+  return breadcrumbTrail(name, NAV, (item) => !item.scopes?.length || auth.canAny([...item.scopes]));
+});
+
+function crumbLabel(crumb: Crumb): string {
+  if (crumb.kind === "section") return t("nav.sections." + crumb.id);
+  if (crumb.kind === "collection") return t("nav.items." + crumb.name);
+  return title.value;
+}
+
 const accountLabel = computed(
   () => auth.principal?.username || auth.principal?.actor_id || t("shell.header.account"),
 );
@@ -164,11 +181,29 @@ function openSecurity() {
 
     <!-- Breadcrumb: Section / Page -->
     <nav :aria-label="$t('shell.header.breadcrumb')" class="flex min-w-0 items-center text-sm">
-      <span v-if="sectionLabel" class="hidden truncate text-muted-foreground sm:inline">
-        {{ sectionLabel }}
-        <span class="px-1.5 text-muted-foreground/50" aria-hidden="true">/</span>
-      </span>
-      <span class="truncate font-medium">{{ title }}</span>
+      <template v-if="pluginCtx">
+        <span v-if="sectionLabel" class="hidden truncate text-muted-foreground sm:inline">
+          {{ sectionLabel }}
+          <span class="px-1.5 text-muted-foreground/50" aria-hidden="true">/</span>
+        </span>
+        <span class="truncate font-medium" aria-current="page">{{ title }}</span>
+      </template>
+      <template v-else>
+        <template v-for="crumb in trail" :key="crumb.kind === 'section' ? crumb.id : crumb.name">
+          <span v-if="crumb.kind !== 'page'" :class="crumb.kind === 'section' ? 'hidden min-w-0 items-center sm:inline-flex' : 'inline-flex min-w-0 items-center'">
+            <RouterLink
+              v-if="crumb.to"
+              :to="crumb.to"
+              class="truncate rounded-sm text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {{ crumbLabel(crumb) }}
+            </RouterLink>
+            <span v-else class="truncate text-muted-foreground">{{ crumbLabel(crumb) }}</span>
+            <span class="px-1.5 text-muted-foreground/50" aria-hidden="true">/</span>
+          </span>
+          <span v-else class="truncate font-medium" aria-current="page">{{ crumbLabel(crumb) }}</span>
+        </template>
+      </template>
     </nav>
 
     <div class="ml-auto flex items-center gap-1">

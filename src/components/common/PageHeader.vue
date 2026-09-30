@@ -2,11 +2,14 @@
 import { useSlots, type HTMLAttributes } from "vue";
 import { cn } from "@/lib/utils";
 
+/**
+ * The page's heading. It never repeats the section (design 23, section
+ * 3.10): the header's breadcrumb already says where the page sits, and
+ * "Fleet / [cd]-DMIT-2" as an H1 read the section twice.
+ */
 const props = defineProps<{
   title: string;
   description?: string;
-  /** Optional breadcrumb context shown muted before the title ("Section / Title"). */
-  section?: string;
   /**
    * "page" is the view's own heading. "section" is the same header inside a
    * page that already has one, as when Logs renders as a lens of Evidence:
@@ -33,10 +36,6 @@ const slots = useSlots();
         :is="level === 'section' ? 'h2' : 'h1'"
         :class="level === 'section' ? 'text-lg font-semibold tracking-tight text-foreground' : 'text-2xl font-semibold tracking-tight text-foreground'"
       >
-        <span v-if="section" class="font-normal text-muted-foreground">
-          {{ section }}
-          <span class="px-1 text-muted-foreground/60">/</span>
-        </span>
         {{ title }}
       </component>
       <!-- A view whose line under the title is structured (Terminal's proof

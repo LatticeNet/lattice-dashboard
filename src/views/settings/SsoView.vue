@@ -62,9 +62,11 @@ const canAdmin = computed(() => auth.can("oidc:admin"));
 const redirectUri = computed(() => `${window.location.origin}/api/auth/oidc/callback`);
 
 // Wrapped object endpoint: unwrap "providers".
+// Operator-only data changes only when an operator changes it, here or in
+// another tab; it is read once and on Refresh, never polled (design 23,
+// section 3.10).
 const providersQuery = useAsyncData(
   (signal) => api.oidc.providers({ signal }).then((r) => unwrap(r, "providers")),
-  { pollInterval: 15000 },
 );
 const providers = computed(() => providersQuery.data.value ?? []);
 

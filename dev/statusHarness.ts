@@ -31,16 +31,22 @@ import OverviewView from "@/views/OverviewView.vue";
 import NodesView from "@/views/fleet/NodesView.vue";
 import NodeDetailView from "@/views/fleet/NodeDetailView.vue";
 import TasksView from "@/views/operations/TasksView.vue";
+import AppHeader from "@/layout/components/AppHeader.vue";
 
 import "@/style/app.css";
 
 // The tooltip provider is part of the shell, not a detail of it: the status
 // pill's explanation is a tooltip now, and without a provider it would be the
 // one thing the harness could not show.
+// `?header=1` adds the app header, so the breadcrumb trail can be checked
+// against the pages it names (design 23, section 3.10).
+const withHeader = new URLSearchParams(window.location.search).get("header") === "1";
+
 const Shell = defineComponent({
   name: "HarnessShell",
   render: () =>
     h(TooltipProvider, { delayDuration: 200 }, () => [
+      withHeader ? h(AppHeader, { mobileOpen: false }) : null,
       h("main", { class: "h-full overflow-y-auto" }, [
         h("div", { class: "mx-auto w-full max-w-(--content-max)" }, [h(RouterView)]),
       ]),

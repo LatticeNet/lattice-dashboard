@@ -360,7 +360,7 @@ function confirmAction() {
   />
 
   <div v-else class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="pageTitle" :section="sectionLabel" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
+    <PageHeader :title="pageTitle" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
       <template v-if="hasSource" #status>
         <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" :poll-ms="sourceQuery.pollMs" />
       </template>

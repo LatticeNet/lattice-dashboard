@@ -286,6 +286,10 @@ export const api = {
   capabilities: {
     list: () => delay({ capabilities: [] }),
   },
+  // The app header resolves plugin page titles; this fleet has none.
+  plugins: {
+    contributions: () => delay([]),
+  },
 } as unknown as typeof import("@/lib/api/index").api;
 
 void unimplemented;
