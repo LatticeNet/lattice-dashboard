@@ -13,11 +13,13 @@ import {
   RefreshCw,
   Send,
   Trash2,
+  Unplug,
 } from "lucide-vue-next";
 import {
   api,
   unwrap,
   type MachineView,
+  type Node,
   type NotifyChannelUpsertRequest,
   type NotifyChannelView,
   type NotifyKind,
@@ -27,6 +29,12 @@ import {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { reminderCoverage, reminderMachineName, ruleRoutesRenewals } from "@/views/fleet/reminderModel";
+import {
+  DEFAULT_OFFLINE_MINUTES,
+  formatOfflineDelay,
+  nodeOfflinePolicy,
+  ruleRoutesNodeOffline,
+} from "@/views/platform/nodeOfflineModel";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -212,6 +220,61 @@ function renewalLine(rule: NotifyRuleView): { text: string; warn: boolean } {
     parts.push(t(c.sameDay > 1 ? "platform.notifications.renewals.nextMany" : "platform.notifications.renewals.next", args));
   }
   return { text: parts.join(" "), warn: false };
+}
+
+// Nodes, for the line under each rule that routes node.offline: which delay
+// each node pages after, which never page, and which carry a delay tag the
+// server ignores. Read only with node:read.
+const canReadNodes = computed(() => auth.can("node:read"));
+const nodesQuery = useAsyncData<Node[] | undefined>(
+  (signal) =>
+    canReadNodes.value
+      ? api.nodes.list({ signal }).then((r) => (Array.isArray(r) ? r : r.nodes ?? []))
+      : Promise.resolve(undefined),
+  { pollInterval: 60_000 },
+);
+const offlinePolicy = computed(() => (nodesQuery.data.value ? nodeOfflinePolicy(nodesQuery.data.value) : undefined));
+
+const LIST_CAP = 8;
+function capList(items: string[]): string {
+  if (items.length <= LIST_CAP) return items.join(", ");
+  return t("platform.notifications.offline.andMore", { list: items.slice(0, LIST_CAP).join(", "), n: items.length - LIST_CAP });
+}
+
+/**
+ * One line for a rule that routes node.offline: the default delay and whom it
+ * covers, the nodes that wait longer or never page, and any delay tag the
+ * server will ignore (`warn`), since that node silently uses the default.
+ */
+function offlineLine(rule: NotifyRuleView): { text: string; warn: boolean } {
+  if (!canReadNodes.value) return { text: t("platform.notifications.offline.noAccess"), warn: false };
+  const policy = offlinePolicy.value;
+  if (!policy) {
+    return {
+      text: nodesQuery.error.value ? t("platform.notifications.offline.failed") : t("platform.notifications.offline.loading"),
+      warn: false,
+    };
+  }
+  const delay = formatOfflineDelay(DEFAULT_OFFLINE_MINUTES);
+  const key = rule.enabled ? "platform.notifications.offline.covers" : "platform.notifications.offline.coversDisabled";
+  const parts = [t(key, { delay, n: policy.defaultCount }, policy.defaultCount)];
+  if (policy.delayed.length > 0) {
+    parts.push(t("platform.notifications.offline.delayed", {
+      list: capList(policy.delayed.map((d) => `${d.name} (${formatOfflineDelay(d.minutes)})`)),
+    }));
+  }
+  if (policy.quiet.length > 0) parts.push(t("platform.notifications.offline.quiet", { list: capList(policy.quiet) }));
+  if (policy.invalid.length > 0) {
+    parts.push(t("platform.notifications.offline.invalid", {
+      list: capList(policy.invalid.map((i) => `${i.name} (${i.tag})`)),
+    }));
+    return { text: parts.join(" "), warn: true };
+  }
+  return { text: parts.join(" "), warn: false };
+}
+
+function ruleHasDetail(rule: NotifyRuleView): boolean {
+  return ruleRoutesRenewals(rule) || ruleRoutesNodeOffline(rule);
 }
 
 const sortedChannels = computed(() =>
@@ -662,7 +725,7 @@ async function confirmDeleteRule(): Promise<void> {
           :loading="rulesQuery.loading.value"
           :error="rulesQuery.error.value"
           :has-data="rulesQuery.data.value !== undefined"
-          :row-expanded="ruleRoutesRenewals"
+          :row-expanded="ruleHasDetail"
           :page-size="50"
           searchable
           :search-placeholder="$t('platform.shared.searchNames')"
@@ -678,6 +741,7 @@ async function confirmDeleteRule(): Promise<void> {
           </template>
           <template #row-detail="{ row }">
             <p
+              v-if="ruleRoutesRenewals(row)"
               :class="cn('flex items-start gap-2 text-xs', renewalLine(row).warn ? 'text-warning-text' : 'text-muted-foreground')"
               data-testid="renewal-coverage"
             >
@@ -691,6 +755,15 @@ async function confirmDeleteRule(): Promise<void> {
                   class="rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 >{{ $t('platform.notifications.renewals.openInventory') }}</RouterLink>
               </span>
+            </p>
+            <p
+              v-if="ruleRoutesNodeOffline(row)"
+              :class="cn('flex items-start gap-2 text-xs', offlineLine(row).warn ? 'text-warning-text' : 'text-muted-foreground', ruleRoutesRenewals(row) && 'mt-1.5')"
+              data-testid="offline-coverage"
+            >
+              <TriangleAlert v-if="offlineLine(row).warn" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <Unplug v-else class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>{{ offlineLine(row).text }}</span>
             </p>
           </template>
           <template #cell-event_types="{ row }">

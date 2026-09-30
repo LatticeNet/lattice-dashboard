@@ -1076,6 +1076,17 @@ export default {
       clearStoredLabel:
         "Clear the stored {keys}. Blank fields are not kept: the save replaces the whole config, so these revert to the server defaults.",
       rulesTitle: "Routing rules",
+      offline: {
+        covers: "Pages after {delay} without a heartbeat for {n} node. | Pages after {delay} without a heartbeat for {n} nodes.",
+        coversDisabled: "Would page after {delay} without a heartbeat for {n} node, but the rule is disabled. | Would page after {delay} without a heartbeat for {n} nodes, but the rule is disabled.",
+        delayed: "Waits longer for {list}.",
+        quiet: "Never pages for {list}.",
+        invalid: "The server ignores these delay tags, so check them: {list}.",
+        andMore: "{list} and {n} more",
+        loading: "Counting nodes.",
+        failed: "Could not read the nodes, so the offline delays are unknown.",
+        noAccess: "Counting nodes needs read access to nodes.",
+      },
       renewals: {
         covers: "Covers renewal reminders for {n} machine with a renewal date. | Covers renewal reminders for {n} machines with a renewal date.",
         off: "{n} other machine with a renewal date has its reminder turned off. | {n} other machines with a renewal date have their reminders turned off.",
@@ -1113,7 +1124,7 @@ export default {
       ruleEventsLabel: "Event types",
       availableEvents: "Available events",
       ruleEventsHint: "Use comma-separated event ids. * matches every event.",
-      nodeOfflineHint: "node.offline fires after ten minutes without a heartbeat, once per outage, and node.online follows only an outage that was sent. Tag a node no-offline-alert to keep it off both, for laptops and machines that sleep.",
+      nodeOfflineHint: "node.offline fires after ten minutes without a heartbeat, once per outage, and node.online follows at the next check after an outage that was sent. Tag a node offline-alert-after:3h (or :45m, from 2m to 168h) to give it its own delay, or no-offline-alert to keep it off both. The outage is recorded either way.",
       ruleChannelsLabel: "Channels",
       createChannelFirst: "Create a channel before adding a routing rule.",
       titleTemplateLabel: "Title template",
