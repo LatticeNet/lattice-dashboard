@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
 import { tableSearchVisible } from "./chassisModel";
+import { groupedEntries, groupRows, toggleGroup, type GroupedEntry, type RowGroup } from "./tableGroupModel";
 import {
   readTableUrlState,
   tableStateParams,
@@ -161,6 +162,17 @@ const props = withDefaults(
      * only for lists whose rows are read one at a time.
      */
     narrowLayout?: "cards" | "scroll";
+    /**
+     * Rows fall into groups (design 23, section 3.7). Each group opens with a
+     * row that spans the table and collapses its members; the `group` slot
+     * fills it with what spans the group (a count, how many are online, what
+     * it costs a month). A column sort orders rows inside their group. The
+     * slot sits inside the collapse button, so it holds text, not controls.
+     * The opt-in cards layout lists the groups in order without group rows.
+     */
+    groupKey?: (row: T) => string;
+    /** Group keys to show first, in this order; the rest follow their first row. */
+    groupOrder?: readonly string[];
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
   }>(),
@@ -196,6 +208,8 @@ const props = withDefaults(
     rowTo: undefined,
     rowClick: undefined,
     activeRowId: null,
+    groupKey: undefined,
+    groupOrder: () => [],
   },
 );
 
@@ -281,6 +295,8 @@ defineSlots<
     "no-match"?: () => unknown;
     /** Full-width panel under a row, rendered while `rowExpanded` holds for it. */
     "row-detail"?: (props: { row: T }) => unknown;
+    /** The group row's content: what spans the group. Text only (it sits in a button). */
+    group?: (props: { group: RowGroup<T>; collapsed: boolean }) => unknown;
   } & Record<`cell-${string}`, (props: { row: T; value: unknown }) => unknown>
 >();
 
@@ -516,6 +532,19 @@ function ariaSortFor(column: DataTableColumn<T>): "ascending" | "descending" | "
   return sortDir.value === "asc" ? "ascending" : "descending";
 }
 
+/* ----------------------------- grouping ----------------------------- */
+/** Groups of the filtered, sorted rows; null when the table is not grouped. */
+const rowGroups = computed<RowGroup<T>[] | null>(() =>
+  props.groupKey ? groupRows(sortedRows.value, props.groupKey, props.groupOrder) : null,
+);
+/** Rows in display order: group by group when grouped, otherwise as sorted. */
+const orderedRows = computed(() => rowGroups.value?.flatMap((group) => group.rows) ?? sortedRows.value);
+const collapsedGroups = defineModel<Set<string>>("collapsedGroups", { default: () => new Set<string>() });
+
+function onToggleGroup(key: string): void {
+  collapsedGroups.value = toggleGroup(collapsedGroups.value, key);
+}
+
 /* ----------------------------- pagination ----------------------------- */
 const page = ref(seed.page);
 const paginationEnabled = computed(() => props.pageSize > 0);
@@ -544,9 +573,17 @@ watch(expressionTerm, resetPage);
 watch([sortKey, sortDir], resetPage);
 
 const pagedRows = computed(() => {
-  if (!paginationEnabled.value) return sortedRows.value;
+  if (!paginationEnabled.value) return orderedRows.value;
   const start = (page.value - 1) * props.pageSize;
-  return sortedRows.value.slice(start, start + props.pageSize);
+  return orderedRows.value.slice(start, start + props.pageSize);
+});
+
+/** The body: rows, with a group row before each group's first row on the page. */
+const bodyEntries = computed<GroupedEntry<T>[]>(() => {
+  const groups = rowGroups.value;
+  const keyOf = props.groupKey;
+  if (!groups || !keyOf) return pagedRows.value.map((row) => ({ kind: "row", key: `row:${props.rowKey(row)}`, row }));
+  return groupedEntries(pagedRows.value, groups, keyOf, props.rowKey, collapsedGroups.value);
 });
 
 const pageFrom = computed(() => (totalRows.value === 0 ? 0 : (page.value - 1) * props.pageSize + 1));
@@ -872,39 +909,66 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             </tr>
           </thead>
           <tbody>
-            <template v-for="row in pagedRows" :key="rowKey(row)">
+            <template v-for="entry in bodyEntries" :key="entry.key">
+            <!-- A group row spans the table. Its label stays at the left edge
+                 while the columns scroll under it at phone width. -->
+            <tr
+              v-if="entry.kind === 'group'"
+              class="border-b border-border bg-muted/40"
+              data-group-row
+              :data-group-key="entry.group.key"
+            >
+              <th :colspan="spannedColumns" scope="rowgroup" class="p-0 text-left font-normal">
+                <button
+                  type="button"
+                  class="sticky left-0 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 px-3 py-2 text-left text-xs outline-none md:max-w-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  :aria-expanded="!entry.collapsed"
+                  @click="onToggleGroup(entry.group.key)"
+                >
+                  <ChevronDown
+                    :class="cn('size-4 shrink-0 text-muted-foreground transition-transform', entry.collapsed && '-rotate-90')"
+                    aria-hidden="true"
+                  />
+                  <slot name="group" :group="entry.group" :collapsed="entry.collapsed">
+                    <span class="font-medium text-foreground">{{ entry.group.key }}</span>
+                    <span class="font-mono tabular text-muted-foreground">{{ entry.group.rows.length }}</span>
+                  </slot>
+                </button>
+              </th>
+            </tr>
+            <template v-else>
             <tr
               class="group border-b border-border last:border-0 bg-(--row-bg) [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:[--row-bg:var(--row-hover)] data-[active]:[--row-bg:var(--muted)]"
               :class="{
-                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--background))]': selectable && isRowSelected(row),
+                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--background))]': selectable && isRowSelected(entry.row),
                 'cursor-pointer focus-row': rowActivatable,
               }"
-              :data-row-key="rowKey(row)"
-              :data-active="isActive(row) ? '' : undefined"
-              :aria-current="isActive(row) ? 'true' : undefined"
+              :data-row-key="rowKey(entry.row)"
+              :data-active="isActive(entry.row) ? '' : undefined"
+              :aria-current="isActive(entry.row) ? 'true' : undefined"
               :tabindex="rowActivatable ? 0 : undefined"
-              @click="rowActivatable && onRowActivate(row, $event)"
-              @keydown="rowActivatable && onRowKeydown(row, $event)"
+              @click="rowActivatable && onRowActivate(entry.row, $event)"
+              @keydown="rowActivatable && onRowKeydown(entry.row, $event)"
             >
               <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-top', selectGutterClass)">
                 <Checkbox
-                  :model-value="isRowSelected(row)"
+                  :model-value="isRowSelected(entry.row)"
                   :aria-label="label.selectRow.value"
-                  @update:model-value="(value) => toggleRow(row, value)"
+                  @update:model-value="(value) => toggleRow(entry.row, value)"
                 />
               </td>
               <td
                 v-for="(column, index) in columns"
                 :key="column.key"
                 :class="cn('px-3 py-3 align-middle', alignClass(column.align), cellPinClass(column, index), column.class)"
-                :title="pinned(index) && !column.wrap ? textOf(rawValue(row, column)) || undefined : undefined"
+                :title="pinned(index) && !column.wrap ? textOf(rawValue(entry.row, column)) || undefined : undefined"
               >
                 <slot
                   :name="`cell-${column.key}`"
-                  :row="row"
-                  :value="rawValue(row, column)"
+                  :row="entry.row"
+                  :value="rawValue(entry.row, column)"
                 >
-                  {{ textOf(rawValue(row, column)) }}
+                  {{ textOf(rawValue(entry.row, column)) }}
                 </slot>
               </td>
               <td v-if="rowTo" :class="cn('w-8 px-2 text-right align-middle', chevronGutterClass)">
@@ -914,16 +978,17 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 />
               </td>
             </tr>
-            <tr v-if="isRowExpanded(row)" class="border-b border-border bg-muted/20 last:border-0">
+            <tr v-if="isRowExpanded(entry.row)" class="border-b border-border bg-muted/20 last:border-0">
               <td :colspan="spannedColumns" class="px-3 pb-3 pt-0">
                 <!-- The cell spans every column, so it is as wide as the
                      table; the sentence stays on the visible part while the
                      columns scroll, and wraps to it. -->
                 <div class="sticky left-3 max-w-[calc(100cqw-1.5rem)]">
-                  <slot name="row-detail" :row="row" />
+                  <slot name="row-detail" :row="entry.row" />
                 </div>
               </td>
             </tr>
+            </template>
             </template>
           </tbody>
         </table>
