@@ -13,10 +13,10 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { RefreshCw } from "lucide-vue-next";
 
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { api, type ConnRecord } from "@/lib/api";
 import { usePluginContributions } from "@/composables/usePluginContributions";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -69,17 +69,19 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const route = useRoute();
+// Reads go through the owned route: while Evidence is leaving, the router
+// already describes the next page, whose query is not this page's filters.
+const ownedRoute = useOwnedRoute();
 const ctx = useEvidenceContext();
 
-const applied = computed(() => readConnTraceFilters(route.query));
+const applied = computed(() => readConnTraceFilters(ownedRoute.query()));
 /**
  * Names in the applied query that were searched as typed because their list
  * has not loaded. An empty result then may say nothing about the traffic.
  */
-const uncheckedNames = computed(() => ctx.uncheckedNames(readEvidenceQuery(route.query)));
+const uncheckedNames = computed(() => ctx.uncheckedNames(readEvidenceQuery(ownedRoute.query())));
 const text = computed(() => {
-  const raw = route.query[EVIDENCE_PARAM.text];
+  const raw = ownedRoute.query()[EVIDENCE_PARAM.text];
   return typeof raw === "string" ? raw.trim() : "";
 });
 
@@ -326,7 +328,7 @@ const policyCoverageText = computed(() => {
   return t("platform.trace.policyCoverage", { enabled: c.enabled, total: c.total }, c.total);
 });
 
-const overviewLink = computed(() => ({ query: writeEvidenceLayer(route.query, "overview") }));
+const overviewLink = computed(() => ({ query: writeEvidenceLayer(ownedRoute.query(), "overview") }));
 </script>
 
 <template>
