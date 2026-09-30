@@ -68,7 +68,7 @@ const chipClass = (active: boolean) =>
     <PageHeader :title="$t('fleet.upcoming.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.upcoming.description') }}</p>
-        <UpcomingProof :data="query.data.value" :items="visible" :now="now.getTime()" />
+        <UpcomingProof :query="query" :items="visible" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="query.refreshing.value" @click="query.refresh">

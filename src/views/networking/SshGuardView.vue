@@ -48,6 +48,8 @@ import { partitionBatchResults, runWithConcurrency } from "@/views/operations/ap
 import { guardReality } from "@/views/networking/sshGuardReality";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
@@ -711,22 +713,32 @@ const visibleStates = computed(() =>
 
 const proof = computed(() => proofCounts(states.value, now.value));
 const observedAt = computed(() => newestObservation(realityQuery.data.value ?? []));
-const proofLine = computed(() => {
-  const observed = observedAt.value
-    ? t("networking.sshGuard.proof.observed", { age: formatAge(now.value - Date.parse(observedAt.value)) })
-    : t("networking.sshGuard.proof.notObserved");
-  return [
-    observed,
-    t("networking.sshGuard.proof.nodes", { n: proof.value.total }),
-    t("networking.sshGuard.proof.secured", { n: postures.value.secured }),
-    t("networking.sshGuard.proof.passwordOpen", { n: postures.value.password_open }),
-    t("networking.sshGuard.proof.partial", { n: postures.value.partial }),
-    t("networking.sshGuard.proof.postureUnknown", { n: postures.value.unknown }),
-    t("networking.sshGuard.proof.confirmed", { n: proof.value.confirmed }),
-    t("networking.sshGuard.proof.failedArms", { n: proof.value.failedArms }),
-    t("networking.sshGuard.proof.reverting", { n: proof.value.reverting }),
-  ].join(" · ");
+/**
+ * The proof line on the shared ProofLine. Its state follows the node and
+ * status reads the board is built from, so a failed read shows the reason
+ * and no counts instead of a row of zeros. Its age is the newest reality
+ * snapshot the nodes sent, which is what "observed" means on this page.
+ */
+const proofBinding = useProof([nodesQuery, statusQuery]);
+const proofObservedAt = computed(() => {
+  const ms = observedAt.value ? Date.parse(observedAt.value) : Number.NaN;
+  return Number.isNaN(ms) ? null : ms;
 });
+const proofSegments = computed<ProofSegment[]>(() => [
+  ...(proofObservedAt.value === null ? [{ key: "not-observed", text: t("networking.sshGuard.proof.notObserved") }] : []),
+  { key: "nodes", text: t("networking.sshGuard.proof.nodes", { n: proof.value.total }) },
+  { key: "secured", text: t("networking.sshGuard.proof.secured", { n: postures.value.secured }) },
+  { key: "password", text: t("networking.sshGuard.proof.passwordOpen", { n: postures.value.password_open }) },
+  { key: "partial", text: t("networking.sshGuard.proof.partial", { n: postures.value.partial }) },
+  { key: "unknown", text: t("networking.sshGuard.proof.postureUnknown", { n: postures.value.unknown }) },
+  { key: "confirmed", text: t("networking.sshGuard.proof.confirmed", { n: proof.value.confirmed }) },
+  { key: "failed-arms", text: t("networking.sshGuard.proof.failedArms", { n: proof.value.failedArms }) },
+  { key: "reverting", text: t("networking.sshGuard.proof.reverting", { n: proof.value.reverting }) },
+]);
+function retryProof(): void {
+  nodesQuery.refresh();
+  statusQuery.refresh();
+}
 
 const evidence = computed(
   () => new Map(states.value.map((s) => [s.nodeId, foldReality(s.nodeId, summariesById.value, realityDetails.value)] as const)),
@@ -1196,7 +1208,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
     </PageHeader>
 
     <!-- The proof line: what was observed, and the numbers the board is made of. -->
-    <p class="font-mono text-xs tabular text-muted-foreground" data-testid="proof-line">{{ proofLine }}</p>
+    <ProofLine v-bind="proofBinding" :observed-at="proofObservedAt" :segments="proofSegments" @retry="retryProof" />
 
     <!-- The only state with a deadline. It goes first and it is loud. -->
     <section

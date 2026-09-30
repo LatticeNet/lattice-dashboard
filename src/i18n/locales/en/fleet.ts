@@ -948,7 +948,6 @@ export default {
         stale: "last refresh failed",
       },
       proof: {
-        generated: "generated {age} ago",
         items: "{n} item | {n} items",
         noPrices: "no prices recorded",
         within: "next {days} days",

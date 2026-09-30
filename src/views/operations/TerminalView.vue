@@ -58,6 +58,7 @@ import {
 } from "./terminalModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
@@ -207,7 +208,13 @@ const proofSegments = computed(() =>
     shell: shell.value,
     liveOwn: counts.value.liveOwn,
     liveOnNode: counts.value.liveOnNode,
-  }).map((label) => ({ key: label.key, text: proofText(label), tone: label.key === "blocked" ? "warning" : "neutral" })),
+  }).map(
+    (label): ProofSegment => ({
+      key: label.key,
+      text: proofText(label),
+      tone: label.key === "blocked" ? "warning" : label.key === "transport" || label.key === "shell" ? "strong" : "default",
+    }),
+  ),
 );
 
 const limitLines = computed(() => [
@@ -546,15 +553,9 @@ onMounted(() => {
   <div class="absolute inset-0 flex min-h-0 flex-col gap-4 overflow-hidden bg-background py-4 sm:p-6">
     <PageHeader :title="$t('operations.terminal.title')" class="shrink-0 px-4 sm:px-0">
       <template #description>
-        <!-- The proof line: what a session would run over, before anything opens. -->
-        <p class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs leading-5 tabular text-muted-foreground" :title="limitsTitle">
-          <template v-for="(segment, index) in proofSegments" :key="segment.key">
-            <span v-if="index > 0" aria-hidden="true" class="text-muted-foreground/50">·</span>
-            <span :class="segment.tone === 'warning' ? 'text-warning' : segment.key === 'transport' || segment.key === 'shell' ? 'text-foreground' : undefined">
-              {{ segment.text }}
-            </span>
-          </template>
-        </p>
+        <!-- The proof line: what a session would run over, before anything opens.
+             Nothing here is polled, so it carries no age (idle). -->
+        <ProofLine state="idle" :segments="proofSegments" :title="limitsTitle" />
       </template>
     </PageHeader>
 
