@@ -17,7 +17,7 @@ const result = computed(() => diffLines(props.before ?? "", props.after ?? ""));
       <span v-if="result.truncated" class="text-muted-foreground">{{ $t('operations.approvals.diffTruncated') }}</span>
       <span v-else-if="result.added === 0 && result.removed === 0" class="text-muted-foreground">{{ $t('operations.approvals.diffNoChange') }}</span>
     </div>
-    <div class="max-h-[520px] overflow-auto font-mono text-xs leading-relaxed">
+    <div class="max-h-[520px] relative overflow-auto font-mono text-xs leading-relaxed">
       <div
         v-for="(line, idx) in result.lines"
         :key="idx"

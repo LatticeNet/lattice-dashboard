@@ -1275,10 +1275,10 @@ const approvalMetrics = computed<Metric[]>(() => [
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('operations.approvals.title')" :description="$t('operations.approvals.description')">
       <template #status>
-        <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" :poll-ms="approvalsQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="refreshApprovals">
@@ -1298,7 +1298,7 @@ const approvalMetrics = computed<Metric[]>(() => [
       <span>{{ $t('operations.approvals.applyRequired') }}</span>
     </p>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <Card>
         <CardHeader>
           <CardTitle>{{ $t('operations.approvals.inbox') }}</CardTitle>
@@ -1562,6 +1562,9 @@ const approvalMetrics = computed<Metric[]>(() => [
               </div>
             </div>
 
+            <!-- Cards on a phone: the inbox is read one plan at a time, and in
+                 the scroll layout the pinned first column is the status badge,
+                 so the change and its target scrolled out of sight. -->
             <DataTable
               state-key="approvals"
               v-else
@@ -1569,6 +1572,7 @@ const approvalMetrics = computed<Metric[]>(() => [
               :columns="approvalColumns"
               :rows="filteredApprovals"
               :row-key="(row) => row.id"
+              narrow-layout="cards"
               :page-size="25"
               :expression-filter="false"
               selectable
@@ -1909,7 +1913,7 @@ const approvalMetrics = computed<Metric[]>(() => [
               </div>
               <PlanDiff :before="previousPlan" :after="selected.plan || ''" />
             </template>
-            <pre v-else class="max-h-[520px] overflow-auto whitespace-pre-wrap rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
+            <pre v-else class="max-h-[520px] relative overflow-auto whitespace-pre-wrap rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ selected.plan }}</pre>
           </div>
 
           <div v-if="digestCache[selected.id]" class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">

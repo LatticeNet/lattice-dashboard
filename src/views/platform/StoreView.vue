@@ -391,7 +391,7 @@ async function submitPut() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('platform.store.title')" :description="$t('platform.store.description')">
       <template #actions>
         <Button
@@ -436,7 +436,7 @@ async function submitPut() {
       </Button>
     </div>
 
-    <div v-if="canRead" class="grid gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start">
+    <div v-if="canRead" class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start">
       <!-- ── Buckets that actually exist ──────────────────────────────────── -->
       <Card>
         <CardHeader>
@@ -631,7 +631,7 @@ async function submitPut() {
               <template v-if="isLong(row.value)">
                 <pre
                   v-if="expanded.has(row.key)"
-                  class="max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 font-mono text-xs"
+                  class="max-h-[280px] relative overflow-auto whitespace-pre-wrap rounded-md bg-muted/30 p-2 font-mono text-xs"
                 >{{ row.value }}</pre>
                 <span
                   v-else
@@ -690,7 +690,7 @@ async function submitPut() {
           <DialogTitle class="break-all font-mono text-base">{{ previewTarget?.path }}</DialogTitle>
           <DialogDescription>{{ previewTarget?.content_type || $t('common.misc.none') }}</DialogDescription>
         </DialogHeader>
-        <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed">{{ previewTarget?.content }}</pre>
+        <pre class="max-h-[420px] relative overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted/30 p-3 font-mono text-xs leading-relaxed">{{ previewTarget?.content }}</pre>
         <DialogFooter>
           <Button type="button" variant="outline" @click="previewTarget = undefined">
             {{ $t('common.actions.close') }}

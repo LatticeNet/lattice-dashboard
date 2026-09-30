@@ -30,7 +30,9 @@ import {
   evidenceCoverageRows,
   evidenceStoreProof,
   summarizeLastHour,
+  unresolvedEvidenceTokens,
   type CoverageRow,
+  type EvidenceQuery,
   type EvidenceTokenResolvers,
   type LastHourSummary,
   type StoreProof,
@@ -76,6 +78,14 @@ export interface EvidenceContext {
    * literal id and match nothing.
    */
   namesReady: ComputedRef<boolean>;
+  /** A list names resolve against has no data (failed, or not answered yet). */
+  namesUnchecked: ComputedRef<boolean>;
+  /**
+   * Tokens of an applied query that were searched as typed because their
+   * list has not loaded. A page with an empty result says so instead of
+   * "nothing matched": the name may simply not have been looked up.
+   */
+  uncheckedNames: (query: EvidenceQuery) => string[];
   /** Bumped by the page's Refresh button, for lists that do not poll. */
   refreshTick: Ref<number>;
   refreshAll: () => void;
@@ -223,6 +233,16 @@ export function provideEvidenceContext(): EvidenceContext {
       (!canRead.value || (settled(policies) && settled(sources))),
   );
 
+  // A list that failed still settles namesReady, so a search never waits on
+  // it; the names it would have resolved are then reported as unchecked
+  // rather than as names that do not exist.
+  const namesUnchecked = computed(
+    () =>
+      (canReadNodes.value && nodesQuery.data.value === undefined) ||
+      (canReadUsers.value && usersQuery.data.value === undefined) ||
+      (canRead.value && sources.data.value === undefined),
+  );
+
   const resolvers = computed<EvidenceTokenResolvers>(() => {
     const byName = new Map<string, string>();
     const ids = new Set<string>();
@@ -285,6 +305,9 @@ export function provideEvidenceContext(): EvidenceContext {
     storeProof,
     resolvers,
     namesReady,
+    namesUnchecked,
+    uncheckedNames: (query: EvidenceQuery) =>
+      namesUnchecked.value ? unresolvedEvidenceTokens(query, resolvers.value) : [],
     refreshTick,
     refreshAll,
   };

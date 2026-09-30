@@ -936,7 +936,6 @@ export default {
         stale: "上次刷新失败",
       },
       proof: {
-        generated: "{age}前生成",
         items: "{n} 项 | {n} 项",
         noPrices: "未记录价格",
         within: "未来 {days} 天",

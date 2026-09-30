@@ -24,7 +24,9 @@ import {
   WifiOff,
 } from "lucide-vue-next";
 import { api, unwrap, isActionablePendingApproval } from "@/lib/api";
-import type { Node, ApprovalCounts, ApprovalView, TaskView, AuditEvent, ExpiringResponse } from "@/lib/api";
+import type { Node, ApprovalCounts, ApprovalView, AuditEvent, ExpiringResponse, TaskCounts } from "@/lib/api";
+import { taskCountsTile } from "@/views/operations/taskCountsModel";
+import { proofReason } from "@/components/common/proofModel";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, dueSoonCounts, isUnsupported } from "@/views/fleet/upcomingModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
@@ -82,10 +84,10 @@ const approvals = useAsyncData<ApprovalView[] | undefined>(
   { pollInterval: 10000 },
 );
 
-const tasks = useAsyncData<TaskView[] | undefined>(
-  (signal) => api.tasks.list({ signal }).then((r) => unwrap(r, "tasks")),
-  { pollInterval: 10000 },
-);
+// The tile reads counts, not tasks. It read all 1,771 tasks every 10 s and
+// each tick aborted the last, so a reply slower than the interval never
+// landed and the tile said "unknown" (design 23, section 1).
+const taskCounts = useAsyncData<TaskCounts>((signal) => api.tasks.counts({ signal }), { pollInterval: 10000 });
 
 // What runs out: one read for the summary tile and the Upcoming panel below.
 // Dates move once a day, so a minute between polls is plenty.
@@ -150,9 +152,39 @@ const pendingApprovals = computed(
 );
 /** The server's pending count; the preview list is capped and cannot count. */
 const pendingApprovalCount = computed(() => approvalCounts.data.value?.pending ?? 0);
-const queuedTasks = computed(
-  () => (tasks.data.value ?? []).filter((t) => t.status === "queued").length,
-);
+const taskTile = computed(() => taskCountsTile({ data: taskCounts.data.value, error: taskCounts.error.value }));
+/**
+ * The Tasks segment. Reading, not read, an older server and no access each
+ * say so; a read that succeeded always prints its counts, queued first.
+ */
+const tasksMetric = computed<Metric>(() => {
+  const tile = taskTile.value;
+  // A whole row on a phone, like "Runs out": the counts do not fit half of one.
+  const base = { key: "tasks", label: t("nav.items.tasks"), icon: Terminal, class: "col-span-2 lg:col-span-1" };
+  switch (tile.state) {
+    case "reading":
+      return { ...base, value: t("overview.kpi.tasksReading"), tone: "muted" };
+    case "failed":
+      return { ...base, value: t("overview.kpi.tasksNotRead"), tone: "muted", hint: proofReason(taskCounts.error.value) || undefined };
+    case "forbidden":
+      return { ...base, value: t("overview.kpi.tasksNoAccess"), tone: "muted" };
+    case "unsupported":
+      return { ...base, value: t("overview.kpi.tasksOldServer"), tone: "muted", hint: t("overview.kpi.tasksOldServerHint") };
+    case "ready": {
+      const parts = tile.parts.map((part) => ({
+        text: t(`overview.kpi.tasksPart.${part.key}`, { n: part.n }),
+        tone: part.tone === "default" ? undefined : part.tone,
+      }));
+      return {
+        ...base,
+        value: parts.map((part) => part.text).join(" · "),
+        parts,
+        hint: tile.stale ? t("overview.kpi.tasksStale") : undefined,
+        to: { name: "tasks", query: tile.status ? { status: tile.status } : {} },
+      };
+    }
+  }
+});
 
 /** Fleet-wide aggregate for the health panel (CPU mean, mem/disk sums, BW). */
 const totals = computed(() => fleetTotals(nodes.value));
@@ -297,14 +329,10 @@ const kpiMetrics = computed<Metric[]>(() => [
     tone: pendingApprovalCount.value > 0 ? "warning" : "default",
     icon: ShieldCheck,
     to: { name: "approvals" },
+    // Full rows on a phone, so no segment sits beside an empty cell.
+    class: "col-span-2 lg:col-span-1",
   },
-  {
-    key: "tasks",
-    label: t("nav.items.tasks"),
-    value: statValue(tasks, queuedTasks.value),
-    icon: Terminal,
-    to: { name: "tasks", query: { status: "queued" } },
-  },
+  tasksMetric.value,
   runsOutMetric.value,
 ]);
 
@@ -349,17 +377,17 @@ function refreshAll() {
   fleet.refresh();
   approvalCounts.refresh();
   approvals.refresh();
-  tasks.refresh();
+  taskCounts.refresh();
   expiring.refresh();
   audit.refresh();
 }
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('overview.title')" :description="$t('overview.description')">
       <template #status>
-        <FreshnessLabel :last-updated="fleet.lastUpdated.value" />
+        <FreshnessLabel :last-updated="fleet.lastUpdated.value" :poll-ms="fleet.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="fleet.refreshing.value" @click="refreshAll">
@@ -392,7 +420,7 @@ function refreshAll() {
           :has-data="hasFleet"
           @retry="fleet.refresh"
         >
-          <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+          <div class="grid grid-cols-1 min-w-0 gap-5 lg:grid-cols-[1.5fr_1fr]">
             <div class="space-y-3">
               <div class="flex items-center gap-2 text-sm font-medium">
                 <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -481,7 +509,7 @@ function refreshAll() {
           :has-data="hasFleet"
           @retry="fleet.refresh"
         >
-          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
             <RouterLink
               :to="{ name: 'nodes' }"
               class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
@@ -582,7 +610,7 @@ function refreshAll() {
                 <span class="h-px flex-1 bg-border"></span>
                 <span class="tabular">{{ $t('overview.fleetHealthyCount', { count: healthyNodes }) }}</span>
               </div>
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <NodeCard
                   v-for="node in attentionShown"
                   :key="node.id"

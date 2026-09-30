@@ -829,13 +829,13 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.policy.title')"
       :description="$t('networking.policy.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" :poll-ms="policiesQuery.pollMs" />
       </template>
       <template #actions>
         <Button
@@ -1099,7 +1099,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
 
                 <!-- Hub-and-spoke node-link diagram, clustered by region -->
-                <div class="overflow-x-auto rounded-lg border border-border bg-muted/10 p-2">
+                <div class="relative overflow-x-auto rounded-lg border border-border bg-muted/10 p-2">
                   <svg
                     :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`"
                     class="mx-auto block h-[540px] w-full max-w-[860px]"
@@ -1253,7 +1253,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
 
                 <!-- Externals adjacency table -->
-                <div v-if="externals.length" class="overflow-x-auto rounded-lg border border-border">
+                <div v-if="externals.length" class="relative overflow-x-auto rounded-lg border border-border">
                   <table class="w-full text-sm">
                     <thead>
                       <tr class="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
@@ -1301,7 +1301,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
         </DialogHeader>
 
         <form class="space-y-5" @submit.prevent="submit">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="policy-node">{{ $t('networking.policy.targetNode') }}</Label>
               <Select v-model="form.target_node_id" :disabled="!!editingId">
@@ -1349,7 +1349,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </Button>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.policy.action') }}</Label>
                   <Select v-model="rule.action">
@@ -1383,7 +1383,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.policy.ports') }}</Label>
                   <Input
@@ -1426,7 +1426,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 <Input v-model="rule.remoteDomain" placeholder="api.example.com" />
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.policy.comment') }}</Label>
                   <Input v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />

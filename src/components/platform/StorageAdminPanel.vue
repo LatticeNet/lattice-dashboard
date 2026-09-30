@@ -27,6 +27,7 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import DataState from "@/components/common/DataState.vue";
 import { Badge } from "@/components/ui/badge";
@@ -187,14 +188,44 @@ async function submitBinding() {
   }
 }
 
-async function deleteBinding(binding: StorageBinding) {
+/**
+ * Deleting a binding takes a live URL offline, so it is the outside-breaking
+ * class of design 23, section 3.8: the dialog says what stops working and
+ * the operator types the address before it can go. It was one click.
+ */
+const pendingBinding = ref<StorageBinding | null>(null);
+
+function bindingAddress(binding: StorageBinding): string {
+  return binding.path_prefix ? `${binding.hostname}/${binding.path_prefix}` : binding.hostname;
+}
+
+const bindingImpact = computed(() => {
+  const binding = pendingBinding.value;
+  if (!binding) return [];
+  return [
+    t("platform.storage.deleteBindingImpactUrl", { url: `https://${bindingAddress(binding)}`, bucket: binding.bucket }),
+    t("platform.storage.deleteBindingImpactKept"),
+  ];
+});
+
+// The dialog closes only when the delete succeeded. On failure it stays open
+// with the typed address, beside the error toast, so the operator can retry.
+async function confirmDeleteBinding() {
+  const binding = pendingBinding.value;
+  if (!binding) return;
+  if (await deleteBinding(binding)) pendingBinding.value = null;
+}
+
+async function deleteBinding(binding: StorageBinding): Promise<boolean> {
   deletingBindingId.value = binding.id;
   try {
     await api.storage.deleteBinding(props.kind, binding.id);
     toast.success(t("platform.storage.bindingDeleted"));
     if (canRead.value) bindingsQuery.refresh();
+    return true;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.bindingDeleteFailed"));
+    return false;
   } finally {
     deletingBindingId.value = "";
   }
@@ -248,14 +279,48 @@ async function submitToken() {
   }
 }
 
-async function revokeToken(token: StorageTokenView) {
+/**
+ * Revoking a token breaks every client holding it, the same outside-breaking
+ * class as a binding: impact lines and the token's name typed first.
+ */
+const pendingToken = ref<StorageTokenView | null>(null);
+
+const tokenImpact = computed(() => {
+  const token = pendingToken.value;
+  if (!token) return [];
+  const lines = [
+    t("platform.storage.revokeTokenImpactClients", {
+      name: token.name,
+      access: token.access,
+      buckets: token.buckets?.join(", ") || "-",
+    }),
+    t("platform.storage.revokeTokenImpactFinal"),
+  ];
+  lines.push(
+    token.last_used_at
+      ? t("platform.storage.revokeTokenImpactUsed", { time: formatDateTime(token.last_used_at) })
+      : t("platform.storage.revokeTokenImpactUnused"),
+  );
+  return lines;
+});
+
+// Same rule as a binding: close on success, stay open with the name on failure.
+async function confirmRevokeToken() {
+  const token = pendingToken.value;
+  if (!token) return;
+  if (await revokeToken(token)) pendingToken.value = null;
+}
+
+async function revokeToken(token: StorageTokenView): Promise<boolean> {
   revokingTokenId.value = token.id;
   try {
     await api.storage.revokeToken(props.kind, token.id);
     toast.success(t("platform.storage.tokenRevoked"));
     tokensQuery.refresh();
+    return true;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.tokenRevokeFailed"));
+    return false;
   } finally {
     revokingTokenId.value = "";
   }
@@ -303,7 +368,7 @@ async function revokeToken(token: StorageTokenView) {
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form v-if="canAdmin" class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="submitBucket">
+        <form v-if="canAdmin" class="grid grid-cols-1 min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="submitBucket">
           <div class="grid gap-2">
             <Label :for="`${kind}-bucket-name`">{{ $t('platform.storage.bucketName') }}</Label>
             <Input :id="`${kind}-bucket-name`" v-model="bucketName" required placeholder="default" />
@@ -344,7 +409,7 @@ async function revokeToken(token: StorageTokenView) {
           :empty-description="$t('platform.storage.noBucketsDescription')"
           @retry="bucketsQuery.refresh"
         >
-          <div class="overflow-x-auto">
+          <div class="relative overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -392,7 +457,7 @@ async function revokeToken(token: StorageTokenView) {
           <CardDescription>{{ $t('platform.storage.bindingsDescription') }}</CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
-          <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitBinding">
+          <form class="grid grid-cols-1 gap-3 sm:grid-cols-2" @submit.prevent="submitBinding">
             <div class="grid gap-2">
               <Label :for="`${kind}-binding-bucket`">{{ $t('platform.storage.bindingBucket') }}</Label>
               <Input :id="`${kind}-binding-bucket`" v-model="bindingBucket" required placeholder="default" />
@@ -427,7 +492,7 @@ async function revokeToken(token: StorageTokenView) {
             :empty-description="$t('platform.storage.noBindingsDescription')"
             @retry="bindingsQuery.refresh"
           >
-            <div class="overflow-x-auto">
+            <div class="relative overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -454,9 +519,9 @@ async function revokeToken(token: StorageTokenView) {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          :aria-label="$t('platform.storage.deleteBinding')"
+                          :aria-label="$t('platform.storage.deleteBindingFor', { url: bindingAddress(binding) })"
                           :disabled="deletingBindingId === binding.id"
-                          @click="deleteBinding(binding)"
+                          @click="pendingBinding = binding"
                         >
                           <RefreshCw v-if="deletingBindingId === binding.id" class="size-4 animate-spin" />
                           <Trash2 v-else class="size-4" />
@@ -487,7 +552,7 @@ async function revokeToken(token: StorageTokenView) {
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
-          <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitToken">
+          <form class="grid grid-cols-1 gap-3 sm:grid-cols-2" @submit.prevent="submitToken">
             <div class="grid gap-2">
               <Label :for="`${kind}-token-name`">{{ $t('platform.storage.tokenName') }}</Label>
               <Input :id="`${kind}-token-name`" v-model="tokenName" required placeholder="deploy-ci" />
@@ -527,7 +592,7 @@ async function revokeToken(token: StorageTokenView) {
               </div>
               <CopyButton :value="createdToken.token" :label="$t('common.actions.copy')" />
             </div>
-            <code class="mt-3 block overflow-x-auto rounded-md bg-background p-2 text-xs">{{ createdToken.token }}</code>
+            <code class="mt-3 block relative overflow-x-auto rounded-md bg-background p-2 text-xs">{{ createdToken.token }}</code>
           </div>
 
           <DataState
@@ -538,7 +603,7 @@ async function revokeToken(token: StorageTokenView) {
             :empty-description="$t('platform.storage.noTokensDescription')"
             @retry="tokensQuery.refresh"
           >
-            <div class="overflow-x-auto">
+            <div class="relative overflow-x-auto">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -568,9 +633,9 @@ async function revokeToken(token: StorageTokenView) {
                         <Button
                           variant="ghost"
                           size="icon-sm"
-                          :aria-label="$t('platform.storage.revokeToken')"
+                          :aria-label="$t('platform.storage.revokeTokenFor', { name: token.name })"
                           :disabled="!!token.revoked_at || revokingTokenId === token.id"
-                          @click="revokeToken(token)"
+                          @click="pendingToken = token"
                         >
                           <RefreshCw v-if="revokingTokenId === token.id" class="size-4 animate-spin" />
                           <Trash2 v-else class="size-4" />
@@ -585,5 +650,28 @@ async function revokeToken(token: StorageTokenView) {
         </CardContent>
       </Card>
     </div>
+
+    <ConfirmDialog
+      :open="!!pendingBinding"
+      :title="pendingBinding ? $t('platform.storage.deleteBindingTitle', { url: bindingAddress(pendingBinding) }) : ''"
+      :impact="bindingImpact"
+      :typed-confirm="pendingBinding ? bindingAddress(pendingBinding) : undefined"
+      :confirm-label="$t('platform.storage.deleteBinding')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!pendingBinding && deletingBindingId === pendingBinding.id"
+      @update:open="(open) => { if (!open) pendingBinding = null; }"
+      @confirm="confirmDeleteBinding"
+    />
+    <ConfirmDialog
+      :open="!!pendingToken"
+      :title="pendingToken ? $t('platform.storage.revokeTokenTitle', { name: pendingToken.name }) : ''"
+      :impact="tokenImpact"
+      :typed-confirm="pendingToken?.name"
+      :confirm-label="$t('platform.storage.revokeToken')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!pendingToken && revokingTokenId === pendingToken.id"
+      @update:open="(open) => { if (!open) pendingToken = null; }"
+      @confirm="confirmRevokeToken"
+    />
   </section>
 </template>

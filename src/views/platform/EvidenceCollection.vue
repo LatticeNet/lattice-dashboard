@@ -455,7 +455,7 @@ async function startFiltered(): Promise<void> {
         @submit.prevent="startFiltered"
       >
         <p class="text-xs text-muted-foreground">{{ $t('platform.trace.startHint', { max: TRACE_TTL_MAX_SECONDS / 60 }) }}</p>
-        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div class="grid gap-2">
             <Label for="capture-name">{{ $t('platform.trace.sessionNameLabel') }}</Label>
             <Input id="capture-name" v-model="form.name" :placeholder="$t('platform.trace.sessionNamePlaceholder')" />
@@ -582,7 +582,7 @@ async function startFiltered(): Promise<void> {
           </p>
         </div>
         <p v-if="tailError" class="text-xs text-destructive">{{ tailError.message }}</p>
-        <div class="max-h-96 overflow-auto rounded-md border border-border bg-muted/10">
+        <div class="max-h-96 relative overflow-auto rounded-md border border-border bg-muted/10">
           <table class="w-full text-xs">
             <tbody class="font-mono">
               <tr v-for="line in tailLines" :key="`${line.session_id}:${line.seq}`" class="border-b border-border align-top last:border-b-0">

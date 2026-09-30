@@ -97,7 +97,7 @@ const steps = computed<{ key: string; to: RouteLocationRaw }[]>(() => [
     <div v-if="expanded" :id="bodyId" class="space-y-5 border-t border-border px-4 py-4 text-sm">
       <p class="leading-relaxed">{{ what }}</p>
 
-      <dl class="grid gap-4 lg:grid-cols-2">
+      <dl class="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-2">
         <div>
           <dt class="font-mono text-xs uppercase tracking-wide text-muted-foreground">
             {{ $t('platform.publishing.guide.relationLabel') }}
@@ -125,7 +125,7 @@ const steps = computed<{ key: string; to: RouteLocationRaw }[]>(() => [
         <p class="font-mono text-xs uppercase tracking-wide text-muted-foreground">
           {{ $t('platform.publishing.guide.walkthroughLabel') }}
         </p>
-        <ol class="mt-2 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ol class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <li
             v-for="(step, index) in steps"
             :key="step.key"

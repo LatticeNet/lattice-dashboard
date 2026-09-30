@@ -502,6 +502,8 @@ export default {
       description: "搜索安全决策并校验仅追加的审计链",
       returned: "返回数",
       totalMatch: "匹配总数",
+      atLeast: "至少 {n}",
+      scanStopped: "只扫描了最新的 {n} 条事件",
       chain: "审计链",
       chainOk: "正常",
       chainBad: "已损坏",

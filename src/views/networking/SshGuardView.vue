@@ -48,6 +48,8 @@ import { partitionBatchResults, runWithConcurrency } from "@/views/operations/ap
 import { guardReality } from "@/views/networking/sshGuardReality";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
@@ -711,22 +713,32 @@ const visibleStates = computed(() =>
 
 const proof = computed(() => proofCounts(states.value, now.value));
 const observedAt = computed(() => newestObservation(realityQuery.data.value ?? []));
-const proofLine = computed(() => {
-  const observed = observedAt.value
-    ? t("networking.sshGuard.proof.observed", { age: formatAge(now.value - Date.parse(observedAt.value)) })
-    : t("networking.sshGuard.proof.notObserved");
-  return [
-    observed,
-    t("networking.sshGuard.proof.nodes", { n: proof.value.total }),
-    t("networking.sshGuard.proof.secured", { n: postures.value.secured }),
-    t("networking.sshGuard.proof.passwordOpen", { n: postures.value.password_open }),
-    t("networking.sshGuard.proof.partial", { n: postures.value.partial }),
-    t("networking.sshGuard.proof.postureUnknown", { n: postures.value.unknown }),
-    t("networking.sshGuard.proof.confirmed", { n: proof.value.confirmed }),
-    t("networking.sshGuard.proof.failedArms", { n: proof.value.failedArms }),
-    t("networking.sshGuard.proof.reverting", { n: proof.value.reverting }),
-  ].join(" · ");
+/**
+ * The proof line on the shared ProofLine. Its state follows the node and
+ * status reads the board is built from, so a failed read shows the reason
+ * and no counts instead of a row of zeros. Its age is the newest reality
+ * snapshot the nodes sent, which is what "observed" means on this page.
+ */
+const proofBinding = useProof([nodesQuery, statusQuery]);
+const proofObservedAt = computed(() => {
+  const ms = observedAt.value ? Date.parse(observedAt.value) : Number.NaN;
+  return Number.isNaN(ms) ? null : ms;
 });
+const proofSegments = computed<ProofSegment[]>(() => [
+  ...(proofObservedAt.value === null ? [{ key: "not-observed", text: t("networking.sshGuard.proof.notObserved") }] : []),
+  { key: "nodes", text: t("networking.sshGuard.proof.nodes", { n: proof.value.total }) },
+  { key: "secured", text: t("networking.sshGuard.proof.secured", { n: postures.value.secured }) },
+  { key: "password", text: t("networking.sshGuard.proof.passwordOpen", { n: postures.value.password_open }) },
+  { key: "partial", text: t("networking.sshGuard.proof.partial", { n: postures.value.partial }) },
+  { key: "unknown", text: t("networking.sshGuard.proof.postureUnknown", { n: postures.value.unknown }) },
+  { key: "confirmed", text: t("networking.sshGuard.proof.confirmed", { n: proof.value.confirmed }) },
+  { key: "failed-arms", text: t("networking.sshGuard.proof.failedArms", { n: proof.value.failedArms }) },
+  { key: "reverting", text: t("networking.sshGuard.proof.reverting", { n: proof.value.reverting }) },
+]);
+function retryProof(): void {
+  nodesQuery.refresh();
+  statusQuery.refresh();
+}
 
 const evidence = computed(
   () => new Map(states.value.map((s) => [s.nodeId, foldReality(s.nodeId, summariesById.value, realityDetails.value)] as const)),
@@ -1164,7 +1176,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 </script>
 
 <template>
-  <div class="p-3 sm:p-6 space-y-5">
+  <div class="p-4 sm:p-6 space-y-5">
     <PageHeader
       :title="$t('networking.sshGuard.title')"
       :description="$t('networking.sshGuard.description')"
@@ -1196,7 +1208,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
     </PageHeader>
 
     <!-- The proof line: what was observed, and the numbers the board is made of. -->
-    <p class="font-mono text-xs tabular text-muted-foreground" data-testid="proof-line">{{ proofLine }}</p>
+    <ProofLine v-bind="proofBinding" :observed-at="proofObservedAt" :segments="proofSegments" @retry="retryProof" />
 
     <!-- The only state with a deadline. It goes first and it is loud. -->
     <section
@@ -1367,7 +1379,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 
       <!-- The table scrolls sideways inside itself at narrow widths and keeps
            the node column pinned; the page stays the only vertical scroller. -->
-      <div v-else class="overflow-x-auto rounded-md border border-border">
+      <div v-else class="relative overflow-x-auto rounded-md border border-border">
         <table class="w-full border-collapse text-sm">
           <thead class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
@@ -1839,7 +1851,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
             <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {{ $t('networking.sshGuard.sheet.policy') }}
             </h3>
-            <div class="grid gap-4 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label for="sshguard-port">{{ $t('networking.sshGuard.fields.sshPort') }}</Label>
                 <Input id="sshguard-port" v-model="sshPortInput" type="number" min="1" max="65535" :placeholder="$t('networking.sshGuard.fields.sshPortKeep')" :disabled="!canAdmin || filing" />
@@ -1902,7 +1914,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               </p>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label class="flex items-start gap-3 text-sm">
                 <Checkbox class="mt-0.5" :model-value="form.keepLegacyPort" :disabled="!canAdmin || filing"
                   @update:model-value="(v) => (form.keepLegacyPort = v === true)" />
@@ -1939,7 +1951,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
             </summary>
             <div v-if="form.advanced" class="space-y-4 border-t border-border px-3 py-3">
               <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.sheet.advancedHint') }}</p>
-              <div class="grid gap-4 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label :for="advancedId('gate')">{{ $t('networking.sshGuard.advancedFields.gatePorts') }}</Label>
                   <Input :id="advancedId('gate')" v-model="form.advanced.gatePorts" class="font-mono" :disabled="!canAdmin || filing"

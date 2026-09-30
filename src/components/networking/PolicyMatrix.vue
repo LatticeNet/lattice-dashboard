@@ -85,7 +85,7 @@ function onDirection(value: unknown) {
     </div>
 
     <!-- Grid -->
-    <div class="overflow-x-auto rounded-lg border border-border">
+    <div class="relative overflow-x-auto rounded-lg border border-border">
       <table class="w-full border-collapse text-sm">
         <thead>
           <tr class="bg-muted/40">

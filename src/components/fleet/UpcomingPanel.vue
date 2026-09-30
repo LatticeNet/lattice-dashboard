@@ -40,7 +40,7 @@ const canOpenList = computed(() => auth.canAny(UPCOMING_SCOPES));
         </RouterLink>
       </CardTitle>
       <CardDescription>
-        <UpcomingProof :data="query.data.value" :now="now.getTime()" />
+        <UpcomingProof :query="query" />
       </CardDescription>
     </CardHeader>
     <CardContent class="px-0">

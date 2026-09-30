@@ -62,9 +62,11 @@ const canAdmin = computed(() => auth.can("oidc:admin"));
 const redirectUri = computed(() => `${window.location.origin}/api/auth/oidc/callback`);
 
 // Wrapped object endpoint: unwrap "providers".
+// Operator-only data changes only when an operator changes it, here or in
+// another tab; it is read once and on Refresh, never polled (design 23,
+// section 3.10).
 const providersQuery = useAsyncData(
   (signal) => api.oidc.providers({ signal }).then((r) => unwrap(r, "providers")),
-  { pollInterval: 15000 },
 );
 const providers = computed(() => providersQuery.data.value ?? []);
 
@@ -285,13 +287,13 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('settings.sso.title')"
       :description="$t('settings.sso.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="providersQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="providersQuery.lastUpdated.value" :poll-ms="providersQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" as-child>
@@ -466,7 +468,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             <li>{{ $t("settings.sso.form.stepCreateApp") }}</li>
             <li>
               {{ $t("settings.sso.form.stepRedirect") }}
-              <code class="block mt-1 overflow-x-auto rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
+              <code class="block mt-1 relative overflow-x-auto rounded bg-background px-2 py-1 font-mono text-xs text-foreground">
                 {{ redirectUri }}
               </code>
             </li>
@@ -486,7 +488,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
 
         <div class="rounded-md border border-border p-4">
           <p class="text-sm font-medium">{{ $t("settings.sso.form.fieldGuideTitle") }}</p>
-          <dl class="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+          <dl class="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
             <div>
               <dt class="font-medium">{{ $t("settings.sso.form.displayName") }}</dt>
               <dd class="text-muted-foreground">{{ $t("settings.sso.form.displayNameGuide") }}</dd>
@@ -549,7 +551,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             </p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="oidc-client-id">{{ $t("settings.sso.form.clientId") }}</Label>
               <Input id="oidc-client-id" v-model="form.client_id" required placeholder="lattice-console" />

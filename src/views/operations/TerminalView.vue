@@ -12,7 +12,6 @@
  * Every decision that does not need the DOM lives in ./terminalModel.ts.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -30,6 +29,7 @@ import { ChevronRight, ChevronsUpDown, Maximize2, Minimize2, Power, RefreshCw, S
 import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { describeNodeStatus } from "@/lib/nodeStatus";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { useAuthStore } from "@/stores/auth";
 import { claimViewportPane } from "@/layout/viewportPane";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -58,6 +58,7 @@ import {
 } from "./terminalModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
@@ -70,7 +71,7 @@ const DEFAULT_ROWS = 34;
 const TRANSPORT_STORAGE_KEY = "lattice.terminal.transport";
 const SHELLS = ["bash", "sh", "/bin/zsh"] as const;
 
-const route = useRoute();
+const ownedRoute = useOwnedRoute();
 const { t } = useI18n();
 const auth = useAuthStore();
 
@@ -120,9 +121,11 @@ function displayNode(id: unknown): string {
 
 // A deep link (`?node_id=`) chooses the node the way a click would, once per
 // route change. It is not a default: without the query nothing is chosen.
-const routeNodeId = computed(() => queryString(route.query.node_id));
-const routeConnect = computed(() => queryFlag(route.query.connect));
-const routeSessionId = computed(() => queryString(route.query.session_id));
+// Read through the owned route: while Terminal is leaving, the router already
+// points at the next page, whose ?node_id= must not select a node here.
+const routeNodeId = computed(() => queryString(ownedRoute.query().node_id));
+const routeConnect = computed(() => queryFlag(ownedRoute.query().connect));
+const routeSessionId = computed(() => queryString(ownedRoute.query().session_id));
 let appliedRouteNodeId = "";
 let routeConnectAttempted = false;
 watch(
@@ -207,7 +210,13 @@ const proofSegments = computed(() =>
     shell: shell.value,
     liveOwn: counts.value.liveOwn,
     liveOnNode: counts.value.liveOnNode,
-  }).map((label) => ({ key: label.key, text: proofText(label), tone: label.key === "blocked" ? "warning" : "neutral" })),
+  }).map(
+    (label): ProofSegment => ({
+      key: label.key,
+      text: proofText(label),
+      tone: label.key === "blocked" ? "warning" : label.key === "transport" || label.key === "shell" ? "strong" : "default",
+    }),
+  ),
 );
 
 const limitLines = computed(() => [
@@ -546,15 +555,9 @@ onMounted(() => {
   <div class="absolute inset-0 flex min-h-0 flex-col gap-4 overflow-hidden bg-background py-4 sm:p-6">
     <PageHeader :title="$t('operations.terminal.title')" class="shrink-0 px-4 sm:px-0">
       <template #description>
-        <!-- The proof line: what a session would run over, before anything opens. -->
-        <p class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs leading-5 tabular text-muted-foreground" :title="limitsTitle">
-          <template v-for="(segment, index) in proofSegments" :key="segment.key">
-            <span v-if="index > 0" aria-hidden="true" class="text-muted-foreground/50">·</span>
-            <span :class="segment.tone === 'warning' ? 'text-warning' : segment.key === 'transport' || segment.key === 'shell' ? 'text-foreground' : undefined">
-              {{ segment.text }}
-            </span>
-          </template>
-        </p>
+        <!-- The proof line: what a session would run over, before anything opens.
+             Nothing here is polled, so it carries no age (idle). -->
+        <ProofLine state="idle" :segments="proofSegments" :title="limitsTitle" />
       </template>
     </PageHeader>
 
@@ -662,7 +665,7 @@ onMounted(() => {
           <ChevronRight class="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
           {{ $t('operations.terminal.limits.summary') }}
         </summary>
-        <div class="mt-2 grid gap-3 rounded-md border border-border bg-card p-3 sm:grid-cols-[1fr_auto]">
+        <div class="mt-2 grid grid-cols-1 gap-3 rounded-md border border-border bg-card p-3 sm:grid-cols-[1fr_auto]">
           <div class="space-y-1">
             <p class="font-mono text-foreground">{{ limitLines.join(' · ') }}</p>
             <p>{{ $t('operations.terminal.limits.source') }}</p>
@@ -695,7 +698,7 @@ onMounted(() => {
         v-if="tabs.length"
         role="tablist"
         :aria-label="$t('operations.terminal.tabs.label')"
-        class="-mb-4 flex shrink-0 items-end gap-1 overflow-x-auto px-4 sm:px-0"
+        class="-mb-4 flex shrink-0 items-end gap-1 relative overflow-x-auto px-4 sm:px-0"
       >
         <div
           v-for="(tab, index) in tabs"

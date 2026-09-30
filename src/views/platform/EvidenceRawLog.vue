@@ -217,7 +217,18 @@ const empty = computed(() =>
 const collectLink = computed(() => ({ query: writeEvidenceLayer(route.query, "collection") }));
 const overviewLink = computed(() => ({ query: writeEvidenceLayer(route.query, "overview") }));
 
+/**
+ * Names in the question searched as typed because their list has not loaded.
+ * "No source on this node" and "nothing matched" are then unproven: the
+ * node or source name may simply not have been looked up.
+ */
+const uncheckedNames = computed(() => ctx.uncheckedNames(question.value));
+const notLookedUp = computed(
+  () => uncheckedNames.value.length > 0 && (noSourceOnNode.value || empty.value.kind === "nothing-matched"),
+);
+
 const emptyTitle = computed(() => {
+  if (notLookedUp.value) return t("platform.evidence.explore.notLookedUpTitle");
   if (noSourceOnNode.value) return t("platform.evidence.explore.noSourceOnNodeTitle");
   switch (empty.value.kind) {
     case "no-sources":
@@ -236,6 +247,9 @@ const emptyTitle = computed(() => {
 const emptyDescription = computed(() => {
   const name = source.value?.name || source.value?.id || "";
   const node = source.value ? ctx.nodeLabel(source.value.node_id) : "";
+  if (notLookedUp.value) {
+    return t("platform.evidence.explore.notLookedUp", { tokens: uncheckedNames.value.join(", ") }, uncheckedNames.value.length);
+  }
   if (noSourceOnNode.value) {
     return t("platform.evidence.explore.noSourceOnNode", { node: ctx.nodeLabel(question.value.nodeId) });
   }

@@ -392,6 +392,24 @@ export interface EnrollTokenResponse {
   agent_launch?: AgentLaunchConfig;
 }
 
+/**
+ * GET /api/tasks/counts: the queue's health as numbers, counted by the server
+ * over the tasks the caller may read. queued, running and stalled count task
+ * rows by status (each equals the total of GET /api/tasks?status=<same>);
+ * failed_24h and finished_24h count runs (a root task with its reruns) whose
+ * outcome settled in the 24 hours before generated_at. Servers before
+ * alpha-0.2.2a101 answer 404.
+ */
+export interface TaskCounts {
+  queued: number;
+  running: number;
+  stalled: number;
+  failed_24h: number;
+  finished_24h: number;
+  total: number;
+  generated_at: string;
+}
+
 export interface TaskView {
   id: string;
   actor_id?: string;
@@ -931,6 +949,13 @@ export interface AuditQueryResponse {
   total: number;
   limit: number;
   offset: number;
+  /**
+   * How many events the server walked to count `total`. It stops at a cap
+   * (200,000), so on a large log `total` counts only the newest `scanned`.
+   */
+  scanned?: number;
+  /** False when the scan stopped at the cap: `total` is then a lower bound. */
+  complete?: boolean;
 }
 
 export interface AuditAnchorCheckpoint {

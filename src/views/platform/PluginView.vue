@@ -359,10 +359,10 @@ function confirmAction() {
     :interfaces="plugin.interfaces ?? []"
   />
 
-  <div v-else class="p-6 space-y-6">
-    <PageHeader :title="pageTitle" :section="sectionLabel" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
+  <div v-else class="p-4 sm:p-6 space-y-6">
+    <PageHeader :title="pageTitle" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
       <template v-if="hasSource" #status>
-        <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" :poll-ms="sourceQuery.pollMs" />
       </template>
       <template #actions>
         <Button
@@ -530,7 +530,7 @@ function confirmAction() {
           :empty-description="$t('pluginViews.emptyDescription')"
           @retry="sourceQuery.refresh"
         >
-          <pre class="overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-4 font-mono text-xs text-foreground">{{ markdownText }}</pre>
+          <pre class="relative overflow-x-auto whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 p-4 font-mono text-xs text-foreground">{{ markdownText }}</pre>
         </DataState>
       </CardContent>
     </Card>

@@ -161,7 +161,7 @@ function setOpen(value: boolean) {
             <CopyButton :value="props.planText || ''" />
           </div>
           <pre
-            class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed"
+            class="max-h-[420px] relative overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed"
           >{{ props.planText }}</pre>
         </div>
 

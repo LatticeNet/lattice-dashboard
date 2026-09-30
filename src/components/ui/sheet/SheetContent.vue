@@ -55,7 +55,7 @@ const forwarded = useForwardPropsEmits(delegatedProps, emits);
       <slot />
 
       <DialogClose
-        class="ring-offset-background focus-visible:ring-ring absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0"
+        class="ring-offset-background focus-visible:ring-ring touch-target absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-none disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0"
       >
         <X />
         <span class="sr-only">{{ $t('common.actions.close') }}</span>

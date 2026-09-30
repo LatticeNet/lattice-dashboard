@@ -1066,10 +1066,10 @@ const taskMetrics = computed<Metric[]>(() => [
 </script>
 
 <template>
-  <div class="space-y-6 p-6">
+  <div class="space-y-6 p-4 sm:p-6">
     <PageHeader :title="$t('operations.tasks.title')" :description="$t('operations.tasks.description')">
       <template #status>
-        <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value || resultsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value || resultsQuery.lastUpdated.value" :poll-ms="tasksQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="tasksQuery.refreshing.value" @click="refreshAll">
@@ -1107,7 +1107,7 @@ const taskMetrics = computed<Metric[]>(() => [
           <Ban class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <p>{{ $t('operations.tasks.taskExecutionDisabled') }}</p>
         </div>
-        <form class="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_1fr]" @submit.prevent="createTask">
+        <form class="grid grid-cols-1 min-w-0 gap-5 xl:grid-cols-[minmax(360px,0.9fr)_1fr]" @submit.prevent="createTask">
           <div class="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -1129,7 +1129,7 @@ const taskMetrics = computed<Metric[]>(() => [
               </div>
             </div>
 
-            <div class="grid gap-2 md:grid-cols-[1fr_0.8fr_0.8fr]">
+            <div class="grid grid-cols-1 gap-2 md:grid-cols-[1fr_0.8fr_0.8fr]">
               <div class="relative">
                 <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
                 <Input v-model="targetSearch" class="pl-8" :placeholder="$t('operations.tasks.targetSearch')" />
@@ -1219,7 +1219,7 @@ const taskMetrics = computed<Metric[]>(() => [
           </div>
 
           <div class="space-y-3">
-            <div class="grid gap-3 sm:grid-cols-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div class="grid gap-2">
                 <Label>{{ $t('operations.tasks.interpreter') }}</Label>
                 <Select v-model="interpreter">
@@ -1329,21 +1329,21 @@ const taskMetrics = computed<Metric[]>(() => [
             <CardTitle>{{ $t('operations.tasks.history') }}</CardTitle>
             <CardDescription>{{ $t('operations.tasks.historyHint') }}</CardDescription>
           </div>
-          <div class="flex flex-wrap gap-2">
-            <div class="relative">
+          <div class="flex w-full flex-wrap gap-2 sm:w-auto">
+            <div class="relative w-full sm:w-auto">
               <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
               <Input
                 v-model="taskSearch"
-                class="w-72 pl-8"
+                class="w-full pl-8 sm:w-72"
                 :placeholder="$t('operations.tasks.searchPlaceholder')"
                 :aria-label="$t('operations.tasks.searchLabel')"
               />
             </div>
-            <div class="relative">
+            <div class="relative w-full sm:w-auto">
               <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
               <Input
                 v-model="taskExpression"
-                class="w-80 pl-8 font-mono text-xs"
+                class="w-full pl-8 font-mono text-xs sm:w-80"
                 :class="taskExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
                 :placeholder="$t('operations.tasks.expressionPlaceholder')"
                 :aria-label="$t('operations.tasks.expressionLabel')"
@@ -1517,7 +1517,7 @@ const taskMetrics = computed<Metric[]>(() => [
                   </div>
                 </div>
 
-                <div class="grid gap-2 text-sm md:grid-cols-4">
+                <div class="grid grid-cols-1 gap-2 text-sm md:grid-cols-4">
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.targetProgress') }}</p>
                     <p class="mt-1 font-medium">
@@ -1547,10 +1547,10 @@ const taskMetrics = computed<Metric[]>(() => [
                     <span class="font-mono" :title="detailTask.script_sha256">{{ shortId(detailTask.script_sha256 ?? "", 16) }}</span>
                     <CopyButton :value="detailTask.script_sha256 ?? ''" />
                   </div>
-                  <pre class="max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[detailTask.id] }}</pre>
+                  <pre class="max-h-64 relative overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ revealedScripts[detailTask.id] }}</pre>
                 </div>
 
-                <div  class="overflow-x-auto rounded-lg border border-border">
+                <div  class="relative overflow-x-auto rounded-lg border border-border">
                   <table class="w-full min-w-[760px] text-sm">
                     <thead class="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
@@ -1641,9 +1641,9 @@ const taskMetrics = computed<Metric[]>(() => [
                                   <span v-if="attempt.task.rerun_of_node_id">{{ $t('operations.tasks.nodeRerunBadge') }}</span>
                                   <span>{{ formatDateTime(attempt.result?.finished_at || attempt.task.created_at) }}</span>
                                 </div>
-                                <pre v-if="attempt.result?.stdout" class="max-h-56 overflow-auto rounded bg-muted p-3 text-xs">{{ attempt.result.stdout }}</pre>
-                                <pre v-if="attempt.result?.stderr" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.stderr }}</pre>
-                                <pre v-if="attempt.result?.error" class="mt-2 max-h-56 overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.error }}</pre>
+                                <pre v-if="attempt.result?.stdout" class="max-h-56 relative overflow-auto rounded bg-muted p-3 text-xs">{{ attempt.result.stdout }}</pre>
+                                <pre v-if="attempt.result?.stderr" class="mt-2 max-h-56 relative overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.stderr }}</pre>
+                                <pre v-if="attempt.result?.error" class="mt-2 max-h-56 relative overflow-auto rounded bg-destructive/10 p-3 text-xs text-destructive">{{ attempt.result.error }}</pre>
                                 <p v-if="!attempt.result" class="text-xs text-muted-foreground">{{ $t('operations.tasks.noResultYet') }}</p>
                               </div>
                             </div>

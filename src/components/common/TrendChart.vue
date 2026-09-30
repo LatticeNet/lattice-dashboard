@@ -25,7 +25,7 @@ const props = withDefaults(
     area?: boolean;
     /** Unit suffix shown next to min/max/last labels (e.g. "ms"). */
     unit?: string;
-    /** Value formatter for the min/max/last labels. */
+    /** Value formatter for the min/max/last labels; `unit` is appended to what it returns, so it returns the number only. */
     formatValue?: (n: number) => string;
     /**
      * Enable the optional hover layer (crosshair + focus dot + value tooltip).

@@ -53,9 +53,10 @@ const grantableScopes = computed(() =>
   isSuperuser.value ? [...SCOPE_CATALOG] : SCOPE_CATALOG.filter((scope) => auth.canGrant(scope)),
 );
 
-const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")), {
-  pollInterval: 15000,
-});
+// Operator-only data changes only when an operator changes it, here or in
+// another tab; it is read once and on Refresh, never polled (design 23,
+// section 3.10).
+const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")));
 const users = computed(() => usersQuery.data.value ?? []);
 const sortedUsers = computed(() =>
   [...users.value].sort((a, b) => (a.created_at || "").localeCompare(b.created_at || "")),
@@ -226,10 +227,10 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('settings.users.title')" :description="$t('settings.users.description')">
       <template #status>
-        <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" :poll-ms="usersQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="usersQuery.refreshing.value" @click="usersQuery.refresh">

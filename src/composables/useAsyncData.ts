@@ -21,6 +21,13 @@ export interface AsyncData<T> {
   loading: Ref<boolean>;
   refreshing: Ref<boolean>;
   lastUpdated: Ref<number | undefined>;
+  /**
+   * The poll interval this query was created with; 0 when it reads once.
+   * Freshness is judged against it (stale at 1.5 times), so a page that polls
+   * every 12 s is not called late at 9 s and a page that never polls is not
+   * called late at all.
+   */
+  pollMs: number;
   refresh: () => Promise<void>;
   stop: () => void;
 }
@@ -94,5 +101,5 @@ export function useAsyncData<T>(
   schedule();
   onScopeDispose(stop);
 
-  return { data, error, loading, refreshing, lastUpdated, refresh: run, stop };
+  return { data, error, loading, refreshing, lastUpdated, pollMs: pollInterval > 0 ? pollInterval : 0, refresh: run, stop };
 }

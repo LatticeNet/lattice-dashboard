@@ -649,7 +649,7 @@ const coverageLoading = computed(
         </div>
       </dl>
 
-      <div class="grid gap-6 lg:grid-cols-2">
+      <div class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-2">
         <div class="space-y-2">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.evidence.overview.failuresByReason') }}</h3>
           <p v-if="summary.failures.length === 0" class="text-sm text-muted-foreground">

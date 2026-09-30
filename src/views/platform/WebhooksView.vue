@@ -393,14 +393,14 @@ async function runTest(): Promise<void> {
 </script>
 
 <template>
-  <div class="space-y-6 p-6">
+  <div class="space-y-6 p-4 sm:p-6">
     <PageHeader
       :title="$t('platform.webhooks.title')"
       :description="$t('platform.webhooks.description')"
       :section="$t('platform.webhooks.section')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="webhooksQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="webhooksQuery.lastUpdated.value" :poll-ms="webhooksQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" @click="webhooksQuery.refresh()">
@@ -447,7 +447,7 @@ async function runTest(): Promise<void> {
       </Button>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <DataTable
         class="min-w-0"
         state-key="webhooks"
@@ -569,7 +569,7 @@ async function runTest(): Promise<void> {
               <CopyButton :value="selectedCurl" :label="$t('common.actions.copy')" />
             </div>
             <pre
-              class="overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
+              class="relative overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
             ><code>{{ selectedCurl }}</code></pre>
           </div>
 
@@ -597,7 +597,7 @@ async function runTest(): Promise<void> {
         <div v-if="selected" class="rounded-lg border border-border bg-card">
           <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
             <h3 class="text-sm font-semibold text-foreground">{{ $t("platform.webhooks.deliveries") }}</h3>
-            <FreshnessLabel :last-updated="deliveriesQuery.lastUpdated.value" />
+            <FreshnessLabel :last-updated="deliveriesQuery.lastUpdated.value" :poll-ms="deliveriesQuery.pollMs" />
           </div>
           <p
             v-if="!deliveries.length"
@@ -751,7 +751,7 @@ async function runTest(): Promise<void> {
             <CopyButton :value="revealedCurl" :label="$t('common.actions.copy')" />
           </div>
           <pre
-            class="overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
+            class="relative overflow-x-auto rounded bg-muted p-2.5 font-mono text-xs leading-relaxed"
           ><code>{{ revealedCurl }}</code></pre>
         </div>
 

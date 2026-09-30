@@ -205,7 +205,7 @@ onMounted(async () => {
       aria-hidden="true"
     />
 
-    <div class="relative grid min-h-screen lg:grid-cols-2">
+    <div class="relative grid grid-cols-1 min-w-0 min-h-screen lg:grid-cols-2">
       <!-- Hero -->
       <section class="hidden flex-col justify-between p-12 lg:flex">
         <div class="flex items-center gap-3">

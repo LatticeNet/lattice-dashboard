@@ -49,13 +49,13 @@ function displayDate(value?: string): string {
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('settings.about.title')"
       :description="$t('settings.about.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="versionQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="versionQuery.lastUpdated.value" :poll-ms="versionQuery.pollMs" />
       </template>
       <template #actions>
         <Button
@@ -73,7 +73,7 @@ function displayDate(value?: string): string {
       </template>
     </PageHeader>
 
-    <div class="grid gap-6 xl:grid-cols-2">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">

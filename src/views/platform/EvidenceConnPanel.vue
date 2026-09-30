@@ -9,17 +9,20 @@
  * including this one, so a link to a connection outside the loaded window
  * still lands on it. A hop path short of "exact" says in words that it was
  * inferred before it shows anything.
+ *
+ * The shell is the shared ObjectSheet (design 23, section 3.5); focus goes
+ * back to the row that opened it on Escape or close.
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { api, type ConnRecord, type HopPath, type TraceLine } from "@/lib/api";
+import { ApiError } from "@/lib/api/client";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import DataState from "@/components/common/DataState.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { SheetContent } from "@/components/ui/sheet";
 
 import {
   connCloseCell,
@@ -38,6 +41,8 @@ const props = defineProps<{
   connKey: string;
   /** The row it was opened from, when the list had it. */
   record?: ConnRecord;
+  /** Where focus returns on close (useRouteOpen). */
+  returnFocus?: () => HTMLElement | null;
 }>();
 const emit = defineEmits<{ close: [] }>();
 
@@ -51,6 +56,8 @@ const hopPath = ref<HopPath | null>(null);
 const hopRecords = ref<ConnRecord[]>([]);
 const hopError = ref<Error | null>(null);
 const hopLoading = ref(false);
+/** The hops read for the open key has answered, with or without a path. */
+const hopsSettled = ref(false);
 
 const recordLines = ref<TraceLine[]>([]);
 const linesLoading = ref(false);
@@ -75,7 +82,11 @@ function stillOpen(key: string): boolean {
 
 async function loadHops(connKey: string): Promise<void> {
   const parts = parseConnKey(connKey);
-  if (!parts) return;
+  if (!parts) {
+    // A key that cannot name a connection names nothing: the sheet says so.
+    hopsSettled.value = true;
+    return;
+  }
   hopsController?.abort();
   const mine = new AbortController();
   hopsController = mine;
@@ -96,6 +107,7 @@ async function loadHops(connKey: string): Promise<void> {
     if (hopsController !== mine || !stillOpen(connKey)) return;
     hopPath.value = res.path ?? null;
     hopRecords.value = res.records ?? [];
+    hopsSettled.value = true;
   } catch (error) {
     if ((error as Error)?.name === "AbortError" || hopsController !== mine || !stillOpen(connKey)) return;
     hopError.value = error as Error;
@@ -146,6 +158,7 @@ watch(
     }
     if (before && before[0] === key && selected.value) return;
     selected.value = record && connRecordKey(record) === key ? record : null;
+    hopsSettled.value = false;
     hopPath.value = null;
     hopRecords.value = [];
     recordLines.value = [];
@@ -176,22 +189,39 @@ function hopRecordFor(key: { node_id: string; core_generation: number; log_id: n
 const upload = computed(() => (selected.value ? traceBytesCell(selected.value.upload, selected.value.bytes_known) : null));
 const download = computed(() => (selected.value ? traceBytesCell(selected.value.download, selected.value.bytes_known) : null));
 const duration = computed(() => (selected.value ? traceDurationCell(selected.value.duration_ms) : null));
+/** The hops endpoint answered that it holds no such connection. */
+const hopMissing = computed(() => hopError.value instanceof ApiError && hopError.value.status === 404);
+
+/**
+ * The sheet's state. A connection the hops endpoint no longer knows is gone,
+ * and the sheet's gone state offers the collection back; any other failed
+ * hops read keeps the sheet open on its retry.
+ */
+const sheetState = computed<"ready" | "loading" | "gone">(() => {
+  if (selected.value || (hopError.value && !hopMissing.value)) return "ready";
+  if (hopLoading.value || !hopsSettled.value) return "loading";
+  return "gone";
+});
+
 const title = computed(() =>
   selected.value ? destinationText(selected.value) || t("platform.trace.detailTitle") : t("platform.trace.detailTitle"),
 );
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="(value) => { if (!value) emit('close'); }">
-    <SheetContent :aria-describedby="undefined">
-      <header class="space-y-1 border-b border-border px-5 pt-5 pb-4 pr-12">
-        <DialogTitle :class="cn('truncate text-base font-semibold tracking-[-0.01em]', selected && destinationText(selected) && 'font-mono')" :title="title">{{ title }}</DialogTitle>
-        <DialogDescription class="font-mono text-xs break-all text-muted-foreground">{{ connKey }}</DialogDescription>
-      </header>
-
-      <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+  <ObjectSheet
+    :open="open"
+    :title="title"
+    :subtitle="connKey"
+    :mono-title="!!(selected && destinationText(selected))"
+    :state="sheetState"
+    :gone-title="$t('platform.evidence.panel.missingTitle')"
+    :gone-description="$t('platform.evidence.panel.missingDescription')"
+    :return-focus="props.returnFocus"
+    @close="emit('close')"
+  >
         <DataState
-          :loading="!selected && hopLoading"
+          :loading="false"
           :error="!selected ? hopError : null"
           :has-data="!!selected"
           :is-empty="!selected"
@@ -204,7 +234,7 @@ const title = computed(() =>
             <!-- Identity -->
             <section class="space-y-2">
               <h3 class="text-sm font-medium">{{ $t('platform.trace.detailIdentity') }}</h3>
-              <dl class="grid gap-2 text-xs sm:grid-cols-2">
+              <dl class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div>
                   <dt class="text-muted-foreground">{{ $t('platform.trace.colUser') }}</dt>
                   <dd :class="cn('mt-0.5', selectedUser?.monospace && 'font-mono')">
@@ -240,7 +270,7 @@ const title = computed(() =>
             <!-- Connection -->
             <section class="space-y-2">
               <h3 class="text-sm font-medium">{{ $t('platform.trace.detailConnection') }}</h3>
-              <dl class="grid gap-2 text-xs sm:grid-cols-2">
+              <dl class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div>
                   <dt class="text-muted-foreground">{{ $t('platform.trace.colDestination') }}</dt>
                   <dd class="mt-0.5 font-mono break-all">{{ destinationText(selected) || $t('common.misc.none') }}</dd>
@@ -278,7 +308,7 @@ const title = computed(() =>
             <!-- Lifecycle -->
             <section class="space-y-2">
               <h3 class="text-sm font-medium">{{ $t('platform.trace.detailLifecycle') }}</h3>
-              <dl class="grid gap-2 text-xs sm:grid-cols-2">
+              <dl class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div>
                   <dt class="text-muted-foreground">{{ $t('platform.trace.colStarted') }}</dt>
                   <dd class="mt-0.5 font-mono tabular">{{ formatDateTime(selected.started_at) }}</dd>
@@ -405,7 +435,5 @@ const title = computed(() =>
             </section>
           </div>
         </DataState>
-      </div>
-    </SheetContent>
-  </Dialog>
+  </ObjectSheet>
 </template>

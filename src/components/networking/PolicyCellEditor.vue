@@ -190,7 +190,7 @@ function submit() {
       </DialogHeader>
 
       <form class="space-y-5" @submit.prevent="submit">
-        <div class="grid gap-3 sm:grid-cols-2">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <label class="flex h-9 items-center gap-2 rounded-md border border-input px-3 text-sm">
             <input v-model="meta.enabled" type="checkbox" class="size-4 accent-primary" />
             {{ $t("networking.matrix.policyEnabled") }}
@@ -237,7 +237,7 @@ function submit() {
               </Button>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div class="grid gap-1.5">
                 <Label class="text-xs">{{ $t("networking.policy.action") }}</Label>
                 <Select v-model="rule.action">
@@ -271,7 +271,7 @@ function submit() {
               </div>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label class="text-xs">{{ $t("networking.policy.ports") }}</Label>
                 <Input

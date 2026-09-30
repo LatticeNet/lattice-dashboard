@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   AlertTriangle,
@@ -61,8 +61,12 @@ import {
 } from "./fleetBulkModel";
 import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
 import {
+  NODE_STATUS_PARAM,
   NODE_TABLE_COLUMNS,
+  NODES_LAYOUT_PARAM,
+  canonicalLayoutQuery,
   compareNodeIdentity,
+  isNodesLayout,
   nameTrackMin,
   nextSortState,
   type NameMeasure,
@@ -70,9 +74,13 @@ import {
   parseSortState,
   serializeHiddenColumns,
   serializeSortState,
+  nodeStatusFilterCodec,
   sortNodes,
   type NodeSortState,
+  type NodesLayout,
 } from "./nodesTableModel";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bodyFont, createTextMeasurer } from "@/lib/textWidth";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -96,10 +104,8 @@ import {
   compareByAttention,
   countNodeStatuses,
   describeNodeStatus,
-  isNodeStatus,
   isReporting,
   nodeStatus,
-  type NodeStatus,
 } from "@/lib/nodeStatus";
 import {
   Select,
@@ -111,7 +117,6 @@ import {
 
 const auth = useAuthStore();
 const { t, locale } = useI18n();
-const route = useRoute();
 const router = useRouter();
 const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
@@ -154,9 +159,12 @@ const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
 /* ----------------------------------------------------------------- */
 /* Client-side search / status / tag filtering over the polled list.  */
 /* ----------------------------------------------------------------- */
-type StatusFilter = "all" | NodeStatus;
 const search = ref("");
-const statusFilter = ref<StatusFilter>("all");
+// The status filter lives in the address, one way: read from `?status=`,
+// written back only by the operator's change, so a reload or a copied link
+// carries what is on screen and nothing writes while the page is leaving.
+const ownedRoute = useOwnedRoute();
+const statusFilter = bindQueryParam(ownedRoute, NODE_STATUS_PARAM, nodeStatusFilterCodec);
 const activeTags = ref<string[]>([]);
 /** arch/os quick-filter tokens currently engaged (every selected must match). */
 const activeArchOs = ref<string[]>([]);
@@ -166,47 +174,43 @@ const agentExpr = ref("");
 const archOsExpr = ref("");
 const tagsExpr = ref("");
 
-// Seed the status filter from a deep-link (e.g. the Overview "online" KPI tile
-// links to /nodes?status=online), so drill-through lands pre-filtered.
+/* ----------------------------------------------------------------- */
+/* Card / list layout. `?layout=` wins; without it, the operator's    */
+/* last choice from localStorage; list by default. Nodes are the      */
+/* highest-cardinality operator data and belong in the dense table;   */
+/* the card wall stays one click away. An old `?view=card|list` link  */
+/* is read once and rewritten (design 23, section 3.4).               */
+/* ----------------------------------------------------------------- */
+const VIEW_STORAGE_KEY = "lattice.nodes.viewMode";
+const savedLayout = ref<NodesLayout>("list");
+try {
+  const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+  if (isNodesLayout(saved)) savedLayout.value = saved;
+} catch {
+  /* ignore storage errors */
+}
 {
-  const seeded = route.query.status;
-  if (isNodeStatus(seeded)) {
-    statusFilter.value = seeded;
+  const legacy = canonicalLayoutQuery(ownedRoute.query());
+  if (legacy) {
+    savedLayout.value = legacy.layout;
+    ownedRoute.replace(legacy.query);
   }
 }
-
-/* ----------------------------------------------------------------- */
-/* Card / list view mode. Persisted to localStorage AND reflected in  */
-/* `?view=` (mirrors the `?status=` seeding) so it is shareable and    */
-/* survives reloads. The URL wins over the saved preference on load.   */
-/* ----------------------------------------------------------------- */
-type ViewMode = "card" | "list";
-const VIEW_STORAGE_KEY = "lattice.nodes.viewMode";
-// List is the default: nodes are the highest-cardinality operator data and
-// belong in the dense table; the card wall stays one click away.
-const viewMode = ref<ViewMode>("list");
-{
-  const seeded = route.query.view;
-  if (seeded === "card" || seeded === "list") {
-    viewMode.value = seeded;
-  } else {
+const layoutParam = bindQueryParam<NodesLayout>(ownedRoute, NODES_LAYOUT_PARAM, {
+  parse: (raw) => (isNodesLayout(raw) ? raw : savedLayout.value),
+  format: (value) => value,
+});
+const viewMode = computed<NodesLayout>({
+  get: () => layoutParam.value,
+  set: (mode) => {
+    savedLayout.value = mode;
     try {
-      const saved = localStorage.getItem(VIEW_STORAGE_KEY);
-      if (saved === "card" || saved === "list") viewMode.value = saved;
+      localStorage.setItem(VIEW_STORAGE_KEY, mode);
     } catch {
       /* ignore storage errors */
     }
-  }
-}
-watch(viewMode, (mode) => {
-  try {
-    localStorage.setItem(VIEW_STORAGE_KEY, mode);
-  } catch {
-    /* ignore storage errors */
-  }
-  if (route.query.view !== mode) {
-    router.replace({ query: { ...route.query, view: mode } }).catch(() => {});
-  }
+    layoutParam.value = mode;
+  },
 });
 
 /* ----------------------------------------------------------------- */
@@ -1039,10 +1043,10 @@ function openTerminal(node: Node) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.nodes.title')" :description="$t('fleet.nodes.description')">
       <template #status>
-        <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" :poll-ms="nodesQuery.pollMs" />
       </template>
       <template #actions>
         <Button v-if="canAdminNodes" size="sm" @click="focusEnroll">
@@ -1110,7 +1114,7 @@ function openTerminal(node: Node) {
         </div>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form class="grid gap-3 lg:grid-cols-6" @submit.prevent="enrollNode">
+        <form class="grid grid-cols-1 gap-3 lg:grid-cols-6" @submit.prevent="enrollNode">
           <div class="grid gap-2">
             <Label for="enroll-name">{{ $t('fleet.nodes.enroll.name') }}</Label>
             <Input id="enroll-name" v-model="enrollName" required />
@@ -1190,7 +1194,7 @@ function openTerminal(node: Node) {
               aria-hidden="true"
             />
           </button>
-          <div v-if="enrollAdvancedOpen" class="grid gap-2 border-t border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div v-if="enrollAdvancedOpen" class="grid grid-cols-1 min-w-0 gap-2 border-t border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
               <Checkbox v-model="enrollAllowExec" class="mt-0.5" :disabled="enrollNoExec" />
               <span>
@@ -1227,7 +1231,7 @@ function openTerminal(node: Node) {
               </span>
             </label>
           </div>
-          <div v-if="enrollAdvancedOpen" class="grid gap-3 px-3 pb-3 md:grid-cols-4">
+          <div v-if="enrollAdvancedOpen" class="grid grid-cols-1 gap-3 px-3 pb-3 md:grid-cols-4">
             <div class="grid gap-1.5">
               <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
               <Select v-model="enrollTerminalTransport" :disabled="!enrollAllowTerminal">
@@ -1273,7 +1277,7 @@ function openTerminal(node: Node) {
               {{ $t('fleet.nodes.enroll.platformManual') }}
             </button>
           </div>
-          <code class="block overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
+          <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
             {{ enrollCommand }}
           </code>
         </div>
@@ -1286,7 +1290,7 @@ function openTerminal(node: Node) {
             </div>
             <CopyButton :value="rotatedToken.token" :label="$t('fleet.nodes.rotated.copyToken')" />
           </div>
-          <code class="block overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
+          <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
             {{ rotatedToken.token }}
           </code>
         </div>

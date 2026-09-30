@@ -299,7 +299,7 @@ async function confirmDelete(): Promise<void> {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="src-name">{{ $t('platform.logs.nameLabel') }}</Label>
               <Input id="src-name" v-model="form.name" required placeholder="nginx-access" :aria-invalid="!!nameError" />
@@ -331,7 +331,7 @@ async function confirmDelete(): Promise<void> {
             <p v-if="form.path && !pathValid" class="text-xs text-destructive">{{ $t('platform.logs.pathInvalid') }}</p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="src-line-bytes">{{ $t('platform.logs.maxLineBytesLabel') }}</Label>
               <Input id="src-line-bytes" v-model.number="form.max_line_bytes" type="number" min="1" :max="MAX_LINE_BYTES_CAP" />

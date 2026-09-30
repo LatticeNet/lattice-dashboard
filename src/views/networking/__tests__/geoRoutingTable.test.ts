@@ -42,9 +42,9 @@ test("the routings list goes through DataTable, not a hand-rolled table", () => 
   );
 });
 
-test("every column the desktop row carries reaches the mobile card", () => {
-  // The stacked card is rendered from `columns`, so a value that only exists
-  // as a hard-coded <td> is a value a phone never sees.
+test("every column the desktop row carries reaches the phone", () => {
+  // Both phone layouts render from `columns`, so a value that only exists as
+  // a hard-coded <td> is a value a phone never sees.
   const block = view.slice(view.indexOf("const columns = computed"), view.indexOf("// ── Create / edit dialog"));
   for (const key of ["name", "hostname", "strategy", "nodes", "dns", "status", "lastApplied", "lastError", "actions"]) {
     assert.match(block, new RegExp(`key: "${key}"`), `the ${key} column is not in the column model`);
@@ -57,11 +57,12 @@ test("every column the desktop row carries reaches the mobile card", () => {
   assert.match(actions, /common\.actions\.delete/);
 });
 
-test("DataTable still has the stacked-card branch this depends on", () => {
-  // Cards stay the narrow layout unless a table opts into scrolling, and this
-  // page does not.
+test("DataTable still renders every column on a phone, scrolling by default", () => {
+  // Design 23, 3.7: a phone keeps the table and scrolls it sideways with the
+  // first column pinned; cards are opt-in. Both layouts render from
+  // `columns`, so the column model above is what a phone sees either way.
+  assert.match(dataTable, /narrowLayout: "scroll",/);
   assert.match(dataTable, /<ul v-if="!isDesktop && narrowLayout === 'cards'" class="space-y-3 md:hidden">/);
-  assert.match(dataTable, /narrowLayout: "cards",/);
   assert.match(dataTable, /v-for="column in columns"/);
   assert.match(dataTable, /:name="`cell-\$\{column\.key\}`"/);
 });

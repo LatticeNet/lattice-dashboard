@@ -24,7 +24,8 @@
  * fan-out whose target on the offline node has been re-leased three times over
  * six days and carries a `stalled_reason` that ends in a full stop.
  */
-import type { Node, NodeStatus, Principal, TaskResult, TaskView } from "@/lib/api/index";
+import type { AuditEvent, Node, NodeStatus, Principal, TaskCounts, TaskResult, TaskView } from "@/lib/api/index";
+import { ApiError } from "@/lib/api/client";
 import { buildApprovalsFixture, fakeApprovalsApi } from "./approvalsFixture";
 
 // The Overview's approvals card against a fleet's worth of history: the KPI
@@ -245,12 +246,96 @@ const unimplemented = new Proxy(
   },
 );
 
+const PARAMS = new URLSearchParams(window.location.search);
+
+/**
+ * GET /api/tasks/counts, shaped like production on 2026-09-30 (1,771 tasks,
+ * 1 stalled; the 24-hour figures are invented). `?counts=` picks the other
+ * answers home has to say something true about: `missing` (a server before
+ * the read, 404), `fail` (502), `slow` (never answers: reading), `quiet`
+ * (nothing queued, nothing failed).
+ */
+function taskCounts(): Promise<TaskCounts> {
+  const mode = PARAMS.get("counts");
+  const generated_at = new Date().toISOString();
+  if (mode === "missing") return delay(undefined).then(() => { throw new ApiError(404, "not_found", "404 page not found"); });
+  if (mode === "fail") return delay(undefined).then(() => { throw new ApiError(502, "bad_gateway", "tasks store busy: scan exceeded 10 s"); });
+  if (mode === "slow") return new Promise(() => {});
+  if (mode === "quiet") return delay({ queued: 0, running: 0, stalled: 0, failed_24h: 0, finished_24h: 12, total: 1771, generated_at });
+  return delay({ queued: 2, running: 1, stalled: 1, failed_24h: 5, finished_24h: 31, total: 1771, generated_at });
+}
+
+/**
+ * GET /api/audit on a log past the server's 200,000-event scan cap, as
+ * production is. `?audit=complete` answers a narrow query that finished its
+ * scan; `?audit=legacy` answers like a server that sends neither field.
+ * Actions and ids are invented; the node flips are the production pattern.
+ */
+function auditQuery(params?: { limit?: number; offset?: number }): Promise<unknown> {
+  const mode = PARAMS.get("audit") ?? "capped";
+  const limit = params?.limit ?? 50;
+  const offset = params?.offset ?? 0;
+  const actions = ["node.offline", "node.online", "task.create", "approval.apply", "network.apply", "node.offline"];
+  const total = mode === "complete" ? 412 : 50_000;
+  const events: AuditEvent[] = Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => {
+    const n = offset + i;
+    const node = nodes[n % nodes.length]!;
+    return {
+      id: `aud_${(n + 1).toString(16).padStart(10, "0")}`,
+      at: new Date(NOW - n * 4 * 60_000).toISOString(),
+      actor_id: n % 3 === 0 ? "cdcd" : "system",
+      node_id: node.id,
+      action: actions[n % actions.length]!,
+      decision: n % 17 === 0 ? "deny" : "allow",
+      correlation_id: n % 5 === 0 ? `corr_${n}` : undefined,
+    };
+  });
+  const base = { events, total, limit, offset };
+  if (mode === "legacy") return delay(base);
+  return delay({ ...base, scanned: mode === "complete" ? 412 : 200_000, complete: mode === "complete" });
+}
+
+/** Coordinates by country for the map (city-level, invented per node). */
+const GEO: Record<string, [number, number, string, string]> = {
+  US: [34.05, -118.24, "California", "Los Angeles"], JP: [35.68, 139.69, "Tokyo", "Tokyo"], HK: [22.32, 114.17, "Hong Kong", "Hong Kong"],
+  SG: [1.35, 103.82, "Singapore", "Singapore"], DE: [50.11, 8.68, "Hesse", "Frankfurt"], GB: [51.5, -0.12, "England", "London"],
+  CN: [31.23, 121.47, "Shanghai", "Shanghai"], AU: [-33.87, 151.2, "NSW", "Sydney"], FI: [60.17, 24.94, "Uusimaa", "Helsinki"],
+};
+
+function geoNodes() {
+  return {
+    nodes: nodes.map((node, index) => {
+      const country = (node as { geo?: { country?: string } }).geo?.country;
+      const place = country ? GEO[country] : undefined;
+      return {
+        ...node,
+        geo: place ? { ...(node as { geo?: object }).geo, lat: place[0] + (index % 3) * 0.6, lon: place[1] + (index % 4) * 0.6, region: place[2], city: place[3] } : (node as { geo?: object }).geo,
+      };
+    }),
+  };
+}
+
+/** Three groups, as production has; membership invented. */
+function groupsList() {
+  const ids = nodes.map((node) => node.id);
+  const rollup = (members: string[]) => ({ total: members.length, online: members.filter((id) => nodes.find((node) => node.id === id)?.status === "online").length });
+  const group = (id: string, name: string, color: string, members: string[]) => ({ id, name, slug: id, color, members, resolved_members: members, rollup: rollup(members), order: 0 });
+  const hubs = ids.slice(0, 12);
+  const exits = ids.slice(12, 20);
+  const home = ids.slice(20, 23);
+  return {
+    groups: [group("grp_hubs", "Relay hubs", "blue", hubs), group("grp_exits", "US exits", "green", exits), group("grp_home", "Home", "amber", home)],
+    ungrouped: { resolved_members: ids.slice(23), rollup: rollup(ids.slice(23)) },
+  };
+}
+
 export const api = {
   auth: {
     me: () => delay(principal),
   },
   nodes: {
     list: () => delay({ nodes: nodes.map((n) => ({ ...n })) }),
+    geo: () => delay(geoNodes()),
     duplicates: () => delay({ groups: [] }),
   },
   approvals: {
@@ -260,6 +345,7 @@ export const api = {
   },
   tasks: {
     list: () => delay({ tasks: tasks.map((t) => ({ ...t })) }),
+    counts: () => taskCounts(),
     listForNode: (nodeId: string) =>
       delay({ tasks: tasks.filter((t) => t.targets.includes(nodeId)).map((t) => ({ ...t })) }),
     results: (query?: { node_id?: string }) =>
@@ -270,13 +356,15 @@ export const api = {
       }),
   },
   audit: {
-    query: () => delay({ events: [] }),
+    query: (params?: { limit?: number; offset?: number }) => auditQuery(params),
+    verify: () => delay({ enabled: true, ok: true, count: 200_000 }),
   },
   agentUpdates: {
     list: () => delay({ policies: [] }),
   },
   groups: {
-    list: () => delay({ groups: [] }),
+    list: () => delay(groupsList()),
+    preview: () => delay({ count: 0, members: [] }),
   },
   // Read-only extras the node page pulls on mount. Empty is a legitimate
   // answer for each; the page renders its own empty states for them.
@@ -285,6 +373,10 @@ export const api = {
   },
   capabilities: {
     list: () => delay({ capabilities: [] }),
+  },
+  // The app header resolves plugin page titles; this fleet has none.
+  plugins: {
+    contributions: () => delay([]),
   },
 } as unknown as typeof import("@/lib/api/index").api;
 

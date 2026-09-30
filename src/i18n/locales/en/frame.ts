@@ -25,6 +25,54 @@ export default {
       untagged: "Untagged",
       ungrouped: "Ungrouped",
     },
+    // The proof line (design 23, 3.1): what the page last read and when. A
+    // failed read states no count, only the reason.
+    proof: {
+      reading: "reading…",
+      observed: "observed {age} ago",
+      lastGood: "last good {age} ago",
+      refreshFailed: "refresh failed: {reason}",
+      noAnswer: "no answer since",
+      notRead: "not read: {reason}",
+      notReadBare: "not read",
+    },
+    attention: {
+      title: "Needs attention",
+      showAll: "Show all {n}",
+      showFewer: "Show fewer",
+      tone: {
+        danger: "Problem",
+        warning: "Warning",
+        info: "Note",
+      },
+    },
+    sheet: {
+      openPage: "Open page",
+      readOnly: "Read only: your access cannot change this.",
+      stale: "Showing the last good read; the refresh failed.",
+      staleReason: "Showing the last good read; the refresh failed: {reason}",
+      goneTitle: "This no longer exists",
+      goneDescription: "It was deleted, or the link points at something that never existed.",
+      backToList: "Back to the list",
+    },
+    rowMenu: {
+      label: "Actions for {name}",
+    },
+    confirm: {
+      impactTitle: "What stops working",
+      typeToConfirm: "Type {name} to confirm.",
+    },
+    query: {
+      rangeLabel: "Time range",
+      clear: "Clear the query",
+      filters: "Filters",
+      apply: "Search",
+      since: "From",
+      until: "To",
+      resolvingNames: "Reading the lists the names in the query resolve against; the search runs when they arrive, or in {seconds} seconds without them.",
+      appliedChanged: "The applied search changed while you were typing (Back, Forward or another control). Search runs what is typed here.",
+      showApplied: "Show the applied search",
+    },
     table: {
       columns: "Columns",
       showAll: "Show all columns",
@@ -307,6 +355,20 @@ export default {
       disabled: "Disabled",
       approvals: "Pending approvals",
       monitors: "Monitors",
+      // The Tasks tile reads GET /api/tasks/counts. Each state says what is
+      // true; a read that succeeded always prints its counts.
+      tasksReading: "reading…",
+      tasksNotRead: "not read",
+      tasksNoAccess: "no access",
+      tasksOldServer: "server too old",
+      tasksOldServerHint: "needs GET /api/tasks/counts",
+      tasksStale: "refresh failed",
+      tasksPart: {
+        queued: "{n} queued",
+        running: "{n} running",
+        stalled: "{n} stalled",
+        failed_24h: "{n} failed in 24h",
+      },
     },
     fleet: "Fleet",
     fleetHealth: "Fleet health",

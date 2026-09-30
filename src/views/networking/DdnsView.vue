@@ -375,13 +375,13 @@ async function confirmRun() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.ddns.title')"
       :description="$t('networking.ddns.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="profilesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="profilesQuery.lastUpdated.value" :poll-ms="profilesQuery.pollMs" />
       </template>
       <template #actions>
         <Button
@@ -527,7 +527,7 @@ async function confirmRun() {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="ddns-name">{{ $t('networking.ddns.name') }}</Label>
               <Input id="ddns-name" v-model="form.name" required placeholder="edge-ddns" />
@@ -546,7 +546,7 @@ async function confirmRun() {
             <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.domainsHint') }}</p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="ddns-provider">{{ $t('networking.ddns.provider') }}</Label>
               <Select v-model="form.provider">
@@ -582,7 +582,7 @@ async function confirmRun() {
             <p class="text-xs text-muted-foreground">{{ $t('networking.ddns.intervalHint') }}</p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="ddns-ttl">{{ $t('networking.ddns.ttlSeconds') }}</Label>
               <Input id="ddns-ttl" v-model.number="form.ttl" type="number" min="1" />
@@ -612,7 +612,7 @@ async function confirmRun() {
 
           <!-- Webhook -->
           <template v-else>
-            <div class="grid gap-3 sm:grid-cols-[1fr_140px]">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
               <div class="grid gap-2">
                 <Label for="ddns-wh-url">{{ $t('networking.ddns.webhookUrl') }}</Label>
                 <Input id="ddns-wh-url" v-model="form.webhook_url" placeholder="https://example.com/ddns" />

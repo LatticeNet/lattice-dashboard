@@ -237,7 +237,7 @@ watch(() => route.fullPath, scrollToHash);
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('platform.publishing.title')"
       :description="$t('platform.publishing.description')"

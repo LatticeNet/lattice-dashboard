@@ -339,7 +339,7 @@ function onRowKey(node: Node, event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="overflow-x-auto rounded-lg border border-border">
+  <div class="relative overflow-x-auto rounded-lg border border-border">
     <div :style="{ minWidth }">
       <!-- Header.
            Not sticky vertically, deliberately. `overflow-x-auto` on the wrapper

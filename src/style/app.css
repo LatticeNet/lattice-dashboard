@@ -444,6 +444,15 @@
     animation: none;
   }
 
+  /* The side sheet slid in and the dialogs zoomed in regardless. With no
+     animation reka unmounts them at once, which is the point. */
+  [data-slot="sheet-content"],
+  [data-slot="sheet-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"] {
+    animation: none;
+  }
+
   .list-move,
   .list-enter-active,
   .list-leave-active,
@@ -472,18 +481,29 @@
    on the wall layout). Applies to native buttons/links/role=button and the
    shadcn icon-size button (data-slot=button, size-icon variant).
    ------------------------------------------------------------------------- */
+/* The hit-area overlay needs a positioned control. That default lives in the
+   base layer, under every utility, so a control that positions itself keeps
+   its position: a dialog's absolute close button, a clear button inside an
+   input. Unlayered, this rule beat `absolute` on touch devices and dropped
+   the side sheet's close button below the fold, where a full-screen sheet
+   had no other way out. */
+@layer base {
+  @media (pointer: coarse) {
+    button,
+    a[role="button"],
+    [role="button"],
+    [data-slot="button"],
+    .touch-target {
+      position: relative;
+    }
+  }
+}
+
 @media (pointer: coarse) {
   /* Hover-revealed row actions have no trigger on a touch panel. Anything that
      hides itself until hover shows itself unconditionally here. */
   .group\/row .opacity-0 {
     opacity: 1;
-  }
-
-  button,
-  a[role="button"],
-  [role="button"],
-  [data-slot="button"] {
-    position: relative;
   }
 
   /* Only enlarge genuinely small controls; full-width / text buttons already
@@ -502,9 +522,6 @@
 
   /* Invisible centered hit-area pad for icon-only buttons that keep their
      small visual box (e.g. inline size-7 controls inside dense rows). */
-  .touch-target {
-    position: relative;
-  }
   .touch-target::after {
     content: "";
     position: absolute;
@@ -657,27 +674,36 @@
    The first column is capped at 38% of the viewport so the data keeps most of
    a phone's width; `--pin-max` sets the cap on a wide screen (12rem unless a
    table says otherwise). Below 48rem, where the middle actually scrolls, a
-   hairline marks each pinned edge so the pin reads as one. */
+   hairline marks each pinned edge so the pin reads as one.
+
+   `--pin-left` and `--pin-right` offset a pinned cell past a pinned gutter
+   (DataTable's selection checkbox, its row chevron). A row that is hovered,
+   selected or open sets `--row-bg` to an opaque tint, and the pinned cells
+   paint it, so the row reads as one band instead of stopping at the pin. */
 @utility pin-start {
   position: sticky;
-  left: 0;
+  left: var(--pin-left, 0);
   z-index: 10;
   max-width: min(var(--pin-max, 12rem), 38vw);
   /* The cap is a hard edge: whatever does not fit wraps or is clipped here,
      never drawn under the next column. */
   overflow: hidden;
-  background-color: var(--background);
+  background-color: var(--row-bg, var(--background));
 
   @media (width < 48rem) {
     box-shadow: inset -1px 0 0 var(--border);
+    /* Without a floor the table's auto layout squeezed the column to 109 px
+       at 375 and names broke at every hyphen over three lines. The floor is
+       the cap itself on a phone; DataTable truncates and titles the cell. */
+    min-width: min(var(--pin-min, 10rem), 38vw);
   }
 }
 
 @utility pin-end {
   position: sticky;
-  right: 0;
+  right: var(--pin-right, 0);
   z-index: 10;
-  background-color: var(--background);
+  background-color: var(--row-bg, var(--background));
 
   @media (width < 48rem) {
     box-shadow: inset 1px 0 0 var(--border);

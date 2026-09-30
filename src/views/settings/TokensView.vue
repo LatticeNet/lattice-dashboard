@@ -59,7 +59,10 @@ const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("token:admin"));
 
 // BARE ARRAY endpoint: do NOT unwrap.
-const tokensQuery = useAsyncData((signal) => api.tokens.list({ signal }), { pollInterval: 15000 });
+// Operator-only data changes only when an operator changes it, here or in
+// another tab; it is read once and on Refresh, never polled (design 23,
+// section 3.10).
+const tokensQuery = useAsyncData((signal) => api.tokens.list({ signal }));
 const tokens = computed(() => tokensQuery.data.value ?? []);
 
 // A token is revoked only if revoked_at is a REAL timestamp. Go's `omitempty`
@@ -311,13 +314,13 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('settings.tokens.title')"
       :description="$t('settings.tokens.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="tokensQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="tokensQuery.lastUpdated.value" :poll-ms="tokensQuery.pollMs" />
       </template>
       <template #actions>
         <Button

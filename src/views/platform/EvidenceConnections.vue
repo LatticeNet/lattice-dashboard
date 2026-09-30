@@ -50,14 +50,19 @@ import {
   type ConnTracePaging,
 } from "./connTraceModel";
 import { useEvidenceContext } from "./evidenceContext";
-import { EVIDENCE_PARAM, connMatchesText, writeEvidenceLayer } from "./evidenceModel";
+import { EVIDENCE_PARAM, connMatchesText, readEvidenceQuery, writeEvidenceLayer } from "./evidenceModel";
 
 const PAGE_LIMIT = 200;
 /** Close tones that are routine, rendered as text rather than a badge. */
 const QUIET_TONES: ReadonlySet<string> = new Set(["success", "secondary"]);
 
+const props = defineProps<{
+  /** The connection open in the side sheet, highlighted in the table. */
+  activeKey?: string | null;
+}>();
+
 const emit = defineEmits<{
-  open: [payload: { key: string; record: ConnRecord }];
+  open: [payload: { key: string; record: ConnRecord; opener: HTMLElement }];
   loaded: [lookup: (key: string) => ConnRecord | undefined];
   "clear-query": [];
   "any-time": [];
@@ -68,6 +73,11 @@ const route = useRoute();
 const ctx = useEvidenceContext();
 
 const applied = computed(() => readConnTraceFilters(route.query));
+/**
+ * Names in the applied query that were searched as typed because their list
+ * has not loaded. An empty result then may say nothing about the traffic.
+ */
+const uncheckedNames = computed(() => ctx.uncheckedNames(readEvidenceQuery(route.query)));
 const text = computed(() => {
   const raw = route.query[EVIDENCE_PARAM.text];
   return typeof raw === "string" ? raw.trim() : "";
@@ -219,7 +229,7 @@ watch(records, () => {
 const coverage = computed(() => traceBytesCoverage(shownRows.value));
 
 const columns = computed<DataTableColumn<ConnRecord>[]>(() => [
-  { key: "started_at", label: t("platform.trace.colStarted"), sortable: true, class: "md:whitespace-nowrap" },
+  { key: "started_at", label: t("platform.trace.colStarted"), sortable: true, class: "md:whitespace-nowrap", wrap: true },
   { key: "user", label: t("platform.trace.colUser"), sortable: true, value: (row) => rowView(row).user.primary },
   { key: "node_id", label: t("platform.trace.colNode"), sortable: true, value: (row) => rowView(row).node },
   { key: "line_uuid", label: t("platform.trace.colLine"), sortable: true },
@@ -232,8 +242,8 @@ const columns = computed<DataTableColumn<ConnRecord>[]>(() => [
   { key: "close_reason", label: t("platform.trace.colClose"), sortable: true, value: (row) => connCloseCell(row).id },
 ]);
 
-function select(row: ConnRecord): void {
-  emit("open", { key: connRecordKey(row), record: row });
+function select(row: ConnRecord, opener: HTMLElement): void {
+  emit("open", { key: connRecordKey(row), record: row, opener });
 }
 
 /* ------------------------------------------------------------------ */
@@ -263,7 +273,13 @@ const nothingCollected = computed(() =>
   ["no-policy", "policy-no-records", "nothing-collected"].includes(emptyKind.value),
 );
 
+/** "Nothing matched" is only true when every name in the question was looked up. */
+const notLookedUp = computed(
+  () => uncheckedNames.value.length > 0 && ["nothing-matched", "text-matched-nothing"].includes(emptyKind.value),
+);
+
 const emptyTitle = computed(() => {
+  if (notLookedUp.value) return t("platform.evidence.explore.notLookedUpTitle");
   switch (emptyKind.value) {
     case "no-visible-nodes":
       return t("platform.trace.noVisibleNodesTitle");
@@ -282,6 +298,9 @@ const emptyTitle = computed(() => {
 });
 
 const emptyDescription = computed(() => {
+  if (notLookedUp.value) {
+    return t("platform.evidence.explore.notLookedUp", { tokens: uncheckedNames.value.join(", ") }, uncheckedNames.value.length);
+  }
   switch (emptyKind.value) {
     case "no-visible-nodes":
       return t("platform.trace.noVisibleNodesDescription");
@@ -332,8 +351,9 @@ const overviewLink = computed(() => ({ query: writeEvidenceLayer(route.query, "o
       :show-summary="false"
       narrow-layout="scroll"
       :skeleton-rows="8"
+      :row-click="select"
+      :active-row-id="props.activeKey"
       @retry="loadNewest"
-      @row-select="select"
     >
       <template #empty>
         <EmptyState :title="emptyTitle" :description="emptyDescription" data-testid="evidence-empty">

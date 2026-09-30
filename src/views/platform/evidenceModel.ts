@@ -29,6 +29,18 @@ import {
   writeConnTraceFilters,
   type ConnTraceFilters,
 } from "./connTraceModel.ts";
+import {
+  formatTokens,
+  parseTokens,
+  scanQueryWords,
+  splitTokenList,
+  type QueryWord,
+  type TokenGrammar,
+  type TokenProblem,
+  type TokenProblemKind,
+  type TokenResolvers,
+  type TokenValues,
+} from "../../lib/queryTokens.ts";
 
 /* ------------------------------------------------------------------ */
 /* Layers and lenses                                                   */
@@ -176,6 +188,28 @@ export const EVIDENCE_TOKEN_FLAGS = ["stalled", "open"] as const;
 /** Keys the raw log lens cannot apply; the view says so instead of ignoring them silently. */
 export const CONNECTION_ONLY_TOKENS: readonly EvidenceTokenKey[] = ["user", "line", "dest", "reason", "kind", "session"];
 
+/**
+ * The field's grammar in the shared token language (src/lib/queryTokens),
+ * listed in the order the field writes tokens back. The address bar keeps
+ * the HTTP contract's own names (connTraceModel), so this grammar only drives
+ * the field; readEvidenceQuery and writeEvidenceQuery own the URL.
+ */
+export const EVIDENCE_GRAMMAR: TokenGrammar = {
+  fields: [
+    { key: "node", kind: "list", resolve: "node" },
+    { key: "source", kind: "value", resolve: "source" },
+    { key: "user", kind: "list", resolve: "user" },
+    { key: "line", kind: "list" },
+    { key: "session", kind: "list" },
+    { key: "dest", kind: "value" },
+    { key: "reason", kind: "enum", values: CLOSE_REASONS },
+    { key: "kind", kind: "enum", values: USER_KINDS },
+  ],
+  // `open` is typed as a word, but its parameter is the HTTP contract's
+  // `include_open`: `?open=` is the key every page's side sheet owns.
+  flags: EVIDENCE_TOKEN_FLAGS.map((name) => (name === "open" ? { name, param: "include_open" } : { name })),
+};
+
 /** Everything the one field can say, resolved to the identifiers requests carry. */
 export interface EvidenceQuery {
   nodeId: string;
@@ -220,12 +254,8 @@ export interface EvidenceTokenResolvers {
   sourceLabel?: (id: string) => string;
 }
 
-export type EvidenceTokenProblemKind = "empty-value" | "unknown-value" | "unresolved";
-
-export interface EvidenceTokenProblem {
-  token: string;
-  kind: EvidenceTokenProblemKind;
-}
+export type EvidenceTokenProblemKind = TokenProblemKind;
+export type EvidenceTokenProblem = TokenProblem;
 
 export interface ParsedEvidenceQuery {
   query: EvidenceQuery;
@@ -233,72 +263,41 @@ export interface ParsedEvidenceQuery {
 }
 
 /** One word of the field, and how much of it was typed outside quotes. */
-export interface EvidenceWord {
-  word: string;
-  /**
-   * Characters of `word` before the first quoted segment; the whole length
-   * when nothing was quoted. A key only counts when its colon falls in this
-   * prefix, so `"node:x"` is text and `dest:"a b"` is a token.
-   */
-  bare: number;
-}
+export type EvidenceWord = QueryWord;
 
-/**
- * Split the field into words. Double quotes group a value with spaces
- * (`dest:"a b"`), and inside quotes \" and \\ stand for a quote and a
- * backslash, so any value can be written and read back. An unclosed quote
- * runs to the end rather than failing.
- */
+/** Split the field into words (the shared scanner; see queryTokens). */
 export function scanEvidenceQuery(input: string): EvidenceWord[] {
-  const words: EvidenceWord[] = [];
-  let current = "";
-  let bare = -1;
-  let quoted = false;
-  let started = false;
-  let escaped = false;
-  const close = () => {
-    if (started && current !== "") words.push({ word: current, bare: bare < 0 ? current.length : bare });
-    current = "";
-    bare = -1;
-    started = false;
-  };
-  for (const ch of input) {
-    if (escaped) {
-      current += ch;
-      escaped = false;
-      continue;
-    }
-    if (quoted && ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === '"') {
-      if (!quoted && bare < 0) bare = current.length;
-      quoted = !quoted;
-      started = true;
-      continue;
-    }
-    if (!quoted && /\s/.test(ch)) {
-      close();
-      continue;
-    }
-    current += ch;
-    started = true;
-  }
-  close();
-  return words;
+  return scanQueryWords(input);
 }
 
 /** The words alone. */
 export function tokenizeEvidenceQuery(input: string): string[] {
-  return scanEvidenceQuery(input).map((entry) => entry.word);
+  return scanQueryWords(input).map((entry) => entry.word);
 }
 
-function splitList(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
+function tokenResolvers(resolvers: EvidenceTokenResolvers): TokenResolvers {
+  return {
+    node: { toId: resolvers.nodeId, label: resolvers.nodeLabel },
+    user: { toId: resolvers.userId, label: resolvers.userLabel },
+    source: { toId: resolvers.sourceId, label: resolvers.sourceLabel },
+  };
+}
+
+function toTokenValues(query: EvidenceQuery): TokenValues {
+  const values: Record<string, string> = {};
+  if (query.nodeId) values.node = query.nodeId;
+  if (query.sourceId) values.source = query.sourceId;
+  if (query.userId) values.user = query.userId;
+  if (query.lineUuid) values.line = query.lineUuid;
+  if (query.sessionId) values.session = query.sessionId;
+  if (query.dst) values.dest = query.dst;
+  const enums: Record<string, string[]> = {};
+  if (query.closeReasons.length) enums.reason = [...query.closeReasons];
+  if (query.userKinds.length) enums.kind = [...query.userKinds];
+  const flags: string[] = [];
+  if (query.stalledOnly) flags.push("stalled");
+  if (query.includeOpen) flags.push("open");
+  return { values, enums, flags, text: query.text };
 }
 
 /**
@@ -307,129 +306,23 @@ function splitList(value: string): string[] {
  * a filter nobody can satisfy reads as a quiet network.
  */
 export function parseEvidenceQuery(input: string, resolvers: EvidenceTokenResolvers = {}): ParsedEvidenceQuery {
-  const query: EvidenceQuery = { ...EMPTY_EVIDENCE_QUERY, closeReasons: [], userKinds: [] };
-  const problems: EvidenceTokenProblem[] = [];
-  const text: string[] = [];
-  const reasons = new Set<string>();
-  const kinds = new Set<string>();
-
-  const resolveList = (
-    word: string,
-    value: string,
-    resolve: ((value: string) => string | undefined) | undefined,
-  ): string => {
-    const out: string[] = [];
-    for (const part of splitList(value)) {
-      const id = resolve?.(part);
-      if (resolve && id === undefined) problems.push({ token: word, kind: "unresolved" });
-      out.push(id ?? part);
-    }
-    return out.join(",");
+  const parsed = parseTokens(input, EVIDENCE_GRAMMAR, tokenResolvers(resolvers));
+  return {
+    query: {
+      nodeId: parsed.values.node ?? "",
+      userId: parsed.values.user ?? "",
+      lineUuid: parsed.values.line ?? "",
+      sessionId: parsed.values.session ?? "",
+      dst: parsed.values.dest ?? "",
+      closeReasons: parsed.enums.reason ?? [],
+      userKinds: parsed.enums.kind ?? [],
+      stalledOnly: parsed.flags.includes("stalled"),
+      includeOpen: parsed.flags.includes("open"),
+      sourceId: parsed.values.source ?? "",
+      text: parsed.text,
+    },
+    problems: parsed.problems,
   };
-
-  for (const { word, bare } of scanEvidenceQuery(input)) {
-    // A quoted word is always what it says: "open" searches for the word.
-    const flag = bare === word.length ? flagOf(word) : "";
-    if (flag === "stalled") {
-      query.stalledOnly = true;
-      continue;
-    }
-    if (flag === "open") {
-      query.includeOpen = true;
-      continue;
-    }
-    const colon = word.indexOf(":");
-    const key = colon > 0 && colon < bare ? word.slice(0, colon).toLowerCase() : "";
-    if (!(EVIDENCE_TOKEN_KEYS as readonly string[]).includes(key)) {
-      text.push(word);
-      continue;
-    }
-    const value = word.slice(colon + 1).trim();
-    if (!value) {
-      problems.push({ token: word, kind: "empty-value" });
-      continue;
-    }
-    switch (key as EvidenceTokenKey) {
-      case "node":
-        query.nodeId = resolveList(word, value, resolvers.nodeId);
-        break;
-      case "user":
-        query.userId = resolveList(word, value, resolvers.userId);
-        break;
-      case "source": {
-        const id = resolvers.sourceId?.(value);
-        if (resolvers.sourceId && id === undefined) problems.push({ token: word, kind: "unresolved" });
-        query.sourceId = id ?? value;
-        break;
-      }
-      case "line":
-        query.lineUuid = splitList(value).join(",");
-        break;
-      case "session":
-        query.sessionId = splitList(value).join(",");
-        break;
-      case "dest":
-        query.dst = value;
-        break;
-      case "reason":
-        for (const part of splitList(value.toLowerCase())) {
-          if ((CLOSE_REASONS as readonly string[]).includes(part)) reasons.add(part);
-          else problems.push({ token: word, kind: "unknown-value" });
-        }
-        break;
-      case "kind":
-        for (const part of splitList(value.toLowerCase())) {
-          if ((USER_KINDS as readonly string[]).includes(part)) kinds.add(part);
-          else problems.push({ token: word, kind: "unknown-value" });
-        }
-        break;
-    }
-  }
-
-  // Canonical order, so parsing and writing back is idempotent.
-  query.closeReasons = CLOSE_REASONS.filter((reason) => reasons.has(reason));
-  query.userKinds = USER_KINDS.filter((kind) => kinds.has(kind));
-  query.text = text.join(" ");
-  return { query, problems };
-}
-
-/** The flag a bare word switches on, or "". */
-function flagOf(word: string): "" | "stalled" | "open" {
-  const lower = word.toLowerCase();
-  const name = lower.startsWith("is:") ? lower.slice(3) : lower;
-  return name === "stalled" || name === "open" ? name : "";
-}
-
-/** A value in quotes, escaped so the scanner reads it back unchanged. */
-function wrap(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-/** Quote a value only when it needs it. */
-function quote(value: string): string {
-  return value !== "" && !/[\s"\\]/.test(value) ? value : wrap(value);
-}
-
-/**
- * Free text back into the field. A word that would read as a token or a flag
- * (`node:x`, `open`) is quoted, so text stays text on the next parse.
- */
-function formatText(text: string): string {
-  return text
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => {
-      const colon = word.indexOf(":");
-      const keyLike = colon > 0 && (EVIDENCE_TOKEN_KEYS as readonly string[]).includes(word.slice(0, colon).toLowerCase());
-      return keyLike || flagOf(word) || /["\\]/.test(word) ? wrap(word) : word;
-    })
-    .join(" ");
-}
-
-function labelList(value: string, label: ((id: string) => string) | undefined): string {
-  return splitList(value)
-    .map((id) => label?.(id) || id)
-    .join(",");
 }
 
 /**
@@ -438,19 +331,19 @@ function labelList(value: string, label: ((id: string) => string) | undefined): 
  * back with the same resolvers yields the same query.
  */
 export function formatEvidenceQuery(query: EvidenceQuery, resolvers: EvidenceTokenResolvers = {}): string {
-  const parts: string[] = [];
-  if (query.nodeId) parts.push(`node:${quote(labelList(query.nodeId, resolvers.nodeLabel))}`);
-  if (query.sourceId) parts.push(`source:${quote(resolvers.sourceLabel?.(query.sourceId) || query.sourceId)}`);
-  if (query.userId) parts.push(`user:${quote(labelList(query.userId, resolvers.userLabel))}`);
-  if (query.lineUuid) parts.push(`line:${quote(query.lineUuid)}`);
-  if (query.sessionId) parts.push(`session:${quote(query.sessionId)}`);
-  if (query.dst) parts.push(`dest:${quote(query.dst)}`);
-  if (query.closeReasons.length) parts.push(`reason:${query.closeReasons.join(",")}`);
-  if (query.userKinds.length) parts.push(`kind:${query.userKinds.join(",")}`);
-  if (query.stalledOnly) parts.push("stalled");
-  if (query.includeOpen) parts.push("open");
-  if (query.text) parts.push(formatText(query.text));
-  return parts.join(" ");
+  return formatTokens(toTokenValues(query), EVIDENCE_GRAMMAR, tokenResolvers(resolvers));
+}
+
+/**
+ * The tokens of an applied query whose names no resolver turned into an id,
+ * spelled as the field shows them. The search sent those values as typed:
+ * with the lists loaded that means the name matches nothing known, and with
+ * a list missing it means the name was never looked up.
+ */
+export function unresolvedEvidenceTokens(query: EvidenceQuery, resolvers: EvidenceTokenResolvers = {}): string[] {
+  return parseEvidenceQuery(formatEvidenceQuery(query, resolvers), resolvers)
+    .problems.filter((problem) => problem.kind === "unresolved")
+    .map((problem) => problem.token);
 }
 
 /** The field's state as the address bar holds it. */
@@ -899,7 +792,7 @@ export function captureBlock(input: {
  */
 export function seedCaptureNodes(nodeParam: string, choices: readonly { id: string }[]): string[] {
   const known = new Set(choices.map((choice) => choice.id));
-  return [...new Set(splitList(nodeParam))].filter((id) => known.has(id));
+  return [...new Set(splitTokenList(nodeParam))].filter((id) => known.has(id));
 }
 
 /**
@@ -960,7 +853,7 @@ export function pickLogSource(
     const named = sorted.find((source) => source.id === want.sourceId);
     if (named) return named;
   }
-  const nodes = splitList(want.nodeId);
+  const nodes = splitTokenList(want.nodeId);
   if (nodes.length) return sorted.find((source) => nodes.includes(source.node_id));
   return sorted[0];
 }

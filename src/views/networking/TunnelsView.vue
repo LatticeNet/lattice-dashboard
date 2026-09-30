@@ -276,7 +276,7 @@ async function openPlan(tunnel: TunnelView) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.tunnels.title')"
       :description="$t('networking.tunnels.description')"
@@ -353,7 +353,7 @@ async function openPlan(tunnel: TunnelView) {
               </Button>
             </EmptyState>
           </template>
-          <div class="overflow-x-auto">
+          <div class="relative overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-border text-left text-xs text-muted-foreground">
@@ -459,7 +459,7 @@ async function openPlan(tunnel: TunnelView) {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="tun-name">{{ $t('networking.tunnels.name') }}</Label>
               <Input id="tun-name" v-model="form.name" required placeholder="edge-tunnel" />
@@ -507,7 +507,7 @@ async function openPlan(tunnel: TunnelView) {
               <div
                 v-for="(rule, index) in form.ingress"
                 :key="index"
-                class="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_1fr_120px_auto]"
+                class="grid grid-cols-1 gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_1fr_120px_auto]"
               >
                 <Input
                   v-model="rule.hostname"
@@ -616,7 +616,7 @@ async function openPlan(tunnel: TunnelView) {
               <span class="text-sm font-medium">config.yml</span>
               <CopyButton :value="approval.plan || ''" />
             </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ approval.plan }}</pre>
+            <pre class="max-h-[420px] relative overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ approval.plan }}</pre>
           </div>
 
           <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">

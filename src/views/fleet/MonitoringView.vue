@@ -394,8 +394,12 @@ const latencyTrend = computed<number[]>(() =>
     .filter((value): value is number => value !== undefined && Number.isFinite(value)),
 );
 
+/**
+ * The number alone: TrendChart appends its `unit` ("ms") to whatever this
+ * returns, and a unit here too printed "min 118msms".
+ */
 function formatTrendLatency(n: number): string {
-  return `${Math.round(n)}ms`;
+  return String(Math.round(n));
 }
 
 watch(
@@ -570,10 +574,10 @@ async function deleteMonitor() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.monitoring.title')" :description="$t('fleet.monitoring.description')">
       <template #status>
-        <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" :poll-ms="monitorsQuery.pollMs" />
       </template>
       <template #actions>
         <Button
@@ -592,14 +596,14 @@ async function deleteMonitor() {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard :label="$t('fleet.monitoring.stats.monitors')" :value="monitors.length" :icon="RadioTower" />
       <StatCard :label="$t('fleet.monitoring.stats.enabled')" :value="enabledCount" :icon="Activity" tone="success" />
       <StatCard :label="$t('fleet.monitoring.stats.selectedSuccess')" :value="selectedSuccessRate" :icon="CheckCircle2" :tone="failureCount > 0 ? 'warning' : 'success'" />
       <StatCard :label="$t('fleet.monitoring.stats.averageLatency')" :value="averageLatency" :icon="Gauge" />
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
@@ -762,7 +766,7 @@ async function deleteMonitor() {
               </p>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="monitor-type">{{ $t('fleet.monitoring.create.type') }}</Label>
                 <Select v-model="monitorType">
@@ -815,7 +819,7 @@ async function deleteMonitor() {
               </div>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="monitor-interval">{{ $t('fleet.monitoring.create.intervalSec') }}</Label>
                 <Input id="monitor-interval" v-model="intervalSec" type="number" min="5" max="86400" />
@@ -838,7 +842,7 @@ async function deleteMonitor() {
                 :skeleton-rows="2"
                 @retry="nodesQuery.refresh"
               >
-                <div class="grid max-h-64 gap-2 overflow-auto rounded-md border border-border p-2">
+                <div class="grid max-h-64 gap-2 relative overflow-auto rounded-md border border-border p-2">
                   <label
                     v-for="node in nodes"
                     :key="node.id"
@@ -1009,7 +1013,7 @@ async function deleteMonitor() {
                   : $t('fleet.monitoring.log.showingOf', { count: displayResults.length, total: logMatchTotal }) }}
               </span>
             </div>
-            <div class="overflow-x-auto rounded-lg border border-border">
+            <div class="relative overflow-x-auto rounded-lg border border-border">
               <div class="min-w-[640px]">
                 <div class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
                   <span>{{ $t('fleet.monitoring.history.colNode') }}</span>

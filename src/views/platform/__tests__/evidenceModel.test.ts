@@ -21,6 +21,7 @@ import {
   normalizeEvidenceQuery,
   parseConnKey,
   parseEvidenceQuery,
+  unresolvedEvidenceTokens,
   pickLogSource,
   readEvidenceQuery,
   seedCaptureNodes,
@@ -653,4 +654,14 @@ test("a policy column the same on every node is said once, in its header", () =>
     null,
     "an empty timestamp is never changed too",
   );
+});
+
+test("the tokens an applied query sent as typed are the ones no list resolved", () => {
+  // The node list has not loaded: its resolver knows no node yet.
+  const noLists: EvidenceTokenResolvers = { nodeId: () => undefined, sourceId: () => undefined };
+  const { query } = parseEvidenceQuery("node:legend-sg reason:timeout dest:example.org", noLists);
+  assert.deepEqual(unresolvedEvidenceTokens(query, noLists), ["node:legend-sg"]);
+  // With the lists, the same question names a known node and nothing is unresolved.
+  const resolved = parseEvidenceQuery("node:legend-sg reason:timeout", resolvers).query;
+  assert.deepEqual(unresolvedEvidenceTokens(resolved, resolvers), []);
 });

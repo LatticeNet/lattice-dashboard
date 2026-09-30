@@ -334,7 +334,7 @@ const continentEntries = computed(() =>
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.geoRouting.title')"
       :description="$t('networking.geoRouting.description')"
@@ -511,7 +511,7 @@ const continentEntries = computed(() =>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-name">{{ $t('networking.geoRouting.name') }}</Label>
               <Input id="geo-name" v-model="form.name" required placeholder="apex-edge" />
@@ -522,7 +522,7 @@ const continentEntries = computed(() =>
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-strategy">{{ $t('networking.geoRouting.strategy') }}</Label>
               <Select v-model="form.strategy">
@@ -567,7 +567,7 @@ const continentEntries = computed(() =>
               :skeleton-rows="2"
               @retry="nodesQuery.refresh"
             >
-              <div class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
+              <div class="grid max-h-48 gap-1 relative overflow-auto rounded-md border border-border p-2">
                 <label
                   v-for="node in nodes"
                   :key="node.id"
@@ -606,7 +606,7 @@ const continentEntries = computed(() =>
               :skeleton-rows="2"
               @retry="nodesQuery.refresh"
             >
-              <div class="grid max-h-48 gap-1 overflow-auto rounded-md border border-border p-2">
+              <div class="grid max-h-48 gap-1 relative overflow-auto rounded-md border border-border p-2">
                 <label
                   v-for="node in nodes"
                   :key="node.id"
@@ -631,7 +631,7 @@ const continentEntries = computed(() =>
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-ddns">{{ $t('networking.geoRouting.ddnsProfileId') }}</Label>
               <Input id="geo-ddns" v-model="form.ddns_profile_id" :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')" />
@@ -699,7 +699,7 @@ const continentEntries = computed(() =>
               <span class="text-sm font-medium">{{ $t('networking.geoRouting.serverBlock') }}</span>
               <CopyButton :value="plan.config || ''" />
             </div>
-            <pre class="max-h-[420px] overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ plan.config }}</pre>
+            <pre class="max-h-[420px] relative overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{{ plan.config }}</pre>
           </div>
 
           <div class="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 p-3 text-xs">
@@ -720,7 +720,7 @@ const continentEntries = computed(() =>
 
           <div v-if="continentEntries.length" class="space-y-2">
             <p class="text-sm font-medium">{{ $t('networking.geoRouting.perContinentTitle') }}</p>
-            <div class="overflow-x-auto rounded-md border border-border">
+            <div class="relative overflow-x-auto rounded-md border border-border">
               <table class="w-full text-sm">
                 <thead>
                   <tr class="border-b border-border text-left text-xs text-muted-foreground">

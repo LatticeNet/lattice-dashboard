@@ -35,7 +35,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const action = ref("");
@@ -100,6 +100,17 @@ const auditQuery = useAsyncData(
 
 const events = computed<AuditEvent[]>(() => auditQuery.data.value?.events ?? []);
 const total = computed(() => auditQuery.data.value?.total ?? events.value.length);
+/**
+ * Whether `total` counts the whole log. The server stops walking at a cap and
+ * says so with `complete: false`; the count is then a lower bound and is
+ * printed as "at least N", never as the total. An older server that sends no
+ * flag is taken at its word.
+ */
+const totalComplete = computed(() => auditQuery.data.value?.complete !== false);
+const totalText = computed(() => {
+  const n = total.value.toLocaleString(locale.value);
+  return totalComplete.value ? n : t("operations.audit.atLeast", { n });
+});
 
 const columns = computed<DataTableColumn<AuditEvent>[]>(() => [
   { key: "decision", label: t("operations.audit.decision"), sortable: true },
@@ -352,8 +363,18 @@ function openTrace(correlationId: string) {
  * computed, because a broken chain is the page's most important fact.
  */
 const auditMetrics = computed<Metric[]>(() => [
+  {
+    key: "total",
+    label: t("operations.audit.totalMatch"),
+    value: totalText.value,
+    hint: totalComplete.value
+      ? undefined
+      : t("operations.audit.scanStopped", { n: (auditQuery.data.value?.scanned ?? total.value).toLocaleString(locale.value) }),
+    icon: ShieldCheck,
+    // A whole row on a phone: "at least 50,000" and why do not fit half.
+    class: "col-span-2 lg:col-span-1",
+  },
   { key: "returned", label: t("operations.audit.returned"), value: events.value.length, icon: ScrollText },
-  { key: "total", label: t("operations.audit.totalMatch"), value: total.value, icon: ShieldCheck },
   {
     key: "chain",
     label: t("operations.audit.chain"),
@@ -366,10 +387,10 @@ const auditMetrics = computed<Metric[]>(() => [
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('operations.audit.title')" :description="$t('operations.audit.description')">
       <template #status>
-        <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" :poll-ms="auditQuery.pollMs" />
       </template>
       <template #actions>
         <Button
@@ -418,7 +439,7 @@ const auditMetrics = computed<Metric[]>(() => [
             @keyup.enter="applyFilters"
           />
         </div>
-        <form class="grid gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="applyFilters">
+        <form class="grid grid-cols-1 min-w-0 gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="applyFilters">
           <div class="grid gap-2">
             <Label for="audit-action">{{ $t('operations.audit.action') }}</Label>
             <Input id="audit-action" v-model="action" placeholder="task.*" />
@@ -544,7 +565,7 @@ const auditMetrics = computed<Metric[]>(() => [
                 </Button>
               </div>
             </div>
-            <pre class="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-background/80 p-3 font-mono text-xs">{{ offBoxAnchorRecord }}</pre>
+            <pre class="max-h-48 relative overflow-auto whitespace-pre-wrap rounded-md bg-background/80 p-3 font-mono text-xs">{{ offBoxAnchorRecord }}</pre>
           </div>
         </div>
       </CardContent>
@@ -594,7 +615,7 @@ const auditMetrics = computed<Metric[]>(() => [
                 {{ $t('operations.audit.corrPrefix') }} {{ row.correlation_id }}
               </button>
             </div>
-            <pre v-if="metadataText(row)" class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-left font-mono text-xs">{{ metadataText(row) }}</pre>
+            <pre v-if="metadataText(row)" class="mt-2 max-h-48 relative overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-left font-mono text-xs">{{ metadataText(row) }}</pre>
           </template>
 
           <template #cell-at="{ row }">
@@ -611,7 +632,7 @@ const auditMetrics = computed<Metric[]>(() => [
 
         <div class="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
           <span class="text-muted-foreground">
-            {{ $t('operations.audit.showingRange', { from: rangeStart, to: rangeEnd, total }) }}
+            {{ $t('operations.audit.showingRange', { from: rangeStart, to: rangeEnd, total: totalText }) }}
           </span>
           <div class="flex items-center gap-2">
             <Button variant="outline" size="sm" :disabled="!hasPrev || auditQuery.loading.value" @click="prevPage">
