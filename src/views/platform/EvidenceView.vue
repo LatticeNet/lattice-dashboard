@@ -20,7 +20,6 @@
  */
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
 import { CircleSlash, RefreshCw } from "lucide-vue-next";
 
 import PageHeader from "@/components/common/PageHeader.vue";
@@ -30,6 +29,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import { proofReason, type ProofState } from "@/components/common/proofModel";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/format";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { cn } from "@/lib/utils";
 
 import EvidenceCollection from "./EvidenceCollection.vue";
@@ -46,26 +46,29 @@ import {
 } from "./evidenceModel";
 
 const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
+// Reads and writes go through the page's own route: while Evidence is
+// leaving, the router already points at the next page, whose query this
+// normaliser must neither read nor rewrite.
+const owned = useOwnedRoute();
 const ctx = provideEvidenceContext();
 
 // Rewrite an old or partial link to its canonical spelling once, in place,
 // so the address bar an operator copies is the one this page writes.
 watch(
-  () => route.query,
+  () => owned.query(),
   (query) => {
+    if (!owned.owns()) return;
     const normalized = normalizeEvidenceQuery(query);
-    if (!evidenceQueryEqual(query, normalized)) router.replace({ query: normalized }).catch(() => {});
+    if (!evidenceQueryEqual(query, normalized)) owned.replace(normalized);
   },
   { immediate: true },
 );
 
 const layer = computed<EvidenceLayer>({
-  get: () => resolveEvidenceLayer(route.query),
+  get: () => resolveEvidenceLayer(owned.query()),
   set: (next) => {
-    const query = writeEvidenceLayer(route.query, next);
-    if (!evidenceQueryEqual(query, route.query)) router.push({ query }).catch(() => {});
+    const query = writeEvidenceLayer(owned.query(), next);
+    if (!evidenceQueryEqual(query, owned.query())) owned.push(query);
   },
 });
 

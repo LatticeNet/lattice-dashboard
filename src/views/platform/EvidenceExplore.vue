@@ -19,10 +19,10 @@
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
 
 import QueryBar, { type QueryFilterGroup } from "@/components/common/QueryBar.vue";
-import { useRouteOpen } from "@/composables/useRouteOpen";
+import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { cn } from "@/lib/utils";
 
 import EvidenceConnPanel from "./EvidenceConnPanel.vue";
@@ -53,37 +53,36 @@ import {
 import type { ConnRecord } from "@/lib/api";
 
 const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
+const owned = useOwnedRoute();
 const ctx = useEvidenceContext();
 
 /* ------------------------------------------------------------------ */
 /* Lens and range                                                      */
 /* ------------------------------------------------------------------ */
 
-const lens = computed<EvidenceLens>(() => resolveEvidenceLens(route.query));
+const lens = computed<EvidenceLens>(() => resolveEvidenceLens(owned.query()));
 
 function setLens(next: EvidenceLens): void {
   if (next === lens.value) return;
-  const query = { ...route.query };
+  const query = { ...owned.query() };
   delete query[EVIDENCE_PARAM.conn];
   if (next === "connections") delete query[EVIDENCE_PARAM.lens];
   else query[EVIDENCE_PARAM.lens] = next;
-  router.push({ query }).catch(() => {});
+  owned.push(query);
 }
 
-const range = computed(() => readConnTraceFilters(route.query));
+const range = computed(() => readConnTraceFilters(owned.query()));
 
 function setRange(value: string): void {
-  const filters = readConnTraceFilters(route.query);
+  const filters = readConnTraceFilters(owned.query());
   filters.range = value as TraceRange;
-  router.replace({ query: writeConnTraceFilters(route.query, filters) }).catch(() => {});
+  owned.replace(writeConnTraceFilters(owned.query(), filters));
 }
 
 function setBound(which: "since" | "until", iso: string): void {
-  const filters = readConnTraceFilters(route.query);
+  const filters = readConnTraceFilters(owned.query());
   filters[which] = iso;
-  router.replace({ query: writeConnTraceFilters(route.query, filters) }).catch(() => {});
+  owned.replace(writeConnTraceFilters(owned.query(), filters));
 }
 
 /* ------------------------------------------------------------------ */
@@ -91,13 +90,13 @@ function setBound(which: "since" | "until", iso: string): void {
 /* ------------------------------------------------------------------ */
 
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
-const applied = computed(() => readEvidenceQuery(route.query));
+const applied = computed(() => readEvidenceQuery(owned.query()));
 const appliedText = computed(() => formatEvidenceQuery(applied.value, ctx.resolvers.value));
 
 function applyQuery(next: EvidenceQuery): void {
-  const query = writeEvidenceQuery(route.query, next);
+  const query = writeEvidenceQuery(owned.query(), next);
   delete query[EVIDENCE_PARAM.conn];
-  router.replace({ query }).catch(() => {});
+  owned.replace(query);
 }
 
 function submit(text: string): void {
@@ -247,7 +246,7 @@ const filterGroups = computed<QueryFilterGroup[]>(() => {
 /* Side panel                                                          */
 /* ------------------------------------------------------------------ */
 
-const sheet = useRouteOpen(EVIDENCE_PARAM.conn);
+const sheet = bindRouteOpen(owned, EVIDENCE_PARAM.conn);
 const connKey = computed(() => sheet.openId.value ?? "");
 const loadedRecord = ref<ConnRecord | undefined>();
 

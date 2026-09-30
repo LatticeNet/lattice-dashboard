@@ -10,6 +10,8 @@ import {
   NAME_TRACK_MAX_PX,
   NAME_TRACK_MIN_PX,
   NODE_TABLE_COLUMNS,
+  canonicalLayoutQuery,
+  nodeStatusFilterCodec,
   SELECT_CELL_PX,
   estimateNameWidth,
   gridTemplate,
@@ -499,4 +501,23 @@ test("sortNodes ranks metrics at the precision the cell prints", () => {
     sortNodes([mem(634), mem(632)], { key: "memory", dir: "desc" }).map((n) => n.id),
     ["mem-632", "mem-634"],
   );
+});
+
+test("the status filter reads one status word and writes all as the bare URL", () => {
+  assert.equal(nodeStatusFilterCodec.parse("offline"), "offline");
+  assert.equal(nodeStatusFilterCodec.parse("queued"), "all");
+  assert.equal(nodeStatusFilterCodec.parse(undefined), "all");
+  assert.equal(nodeStatusFilterCodec.format("all"), undefined);
+  assert.equal(nodeStatusFilterCodec.format("never_reported"), "never_reported");
+});
+
+test("an old ?view=card|list link moves to ?layout=, and ?layout= wins", () => {
+  assert.deepEqual(canonicalLayoutQuery({ view: "card", status: "offline" }), {
+    layout: "card",
+    query: { status: "offline", layout: "card" },
+  });
+  assert.deepEqual(canonicalLayoutQuery({ view: "card", layout: "list" }), { layout: "list", query: { layout: "list" } });
+  assert.equal(canonicalLayoutQuery({ layout: "card" }), null);
+  // ?view= that is not a layout is a layer name; it is not Nodes' to move.
+  assert.equal(canonicalLayoutQuery({ view: "history" }), null);
 });

@@ -3,9 +3,11 @@
  * node comparators, and column-visibility persistence. Kept free of Vue so
  * `node --test` covers it directly (house *Model.ts pattern).
  */
+import type { QueryRecord, QueryValue } from "@/components/common/tableUrlState";
+import type { QueryParamCodec } from "@/composables/useQueryParam";
 import type { Node } from "@/lib/api/types";
 import { splitNamePrefix } from "@/lib/fleet";
-import { NODE_STATUSES, nodeStatus } from "@/lib/nodeStatus";
+import { NODE_STATUSES, isNodeStatus, nodeStatus, type NodeStatus } from "@/lib/nodeStatus";
 
 export type NodeSortKey =
   | "name"
@@ -417,4 +419,49 @@ export function parseSortState(raw: string | null): NodeSortState {
 
 export function serializeSortState(state: NodeSortState): string {
   return state.key ? `${state.key}:${state.dir}` : "";
+}
+
+/* ------------------------------------------------------------------ */
+/* The address: status filter and card/list layout                      */
+/* ------------------------------------------------------------------ */
+
+export type NodeStatusFilter = "all" | NodeStatus;
+
+/** `?status=` holds one status word; "all" is the bare URL. Overview's tiles link here. */
+export const NODE_STATUS_PARAM = "status";
+export const nodeStatusFilterCodec: QueryParamCodec<NodeStatusFilter> = {
+  parse: (raw) => (isNodeStatus(raw) ? raw : "all"),
+  format: (value) => (value === "all" ? undefined : value),
+};
+
+export type NodesLayout = "card" | "list";
+
+/**
+ * The card/list switch is a layout, not a layer, so it lives in `?layout=`
+ * (design 23, section 3.4). `?view=` is the layer key on every page; Nodes
+ * wrote its layout there before, and old links are read once and rewritten.
+ */
+export const NODES_LAYOUT_PARAM = "layout";
+const LEGACY_LAYOUT_PARAM = "view";
+
+export function isNodesLayout(value: unknown): value is NodesLayout {
+  return value === "card" || value === "list";
+}
+
+/**
+ * An old link's `?view=card|list` moved to `?layout=`, or null when the query
+ * has nothing to move. A `?layout=` already present wins over the old key.
+ */
+export function canonicalLayoutQuery(query: QueryRecord): { layout: NodesLayout; query: Record<string, QueryValue> } | null {
+  const legacy = query[LEGACY_LAYOUT_PARAM];
+  if (!isNodesLayout(legacy)) return null;
+  const current = query[NODES_LAYOUT_PARAM];
+  const layout = isNodesLayout(current) ? current : legacy;
+  const next: Record<string, QueryValue> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || key === LEGACY_LAYOUT_PARAM) continue;
+    next[key] = value;
+  }
+  next[NODES_LAYOUT_PARAM] = layout;
+  return { layout, query: next };
 }

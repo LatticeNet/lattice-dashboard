@@ -5,11 +5,41 @@
  * that says `?tab=` lands on the layer it named and is rewritten once, with
  * `replace`, to `?view=`. Switching layers pushes, so Back returns to the
  * layer the operator came from.
+ *
+ * Every read and write goes through the page's owned route: while the page
+ * is leaving, the router already points at the next page, whose own `?tab=`
+ * (plugin pages use it freely) is none of this page's business.
  */
 import { computed, watch, type WritableComputedRef } from "vue";
-import { useRoute, useRouter } from "vue-router";
 
-import { canonicalLayerQuery, resolveLayer, writeLayer } from "./layerModel";
+import { canonicalLayerQuery, resolveLayer, writeLayer } from "@/composables/layerModel";
+import { useOwnedRoute, type OwnedRoute } from "@/composables/useOwnedRoute";
+
+export function bindLayer<T extends string>(
+  owned: OwnedRoute,
+  allowed: () => readonly T[],
+  fallback: () => T,
+): WritableComputedRef<T> {
+  watch(
+    () => owned.query(),
+    (query) => {
+      if (!owned.owns()) return;
+      const canonical = canonicalLayerQuery(query, allowed(), fallback());
+      if (canonical) owned.replace(canonical);
+    },
+    { immediate: true },
+  );
+
+  return computed<T>({
+    get: () => resolveLayer(owned.query(), allowed(), fallback()),
+    set: (value) => {
+      const next = resolveLayer({ view: value }, allowed(), fallback());
+      const query = owned.query();
+      if (next === resolveLayer(query, allowed(), fallback())) return;
+      owned.push(writeLayer(query, next, fallback()));
+    },
+  });
+}
 
 export function useLayer<T extends string>(
   /** Layers this page can render right now; may narrow with the operator's scopes. */
@@ -17,24 +47,5 @@ export function useLayer<T extends string>(
   /** Layer shown when the URL names none, or one that is not allowed. */
   fallback: () => T,
 ): WritableComputedRef<T> {
-  const route = useRoute();
-  const router = useRouter();
-
-  watch(
-    () => route.query,
-    (query) => {
-      const canonical = canonicalLayerQuery(query, allowed(), fallback());
-      if (canonical) router.replace({ query: canonical }).catch(() => {});
-    },
-    { immediate: true },
-  );
-
-  return computed<T>({
-    get: () => resolveLayer(route.query, allowed(), fallback()),
-    set: (value) => {
-      const next = resolveLayer({ view: value }, allowed(), fallback());
-      if (next === resolveLayer(route.query, allowed(), fallback())) return;
-      router.push({ query: writeLayer(route.query, next, fallback()) }).catch(() => {});
-    },
-  });
+  return bindLayer(useOwnedRoute(), allowed, fallback);
 }

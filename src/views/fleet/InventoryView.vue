@@ -67,6 +67,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import { useQueryParam } from "@/composables/useQueryParam";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -164,20 +165,14 @@ const notifyRulesQuery = useAsyncData(
 
 // ── View state ──────────────────────────────────────────────────────────────
 const search = ref("");
-const groupBy = ref<GroupBy>(parseInventoryGroup(route.query.group));
 // The grouping lives in the address bar (see inventoryGroupingModel), so the
-// Renewal view survives a reload and back/forward restores it.
-watch(groupBy, (group) => {
-  const wanted = group === DEFAULT_INVENTORY_GROUP ? undefined : group;
-  if (route.query.group === wanted) return;
-  router.replace({ query: { ...route.query, group: wanted } }).catch(() => {});
+// Renewal view survives a reload and back/forward restores it. One way: read
+// from `?group=`, written only by the operator's change, so nothing rewrites
+// the next page's `?group=` while Inventory is leaving.
+const groupBy = useQueryParam<GroupBy>("group", {
+  parse: (raw) => parseInventoryGroup(raw),
+  format: (group) => (group === DEFAULT_INVENTORY_GROUP ? undefined : group),
 });
-watch(
-  () => route.query.group,
-  (value) => {
-    groupBy.value = parseInventoryGroup(value);
-  },
-);
 
 // ── Edit dialog state ─────────────────────────────────────────────────────────
 const editOpen = ref(false);

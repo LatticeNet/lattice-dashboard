@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
+import { useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   AlertTriangle,
@@ -61,8 +61,12 @@ import {
 } from "./fleetBulkModel";
 import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
 import {
+  NODE_STATUS_PARAM,
   NODE_TABLE_COLUMNS,
+  NODES_LAYOUT_PARAM,
+  canonicalLayoutQuery,
   compareNodeIdentity,
+  isNodesLayout,
   nameTrackMin,
   nextSortState,
   type NameMeasure,
@@ -70,9 +74,13 @@ import {
   parseSortState,
   serializeHiddenColumns,
   serializeSortState,
+  nodeStatusFilterCodec,
   sortNodes,
   type NodeSortState,
+  type NodesLayout,
 } from "./nodesTableModel";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bodyFont, createTextMeasurer } from "@/lib/textWidth";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -96,10 +104,8 @@ import {
   compareByAttention,
   countNodeStatuses,
   describeNodeStatus,
-  isNodeStatus,
   isReporting,
   nodeStatus,
-  type NodeStatus,
 } from "@/lib/nodeStatus";
 import {
   Select,
@@ -111,7 +117,6 @@ import {
 
 const auth = useAuthStore();
 const { t, locale } = useI18n();
-const route = useRoute();
 const router = useRouter();
 const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 5000,
@@ -154,9 +159,12 @@ const rotatedToken = ref<{ node_id: string; token: string } | undefined>();
 /* ----------------------------------------------------------------- */
 /* Client-side search / status / tag filtering over the polled list.  */
 /* ----------------------------------------------------------------- */
-type StatusFilter = "all" | NodeStatus;
 const search = ref("");
-const statusFilter = ref<StatusFilter>("all");
+// The status filter lives in the address, one way: read from `?status=`,
+// written back only by the operator's change, so a reload or a copied link
+// carries what is on screen and nothing writes while the page is leaving.
+const ownedRoute = useOwnedRoute();
+const statusFilter = bindQueryParam(ownedRoute, NODE_STATUS_PARAM, nodeStatusFilterCodec);
 const activeTags = ref<string[]>([]);
 /** arch/os quick-filter tokens currently engaged (every selected must match). */
 const activeArchOs = ref<string[]>([]);
@@ -166,66 +174,43 @@ const agentExpr = ref("");
 const archOsExpr = ref("");
 const tagsExpr = ref("");
 
-// Seed the status filter from a deep-link (e.g. the Overview "online" KPI tile
-// links to /nodes?status=online), so drill-through lands pre-filtered.
+/* ----------------------------------------------------------------- */
+/* Card / list layout. `?layout=` wins; without it, the operator's    */
+/* last choice from localStorage; list by default. Nodes are the      */
+/* highest-cardinality operator data and belong in the dense table;   */
+/* the card wall stays one click away. An old `?view=card|list` link  */
+/* is read once and rewritten (design 23, section 3.4).               */
+/* ----------------------------------------------------------------- */
+const VIEW_STORAGE_KEY = "lattice.nodes.viewMode";
+const savedLayout = ref<NodesLayout>("list");
+try {
+  const saved = localStorage.getItem(VIEW_STORAGE_KEY);
+  if (isNodesLayout(saved)) savedLayout.value = saved;
+} catch {
+  /* ignore storage errors */
+}
 {
-  const seeded = route.query.status;
-  if (isNodeStatus(seeded)) {
-    statusFilter.value = seeded;
+  const legacy = canonicalLayoutQuery(ownedRoute.query());
+  if (legacy) {
+    savedLayout.value = legacy.layout;
+    ownedRoute.replace(legacy.query);
   }
 }
-
-// The filter lives in the address both ways. It was read once and never
-// written, so a reload after changing it brought the old filter back, and
-// a copied link did not carry what was on screen. "all" is the bare URL.
-watch(statusFilter, (value) => {
-  const want = value === "all" ? undefined : value;
-  if ((route.query.status ?? undefined) === want) return;
-  const query = { ...route.query };
-  if (want) query.status = want;
-  else delete query.status;
-  router.replace({ query }).catch(() => {});
+const layoutParam = bindQueryParam<NodesLayout>(ownedRoute, NODES_LAYOUT_PARAM, {
+  parse: (raw) => (isNodesLayout(raw) ? raw : savedLayout.value),
+  format: (value) => value,
 });
-watch(
-  () => route.query.status,
-  (raw) => {
-    const next: StatusFilter = isNodeStatus(raw) ? raw : "all";
-    if (statusFilter.value !== next) statusFilter.value = next;
-  },
-);
-
-/* ----------------------------------------------------------------- */
-/* Card / list view mode. Persisted to localStorage AND reflected in  */
-/* `?view=` (mirrors the `?status=` seeding) so it is shareable and    */
-/* survives reloads. The URL wins over the saved preference on load.   */
-/* ----------------------------------------------------------------- */
-type ViewMode = "card" | "list";
-const VIEW_STORAGE_KEY = "lattice.nodes.viewMode";
-// List is the default: nodes are the highest-cardinality operator data and
-// belong in the dense table; the card wall stays one click away.
-const viewMode = ref<ViewMode>("list");
-{
-  const seeded = route.query.view;
-  if (seeded === "card" || seeded === "list") {
-    viewMode.value = seeded;
-  } else {
+const viewMode = computed<NodesLayout>({
+  get: () => layoutParam.value,
+  set: (mode) => {
+    savedLayout.value = mode;
     try {
-      const saved = localStorage.getItem(VIEW_STORAGE_KEY);
-      if (saved === "card" || saved === "list") viewMode.value = saved;
+      localStorage.setItem(VIEW_STORAGE_KEY, mode);
     } catch {
       /* ignore storage errors */
     }
-  }
-}
-watch(viewMode, (mode) => {
-  try {
-    localStorage.setItem(VIEW_STORAGE_KEY, mode);
-  } catch {
-    /* ignore storage errors */
-  }
-  if (route.query.view !== mode) {
-    router.replace({ query: { ...route.query, view: mode } }).catch(() => {});
-  }
+    layoutParam.value = mode;
+  },
 });
 
 /* ----------------------------------------------------------------- */
