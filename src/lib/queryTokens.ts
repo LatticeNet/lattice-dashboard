@@ -181,6 +181,7 @@ export function tokenFlagOf(word: string, grammar: TokenGrammar): string {
  * enums, which add up.
  */
 export function parseTokens(input: string, grammar: TokenGrammar, resolvers: TokenResolvers = {}): ParsedTokens {
+  assertGrammar(grammar);
   const values: Record<string, string> = {};
   const enumSets = new Map<string, Set<string>>();
   const flags = new Set<string>();
@@ -321,8 +322,50 @@ function flagParam(flag: TokenFlag): string {
   return flag.param ?? flag.name;
 }
 
+/**
+ * Query keys the chassis owns on every page (design 23, sections 3.4 and
+ * 3.5): the layer (`view`, and `tab` read once for old links), the open
+ * object (`open`) and a collection's layout (`layout`). A grammar that wrote
+ * one of them would have its field and the page's tabs or sheet overwrite
+ * each other in the address bar.
+ */
+export const RESERVED_QUERY_KEYS: readonly string[] = ["view", "tab", "open", "layout"];
+
+/**
+ * Every key and parameter of a grammar that collides with a reserved one. A
+ * flag's name is a bare word typed in the field, not a key, so only its
+ * parameter counts: `open` may be typed, `?open=` may not be written.
+ */
+export function reservedTokenCollisions(grammar: TokenGrammar): string[] {
+  const names = [
+    ...grammar.fields.flatMap((field) => [field.key, paramOf(field)]),
+    ...grammar.flags.map(flagParam),
+    grammar.textParam ?? "q",
+  ];
+  return [...new Set(names.filter((name) => RESERVED_QUERY_KEYS.includes(name)))];
+}
+
+const checkedGrammars = new WeakSet<TokenGrammar>();
+
+/**
+ * Throw on a grammar that claims a reserved key, once per grammar, outside
+ * production builds (vite sets DEV; under `node --test` there is no env, and
+ * the check runs). A production build skips it: the grammar is fixed in code,
+ * so development and the tests are where it can be caught.
+ */
+function assertGrammar(grammar: TokenGrammar): void {
+  if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV === false) return;
+  if (checkedGrammars.has(grammar)) return;
+  const clash = reservedTokenCollisions(grammar);
+  if (clash.length) {
+    throw new Error(`query grammar claims reserved key ${clash.join(", ")}; ${RESERVED_QUERY_KEYS.join(", ")} belong to the page`);
+  }
+  checkedGrammars.add(grammar);
+}
+
 /** Every parameter a grammar owns, so a writer can clear them. */
 export function tokenParams(grammar: TokenGrammar): string[] {
+  assertGrammar(grammar);
   return [
     ...grammar.fields.map(paramOf),
     ...grammar.flags.map(flagParam),
@@ -336,6 +379,7 @@ export function tokenParams(grammar: TokenGrammar): string[] {
  * a value it would reject.
  */
 export function readTokenQuery(query: QueryRecord, grammar: TokenGrammar): TokenValues {
+  assertGrammar(grammar);
   const values: Record<string, string> = {};
   const enums: Record<string, string[]> = {};
   for (const field of grammar.fields) {

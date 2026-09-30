@@ -205,7 +205,9 @@ export const EVIDENCE_GRAMMAR: TokenGrammar = {
     { key: "reason", kind: "enum", values: CLOSE_REASONS },
     { key: "kind", kind: "enum", values: USER_KINDS },
   ],
-  flags: EVIDENCE_TOKEN_FLAGS.map((name) => ({ name })),
+  // `open` is typed as a word, but its parameter is the HTTP contract's
+  // `include_open`: `?open=` is the key every page's side sheet owns.
+  flags: EVIDENCE_TOKEN_FLAGS.map((name) => (name === "open" ? { name, param: "include_open" } : { name })),
 };
 
 /** Everything the one field can say, resolved to the identifiers requests carry. */

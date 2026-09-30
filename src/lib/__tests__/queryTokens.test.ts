@@ -5,6 +5,7 @@ import {
   formatTokens,
   parseTokens,
   readTokenQuery,
+  reservedTokenCollisions,
   scanQueryWords,
   tokenFilterCount,
   tokenParams,
@@ -117,4 +118,29 @@ test("the grammar lists every parameter it owns, and the filter count leaves fre
   const parsed = parseTokens("node:a decision:allow,deny failed text", AUDIT);
   assert.equal(tokenFilterCount(parsed, AUDIT), 4);
   assert.equal(tokenFilterCount(parsed, AUDIT, ["decision"]), 2);
+});
+
+test("a grammar may not claim the page's layer, sheet or layout keys", () => {
+  assert.deepEqual(reservedTokenCollisions({ fields: [{ key: "node", kind: "list" }], flags: [] }), []);
+  assert.deepEqual(
+    reservedTokenCollisions({
+      fields: [
+        { key: "view", kind: "value" },
+        { key: "state", kind: "enum", values: ["open"], param: "open" },
+      ],
+      flags: [
+        { name: "stale", param: "tab" },
+        { name: "open", param: "include_open" },
+      ],
+      textParam: "layout",
+    }),
+    ["view", "open", "tab", "layout"],
+  );
+  // A flag typed as `open` is fine; writing it to ?open= is not.
+  assert.deepEqual(reservedTokenCollisions({ fields: [], flags: [{ name: "open", param: "include_open" }] }), []);
+  assert.deepEqual(reservedTokenCollisions({ fields: [], flags: [{ name: "open" }] }), ["open"]);
+  const bad = { fields: [{ key: "open", kind: "value" as const }], flags: [] };
+  assert.throws(() => parseTokens("open:x", bad), /reserved key open/);
+  assert.throws(() => readTokenQuery({}, bad), /reserved key open/);
+  assert.throws(() => tokenParams(bad), /reserved key open/);
 });
