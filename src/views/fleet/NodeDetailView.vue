@@ -1305,7 +1305,7 @@ async function resolveGeo() {
     <div class="sticky top-0 z-20 border-b border-border bg-background px-4 py-4 sm:px-6">
       <PageHeader :title="node.name || node.id" :section="$t('nav.sections.fleet')">
         <template #status>
-          <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
+          <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" :poll-ms="nodesQuery.pollMs" />
         </template>
         <template #actions>
           <Button variant="ghost" size="sm" @click="goBack">

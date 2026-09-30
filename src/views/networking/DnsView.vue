@@ -755,7 +755,7 @@ function closePlan(open: boolean) {
       :description="$t('networking.dns.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="deploymentsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="deploymentsQuery.lastUpdated.value" :poll-ms="deploymentsQuery.pollMs" />
       </template>
       <template #actions>
         <Button

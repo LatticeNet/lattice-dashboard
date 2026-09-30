@@ -1278,7 +1278,7 @@ const approvalMetrics = computed<Metric[]>(() => [
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('operations.approvals.title')" :description="$t('operations.approvals.description')">
       <template #status>
-        <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" :poll-ms="approvalsQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="approvalsQuery.refreshing.value" @click="refreshApprovals">

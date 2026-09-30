@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Chassis gallery</title>
+    <!-- ?theme=light|dark picks the theme before paint, so a screenshot run
+         can render both without clicking. -->
+    <script src="./chassisTheme.js"></script>
+    <script src="/theme-init.js"></script>
+    <!-- The app pins html, body and #app to the viewport and scrolls inside
+         its own main pane; the gallery lets the document scroll instead, so a
+         full-page screenshot shows every section. -->
+    <style>
+      html, body, #app { height: auto; min-height: 100%; overflow: visible; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./chassisHarness.ts"></script>
+  </body>
+</html>

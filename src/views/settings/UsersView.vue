@@ -229,7 +229,7 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
   <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('settings.users.title')" :description="$t('settings.users.description')">
       <template #status>
-        <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" :poll-ms="usersQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="usersQuery.refreshing.value" @click="usersQuery.refresh">

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
+import { PINNED_END_KEYS, tableToolbarVisible } from "./chassisModel";
 import {
   readTableUrlState,
   tableStateParams,
@@ -39,6 +40,12 @@ export interface DataTableColumn<Row> {
   class?: HTMLAttributes["class"];
   /** Custom accessor for sort/search/default-cell value (defaults to `row[key]`). */
   value?: (row: Row) => unknown;
+  /**
+   * Pins the column to the table's end in the scroll layout, so the row's
+   * actions stay in reach while the columns between scroll. A column keyed
+   * `actions` pins without asking.
+   */
+  pin?: "end";
 }
 
 type SortDir = "asc" | "desc" | null;
@@ -73,6 +80,14 @@ const props = withDefaults(
     selectable?: boolean;
     /** When set, each row becomes a drill-through link to this route (and emits `row-select`). */
     rowTo?: (row: T) => RouteLocationRaw;
+    /**
+     * A row click opens the row in place (the object sheet, design 23
+     * section 3.5). Receives the row element so focus can return to it when
+     * the sheet closes.
+     */
+    rowClick?: (row: T, opener: HTMLElement) => void;
+    /** The row open in a sheet right now; it is highlighted and marked current. */
+    activeRowId?: string | null;
     /** Client-side page size; 0 disables pagination. */
     pageSize?: number;
     /** Shows the built-in debounced search box (requires >=1 searchable column). */
@@ -126,11 +141,12 @@ const props = withDefaults(
      */
     showSummary?: boolean;
     /**
-     * What the table becomes below 768px. "cards" (the default) stacks each
-     * row as a card of label and value pairs. "scroll" keeps the table, lets
-     * it scroll sideways, and pins the first column, for lists read by
-     * comparing rows down a column (connection records), which a stack of
-     * cards makes impossible.
+     * What the table becomes below 768px. "scroll" (the default, design 23
+     * section 3.7) keeps the columns, lets the table scroll sideways, pins
+     * the first column (capped at 38vw) and the actions column: rows are
+     * compared down a column, which a stack of cards makes impossible.
+     * "cards" stacks each row as a card of label and value pairs; opt into it
+     * only for lists whose rows are read one at a time.
      */
     narrowLayout?: "cards" | "scroll";
     /** Wrapper class. */
@@ -163,8 +179,11 @@ const props = withDefaults(
     selectRowLabel: undefined,
     rowExpanded: undefined,
     showSummary: true,
-    narrowLayout: "cards",
+    narrowLayout: "scroll",
     stateKey: undefined,
+    rowTo: undefined,
+    rowClick: undefined,
+    activeRowId: null,
   },
 );
 
@@ -203,7 +222,7 @@ const instance = getCurrentInstance();
  * row clicks: the listener was attached, the handler was never called, and the
  * page just looked broken.
  */
-const rowActivatable = computed(() => !!props.rowTo || !!instance?.vnode.props?.onRowSelect);
+const rowActivatable = computed(() => !!props.rowTo || !!props.rowClick || !!instance?.vnode.props?.onRowSelect);
 
 /**
  * Activate a row (click or keyboard). Suppressed when the interaction
@@ -214,6 +233,7 @@ function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
   const target = event.target as HTMLElement | null;
   if (target?.closest('button, a, input, label, [role="checkbox"], [data-no-row-nav]')) return;
   emit("row-select", row);
+  if (props.rowClick) props.rowClick(row, event.currentTarget as HTMLElement);
   if (props.rowTo) router.push(props.rowTo(row));
 }
 
@@ -256,10 +276,27 @@ const isDesktop = useMediaQuery("(min-width: 768px)");
 
 /**
  * The first data column stays in view while a scroll-layout table scrolls
- * sideways. Only in that layout: a table that fits never needed it.
+ * sideways. Only in that layout: a table that fits never needed it. Its cap
+ * is 38% of the viewport at every width (a column's own class may set
+ * `--pin-max` lower), so a wide screen does not clip a name that fits.
  */
 function pinned(index: number): boolean {
   return props.narrowLayout === "scroll" && index === 0;
+}
+
+/** The actions column pins to the end in the scroll layout. */
+function pinnedEnd(column: DataTableColumn<T>): boolean {
+  return props.narrowLayout === "scroll" && (column.pin === "end" || PINNED_END_KEYS.includes(column.key));
+}
+
+function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
+  if (pinned(index)) return "pin-start [--pin-max:38vw] group-hover:bg-(--row-hover) group-data-[active]:bg-muted";
+  if (pinnedEnd(column)) return "pin-end group-hover:bg-(--row-hover) group-data-[active]:bg-muted";
+  return undefined;
+}
+
+function isActive(row: T): boolean {
+  return !!props.activeRowId && props.rowKey(row) === props.activeRowId;
 }
 
 /** Columns a detail row has to span: the data columns plus the two optional gutters. */
@@ -598,6 +635,16 @@ function clearSelection(): void {
 
 /* ----------------------------- view state ----------------------------- */
 const isEmpty = computed(() => props.rows.length === 0);
+/**
+ * No toolbar over nothing: with zero rows and no filter the empty state
+ * carries the create action, and a search box above it only pushes it down.
+ */
+const toolbarShown = computed(() =>
+  tableToolbarVisible({
+    rowCount: props.rows.length,
+    filterActive: searchInput.value.trim() !== "" || expressionInput.value.trim() !== "",
+  }),
+);
 const isNoMatch = computed(() => props.rows.length > 0 && filteredRows.value.length === 0);
 const totalCount = computed(() => props.rows.length);
 const shownCount = computed(() => filteredRows.value.length);
@@ -612,7 +659,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
 <template>
   <div :class="cn('space-y-4', props.class)">
     <!-- Toolbar -->
-    <div v-if="showSearch || showExpression || $slots.toolbar" class="space-y-2">
+    <div v-if="toolbarShown && (showSearch || showExpression || $slots.toolbar)" class="space-y-2">
       <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
           <div v-if="showSearch" class="relative min-w-[220px]">
@@ -737,8 +784,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 v-for="(column, index) in columns"
                 :key="column.key"
                 scope="col"
-                class="px-3 py-2 font-medium"
-                :class="[alignClass(column.align), column.class, pinned(index) && 'pin-start']"
+                :class="cn('px-3 py-2 font-medium', alignClass(column.align), cellPinClass(column, index), column.class)"
                 :aria-sort="ariaSortFor(column)"
               >
                 <button
@@ -776,11 +822,14 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           <tbody>
             <template v-for="row in pagedRows" :key="rowKey(row)">
             <tr
-              class="group border-b border-border last:border-0 hover:bg-muted/40"
+              class="group border-b border-border last:border-0 [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:bg-(--row-hover) data-[active]:bg-muted"
               :class="{
                 'bg-muted/30': selectable && isRowSelected(row),
                 'cursor-pointer focus-row': rowActivatable,
               }"
+              :data-row-key="rowKey(row)"
+              :data-active="isActive(row) ? '' : undefined"
+              :aria-current="isActive(row) ? 'true' : undefined"
               :tabindex="rowActivatable ? 0 : undefined"
               @click="rowActivatable && onRowActivate(row, $event)"
               @keydown="rowActivatable && onRowKeydown(row, $event)"
@@ -795,8 +844,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               <td
                 v-for="(column, index) in columns"
                 :key="column.key"
-                class="px-3 py-3 align-middle"
-                :class="[alignClass(column.align), column.class, pinned(index) && 'pin-start']"
+                :class="cn('px-3 py-3 align-middle', alignClass(column.align), cellPinClass(column, index), column.class)"
               >
                 <slot
                   :name="`cell-${column.key}`"
@@ -830,9 +878,11 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           :key="rowKey(row)"
           class="rounded-lg border border-border p-3"
           :class="{
-            'ring-1 ring-primary/40': selectable && isRowSelected(row),
-            'surface-interactive': rowActivatable,
+            'ring-1 ring-primary/40': (selectable && isRowSelected(row)) || isActive(row),
+            'surface-interactive focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring': rowActivatable,
           }"
+          :data-row-key="rowKey(row)"
+          :aria-current="isActive(row) ? 'true' : undefined"
           :tabindex="rowActivatable ? 0 : undefined"
           @click="rowActivatable && onRowActivate(row, $event)"
           @keydown="rowActivatable && onRowKeydown(row, $event)"

@@ -400,7 +400,7 @@ async function runTest(): Promise<void> {
       :section="$t('platform.webhooks.section')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="webhooksQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="webhooksQuery.lastUpdated.value" :poll-ms="webhooksQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" @click="webhooksQuery.refresh()">
@@ -597,7 +597,7 @@ async function runTest(): Promise<void> {
         <div v-if="selected" class="rounded-lg border border-border bg-card">
           <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
             <h3 class="text-sm font-semibold text-foreground">{{ $t("platform.webhooks.deliveries") }}</h3>
-            <FreshnessLabel :last-updated="deliveriesQuery.lastUpdated.value" />
+            <FreshnessLabel :last-updated="deliveriesQuery.lastUpdated.value" :poll-ms="deliveriesQuery.pollMs" />
           </div>
           <p
             v-if="!deliveries.length"

@@ -317,7 +317,7 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
       :description="$t('settings.tokens.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="tokensQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="tokensQuery.lastUpdated.value" :poll-ms="tokensQuery.pollMs" />
       </template>
       <template #actions>
         <Button

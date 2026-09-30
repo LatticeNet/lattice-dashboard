@@ -268,6 +268,7 @@ async function runVerify() {
       <template #status>
         <FreshnessLabel
           :last-updated="tab === 'lifecycle' ? lifecycleQuery.lastUpdated.value : registeredQuery.lastUpdated.value"
+          :poll-ms="tab === 'lifecycle' ? lifecycleQuery.pollMs : registeredQuery.pollMs"
         />
       </template>
       <template #actions>

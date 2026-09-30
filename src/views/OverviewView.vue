@@ -359,7 +359,7 @@ function refreshAll() {
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('overview.title')" :description="$t('overview.description')">
       <template #status>
-        <FreshnessLabel :last-updated="fleet.lastUpdated.value" />
+        <FreshnessLabel :last-updated="fleet.lastUpdated.value" :poll-ms="fleet.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="fleet.refreshing.value" @click="refreshAll">

@@ -622,7 +622,7 @@ watch(() => route.query, applyDeepLink);
       :description="$t('networking.shares.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="sharesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="sharesQuery.lastUpdated.value" :poll-ms="sharesQuery.pollMs" />
       </template>
       <template #actions>
         <Button v-if="canAdmin" size="sm" @click="openPublish">

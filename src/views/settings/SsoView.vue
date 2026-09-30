@@ -291,7 +291,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
       :description="$t('settings.sso.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="providersQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="providersQuery.lastUpdated.value" :poll-ms="providersQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" as-child>

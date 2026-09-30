@@ -381,7 +381,7 @@ async function confirmRun() {
       :description="$t('networking.ddns.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="profilesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="profilesQuery.lastUpdated.value" :poll-ms="profilesQuery.pollMs" />
       </template>
       <template #actions>
         <Button

@@ -1069,7 +1069,7 @@ const taskMetrics = computed<Metric[]>(() => [
   <div class="space-y-6 p-4 sm:p-6">
     <PageHeader :title="$t('operations.tasks.title')" :description="$t('operations.tasks.description')">
       <template #status>
-        <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value || resultsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value || resultsQuery.lastUpdated.value" :poll-ms="tasksQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" :disabled="tasksQuery.refreshing.value" @click="refreshAll">

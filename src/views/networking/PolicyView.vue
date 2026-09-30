@@ -835,7 +835,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
       :description="$t('networking.policy.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" :poll-ms="policiesQuery.pollMs" />
       </template>
       <template #actions>
         <Button

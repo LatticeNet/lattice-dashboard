@@ -369,7 +369,7 @@ const auditMetrics = computed<Metric[]>(() => [
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('operations.audit.title')" :description="$t('operations.audit.description')">
       <template #status>
-        <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" :poll-ms="auditQuery.pollMs" />
       </template>
       <template #actions>
         <Button

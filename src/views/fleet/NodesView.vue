@@ -1042,7 +1042,7 @@ function openTerminal(node: Node) {
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.nodes.title')" :description="$t('fleet.nodes.description')">
       <template #status>
-        <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" :poll-ms="nodesQuery.pollMs" />
       </template>
       <template #actions>
         <Button v-if="canAdminNodes" size="sm" @click="focusEnroll">

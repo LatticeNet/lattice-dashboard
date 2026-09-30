@@ -384,7 +384,7 @@ watch(
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.groups.title')" :description="$t('fleet.groups.description')">
       <template #status>
-        <FreshnessLabel :last-updated="groupsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="groupsQuery.lastUpdated.value" :poll-ms="groupsQuery.pollMs" />
       </template>
       <template #actions>
         <Button

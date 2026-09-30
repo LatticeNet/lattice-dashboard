@@ -577,7 +577,7 @@ async function confirmDeleteRule(): Promise<void> {
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('platform.notifications.title')" :description="$t('platform.notifications.description')">
       <template #status>
-        <FreshnessLabel :last-updated="channelsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="channelsQuery.lastUpdated.value" :poll-ms="channelsQuery.pollMs" />
       </template>
       <template #actions>
         <Button

@@ -573,7 +573,7 @@ async function deleteMonitor() {
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.monitoring.title')" :description="$t('fleet.monitoring.description')">
       <template #status>
-        <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" :poll-ms="monitorsQuery.pollMs" />
       </template>
       <template #actions>
         <Button

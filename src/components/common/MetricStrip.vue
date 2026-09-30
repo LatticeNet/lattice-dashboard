@@ -17,10 +17,16 @@
  * That is what makes them survive wrapping: at any column count every seam is
  * exactly one hairline, with no first-child / last-child arithmetic to get
  * wrong when the strip reflows from four columns to two.
+ *
+ * Capped at four (design 23, section 3.3): a page head shows at most four
+ * numbers, and only numbers that move. Totals that only grow and static
+ * configuration belong in the proof line or in Settings. A strip over the
+ * cap still renders, and warns once in development so the page gets fixed.
  */
-import { computed, type Component } from "vue";
+import { computed, watch, type Component } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import { cn } from "@/lib/utils";
+import { metricCapWarning } from "./chassisModel";
 
 /**
  * `muted` is not a weaker `default`. It marks a value that is not an assertion:
@@ -59,6 +65,21 @@ const props = withDefaults(
   }>(),
   { columns: 4 },
 );
+
+if (import.meta.env.DEV) {
+  let warned = false;
+  watch(
+    () => props.metrics.length,
+    (count) => {
+      const warning = metricCapWarning(count);
+      if (warning && !warned) {
+        warned = true;
+        console.warn(warning, props.metrics.map((metric) => metric.key));
+      }
+    },
+    { immediate: true },
+  );
+}
 
 const toneClass: Record<MetricTone, string> = {
   default: "text-foreground",

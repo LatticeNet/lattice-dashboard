@@ -1422,7 +1422,7 @@ async function runReminders(selectedOnly: boolean) {
   <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.inventory.title')" :description="$t('fleet.inventory.description')">
       <template #status>
-        <FreshnessLabel :last-updated="machinesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="machinesQuery.lastUpdated.value" :poll-ms="machinesQuery.pollMs" />
       </template>
       <template #actions>
         <div class="flex flex-wrap items-center gap-2">

@@ -55,7 +55,7 @@ function displayDate(value?: string): string {
       :description="$t('settings.about.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="versionQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="versionQuery.lastUpdated.value" :poll-ms="versionQuery.pollMs" />
       </template>
       <template #actions>
         <Button

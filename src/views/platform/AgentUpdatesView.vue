@@ -554,7 +554,7 @@ watch(
       :description="$t('platform.agentUpdates.description')"
     >
       <template #status>
-        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" />
+        <FreshnessLabel :last-updated="policiesQuery.lastUpdated.value" :poll-ms="policiesQuery.pollMs" />
       </template>
       <template #actions>
         <Button variant="outline" size="sm" as-child>
