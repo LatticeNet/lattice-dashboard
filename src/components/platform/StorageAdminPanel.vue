@@ -208,21 +208,24 @@ const bindingImpact = computed(() => {
   ];
 });
 
+// The dialog closes only when the delete succeeded. On failure it stays open
+// with the typed address, beside the error toast, so the operator can retry.
 async function confirmDeleteBinding() {
   const binding = pendingBinding.value;
   if (!binding) return;
-  await deleteBinding(binding);
-  pendingBinding.value = null;
+  if (await deleteBinding(binding)) pendingBinding.value = null;
 }
 
-async function deleteBinding(binding: StorageBinding) {
+async function deleteBinding(binding: StorageBinding): Promise<boolean> {
   deletingBindingId.value = binding.id;
   try {
     await api.storage.deleteBinding(props.kind, binding.id);
     toast.success(t("platform.storage.bindingDeleted"));
     if (canRead.value) bindingsQuery.refresh();
+    return true;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.bindingDeleteFailed"));
+    return false;
   } finally {
     deletingBindingId.value = "";
   }
@@ -301,21 +304,23 @@ const tokenImpact = computed(() => {
   return lines;
 });
 
+// Same rule as a binding: close on success, stay open with the name on failure.
 async function confirmRevokeToken() {
   const token = pendingToken.value;
   if (!token) return;
-  await revokeToken(token);
-  pendingToken.value = null;
+  if (await revokeToken(token)) pendingToken.value = null;
 }
 
-async function revokeToken(token: StorageTokenView) {
+async function revokeToken(token: StorageTokenView): Promise<boolean> {
   revokingTokenId.value = token.id;
   try {
     await api.storage.revokeToken(props.kind, token.id);
     toast.success(t("platform.storage.tokenRevoked"));
     tokensQuery.refresh();
+    return true;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.storage.tokenRevokeFailed"));
+    return false;
   } finally {
     revokingTokenId.value = "";
   }

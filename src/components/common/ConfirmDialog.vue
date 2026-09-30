@@ -103,6 +103,11 @@ const typedOk = computed(() => typedConfirmMatches(typed.value, props.typedConfi
 const blocked = computed(() => props.confirmDisabled || !typedOk.value);
 
 function setOpen(value: boolean) {
+  // Escape, an outside click or the close button while the request is in
+  // flight would drop the dialog, and the name typed into it, with the
+  // outcome still unknown. It stays until the caller settles the request and
+  // closes it (on success) or leaves it open to try again (on failure).
+  if (!value && props.pending) return;
   emit("update:open", value);
 }
 

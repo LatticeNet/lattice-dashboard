@@ -47,12 +47,18 @@ export * from "@/lib/api/index";
  *   ?token-writer     A storage token can write the operator's own bucket.
  *   ?no-admin         The caller holds no kv:admin or static:admin, so the
  *                     console cannot read the token list at all.
+ *   ?storage-fail     Deleting a host binding and revoking a storage token
+ *                     answer 500 after 1.5 s, so the confirm dialog's pending
+ *                     and failure states can be driven. Without it they
+ *                     succeed after the same 1.5 s.
  */
 const flags = new URLSearchParams(location.search);
 const EMPTY_PLANE = flags.has("empty-plane");
 const NO_ORIGINS = flags.has("no-origins");
 const TOKEN_WRITER = flags.has("token-writer");
 const NO_ADMIN = flags.has("no-admin");
+const STORAGE_FAIL = flags.has("storage-fail");
+const STORAGE_WRITE_MS = 1500;
 
 const NOW = Date.now();
 const DAY = 86_400_000;
@@ -352,6 +358,18 @@ export const api = {
       }),
     bindings: (kind: StorageKind) => delay({ bindings: bindings[kind].map((b) => ({ ...b })) }),
     tokens: (kind: StorageKind) => delay({ tokens: tokens[kind].map((t) => ({ ...t })) }),
+    deleteBinding: async (kind: StorageKind, id: string) => {
+      await delay(undefined, STORAGE_WRITE_MS);
+      if (STORAGE_FAIL) throw new ApiError(500, "internal", "storage: delete binding: database is locked");
+      bindings[kind] = bindings[kind].filter((b) => b.id !== id);
+      return {};
+    },
+    revokeToken: async (kind: StorageKind, id: string) => {
+      await delay(undefined, STORAGE_WRITE_MS);
+      if (STORAGE_FAIL) throw new ApiError(500, "internal", "storage: revoke token: database is locked");
+      tokens[kind] = tokens[kind].filter((t) => t.id !== id);
+      return {};
+    },
   },
 
   kv: {
