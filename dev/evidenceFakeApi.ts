@@ -22,7 +22,9 @@
  *
  * Add `&readonly` to drop log:admin from the principal. Add `&names=fail` to
  * make the node list answer 500, or `&names=hang` to make it never answer:
- * the Explore field resolves node names against that list.
+ * the Explore field resolves node names against that list. Add `&now=<ms>` to
+ * pin the clock the fixture is built from: records keep their keys across a
+ * reload, so a reload onto ?conn= finds the same connection.
  */
 import { ApiError } from "@/lib/api/client";
 import type {
@@ -48,7 +50,7 @@ const FIXTURE = flags.get("fixture") ?? "empty";
 const READONLY = flags.has("readonly");
 const NAMES = flags.get("names");
 
-const NOW = Date.now();
+const NOW = Number(flags.get("now")) || Date.now();
 const MIN = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;

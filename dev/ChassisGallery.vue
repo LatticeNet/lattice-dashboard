@@ -522,7 +522,10 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
         <div><dt class="text-xs text-muted-foreground">Last seen</dt><dd>{{ ageText(openNode.lastSeenSec) }}</dd></div>
         <div><dt class="text-xs text-muted-foreground">Address</dt><dd class="font-mono text-xs">{{ openNode.ip }}</dd></div>
         <div><dt class="text-xs text-muted-foreground">Agent</dt><dd class="font-mono text-xs">{{ openNode.agent }}</dd></div>
-        <div class="sm:col-span-2"><dt class="text-xs text-muted-foreground">Why it is offline</dt><dd>{{ openNode.status === 'offline' ? 'No report since the agent lost its connection; the node did not say why.' : 'It is online.' }}</dd></div>
+        <div v-if="openNode.status === 'offline'" class="sm:col-span-2">
+          <dt class="text-xs text-muted-foreground">Why it is offline</dt>
+          <dd>No report since the agent lost its connection; the node did not say why.</dd>
+        </div>
       </dl>
       <template #actions>
         <Button variant="outline" size="sm" type="button" @click="toast('Terminal')">Open terminal</Button>

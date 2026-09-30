@@ -444,6 +444,14 @@
     animation: none;
   }
 
+  /* The side sheet slid in and the dialogs zoomed in regardless. With no
+     animation reka unmounts them at once, which is the point. */
+  [data-slot="sheet-content"],
+  [data-slot="sheet-overlay"],
+  [data-slot="dialog-content"],
+  [data-slot="dialog-overlay"] {
+    animation: none;
+  }
 
   .list-move,
   .list-enter-active,

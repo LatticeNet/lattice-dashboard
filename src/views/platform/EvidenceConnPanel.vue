@@ -17,6 +17,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { api, type ConnRecord, type HopPath, type TraceLine } from "@/lib/api";
+import { ApiError } from "@/lib/api/client";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import DataState from "@/components/common/DataState.vue";
@@ -188,12 +189,16 @@ function hopRecordFor(key: { node_id: string; core_generation: number; log_id: n
 const upload = computed(() => (selected.value ? traceBytesCell(selected.value.upload, selected.value.bytes_known) : null));
 const download = computed(() => (selected.value ? traceBytesCell(selected.value.download, selected.value.bytes_known) : null));
 const duration = computed(() => (selected.value ? traceDurationCell(selected.value.duration_ms) : null));
+/** The hops endpoint answered that it holds no such connection. */
+const hopMissing = computed(() => hopError.value instanceof ApiError && hopError.value.status === 404);
+
 /**
- * The sheet's state. A connection the hops endpoint no longer knows is gone;
- * a failed hops read keeps the sheet open on its retry.
+ * The sheet's state. A connection the hops endpoint no longer knows is gone,
+ * and the sheet's gone state offers the collection back; any other failed
+ * hops read keeps the sheet open on its retry.
  */
 const sheetState = computed<"ready" | "loading" | "gone">(() => {
-  if (selected.value || hopError.value) return "ready";
+  if (selected.value || (hopError.value && !hopMissing.value)) return "ready";
   if (hopLoading.value || !hopsSettled.value) return "loading";
   return "gone";
 });
@@ -210,6 +215,8 @@ const title = computed(() =>
     :subtitle="connKey"
     :mono-title="!!(selected && destinationText(selected))"
     :state="sheetState"
+    :gone-title="$t('platform.evidence.panel.missingTitle')"
+    :gone-description="$t('platform.evidence.panel.missingDescription')"
     :return-focus="props.returnFocus"
     @close="emit('close')"
   >
