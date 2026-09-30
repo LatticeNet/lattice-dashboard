@@ -37,6 +37,26 @@ import { typedConfirmMatches } from "./chassisModel";
  * (a live URL goes offline, clients lose a token) also passes
  * `typed-confirm`, the name the operator types before Confirm enables. A
  * reversible action passes `variant="default"` and neither.
+ *
+ * While `pending` is true the dialog ignores every request to close it
+ * (Escape, an outside click, the close button, Cancel is disabled), so the
+ * operator never loses sight of a request whose outcome is unknown. The
+ * caller must therefore set `pending` back to false in a `finally`, on
+ * failure as well as success: a `pending` left true after an error is a
+ * dialog nobody can close. Close it on success through `open`; on failure
+ * leave it open, with the typed name, so the operator can retry.
+ *
+ *   async function confirmDelete() {
+ *     deleting.value = true;
+ *     try {
+ *       await api.thing.delete(id);
+ *       deleteOpen.value = false;
+ *     } catch (error) {
+ *       toast.error(message(error));
+ *     } finally {
+ *       deleting.value = false;
+ *     }
+ *   }
  */
 const props = withDefaults(
   defineProps<{
