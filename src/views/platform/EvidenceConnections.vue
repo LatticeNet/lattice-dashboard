@@ -219,7 +219,7 @@ watch(records, () => {
 const coverage = computed(() => traceBytesCoverage(shownRows.value));
 
 const columns = computed<DataTableColumn<ConnRecord>[]>(() => [
-  { key: "started_at", label: t("platform.trace.colStarted"), sortable: true, class: "whitespace-nowrap" },
+  { key: "started_at", label: t("platform.trace.colStarted"), sortable: true, class: "md:whitespace-nowrap" },
   { key: "user", label: t("platform.trace.colUser"), sortable: true, value: (row) => rowView(row).user.primary },
   { key: "node_id", label: t("platform.trace.colNode"), sortable: true, value: (row) => rowView(row).node },
   { key: "line_uuid", label: t("platform.trace.colLine"), sortable: true },
@@ -330,6 +330,7 @@ const overviewLink = computed(() => ({ query: writeEvidenceLayer(route.query, "o
       :page-size="0"
       :expression-filter="false"
       :show-summary="false"
+      narrow-layout="scroll"
       :skeleton-rows="8"
       @retry="loadNewest"
       @row-select="select"
@@ -356,7 +357,7 @@ const overviewLink = computed(() => ({ query: writeEvidenceLayer(route.query, "o
       </template>
 
       <template #cell-started_at="{ row }">
-        <span class="whitespace-nowrap font-mono text-xs tabular">{{ formatDateTime(row.started_at) }}</span>
+        <span class="font-mono text-xs tabular md:whitespace-nowrap">{{ formatDateTime(row.started_at) }}</span>
       </template>
 
       <template #cell-user="{ row }">

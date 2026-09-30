@@ -233,18 +233,18 @@ async function confirmDelete(): Promise<void> {
         <table class="w-full min-w-[820px] text-sm">
           <thead>
             <tr class="border-b border-border text-left text-xs text-muted-foreground">
-              <th scope="col" class="sticky left-0 z-10 bg-background px-3 py-2 font-medium">{{ $t('platform.logs.nameLabel') }}</th>
+              <th scope="col" class="pin-start px-3 py-2 font-medium [--pin-max:14rem]">{{ $t('platform.logs.nameLabel') }}</th>
               <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.nodeLabel') }}</th>
               <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.pathLabel') }}</th>
               <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.evidence.collection.colState') }}</th>
               <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.logs.statLines') }}</th>
               <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.statLastIngest') }}</th>
-              <th scope="col" class="px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colSessionActions') }}</span></th>
+              <th scope="col" class="pin-end px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colSessionActions') }}</span></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="source in sources" :key="source.id" class="border-b border-border last:border-b-0">
-              <th scope="row" class="sticky left-0 z-10 max-w-56 bg-background px-3 py-2 text-left font-medium">
+              <th scope="row" class="pin-start px-3 py-2 text-left font-medium [--pin-max:14rem]">
                 <RouterLink :to="linesLink(source)" class="block truncate hover:underline" :title="source.name || source.id">
                   {{ source.name || source.id }}
                 </RouterLink>
@@ -267,7 +267,7 @@ async function confirmDelete(): Promise<void> {
                 <span class="font-mono text-xs tabular">{{ lastIngest(source) ? formatDateTime(lastIngest(source)) : $t('platform.evidence.overview.neverShipped') }}</span>
                 <Badge v-if="stale(source)" variant="warning" class="ml-2" :title="$t('platform.evidence.overview.staleHint')">{{ $t('platform.evidence.overview.stale') }}</Badge>
               </td>
-              <td class="px-3 py-2">
+              <td class="pin-end px-3 py-2">
                 <!-- The server owns its synthetic sources and refuses to edit
                      or delete them; drawing the controls only produced a
                      failing click. -->

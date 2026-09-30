@@ -12,7 +12,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
-import { CircleStop, Play, RefreshCw } from "lucide-vue-next";
+import { CircleStop, Play, RefreshCw, ScrollText } from "lucide-vue-next";
 
 import { api, type TraceLevel, type TraceLine, type TracePolicy, type TraceSession } from "@/lib/api";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -36,6 +36,7 @@ import { useEvidenceContext } from "./evidenceContext";
 import {
   EMPTY_EVIDENCE_QUERY,
   readEvidenceQuery,
+  uniformPolicyColumns,
   writeEvidenceLayer,
   writeEvidenceQuery,
 } from "./evidenceModel";
@@ -78,6 +79,18 @@ const shownPolicies = computed(() =>
 );
 const drafts = ref<Record<string, PolicyDraft>>({});
 const savingNode = ref("");
+
+/**
+ * Columns whose saved value is the same on every node (today: debug, 500 a
+ * second, never changed) say it once in the header. The row's control stays
+ * in place and in the tab order, shown when the row is hovered or holds
+ * focus, always on a touch screen, and always once the row is edited.
+ */
+const uniform = computed(() => uniformPolicyColumns(policies.value));
+const REVEAL = "opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100";
+function revealUnlessEdited(row: TracePolicy, column: "level" | "budget"): string | undefined {
+  return uniform.value[column] !== undefined && !dirty(row) ? REVEAL : undefined;
+}
 
 watch(
   policies,
@@ -308,17 +321,34 @@ async function startFiltered(): Promise<void> {
           <table class="w-full min-w-[720px] text-sm">
             <thead>
               <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th scope="col" class="sticky left-0 z-10 bg-background px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyNode') }}</th>
+                <th scope="col" class="pin-start px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyNode') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyEnabled') }}</th>
-                <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyLevel') }}</th>
-                <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyBudget') }}</th>
-                <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyUpdated') }}</th>
-                <th scope="col" class="px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colPolicyActions') }}</span></th>
+                <th scope="col" class="px-3 py-2 font-medium">
+                  {{ $t('platform.trace.colPolicyLevel') }}
+                  <span v-if="uniform.level" class="block pt-0.5 font-normal text-foreground">
+                    {{ $t('platform.evidence.collection.everyNode', { value: $t(`platform.trace.level.${uniform.level}`) }) }}
+                  </span>
+                </th>
+                <th scope="col" class="px-3 py-2 font-medium">
+                  {{ $t('platform.trace.colPolicyBudget') }}
+                  <span v-if="uniform.budget !== undefined" class="block pt-0.5 font-normal text-foreground tabular">
+                    {{ $t('platform.evidence.collection.everyNode', { value: uniform.budget }) }}
+                  </span>
+                </th>
+                <th scope="col" class="px-3 py-2 font-medium">
+                  {{ $t('platform.trace.colPolicyUpdated') }}
+                  <span v-if="uniform.updated !== undefined" class="block pt-0.5 font-normal text-foreground tabular">
+                    {{ $t('platform.evidence.collection.everyNode', {
+                      value: uniform.updated ? formatDateTime(uniform.updated) : $t('platform.evidence.collection.neverChanged'),
+                    }) }}
+                  </span>
+                </th>
+                <th scope="col" class="pin-end px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colPolicyActions') }}</span></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in shownPolicies" :key="row.node_id" class="border-b border-border last:border-b-0">
-                <th scope="row" class="sticky left-0 z-10 max-w-48 bg-background px-3 py-2 text-left font-medium">
+              <tr v-for="row in shownPolicies" :key="row.node_id" class="group border-b border-border last:border-b-0">
+                <th scope="row" class="pin-start px-3 py-2 text-left font-medium">
                   <span class="block truncate" :title="row.node_id">{{ ctx.nodeLabel(row.node_id) }}</span>
                 </th>
                 <td class="px-3 py-2">
@@ -329,7 +359,7 @@ async function startFiltered(): Promise<void> {
                     @update:model-value="(v) => setField(row, 'enabled', v === true)"
                   />
                 </td>
-                <td class="px-3 py-2">
+                <td class="px-3 py-2" :class="revealUnlessEdited(row, 'level')">
                   <Select
                     :model-value="draftOf(row).level"
                     :disabled="!ctx.canAdmin.value"
@@ -343,7 +373,7 @@ async function startFiltered(): Promise<void> {
                     </SelectContent>
                   </Select>
                 </td>
-                <td class="px-3 py-2">
+                <td class="px-3 py-2" :class="revealUnlessEdited(row, 'budget')">
                   <Input
                     class="h-8 w-24 font-mono text-xs"
                     type="number"
@@ -356,13 +386,17 @@ async function startFiltered(): Promise<void> {
                   />
                 </td>
                 <td class="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground tabular">
-                  {{ row.updated_at ? formatDateTime(row.updated_at) : $t('common.misc.none') }}
+                  <template v-if="uniform.updated === undefined">
+                    {{ row.updated_at ? formatDateTime(row.updated_at) : $t('common.misc.none') }}
+                  </template>
                 </td>
-                <td class="px-3 py-2 text-right">
+                <td class="pin-end px-3 py-2 text-right">
+                  <!-- Save exists only where there is something to save. -->
                   <Button
+                    v-if="dirty(row) || savingNode === row.node_id"
                     size="sm"
                     variant="outline"
-                    :disabled="!ctx.canAdmin.value || !dirty(row) || savingNode === row.node_id"
+                    :disabled="!ctx.canAdmin.value || savingNode === row.node_id"
                     :title="adminReason"
                     @click="savePolicy(row)"
                   >
@@ -480,7 +514,7 @@ async function startFiltered(): Promise<void> {
           <table class="w-full min-w-[920px] text-sm">
             <thead>
               <tr class="border-b border-border text-left text-xs text-muted-foreground">
-                <th scope="col" class="sticky left-0 z-10 bg-background px-3 py-2 font-medium">{{ $t('platform.trace.colSessionName') }}</th>
+                <th scope="col" class="pin-start px-3 py-2 font-medium [--pin-max:15rem]">{{ $t('platform.trace.colSessionName') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colSessionState') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.evidence.collection.colNodes') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colSessionLevel') }}</th>
@@ -488,12 +522,12 @@ async function startFiltered(): Promise<void> {
                 <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.trace.colSessionLines') }}</th>
                 <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.trace.colSessionRecords') }}</th>
                 <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.trace.colSessionDropped') }}</th>
-                <th scope="col" class="px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colSessionActions') }}</span></th>
+                <th scope="col" class="pin-end px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colSessionActions') }}</span></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="session in sessions" :key="session.id" class="border-b border-border last:border-b-0">
-                <th scope="row" class="sticky left-0 z-10 max-w-60 bg-background px-3 py-2 text-left font-medium">
+                <th scope="row" class="pin-start px-3 py-2 text-left font-medium [--pin-max:15rem]">
                   <span class="block truncate" :title="session.name">{{ session.name || session.id }}</span>
                   <span class="block font-mono text-xs font-normal text-muted-foreground">{{ shortId(session.id, 10) }}</span>
                 </th>
@@ -514,10 +548,11 @@ async function startFiltered(): Promise<void> {
                   <span v-if="session.dropped > 0" class="font-medium text-warning-text" :title="$t('platform.trace.droppedHint')">{{ session.dropped }}</span>
                   <span v-else class="text-muted-foreground">0</span>
                 </td>
-                <td class="px-3 py-2">
+                <td class="pin-end px-3 py-2">
                   <div v-if="session.state === 'running'" class="flex justify-end gap-1">
                     <Button variant="outline" size="sm" @click="tailSessionId === session.id ? stopTail() : startTail(session.id)">
-                      {{ tailSessionId === session.id ? $t('platform.trace.tailStop') : $t('platform.trace.tailStart') }}
+                      <ScrollText aria-hidden="true" class="size-4" />
+                      <span class="max-sm:sr-only">{{ tailSessionId === session.id ? $t('platform.trace.tailStop') : $t('platform.trace.tailStart') }}</span>
                     </Button>
                     <Button
                       variant="ghost"
@@ -527,7 +562,7 @@ async function startFiltered(): Promise<void> {
                       @click="stopSession(session)"
                     >
                       <CircleStop aria-hidden="true" class="size-4" />
-                      {{ $t('platform.trace.sessionStop') }}
+                      <span class="max-sm:sr-only">{{ $t('platform.trace.sessionStop') }}</span>
                     </Button>
                   </div>
                 </td>

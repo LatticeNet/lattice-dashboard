@@ -519,6 +519,8 @@ export default {
           "The link names a connection the store no longer holds, or one outside the nodes you can see.",
       },
       collection: {
+        everyNode: "{value} on every node",
+        neverChanged: "never changed",
         policyHint:
           "A node with its policy on assembles connection records all the time, within its line budget. Leave it off and capture when you need to.",
         policyEnabledFor: "Trace policy on for {node}",

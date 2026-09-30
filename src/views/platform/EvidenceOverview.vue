@@ -10,7 +10,7 @@
  * the question already asked. The node table closes the page: trace on or
  * off, raw log sources and how fresh they are, what is held.
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
@@ -20,7 +20,6 @@ import { CircleStop, Play, Plus, RefreshCw, X } from "lucide-vue-next";
 
 import { api } from "@/lib/api";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -117,6 +116,40 @@ watch(pickerOpen, (open) => {
   if (!open) pickerFilter.value = "";
 });
 
+/**
+ * The picker is a combobox: focus stays in the filter field, the arrows move
+ * a highlight through the matches (the first by default), Enter picks or
+ * unpicks the highlighted node and keeps the list open for the next one, and
+ * Escape closes it. The options are not in the tab order.
+ */
+const PICKER_LIST_ID = "evidence-node-picker";
+const pickerActive = ref(0);
+const pickerList = ref<HTMLElement | null>(null);
+watch([pickerOpen, pickerFilter], () => {
+  pickerActive.value = 0;
+});
+watch(pickerActive, async (index) => {
+  await nextTick();
+  pickerList.value?.querySelector(`#${PICKER_LIST_ID}-${index}`)?.scrollIntoView({ block: "nearest" });
+});
+
+function onPickerKeydown(event: KeyboardEvent): void {
+  const last = pickerMatches.value.length - 1;
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    pickerActive.value = Math.min(pickerActive.value + 1, Math.max(last, 0));
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    pickerActive.value = Math.max(pickerActive.value - 1, 0);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    const node = pickerMatches.value[pickerActive.value];
+    if (node) toggleNode(node.id);
+  } else if (event.key === "Escape") {
+    pickerOpen.value = false;
+  }
+}
+
 const block = computed(() =>
   captureBlock({
     canAdmin: ctx.canAdmin.value,
@@ -177,12 +210,25 @@ async function startCapture(): Promise<void> {
     chosen.value = [];
     await ctx.sessions.refresh();
     void ctx.lastHour.refresh();
-    void created;
+    await focusCaptureRow(created.id);
   } catch (error) {
     startError.value = error instanceof Error ? error.message : t("platform.trace.sessionStartFailed");
   } finally {
     starting.value = false;
   }
+}
+
+/**
+ * After a start, focus lands on the capture it made, not on the page body
+ * (the Start button disables itself once the chosen nodes clear). If the list
+ * has not caught up, the section heading takes it instead.
+ */
+const runningList = ref<HTMLElement | null>(null);
+const captureTitle = ref<HTMLElement | null>(null);
+async function focusCaptureRow(id: string): Promise<void> {
+  await nextTick();
+  const row = runningList.value?.querySelector<HTMLElement>(`[data-session-id="${CSS.escape(id)}"]`);
+  (row ?? captureTitle.value)?.focus();
 }
 
 async function stopCapture(session: TraceSession): Promise<void> {
@@ -269,7 +315,7 @@ const coverageLoading = computed(
     <!-- ── Collection and the one action ─────────────────────────────── -->
     <section class="rounded-lg border border-border bg-card" aria-labelledby="evidence-capture-title">
       <div class="space-y-1 border-b border-border px-4 py-4 sm:px-5">
-        <h2 id="evidence-capture-title" class="text-base font-semibold tracking-[-0.01em]">
+        <h2 id="evidence-capture-title" ref="captureTitle" tabindex="-1" class="text-base font-semibold tracking-[-0.01em] outline-none">
           <template v-if="headline === 'capturing'">
             {{ $t('platform.evidence.overview.capturingTitle', { count: running.length }, running.length) }}
           </template>
@@ -303,11 +349,15 @@ const coverageLoading = computed(
       <!-- Running captures: what is collecting now, until when, and what it
            has kept so far. Dropped lines stay visible; a capture that lost
            lines under budget must not read as a quiet network. -->
-      <ul v-if="running.length" class="divide-y divide-border border-b border-border">
+      <ul v-if="running.length" ref="runningList" class="divide-y divide-border border-b border-border">
+        <!-- Focusable only by script (after a start), so the ring shows on
+             any focus: it is the "here is your capture" cue. -->
         <li
           v-for="session in running"
           :key="session.id"
-          class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-5"
+          :data-session-id="session.id"
+          tabindex="-1"
+          class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 outline-none focus:outline-2 focus:-outline-offset-2 focus:outline-ring sm:px-5"
         >
           <div class="min-w-0 flex-1 basis-56">
             <p class="truncate text-sm font-medium" :title="session.name">{{ sessionNodes(session) }}</p>
@@ -375,24 +425,39 @@ const coverageLoading = computed(
                   <Input
                     v-model="pickerFilter"
                     class="h-8 text-sm"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="true"
+                    :aria-controls="PICKER_LIST_ID"
+                    :aria-activedescendant="pickerMatches.length ? `${PICKER_LIST_ID}-${pickerActive}` : undefined"
                     :aria-label="$t('platform.evidence.capture.filterNodes')"
                     :placeholder="$t('platform.evidence.capture.filterNodes')"
+                    @keydown="onPickerKeydown"
                   />
-                  <ul class="mt-2 max-h-64 overflow-y-auto" role="listbox" aria-multiselectable="true">
-                    <li v-for="node in pickerMatches" :key="node.id">
-                      <button
-                        type="button"
-                        role="option"
-                        :aria-selected="chosen.includes(node.id)"
-                        :class="cn(
-                          'flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none hover:bg-muted focus-visible:bg-muted',
-                          chosen.includes(node.id) && 'text-foreground',
-                        )"
-                        @click="toggleNode(node.id)"
-                      >
-                        <span class="truncate">{{ node.name }}</span>
-                        <span v-if="chosen.includes(node.id)" class="text-xs text-primary">{{ $t('platform.evidence.capture.chosen') }}</span>
-                      </button>
+                  <ul
+                    :id="PICKER_LIST_ID"
+                    ref="pickerList"
+                    class="mt-2 max-h-64 overflow-y-auto"
+                    role="listbox"
+                    aria-multiselectable="true"
+                    :aria-label="$t('platform.evidence.capture.nodesLabel')"
+                  >
+                    <!-- mousedown is held so a click keeps focus in the field
+                         and the arrows keep working after it. -->
+                    <li
+                      v-for="(node, index) in pickerMatches"
+                      :id="`${PICKER_LIST_ID}-${index}`"
+                      :key="node.id"
+                      role="option"
+                      :aria-selected="chosen.includes(node.id)"
+                      :data-active="index === pickerActive || undefined"
+                      class="flex cursor-pointer items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-sm data-[active]:bg-muted"
+                      @mousedown.prevent
+                      @pointermove="pickerActive = index"
+                      @click="toggleNode(node.id)"
+                    >
+                      <span class="truncate">{{ node.name }}</span>
+                      <span v-if="chosen.includes(node.id)" class="text-xs text-primary">{{ $t('platform.evidence.capture.chosen') }}</span>
                     </li>
                     <li v-if="pickerMatches.length === 0" class="px-2 py-1.5 text-xs text-muted-foreground">
                       {{ $t('platform.evidence.capture.noNodeMatches') }}
@@ -435,6 +500,122 @@ const coverageLoading = computed(
           {{ $t('platform.evidence.capture.failed', { reason: startError }) }}
         </p>
       </form>
+    </section>
+
+    <!-- ── Coverage per node ──────────────────────────────────────────── -->
+    <section class="space-y-2" aria-labelledby="evidence-nodes-title">
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 id="evidence-nodes-title" class="text-sm font-semibold tracking-[-0.01em]">
+          {{ $t('platform.evidence.overview.nodesTitle') }}
+        </h2>
+        <p v-if="ctx.policies.error.value && ctx.storeReady.value && !coverageUnread" class="text-xs text-destructive">
+          {{ $t('platform.evidence.overview.policiesFailed') }}
+        </p>
+      </div>
+
+      <div v-if="coverageLoading" class="space-y-2">
+        <Skeleton v-for="n in 4" :key="n" class="h-9 w-full" />
+      </div>
+      <!-- Neither list loaded: one honest block, not a table of guesses. -->
+      <div
+        v-else-if="coverageUnread"
+        class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-4"
+        role="alert"
+      >
+        <p class="text-sm">{{ $t('platform.evidence.overview.nodesUnread') }}</p>
+        <Button variant="outline" size="sm" @click="() => { ctx.policies.refresh(); ctx.sources.refresh(); ctx.logStats.refresh(); }">
+          <RefreshCw aria-hidden="true" class="size-4" />
+          {{ $t('common.actions.retry') }}
+        </Button>
+      </div>
+      <p v-else-if="ctx.coverageRows.value.length === 0" class="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
+        {{ $t('platform.trace.noVisibleNodesDescription') }}
+      </p>
+      <div v-else-if="visibleRows.length" class="relative overflow-x-auto rounded-md border border-border">
+        <table class="w-full min-w-[680px] text-sm">
+          <thead>
+            <tr class="border-b border-border text-left text-xs text-muted-foreground">
+              <th scope="col" class="pin-start px-3 py-2 font-medium">{{ $t('platform.evidence.overview.colNode') }}</th>
+              <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.evidence.overview.colTrace') }}</th>
+              <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.evidence.overview.colRawLog') }}</th>
+              <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.evidence.overview.colHeld') }}</th>
+              <th v-if="showLastHour" scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.evidence.overview.colLastHour') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in visibleRows" :key="row.nodeId" class="border-b border-border last:border-b-0">
+              <th scope="row" class="pin-start px-3 py-2 text-left font-medium">
+                <span class="block truncate" :title="row.nodeId">{{ row.name }}</span>
+              </th>
+              <td class="px-3 py-2 whitespace-nowrap">
+                <Badge v-if="row.capturing > 0" variant="info" :title="$t('platform.evidence.overview.capturingUntil', { at: formatDateTime(row.captureEndsAt) })">
+                  {{ $t('platform.evidence.overview.traceCapturing') }}
+                </Badge>
+                <span v-else-if="row.trace?.enabled" class="text-sm">
+                  {{ $t('platform.evidence.overview.traceOn') }}
+                  <span class="font-mono text-xs text-muted-foreground">{{ row.trace.level }}</span>
+                </span>
+                <span v-else-if="!ctx.storeReady.value" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.traceServerOff') }}</span>
+                <span v-else-if="row.trace" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
+                <span v-else class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
+              </td>
+              <td class="px-3 py-2">
+                <span v-if="!row.sourcesKnown" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
+                <span v-else-if="row.sources.length === 0" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.noSource') }}</span>
+                <ul v-else class="space-y-0.5">
+                  <li v-for="source in row.sources" :key="source.id" class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <RouterLink
+                      :to="exploreTo({ sourceId: source.id, nodeId: row.nodeId }, 'all')"
+                      class="text-sm hover:underline"
+                      :class="!source.enabled && 'text-muted-foreground'"
+                    >
+                      {{ source.name }}
+                    </RouterLink>
+                    <span class="font-mono text-xs tabular text-muted-foreground">
+                      {{ source.lastIngestAt
+                        ? $t('platform.evidence.overview.lastIngest', { at: formatDateTime(source.lastIngestAt) })
+                        : $t('platform.evidence.overview.neverShipped') }}
+                    </span>
+                    <Badge
+                      v-if="source.stale && source.lastIngestAt"
+                      variant="warning"
+                      :title="$t('platform.evidence.overview.staleHint')"
+                    >
+                      {{ $t('platform.evidence.overview.stale') }}
+                    </Badge>
+                    <span v-if="!source.enabled" class="text-xs text-muted-foreground">{{ $t('common.status.disabled') }}</span>
+                  </li>
+                </ul>
+              </td>
+              <td class="px-3 py-2 text-right font-mono text-xs tabular whitespace-nowrap">
+                <span v-if="row.heldLines === undefined" class="text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
+                <span v-else :class="row.heldLines === 0 && 'text-muted-foreground'">
+                  {{ $t('platform.evidence.overview.heldLines', { count: row.heldLines }, row.heldLines) }}
+                </span>
+              </td>
+              <td v-if="showLastHour" class="px-3 py-2 text-right font-mono text-xs tabular">
+                <span :class="!row.lastHour && 'text-muted-foreground'">{{ row.lastHour ?? 0 }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Rows that would all read "off, none, 0" collapse into one line
+           that says so, instead of a screen of identical rows. It sits under
+           the table, outside its scroller, so the toggle is reachable at
+           phone width. -->
+      <div v-if="quietRows.length && !coverageUnread" class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1">
+        <p class="text-sm text-muted-foreground">
+          {{ showQuiet
+            ? $t('platform.evidence.overview.quietShown', { count: quietRows.length }, quietRows.length)
+            : activeRows.length
+              ? $t('platform.evidence.overview.quietRows', { count: quietRows.length }, quietRows.length)
+              : $t('platform.evidence.overview.quietAll', { count: quietRows.length }, quietRows.length) }}
+        </p>
+        <Button variant="ghost" size="sm" :aria-expanded="showQuiet" @click="showQuiet = !showQuiet">
+          {{ showQuiet ? $t('platform.evidence.overview.hideQuiet') : $t('platform.evidence.overview.showQuiet', { count: quietRows.length }, quietRows.length) }}
+        </Button>
+      </div>
     </section>
 
     <!-- ── The last hour ─────────────────────────────────────────────── -->
@@ -541,121 +722,5 @@ const coverageLoading = computed(
     <p v-else-if="ctx.lastHour.error.value && ctx.storeReady.value" class="text-sm text-destructive" role="alert">
       {{ $t('platform.evidence.overview.hourFailed', { reason: ctx.lastHour.error.value.message }) }}
     </p>
-
-    <!-- ── Coverage per node ──────────────────────────────────────────── -->
-    <section class="space-y-2" aria-labelledby="evidence-nodes-title">
-      <div class="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 id="evidence-nodes-title" class="text-sm font-semibold tracking-[-0.01em]">
-          {{ $t('platform.evidence.overview.nodesTitle') }}
-        </h2>
-        <p v-if="ctx.policies.error.value && ctx.storeReady.value && !coverageUnread" class="text-xs text-destructive">
-          {{ $t('platform.evidence.overview.policiesFailed') }}
-        </p>
-      </div>
-
-      <div v-if="coverageLoading" class="space-y-2">
-        <Skeleton v-for="n in 4" :key="n" class="h-9 w-full" />
-      </div>
-      <!-- Neither list loaded: one honest block, not a table of guesses. -->
-      <div
-        v-else-if="coverageUnread"
-        class="flex flex-wrap items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-4"
-        role="alert"
-      >
-        <p class="text-sm">{{ $t('platform.evidence.overview.nodesUnread') }}</p>
-        <Button variant="outline" size="sm" @click="() => { ctx.policies.refresh(); ctx.sources.refresh(); ctx.logStats.refresh(); }">
-          <RefreshCw aria-hidden="true" class="size-4" />
-          {{ $t('common.actions.retry') }}
-        </Button>
-      </div>
-      <p v-else-if="ctx.coverageRows.value.length === 0" class="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-        {{ $t('platform.trace.noVisibleNodesDescription') }}
-      </p>
-      <div v-else-if="visibleRows.length" class="relative overflow-x-auto rounded-md border border-border">
-        <table class="w-full min-w-[680px] text-sm">
-          <thead>
-            <tr class="border-b border-border text-left text-xs text-muted-foreground">
-              <th scope="col" class="sticky left-0 z-10 bg-background px-3 py-2 font-medium">{{ $t('platform.evidence.overview.colNode') }}</th>
-              <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.evidence.overview.colTrace') }}</th>
-              <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.evidence.overview.colRawLog') }}</th>
-              <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.evidence.overview.colHeld') }}</th>
-              <th v-if="showLastHour" scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.evidence.overview.colLastHour') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in visibleRows" :key="row.nodeId" class="border-b border-border last:border-b-0">
-              <th scope="row" class="sticky left-0 z-10 max-w-48 bg-background px-3 py-2 text-left font-medium">
-                <span class="block truncate" :title="row.nodeId">{{ row.name }}</span>
-              </th>
-              <td class="px-3 py-2 whitespace-nowrap">
-                <Badge v-if="row.capturing > 0" variant="info" :title="$t('platform.evidence.overview.capturingUntil', { at: formatDateTime(row.captureEndsAt) })">
-                  {{ $t('platform.evidence.overview.traceCapturing') }}
-                </Badge>
-                <span v-else-if="row.trace?.enabled" class="text-sm">
-                  {{ $t('platform.evidence.overview.traceOn') }}
-                  <span class="font-mono text-xs text-muted-foreground">{{ row.trace.level }}</span>
-                </span>
-                <span v-else-if="!ctx.storeReady.value" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.traceServerOff') }}</span>
-                <span v-else-if="row.trace" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
-                <span v-else class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
-              </td>
-              <td class="px-3 py-2">
-                <span v-if="!row.sourcesKnown" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
-                <span v-else-if="row.sources.length === 0" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.noSource') }}</span>
-                <ul v-else class="space-y-0.5">
-                  <li v-for="source in row.sources" :key="source.id" class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <RouterLink
-                      :to="exploreTo({ sourceId: source.id, nodeId: row.nodeId }, 'all')"
-                      class="text-sm hover:underline"
-                      :class="!source.enabled && 'text-muted-foreground'"
-                    >
-                      {{ source.name }}
-                    </RouterLink>
-                    <span class="font-mono text-xs tabular text-muted-foreground">
-                      {{ source.lastIngestAt
-                        ? $t('platform.evidence.overview.lastIngest', { at: formatDateTime(source.lastIngestAt) })
-                        : $t('platform.evidence.overview.neverShipped') }}
-                    </span>
-                    <Badge
-                      v-if="source.stale && source.lastIngestAt"
-                      variant="warning"
-                      :title="$t('platform.evidence.overview.staleHint')"
-                    >
-                      {{ $t('platform.evidence.overview.stale') }}
-                    </Badge>
-                    <span v-if="!source.enabled" class="text-xs text-muted-foreground">{{ $t('common.status.disabled') }}</span>
-                  </li>
-                </ul>
-              </td>
-              <td class="px-3 py-2 text-right font-mono text-xs tabular whitespace-nowrap">
-                <span v-if="row.heldLines === undefined" class="text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
-                <span v-else :class="row.heldLines === 0 && 'text-muted-foreground'">
-                  {{ $t('platform.evidence.overview.heldLines', { count: row.heldLines }, row.heldLines) }}
-                </span>
-              </td>
-              <td v-if="showLastHour" class="px-3 py-2 text-right font-mono text-xs tabular">
-                <span :class="!row.lastHour && 'text-muted-foreground'">{{ row.lastHour ?? 0 }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <!-- Rows that would all read "off, none, 0" collapse into one line
-           that says so, instead of a screen of identical rows. It sits under
-           the table, outside its scroller, so the toggle is reachable at
-           phone width. -->
-      <div v-if="quietRows.length && !coverageUnread" class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-1">
-        <p class="text-sm text-muted-foreground">
-          {{ showQuiet
-            ? $t('platform.evidence.overview.quietShown', { count: quietRows.length }, quietRows.length)
-            : activeRows.length
-              ? $t('platform.evidence.overview.quietRows', { count: quietRows.length }, quietRows.length)
-              : $t('platform.evidence.overview.quietAll', { count: quietRows.length }, quietRows.length) }}
-        </p>
-        <Button variant="ghost" size="sm" :aria-expanded="showQuiet" @click="showQuiet = !showQuiet">
-          {{ showQuiet ? $t('platform.evidence.overview.hideQuiet') : $t('platform.evidence.overview.showQuiet', { count: quietRows.length }, quietRows.length) }}
-        </Button>
-      </div>
-    </section>
   </div>
 </template>

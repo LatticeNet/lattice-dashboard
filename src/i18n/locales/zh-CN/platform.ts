@@ -481,6 +481,8 @@ export default {
         missingDescription: "链接指向的连接已经不在存储里，或者不在你能看到的节点范围内。",
       },
       collection: {
+        everyNode: "所有节点：{value}",
+        neverChanged: "从未改动",
         policyHint: "开启策略的节点会在日志行预算内一直拼连接记录。平时可以关着，需要时再抓取。",
         policyEnabledFor: "{node} 的追踪策略开关",
         historyTitle: "抓取记录",

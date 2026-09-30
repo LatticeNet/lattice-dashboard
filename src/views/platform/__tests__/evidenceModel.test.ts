@@ -5,6 +5,7 @@ import type { ConnRecord, LogSource, LogSourceStatsView, TracePolicy, TraceSessi
 import { connRecordKey, readConnTraceFilters, resolveTraceWindow } from "../connTraceModel.ts";
 import {
   EMPTY_EVIDENCE_QUERY,
+  uniformPolicyColumns,
   captureBlock,
   captureRequest,
   captureSessionName,
@@ -636,4 +637,20 @@ test("with stats, the raw log lens opens on the source that shipped most recentl
   ];
   assert.equal(pickLogSource([stale, fresh], { sourceId: "", nodeId: "" }, stats)?.id, "src_z");
   assert.equal(pickLogSource([stale, fresh], { sourceId: "", nodeId: "" })?.id, "src_a");
+});
+
+test("a policy column the same on every node is said once, in its header", () => {
+  const all = ["a", "b", "c"].map((id) => policy(id));
+  // Production today: every node debug, 500 a second, never changed.
+  assert.deepEqual(uniformPolicyColumns(all), { level: "debug", budget: 500, updated: null });
+
+  const edited = [...all.slice(0, 2), { ...policy("c", true), level: "info" as const, updated_at: "2026-09-29T01:00:00Z" }];
+  assert.deepEqual(uniformPolicyColumns(edited), { budget: 500 }, "one node that differs keeps its column per row");
+  assert.deepEqual(uniformPolicyColumns([policy("a")]), {}, "one row is not a pattern");
+  assert.deepEqual(uniformPolicyColumns([]), {});
+  assert.deepEqual(
+    uniformPolicyColumns([policy("a"), { ...policy("b"), updated_at: "" }]).updated,
+    null,
+    "an empty timestamp is never changed too",
+  );
 });

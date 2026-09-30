@@ -964,3 +964,31 @@ export function pickLogSource(
   if (nodes.length) return sorted.find((source) => nodes.includes(source.node_id));
   return sorted[0];
 }
+
+/* ------------------------------------------------------------------ */
+/* Collection policy table                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The policy columns whose value is the same on every node. Such a column
+ * says its value once, in its header, instead of on each of 34 rows; the
+ * row controls stay, revealed when the row is hovered or focused. A value is
+ * reported only when there are at least two rows to be the same across.
+ * `updated` is null when no node's policy has ever been changed.
+ */
+export interface UniformPolicyColumns {
+  level?: TracePolicy["level"];
+  budget?: number;
+  updated?: string | null;
+}
+
+export function uniformPolicyColumns(policies: readonly TracePolicy[]): UniformPolicyColumns {
+  if (policies.length < 2) return {};
+  const [first, ...rest] = policies;
+  const uniform: UniformPolicyColumns = {};
+  if (rest.every((row) => row.level === first!.level)) uniform.level = first!.level;
+  if (rest.every((row) => row.budget_lines_per_sec === first!.budget_lines_per_sec)) uniform.budget = first!.budget_lines_per_sec;
+  const updatedOf = (row: TracePolicy) => row.updated_at || null;
+  if (rest.every((row) => updatedOf(row) === updatedOf(first!))) uniform.updated = updatedOf(first!);
+  return uniform;
+}

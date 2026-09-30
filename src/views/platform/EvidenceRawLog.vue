@@ -323,14 +323,14 @@ const nothingCollected = computed(
           <table class="w-full min-w-[560px] text-xs">
             <thead>
               <tr class="border-b border-border text-left text-muted-foreground">
-                <th scope="col" class="sticky left-0 z-10 bg-background px-3 py-2 font-medium">{{ $t('platform.logs.colTime') }}</th>
+                <th scope="col" class="pin-start px-3 py-2 font-medium">{{ $t('platform.logs.colTime') }}</th>
                 <th scope="col" class="px-3 py-2 text-right font-medium">{{ $t('platform.logs.colSeq') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.logs.colLine') }}</th>
               </tr>
             </thead>
             <tbody class="font-mono">
               <tr v-for="line in rendered" :key="line.seq" class="border-b border-border align-top last:border-b-0 hover:bg-muted/40">
-                <td class="sticky left-0 z-10 bg-background px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular">{{ formatDateTime(line.at) }}</td>
+                <td class="pin-start px-3 py-1.5 whitespace-nowrap text-muted-foreground tabular">{{ formatDateTime(line.at) }}</td>
                 <td class="px-3 py-1.5 text-right whitespace-nowrap text-muted-foreground tabular">{{ line.seq }}</td>
                 <td class="px-3 py-1.5">
                   <span class="break-all whitespace-pre-wrap">{{ line.line }}</span>
