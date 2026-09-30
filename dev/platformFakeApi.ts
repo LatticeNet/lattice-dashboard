@@ -6,12 +6,13 @@
  *   open http://127.0.0.1:5185/dev/platform.html
  *
  * Everything the real barrel exports is re-exported unchanged; only `api` is
- * replaced, and only the calls Publishing, Store and Evidence make are
+ * replaced, and only the calls Publishing and Store make are
  * implemented. Anything else throws, loudly, so a new call path is noticed
- * rather than silently fed nothing.
+ * rather than silently fed nothing. Evidence has its own fake
+ * (evidenceFakeApi.ts).
  *
  * The fixture is production's actual shape, because that is the shape the
- * three pages were wrong about:
+ * two pages were wrong about:
  *
  * - Publishing holds one reserved subscription share that is serving, which is
  *   exactly what lattice.roobli.org answers with today, plus a static site and
@@ -19,12 +20,9 @@
  * - Store holds the server's line identity map (vpnmeta/lineuuid, 313 entries),
  *   Sub-Store's plugin bucket and one operator bucket, so the page can be
  *   checked for who it says wrote a bucket and which controls it offers.
- * - Evidence answers with no records, a store that holds 412 of them, and a
- *   newest record eight days older than the default window.
  */
 import { ApiError } from "@/lib/api/client";
 import type {
-  ConnRecord,
   KVEntry,
   Principal,
   PublishingRecord,
@@ -34,7 +32,6 @@ import type {
   StorageBucketInventoryEntry,
   StorageKind,
   StorageTokenView,
-  TracePolicy,
 } from "@/lib/api/index";
 
 export * from "@/lib/api/index";
@@ -47,10 +44,6 @@ export * from "@/lib/api/index";
  *   ?no-origins       Publishing answers with no origin the caller may see,
  *                     which is what the server returns for an operator holding
  *                     none of kv:admin, kv:read, static:admin, static:read.
- *   ?nothing-collected  Evidence answers with a store that holds no record.
- *   ?no-nodes         The caller can see no node, so the trace handler answers
- *                     before it reaches the store and its collected_total is 0.
- *   ?old-server       Evidence answers without the collection fields at all.
  *   ?token-writer     A storage token can write the operator's own bucket.
  *   ?no-admin         The caller holds no kv:admin or static:admin, so the
  *                     console cannot read the token list at all.
@@ -58,9 +51,6 @@ export * from "@/lib/api/index";
 const flags = new URLSearchParams(location.search);
 const EMPTY_PLANE = flags.has("empty-plane");
 const NO_ORIGINS = flags.has("no-origins");
-const NOTHING_COLLECTED = flags.has("nothing-collected");
-const NO_NODES = flags.has("no-nodes");
-const OLD_SERVER = flags.has("old-server");
 const TOKEN_WRITER = flags.has("token-writer");
 const NO_ADMIN = flags.has("no-admin");
 
@@ -324,28 +314,6 @@ const tokens: Record<StorageKind, StorageTokenView[]> = {
   static: [],
 };
 
-/* ------------------------------- evidence ------------------------------- */
-
-const policies: TracePolicy[] = [
-  {
-    node_id: "nod_legend_sg",
-    enabled: true,
-    level: "info",
-    budget_lines_per_sec: 200,
-    updated_at: iso(-8 * DAY),
-  },
-  { node_id: "nod_kenji_tokyo", enabled: false, level: "info", budget_lines_per_sec: 0 },
-  { node_id: "nod_falcon_fra", enabled: false, level: "info", budget_lines_per_sec: 0 },
-];
-
-const nodes = [
-  { id: "nod_legend_sg", name: "legend-sg", status: "online" },
-  { id: "nod_kenji_tokyo", name: "kenji-tokyo", status: "online" },
-  { id: "nod_falcon_fra", name: "falcon-fra", status: "online" },
-];
-
-const NO_RECORDS: ConnRecord[] = [];
-
 const unimplemented = new Proxy(
   {},
   {
@@ -429,35 +397,6 @@ export const api = {
       else rows.push(next);
       return { ...next };
     },
-  },
-
-  nodes: {
-    list: () => delay({ nodes: NO_NODES ? [] : nodes.map((n) => ({ ...n })) } as never),
-  },
-
-  users: {
-    list: () => delay({ users: [] } as never),
-  },
-
-  trace: {
-    // No record matches the window, but the store is not empty: this is the
-    // case the empty state used to answer with "widen the time range" and no
-    // idea of how far. The newest record is eight days old.
-    connections: () => {
-      // handleTraceRecords returns before it reaches the store when the caller
-      // has no visible node, and collected_total carries no omitempty, so that
-      // answer is indistinguishable from a store that collected nothing.
-      if (NO_NODES) return delay({ records: NO_RECORDS, collected_total: 0 });
-      if (OLD_SERVER) return delay({ records: NO_RECORDS });
-      if (NOTHING_COLLECTED) return delay({ records: NO_RECORDS, collected_total: 0 });
-      return delay({
-        records: NO_RECORDS,
-        collected_total: 412,
-        collected_newest_at: iso(-8 * DAY),
-      });
-    },
-    sessions: () => delay({ sessions: [] }),
-    policy: () => delay({ policies: NO_NODES ? [] : policies.map((p) => ({ ...p })) }),
   },
 
   approvals: unimplemented,

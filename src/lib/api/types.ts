@@ -2419,3 +2419,21 @@ export interface TraceHopsResponse {
   path: HopPath;
   records: ConnRecord[];
 }
+
+/**
+ * GET /api/trace/stats. An operator who sees every node gets the whole store;
+ * anyone narrower gets `scoped: true` with only the schema and cipher fields,
+ * because fleet-wide counts would describe activity outside their allowlist.
+ */
+export interface TraceStatsResponse {
+  scoped?: boolean;
+  schema_version?: number;
+  records?: number;
+  open_records?: number;
+  lines?: number;
+  oldest_record_at?: string;
+  newest_record_at?: string;
+  size_bytes?: number;
+  max_bytes?: number;
+  cipher_enabled?: boolean;
+}

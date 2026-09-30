@@ -110,6 +110,7 @@ import type {
   TokenView,
   TraceConnectionsResponse,
   TraceHopsResponse,
+  TraceStatsResponse,
   TraceLinesResponse,
   TracePolicy,
   TracePolicyResponse,
@@ -737,7 +738,7 @@ export const api = {
       until?: string;
       limit?: number;
       before_seq?: number;
-    }) => http.get<LogQueryResponse>("/api/logs/query", params as Record<string, unknown>),
+    }, opts?: RequestOptions) => http.get<LogQueryResponse>("/api/logs/query", params as Record<string, unknown>, opts),
     stats: (source_id?: string, opts?: RequestOptions) =>
       http.get<{ stats: LogSourceStatsView[] }>(
         "/api/logs/stats",
@@ -774,6 +775,7 @@ export const api = {
       params: { node_id: string; core_generation: number; log_id: number; started_at?: string },
       opts?: RequestOptions,
     ) => http.get<TraceHopsResponse>("/api/trace/hops", params as Record<string, unknown>, opts),
+    stats: (opts?: RequestOptions) => http.get<TraceStatsResponse>("/api/trace/stats", undefined, opts),
   },
 
   notify: {
