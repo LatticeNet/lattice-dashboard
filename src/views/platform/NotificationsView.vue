@@ -82,7 +82,23 @@ type RulePreset = {
   body: string;
 };
 
-const EVENT_OPTIONS = ["*", "monitor.down", "monitor.recovered", "ssh.login", "proxy.quota", "proxy.expiry", "inventory.renewal"];
+// Every event type the server sends, typed or classified. ssh.pressure_window
+// is left out on purpose: it is recorded, never notified.
+const EVENT_OPTIONS = [
+  "*",
+  "monitor.down",
+  "monitor.recovered",
+  "service.down",
+  "service.recovered",
+  "node.offline",
+  "node.online",
+  "ssh.login",
+  "ssh.compromise_suspected",
+  "auth.2fa_limit",
+  "proxy.quota",
+  "proxy.expiry",
+  "inventory.renewal",
+];
 // renderNotifyTemplate substitutes exactly three variables: event_type, title,
 // and body. Anything else is left in the delivered message verbatim, which is
 // how these presets used to ship literal "{{message}}" to Telegram.
@@ -891,6 +907,7 @@ async function confirmDeleteRule(): Promise<void> {
               <Badge v-for="event in EVENT_OPTIONS" :key="event" variant="outline" class="font-mono text-[10px]">{{ event }}</Badge>
             </div>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.ruleEventsHint') }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.nodeOfflineHint') }}</p>
           </div>
 
           <div class="space-y-2 rounded-md border border-border p-3">
