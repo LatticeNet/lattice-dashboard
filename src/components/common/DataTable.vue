@@ -125,6 +125,14 @@ const props = withDefaults(
      * off so the page does not say the same number twice.
      */
     showSummary?: boolean;
+    /**
+     * What the table becomes below 768px. "cards" (the default) stacks each
+     * row as a card of label and value pairs. "scroll" keeps the table, lets
+     * it scroll sideways, and pins the first column, for lists read by
+     * comparing rows down a column (connection records), which a stack of
+     * cards makes impossible.
+     */
+    narrowLayout?: "cards" | "scroll";
     /** Wrapper class. */
     class?: HTMLAttributes["class"];
   }>(),
@@ -155,6 +163,7 @@ const props = withDefaults(
     selectRowLabel: undefined,
     rowExpanded: undefined,
     showSummary: true,
+    narrowLayout: "cards",
     stateKey: undefined,
   },
 );
@@ -244,6 +253,14 @@ defineSlots<
 >();
 
 const isDesktop = useMediaQuery("(min-width: 768px)");
+
+/**
+ * The first data column stays in view while a scroll-layout table scrolls
+ * sideways. Only in that layout: a table that fits never needed it.
+ */
+function pinned(index: number): boolean {
+  return props.narrowLayout === "scroll" && index === 0;
+}
 
 /** Columns a detail row has to span: the data columns plus the two optional gutters. */
 const spannedColumns = computed(
@@ -704,8 +721,8 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         <slot v-else name="empty" />
       </template>
 
-      <!-- Desktop / tablet: real table -->
-      <div class="hidden overflow-x-auto md:block">
+      <!-- Desktop / tablet: real table (and phones too, in scroll layout) -->
+      <div :class="narrowLayout === 'scroll' ? 'overflow-x-auto' : 'hidden overflow-x-auto md:block'">
         <table class="w-full min-w-[640px] text-sm">
           <thead class="sticky top-0 z-10 bg-background">
             <tr class="border-b border-border text-xs text-muted-foreground">
@@ -717,11 +734,11 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 />
               </th>
               <th
-                v-for="column in columns"
+                v-for="(column, index) in columns"
                 :key="column.key"
                 scope="col"
                 class="px-3 py-2 font-medium"
-                :class="[alignClass(column.align), column.class]"
+                :class="[alignClass(column.align), column.class, pinned(index) && 'pin-start']"
                 :aria-sort="ariaSortFor(column)"
               >
                 <button
@@ -762,7 +779,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               class="group border-b border-border last:border-0 hover:bg-muted/40"
               :class="{
                 'bg-muted/30': selectable && isRowSelected(row),
-                'cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none': rowActivatable,
+                'cursor-pointer focus-row': rowActivatable,
               }"
               :tabindex="rowActivatable ? 0 : undefined"
               @click="rowActivatable && onRowActivate(row, $event)"
@@ -776,10 +793,10 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 />
               </td>
               <td
-                v-for="column in columns"
+                v-for="(column, index) in columns"
                 :key="column.key"
                 class="px-3 py-3 align-middle"
-                :class="[alignClass(column.align), column.class]"
+                :class="[alignClass(column.align), column.class, pinned(index) && 'pin-start']"
               >
                 <slot
                   :name="`cell-${column.key}`"
@@ -807,7 +824,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
       </div>
 
       <!-- Mobile: stacked cards -->
-      <ul v-if="!isDesktop" class="space-y-3 md:hidden">
+      <ul v-if="!isDesktop && narrowLayout === 'cards'" class="space-y-3 md:hidden">
         <li
           v-for="row in pagedRows"
           :key="rowKey(row)"

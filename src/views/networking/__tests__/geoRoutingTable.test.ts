@@ -58,7 +58,10 @@ test("every column the desktop row carries reaches the mobile card", () => {
 });
 
 test("DataTable still has the stacked-card branch this depends on", () => {
-  assert.match(dataTable, /<ul v-if="!isDesktop" class="space-y-3 md:hidden">/);
+  // Cards stay the narrow layout unless a table opts into scrolling, and this
+  // page does not.
+  assert.match(dataTable, /<ul v-if="!isDesktop && narrowLayout === 'cards'" class="space-y-3 md:hidden">/);
+  assert.match(dataTable, /narrowLayout: "cards",/);
   assert.match(dataTable, /v-for="column in columns"/);
   assert.match(dataTable, /:name="`cell-\$\{column\.key\}`"/);
 });

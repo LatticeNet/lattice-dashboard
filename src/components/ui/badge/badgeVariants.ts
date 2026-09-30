@@ -5,6 +5,11 @@ export const badgeVariants = cva(
   {
     variants: {
       variant: {
+        // success and info fill with their -text step. In light the fill
+        // steps are too bright to carry white text (3.3:1 and 3.7:1); the
+        // -text steps carry it at 5.4:1 and 5.6:1. In dark the two steps are
+        // one value, so dark badges do not change. warning keeps its fill: it
+        // carries dark text at 6.2:1.
         default:
           "border-transparent bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
         secondary:
@@ -14,11 +19,11 @@ export const badgeVariants = cva(
         outline:
           "text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
         success:
-          "border-transparent bg-success text-success-foreground [a&]:hover:bg-success/90",
+          "border-transparent bg-success-text text-success-foreground [a&]:hover:bg-success-text/90",
         warning:
           "border-transparent bg-warning text-warning-foreground [a&]:hover:bg-warning/90",
         info:
-          "border-transparent bg-info text-info-foreground [a&]:hover:bg-info/90",
+          "border-transparent bg-info-text text-info-foreground [a&]:hover:bg-info-text/90",
       },
     },
     defaultVariants: {

@@ -56,6 +56,7 @@
 
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-control-border: var(--control-border);
   --color-ring: var(--ring);
 
   --color-chart-1: var(--chart-1);
@@ -200,6 +201,12 @@
 
   --border: oklch(0.91 0.006 281);
   --input: oklch(0.91 0.006 281);
+  /* The edge of a control that is nothing but its edge (an unchecked
+     checkbox). --input is a hairline for text fields, whose placeholder and
+     value already say where they are: 1.3:1 on --card. A box with nothing in
+     it needs the 3:1 of a UI component. Measured 3.65:1 on --card, 3.55 on
+     --background, 3.30 on --muted. */
+  --control-border: oklch(0.62 0.015 281);
   --ring: oklch(0.541 0.205 278.5);
 
   --chart-1: oklch(0.541 0.205 278.5);
@@ -261,6 +268,8 @@
 
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 13%);
+  /* 3.93:1 on --card, 4.21 on --background, 3.39 on --muted. */
+  --control-border: oklch(0.56 0.012 240);
   --ring: oklch(0.7 0.12 182);
 
   /* On a dark ground a shadow is nearly invisible and a light rim is what reads
@@ -607,6 +616,72 @@
   margin-inline: auto;
   width: 100%;
   max-width: var(--content-narrow);
+}
+
+/* Keyboard focus on a table row: the chassis ring (2px --ring), drawn inside
+   the row, since a row has no room for an offset and its neighbours would
+   cover one. It is painted on the cells rather than the row: an outline on a
+   <tr> is drawn underneath a sticky cell, and the sticky cell is the one that
+   names the row. */
+@utility focus-row {
+  &:focus-visible {
+    outline: none;
+  }
+
+  &:focus-visible > * {
+    box-shadow:
+      inset 0 2px 0 var(--ring),
+      inset 0 -2px 0 var(--ring);
+  }
+
+  &:focus-visible > :first-child {
+    box-shadow:
+      inset 2px 0 0 var(--ring),
+      inset 0 2px 0 var(--ring),
+      inset 0 -2px 0 var(--ring);
+  }
+
+  &:focus-visible > :last-child {
+    box-shadow:
+      inset -2px 0 0 var(--ring),
+      inset 0 2px 0 var(--ring),
+      inset 0 -2px 0 var(--ring);
+  }
+}
+
+/* A table wider than a phone keeps what the row is and what can be done to it
+   in view while the columns between scroll: `pin-start` on the first cell of
+   every row, `pin-end` on the actions cell. Both need an opaque ground, or the
+   scrolled columns show through.
+
+   The first column is capped at 38% of the viewport so the data keeps most of
+   a phone's width; `--pin-max` sets the cap on a wide screen (12rem unless a
+   table says otherwise). Below 48rem, where the middle actually scrolls, a
+   hairline marks each pinned edge so the pin reads as one. */
+@utility pin-start {
+  position: sticky;
+  left: 0;
+  z-index: 10;
+  max-width: min(var(--pin-max, 12rem), 38vw);
+  /* The cap is a hard edge: whatever does not fit wraps or is clipped here,
+     never drawn under the next column. */
+  overflow: hidden;
+  background-color: var(--background);
+
+  @media (width < 48rem) {
+    box-shadow: inset -1px 0 0 var(--border);
+  }
+}
+
+@utility pin-end {
+  position: sticky;
+  right: 0;
+  z-index: 10;
+  background-color: var(--background);
+
+  @media (width < 48rem) {
+    box-shadow: inset 1px 0 0 var(--border);
+  }
 }
 
 /* A cell that holds a control rather than text.
