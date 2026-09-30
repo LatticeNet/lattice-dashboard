@@ -91,7 +91,7 @@ const rules: NotifyRuleView[] = [
   {
     id: "nrl_monitor_phone",
     name: "monitor-to-phone",
-    event_types: ["monitor.down", "monitor.recovered"],
+    event_types: ["monitor.down", "monitor.recovered", "node.offline"],
     channel_ids: ["nch_bark_cdcd", "nch_bark_oncall"],
     title_template: "{{event_type}}: {{title}}",
     body_template: "{{body}}",
@@ -99,6 +99,24 @@ const rules: NotifyRuleView[] = [
     created_at: iso(-30 * DAY),
     updated_at: iso(-30 * DAY),
   },
+];
+
+// Production-shaped fleet for the node.offline line: most nodes on the default
+// delay, the three personal machines on three hours, one silenced laptop and
+// one delay tag the server would ignore.
+const fleetNames = [
+  "[Metix]-DMIT-1", "[Metix]-DMIT-2", "[Metix]-DMIT-3", "[Metix]-DMIT-4", "[cd]-DMIT-eb-wee",
+  "[Metix]-VIRCS-ATT-VDS", "[Metix]-Aaitr-jp-softbank-NAT", "[cd]-gomami-jpn-pulse-nano", "[cd]-huoshan-shanghai",
+  "[cd]-LegendVPS-SG-EVO", "[cd]-Akkocloud-UK-London-KVM", "[OpenJobs-Data]-TiDB-1", "[OpenJobs-Data]-TiDB-2",
+  "[cd]-xuezhang-jp-NAT", "[cd]-xuezhang-ca-NAT", "[cd]-mkcloud-hr-iplc", "grok-bot-lidonggui",
+];
+const nodes = [
+  ...fleetNames.map((name, i) => ({ id: `node_${i}`, name, tags: ["cd"] })),
+  { id: "node_mac", name: "[cd]-mac-air", tags: ["Mac", "cd", "offline-alert-after:3h"] },
+  { id: "node_xiaoxin", name: "[cd]-xiaoxin", tags: ["cd", "offline-alert-after:3h", "workplace"] },
+  { id: "node_home", name: "[cd]-homeserver", tags: ["cd", "homeserver", "offline-alert-after:3h"] },
+  { id: "node_old", name: "old-laptop", tags: ["no-offline-alert"] },
+  { id: "node_typo", name: "[cd]-qqpw-VDS-cd1", tags: ["cd", "offline-alert-after:2d"] },
 ];
 
 let seq = 1;
@@ -192,7 +210,9 @@ export const api = {
       return { ok: true };
     },
   },
-  nodes: unimplemented,
+  nodes: {
+    list: () => delay({ nodes: nodes.map((n) => ({ ...n, tags: [...n.tags] })) }),
+  },
   approvals: unimplemented,
   security: unimplemented,
 };
