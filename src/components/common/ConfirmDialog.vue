@@ -120,6 +120,8 @@ watch(
   },
 );
 const typedOk = computed(() => typedConfirmMatches(typed.value, props.typedConfirm));
+/** A dialog with nothing to describe says so, instead of pointing at a missing element. */
+const describedBy = computed(() => (props.description || props.impact?.length ? {} : { "aria-describedby": undefined }));
 const blocked = computed(() => props.confirmDisabled || !typedOk.value);
 
 function setOpen(value: boolean) {
@@ -147,23 +149,29 @@ function onConfirm() {
     <!-- A 16 px gutter on a phone, and a title that stops short of the close
          button: a long name ("Revoke the storage token edge-config reader?")
          ran under it at 375. -->
-    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md">
+    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" v-bind="describedBy">
       <DialogHeader class="pe-6">
         <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription v-if="description">
+        <DialogDescription v-if="description && !impact?.length">
           {{ description }}
         </DialogDescription>
       </DialogHeader>
 
-      <section v-if="impact?.length" class="space-y-1.5" data-testid="confirm-impact">
-        <h3 class="text-xs font-medium text-muted-foreground">{{ impactTitle ?? $t('common.confirm.impactTitle') }}</h3>
-        <ul class="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
-          <li v-for="line in impact" :key="line" class="flex gap-2">
-            <span aria-hidden="true" class="text-destructive">&#8226;</span>
-            <span class="min-w-0 break-words">{{ line }}</span>
-          </li>
-        </ul>
-      </section>
+      <!-- With impact lines, the description and the list are one
+           DialogDescription, so a screen reader reads what stops working
+           along with the title (and reka has the description it asks for). -->
+      <DialogDescription v-if="impact?.length" as="div" class="space-y-3">
+        <p v-if="description">{{ description }}</p>
+        <section class="space-y-1.5" data-testid="confirm-impact">
+          <h3 class="text-xs font-medium">{{ impactTitle ?? $t('common.confirm.impactTitle') }}</h3>
+          <ul class="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-foreground">
+            <li v-for="line in impact" :key="line" class="flex gap-2">
+              <span aria-hidden="true" class="text-destructive">&#8226;</span>
+              <span class="min-w-0 break-words">{{ line }}</span>
+            </li>
+          </ul>
+        </section>
+      </DialogDescription>
 
       <slot />
 
