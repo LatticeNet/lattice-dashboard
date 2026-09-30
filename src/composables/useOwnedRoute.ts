@@ -13,7 +13,14 @@
  * as its own, so nothing on the leaving page flips to the target's state;
  * writes do nothing once the router has moved on, and carry the page's path
  * so they can only ever address this page.
+ *
+ * A write is not in `route.query` until the router confirms it, a tick or
+ * more later. Two writes in the same tick (a filter and its page reset, two
+ * bindings on one page) would each build on the same stale query, and the
+ * later would cancel the earlier. The last requested query is therefore the
+ * base, and what reads return, until the router confirms or drops it.
  */
+import { shallowRef } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
 
 import type { QueryRecord } from "@/components/common/tableUrlState";
@@ -44,22 +51,38 @@ export interface OwnedRoute {
 export function ownRoute(read: () => RouteView, router: QueryNavigator): OwnedRoute {
   const path = read().path;
   let last = read().query;
+  /** The query last asked for and not yet confirmed or dropped by the router. */
+  const requested = shallowRef<QueryRecord | null>(null);
+  let writes = 0;
 
   const owns = () => read().path === path;
+
+  function write(navigate: QueryNavigator["replace"], query: LocationQueryRaw): void {
+    if (!owns()) return;
+    const mine = ++writes;
+    requested.value = query as QueryRecord;
+    // Settled either way (done, redundant, cancelled by a later navigation):
+    // from then on the route itself says what the query is.
+    const settle = () => {
+      if (writes === mine) requested.value = null;
+    };
+    navigate({ path, query }).then(settle, settle);
+  }
 
   return {
     path,
     owns,
     query() {
       const current = read();
-      if (current.path === path) last = current.query;
-      return last;
+      if (current.path !== path) return last;
+      last = current.query;
+      return requested.value ?? last;
     },
     replace(query) {
-      if (owns()) router.replace({ path, query }).catch(() => {});
+      write((to) => router.replace(to), query);
     },
     push(query) {
-      if (owns()) router.push({ path, query }).catch(() => {});
+      write((to) => router.push(to), query);
     },
   };
 }

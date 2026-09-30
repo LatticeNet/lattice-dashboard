@@ -162,3 +162,53 @@ test("sheets: closing on the page's own route clears only ?open=", async () => {
   assert.deepEqual(router.currentRoute.value.query, { view: "history" });
   assert.equal(sheet.openId.value, null);
 });
+
+const plainCodec = {
+  parse: (raw: unknown) => (typeof raw === "string" ? raw : ""),
+  format: (value: string) => value || undefined,
+};
+
+test("control: two writes in one tick on the live query lose the first", async () => {
+  const router = await routerAt("/nodes");
+  const route = router.currentRoute;
+  router.replace({ query: { ...route.value.query, status: "offline" } }).catch(() => {});
+  router.replace({ query: { ...route.value.query, group: "region" } }).catch(() => {});
+  await settle(router);
+  assert.deepEqual(route.value.query, { group: "region" }, "the second write built on the stale query");
+});
+
+test("two bindings writing different keys in one tick both land", async () => {
+  const router = await routerAt("/nodes?q=edge");
+  const page = owned(router);
+  const status = bindQueryParam(page, "status", plainCodec);
+  const group = bindQueryParam(page, "group", plainCodec);
+
+  status.value = "offline";
+  group.value = "region";
+  // Reads answer with what was asked for before the router confirms it.
+  assert.equal(status.value, "offline");
+  assert.equal(group.value, "region");
+
+  await settle(router);
+  assert.deepEqual(router.currentRoute.value.query, { q: "edge", status: "offline", group: "region" });
+  assert.equal(status.value, "offline");
+  assert.equal(group.value, "region");
+
+  // Clearing one and setting another in the same tick keeps the rest.
+  status.value = "";
+  group.value = "role";
+  await settle(router);
+  assert.deepEqual(router.currentRoute.value.query, { q: "edge", group: "role" });
+});
+
+test("a write the router drops stops being the base", async () => {
+  const router = await routerAt("/nodes?status=offline");
+  const page = owned(router);
+  // The same query again: the router reports it as a duplicate and does nothing.
+  page.replace({ status: "offline" });
+  await settle(router);
+  // A later change in the address (Back, a link) is read, not the dropped request.
+  await router.replace("/nodes?status=degraded");
+  await settle(router);
+  assert.deepEqual(page.query(), { status: "degraded" });
+});
