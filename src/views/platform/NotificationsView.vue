@@ -266,7 +266,6 @@ function offlineLine(rule: NotifyRuleView): { text: string; warn: boolean } {
   if (policy.quiet.length > 0) parts.push(t("platform.notifications.offline.quiet", { list: capList(policy.quiet) }));
   if (policy.invalid.length > 0) {
     parts.push(t("platform.notifications.offline.invalid", {
-      delay,
       list: capList(policy.invalid.map((i) => `${i.name} (${i.tag})`)),
     }));
     return { text: parts.join(" "), warn: true };

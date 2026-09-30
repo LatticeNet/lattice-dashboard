@@ -1081,7 +1081,7 @@ export default {
         coversDisabled: "Would page after {delay} without a heartbeat for {n} node, but the rule is disabled. | Would page after {delay} without a heartbeat for {n} nodes, but the rule is disabled.",
         delayed: "Waits longer for {list}.",
         quiet: "Never pages for {list}.",
-        invalid: "These delay tags are not understood, so those nodes page after {delay}: {list}.",
+        invalid: "The server ignores these delay tags, so check them: {list}.",
         andMore: "{list} and {n} more",
         loading: "Counting nodes.",
         failed: "Could not read the nodes, so the offline delays are unknown.",

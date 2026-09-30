@@ -982,7 +982,7 @@ export default {
         coversDisabled: "本规则已停用；启用后 {n} 个节点连续 {delay} 没有心跳就会发离线提醒。 | 本规则已停用；启用后 {n} 个节点连续 {delay} 没有心跳就会发离线提醒。",
         delayed: "等待更久的：{list}。",
         quiet: "从不提醒的：{list}。",
-        invalid: "这些延迟标签无法识别，对应节点按 {delay} 提醒：{list}。",
+        invalid: "服务端会忽略这些延迟标签，请检查：{list}。",
         andMore: "{list} 等另外 {n} 个",
         loading: "正在统计节点。",
         failed: "读取节点失败，离线延迟未知。",

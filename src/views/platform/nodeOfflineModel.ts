@@ -40,7 +40,12 @@ export interface NodeOfflinePolicy {
   delayed: { name: string; minutes: number }[];
   /** Nodes that never page. */
   quiet: string[];
-  /** Delay tags the server will ignore, with the node they sit on. */
+  /**
+   * Delay tags the server will ignore, with the node they sit on. Listed even
+   * when the node is quiet or has another valid delay: a typo is worth
+   * fixing wherever it sits, and the counts above already say what the node
+   * actually does.
+   */
   invalid: { name: string; tag: string }[];
 }
 
