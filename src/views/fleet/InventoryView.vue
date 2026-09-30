@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
+  BellOff,
   BookOpen,
   Boxes,
   CalendarClock,
@@ -61,6 +62,8 @@ import {
   parseReminderDaysInput,
   rollForwardPast,
 } from "./inventoryEditorModel";
+import { DEFAULT_REMIND_DAYS, hasRenewalDate, nextReminder } from "./reminderModel";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
@@ -207,7 +210,13 @@ const cycleDays = ref("");
 const nextRenewal = ref("");
 const autoRoll = ref(false);
 const remindersEnabled = ref(false);
-const remindDays = ref("14,7,1");
+/**
+ * Reminders are on by default for a machine with a renewal date (design 22).
+ * A profile loaded without a date cannot have had them on, so its "off" is not
+ * a choice: the box follows the date until the operator touches it.
+ */
+const remindersFollowDate = ref(false);
+const remindDays = ref(DEFAULT_REMIND_DAYS.join(","));
 const consoleUrl = ref("");
 const detailUrl = ref("");
 const clearConsoleUrl = ref(false);
@@ -568,19 +577,61 @@ const groups = computed<MachineGroup[]>(() => {
 
 const groupOptions = INVENTORY_GROUPS;
 
-// ── Deep-link (?node=<id>) opens that node's editor once the list loads ───────
+// ── Deep links, once the list loads ──────────────────────────────────────────
+// ?node=<node id> opens that node's editor for an admin, as it always has.
+// ?machine=<profile id> is the link the Upcoming list gives a renewal: it
+// opens the editor for an admin, and for anyone else it marks the machine's
+// card and scrolls to it, so a reader still lands on the row they followed.
 const seededNodeQuery = ref<string | undefined>(undefined);
+const highlightedKey = ref<string | undefined>(undefined);
+/**
+ * The card a ?machine= link opened the editor for. Nothing was clicked, so
+ * the dialog has no trigger to hand focus back to on close; this names the
+ * row that should get it.
+ */
+const openedFromLink = ref<string | undefined>(undefined);
 watch(
-  [machines, () => route.query.node],
-  ([list, nodeQ]) => {
-    const id = typeof nodeQ === "string" ? nodeQ : undefined;
-    if (!id || id === seededNodeQuery.value || list.length === 0) return;
-    const m = list.find((x) => x.node_id === id);
-    seededNodeQuery.value = id;
-    if (m && canAdminInventory.value) openEdit(m);
+  [machines, () => route.query.node, () => route.query.machine],
+  ([list, nodeQ, machineQ]) => {
+    const nodeId = typeof nodeQ === "string" ? nodeQ : undefined;
+    const profileId = typeof machineQ === "string" ? machineQ : undefined;
+    const key = nodeId ? `node:${nodeId}` : profileId ? `machine:${profileId}` : undefined;
+    if (!profileId) highlightedKey.value = undefined;
+    if (!key || key === seededNodeQuery.value || list.length === 0) return;
+    const m = list.find((x) => (nodeId ? x.node_id === nodeId : x.id === profileId));
+    seededNodeQuery.value = key;
+    if (!m) return;
+    if (canAdminInventory.value) {
+      openEdit(m);
+      if (profileId) openedFromLink.value = machineKey(m);
+    } else if (profileId) {
+      const cardKey = machineKey(m);
+      highlightedKey.value = cardKey;
+      void nextTick(() =>
+        document.querySelector(`[data-machine-key="${CSS.escape(cardKey)}"]`)?.scrollIntoView({ block: "center" }),
+      );
+    }
   },
   { immediate: true },
 );
+
+// ── Reminder indicator ─────────────────────────────────────────────────────
+function reminderWhen(inDays: number, at: string): string {
+  if (inDays <= 0) return t("fleet.inventory.list.whenToday");
+  if (inDays === 1) return t("fleet.inventory.list.whenTomorrow");
+  return t("fleet.inventory.list.whenDate", { date: at });
+}
+
+/** The row's reminder in one sentence: off, or when the next one goes out. */
+function reminderHint(machine: MachineView): string {
+  if (!machine.reminders_enabled) return t("fleet.inventory.list.reminderOffHint");
+  const next = nextReminder(machine, formatDay(new Date()));
+  if (!next) return t("fleet.inventory.list.reminderNone");
+  const when = reminderWhen(next.inDays, next.at);
+  if (next.offset >= 0) return t("fleet.inventory.list.reminderNext", { when, offset: next.offset, renewal: next.renewal });
+  if (next.inDays > 0) return t("fleet.inventory.list.reminderNextAfterDate", { when, renewal: next.renewal });
+  return t("fleet.inventory.list.reminderNextOverdue", { renewal: next.renewal, until: next.repeatsUntil });
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function machineKey(machine: MachineView): string {
@@ -946,10 +997,10 @@ watch(editOpen, (open) => {
   if (open) return;
   formSnapshot.value = undefined;
   discardOpen.value = false;
-  // A ?node= deep link opened the editor; left behind, it reopens the editor
-  // on the next reload.
-  if (route.query.node !== undefined) {
-    router.replace({ query: { ...route.query, node: undefined } }).catch(() => {});
+  // A ?node= or ?machine= deep link opened the editor; left behind, it
+  // reopens the editor on the next reload.
+  if (route.query.node !== undefined || route.query.machine !== undefined) {
+    router.replace({ query: { ...route.query, node: undefined, machine: undefined } }).catch(() => {});
   }
 });
 
@@ -975,7 +1026,26 @@ function discardChanges(): void {
  */
 function focusEditorOnOpen(event: Event): void {
   event.preventDefault();
-  document.getElementById("machine-editor-title")?.focus({ preventScroll: true });
+  // Arriving from the Upcoming list is about the renewal, so start there
+  // rather than at Label and Region with Delete in view.
+  const renewal = openedFromLink.value ? document.getElementById("machine-section-renewal") : null;
+  if (renewal) {
+    renewal.focus({ preventScroll: true });
+    renewal.scrollIntoView({ block: "start" });
+    return;
+  }
+  document.querySelector<HTMLElement>("[data-editor-title]")?.focus({ preventScroll: true });
+}
+
+/** Back to the row a ?machine= link opened; a clicked Edit gets focus back from the dialog itself. */
+function restoreFocusOnClose(event: Event): void {
+  const key = openedFromLink.value;
+  if (!key) return;
+  event.preventDefault();
+  openedFromLink.value = undefined;
+  document
+    .querySelector<HTMLElement>(`[data-machine-key="${CSS.escape(key)}"] [data-edit-button]`)
+    ?.focus();
 }
 
 /**
@@ -1140,7 +1210,8 @@ function loadForm(machine: MachineView) {
   nextRenewal.value = formatDate(machine.next_renewal);
   autoRoll.value = !!machine.auto_roll;
   remindersEnabled.value = !!machine.reminders_enabled;
-  remindDays.value = (machine.remind_days_before?.length ? machine.remind_days_before : [14, 7, 1]).join(
+  remindersFollowDate.value = !hasRenewalDate(machine);
+  remindDays.value = (machine.remind_days_before?.length ? machine.remind_days_before : DEFAULT_REMIND_DAYS).join(
     ",",
   );
   consoleUrl.value = "";
@@ -1170,6 +1241,7 @@ function syncVendorDetailsFromSelection() {
 }
 
 function openEdit(machine: MachineView) {
+  openedFromLink.value = undefined;
   editKey.value = machineKey(machine);
   loadForm(machine);
   editOpen.value = true;
@@ -1243,6 +1315,7 @@ watch(renewalCycle, (cycle) => {
 
 watch([nextRenewal, calculatedNextRenewal], () => {
   if (!hasEffectiveNextRenewal.value) remindersEnabled.value = false;
+  else if (remindersFollowDate.value) remindersEnabled.value = true;
 });
 
 watch([purchasedAt, renewalCycle, cycleDays, needsRenewal], () => {
@@ -1637,7 +1710,11 @@ async function runReminders(selectedOnly: boolean) {
             <div
               v-for="machine in group.machines"
               :key="machineKey(machine)"
-              class="flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-primary/40"
+              :data-machine-key="machineKey(machine)"
+              :class="cn(
+                'flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-primary/40',
+                highlightedKey === machineKey(machine) && 'border-primary ring-2 ring-primary/30',
+              )"
             >
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0">
@@ -1662,6 +1739,7 @@ async function runReminders(selectedOnly: boolean) {
                   <Button
                     variant="outline"
                     size="sm"
+                    data-edit-button
                     @click="openEdit(machine)"
                   >
                     <component :is="canAdminInventory ? (machine.id ? Pencil : Plus) : Eye" class="size-3.5" aria-hidden="true" />
@@ -1706,10 +1784,44 @@ async function runReminders(selectedOnly: boolean) {
                 </Badge>
                 <!-- The date beside the countdown: "12d left" says how soon, the
                      date says when, and a renewal view is read for both. -->
+                <!-- The date and its bell wrap as one piece, so a narrow card
+                     never strands the bell on a line of its own. -->
+                <span class="inline-flex items-center gap-1 self-center">
                 <span
                   v-if="renewalDate(machine) && !renewalSetupIncomplete(machine) && machine.days_until_renewal !== undefined"
-                  class="self-center font-mono text-xs tabular text-muted-foreground"
+                  class="font-mono text-xs tabular text-muted-foreground"
                 >{{ renewalDate(machine) }}</span>
+                <!-- Whether this renewal reminds anyone: a bell, struck through
+                     when off, and the next reminder on hover or focus. -->
+                <Tooltip v-if="machine.id && hasRenewalDate(machine)">
+                  <TooltipTrigger as-child>
+                    <span
+                      tabindex="0"
+                      role="img"
+                      :aria-label="reminderHint(machine)"
+                      data-testid="reminder-indicator"
+                      class="inline-flex rounded-sm p-0.5 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      <!-- Full muted-foreground for both: the strike-through
+                           says off, and a dimmed icon fell under 3:1 in light. -->
+                      <Bell v-if="machine.reminders_enabled" class="size-3.5" aria-hidden="true" />
+                      <BellOff v-else class="size-3.5" aria-hidden="true" />
+                    </span>
+                  </TooltipTrigger>
+                  <!-- On the popover surface the console's data hovers use, and
+                       below the bell, so it never sits on the card's title
+                       or its Node and Edit buttons. -->
+                  <TooltipContent
+                    side="bottom"
+                    align="start"
+                    :side-offset="6"
+                    :collision-padding="8"
+                    class="max-w-64 border border-border bg-popover text-popover-foreground shadow-(--shadow-overlay)"
+                  >
+                    {{ reminderHint(machine) }}
+                  </TooltipContent>
+                </Tooltip>
+                </span>
               </div>
 
               <div class="mt-3 grid gap-1.5 text-xs text-muted-foreground">
@@ -1727,7 +1839,7 @@ async function runReminders(selectedOnly: boolean) {
                 </div>
               </div>
 
-              <div v-if="machine.has_console_url || machine.has_detail_url || machine.reminders_enabled" class="mt-3 flex flex-wrap gap-1.5">
+              <div v-if="machine.has_console_url || machine.has_detail_url" class="mt-3 flex flex-wrap gap-1.5">
                 <Button
                   v-if="machine.has_console_url && canAdminInventory"
                   type="button"
@@ -1762,10 +1874,6 @@ async function runReminders(selectedOnly: boolean) {
                   <LinkIcon class="size-3" aria-hidden="true" />
                   {{ $t('fleet.inventory.list.detailLinkStored') }}
                 </Badge>
-                <Badge v-if="machine.reminders_enabled" variant="outline">
-                  <Bell class="size-3" aria-hidden="true" />
-                  {{ $t('fleet.inventory.list.reminders') }}
-                </Badge>
               </div>
             </div>
           </div>
@@ -1788,9 +1896,12 @@ async function runReminders(selectedOnly: boolean) {
       <DialogContent
         class="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
         @open-auto-focus="focusEditorOnOpen"
+        @close-auto-focus="restoreFocusOnClose"
       >
         <DialogHeader class="gap-1.5 border-b border-border px-5 pt-5 pr-12 pb-4 text-left sm:px-6">
-          <DialogTitle id="machine-editor-title" tabindex="-1" class="flex min-w-0 items-center gap-2 outline-none">
+          <!-- No id here: reka names the dialog by its own title id, and
+               overriding it left the dialog unnamed (and warning). -->
+          <DialogTitle data-editor-title tabindex="-1" class="flex min-w-0 items-center gap-2 outline-none">
             <Pencil class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span class="truncate">{{ editMachine ? displayName(editMachine) : $t('fleet.inventory.profile.title') }}</span>
           </DialogTitle>
@@ -2012,7 +2123,7 @@ async function runReminders(selectedOnly: boolean) {
           </section>
 
           <section v-if="needsRenewal" class="space-y-3" aria-labelledby="machine-section-renewal">
-            <h3 id="machine-section-renewal" class="font-mono text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <h3 id="machine-section-renewal" tabindex="-1" class="scroll-mt-4 font-mono text-[11px] font-medium tracking-wide text-muted-foreground uppercase outline-none">
               {{ $t('fleet.inventory.profile.sectionRenewal') }}
             </h3>
             <div class="grid gap-2">
@@ -2064,10 +2175,12 @@ async function runReminders(selectedOnly: boolean) {
                   class="mt-0.5"
                   :disabled="!hasEffectiveNextRenewal"
                   aria-describedby="machine-reminders-enabled-hint"
+                  @update:model-value="remindersFollowDate = false"
                 />
                 <div>
                   <label for="machine-reminders-enabled">{{ $t('fleet.inventory.profile.enableReminders') }}</label>
                   <p id="machine-reminders-enabled-hint" class="text-xs text-muted-foreground">
+                    {{ $t('fleet.inventory.profile.remindersDefault') }}
                     {{ $t('fleet.inventory.profile.enableRemindersHint') }}
                   </p>
                 </div>
@@ -2078,7 +2191,7 @@ async function runReminders(selectedOnly: boolean) {
                   id="machine-reminders"
                   v-model="remindDays"
                   class="sm:w-56"
-                  placeholder="14,7,1"
+                  placeholder="14,7,3,1,0"
                   :aria-invalid="draftReminderDays.days.length === 0 || undefined"
                   aria-describedby="machine-reminders-hint"
                 />

@@ -122,6 +122,25 @@ export function formatMoney(cents?: number, currency = "USD"): string {
   }
 }
 
+const AGE_UNITS = { s: "s", m: "m", h: "h", d: "d" };
+const AGE_UNITS_ZH = { s: " 秒", m: " 分钟", h: " 小时", d: " 天" };
+
+/**
+ * "43s", "2m", "3h", "2d". The floor is zero: an age is never negative.
+ * Pass a zh locale for "43 秒", "2 分钟"; without one the compact English
+ * units stay, which is what the SSH Guard strings are written around.
+ */
+export function formatAge(ms: number, locale?: string): string {
+  const u = locale?.toLowerCase().startsWith("zh") ? AGE_UNITS_ZH : AGE_UNITS;
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}${u.s}`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}${u.m}`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}${u.h}`;
+  return `${Math.floor(h / 24)}${u.d}`;
+}
+
 /** Short, copy-friendly id (first 8 chars). */
 export function shortId(id?: string, len = 8): string {
   if (!id) return NO_VALUE;

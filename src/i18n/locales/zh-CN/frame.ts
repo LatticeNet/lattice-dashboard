@@ -200,6 +200,7 @@ export default {
       groups: "分组",
       map: "地图",
       inventory: "资产",
+      upcoming: "即将到期",
       monitoring: "监控",
       approvals: "审批",
       tasks: "任务",

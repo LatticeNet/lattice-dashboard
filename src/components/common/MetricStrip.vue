@@ -41,6 +41,14 @@ export interface Metric {
   icon?: Component;
   /** When set, this segment becomes a drill-through link. */
   to?: RouteLocationRaw;
+  /**
+   * Phrases that each carry their own tone, printed in place of `value` and
+   * joined by a middle dot ("1 overdue · 3 within 7 days"). `value` stays the
+   * plain-text reading for the title and for anything that cannot style.
+   */
+  parts?: { text: string; tone?: MetricTone }[];
+  /** Extra classes for this segment, such as a column span. */
+  class?: string;
 }
 
 const props = withDefaults(
@@ -56,7 +64,8 @@ const toneClass: Record<MetricTone, string> = {
   default: "text-foreground",
   muted: "text-muted-foreground",
   success: "text-success",
-  warning: "text-warning",
+  // The darker text step: the fill-strength amber is under 3:1 on a light card.
+  warning: "text-warning-text",
   destructive: "text-destructive",
 };
 
@@ -90,7 +99,8 @@ const gridClass = computed(
       :to="metric.to"
       :class="cn(
         'flex min-w-0 items-center gap-2.5 bg-card px-3.5 py-3',
-        metric.to && 'transition-colors hover:bg-foreground/3 focus-visible:outline-none focus-visible:bg-foreground/5',
+        metric.to && 'transition-colors outline-none hover:bg-foreground/3 focus-visible:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset',
+        metric.class,
       )"
       :title="metric.hint ? `${metric.label}: ${metric.value} (${metric.hint})` : undefined"
     >
@@ -109,6 +119,16 @@ const gridClass = computed(
              the rate gets the whole width. -->
         <p class="flex min-w-0 flex-col items-start gap-x-1.5 sm:flex-row sm:items-baseline">
           <span
+            v-if="metric.parts?.length"
+            class="max-w-full truncate text-lg font-semibold leading-tight tabular sm:text-xl"
+          >
+            <template v-for="(part, index) in metric.parts" :key="index">
+              <span v-if="index > 0" class="font-normal text-muted-foreground" aria-hidden="true"> · </span>
+              <span :class="toneClass[part.tone ?? 'default']">{{ part.text }}</span>
+            </template>
+          </span>
+          <span
+            v-else
             :class="cn('max-w-full truncate text-lg font-semibold leading-tight tabular sm:text-xl', toneClass[metric.tone ?? 'default'])"
           >{{ metric.value }}</span>
           <span v-if="metric.hint" class="max-w-full truncate text-xs text-muted-foreground">{{ metric.hint }}</span>

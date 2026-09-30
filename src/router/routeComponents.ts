@@ -13,6 +13,7 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
   groups: () => import("@/views/fleet/GroupsView.vue"),
   map: () => import("@/views/fleet/MapView.vue"),
   inventory: () => import("@/views/fleet/InventoryView.vue"),
+  upcoming: () => import("@/views/fleet/UpcomingView.vue"),
   monitoring: () => import("@/views/fleet/MonitoringView.vue"),
   approvals: () => import("@/views/operations/ApprovalsView.vue"),
   tasks: () => import("@/views/operations/TasksView.vue"),

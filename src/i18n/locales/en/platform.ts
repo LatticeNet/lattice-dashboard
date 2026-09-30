@@ -1076,6 +1076,22 @@ export default {
       clearStoredLabel:
         "Clear the stored {keys}. Blank fields are not kept: the save replaces the whole config, so these revert to the server defaults.",
       rulesTitle: "Routing rules",
+      renewals: {
+        covers: "Covers renewal reminders for {n} machine with a renewal date. | Covers renewal reminders for {n} machines with a renewal date.",
+        off: "{n} other machine with a renewal date has its reminder turned off. | {n} other machines with a renewal date have their reminders turned off.",
+        coversDisabled: "Would carry renewal reminders for {n} machine with a renewal date, but the rule is disabled. | Would carry renewal reminders for {n} machines with a renewal date, but the rule is disabled.",
+        next: "Next reminder {when}: {name}, {offset} days before {renewal}.",
+        nextMany: "Next reminder {when}: {count} machines in one message, first {name}, {offset} days before {renewal}.",
+        nextOverdue: "Next reminder {when}: {name}, overdue since {renewal}.",
+        nextAfterDate: "Next reminder {when}: {name}, the day after {renewal} if it is not renewed.",
+        none: "No reminder is scheduled.",
+        noneOn: "None of the {n} machines with a renewal date has its reminder on, so no renewal reminder goes out.",
+        noDates: "No machine has a renewal date, so no renewal reminder goes out.",
+        openInventory: "Open Inventory",
+        loading: "Counting machines.",
+        failed: "Could not read the machines, so coverage is unknown.",
+        noAccess: "Counting machines needs read access to Inventory.",
+      },
       rulesDescription:
         "With no enabled rule, every enabled channel gets every notification. Once one enabled rule exists, only matching rules deliver, and a notification that no rule matches is dropped without a record.",
       presetsTitle: "Rule presets",

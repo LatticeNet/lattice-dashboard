@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
+  CalendarClock,
   GitBranch,
+  TriangleAlert,
   Pencil,
   Plus,
   RefreshCw,
@@ -13,6 +16,8 @@ import {
 } from "lucide-vue-next";
 import {
   api,
+  unwrap,
+  type MachineView,
   type NotifyChannelUpsertRequest,
   type NotifyChannelView,
   type NotifyKind,
@@ -20,6 +25,8 @@ import {
   type NotifyRuleView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { formatDay } from "@/views/fleet/inventoryEditorModel";
+import { reminderCoverage, reminderMachineName, ruleRoutesRenewals } from "@/views/fleet/reminderModel";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -75,7 +82,7 @@ type RulePreset = {
   body: string;
 };
 
-const EVENT_OPTIONS = ["*", "monitor.down", "monitor.recovered", "ssh.login", "proxy.quota", "proxy.expiry"];
+const EVENT_OPTIONS = ["*", "monitor.down", "monitor.recovered", "ssh.login", "proxy.quota", "proxy.expiry", "inventory.renewal"];
 // renderNotifyTemplate substitutes exactly three variables: event_type, title,
 // and body. Anything else is left in the delivered message verbatim, which is
 // how these presets used to ship literal "{{message}}" to Telegram.
@@ -125,6 +132,71 @@ const channelsQuery = useAsyncData((signal) => api.notify.channels({ signal }), 
 const channels = computed(() => channelsQuery.data.value ?? []);
 const rulesQuery = useAsyncData((signal) => api.notify.rules({ signal }), { pollInterval: 12000 });
 const rules = computed(() => rulesQuery.data.value?.rules ?? []);
+
+// Machines, for the line under each rule that routes inventory.renewal: how
+// many machines it reaches and when the next reminder goes out. Read only
+// with inventory:read; without it the line says so instead of guessing.
+const canReadInventory = computed(() => auth.can("inventory:read"));
+const machinesQuery = useAsyncData<MachineView[] | undefined>(
+  (signal) =>
+    canReadInventory.value
+      ? api.machines.list({ signal }).then((r) => unwrap(r, "machines"))
+      : Promise.resolve(undefined),
+  { pollInterval: 60_000 },
+);
+const coverage = computed(() =>
+  machinesQuery.data.value ? reminderCoverage(machinesQuery.data.value, formatDay(new Date())) : undefined,
+);
+
+function reminderWhen(inDays: number, at: string): string {
+  if (inDays <= 0) return t("fleet.inventory.list.whenToday");
+  if (inDays === 1) return t("fleet.inventory.list.whenTomorrow");
+  return t("fleet.inventory.list.whenDate", { date: at });
+}
+
+/**
+ * One line for a rule that routes renewals: whom it reaches and what goes out
+ * next. `warn` marks an enabled rule through which no reminder will go out
+ * (no dated machine, every reminder off, or nothing scheduled): the fix is in
+ * Inventory, so the line says so there instead of reading as healthy.
+ */
+function renewalLine(rule: NotifyRuleView): { text: string; warn: boolean } {
+  if (!canReadInventory.value) return { text: t("platform.notifications.renewals.noAccess"), warn: false };
+  const c = coverage.value;
+  if (!c) {
+    return {
+      text: machinesQuery.error.value
+        ? t("platform.notifications.renewals.failed")
+        : t("platform.notifications.renewals.loading"),
+      warn: false,
+    };
+  }
+  if (c.covered === 0 && c.off > 0) return { text: t("platform.notifications.renewals.noneOn", { n: c.off }), warn: rule.enabled };
+  if (c.covered === 0) return { text: t("platform.notifications.renewals.noDates"), warn: rule.enabled };
+  const covers = rule.enabled ? "platform.notifications.renewals.covers" : "platform.notifications.renewals.coversDisabled";
+  const parts = [t(covers, { n: c.covered }, c.covered)];
+  if (c.off > 0) parts.push(t("platform.notifications.renewals.off", { n: c.off }, c.off));
+  // Nothing goes out through a disabled rule, so it has no next reminder to name.
+  if (!rule.enabled) return { text: parts.join(" "), warn: false };
+  if (!c.next) {
+    parts.push(t("platform.notifications.renewals.none"));
+    return { text: parts.join(" "), warn: true };
+  }
+  const { machine, reminder } = c.next;
+  const args = {
+    when: reminderWhen(reminder.inDays, reminder.at),
+    name: reminderMachineName(machine),
+    offset: reminder.offset,
+    renewal: reminder.renewal,
+    count: c.sameDay,
+  };
+  if (reminder.offset < 0) {
+    parts.push(t(reminder.inDays > 0 ? "platform.notifications.renewals.nextAfterDate" : "platform.notifications.renewals.nextOverdue", args));
+  } else {
+    parts.push(t(c.sameDay > 1 ? "platform.notifications.renewals.nextMany" : "platform.notifications.renewals.next", args));
+  }
+  return { text: parts.join(" "), warn: false };
+}
 
 const sortedChannels = computed(() =>
   [...channels.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
@@ -574,6 +646,7 @@ async function confirmDeleteRule(): Promise<void> {
           :loading="rulesQuery.loading.value"
           :error="rulesQuery.error.value"
           :has-data="rulesQuery.data.value !== undefined"
+          :row-expanded="ruleRoutesRenewals"
           :page-size="50"
           searchable
           :search-placeholder="$t('platform.shared.searchNames')"
@@ -586,6 +659,23 @@ async function confirmDeleteRule(): Promise<void> {
           <template #cell-name="{ row }">
             <div class="font-medium">{{ row.name || row.id }}</div>
             <div class="mt-1 font-mono text-xs text-muted-foreground">{{ row.id }}</div>
+          </template>
+          <template #row-detail="{ row }">
+            <p
+              :class="cn('flex items-start gap-2 text-xs', renewalLine(row).warn ? 'text-warning-text' : 'text-muted-foreground')"
+              data-testid="renewal-coverage"
+            >
+              <TriangleAlert v-if="renewalLine(row).warn" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <CalendarClock v-else class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                {{ renewalLine(row).text }}
+                <RouterLink
+                  v-if="renewalLine(row).warn"
+                  :to="{ name: 'inventory', query: { group: 'renewal' } }"
+                  class="rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                >{{ $t('platform.notifications.renewals.openInventory') }}</RouterLink>
+              </span>
+            </p>
           </template>
           <template #cell-event_types="{ row }">
             <div class="flex flex-wrap gap-1">
