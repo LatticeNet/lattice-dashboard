@@ -50,7 +50,7 @@ import {
   type ConnTracePaging,
 } from "./connTraceModel";
 import { useEvidenceContext } from "./evidenceContext";
-import { EVIDENCE_PARAM, connMatchesText, writeEvidenceLayer } from "./evidenceModel";
+import { EVIDENCE_PARAM, connMatchesText, readEvidenceQuery, writeEvidenceLayer } from "./evidenceModel";
 
 const PAGE_LIMIT = 200;
 /** Close tones that are routine, rendered as text rather than a badge. */
@@ -73,6 +73,11 @@ const route = useRoute();
 const ctx = useEvidenceContext();
 
 const applied = computed(() => readConnTraceFilters(route.query));
+/**
+ * Names in the applied query that were searched as typed because their list
+ * has not loaded. An empty result then may say nothing about the traffic.
+ */
+const uncheckedNames = computed(() => ctx.uncheckedNames(readEvidenceQuery(route.query)));
 const text = computed(() => {
   const raw = route.query[EVIDENCE_PARAM.text];
   return typeof raw === "string" ? raw.trim() : "";
@@ -268,7 +273,13 @@ const nothingCollected = computed(() =>
   ["no-policy", "policy-no-records", "nothing-collected"].includes(emptyKind.value),
 );
 
+/** "Nothing matched" is only true when every name in the question was looked up. */
+const notLookedUp = computed(
+  () => uncheckedNames.value.length > 0 && ["nothing-matched", "text-matched-nothing"].includes(emptyKind.value),
+);
+
 const emptyTitle = computed(() => {
+  if (notLookedUp.value) return t("platform.evidence.explore.notLookedUpTitle");
   switch (emptyKind.value) {
     case "no-visible-nodes":
       return t("platform.trace.noVisibleNodesTitle");
@@ -287,6 +298,9 @@ const emptyTitle = computed(() => {
 });
 
 const emptyDescription = computed(() => {
+  if (notLookedUp.value) {
+    return t("platform.evidence.explore.notLookedUp", { tokens: uncheckedNames.value.join(", ") }, uncheckedNames.value.length);
+  }
   switch (emptyKind.value) {
     case "no-visible-nodes":
       return t("platform.trace.noVisibleNodesDescription");

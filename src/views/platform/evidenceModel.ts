@@ -334,6 +334,18 @@ export function formatEvidenceQuery(query: EvidenceQuery, resolvers: EvidenceTok
   return formatTokens(toTokenValues(query), EVIDENCE_GRAMMAR, tokenResolvers(resolvers));
 }
 
+/**
+ * The tokens of an applied query whose names no resolver turned into an id,
+ * spelled as the field shows them. The search sent those values as typed:
+ * with the lists loaded that means the name matches nothing known, and with
+ * a list missing it means the name was never looked up.
+ */
+export function unresolvedEvidenceTokens(query: EvidenceQuery, resolvers: EvidenceTokenResolvers = {}): string[] {
+  return parseEvidenceQuery(formatEvidenceQuery(query, resolvers), resolvers)
+    .problems.filter((problem) => problem.kind === "unresolved")
+    .map((problem) => problem.token);
+}
+
 /** The field's state as the address bar holds it. */
 export function readEvidenceQuery(query: QueryRecord): EvidenceQuery {
   const filters = readConnTraceFilters(query);

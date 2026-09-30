@@ -15,9 +15,13 @@
  * A search submitted before the lists that names resolve against have
  * answered waits for them (`ready`), because sending `node:legend-sg` on as a
  * literal id would search for a node that does not exist. The page counts a
- * list that failed as answered, and its `problems` then say which names could
- * not be checked; a list that never answers is waited on for
- * QUERY_NAME_WAIT_MS, then the search runs without it. Problems (a value that
+ * list that failed as answered; a list that never answers is waited on for
+ * QUERY_NAME_WAIT_MS, then the search runs without it. Either way some names
+ * go out as typed, never looked up, and the page owns the copy that says so:
+ * its `problems` name each such token ("not looked up, searched as typed"),
+ * and its empty result must not say "nothing matched", because the result
+ * may be empty only because a name could not be looked up. Evidence and the
+ * chassis gallery show the copy. Problems (a value that
  * does not resolve, an unknown enum value) are named per token while typing,
  * and kept after Apply until the next edit, since the canonical spelling
  * Apply writes back no longer holds the token.

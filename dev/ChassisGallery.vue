@@ -277,21 +277,33 @@ const resolvers: TokenResolvers = {
   },
 };
 const namesReady = ref(true);
+// With "names loaded" off the node list has not answered: a search that runs
+// after the wait resolves nothing and sends names as typed, like a real page.
+const liveResolvers = computed<TokenResolvers>(() =>
+  namesReady.value ? resolvers : { node: { toId: () => undefined, label: (id) => id } },
+);
 const range = ref("24h");
 const since = ref("");
 const until = ref("");
 const appliedTokens = computed(() => readTokenQuery(route.query, GRAMMAR));
 const appliedText = computed(() => formatTokens(appliedTokens.value, GRAMMAR, resolvers));
 function applyText(text: string): void {
-  router.replace({ query: writeTokenQuery(route.query, GRAMMAR, parseTokens(text, GRAMMAR, resolvers)) }).catch(() => {});
+  router.replace({ query: writeTokenQuery(route.query, GRAMMAR, parseTokens(text, GRAMMAR, liveResolvers.value)) }).catch(() => {});
 }
 function clearQuery(): void {
   router.replace({ query: writeTokenQuery(route.query, GRAMMAR, { values: {}, enums: {}, flags: [], text: "" }) }).catch(() => {});
 }
+// After the wait a name that did not resolve was never looked up: the copy
+// says so, and that an empty result may come from it, not "no such node".
 function problemsFor(text: string): string[] {
-  return parseTokens(text, GRAMMAR, resolvers).problems.map((problem) =>
-    problem.kind === "unresolved" ? `${problem.token}: no node has that name` : problem.kind === "empty-value" ? `${problem.token}: says nothing after the colon` : `${problem.token}: not a value this field knows`,
-  );
+  return parseTokens(text, GRAMMAR, liveResolvers.value).problems.map((problem) => {
+    if (problem.kind === "unresolved") {
+      return namesReady.value
+        ? `${problem.token}: no node has that name; searched as typed`
+        : `${problem.token}: not looked up, because the node list has not answered; searched as typed, so an empty result may come from that`;
+    }
+    return problem.kind === "empty-value" ? `${problem.token}: says nothing after the colon` : `${problem.token}: not a value this field knows`;
+  });
 }
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
 function toggleDecision(value: string): void {

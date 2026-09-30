@@ -502,13 +502,16 @@ export default {
         filtersHint: "Each choice becomes a token in the query field.",
         stateLabel: "Connection state",
         resolvingNames: "Reading the node, user and source lists so the names in the query resolve; the search runs when they arrive, or in {seconds} seconds without them.",
-        problemUnchecked: "{token} was not checked, because the node, user or source list has not loaded; searching for it as typed.",
+        problemUnchecked: "{token} was not looked up, because the node, user or source list has not loaded; it is searched as typed.",
         problemEmpty: "{token} has no value, so it was left out.",
         problemUnknown: "{token} names a value this console does not know, so it was left out.",
         problemUnresolved: "{token} does not name a known item; searching for it as typed.",
         ignoredInLog: "{tokens} apply to connections only; the raw log ignores them.",
         shown: "{shown} of {loaded} loaded connection, newest first | {shown} of {loaded} loaded connections, newest first",
         nothingMatchedTitle: "Nothing matched",
+        notLookedUpTitle: "A name was not looked up",
+        notLookedUp:
+          "{tokens} was searched as typed, because the node, user or source list has not loaded. The result may be empty for that reason, not because nothing matched. Search again once the lists load. | {tokens} were searched as typed, because the node, user or source list has not loaded. The result may be empty for that reason, not because nothing matched. Search again once the lists load.",
         nothingMatched: "The store holds records for these nodes, but none match this question.",
         nothingMatchedNewest:
           "The store holds records for these nodes, but none match this question in this window. The newest record started at {newest}.",

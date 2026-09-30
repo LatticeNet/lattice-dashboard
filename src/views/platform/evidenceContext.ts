@@ -30,7 +30,9 @@ import {
   evidenceCoverageRows,
   evidenceStoreProof,
   summarizeLastHour,
+  unresolvedEvidenceTokens,
   type CoverageRow,
+  type EvidenceQuery,
   type EvidenceTokenResolvers,
   type LastHourSummary,
   type StoreProof,
@@ -78,6 +80,12 @@ export interface EvidenceContext {
   namesReady: ComputedRef<boolean>;
   /** A list names resolve against has no data (failed, or not answered yet). */
   namesUnchecked: ComputedRef<boolean>;
+  /**
+   * Tokens of an applied query that were searched as typed because their
+   * list has not loaded. A page with an empty result says so instead of
+   * "nothing matched": the name may simply not have been looked up.
+   */
+  uncheckedNames: (query: EvidenceQuery) => string[];
   /** Bumped by the page's Refresh button, for lists that do not poll. */
   refreshTick: Ref<number>;
   refreshAll: () => void;
@@ -298,6 +306,8 @@ export function provideEvidenceContext(): EvidenceContext {
     resolvers,
     namesReady,
     namesUnchecked,
+    uncheckedNames: (query: EvidenceQuery) =>
+      namesUnchecked.value ? unresolvedEvidenceTokens(query, resolvers.value) : [],
     refreshTick,
     refreshAll,
   };
