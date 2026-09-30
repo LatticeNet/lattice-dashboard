@@ -1113,6 +1113,7 @@ export default {
       ruleEventsLabel: "Event types",
       availableEvents: "Available events",
       ruleEventsHint: "Use comma-separated event ids. * matches every event.",
+      nodeOfflineHint: "node.offline fires after ten minutes without a heartbeat, once per outage, and node.online follows only an outage that was sent. Tag a node no-offline-alert to keep it off both, for laptops and machines that sleep.",
       ruleChannelsLabel: "Channels",
       createChannelFirst: "Create a channel before adding a routing rule.",
       titleTemplateLabel: "Title template",
