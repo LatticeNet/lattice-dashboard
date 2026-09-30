@@ -1039,7 +1039,7 @@ function openTerminal(node: Node) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.nodes.title')" :description="$t('fleet.nodes.description')">
       <template #status>
         <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
@@ -1110,7 +1110,7 @@ function openTerminal(node: Node) {
         </div>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form class="grid gap-3 lg:grid-cols-6" @submit.prevent="enrollNode">
+        <form class="grid grid-cols-1 gap-3 lg:grid-cols-6" @submit.prevent="enrollNode">
           <div class="grid gap-2">
             <Label for="enroll-name">{{ $t('fleet.nodes.enroll.name') }}</Label>
             <Input id="enroll-name" v-model="enrollName" required />
@@ -1190,7 +1190,7 @@ function openTerminal(node: Node) {
               aria-hidden="true"
             />
           </button>
-          <div v-if="enrollAdvancedOpen" class="grid gap-2 border-t border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div v-if="enrollAdvancedOpen" class="grid grid-cols-1 min-w-0 gap-2 border-t border-border bg-muted/20 p-3 sm:grid-cols-2 lg:grid-cols-3">
             <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
               <Checkbox v-model="enrollAllowExec" class="mt-0.5" :disabled="enrollNoExec" />
               <span>
@@ -1227,7 +1227,7 @@ function openTerminal(node: Node) {
               </span>
             </label>
           </div>
-          <div v-if="enrollAdvancedOpen" class="grid gap-3 px-3 pb-3 md:grid-cols-4">
+          <div v-if="enrollAdvancedOpen" class="grid grid-cols-1 gap-3 px-3 pb-3 md:grid-cols-4">
             <div class="grid gap-1.5">
               <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
               <Select v-model="enrollTerminalTransport" :disabled="!enrollAllowTerminal">

@@ -548,7 +548,7 @@ watch(
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('platform.agentUpdates.title')"
       :description="$t('platform.agentUpdates.description')"
@@ -605,7 +605,7 @@ watch(
         <div v-if="releaseQuery.error.value" class="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm text-warning">
           {{ releaseQuery.error.value.message }}
         </div>
-        <div v-else class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div v-else class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div>
             <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('platform.agentUpdates.latestVersion') }}</p>
             <p class="mt-1 font-mono text-xl font-semibold">{{ releaseInfo?.latest_version || $t('platform.agentUpdates.latestUnknown') }}</p>
@@ -927,7 +927,7 @@ watch(
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 lg:grid-cols-3">
+          <div class="grid grid-cols-1 min-w-0 gap-3 lg:grid-cols-3">
             <div class="grid gap-2">
               <Label for="pol-node">{{ $t('platform.agentUpdates.nodeLabel') }}</Label>
               <Select v-model="form.node_id" :disabled="editing">
@@ -1029,7 +1029,7 @@ watch(
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="pol-install">{{ $t('platform.agentUpdates.installPathLabel') }}</Label>
               <Input id="pol-install" v-model="form.install_path" :placeholder="DEFAULT_INSTALL_PATH" />

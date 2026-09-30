@@ -704,7 +704,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
 </script>
 
 <template>
-  <div class="space-y-6 p-6">
+  <div class="space-y-6 p-4 sm:p-6">
     <PageHeader :title="$t('fleet.map.title')" :description="$t('fleet.map.description')">
       <template #actions>
         <Button
@@ -724,7 +724,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
       </template>
     </PageHeader>
 
-    <div class="grid gap-2 md:grid-cols-4">
+    <div class="grid grid-cols-1 gap-2 md:grid-cols-4">
       <div class="rounded-lg border border-border bg-card p-3">
         <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.coverage') }}</p>
         <div class="mt-1.5 flex items-end justify-between gap-3">
@@ -872,7 +872,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
       </div>
     </div>
 
-    <div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+    <div class="grid grid-cols-1 min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
       <Card class="self-start overflow-hidden">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
@@ -1220,7 +1220,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
       >
         <div class="overflow-hidden">
           <CardContent class="border-t border-border pt-4">
-            <form v-if="canAdminNodes" class="grid gap-4 lg:grid-cols-[minmax(220px,320px)_1fr_auto]" @submit.prevent="saveGeo">
+            <form v-if="canAdminNodes" class="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-[minmax(220px,320px)_1fr_auto]" @submit.prevent="saveGeo">
               <div class="grid gap-2">
                 <Label for="geo-node">{{ $t('fleet.map.editor.node') }}</Label>
                 <select
@@ -1242,7 +1242,7 @@ async function handleResolveResults(results: NodeGeoResolveResult[]) {
                 </div>
               </div>
 
-              <div class="grid gap-3 md:grid-cols-4">
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
                 <div class="grid gap-2">
                   <Label for="geo-lat">{{ $t('fleet.map.editor.latitude') }}</Label>
                   <Input id="geo-lat" v-model="lat" inputmode="decimal" placeholder="37.7749" />

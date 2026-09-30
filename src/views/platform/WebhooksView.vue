@@ -393,7 +393,7 @@ async function runTest(): Promise<void> {
 </script>
 
 <template>
-  <div class="space-y-6 p-6">
+  <div class="space-y-6 p-4 sm:p-6">
     <PageHeader
       :title="$t('platform.webhooks.title')"
       :description="$t('platform.webhooks.description')"
@@ -447,7 +447,7 @@ async function runTest(): Promise<void> {
       </Button>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <DataTable
         class="min-w-0"
         state-key="webhooks"

@@ -132,7 +132,7 @@ async function applyToggle() {
        rows does not earn 1600px: at that width the name sits at one edge and its
        control at the other with a thousand pixels of nothing between, and the
        eye has to cross the screen to connect them. -->
-  <div class="page-narrow space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('settings.capabilities.title')"
       :description="$t('settings.capabilities.description')"

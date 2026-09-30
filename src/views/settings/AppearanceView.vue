@@ -132,7 +132,7 @@ function onSegmentKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6" :style="swatchVars">
+  <div class="page-narrow p-4 sm:p-6 space-y-6" :style="swatchVars">
     <PageHeader
       :title="$t('appearance.title')"
       :description="$t('appearance.description')"
@@ -145,7 +145,7 @@ function onSegmentKeydown(event: KeyboardEvent): void {
       </template>
     </PageHeader>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
       <div class="space-y-6">
         <!-- Mode -->
         <Card>

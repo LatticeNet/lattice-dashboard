@@ -662,7 +662,7 @@ onMounted(() => {
           <ChevronRight class="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
           {{ $t('operations.terminal.limits.summary') }}
         </summary>
-        <div class="mt-2 grid gap-3 rounded-md border border-border bg-card p-3 sm:grid-cols-[1fr_auto]">
+        <div class="mt-2 grid grid-cols-1 gap-3 rounded-md border border-border bg-card p-3 sm:grid-cols-[1fr_auto]">
           <div class="space-y-1">
             <p class="font-mono text-foreground">{{ limitLines.join(' · ') }}</p>
             <p>{{ $t('operations.terminal.limits.source') }}</p>

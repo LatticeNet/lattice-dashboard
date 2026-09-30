@@ -334,7 +334,7 @@ const continentEntries = computed(() =>
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.geoRouting.title')"
       :description="$t('networking.geoRouting.description')"
@@ -511,7 +511,7 @@ const continentEntries = computed(() =>
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-name">{{ $t('networking.geoRouting.name') }}</Label>
               <Input id="geo-name" v-model="form.name" required placeholder="apex-edge" />
@@ -522,7 +522,7 @@ const continentEntries = computed(() =>
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-strategy">{{ $t('networking.geoRouting.strategy') }}</Label>
               <Select v-model="form.strategy">
@@ -631,7 +631,7 @@ const continentEntries = computed(() =>
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="geo-ddns">{{ $t('networking.geoRouting.ddnsProfileId') }}</Label>
               <Input id="geo-ddns" v-model="form.ddns_profile_id" :placeholder="$t('networking.geoRouting.ddnsProfilePlaceholder')" />

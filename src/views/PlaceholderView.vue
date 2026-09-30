@@ -33,7 +33,7 @@ const icon = computed(() => {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="title"
       :description="$t('placeholder.description', { scope: description })"

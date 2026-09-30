@@ -829,7 +829,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.policy.title')"
       :description="$t('networking.policy.description')"
@@ -1301,7 +1301,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
         </DialogHeader>
 
         <form class="space-y-5" @submit.prevent="submit">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="policy-node">{{ $t('networking.policy.targetNode') }}</Label>
               <Select v-model="form.target_node_id" :disabled="!!editingId">
@@ -1349,7 +1349,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </Button>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-3">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.policy.action') }}</Label>
                   <Select v-model="rule.action">
@@ -1383,7 +1383,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 </div>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.policy.ports') }}</Label>
                   <Input
@@ -1426,7 +1426,7 @@ const hasGraphEdges = computed(() => drawnEdges.value.length > 0);
                 <Input v-model="rule.remoteDomain" placeholder="api.example.com" />
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.policy.comment') }}</Label>
                   <Input v-model="rule.comment" :placeholder="$t('networking.policy.commentPlaceholder')" />

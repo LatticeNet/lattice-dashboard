@@ -356,7 +356,7 @@ function refreshAll() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('overview.title')" :description="$t('overview.description')">
       <template #status>
         <FreshnessLabel :last-updated="fleet.lastUpdated.value" />
@@ -392,7 +392,7 @@ function refreshAll() {
           :has-data="hasFleet"
           @retry="fleet.refresh"
         >
-          <div class="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
+          <div class="grid grid-cols-1 min-w-0 gap-5 lg:grid-cols-[1.5fr_1fr]">
             <div class="space-y-3">
               <div class="flex items-center gap-2 text-sm font-medium">
                 <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -481,7 +481,7 @@ function refreshAll() {
           :has-data="hasFleet"
           @retry="fleet.refresh"
         >
-          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
             <RouterLink
               :to="{ name: 'nodes' }"
               class="rounded-md border border-border p-3 transition-colors hover:bg-muted/40"
@@ -582,7 +582,7 @@ function refreshAll() {
                 <span class="h-px flex-1 bg-border"></span>
                 <span class="tabular">{{ $t('overview.fleetHealthyCount', { count: healthyNodes }) }}</span>
               </div>
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <NodeCard
                   v-for="node in attentionShown"
                   :key="node.id"

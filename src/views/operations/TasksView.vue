@@ -1066,7 +1066,7 @@ const taskMetrics = computed<Metric[]>(() => [
 </script>
 
 <template>
-  <div class="space-y-6 p-6">
+  <div class="space-y-6 p-4 sm:p-6">
     <PageHeader :title="$t('operations.tasks.title')" :description="$t('operations.tasks.description')">
       <template #status>
         <FreshnessLabel :last-updated="tasksQuery.lastUpdated.value || resultsQuery.lastUpdated.value" />
@@ -1107,7 +1107,7 @@ const taskMetrics = computed<Metric[]>(() => [
           <Ban class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <p>{{ $t('operations.tasks.taskExecutionDisabled') }}</p>
         </div>
-        <form class="grid gap-5 xl:grid-cols-[minmax(360px,0.9fr)_1fr]" @submit.prevent="createTask">
+        <form class="grid grid-cols-1 min-w-0 gap-5 xl:grid-cols-[minmax(360px,0.9fr)_1fr]" @submit.prevent="createTask">
           <div class="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -1129,7 +1129,7 @@ const taskMetrics = computed<Metric[]>(() => [
               </div>
             </div>
 
-            <div class="grid gap-2 md:grid-cols-[1fr_0.8fr_0.8fr]">
+            <div class="grid grid-cols-1 gap-2 md:grid-cols-[1fr_0.8fr_0.8fr]">
               <div class="relative">
                 <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
                 <Input v-model="targetSearch" class="pl-8" :placeholder="$t('operations.tasks.targetSearch')" />
@@ -1219,7 +1219,7 @@ const taskMetrics = computed<Metric[]>(() => [
           </div>
 
           <div class="space-y-3">
-            <div class="grid gap-3 sm:grid-cols-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div class="grid gap-2">
                 <Label>{{ $t('operations.tasks.interpreter') }}</Label>
                 <Select v-model="interpreter">
@@ -1517,7 +1517,7 @@ const taskMetrics = computed<Metric[]>(() => [
                   </div>
                 </div>
 
-                <div class="grid gap-2 text-sm md:grid-cols-4">
+                <div class="grid grid-cols-1 gap-2 text-sm md:grid-cols-4">
                   <div class="rounded-md border border-border bg-muted/20 p-2.5">
                     <p class="text-xs text-muted-foreground">{{ $t('operations.tasks.targetProgress') }}</p>
                     <p class="mt-1 font-medium">

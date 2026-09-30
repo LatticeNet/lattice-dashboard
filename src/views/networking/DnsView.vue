@@ -749,7 +749,7 @@ function closePlan(open: boolean) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.dns.title')"
       :description="$t('networking.dns.description')"
@@ -1040,7 +1040,7 @@ function closePlan(open: boolean) {
             </p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="dns-name">{{ $t('networking.dns.name') }}</Label>
               <Input id="dns-name" v-model="form.name" placeholder="edge-resolver" required />
@@ -1097,7 +1097,7 @@ function closePlan(open: boolean) {
               <div
                 v-for="(listener, lIndex) in form.listeners"
                 :key="lIndex"
-                class="grid items-end gap-2 sm:grid-cols-[1fr_1fr_auto]"
+                class="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1fr_1fr_auto]"
               >
                 <div class="grid gap-1">
                   <Label class="text-[10px] uppercase text-muted-foreground">{{ $t('networking.dns.listenerProtocol') }}</Label>
@@ -1141,7 +1141,7 @@ function closePlan(open: boolean) {
             </div>
           </div>
 
-          <div v-if="!isExternalForm" class="grid gap-3 sm:grid-cols-3">
+          <div v-if="!isExternalForm" class="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div class="grid gap-2">
               <Label for="dns-port">{{ $t('networking.dns.listenPort') }}</Label>
               <Input id="dns-port" v-model="form.listen_port" type="number" min="1" max="65535" />
@@ -1191,7 +1191,7 @@ function closePlan(open: boolean) {
                 </Button>
               </div>
 
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label class="text-xs">{{ $t('networking.dns.suffix') }}</Label>
                   <Input v-model="zone.suffix" placeholder="internal.example.com" />
@@ -1224,7 +1224,7 @@ function closePlan(open: boolean) {
                 <div
                   v-for="(record, rIndex) in zone.records"
                   :key="rIndex"
-                  class="grid items-end gap-2 sm:grid-cols-[1.3fr_0.8fr_1.5fr_0.7fr_auto]"
+                  class="grid grid-cols-1 items-end gap-2 sm:grid-cols-[1.3fr_0.8fr_1.5fr_0.7fr_auto]"
                 >
                   <div class="grid gap-1">
                     <Label class="text-[10px] uppercase text-muted-foreground">{{ $t('networking.dns.recordName') }}</Label>
@@ -1265,7 +1265,7 @@ function closePlan(open: boolean) {
             <div class="flex items-center justify-between">
               <Label>{{ $t('networking.dns.publicPublishing') }}</Label>
             </div>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label class="text-xs">{{ $t('networking.dns.hostname') }}</Label>
                 <Input v-model="form.hostname" placeholder="dns.example.com" />
@@ -1296,7 +1296,7 @@ function closePlan(open: boolean) {
                 <Checkbox v-model="form.publish_ipv6" :disabled="!form.hostname.trim()" /> {{ $t('networking.dns.publishIpv6') }}
               </label>
             </div>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label class="text-xs">{{ $t('networking.dns.cfApiToken') }}</Label>
                 <Input

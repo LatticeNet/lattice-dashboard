@@ -1164,7 +1164,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
 </script>
 
 <template>
-  <div class="p-3 sm:p-6 space-y-5">
+  <div class="p-4 sm:p-6 space-y-5">
     <PageHeader
       :title="$t('networking.sshGuard.title')"
       :description="$t('networking.sshGuard.description')"
@@ -1839,7 +1839,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
             <h3 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               {{ $t('networking.sshGuard.sheet.policy') }}
             </h3>
-            <div class="grid gap-4 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label for="sshguard-port">{{ $t('networking.sshGuard.fields.sshPort') }}</Label>
                 <Input id="sshguard-port" v-model="sshPortInput" type="number" min="1" max="65535" :placeholder="$t('networking.sshGuard.fields.sshPortKeep')" :disabled="!canAdmin || filing" />
@@ -1902,7 +1902,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               </p>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-3">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label class="flex items-start gap-3 text-sm">
                 <Checkbox class="mt-0.5" :model-value="form.keepLegacyPort" :disabled="!canAdmin || filing"
                   @update:model-value="(v) => (form.keepLegacyPort = v === true)" />
@@ -1939,7 +1939,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
             </summary>
             <div v-if="form.advanced" class="space-y-4 border-t border-border px-3 py-3">
               <p class="text-xs text-muted-foreground">{{ $t('networking.sshGuard.sheet.advancedHint') }}</p>
-              <div class="grid gap-4 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label :for="advancedId('gate')">{{ $t('networking.sshGuard.advancedFields.gatePorts') }}</Label>
                   <Input :id="advancedId('gate')" v-model="form.advanced.gatePorts" class="font-mono" :disabled="!canAdmin || filing"

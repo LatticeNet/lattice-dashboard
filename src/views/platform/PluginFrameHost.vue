@@ -436,7 +436,7 @@ onBeforeUnmount(() => {
           <Skeleton class="h-6 w-56 rounded-md" />
           <Skeleton class="h-4 w-80 rounded-md" />
         </div>
-        <div class="grid gap-3 sm:grid-cols-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Skeleton v-for="n in 3" :key="n" class="h-20 rounded-lg" />
         </div>
         <div class="space-y-2">

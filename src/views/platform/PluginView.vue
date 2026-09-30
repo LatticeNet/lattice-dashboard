@@ -359,7 +359,7 @@ function confirmAction() {
     :interfaces="plugin.interfaces ?? []"
   />
 
-  <div v-else class="p-6 space-y-6">
+  <div v-else class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="pageTitle" :section="sectionLabel" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
       <template v-if="hasSource" #status>
         <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" />

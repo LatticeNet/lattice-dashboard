@@ -303,7 +303,7 @@ async function revokeToken(token: StorageTokenView) {
         </CardDescription>
       </CardHeader>
       <CardContent class="space-y-4">
-        <form v-if="canAdmin" class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="submitBucket">
+        <form v-if="canAdmin" class="grid grid-cols-1 min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]" @submit.prevent="submitBucket">
           <div class="grid gap-2">
             <Label :for="`${kind}-bucket-name`">{{ $t('platform.storage.bucketName') }}</Label>
             <Input :id="`${kind}-bucket-name`" v-model="bucketName" required placeholder="default" />
@@ -392,7 +392,7 @@ async function revokeToken(token: StorageTokenView) {
           <CardDescription>{{ $t('platform.storage.bindingsDescription') }}</CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
-          <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitBinding">
+          <form class="grid grid-cols-1 gap-3 sm:grid-cols-2" @submit.prevent="submitBinding">
             <div class="grid gap-2">
               <Label :for="`${kind}-binding-bucket`">{{ $t('platform.storage.bindingBucket') }}</Label>
               <Input :id="`${kind}-binding-bucket`" v-model="bindingBucket" required placeholder="default" />
@@ -487,7 +487,7 @@ async function revokeToken(token: StorageTokenView) {
           </CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
-          <form class="grid gap-3 sm:grid-cols-2" @submit.prevent="submitToken">
+          <form class="grid grid-cols-1 gap-3 sm:grid-cols-2" @submit.prevent="submitToken">
             <div class="grid gap-2">
               <Label :for="`${kind}-token-name`">{{ $t('platform.storage.tokenName') }}</Label>
               <Input :id="`${kind}-token-name`" v-model="tokenName" required placeholder="deploy-ci" />

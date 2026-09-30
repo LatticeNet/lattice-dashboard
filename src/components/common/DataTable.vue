@@ -614,7 +614,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
     <!-- Toolbar -->
     <div v-if="showSearch || showExpression || $slots.toolbar" class="space-y-2">
       <div class="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-        <div class="grid min-w-0 flex-1 gap-2 md:grid-cols-2">
+        <div class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
           <div v-if="showSearch" class="relative min-w-[220px]">
             <Search
               class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"

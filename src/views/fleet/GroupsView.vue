@@ -381,7 +381,7 @@ watch(
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.groups.title')" :description="$t('fleet.groups.description')">
       <template #status>
         <FreshnessLabel :last-updated="groupsQuery.lastUpdated.value" />
@@ -423,7 +423,7 @@ watch(
         </EmptyState>
       </template>
 
-      <div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
+      <div class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-[20rem_1fr]">
         <!-- Left: group list -->
         <Card class="h-fit">
           <CardHeader>
@@ -490,7 +490,7 @@ watch(
           <CardContent class="space-y-6">
             <fieldset :disabled="!canAdmin" class="space-y-6">
               <!-- Identity -->
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label for="grp-name">{{ $t('fleet.groups.fieldName') }}</Label>
                   <Input id="grp-name" v-model="form.name" :placeholder="$t('fleet.groups.namePlaceholder')" />
@@ -660,7 +660,7 @@ watch(
                   <Badge variant="outline">{{ $t('fleet.groups.displayOnly') }}</Badge>
                 </div>
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.selectorHint') }}</p>
-                <div class="grid gap-3 sm:grid-cols-2">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div class="grid gap-1.5">
                     <Label class="text-xs">{{ $t('fleet.groups.matchTags') }}</Label>
                     <Input v-model="form.selTags" placeholder="edge, prod" />

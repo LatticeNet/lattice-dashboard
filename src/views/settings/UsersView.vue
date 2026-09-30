@@ -226,7 +226,7 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('settings.users.title')" :description="$t('settings.users.description')">
       <template #status>
         <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" />

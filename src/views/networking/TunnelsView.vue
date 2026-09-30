@@ -276,7 +276,7 @@ async function openPlan(tunnel: TunnelView) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('networking.tunnels.title')"
       :description="$t('networking.tunnels.description')"
@@ -459,7 +459,7 @@ async function openPlan(tunnel: TunnelView) {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="tun-name">{{ $t('networking.tunnels.name') }}</Label>
               <Input id="tun-name" v-model="form.name" required placeholder="edge-tunnel" />
@@ -507,7 +507,7 @@ async function openPlan(tunnel: TunnelView) {
               <div
                 v-for="(rule, index) in form.ingress"
                 :key="index"
-                class="grid gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_1fr_120px_auto]"
+                class="grid grid-cols-1 gap-2 rounded-md border border-border p-2 sm:grid-cols-[1fr_1fr_120px_auto]"
               >
                 <Input
                   v-model="rule.hostname"

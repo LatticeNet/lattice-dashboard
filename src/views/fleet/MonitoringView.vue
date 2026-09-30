@@ -570,7 +570,7 @@ async function deleteMonitor() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.monitoring.title')" :description="$t('fleet.monitoring.description')">
       <template #status>
         <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" />
@@ -592,14 +592,14 @@ async function deleteMonitor() {
       </template>
     </PageHeader>
 
-    <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <StatCard :label="$t('fleet.monitoring.stats.monitors')" :value="monitors.length" :icon="RadioTower" />
       <StatCard :label="$t('fleet.monitoring.stats.enabled')" :value="enabledCount" :icon="Activity" tone="success" />
       <StatCard :label="$t('fleet.monitoring.stats.selectedSuccess')" :value="selectedSuccessRate" :icon="CheckCircle2" :tone="failureCount > 0 ? 'warning' : 'success'" />
       <StatCard :label="$t('fleet.monitoring.stats.averageLatency')" :value="averageLatency" :icon="Gauge" />
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
@@ -762,7 +762,7 @@ async function deleteMonitor() {
               </p>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="monitor-type">{{ $t('fleet.monitoring.create.type') }}</Label>
                 <Select v-model="monitorType">
@@ -815,7 +815,7 @@ async function deleteMonitor() {
               </div>
             </div>
 
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="monitor-interval">{{ $t('fleet.monitoring.create.intervalSec') }}</Label>
                 <Input id="monitor-interval" v-model="intervalSec" type="number" min="5" max="86400" />

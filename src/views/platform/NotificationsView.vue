@@ -574,7 +574,7 @@ async function confirmDeleteRule(): Promise<void> {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('platform.notifications.title')" :description="$t('platform.notifications.description')">
       <template #status>
         <FreshnessLabel :last-updated="channelsQuery.lastUpdated.value" />
@@ -824,7 +824,7 @@ async function confirmDeleteRule(): Promise<void> {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitForm">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="ch-name">{{ $t('platform.notifications.nameLabel') }}</Label>
               <Input id="ch-name" v-model="formName" required placeholder="ops-alerts" />
@@ -910,7 +910,7 @@ async function confirmDeleteRule(): Promise<void> {
 
           <div class="space-y-3 rounded-md border border-dashed border-border p-3">
             <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.sendTest') }}</p>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="test-title">{{ $t('platform.notifications.testTitleLabel') }}</Label>
                 <Input id="test-title" v-model="formTitle" :placeholder="$t('platform.notifications.testTitlePlaceholder')" />
@@ -963,7 +963,7 @@ async function confirmDeleteRule(): Promise<void> {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="submitRule">
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="rule-name">{{ $t('platform.notifications.ruleNameLabel') }}</Label>
               <Input id="rule-name" v-model="ruleName" required placeholder="critical-monitor-alerts" />
@@ -985,7 +985,7 @@ async function confirmDeleteRule(): Promise<void> {
 
           <div class="space-y-2 rounded-md border border-border p-3">
             <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.ruleChannelsLabel') }}</p>
-            <div v-if="sortedChannels.length > 0" class="grid gap-2 sm:grid-cols-2">
+            <div v-if="sortedChannels.length > 0" class="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <label
                 v-for="channel in sortedChannels"
                 :key="channel.id"
@@ -1007,7 +1007,7 @@ async function confirmDeleteRule(): Promise<void> {
             <p v-else class="text-sm text-muted-foreground">{{ $t('platform.notifications.createChannelFirst') }}</p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="rule-title-template">{{ $t('platform.notifications.titleTemplateLabel') }}</Label>
               <Input id="rule-title-template" v-model="ruleTitleTemplate" placeholder="[{{event_type}}] {{title}}" />

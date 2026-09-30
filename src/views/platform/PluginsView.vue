@@ -260,7 +260,7 @@ async function runVerify() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('platform.plugins.title')"
       :description="$t('platform.plugins.description')"
@@ -526,7 +526,7 @@ async function runVerify() {
               <span class="text-sm font-medium">{{ verifyResult.manifest.name || verifyResult.manifest.id }}</span>
             </div>
 
-            <div class="grid gap-2 text-xs sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
               <div class="rounded-md border border-border p-2">
                 <p class="font-medium uppercase text-muted-foreground">{{ $t('platform.plugins.manifestId') }}</p>
                 <p class="mt-1 break-all font-mono">{{ verifyResult.manifest.id }}</p>

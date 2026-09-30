@@ -1302,7 +1302,7 @@ async function resolveGeo() {
 <template>
   <!-- Resolved node: full page with a sticky header over a 2-column body. -->
   <div v-if="node">
-    <div class="sticky top-0 z-20 border-b border-border bg-background px-6 py-4">
+    <div class="sticky top-0 z-20 border-b border-border bg-background px-4 py-4 sm:px-6">
       <PageHeader :title="node.name || node.id" :section="$t('nav.sections.fleet')">
         <template #status>
           <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" />
@@ -1391,7 +1391,7 @@ async function resolveGeo() {
       </div>
     </div>
 
-    <div class="grid gap-6 p-6 lg:grid-cols-3">
+    <div class="grid grid-cols-1 min-w-0 gap-6 p-4 sm:p-6 lg:grid-cols-3">
       <!-- ── Main column ──────────────────────────────────────────── -->
       <div class="space-y-6 lg:col-span-2">
         <!-- Capability enrolment. What is allowed to act on this node, as
@@ -1490,7 +1490,7 @@ async function resolveGeo() {
             <CardDescription>{{ $t('fleet.nodes.detail.identityDesc') }}</CardDescription>
           </CardHeader>
           <CardContent class="space-y-4">
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label for="identity-name">{{ $t('fleet.nodes.detail.identityName') }}</Label>
                 <Input id="identity-name" v-model="editName" :placeholder="node.id" />
@@ -1533,7 +1533,7 @@ async function resolveGeo() {
               />
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
             </div>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label for="identity-purity">{{ $t('fleet.nodes.detail.identityPurity') }}</Label>
                 <Input
@@ -1701,7 +1701,7 @@ async function resolveGeo() {
             <CardDescription>{{ $t('fleet.nodes.detail.networkDesc') }}</CardDescription>
           </CardHeader>
           <CardContent class="space-y-4">
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
                 <div class="min-w-0">
                   <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIp') }}</p>
@@ -1763,7 +1763,7 @@ async function resolveGeo() {
                   </SelectContent>
                 </Select>
               </div>
-              <div v-if="ipMode === 'static' || ipMode === 'auto'" class="grid gap-3 sm:grid-cols-2">
+              <div v-if="ipMode === 'static' || ipMode === 'auto'" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid gap-1.5">
                   <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV4') }}</Label>
                   <Input v-model="ipStaticV4" placeholder="203.0.113.10" class="font-mono" />
@@ -1838,7 +1838,7 @@ async function resolveGeo() {
                 </div>
               </div>
 
-              <div class="grid gap-2 text-xs md:grid-cols-3">
+              <div class="grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
                 <div class="rounded-md border border-border bg-background/60 p-2">
                   <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.runtimeNow') }}</p>
                   <p class="mt-1 text-foreground">{{ launchSnapshotSummary(runtimeLaunchSnapshot) }}</p>
@@ -1862,7 +1862,7 @@ async function resolveGeo() {
                 {{ launchDirty ? $t('fleet.nodes.detail.launch.draftChanges', { changes: launchDiffSummary }) : $t('fleet.nodes.detail.launch.noDraftChanges') }}
               </p>
 
-              <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div class="grid grid-cols-1 min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
                   <Checkbox v-model="launchAllowExec" class="mt-0.5" :disabled="launchNoExec" />
                   <span>
@@ -1900,7 +1900,7 @@ async function resolveGeo() {
                 </label>
               </div>
 
-              <div class="grid gap-3 md:grid-cols-3">
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div class="grid gap-1.5">
                   <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
                   <Select v-model="launchTerminalTransport" :disabled="!launchAllowTerminal">
@@ -2024,7 +2024,7 @@ async function resolveGeo() {
             <CardDescription>{{ $t('fleet.nodes.detail.hostFactsDesc') }}</CardDescription>
           </CardHeader>
           <CardContent>
-            <dl v-if="node.host_facts" class="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            <dl v-if="node.host_facts" class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
               <div>
                 <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factHostname') }}</dt>
                 <dd class="mt-0.5 truncate font-mono text-sm" :title="node.host_facts.hostname || $t('common.misc.none')">{{ node.host_facts.hostname || $t('common.misc.none') }}</dd>
@@ -2190,7 +2190,7 @@ async function resolveGeo() {
                 </span>
               </label>
               <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.updateRequiresExec') }}</p>
-              <div class="grid gap-2 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Button
                   variant="outline"
                   size="sm"
@@ -2649,7 +2649,7 @@ async function resolveGeo() {
   </div>
 
   <!-- Loading / error / not-found. -->
-  <div v-else class="space-y-4 p-6">
+  <div v-else class="space-y-4 p-4 sm:p-6">
     <Button variant="ghost" size="sm" @click="goBack">
       <ArrowLeft class="size-4" aria-hidden="true" />
       {{ $t('fleet.nodes.detail.backToNodes') }}

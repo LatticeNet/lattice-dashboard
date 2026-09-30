@@ -377,7 +377,7 @@ onMounted(loadPasskeys);
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('settings.security.title')"
       :description="$t('settings.security.description')"
@@ -406,7 +406,7 @@ onMounted(loadPasskeys);
       </div>
     </div>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
       <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
@@ -587,7 +587,7 @@ onMounted(loadPasskeys);
           </div>
 
           <div v-else class="space-y-5">
-            <div class="grid gap-4 lg:grid-cols-2">
+            <div class="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-2">
               <div class="space-y-2 rounded-md border border-border p-4">
                 <div class="flex items-center justify-between gap-3">
                   <Label>{{ $t("settings.security.totp.setupKey") }}</Label>
@@ -628,7 +628,7 @@ onMounted(loadPasskeys);
                   :label="$t('settings.security.totp.copyAll')"
                 />
               </div>
-              <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              <div class="grid grid-cols-1 min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <code
                   v-for="code in enrollment.recovery_codes"
                   :key="code"

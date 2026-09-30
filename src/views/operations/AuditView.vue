@@ -366,7 +366,7 @@ const auditMetrics = computed<Metric[]>(() => [
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('operations.audit.title')" :description="$t('operations.audit.description')">
       <template #status>
         <FreshnessLabel :last-updated="auditQuery.lastUpdated.value" />
@@ -418,7 +418,7 @@ const auditMetrics = computed<Metric[]>(() => [
             @keyup.enter="applyFilters"
           />
         </div>
-        <form class="grid gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="applyFilters">
+        <form class="grid grid-cols-1 min-w-0 gap-3 lg:grid-cols-[1fr_140px_150px_1fr_1fr_100px_auto_auto]" @submit.prevent="applyFilters">
           <div class="grid gap-2">
             <Label for="audit-action">{{ $t('operations.audit.action') }}</Label>
             <Input id="audit-action" v-model="action" placeholder="task.*" />

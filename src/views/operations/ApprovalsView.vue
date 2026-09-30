@@ -1275,7 +1275,7 @@ const approvalMetrics = computed<Metric[]>(() => [
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('operations.approvals.title')" :description="$t('operations.approvals.description')">
       <template #status>
         <FreshnessLabel :last-updated="approvalsQuery.lastUpdated.value" />
@@ -1298,7 +1298,7 @@ const approvalMetrics = computed<Metric[]>(() => [
       <span>{{ $t('operations.approvals.applyRequired') }}</span>
     </p>
 
-    <div class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
+    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
       <Card>
         <CardHeader>
           <CardTitle>{{ $t('operations.approvals.inbox') }}</CardTitle>

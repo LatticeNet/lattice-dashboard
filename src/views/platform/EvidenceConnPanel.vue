@@ -204,7 +204,7 @@ const title = computed(() =>
             <!-- Identity -->
             <section class="space-y-2">
               <h3 class="text-sm font-medium">{{ $t('platform.trace.detailIdentity') }}</h3>
-              <dl class="grid gap-2 text-xs sm:grid-cols-2">
+              <dl class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div>
                   <dt class="text-muted-foreground">{{ $t('platform.trace.colUser') }}</dt>
                   <dd :class="cn('mt-0.5', selectedUser?.monospace && 'font-mono')">
@@ -240,7 +240,7 @@ const title = computed(() =>
             <!-- Connection -->
             <section class="space-y-2">
               <h3 class="text-sm font-medium">{{ $t('platform.trace.detailConnection') }}</h3>
-              <dl class="grid gap-2 text-xs sm:grid-cols-2">
+              <dl class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div>
                   <dt class="text-muted-foreground">{{ $t('platform.trace.colDestination') }}</dt>
                   <dd class="mt-0.5 font-mono break-all">{{ destinationText(selected) || $t('common.misc.none') }}</dd>
@@ -278,7 +278,7 @@ const title = computed(() =>
             <!-- Lifecycle -->
             <section class="space-y-2">
               <h3 class="text-sm font-medium">{{ $t('platform.trace.detailLifecycle') }}</h3>
-              <dl class="grid gap-2 text-xs sm:grid-cols-2">
+              <dl class="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
                 <div>
                   <dt class="text-muted-foreground">{{ $t('platform.trace.colStarted') }}</dt>
                   <dd class="mt-0.5 font-mono tabular">{{ formatDateTime(selected.started_at) }}</dd>

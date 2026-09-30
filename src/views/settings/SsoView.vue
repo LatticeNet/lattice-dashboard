@@ -285,7 +285,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
 </script>
 
 <template>
-  <div class="page-narrow p-6 space-y-6">
+  <div class="page-narrow p-4 sm:p-6 space-y-6">
     <PageHeader
       :title="$t('settings.sso.title')"
       :description="$t('settings.sso.description')"
@@ -486,7 +486,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
 
         <div class="rounded-md border border-border p-4">
           <p class="text-sm font-medium">{{ $t("settings.sso.form.fieldGuideTitle") }}</p>
-          <dl class="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+          <dl class="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
             <div>
               <dt class="font-medium">{{ $t("settings.sso.form.displayName") }}</dt>
               <dd class="text-muted-foreground">{{ $t("settings.sso.form.displayNameGuide") }}</dd>
@@ -549,7 +549,7 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
             </p>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div class="grid gap-2">
               <Label for="oidc-client-id">{{ $t("settings.sso.form.clientId") }}</Label>
               <Input id="oidc-client-id" v-model="form.client_id" required placeholder="lattice-console" />

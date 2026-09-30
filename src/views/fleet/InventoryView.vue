@@ -1419,7 +1419,7 @@ async function runReminders(selectedOnly: boolean) {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('fleet.inventory.title')" :description="$t('fleet.inventory.description')">
       <template #status>
         <FreshnessLabel :last-updated="machinesQuery.lastUpdated.value" />
@@ -1461,7 +1461,7 @@ async function runReminders(selectedOnly: boolean) {
     <!-- min-w-0 on every card: a grid item's minimum is its content, so at 375
          the spend card's longest line pushed the page 20px wider than the
          viewport instead of truncating. -->
-    <div class="grid auto-rows-[8rem] gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
+    <div class="grid grid-cols-1 auto-rows-[8rem] gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
       <StatCard :label="$t('fleet.inventory.stats.machines')" :value="machines.length" :icon="Boxes"
         :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })"
         class="h-full py-0" hint-placement="bottom" />
@@ -1513,7 +1513,7 @@ async function runReminders(selectedOnly: boolean) {
         </CardTitle>
         <CardDescription>{{ $t('fleet.inventory.summary.description') }}</CardDescription>
       </CardHeader>
-      <CardContent class="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
+      <CardContent class="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-[1fr_1.2fr]">
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2">
           <div class="rounded-lg border border-border bg-muted/20 p-3">
             <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.billing.recurring') }}</p>
@@ -1706,7 +1706,7 @@ async function runReminders(selectedOnly: boolean) {
             </span>
           </div>
 
-          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div class="grid grid-cols-1 min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
             <div
               v-for="machine in group.machines"
               :key="machineKey(machine)"
@@ -1946,7 +1946,7 @@ async function runReminders(selectedOnly: boolean) {
             <h3 id="machine-section-machine" class="font-mono text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
               {{ $t('fleet.inventory.profile.sectionMachine') }}
             </h3>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid gap-2">
                 <Label for="machine-label">{{ $t('fleet.inventory.profile.label') }}</Label>
                 <Input id="machine-label" v-model="label" placeholder="gmami-jp1" />
@@ -2013,7 +2013,7 @@ async function runReminders(selectedOnly: boolean) {
               </summary>
               <div class="grid gap-3 border-t border-border px-3 py-3">
                 <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendorDirectoryHint') }}</p>
-                <div class="grid gap-3 sm:grid-cols-2">
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div class="grid gap-2">
                     <Label for="machine-vendor-url">{{ $t('fleet.inventory.profile.vendorUrl') }}</Label>
                     <Input id="machine-vendor-url" v-model="vendorUrl" placeholder="https://example.com" />
@@ -2057,7 +2057,7 @@ async function runReminders(selectedOnly: boolean) {
                 </button>
               </div>
             </div>
-            <div class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
               <div class="grid content-start gap-2">
                 <Label for="machine-price">{{ $t('fleet.inventory.profile.price') }}</Label>
                 <Input id="machine-price" v-model="priceMajor" type="number" min="0" step="0.01" placeholder="9.90" />
@@ -2087,7 +2087,7 @@ async function runReminders(selectedOnly: boolean) {
               {{ needsRenewal ? $t('fleet.inventory.profile.priceHint') : $t('fleet.inventory.profile.priceHintOneTime') }}
               <span v-if="draftMonthlyLabel" class="font-mono text-foreground tabular">{{ draftMonthlyLabel }}</span>
             </p>
-            <div v-if="needsRenewal" class="grid gap-3 sm:grid-cols-2">
+            <div v-if="needsRenewal" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid content-start gap-2">
                 <Label for="machine-cycle">{{ $t('fleet.inventory.profile.renewalCycle') }}</Label>
                 <Select v-model="renewalCycleSelect">
@@ -2268,7 +2268,7 @@ async function runReminders(selectedOnly: boolean) {
             </summary>
             <div class="grid gap-3 border-t border-border px-3 py-3">
               <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.writeOnlyUrlHint') }}</p>
-              <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div class="grid content-start gap-2">
                   <Label for="machine-console">{{ $t('fleet.inventory.profile.consoleUrl') }}</Label>
                   <Input id="machine-console" v-model="consoleUrl" :placeholder="$t('fleet.inventory.profile.consoleUrlPlaceholder')" />
@@ -2300,7 +2300,7 @@ async function runReminders(selectedOnly: boolean) {
         </form>
 
         <div v-else-if="editMachine" class="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-5 sm:px-6">
-          <dl class="grid gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+          <dl class="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.vendor') }}</dt>
               <dd>{{ editMachine.vendor || $t('common.misc.none') }}</dd>

@@ -391,7 +391,7 @@ async function submitPut() {
 </script>
 
 <template>
-  <div class="p-6 space-y-6">
+  <div class="p-4 sm:p-6 space-y-6">
     <PageHeader :title="$t('platform.store.title')" :description="$t('platform.store.description')">
       <template #actions>
         <Button
@@ -436,7 +436,7 @@ async function submitPut() {
       </Button>
     </div>
 
-    <div v-if="canRead" class="grid gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start">
+    <div v-if="canRead" class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start">
       <!-- ── Buckets that actually exist ──────────────────────────────────── -->
       <Card>
         <CardHeader>
