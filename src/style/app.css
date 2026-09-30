@@ -692,6 +692,10 @@
 
   @media (width < 48rem) {
     box-shadow: inset -1px 0 0 var(--border);
+    /* Without a floor the table's auto layout squeezed the column to 109 px
+       at 375 and names broke at every hyphen over three lines. The floor is
+       the cap itself on a phone; DataTable truncates and titles the cell. */
+    min-width: min(var(--pin-min, 10rem), 38vw);
   }
 }
 

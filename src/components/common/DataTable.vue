@@ -49,6 +49,14 @@ export interface DataTableColumn<Row> {
    * width (Notifications).
    */
   pin?: "end";
+  /**
+   * On a phone the pinned first column is one line, cut with an ellipsis,
+   * and the cell's title carries the whole value: a name broken at every
+   * hyphen over three lines read worse than a cut name. A value whose every
+   * part matters (a timestamp, whose time is at the end) sets this to wrap
+   * instead.
+   */
+  wrap?: boolean;
 }
 
 type SortDir = "asc" | "desc" | null;
@@ -304,7 +312,9 @@ const pinsEnd = computed(() => props.narrowLayout === "scroll" && props.columns.
 const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--background))]";
 
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
-  if (pinned(index)) return cn("pin-start [--pin-max:38vw]", props.selectable && "[--pin-left:2.5rem]");
+  if (pinned(index)) {
+    return cn("pin-start [--pin-max:38vw]", !column.wrap && "max-md:truncate", props.selectable && "[--pin-left:2.5rem]");
+  }
   if (pinnedEnd(column)) return cn("pin-end", props.rowTo && "[--pin-right:2rem]");
   return undefined;
 }
@@ -887,6 +897,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 v-for="(column, index) in columns"
                 :key="column.key"
                 :class="cn('px-3 py-3 align-middle', alignClass(column.align), cellPinClass(column, index), column.class)"
+                :title="pinned(index) && !column.wrap ? textOf(rawValue(row, column)) || undefined : undefined"
               >
                 <slot
                   :name="`cell-${column.key}`"

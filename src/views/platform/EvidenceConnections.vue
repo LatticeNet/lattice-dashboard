@@ -229,7 +229,7 @@ watch(records, () => {
 const coverage = computed(() => traceBytesCoverage(shownRows.value));
 
 const columns = computed<DataTableColumn<ConnRecord>[]>(() => [
-  { key: "started_at", label: t("platform.trace.colStarted"), sortable: true, class: "md:whitespace-nowrap" },
+  { key: "started_at", label: t("platform.trace.colStarted"), sortable: true, class: "md:whitespace-nowrap", wrap: true },
   { key: "user", label: t("platform.trace.colUser"), sortable: true, value: (row) => rowView(row).user.primary },
   { key: "node_id", label: t("platform.trace.colNode"), sortable: true, value: (row) => rowView(row).node },
   { key: "line_uuid", label: t("platform.trace.colLine"), sortable: true },
