@@ -116,6 +116,7 @@ test("the contract carries every group the plugins were re-deriving", () => {
     spacing: ["--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6", "--space-7"],
     type: ["--font-mono", "--text-body", "--text-mono"],
     ink: ["--success-text", "--warning-text", "--info-text"],
+    charts: ["--chart-1", "--chart-2", "--chart-3", "--chart-4", "--chart-5"],
     elevation: ["--shadow-overlay", "--shadow-raised"],
     motion: ["--duration-fast", "--duration-base", "--ease-out"],
   };

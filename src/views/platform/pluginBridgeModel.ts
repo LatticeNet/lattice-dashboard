@@ -1,3 +1,5 @@
+import { PLUGIN_VIEW_ROUTE_NAME } from "@/router/navigationState";
+
 export interface BridgeInterfaceMethod {
   name: string;
   effect: "read" | "write" | "plan" | string;
@@ -22,6 +24,8 @@ export type BridgeHostMessage =
       colorScheme: string;
       designTokens: Record<string, string>;
       interfaces: Array<{ service: string; methods: string[] }>;
+      /** The console route's query as the plugin may read it; {} when there is none. */
+      pageState: PluginPageState;
     }
   | { type: "lattice.host.result"; nonce: string; id: string; result: unknown }
   | { type: "lattice.host.error"; nonce: string; id?: string; code: string; message: string }
@@ -97,6 +101,198 @@ export function classifyPluginClipboardRequest(
   return { kind: "ok", request: { id, text: message.text } };
 }
 
+/**
+ * Plugin page state in the console address (CONTRACTS, bridge v1 additive).
+ *
+ * A plugin page's own state (layer, open record, grouping, search, period) has
+ * to survive a reload and travel in a pasted link. The frame URL cannot carry
+ * it: the host builds a content-addressed frame URL with no query, and
+ * resolvePluginFrameURL refuses one. So the console route's query carries it,
+ * the host hands it to the plugin in `lattice.host.init`, and the plugin sends
+ * its full state back in `lattice.plugin.state`, which the host writes into
+ * the query with a history replace. The rules are identical on both sides.
+ */
+export type PluginPageState = Record<string, string>;
+
+export const PAGE_STATE_MAX_KEYS = 16;
+export const PAGE_STATE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,23}$/;
+export const PAGE_STATE_MAX_VALUE_LENGTH = 256;
+
+/**
+ * Query keys the console itself reads: the login redirect, the SSO callback,
+ * the TOTP challenge, the MFA gate. They never cross the bridge. Init leaves
+ * them out of pageState, and a plugin state naming one is dropped whole, so a
+ * plugin can neither read a code or token that happens to be in the address
+ * nor plant one for the console to act on.
+ */
+export const PAGE_STATE_RESERVED_KEYS: readonly string[] = Object.freeze([
+  "redirect",
+  "next",
+  "code",
+  "state",
+  "token",
+  "sso_error",
+  "totp_challenge",
+  "mfa",
+]);
+
+function isPageStateKey(key: string): boolean {
+  return PAGE_STATE_KEY_PATTERN.test(key) && !PAGE_STATE_RESERVED_KEYS.includes(key);
+}
+
+function isPageStateValue(value: unknown): value is string {
+  return typeof value === "string" && value.length <= PAGE_STATE_MAX_VALUE_LENGTH;
+}
+
+/**
+ * A plain object as structured clone delivers one: its prototype is
+ * Object.prototype or null. A Map, Set, Date or class instance survives the
+ * clone with its own prototype and no own enumerable keys, so without this it
+ * would read as an empty state and clear the query.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/**
+ * The state a plugin sent, or null when anything about it breaks the rules:
+ * not a plain object, more than 16 keys, a key outside the pattern or on the
+ * reserved list, or a value that is not a string of at most 256 characters.
+ * One bad entry drops the whole message, so the address never holds half of
+ * what the plugin meant.
+ *
+ * One pass, stopping at the 17th key or the first bad entry: a state with a
+ * million keys costs no more to refuse than one with seventeen. (The browser
+ * has already paid for cloning it; the rate limit bounds how often.)
+ */
+export function validatePluginPageState(value: unknown): PluginPageState | null {
+  if (!isPlainObject(value)) return null;
+  const state: PluginPageState = {};
+  let count = 0;
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+    count += 1;
+    if (count > PAGE_STATE_MAX_KEYS) return null;
+    if (!isPageStateKey(key)) return null;
+    const entry = value[key];
+    if (!isPageStateValue(entry)) return null;
+    state[key] = entry;
+  }
+  return state;
+}
+
+/**
+ * The console route's query as the plugin may see it in `lattice.host.init`.
+ * Here the rules filter rather than reject: the address is the operator's and
+ * may hold anything a hand or an old link put there, so entries that break
+ * the rules are left out one by one (a repeated key, which the router hands
+ * over as an array, among them) and at most 16 are kept, in query order.
+ * Reserved console keys are always left out.
+ */
+export function pluginPageStateFromQuery(query: Record<string, unknown>): PluginPageState {
+  const state: PluginPageState = {};
+  let kept = 0;
+  for (const [key, entry] of Object.entries(query)) {
+    if (kept >= PAGE_STATE_MAX_KEYS) break;
+    if (!isPageStateKey(key)) continue;
+    if (!isPageStateValue(entry)) continue;
+    state[key] = entry;
+    kept += 1;
+  }
+  return state;
+}
+
+/** The parts of the console's current route a page-state write touches. */
+export interface PluginRouteLocation {
+  path: string;
+  query: Record<string, unknown>;
+  hash?: string;
+}
+
+/**
+ * Where a plugin's page state takes the console: the same path and hash with
+ * the state as the whole query, or null when the query already says exactly
+ * that. The path never changes, so the view is not remounted and the frame is
+ * not reloaded; the caller applies it with a history replace, not a push.
+ *
+ * The state replaces the whole query. That is safe only because no console
+ * key lives on a plugin route today (the reserved keys belong to login, SSO
+ * and the MFA gate, which never render a plugin). Keep it that way: a console
+ * parameter added to plugin routes would be erased by the plugin's next write.
+ */
+export function pluginStateLocation(
+  current: PluginRouteLocation,
+  state: PluginPageState,
+): { path: string; query: PluginPageState; hash: string } | null {
+  if (sameQuery(current.query, state)) return null;
+  return { path: current.path, query: { ...state }, hash: current.hash ?? "" };
+}
+
+/**
+ * Two route queries say the same thing: the same keys with the same values,
+ * in any order. A repeated key (an array) equals only the same array.
+ */
+function sameQuery(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((key) =>
+    Object.prototype.hasOwnProperty.call(b, key) && JSON.stringify(a[key]) === JSON.stringify(b[key]));
+}
+
+/**
+ * Whether a state held during a navigation may still be written when that
+ * navigation ends.
+ *
+ * The plugin is not told about a query change it did not make (init is sent
+ * once), so its held state knows nothing of one. If the operator changed the
+ * query on this same page while the state was held, writing it would undo
+ * their change. The held state applies only when the query is still what it
+ * was when the state was held (the navigation was aborted or went elsewhere),
+ * or is exactly what the plugin's own last write asked for (the pending
+ * navigation was that write).
+ */
+export function heldPluginStateStillApplies(input: {
+  currentQuery: Record<string, unknown>;
+  queryWhenHeld: Record<string, unknown>;
+  ownWrite: PluginPageState | null;
+}): boolean {
+  if (sameQuery(input.currentQuery, input.queryWhenHeld)) return true;
+  return input.ownWrite !== null && sameQuery(input.currentQuery, input.ownWrite);
+}
+
+/** What the frame host does with a page state the bridge accepted. */
+export type PluginStateWrite =
+  | { kind: "replace"; location: { path: string; query: PluginPageState; hash: string } }
+  | { kind: "hold" }
+  | { kind: "skip" };
+
+/**
+ * Decide a page-state write against the console's current route.
+ *
+ * While any navigation is pending the write is held, never applied: a history
+ * replace started then would cancel it, and the operator's click would be
+ * lost. The route the operator is still looking at is not where they are
+ * going, so nothing about it can make the write safe. The caller keeps the
+ * newest held state and asks again when the navigation ends.
+ *
+ * Otherwise the write applies only on the plugin route, on the path the frame
+ * was mounted for, and only when it changes the query.
+ */
+export function planPluginStateWrite(input: {
+  current: PluginRouteLocation & { name: unknown };
+  framePath: string;
+  navigationPending: boolean;
+  state: PluginPageState;
+}): PluginStateWrite {
+  if (input.navigationPending) return { kind: "hold" };
+  const { current } = input;
+  if (current.name !== PLUGIN_VIEW_ROUTE_NAME || current.path !== input.framePath) return { kind: "skip" };
+  const location = pluginStateLocation(current, input.state);
+  return location ? { kind: "replace", location } : { kind: "skip" };
+}
+
 export interface BridgeMessageEvent {
   source: unknown;
   data: unknown;
@@ -118,6 +314,18 @@ interface PluginBridgeOptions {
   resize?: (height: number) => void;
   ready?: () => void;
   /**
+   * The current console route's query, read when the plugin says ready so a
+   * reload or a pasted link hands the plugin the state it left there. The
+   * session filters it by the page-state rules before it leaves the host.
+   */
+  pageState?: () => Record<string, unknown>;
+  /**
+   * Write a validated page state into the current route's query. The host
+   * component owns the router; the session owns whether the state is valid,
+   * within budget, and from a plugin that has completed its handshake.
+   */
+  state?: (state: PluginPageState) => void;
+  /**
    * Put `text` on the operator's clipboard, resolving true only when it
    * actually landed. The host component owns this because it is the only
    * layer allowed to touch the DOM; the session owns whether it may be
@@ -132,6 +340,7 @@ interface PluginBridgeOptions {
   maxCallsPerMinute?: number;
   maxResizesPerMinute?: number;
   maxClipboardPerMinute?: number;
+  maxStatesPerMinute?: number;
   timeoutMs?: number;
   now?: () => number;
 }
@@ -197,13 +406,15 @@ export function interfaceMethodScopes(contract: BridgeInterfaceContract | undefi
 export class PluginBridgeSession {
   private readonly options: Required<Pick<PluginBridgeOptions,
     "maxPayloadBytes" | "maxResultBytes" | "maxClipboardBytes" | "maxInflight" | "maxCallsPerMinute"
-    | "maxResizesPerMinute" | "maxClipboardPerMinute" | "timeoutMs" | "now"
+    | "maxResizesPerMinute" | "maxClipboardPerMinute" | "maxStatesPerMinute" | "timeoutMs" | "now"
   >> & PluginBridgeOptions;
 
   private readonly pending = new Map<string, PendingCall>();
   private callTimes: number[] = [];
   private resizeTimes: number[] = [];
   private clipboardTimes: number[] = [];
+  private stateTimes: number[] = [];
+  private readySeen = false;
   private disposed = false;
 
   constructor(options: PluginBridgeOptions) {
@@ -218,6 +429,10 @@ export class PluginBridgeSession {
       // is far below the call budget. High enough that no real operator meets
       // it, low enough that a frame cannot use the clipboard as a channel.
       maxClipboardPerMinute: 30,
+      // A plugin sends its full state debounced by about 250 ms, so a person
+      // clicking through a page stays far under this. Past it the address
+      // simply stops following until the minute rolls over.
+      maxStatesPerMinute: 60,
       timeoutMs: 15_000,
       now: () => Date.now(),
       ...options,
@@ -245,7 +460,9 @@ export class PluginBridgeSession {
             service: contract.service,
             methods: contract.methods.map((method) => typeof method === "string" ? method : method.name),
           })),
+          pageState: pluginPageStateFromQuery(this.options.pageState?.() ?? {}),
         });
+        this.readySeen = true;
         this.options.ready?.();
         return;
       case "lattice.plugin.call":
@@ -263,6 +480,17 @@ export class PluginBridgeSession {
       case "lattice.plugin.clipboard":
         await this.handleClipboard(message);
         return;
+      case "lattice.plugin.state": {
+        // Before init the plugin has not seen the state in the address, so
+        // anything it sends would be its defaults overwriting a pasted link.
+        if (!this.readySeen) return;
+        // Charged before validation, as resize is: a stream of malformed
+        // states must not be free.
+        if (!this.consumeStateBudget()) return;
+        const state = validatePluginPageState(message.state);
+        if (state) this.options.state?.(state);
+        return;
+      }
       default:
         return;
     }
@@ -442,6 +670,16 @@ export class PluginBridgeSession {
     this.resizeTimes = this.resizeTimes.filter((time) => now - time < 60_000);
     if (this.resizeTimes.length >= this.options.maxResizesPerMinute) return false;
     this.resizeTimes.push(now);
+    return true;
+  }
+
+  // Page state is advisory like resize: over the budget it is dropped, and the
+  // plugin's next state within the minute puts the address right again.
+  private consumeStateBudget(): boolean {
+    const now = this.options.now();
+    this.stateTimes = this.stateTimes.filter((time) => now - time < 60_000);
+    if (this.stateTimes.length >= this.options.maxStatesPerMinute) return false;
+    this.stateTimes.push(now);
     return true;
   }
 

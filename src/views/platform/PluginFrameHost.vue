@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
@@ -8,7 +8,14 @@ import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PluginBridgeSession, resolvePluginFrameURL, type BridgeHostMessage } from "./pluginBridgeModel";
+import {
+  PluginBridgeSession,
+  heldPluginStateStillApplies,
+  planPluginStateWrite,
+  resolvePluginFrameURL,
+  type BridgeHostMessage,
+  type PluginPageState,
+} from "./pluginBridgeModel";
 import {
   PluginFrameLifecycle,
   pluginFrameIsBusy,
@@ -17,6 +24,7 @@ import {
 import { classifyPluginNavigateMessage, isExpectedPluginFrameOrigin } from "./pluginNavigationModel";
 import { PLUGIN_TOKEN_NAMES } from "./pluginTokenContract";
 import { claimViewportPane } from "@/layout/viewportPane";
+import { pendingNavigationOf } from "@/router/navigationState";
 import { copyForFrame as hostCopy } from "./pluginClipboard";
 
 const props = defineProps<{
@@ -33,7 +41,75 @@ const HANDSHAKE_TIMEOUT_MS = 8_000;
 
 const lifecycle = new PluginFrameLifecycle({ createNonce });
 const router = useRouter();
+const route = useRoute();
 const { t } = useI18n();
+
+/**
+ * The console path this frame was mounted for. AppLayout keys the view by
+ * route.path, so a path change remounts the view and with it this frame; a
+ * query change does not, which is what lets the plugin's page state live in
+ * the query without reloading the frame or re-sending init.
+ */
+const framePath = route.path;
+
+/**
+ * The router's pending-navigation tracker (installed in router/index.ts).
+ * Without one the host cannot tell whether a replace would cancel the
+ * operator's navigation, so it holds every write and applies none.
+ */
+const navigation = pendingNavigationOf(router);
+
+/**
+ * The newest state that arrived while a navigation was pending, with the
+ * query the console had when it was held.
+ */
+let held: { state: PluginPageState; query: Record<string, unknown> } | null = null;
+
+/** The query the plugin's latest write asked for. */
+let ownWrite: PluginPageState | null = null;
+
+/**
+ * Put the plugin's page state in the address: history replace, same path,
+ * query only. While a navigation is pending the newest state is held and
+ * tried again when it ends; on another page, or another route, it is dropped
+ * rather than applied there.
+ */
+function writePageState(state: PluginPageState) {
+  const current = router.currentRoute.value;
+  const plan = planPluginStateWrite({
+    current: { name: current.name, path: current.path, query: current.query, hash: current.hash },
+    framePath,
+    navigationPending: navigation?.isPending() ?? true,
+    state,
+  });
+  held = plan.kind === "hold" ? { state, query: current.query } : null;
+  if (plan.kind === "replace") {
+    const next = plan.location;
+    ownWrite = next.query;
+    void router.replace(next);
+  }
+}
+
+// Retried outside the router's own hook loop, against the route the
+// navigation left behind: a click that landed elsewhere drops it, a click
+// that was aborted lets it through, and an operator's change to this page's
+// query clears it rather than being overwritten by it.
+const stopHeldStateRetry = navigation?.onSettled(() => {
+  if (!held) return;
+  void Promise.resolve().then(() => {
+    if (!held) return;
+    const stillApplies = heldPluginStateStillApplies({
+      currentQuery: router.currentRoute.value.query,
+      queryWhenHeld: held.query,
+      ownWrite,
+    });
+    if (!stillApplies) {
+      held = null;
+      return;
+    }
+    writePageState(held.state);
+  });
+});
 
 const frame = ref<HTMLIFrameElement | null>(null);
 const loaded = ref(false);
@@ -223,6 +299,8 @@ function armSession() {
     post: postToFrame,
     ready: markReady,
     clipboard: copyForFrame,
+    pageState: () => route.query,
+    state: writePageState,
   });
 }
 
@@ -307,6 +385,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopHeldStateRetry?.();
+  held = null;
   releaseViewportPane?.();
   releaseViewportPane = undefined;
   window.removeEventListener("message", onMessage);

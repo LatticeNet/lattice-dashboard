@@ -63,6 +63,15 @@ export const PLUGIN_TOKEN_NAMES = [
   "--warning-text",
   "--info-text",
 
+  // Categorical chart colours, in order. A plugin that stacks or colours series
+  // uses these rather than tints of --primary, which cannot be told apart past
+  // three; the semantic tones above stay reserved for meaning.
+  "--chart-1",
+  "--chart-2",
+  "--chart-3",
+  "--chart-4",
+  "--chart-5",
+
   // Corner radius. Four steps and the shadcn alias; the step decides whether a
   // dense grid reads as an operator tool.
   "--radius-sm",
