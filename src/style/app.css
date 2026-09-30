@@ -444,6 +444,7 @@
     animation: none;
   }
 
+
   .list-move,
   .list-enter-active,
   .list-leave-active,
@@ -472,18 +473,29 @@
    on the wall layout). Applies to native buttons/links/role=button and the
    shadcn icon-size button (data-slot=button, size-icon variant).
    ------------------------------------------------------------------------- */
+/* The hit-area overlay needs a positioned control. That default lives in the
+   base layer, under every utility, so a control that positions itself keeps
+   its position: a dialog's absolute close button, a clear button inside an
+   input. Unlayered, this rule beat `absolute` on touch devices and dropped
+   the side sheet's close button below the fold, where a full-screen sheet
+   had no other way out. */
+@layer base {
+  @media (pointer: coarse) {
+    button,
+    a[role="button"],
+    [role="button"],
+    [data-slot="button"],
+    .touch-target {
+      position: relative;
+    }
+  }
+}
+
 @media (pointer: coarse) {
   /* Hover-revealed row actions have no trigger on a touch panel. Anything that
      hides itself until hover shows itself unconditionally here. */
   .group\/row .opacity-0 {
     opacity: 1;
-  }
-
-  button,
-  a[role="button"],
-  [role="button"],
-  [data-slot="button"] {
-    position: relative;
   }
 
   /* Only enlarge genuinely small controls; full-width / text buttons already
@@ -502,9 +514,6 @@
 
   /* Invisible centered hit-area pad for icon-only buttons that keep their
      small visual box (e.g. inline size-7 controls inside dense rows). */
-  .touch-target {
-    position: relative;
-  }
   .touch-target::after {
     content: "";
     position: absolute;
