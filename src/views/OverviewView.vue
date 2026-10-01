@@ -328,8 +328,11 @@ const changesState = computed(() => stateOf(can.audit, changes));
               {{ $t('overview.due.all') }}
             </RouterLink>
           </header>
-          <div v-if="expiringState !== 'ready'" class="px-4 py-6 text-sm text-muted-foreground">
-            {{ $t(`overview.read.${expiringState}Long`) }}
+          <div v-if="expiringState !== 'ready'" class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-6 text-sm text-muted-foreground">
+            <span class="min-w-0 break-words">{{ $t(`overview.read.${expiringState}Long`, { reason: proofReason(expiring.error.value) }) }}</span>
+            <Button v-if="expiringState === 'failed'" variant="outline" size="sm" @click="expiring.refresh()">
+              {{ $t('common.actions.retry') }}
+            </Button>
           </div>
           <template v-else>
             <UpcomingList v-if="week.shown.length" :groups="dueGroups" :today="today" />
@@ -389,15 +392,18 @@ const changesState = computed(() => stateOf(can.audit, changes));
             {{ $t('common.actions.viewAll') }}
           </RouterLink>
         </header>
-        <p v-if="changesState !== 'ready'" class="px-4 py-5 text-sm text-muted-foreground">
-          {{ $t(`overview.read.${changesState}Long`) }}
-        </p>
+        <div v-if="changesState !== 'ready'" class="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-5 text-sm text-muted-foreground">
+          <span class="min-w-0 break-words">{{ $t(`overview.read.${changesState}Long`, { reason: proofReason(changes.error.value) }) }}</span>
+          <Button v-if="changesState === 'failed'" variant="outline" size="sm" @click="changes.refresh()">
+            {{ $t('common.actions.retry') }}
+          </Button>
+        </div>
         <p v-else-if="!changes.data.value?.length" class="px-4 py-5 text-sm text-muted-foreground">{{ $t('overview.changes.empty') }}</p>
         <ul v-else class="divide-y divide-border">
           <li v-for="event in changes.data.value" :key="event.id">
             <RouterLink
               :to="{ name: 'audit', query: { open: event.id } }"
-              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-4 py-2 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[14rem_minmax(0,1fr)_8rem_auto]"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-4 py-2 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[14rem_minmax(0,1fr)_8rem_8rem]"
             >
               <span class="truncate font-mono text-xs" :title="event.action">{{ event.action }}</span>
               <span class="col-start-1 row-start-2 flex min-w-0 gap-2 text-xs text-muted-foreground sm:col-start-2 sm:row-start-1">

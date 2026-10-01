@@ -364,7 +364,7 @@ export default {
       forbidden: "no access",
       unsupported: "server too old",
       readingLong: "Reading...",
-      failedLong: "Not read. The proof line above says why.",
+      failedLong: "Not read: {reason}",
       forbiddenLong: "Your session has no scope for this list.",
       unsupportedLong: "This server does not have this list yet.",
     },

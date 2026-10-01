@@ -357,7 +357,7 @@ export default {
       forbidden: "无权限",
       unsupported: "服务端版本过旧",
       readingLong: "读取中...",
-      failedLong: "未读取，原因见上方状态行。",
+      failedLong: "未读取：{reason}",
       forbiddenLong: "当前会话没有查看这份列表的权限。",
       unsupportedLong: "当前服务端还没有这份列表。",
     },
