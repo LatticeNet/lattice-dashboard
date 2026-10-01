@@ -13,6 +13,7 @@ import {
   RadioTower,
   RefreshCw,
   Trash2,
+  X,
 } from "lucide-vue-next";
 import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
 import {
@@ -42,6 +43,7 @@ import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { bindQueryParam } from "@/composables/useQueryParam";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import TrendChart from "@/components/common/TrendChart.vue";
@@ -100,6 +102,16 @@ watch(
   { immediate: true },
 );
 const selectedMonitorId = computed(() => sheet.openId.value ?? "");
+
+/**
+ * ?node=<id> (the node page's Monitoring link) lists the monitors that check
+ * from that node: the ones assigned to every node or to it by name. A
+ * certificate watch runs on the control plane, so it never matches.
+ */
+const nodeFilter = bindQueryParam(owned, "node", {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value: string) => value || undefined,
+});
 const createOpen = ref(false);
 const createPending = ref(false);
 const deletePending = ref(false);
@@ -247,19 +259,18 @@ function togglePause() {
   }
 }
 
-// Deep-link: /monitoring?node=<id> seeds the results-log node filter once that
-// node appears in the loaded results (e.g. from a node's "Monitoring" cross-link).
-// Only seeds while the filter is still on its "all" default so it never clobbers
-// a manual choice, and seeds at most once per id.
+// With ?node=<id>, a monitor opened from the list starts its results log on
+// that node once the node appears in the results. Only while the filter is
+// still on "all", so it never clobbers a manual choice, and once per monitor.
 const seededLogNode = ref<string | undefined>(undefined);
 watch(
-  [logNodeOptions, () => route.query.node],
-  ([opts, nodeQ]) => {
-    const id = typeof nodeQ === "string" ? nodeQ : undefined;
-    if (!id || id === seededLogNode.value) return;
+  [logNodeOptions, nodeFilter, selectedMonitorId],
+  ([opts, id, monitorId]) => {
+    const key = `${monitorId}:${id}`;
+    if (!id || !monitorId || key === seededLogNode.value) return;
     if (logNode.value === "all" && opts.includes(id)) {
       logNode.value = id;
-      seededLogNode.value = id;
+      seededLogNode.value = key;
     }
   },
   { immediate: true },
@@ -308,7 +319,14 @@ function formatTrendLatency(n: number): string {
   return String(Math.round(n));
 }
 
+// Another monitor opens with nothing of the last one's: no results, no
+// failure line, no paused snapshot and no node filter it may not have.
 watch(selectedMonitorId, (id) => {
+  resultsQuery.data.value = undefined;
+  resultsQuery.error.value = undefined;
+  paused.value = false;
+  frozen.value = null;
+  logNode.value = "all";
   if (id) void resultsQuery.refresh();
 });
 
@@ -428,6 +446,14 @@ const proofSegments = computed<ProofSegment[]>(() => {
   return out;
 });
 
+const listedMonitors = computed(() => {
+  const id = nodeFilter.value;
+  if (!id) return sortedMonitors.value;
+  return sortedMonitors.value.filter(
+    (monitor) => !isServerEvaluated(monitor.type) && (monitor.assign_all || (monitor.node_ids ?? []).includes(id)),
+  );
+});
+
 const columns = computed<DataTableColumn<MonitorView>[]>(() => [
   { key: "name", label: t("fleet.monitoring.table.name"), sortable: true, searchable: true, value: (m) => m.name || m.id },
   { key: "type", label: t("fleet.monitoring.table.type"), sortable: true, searchable: true },
@@ -461,6 +487,7 @@ const latestByNode = computed(() => {
 });
 const failingNow = computed(() => latestByNode.value.filter((result) => !result.success).length);
 const stateBadge = computed<{ variant: "success" | "destructive" | "secondary"; label: string }>(() => {
+  if (resultsQuery.data.value === undefined) return { variant: "secondary", label: t("common.proof.reading") };
   if (latestByNode.value.length === 0) return { variant: "secondary", label: t("fleet.monitoring.result.noResult") };
   if (failingNow.value === 0) return { variant: "success", label: t("fleet.monitoring.result.passing") };
   if (latestByNode.value.length === 1) return { variant: "destructive", label: t("fleet.monitoring.result.failing") };
@@ -535,11 +562,24 @@ const deleteImpact = computed(() => {
       </div>
     </section>
 
+    <div v-if="nodeFilter && monitors.length" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <button
+        type="button"
+        class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary hover:bg-primary/20 pointer-coarse:min-h-11"
+        :aria-label="$t('fleet.monitoring.nodeFilter.remove', { node: nodeName(nodeFilter) })"
+        @click="nodeFilter = ''"
+      >
+        <span class="truncate">{{ $t('fleet.monitoring.nodeFilter.chip', { node: nodeName(nodeFilter) }) }}</span>
+        <X class="size-3 shrink-0" aria-hidden="true" />
+      </button>
+      <span class="tabular">{{ $t('fleet.monitoring.nodeFilter.showing', { shown: listedMonitors.length, total: monitors.length }) }}</span>
+    </div>
+
     <DataTable
-      v-else
+      v-if="canReadMonitors && !(monitorsQuery.data.value !== undefined && monitors.length === 0)"
       state-key="monitors"
       :columns="columns"
-      :rows="sortedMonitors"
+      :rows="listedMonitors"
       :row-key="(monitor) => monitor.id"
       :loading="monitorsQuery.loading.value"
       :error="monitorsQuery.error.value ?? null"
@@ -573,6 +613,15 @@ const deleteImpact = computed(() => {
       </template>
       <template #cell-actions="{ row }">
         <RowMenu :name="row.name || row.id" :items="menuFor(row)" />
+      </template>
+      <template v-if="nodeFilter" #empty>
+        <EmptyState
+          :icon="RadioTower"
+          :title="$t('fleet.monitoring.nodeFilter.emptyTitle', { node: nodeName(nodeFilter) })"
+          :description="$t('fleet.monitoring.nodeFilter.emptyDescription')"
+        >
+          <Button variant="outline" size="sm" type="button" @click="nodeFilter = ''">{{ $t('fleet.monitoring.nodeFilter.showAll') }}</Button>
+        </EmptyState>
       </template>
     </DataTable>
 

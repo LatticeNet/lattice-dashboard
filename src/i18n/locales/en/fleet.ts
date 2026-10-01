@@ -1115,6 +1115,14 @@ export default {
         monitors: "{n} monitor | {n} monitors",
         enabled: "{n} enabled",
       },
+      nodeFilter: {
+        chip: "Checked from {node}",
+        remove: "Show every monitor, not only the ones checked from {node}",
+        showing: "{shown} of {total}",
+        emptyTitle: "No monitor checks from {node}",
+        emptyDescription: "No monitor is assigned to this node or to every node. Certificate watches run on the control plane.",
+        showAll: "Show all monitors",
+      },
       empty: {
         title: "No monitors yet",
         description: "Watch an endpoint from your nodes, or watch a certificate so its expiry shows up in Upcoming.",

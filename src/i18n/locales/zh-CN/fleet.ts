@@ -1099,6 +1099,14 @@ export default {
         monitors: "{n} 个监控 | {n} 个监控",
         enabled: "{n} 个已启用",
       },
+      nodeFilter: {
+        chip: "从 {node} 探测",
+        remove: "显示全部监控，不只是从 {node} 探测的",
+        showing: "{total} 个中的 {shown} 个",
+        emptyTitle: "没有监控从 {node} 探测",
+        emptyDescription: "没有监控分配给这个节点或全部节点。证书监控由控制面执行。",
+        showAll: "显示全部监控",
+      },
       empty: {
         title: "还没有监控",
         description: "从节点探测一个端点，或者监视一张证书，让它的到期时间出现在即将到期列表里。",
