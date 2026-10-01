@@ -258,9 +258,14 @@ defineExpose({ draft, submit, revert, settle });
 
       <div class="relative min-w-0 flex-1 basis-full sm:basis-72">
         <Search aria-hidden="true" class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <!-- The placeholder holds example tokens in the same mono face as a
+             query. In dark mode the field's muted grey (7.5:1) read like an
+             applied filter, so it drops to about 3:1 there; entered text
+             stays near 18:1. Light mode's 5.3:1 against 17:1 already reads
+             as a hint. -->
         <Input
           v-model="draft"
-          class="pr-8 pl-8 font-mono text-xs"
+          class="pr-8 pl-8 font-mono text-xs dark:placeholder:text-muted-foreground/55"
           autocomplete="off"
           spellcheck="false"
           autocapitalize="off"
