@@ -28,6 +28,7 @@ import GeoRoutingView from "@/views/networking/GeoRoutingView.vue";
 import PluginsView from "@/views/platform/PluginsView.vue";
 import PluginView from "@/views/platform/PluginView.vue";
 import AgentUpdatesView from "@/views/platform/AgentUpdatesView.vue";
+import WebhooksView from "@/views/platform/WebhooksView.vue";
 
 import "@/style/app.css";
 
@@ -59,6 +60,8 @@ const router = createRouter({
     { path: "/netplat-geo.html", name: "network-geo-routing", component: GeoRoutingView },
     { path: "/netplat-plugins.html", name: "platform-plugins", component: PluginsView },
     { path: "/netplat-agents.html", name: "platform-agent-updates", component: AgentUpdatesView },
+    { path: "/netplat-webhooks.html", name: "platform-webhooks", component: WebhooksView },
+    { path: "/platform/notifications", name: "platform-notifications", component: placeholder("Notifications") },
     { path: "/nodes/:id", name: "node-detail", component: placeholder("Node") },
     { path: "/approvals", name: "approvals", component: placeholder("Approvals") },
     { path: "/groups", name: "groups", component: placeholder("Groups") },

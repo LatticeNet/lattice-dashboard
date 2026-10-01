@@ -874,7 +874,6 @@ export default {
       policySaveFailed: "保存采集策略失败",
     },
     webhooks: {
-      section: "平台",
       title: "入站 Webhook",
       description:
         "入站入口。调用方向其中一个地址发起请求，结果是一条由通知规则路由的事件，因此通知系统已有的能力对它原样适用。",
@@ -894,7 +893,6 @@ export default {
       step2Detail: "密钥只展示一次，通过 Authorization 头传递，因此仅有地址无法触发任何事情。",
       step3Title: "像其他事件一样路由",
       step3Detail: "添加一条匹配该事件类型的通知规则，发送到你需要的渠道。",
-      selectPrompt: "选择一个 Webhook，查看它的地址、请求示例和最近的调用记录。",
       createdAt: "创建于 {at}",
       health: {
         never: "从未调用",
@@ -925,7 +923,6 @@ export default {
       noChannelTitle: "没有启用任何通知渠道",
       noChannelDetail: "Webhook 会完成认证并渲染消息，但不会送达任何人。交出地址前请先添加渠道。",
       openNotifications: "打开通知设置",
-      noRuleTitle: "没有规则匹配该事件类型",
       noRuleDetail: "渠道已存在，但没有启用的规则路由 {event}，因此这个 Webhook 不会送出任何消息。请为它添加规则。",
       createTitle: "新建 Webhook",
       editTitle: "编辑 Webhook",
@@ -983,6 +980,16 @@ export default {
       confirmMismatch: "名称不匹配。",
       updated: "Webhook 已更新。",
       saveFailed: "保存 Webhook 失败。",
+    },
+    webhooksPage: {
+      proof: {
+        webhooks: "{n} 个 webhook",
+        enabled: "{n} 个已启用",
+        channels: "{n} 个通道在接收",
+      },
+      noRuleClaim: "{name} 送不到任何人：没有规则转发它的事件",
+      goneTitle: "找不到这个 webhook",
+      goneDescription: "它已被删除，或者这个链接指向的 webhook 不在本服务器上。",
     },
     notifications: {
       title: "通知",

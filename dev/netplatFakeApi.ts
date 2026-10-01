@@ -13,7 +13,8 @@
  *
  *   ?fail=ddns,nodes  the named reads answer 502 (a failed read shows no counts);
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
- *                     dns, monitors, tunnels, geo, agents, release, artifacts
+ *                     dns, monitors, tunnels, geo, agents, release, artifacts,
+ *                     webhooks, channels, rules, deliveries
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
@@ -28,6 +29,7 @@ import type { DDNSUpsertRequest, DDNSView, Principal } from "@/lib/api/index";
 import { DDNS, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
+import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
 import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from "./netplatAgentFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
@@ -241,6 +243,33 @@ export const api = {
     deleteArtifact: async () => {
       await delay(undefined, WRITE_MS);
       return { deleted: true, sha256: "" };
+    },
+  },
+  notify: {
+    webhooks: () => read("webhooks", () => ({ webhooks: WEBHOOKS.map((hook) => ({ ...hook })) })),
+    channels: () => read("channels", () => NOTIFY_CHANNELS.map((channel) => ({ ...channel }))),
+    rules: () => read("rules", () => ({ rules: NOTIFY_RULES.map((rule) => ({ ...rule })) })),
+    webhookDeliveries: (id: string) => read("deliveries", () => ({ deliveries: deliveriesFor(id) })),
+    upsertWebhook: async (input: { id?: string; name: string; event_type: string; title_template: string; body_template?: string; enabled: boolean }) => {
+      await delay(undefined, WRITE_MS);
+      const id = input.id ?? `wh_${seq++}`;
+      const existing = WEBHOOKS.find((hook) => hook.id === id);
+      const next = { ...(existing ?? { created_at: iso(0), path: `/hooks/${id}` }), ...input, id, updated_at: iso(0) } as (typeof WEBHOOKS)[number];
+      if (existing) Object.assign(existing, next);
+      else WEBHOOKS.push(next);
+      return { ...next, secret: input.id ? undefined : "whsec_harness_4f2a9c" };
+    },
+    deleteWebhook: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(WEBHOOKS, id, "webhook");
+    },
+    rotateWebhookSecret: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return { ...WEBHOOKS.find((hook) => hook.id === id)!, secret: "whsec_rotated_9b1e" };
+    },
+    testWebhook: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return { id: `dl_test_${seq++}`, webhook_id: id, outcome: "accepted", test: true, fields: 0, bytes: 0, channels: 1, delivered: 1, created_at: iso(0) };
     },
   },
   approvals: {

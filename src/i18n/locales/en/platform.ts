@@ -955,7 +955,6 @@ export default {
       policySaveFailed: "Could not save the collection policy",
     },
     webhooks: {
-      section: "Platform",
       title: "Webhooks",
       description:
         "Inbound entry points. A caller posts to one of these and the result is a notification event your rules route, so anything the notification system can already do applies to it unchanged.",
@@ -979,7 +978,6 @@ export default {
       step3Title: "Route it like any other event",
       step3Detail:
         "Add a notification rule that matches the event type and sends to the channels you want.",
-      selectPrompt: "Select a webhook to see its URL, the request to send, and recent attempts.",
       createdAt: "Created {at}",
       health: {
         never: "Never called",
@@ -1012,7 +1010,6 @@ export default {
       noChannelDetail:
         "A webhook will authenticate and render its message, then reach nobody. Add a channel before handing the URL out.",
       openNotifications: "Open Notifications",
-      noRuleTitle: "No rule matches this event type",
       noRuleDetail:
         "Channels exist, but no enabled rule routes {event}, so this webhook delivers nothing. Add a rule for it.",
       createTitle: "New webhook",
@@ -1078,6 +1075,16 @@ export default {
       confirmMismatch: "The name does not match.",
       updated: "Webhook updated.",
       saveFailed: "Could not save the webhook.",
+    },
+    webhooksPage: {
+      proof: {
+        webhooks: "{n} webhook | {n} webhooks",
+        enabled: "{n} enabled",
+        channels: "{n} channel listening | {n} channels listening",
+      },
+      noRuleClaim: "{name} reaches nobody: no rule routes its event",
+      goneTitle: "Webhook not found",
+      goneDescription: "It was deleted, or this link names a webhook this server does not hold.",
     },
     notifications: {
       title: "Notifications",
