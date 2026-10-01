@@ -28,6 +28,15 @@ export default {
       proof: {
         groups: "{n} 个分组 | {n} 个分组",
         ungrouped: "{n} 个节点未分组",
+        nodesNotRead: "成员状态未读取：{reason}",
+        nodesStale: "成员状态刷新失败：{reason}",
+      },
+      discard: {
+        title: "放弃修改？",
+        description: "对 {name} 的修改还没有保存。",
+        descriptionNew: "新分组还没有保存。",
+        confirm: "放弃修改",
+        keep: "继续编辑",
       },
       table: {
         group: "分组",

@@ -35,6 +35,7 @@ import DataTable, { type DataTableColumn } from "@/components/common/DataTable.v
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
+import { proofReason } from "@/components/common/proofModel";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import type { QueryRecord } from "@/components/common/tableUrlState";
@@ -61,10 +62,18 @@ const canAdmin = computed(() => auth.can("group:admin"));
 const ROOT_VALUE = "__root__";
 const LEADER_NONE = "__none__";
 
-const groupsQuery = useAsyncData((signal) => api.groups.list({ signal }), { pollInterval: 0 });
+// Rows carry member health, so both reads move: the group rollup gives the
+// counts and the node list the names of members not reporting.
+const POLL_MS = 15000;
+const groupsQuery = useAsyncData((signal) => api.groups.list({ signal }), { pollInterval: POLL_MS });
 const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
-  pollInterval: 0,
+  pollInterval: POLL_MS,
 });
+
+/** Counts and names come from two reads; every refresh takes both. */
+async function refreshAll(): Promise<void> {
+  await Promise.all([groupsQuery.refresh(), nodesQuery.refresh()]);
+}
 
 const list = computed(() => groupsQuery.data.value);
 const groups = computed<GroupView[]>(() => list.value?.groups ?? []);
@@ -143,6 +152,11 @@ function slugify(value: string): string {
     .slice(0, 48);
 }
 
+// Declared before loadForm runs: ?open=new loads the create form during setup.
+const memberSearch = ref("");
+const memberQuickTag = ref("");
+const previewCount = ref<number | null>(null);
+
 function loadForm(g?: GroupView) {
   form.id = g?.id;
   form.name = g?.name ?? "";
@@ -162,6 +176,50 @@ function loadForm(g?: GroupView) {
   memberSearch.value = "";
   memberQuickTag.value = "";
   previewCount.value = null;
+  formBaseline.value = formSnapshot();
+}
+
+/**
+ * What the editor holds, to tell an edited draft from a loaded one. The
+ * sheet is not modal from 768 px up, so a row click or a row menu while
+ * editing would otherwise drop the draft without a word.
+ */
+function formSnapshot(): string {
+  return JSON.stringify(form);
+}
+const formBaseline = ref("");
+const draftDirty = computed(() => editing.value !== null && formSnapshot() !== formBaseline.value);
+
+const discardOpen = ref(false);
+let afterDiscard: (() => void) | undefined;
+
+/** Run `action` now, or once the operator agrees to drop the draft. */
+function unlessDraft(action: () => void): void {
+  if (!draftDirty.value) {
+    action();
+    return;
+  }
+  afterDiscard = action;
+  discardOpen.value = true;
+}
+
+function discardDraft(): void {
+  const action = afterDiscard;
+  afterDiscard = undefined;
+  discardOpen.value = false;
+  editingExisting.value = false;
+  formBaseline.value = formSnapshot();
+  action?.();
+}
+
+watch(discardOpen, (open) => {
+  if (!open) afterDiscard = undefined;
+});
+
+/** A row click swaps the open group; the group already open stays as it is. */
+function openGroup(group: GroupView, el?: HTMLElement): void {
+  if (group.id === sheet.openId.value) return;
+  unlessDraft(() => sheet.open(group.id, el));
 }
 
 function startEdit() {
@@ -171,9 +229,12 @@ function startEdit() {
 }
 
 function startCreate() {
-  editingExisting.value = false;
-  loadForm(undefined);
-  sheet.open(NEW_GROUP);
+  if (creating.value) return;
+  unlessDraft(() => {
+    editingExisting.value = false;
+    loadForm(undefined);
+    sheet.open(NEW_GROUP);
+  });
 }
 
 // A different group (or none) leaves edit mode; the create form starts empty.
@@ -194,9 +255,6 @@ const parentOptions = computed(() =>
 /* ----------------------------------------------------------------- */
 /* Explicit membership picker                                         */
 /* ----------------------------------------------------------------- */
-const memberSearch = ref("");
-const memberQuickTag = ref("");
-
 const filteredNodes = computed(() => {
   const q = memberSearch.value.trim().toLowerCase();
   const base = [...nodes.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
@@ -253,7 +311,6 @@ const leaderOptions = computed(() =>
 /* ----------------------------------------------------------------- */
 /* Dynamic selector + live preview                                   */
 /* ----------------------------------------------------------------- */
-const previewCount = ref<number | null>(null);
 const previewing = ref(false);
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -331,7 +388,7 @@ async function save() {
     const saved = await api.groups.upsert(buildUpsert());
     const wasNew = creating.value;
     toast.success(wasNew ? t("fleet.groups.toast.created") : t("fleet.groups.toast.saved"));
-    await groupsQuery.refresh();
+    await refreshAll();
     editingExisting.value = false;
     if (wasNew) sheet.open(saved.id);
   } catch (error) {
@@ -343,17 +400,27 @@ async function save() {
 
 const deleteOpen = ref(false);
 const deleting = ref(false);
+/** The group the confirm names; its own ref, so the editor's draft is never touched. */
+const deleteTarget = ref<GroupView | undefined>();
+
+function requestDelete(group: GroupView): void {
+  deleteTarget.value = group;
+  deleteOpen.value = true;
+}
 
 async function confirmDelete() {
-  if (!form.id) return;
+  const target = deleteTarget.value;
+  if (!target) return;
   deleting.value = true;
   try {
-    await api.groups.delete(form.id);
+    await api.groups.delete(target.id);
     toast.success(t("fleet.groups.toast.deleted"));
     deleteOpen.value = false;
-    editingExisting.value = false;
-    sheet.close();
-    await groupsQuery.refresh();
+    if (sheet.openId.value === target.id) {
+      editingExisting.value = false;
+      sheet.close();
+    }
+    await refreshAll();
   } catch (error) {
     // The server rejects (409) when the group has children or is referenced by
     // a group policy; surface that exact reason rather than a generic message.
@@ -383,11 +450,20 @@ watch(
 /* Head, rows and member health (design 23, 4.2)                       */
 /* ------------------------------------------------------------------ */
 
-// Groups do not poll, so the line has no age (ProofLine idle).
+// The line ages with the group read; a failed node read is its own segment,
+// since the counts still stand without the names.
 const proof = useProof(groupsQuery);
 const proofSegments = computed<ProofSegment[]>(() => {
   const out: ProofSegment[] = [{ key: "groups", text: t("fleet.groups.proof.groups", { n: groups.value.length }, groups.value.length) }];
   if (ungrouped.value) out.push({ key: "ungrouped", text: t("fleet.groups.proof.ungrouped", { n: ungrouped.value.rollup.total }), tone: "muted" });
+  if (nodesQuery.error.value) {
+    const reason = proofReason(nodesQuery.error.value);
+    out.push({
+      key: "nodes",
+      text: nodesQuery.data.value ? t("fleet.groups.proof.nodesStale", { reason }) : t("fleet.groups.proof.nodesNotRead", { reason }),
+      tone: nodesQuery.data.value ? "warning" : "destructive",
+    });
+  }
   return out;
 });
 
@@ -425,8 +501,11 @@ function menuFor(group: GroupView): RowMenuItem[] {
       icon: Pencil,
       hidden: !canAdmin.value,
       run: () => {
-        sheet.open(group.id);
-        void Promise.resolve().then(startEdit);
+        if (group.id === sheet.openId.value && editingExisting.value) return;
+        unlessDraft(() => {
+          sheet.open(group.id);
+          void Promise.resolve().then(startEdit);
+        });
       },
     },
     {
@@ -435,10 +514,7 @@ function menuFor(group: GroupView): RowMenuItem[] {
       icon: Trash2,
       danger: true,
       hidden: !canAdmin.value || !!group.system,
-      run: () => {
-        loadForm(group);
-        deleteOpen.value = true;
-      },
+      run: () => requestDelete(group),
     },
   ];
 }
@@ -446,7 +522,9 @@ function menuFor(group: GroupView): RowMenuItem[] {
 const sheetState = computed(() => {
   if (!sheet.openId.value) return "ready" as const;
   if (creating.value) return "ready" as const;
-  if (groupsQuery.data.value === undefined) return "loading" as const;
+  if (groupsQuery.data.value === undefined) {
+    return groupsQuery.error.value && !groupsQuery.loading.value ? ("failed" as const) : ("loading" as const);
+  }
   if (!selectedGroup.value) return "gone" as const;
   return groupsQuery.error.value ? ("stale" as const) : ("ready" as const);
 });
@@ -478,7 +556,12 @@ function selectorSummary(group: GroupView): string {
   return parts.join(" · ");
 }
 
-const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", { n: groups.value.find((g) => g.id === form.id)?.resolved_members.length ?? 0 })] : []));
+const deleteImpact = computed(() => {
+  const target = deleteTarget.value;
+  if (!target) return [];
+  const members = groups.value.find((g) => g.id === target.id)?.resolved_members.length ?? target.resolved_members.length;
+  return [t("fleet.groups.deleteImpact", { n: members })];
+});
 </script>
 
 <template>
@@ -486,7 +569,7 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
     <PageHeader :title="$t('fleet.groups.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.groups.description') }}</p>
-        <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="groupsQuery.refresh" />
+        <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
         <!-- With no groups the empty state carries New group; the header does not repeat it. -->
@@ -494,7 +577,7 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.groups.newGroup') }}
         </Button>
-        <Button variant="outline" size="sm" type="button" :disabled="groupsQuery.refreshing.value" @click="groupsQuery.refresh(); nodesQuery.refresh()">
+        <Button variant="outline" size="sm" type="button" :disabled="groupsQuery.refreshing.value" @click="refreshAll">
           <RotateCw :class="cn('size-4', groupsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
@@ -513,9 +596,9 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
         :has-data="groupsQuery.data.value !== undefined"
         :expression-filter="false"
         :show-summary="false"
-        :row-click="(group, el) => sheet.open(group.id, el)"
+        :row-click="openGroup"
         :active-row-id="selectedId ?? null"
-        @retry="groupsQuery.refresh"
+        @retry="refreshAll"
       >
         <template #empty>
           <EmptyState
@@ -573,6 +656,7 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
       :gone-title="$t('fleet.groups.sheet.goneTitle')"
       :gone-description="$t('fleet.groups.sheet.goneDescription')"
       @close="sheet.close"
+      @retry="refreshAll"
     >
       <!-- Read: health, members, how membership is decided. -->
       <div v-if="!editing && selectedGroup" class="space-y-5 text-sm">
@@ -760,7 +844,7 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
             size="sm"
             type="button"
             class="me-auto text-destructive"
-            @click="deleteOpen = true"
+            @click="selectedGroup && requestDelete(selectedGroup)"
           >
             <Trash2 class="size-4" aria-hidden="true" />
             {{ $t('common.actions.delete') }}
@@ -783,12 +867,23 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.groups.deleteTitle')"
-      :description="$t('fleet.groups.deleteDescription', { name: form.name })"
+      :description="$t('fleet.groups.deleteDescription', { name: deleteTarget?.name ?? '' })"
       :impact="deleteImpact"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @confirm="confirmDelete"
+    />
+
+    <!-- Leaving an edited draft: say what is lost, keep editing by default. -->
+    <ConfirmDialog
+      v-model:open="discardOpen"
+      variant="default"
+      :title="$t('fleet.groups.discard.title')"
+      :description="editing === 'new' ? $t('fleet.groups.discard.descriptionNew') : $t('fleet.groups.discard.description', { name: selectedGroup?.name ?? '' })"
+      :confirm-label="$t('fleet.groups.discard.confirm')"
+      :cancel-label="$t('fleet.groups.discard.keep')"
+      @confirm="discardDraft"
     />
   </div>
 </template>

@@ -29,6 +29,15 @@ export default {
       proof: {
         groups: "{n} group | {n} groups",
         ungrouped: "{n} nodes in no group",
+        nodesNotRead: "member status not read: {reason}",
+        nodesStale: "member status refresh failed: {reason}",
+      },
+      discard: {
+        title: "Discard your changes?",
+        description: "Your edits to {name} are not saved yet.",
+        descriptionNew: "The new group is not saved yet.",
+        confirm: "Discard changes",
+        keep: "Keep editing",
       },
       table: {
         group: "Group",
