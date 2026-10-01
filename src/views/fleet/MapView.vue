@@ -34,6 +34,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
+import DataState from "@/components/common/DataState.vue";
 import FleetMap from "@/components/fleet/FleetMap.vue";
 import NodeSheet from "@/components/fleet/NodeSheet.vue";
 import { Button } from "@/components/ui/button";
@@ -227,6 +228,8 @@ const STATUS_TEXT: Record<string, string> = {
     <div v-else-if="nodesQuery.loading.value" class="grid aspect-[2/1] place-items-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
       {{ $t('common.proof.reading') }}
     </div>
+    <!-- The first read failed: no map is drawn from nothing. -->
+    <DataState v-else :loading="false" :error="nodesQuery.error.value ?? null" @retry="nodesQuery.refresh" />
 
     <NodeSheet
       :node-id="sheet.openId.value"
