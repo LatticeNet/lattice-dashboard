@@ -875,10 +875,11 @@ const deleteImpact = computed(() => {
       @confirm="confirmDelete"
     />
 
-    <!-- Leaving an edited draft: say what is lost, keep editing by default. -->
+    <!-- Leaving an edited draft: say what is lost, keep editing by default.
+         Destructive like every other discard confirm in the console. -->
     <ConfirmDialog
       v-model:open="discardOpen"
-      variant="default"
+      variant="destructive"
       :title="$t('fleet.groups.discard.title')"
       :description="editing === 'new' ? $t('fleet.groups.discard.descriptionNew') : $t('fleet.groups.discard.description', { name: selectedGroup?.name ?? '' })"
       :confirm-label="$t('fleet.groups.discard.confirm')"
