@@ -51,6 +51,8 @@ export default {
         // The posture chips: the triage entry point. The words are the row
         // words, so "Password open 4" means four rows read "password open".
         postureLabel: "Filter the fleet by SSH posture",
+        nodesNotRead:
+          "The node list was not read, so these counts cover only the {n} nodes with SSH Guard history, shown by id. Nodes never armed are missing.",
         posture: {
           all: "All postures",
           password_open: "Password open",

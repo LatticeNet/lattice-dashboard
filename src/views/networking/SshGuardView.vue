@@ -701,6 +701,8 @@ const postureFilter = computed<PostureFilter>({
 });
 
 const counts = computed(() => coverageCounts(states.value, scopeOf, now.value));
+/** No node list was ever read (a failed poll keeps the last good one). */
+const nodesNotRead = computed(() => !!nodesQuery.error.value && !nodesQuery.data.value);
 const postureChipCounts = computed<Record<PostureFilter, number>>(() => ({ all: states.value.length, ...postures.value }));
 const visibleStates = computed(() =>
   filterByCoverage(
@@ -1255,7 +1257,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         >
           <div class="min-w-0 flex-1 basis-40">
             <p class="truncate text-sm font-medium" :title="state.nodeId">{{ state.name || state.nodeId }}</p>
-            <p class="truncate font-mono text-xs text-muted-foreground">{{ state.nodeId }}</p>
+            <p v-if="state.name" class="truncate font-mono text-xs text-muted-foreground">{{ state.nodeId }}</p>
           </div>
           <div
             v-if="revertDeadline(state)"
@@ -1285,6 +1287,17 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
       </ul>
     </section>
 
+    <!-- Without the node list the board holds only the nodes that have SSH
+         Guard history, so the chips count part of the fleet. Said here,
+         beside the counts it qualifies; "Not armed" is mostly the nodes
+         that are missing, so it prints no count at all. -->
+    <p
+      v-if="states.length && nodesNotRead"
+      class="text-xs text-warning-text"
+      data-testid="nodes-not-read"
+    >
+      {{ $t('networking.sshGuard.coverage.nodesNotRead', { n: states.length }) }}
+    </p>
     <!-- Coverage chips: the filter and the count are the same control, so
          they can never disagree. -->
     <!-- Two chip groups in one strip. Posture first: it is the triage entry
@@ -1346,7 +1359,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         @click="coverageFilter = key"
       >
         {{ $t(`networking.sshGuard.coverage.filter.${key}`) }}
-        <span class="font-mono tabular">{{ counts[key] }}</span>
+        <span class="font-mono tabular">{{ key === 'open' && nodesNotRead ? $t('common.proof.notReadBare') : counts[key] }}</span>
       </button>
     </div>
     </div>

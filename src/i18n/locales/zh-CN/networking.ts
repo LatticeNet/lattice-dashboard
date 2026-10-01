@@ -45,6 +45,7 @@ export default {
       },
       coverage: {
         postureLabel: "按 SSH 姿态筛选舰队",
+        nodesNotRead: "节点列表没有读到，下面的计数只包括有 SSH Guard 记录的 {n} 个节点，按 ID 显示；从未加固的节点不在其中。",
         posture: {
           all: "全部姿态",
           password_open: "密码登录开着",
