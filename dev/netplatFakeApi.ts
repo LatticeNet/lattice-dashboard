@@ -13,7 +13,7 @@
  *
  *   ?fail=ddns,nodes  the named reads answer 502 (a failed read shows no counts);
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
- *                     dns, monitors, tunnels, geo
+ *                     dns, monitors, tunnels, geo, agents, release, artifacts
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
@@ -28,6 +28,7 @@ import type { DDNSUpsertRequest, DDNSView, Principal } from "@/lib/api/index";
 import { DDNS, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
+import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from "./netplatAgentFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
 
@@ -210,6 +211,40 @@ export const api = {
       await delay(undefined, WRITE_MS);
       return geoPlan(id);
     },
+  },
+  agentUpdates: {
+    list: () => read("agents", () => ({ policies: AGENT_POLICIES.map((policy) => ({ ...policy })) })),
+    releases: () => read(flags.get("release") === "fail" ? "release-fail" : "release", () => ({ ...AGENT_RELEASE })),
+    artifacts: () => read("artifacts", () => ({ ...AGENT_ARTIFACTS, artifacts: AGENT_ARTIFACTS.artifacts.map((a) => ({ ...a })) })),
+    plan: async (nodeId: string) => {
+      await delay(undefined, WRITE_MS);
+      const node = NODES.find((entry) => entry.id === nodeId);
+      if (node?.agent_version === AGENT_RELEASE.latest_version) {
+        throw new ApiError(409, "agent_update_noop", `${node.name} already runs ${node.agent_version}`);
+      }
+      return planApproval("agentupdate", "agent.update", nodeId);
+    },
+    upsert: async (input: { node_id: string }) => {
+      await delay(undefined, WRITE_MS);
+      return input;
+    },
+    delete: async (nodeId: string) => {
+      await delay(undefined, WRITE_MS);
+      const at = AGENT_POLICIES.findIndex((policy) => policy.node_id === nodeId);
+      if (at >= 0) AGENT_POLICIES.splice(at, 1);
+      return { ok: true };
+    },
+    importArtifact: async () => {
+      await delay(undefined, WRITE_MS);
+      return AGENT_ARTIFACTS.artifacts[0];
+    },
+    deleteArtifact: async () => {
+      await delay(undefined, WRITE_MS);
+      return { deleted: true, sha256: "" };
+    },
+  },
+  approvals: {
+    list: () => read("approvals", () => ({ approvals: AGENT_APPROVALS.map((approval) => ({ ...approval })) })),
   },
   plugins: {
     list: () => read("plugins", () => pluginViews()),
