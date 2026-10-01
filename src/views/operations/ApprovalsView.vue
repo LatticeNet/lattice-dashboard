@@ -237,14 +237,27 @@ const unexplainedCount = computed(() => inbox.value.filter((row) => row.status =
 const needsCount = computed(() => pendingRows.value.length + staleRows.value.length);
 const eventGroups = computed(() => groupApprovalsIntoEvents(pendingRows.value));
 
+/**
+ * The bare address is resolved once per visit: approving the last pending
+ * plan, or a new one arriving, must not swap the layer under the operator.
+ */
+const settledDefault = ref<ApprovalLayer | null>(null);
 const layer = computed<ApprovalLayer | null>(() => {
   if (choice.value !== AUTO_LAYER) return choice.value;
+  if (settledDefault.value) return settledDefault.value;
   return defaultApprovalLayer({
     needs: needsCount.value,
     read: activeQuery.data.value !== undefined,
     failed: activeQuery.data.value === undefined && !!activeQuery.error.value,
   });
 });
+watch(
+  layer,
+  (value) => {
+    if (value && choice.value === AUTO_LAYER && !settledDefault.value && activeQuery.data.value !== undefined) settledDefault.value = value;
+  },
+  { immediate: true },
+);
 const layerModel = computed<ApprovalLayer>({
   get: () => layer.value ?? "needs",
   set: (value) => {
@@ -632,7 +645,7 @@ async function performBatch(group: ApprovalEventGroup<ApprovalView>, mode: "appr
   concealed.value = hidden;
   const next = { ...batches.value };
   if (failed.length === 0) {
-    toast.success(t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApproveDone" : "toastBatchRejectDone"}`, { count: succeeded.length }));
+    toast.success(t(`operations.approvals.events.${mode === "approve-queue" ? "toastBatchApproveDone" : "toastBatchRejectDone"}`, { count: succeeded.length }, succeeded.length));
     delete next[group.key];
   } else {
     toast.warning(
