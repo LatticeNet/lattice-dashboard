@@ -12,7 +12,8 @@
  * Fixture switches, on the page's query string:
  *
  *   ?fail=ddns,nodes  the named reads answer 502 (a failed read shows no counts);
- *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins
+ *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
+ *                     dns, monitors, tunnels, geo
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
@@ -27,6 +28,7 @@ import type { DDNSUpsertRequest, DDNSView, Principal } from "@/lib/api/index";
 import { DDNS, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
 import { PLUGIN_INSTALLS, pluginViews } from "./netplatPluginsFixture";
+import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
 
 export * from "@/lib/api/index";
@@ -149,6 +151,66 @@ export const api = {
       return { affected: [], conflicts: [], orphaned: [] };
     },
   },
+  dns: {
+    deployments: () => read("dns", () => ({ deployments: DNS_DEPLOYMENTS.map((dep) => ({ ...dep })) })),
+    upsert: async (input: { id?: string }) => {
+      await delay(undefined, WRITE_MS);
+      return input;
+    },
+    delete: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(DNS_DEPLOYMENTS, id, "deployment");
+    },
+    plan: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      const dep = DNS_DEPLOYMENTS.find((entry) => entry.id === id)!;
+      return { approval: planApproval("dns", "dns.apply", dep.node_id), findings: [] };
+    },
+    publish: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      const dep = DNS_DEPLOYMENTS.find((entry) => entry.id === id)!;
+      const node = NODES.find((entry) => entry.id === dep.node_id);
+      dep.last_published_at = iso(0);
+      dep.last_publish_error = undefined;
+      return { ipv4: node?.public_ip ?? "", ipv6: node?.public_ipv6 ?? "" };
+    },
+  },
+  monitors: {
+    list: () => read("monitors", () => ({ monitors: MONITORS.map((monitor) => ({ ...monitor })) })),
+  },
+  tunnels: {
+    list: () => read("tunnels", () => TUNNELS.map((tunnel) => ({ ...tunnel }))),
+    create: async (input: Omit<(typeof TUNNELS)[number], "id" | "created_at" | "updated_at">) => {
+      await delay(undefined, WRITE_MS);
+      const next = { ...input, id: `tun_${seq++}`, created_at: iso(0), updated_at: iso(0) };
+      TUNNELS.push(next);
+      return next;
+    },
+    delete: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(TUNNELS, id, "tunnel");
+    },
+    plan: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      const tunnel = TUNNELS.find((entry) => entry.id === id)!;
+      return { ...planApproval("tunnel", "tunnel.apply", tunnel.node_id), node_id: tunnel.node_id };
+    },
+  },
+  geoRouting: {
+    list: () => read("geo", () => ({ geo_routings: GEO_ROUTINGS.map((routing) => ({ ...routing })) })),
+    upsert: async (input: { id?: string }) => {
+      await delay(undefined, WRITE_MS);
+      return input;
+    },
+    delete: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(GEO_ROUTINGS, id, "geo routing");
+    },
+    plan: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return geoPlan(id);
+    },
+  },
   plugins: {
     list: () => read("plugins", () => pluginViews()),
     contributions: () => read("contributions", () => pluginViews().filter((plugin) => plugin.active)),
@@ -171,6 +233,13 @@ export const api = {
     },
   },
 };
+
+function removeById<T extends { id: string }>(list: T[], id: string, what: string) {
+  const at = list.findIndex((entry) => entry.id === id);
+  if (at < 0) throw new ApiError(404, "not_found", `${what} not found`);
+  list.splice(at, 1);
+  return { ok: true };
+}
 
 /** A pending approval shaped like the server's, for the plan dialogs. */
 function planApproval(plugin: string, action: string, nodeId: string) {

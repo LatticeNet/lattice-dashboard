@@ -76,6 +76,30 @@ const FLEET: FleetEntry[] = [
   { name: "mkcloud-hr-iplc", v4: "203.0.113.43", tags: ["openjobs-vpn"] },
 ];
 
+/**
+ * Where a node sits, by the provider and city in its name (invented to that
+ * pattern; production nodes carry geo the Map page reads). A name with no
+ * place in it gets no coordinates, as on the live fleet.
+ */
+const PLACES: Array<[RegExp, string, number, number]> = [
+  [/NYC/, "US", 40.71, -74.01],
+  [/LA\b|-la\b|malibu|VIRCS|ATT/i, "US", 34.05, -118.24],
+  [/DMIT/, "US", 34.05, -118.24],
+  [/KIX|softbank|jp|tokyo/i, "JP", 34.69, 135.5],
+  [/FSN|fsn/, "DE", 50.47, 12.37],
+  [/hel/, "FI", 60.17, 24.94],
+  [/SG|sgp/i, "SG", 1.35, 103.82],
+  [/UK|London/i, "GB", 51.51, -0.13],
+  [/DC6|dc6/, "US", 34.05, -118.24],
+  [/syd/, "AU", -33.87, 151.21],
+  [/hk|hkbn|turin/i, "HK", 22.32, 114.17],
+];
+
+function geoOf(name: string): Node["geo"] {
+  const place = PLACES.find(([pattern]) => pattern.test(name));
+  return place ? { country: place[1], lat: place[2], lon: place[3] } : undefined;
+}
+
 function toNode(entry: FleetEntry, index: number): Node {
   const id = `node_${String(index + 1).padStart(3, "0")}`;
   const status = entry.status ?? "online";
@@ -88,6 +112,7 @@ function toNode(entry: FleetEntry, index: number): Node {
     public_ip: entry.v4,
     public_ipv6: entry.v6,
     agent_version: entry.agent ?? LATEST_AGENT,
+    geo: geoOf(entry.name),
     online: reporting,
     reachability: reporting ? "online" : "offline",
     status,

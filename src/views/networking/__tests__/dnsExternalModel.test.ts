@@ -4,25 +4,19 @@ import { test } from "node:test";
 
 import type { DNSDeploymentView } from "@/lib/api";
 import {
-  DNS_COLUMN_SIZING,
   buildExternalDnsBody,
   canPlanDeployment,
   canPublishDeployment,
   certExpiry,
   certVerdict,
-  dnsVisibleColumns,
-  driftTone,
   externalHostnameProblem,
   formatListeners,
   isExternalHostnameValid,
   isObservedEngine,
-  isObservedOnlyTable,
   listenSummary,
   listenerProcesses,
   lookupCertWatch,
   tlsTargetHost,
-  reservedWidthPx,
-  reservesWidth,
 } from "../dnsExternalModel.ts";
 
 function deployment(over: Partial<DNSDeploymentView>): DNSDeploymentView {
@@ -107,69 +101,28 @@ test("the certificate countdown warns inside the window it was given and treats 
   assert.deepEqual(certExpiry("not a date", now, 30), { tone: "unknown", days: 0 });
 });
 
-test("an uncheckable drift verdict is a warning, not a neutral badge", () => {
-  assert.equal(driftTone("ok"), "success");
-  assert.equal(driftTone("drift"), "destructive");
-  assert.equal(driftTone("unknown"), "warning");
-  assert.equal(driftTone(undefined), "warning");
-});
-
 // ── Deployments table layout ──────────────────────────────────────────────
 
-test("the Reality column reserves width instead of only capping it", () => {
-  // A cap lets auto layout squeeze the column to its longest word, which is
-  // what shredded two drift findings over nine lines at 1440.
-  assert.equal(reservesWidth(DNS_COLUMN_SIZING.reality), true);
-  assert.ok(
-    reservedWidthPx(DNS_COLUMN_SIZING.reality) >= 180,
-    "the drift verdict and the certificate countdown need at least 180px",
-  );
-  // Reality states its own width, so it no longer depends on the columns
-  // beside it being capped. Node still is: it prints a name over a short id,
-  // and truncating the name costs nothing the id does not carry.
-  assert.equal(reservesWidth(DNS_COLUMN_SIZING.node), false);
-  assert.match(DNS_COLUMN_SIZING.node, /max-w-\[/);
-});
-
-test("a max-width alone does not count as a reservation", () => {
-  assert.equal(reservesWidth("max-w-[280px]"), false);
-  assert.equal(reservesWidth("w-[280px]"), true);
-  assert.equal(reservesWidth("min-w-[240px] max-w-[280px]"), true);
-  assert.equal(reservesWidth(undefined), false);
-  assert.equal(reservedWidthPx("max-w-[280px]"), 0);
-  assert.equal(reservedWidthPx("w-[300px] min-w-[280px]"), 280);
-});
-
-test("DnsView gives the Reality column the reserved sizing and caps the columns it takes from", () => {
-  // Grounding: the sizing constants are worth nothing if the table stops using
-  // them, and a table-layout claim cannot be asserted any other way from here.
+test("DnsView's table holds the columns a resolver is compared by, and one row menu", () => {
+  // Design 23, 4.4: eleven columns and four inline buttons became the row a
+  // resolver is scanned by, with the rest in the sheet.
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
-  assert.match(view, /key:\s*"reality"[^]*?class:\s*DNS_COLUMN_SIZING\.reality/);
-  assert.match(view, /key:\s*"node"[^]*?class:\s*DNS_COLUMN_SIZING\.node/);
-  assert.match(view, /key:\s*"hostname"[^]*?class:\s*DNS_COLUMN_SIZING\.hostname/);
-  assert.doesNotMatch(view, /class:\s*"max-w-\[280px\]"/, "the Reality column is back on a bare cap");
+  const block = view.slice(view.indexOf("const columns = computed"), view.indexOf("]);", view.indexOf("const columns = computed")));
+  const keys = [...block.matchAll(/key: "(\w+)"/g)].map((match) => match[1]);
+  assert.deepEqual(keys, ["name", "node", "listen", "hostname", "status", "reality", "actions"]);
+  assert.match(block, /key: "actions"[^}]*pin: "end"/);
+  const actions = view.slice(view.indexOf("#cell-actions="), view.indexOf("</DataTable>"));
+  assert.match(actions, /<RowMenu\b/);
+  assert.doesNotMatch(actions, /<Button\b/, "inline row buttons are back beside the menu");
 });
 
-test("the drift findings are rendered at the table's width, not inside the Reality column", () => {
+test("the drift findings are read in the sheet, not squeezed into the Reality cell", () => {
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
-  const cell = view.slice(
-    view.indexOf('#cell-reality='),
-    view.indexOf('#row-detail='),
-  );
-  assert.ok(cell.length > 0, "DnsView no longer has a reality cell and a row-detail panel");
-  assert.doesNotMatch(cell, /drift\.findings/, "the findings list is back inside the table cell");
-  assert.match(cell, /driftFindingsToggle/, "the cell no longer offers a way to open the findings");
-
-  const detail = view.slice(view.indexOf('#row-detail='));
-  assert.match(detail, /v-for="\(finding, index\) in driftFindings\(dep\)"/);
-
-  // The panel is inert unless DataTable is told which rows are open.
-  assert.match(view, /:row-expanded="isDriftOpen"/);
-
-  // DataTable has to carry the slot, or the panel renders nowhere.
-  const table = readFileSync(new URL("../../../components/common/DataTable.vue", import.meta.url), "utf8");
-  assert.match(table, /name="row-detail"/);
-  assert.match(table, /:colspan="spannedColumns"/);
+  const cell = view.slice(view.indexOf("#cell-reality="), view.indexOf("#cell-actions="));
+  assert.ok(cell.length > 0, "DnsView no longer has a reality cell");
+  assert.doesNotMatch(cell, /driftFindings|drift\.findings/, "the findings list is back inside the table cell");
+  const sheet = view.slice(view.indexOf("<ObjectSheet"), view.indexOf("</ObjectSheet>"));
+  assert.match(sheet, /v-for="\(finding, index\) in driftFindings\(openDep\)"/);
 });
 
 // ── The observed body ─────────────────────────────────────────────────────
@@ -270,40 +223,10 @@ const allColumns = [
   { key: "actions" },
 ];
 
-test("a table of nothing but observed records is observed-only, an empty one is not", () => {
-  assert.equal(isObservedOnlyTable([observedRow, observedRow]), true);
-  assert.equal(isObservedOnlyTable([observedRow, deployedRow]), false);
-  assert.equal(isObservedOnlyTable([deployedRow]), false);
-  // Nothing loaded is not the same claim as nothing deployed, and dropping
-  // columns off an empty table would only make the header lie while it fills.
-  assert.equal(isObservedOnlyTable([]), false);
-});
-
-test("the two intent columns leave an observed-only table, and nothing else does", () => {
-  const kept = dnsVisibleColumns(allColumns, true).map((column) => column.key);
-  assert.deepEqual(kept, ["name", "node", "listen", "exposure", "zones", "hostname", "status", "reality", "actions"]);
-  assert.equal(kept.includes("credential"), false, "Credential prints one dot per observed row");
-  assert.equal(kept.includes("published"), false, "Last publish attempt prints one dot per observed row");
-  assert.deepEqual(dnsVisibleColumns(allColumns, false), allColumns, "a mixed table loses a column");
-});
-
-test("the hostname reserves its width instead of capping it", () => {
-  // The hostname is what a certificate watch is pointed at, so it is the value
-  // the operator came to read; `resolver.xuezhan…` is not that value. Measured
-  // at 1440 in dev/narrow.html?to=dns.html&w=1440, `resolver.xuezhang.example`
-  // wants 181px against a 150px cap, while the table used 1343 of 1440.
-  const hostname = DNS_COLUMN_SIZING.hostname;
-  assert.equal(reservesWidth(hostname), true, "the hostname column is back on a bare cap");
-  assert.ok(reservedWidthPx(hostname) >= 190, `reserved ${reservedWidthPx(hostname)}px, too little for a real resolver name`);
-  assert.match(hostname, /whitespace-nowrap/);
-  assert.doesNotMatch(hostname, /max-w-/, "the cap is back beside the reservation");
-});
-
-test("DnsView renders the visible columns, and no longer truncates the hostname", () => {
+test("the hostname cell prints the whole hostname", () => {
   const view = readFileSync(new URL("../DnsView.vue", import.meta.url), "utf8");
-  assert.match(view, /:columns="visibleColumns"/);
-  assert.match(view, /const visibleColumns = computed\(\(\) => dnsVisibleColumns\(columns\.value, observedOnly\.value\)\)/);
   const cell = view.slice(view.indexOf("#cell-hostname="), view.indexOf("#cell-status="));
+  assert.ok(cell.length > 0);
   assert.doesNotMatch(cell, /truncate/, "the hostname cell clips again");
   assert.doesNotMatch(cell, /:title=/, "a tooltip is back standing in for the value");
 });
@@ -372,12 +295,12 @@ test("DnsView resolves the watch and links both directions", () => {
   assert.match(view, /lookupCertWatch\(dep\.hostname, certWatches\.value\)/);
   assert.match(view, /certVerdict\(dep\.cert_not_after, new Date\(\), certWatch\(dep\)\)/);
   assert.doesNotMatch(view, /certExpiry\(/, "the row is judging the expiry on its own again");
-  // Watched and unwatched look different, and both reach Monitoring.
-  const cell = view.slice(view.indexOf("#cell-reality="), view.indexOf("#row-detail="));
-  assert.match(cell, /certWatch\(dep\)\.state === 'watched'/);
-  assert.match(cell, /certWatch\(dep\)\.state === 'unwatched'/);
-  assert.match(cell, /name: 'monitor-detail'/);
-  assert.match(cell, /name: 'monitoring'/);
+  // Watched and unwatched look different in the sheet, and both reach Monitoring.
+  const sheet = view.slice(view.indexOf("<ObjectSheet"), view.indexOf("</ObjectSheet>"));
+  assert.match(sheet, /certWatch\(openDep\)\.state === 'watched'/);
+  assert.match(sheet, /certWatch\(openDep\)\.state === 'unwatched'/);
+  assert.match(sheet, /name: 'monitor-detail'/);
+  assert.match(sheet, /name: 'monitoring'/);
   // And the create dialog's prose reference is a link the reader can follow.
   assert.match(view, /networking\.dns\.certWatchSetUp/);
 });

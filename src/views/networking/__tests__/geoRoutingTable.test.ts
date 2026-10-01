@@ -23,13 +23,11 @@ const dataTable = readFileSync(
 );
 
 /**
- * The routings card only. The plan preview dialog keeps a plain two-column
- * table of continent to node, which is not a layout a phone loses anything to.
+ * The routings collection only. The plan preview dialog keeps a plain
+ * two-column table of continent to node, which is not a layout a phone loses
+ * anything to.
  */
-const routingsCard = view.slice(
-  view.indexOf("networking.geoRouting.routings"),
-  view.indexOf("<!-- Create / edit dialog -->"),
-);
+const routingsCard = view.slice(view.indexOf("<DataTable"), view.indexOf("<!-- Create / edit dialog -->"));
 
 test("the routings list goes through DataTable, not a hand-rolled table", () => {
   assert.ok(routingsCard.length > 0, "GeoRoutingView no longer has a routings card");
@@ -42,19 +40,20 @@ test("the routings list goes through DataTable, not a hand-rolled table", () => 
   );
 });
 
-test("every column the desktop row carries reaches the phone", () => {
+test("every column the desktop row carries reaches the phone, and the row menu holds delete", () => {
   // Both phone layouts render from `columns`, so a value that only exists as
-  // a hard-coded <td> is a value a phone never sees.
-  const block = view.slice(view.indexOf("const columns = computed"), view.indexOf("// ── Create / edit dialog"));
-  for (const key of ["name", "hostname", "strategy", "nodes", "dns", "status", "lastApplied", "lastError", "actions"]) {
+  // a hard-coded <td> is a value a phone never sees. Applied state and the
+  // error moved to the status cell and the sheet (design 23, 4.4).
+  const block = view.slice(view.indexOf("const columns = computed"), view.indexOf("const openRoute"));
+  for (const key of ["name", "hostname", "strategy", "nodes", "dns", "status", "actions"]) {
     assert.match(block, new RegExp(`key: "${key}"`), `the ${key} column is not in the column model`);
   }
-  // And the actions cell still offers all three controls, delete included:
-  // the demo copy on this page names the row's delete button by hand.
-  const actions = view.slice(view.indexOf('#cell-actions='), view.indexOf("</DataTable>"));
-  assert.match(actions, /previewConfig/);
-  assert.match(actions, /common\.actions\.edit/);
-  assert.match(actions, /common\.actions\.delete/);
+  // The demo copy tells the reader to delete it from its row menu.
+  const menu = view.slice(view.indexOf("function menuFor("), view.indexOf("const deleteImpact"));
+  assert.match(menu, /previewConfig/);
+  assert.match(menu, /common\.actions\.edit/);
+  assert.match(menu, /common\.actions\.delete/);
+  assert.match(view.slice(view.indexOf("#cell-actions="), view.indexOf("</DataTable>")), /<RowMenu\b/);
 });
 
 test("DataTable still renders every column on a phone, scrolling by default", () => {

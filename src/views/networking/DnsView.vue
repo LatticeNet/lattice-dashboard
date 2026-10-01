@@ -1,18 +1,33 @@
 <script setup lang="ts">
+/**
+ * Self-host DNS (design 23, section 4.4): the resolvers on the fleet, the
+ * CoreDNS ones Lattice deploys and the ones it only watches.
+ *
+ * The head counts them and what is wrong (a failed apply or publish, drift,
+ * a certificate that lapses); attention names each with its proof. With no
+ * resolver the page is a checklist read from live state, with the two ways
+ * in. A row opens the resolver in the sheet on `?open=`, which holds what
+ * the eleven columns used to (zones, exposure, publish history, drift
+ * findings); Plan, Publish, Edit and Delete sit in one row menu.
+ *
+ * Publish writes public DNS at once (design 23, 3.8, outside-breaking): its
+ * confirm previews the records and asks for the resolver's name. Deleting a
+ * CoreDNS record leaves CoreDNS running on the node and published records
+ * published ("leaves config on a node"), so that confirm names the node and
+ * what keeps running and asks for the name too; deleting a watched record
+ * only stops the watch.
+ */
 import { computed, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
+import { useNow } from "@vueuse/core";
 import {
-  ChevronDown,
   Eye,
-  Globe2,
-  KeyRound,
   Pencil,
   Play,
   Plus,
   RefreshCw,
-  ShieldAlert,
   Trash2,
   UploadCloud,
 } from "lucide-vue-next";
@@ -30,16 +45,12 @@ import {
 } from "@/lib/api";
 import {
   canPlanDeployment,
-  DNS_COLUMN_SIZING,
   buildExternalDnsBody,
   canPublishDeployment,
   certDate,
   certVerdict,
-  dnsVisibleColumns,
-  driftTone,
   externalHostnameProblem,
   isObservedEngine,
-  isObservedOnlyTable,
   listenSummary,
   listenerProcesses,
   lookupCertWatch,
@@ -53,19 +64,22 @@ import { formatDateTime, shortId } from "@/lib/format";
 import { fieldNumber } from "@/lib/formValue";
 import { cn } from "@/lib/utils";
 
+import { useProof } from "@/composables/useProof";
+import { useRouteOpen } from "@/composables/useRouteOpen";
+import { provideNodeDirectory } from "@/composables/useNodeDirectory";
+import { describeNodeStatus } from "@/lib/nodeStatus";
+import { proofReason } from "@/components/common/proofModel";
 import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import NodeLabel from "@/components/common/NodeLabel.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import SetupChecklist, { type SetupItem } from "@/components/networking/SetupChecklist.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PlanReviewDialog from "@/components/common/PlanReviewDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -86,7 +100,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("dns:admin"));
 const canPlan = computed(() => auth.can("dns:admin") && auth.can("network:plan"));
@@ -131,24 +145,6 @@ function nodeLabel(dep: DNSDeploymentView): string {
   return dep.node_name || dep.node_id;
 }
 
-function statusVariant(status: string): "success" | "destructive" | "warning" | "secondary" | "outline" {
-  switch (status) {
-    case "running":
-      return "success";
-    // Observed is not a health claim: it says Lattice watches this daemon and
-    // never touched it. A green badge would read as "Lattice has it running".
-    case "observed":
-      return "outline";
-    case "failed":
-      return "destructive";
-    case "pending":
-    case "applying":
-      return "warning";
-    default:
-      return "secondary";
-  }
-}
-
 /** The certificate line in the Reality column: how long is left, and when. */
 function certLabel(dep: DNSDeploymentView): string {
   const expiry = certVerdict(dep.cert_not_after, new Date(), certWatch(dep));
@@ -176,76 +172,247 @@ function certToneClass(dep: DNSDeploymentView): string {
   }
 }
 
-/**
- * Whether the table is showing nothing but daemons Lattice watches. Two of the
- * eleven columns describe an intent Lattice holds, and an observed record
- * holds neither, so on such a table they are two columns of "·" charging the
- * hostname beside them about ninety pixels each.
- */
-const observedOnly = computed(() => isObservedOnlyTable(sortedDeployments.value));
-
 const columns = computed<DataTableColumn<DNSDeploymentView>[]>(() => [
   { key: "name", label: t("networking.dns.colName"), sortable: true, searchable: true },
-  {
-    key: "node",
-    label: t("networking.dns.colNode"),
-    sortable: true,
-    searchable: true,
-    value: (dep) => nodeLabel(dep),
-    class: DNS_COLUMN_SIZING.node,
-  },
-  {
-    key: "listen",
-    label: t("networking.dns.colListen"),
-    sortable: true,
-    searchable: true,
-    value: (dep) => listenSummary(dep),
-  },
-  { key: "exposure", label: t("networking.dns.colExposure"), sortable: true },
-  { key: "zones", label: t("networking.dns.colZones"), align: "right", sortable: true, value: (dep) => dep.zones.length },
-  { key: "hostname", label: t("networking.dns.colHostname"), sortable: true, searchable: true, class: DNS_COLUMN_SIZING.hostname },
+  { key: "node", label: t("networking.dns.colNode"), sortable: true, searchable: true, value: (dep) => nodeLabel(dep) },
+  { key: "listen", label: t("networking.dns.colListen"), searchable: true, value: (dep) => listenSummary(dep) },
+  { key: "hostname", label: t("networking.dns.colHostname"), sortable: true, searchable: true },
   { key: "status", label: t("networking.dns.colStatus"), sortable: true },
-  {
-    key: "reality",
-    label: t("networking.dns.colReality"),
-    sortable: true,
-    value: (dep) => dep.drift?.status ?? "",
-    class: DNS_COLUMN_SIZING.reality,
-  },
-  { key: "credential", label: t("networking.dns.colCredential"), sortable: true, value: (dep) => (dep.has_credential ? 1 : 0) },
-  { key: "published", label: t("networking.dns.colPublished"), sortable: true, value: (dep) => dep.last_published_at ?? "" },
-  { key: "actions", label: t("networking.dns.colActions"), align: "right" },
+  { key: "reality", label: t("networking.dns.colReality"), sortable: true, value: (dep) => dep.drift?.status ?? "" },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
-
-/** The columns actually rendered: the intent pair leaves an observed-only table. */
-const visibleColumns = computed(() => dnsVisibleColumns(columns.value, observedOnly.value));
-
-/**
- * Observed records whose drift findings are open.
- *
- * The findings are sentences, and a table column is the one place a sentence
- * cannot be given room: auto layout hands width to whatever cannot wrap, so
- * the prose column loses to the mono ones every time. The verdict and the
- * certificate countdown stay in the row because they are short and are what
- * the operator scans for; the sentences that explain a verdict open under the
- * row at the table's full width.
- */
-const openDrift = ref<Set<string>>(new Set());
 
 function driftFindings(dep: DNSDeploymentView): string[] {
   return dep.drift?.findings ?? [];
 }
 
-function isDriftOpen(dep: DNSDeploymentView): boolean {
-  return openDrift.value.has(dep.id);
+/* ------------------------------------------------------------------ */
+/* Head: proof line and attention (design 23, section 4.4)             */
+/* ------------------------------------------------------------------ */
+
+provideNodeDirectory(computed(() => nodesQuery.data.value));
+const proof = useProof(deploymentsQuery);
+const sheet = useRouteOpen();
+const now = useNow({ interval: 60_000 });
+
+function certTone(dep: DNSDeploymentView) {
+  return certVerdict(dep.cert_not_after, now.value, certWatch(dep)).tone;
 }
 
-function toggleDrift(dep: DNSDeploymentView) {
-  const next = new Set(openDrift.value);
-  if (next.has(dep.id)) next.delete(dep.id);
-  else next.add(dep.id);
-  openDrift.value = next;
+const counts = computed(() => {
+  const out = { watched: 0, deployed: 0, drift: 0, failing: 0, certExpired: 0, certSoon: 0 };
+  for (const dep of deployments.value) {
+    if (isObservedEngine(dep.engine)) out.watched += 1;
+    else out.deployed += 1;
+    if (dep.drift?.status === "drift") out.drift += 1;
+    if (dep.last_error || dep.last_publish_error || dep.status === "failed") out.failing += 1;
+    const tone = certTone(dep);
+    if (tone === "expired") out.certExpired += 1;
+    else if (tone === "warn") out.certSoon += 1;
+  }
+  return out;
+});
+
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = deployments.value.length;
+  const parts: ProofSegment[] = [{ key: "resolvers", text: t("networking.dnsPage.proof.resolvers", { n }, n) }];
+  if (n === 0) return parts;
+  const c = counts.value;
+  if (c.watched) parts.push({ key: "watched", text: t("networking.dnsPage.proof.watched", { n: c.watched }) });
+  if (c.deployed) parts.push({ key: "deployed", text: t("networking.dnsPage.proof.deployed", { n: c.deployed }) });
+  if (c.failing) parts.push({ key: "failing", text: t("networking.dnsPage.proof.failing", { n: c.failing }), tone: "destructive" });
+  if (c.drift) parts.push({ key: "drift", text: t("networking.dnsPage.proof.drift", { n: c.drift }), tone: "warning" });
+  if (c.certExpired) parts.push({ key: "expired", text: t("networking.dnsPage.proof.certExpired", { n: c.certExpired }), tone: "destructive" });
+  if (c.certSoon) parts.push({ key: "soon", text: t("networking.dnsPage.proof.certSoon", { n: c.certSoon }), tone: "warning" });
+  if (canReadMonitors.value && monitorsQuery.error.value) {
+    parts.push({ key: "watches", text: t("networking.dnsPage.proof.watchesUnread", { reason: proofReason(monitorsQuery.error.value) }), tone: "warning" });
+  }
+  return parts;
+});
+
+function refreshAll(): void {
+  void deploymentsQuery.refresh();
+  void nodesQuery.refresh();
+  if (canReadMonitors.value) void monitorsQuery.refresh();
 }
+
+function firstLine(text: string): string {
+  const line = text.split("\n")[0]?.trim() ?? "";
+  return line.length > 160 ? `${line.slice(0, 157)}...` : line;
+}
+
+const attention = computed<AttentionItem[]>(() => {
+  const items: AttentionItem[] = [];
+  for (const dep of sortedDeployments.value) {
+    const open = { label: t("networking.dnsPage.attention.open"), run: () => sheet.open(dep.id) };
+    if (dep.last_error || dep.status === "failed") {
+      items.push({
+        key: `failed:${dep.id}`,
+        tone: "danger",
+        claim: t("networking.dnsPage.attention.failedClaim", { name: dep.name, node: nodeLabel(dep) }),
+        proof: firstLine(dep.last_error ?? dep.status),
+        action: open,
+      });
+    }
+    if (dep.last_publish_error) {
+      items.push({
+        key: `publish:${dep.id}`,
+        tone: "danger",
+        claim: t("networking.dnsPage.attention.publishClaim", { name: dep.name, hostname: dep.hostname ?? "" }),
+        proof: firstLine(dep.last_publish_error),
+        action: open,
+      });
+    }
+    const tone = certTone(dep);
+    if (tone === "expired" || tone === "warn") {
+      const watch = certWatch(dep);
+      items.push({
+        key: `cert:${dep.id}`,
+        tone: tone === "expired" ? "danger" : "warning",
+        claim: t(`networking.dnsPage.attention.${tone === "expired" ? "certExpiredClaim" : "certSoonClaim"}`, { name: dep.name }),
+        proof: `${certLabel(dep)} · ${dep.hostname ?? ""}`,
+        action: open,
+      });
+      if (watch.state === "unwatched") {
+        items.push({
+          key: `unwatched:${dep.id}`,
+          tone: "warning",
+          claim: t("networking.dnsPage.attention.unwatchedClaim", { hostname: dep.hostname ?? dep.name }),
+          proof: t("networking.dnsPage.attention.unwatchedProof"),
+          action: { label: t("networking.dns.certWatchSetUp"), to: { name: "monitoring" } },
+        });
+      }
+    }
+    if (dep.drift?.status === "drift") {
+      items.push({
+        key: `drift:${dep.id}`,
+        tone: "warning",
+        claim: t("networking.dnsPage.attention.driftClaim", { name: dep.name, node: nodeLabel(dep) }),
+        proof: firstLine(driftFindings(dep)[0] ?? ""),
+        action: open,
+      });
+    }
+  }
+  return items;
+});
+
+/* ------------------------------------------------------------------ */
+/* Empty state: what a resolver needs, read live                       */
+/* ------------------------------------------------------------------ */
+
+const listEmpty = computed(() => deploymentsQuery.data.value !== undefined && deployments.value.length === 0);
+
+const setupItems = computed<SetupItem[]>(() => {
+  const nodesRead = nodesQuery.data.value !== undefined;
+  const online = nodes.value.filter((node) => describeNodeStatus(node).reporting).length;
+  return [
+    {
+      key: "node",
+      label: t("networking.dnsPage.setup.node"),
+      ready: nodesRead ? online > 0 : null,
+      detail: nodesRead
+        ? t("networking.dnsPage.setup.nodeDetail", { online, total: nodes.value.length })
+        : nodesQuery.error.value
+          ? t("networking.setup.notRead", { reason: proofReason(nodesQuery.error.value) })
+          : undefined,
+    },
+    {
+      key: "plan",
+      label: t("networking.dnsPage.setup.plan"),
+      ready: canPlan.value,
+      detail: canPlan.value ? t("networking.dnsPage.setup.planHeld") : t("networking.dnsPage.setup.planMissing"),
+    },
+    {
+      key: "watch",
+      label: t("networking.dnsPage.setup.watch"),
+      ready: canReadMonitors.value && monitorsQuery.data.value !== undefined ? tlsWatchCount.value > 0 : null,
+      detail:
+        canReadMonitors.value && monitorsQuery.data.value !== undefined
+          ? t("networking.dnsPage.setup.watchDetail", { n: tlsWatchCount.value }, tlsWatchCount.value)
+          : t("networking.dnsPage.setup.watchUnread"),
+      action: { label: t("networking.dns.certWatchSetUp"), to: { name: "monitoring" } },
+    },
+  ];
+});
+
+const tlsWatchCount = computed(() => (monitorsQuery.data.value ?? []).filter((monitor) => monitor.type === "tls").length);
+
+/* ------------------------------------------------------------------ */
+/* Sheet and row menu                                                  */
+/* ------------------------------------------------------------------ */
+
+const openDep = computed(() => deployments.value.find((dep) => dep.id === sheet.openId.value));
+const sheetState = computed(() => {
+  if (!sheet.openId.value) return "ready" as const;
+  if (openDep.value) return deploymentsQuery.error.value ? ("stale" as const) : ("ready" as const);
+  if (deploymentsQuery.data.value === undefined) return deploymentsQuery.error.value ? ("gone" as const) : ("loading" as const);
+  return "gone" as const;
+});
+
+const STATUS_TONE: Record<string, string> = {
+  failed: "text-destructive",
+  pending: "text-warning-text",
+  applying: "text-warning-text",
+};
+
+function statusText(dep: DNSDeploymentView): string {
+  const key = `networking.dnsPage.status.${dep.status}`;
+  return te(key) ? t(key) : dep.status;
+}
+
+function menuFor(dep: DNSDeploymentView): RowMenuItem[] {
+  const observed = isObservedEngine(dep.engine);
+  return [
+    {
+      key: "plan",
+      label: t("networking.shared.plan"),
+      icon: Play,
+      hidden: observed || !canAdmin.value,
+      disabled: !canPlan.value || planning.value === dep.id,
+      reason: !canPlan.value ? t("networking.dnsPage.setup.planMissing") : undefined,
+      run: () => void plan(dep),
+    },
+    {
+      key: "publish",
+      label: t("common.actions.publish"),
+      icon: UploadCloud,
+      hidden: !canAdmin.value || !canPublishDeployment(dep),
+      disabled: publishing.value === dep.id,
+      run: () => (publishTarget.value = dep),
+    },
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(dep) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = dep) },
+  ];
+}
+
+/** What a publish writes, one line per record (design 23, 3.8: a run shows what goes out). */
+const publishPreview = computed(() => {
+  const dep = publishTarget.value;
+  if (!dep?.hostname) return [];
+  const node = nodes.value.find((entry) => entry.id === dep.node_id);
+  const unknown = t("networking.dnsPage.publish.unknownAddress");
+  const lines: string[] = [];
+  if (dep.publish_ipv4) {
+    lines.push(t("networking.dnsPage.publish.record", { host: dep.hostname, type: "A", value: node?.public_ip || unknown, was: dep.last_ipv4 || t("networking.dnsPage.publish.nothing") }));
+  }
+  if (dep.publish_ipv6) {
+    lines.push(t("networking.dnsPage.publish.record", { host: dep.hostname, type: "AAAA", value: node?.public_ipv6 || unknown, was: dep.last_ipv6 || t("networking.dnsPage.publish.nothing") }));
+  }
+  return lines;
+});
+
+/** Delete: a watched resolver loses its watch; a deployed one keeps running on the node. */
+const deleteImpact = computed(() => {
+  const dep = deleteTarget.value;
+  if (!dep) return [];
+  if (isObservedEngine(dep.engine)) {
+    return [t("networking.dnsPage.delete.observedImpact", { node: nodeLabel(dep) })];
+  }
+  const lines = [t("networking.dnsPage.delete.corednsImpact", { node: nodeLabel(dep) })];
+  if (dep.hostname && dep.last_published_at) lines.push(t("networking.dnsPage.delete.publishedImpact", { hostname: dep.hostname }));
+  lines.push(t("networking.dnsPage.delete.noRemoval"));
+  return lines;
+});
 
 // ── Zone / record editor drafts ───────────────────────────────────────────
 type ZoneMode = "forward" | "static" | "block";
@@ -397,11 +564,12 @@ function emptyForm(): DnsForm {
   };
 }
 
-function openCreate() {
+function openCreate(engine?: DnsForm["engine"]) {
   editingId.value = undefined;
   editingRecord.value = undefined;
   editingHasCredential.value = false;
   Object.assign(form, emptyForm());
+  if (engine) form.engine = engine;
   formSnapshot.value = snapshotForm();
   dialogOpen.value = true;
 }
@@ -749,264 +917,217 @@ function closePlan(open: boolean) {
 </script>
 
 <template>
-  <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('networking.dns.title')"
-      :description="$t('networking.dns.description')"
-    >
-      <template #status>
-        <FreshnessLabel :last-updated="deploymentsQuery.lastUpdated.value" :poll-ms="deploymentsQuery.pollMs" />
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('networking.dns.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('networking.dns.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="deploymentsQuery.refreshing.value"
-          @click="deploymentsQuery.refresh"
-        >
+        <Button variant="outline" size="sm" :disabled="deploymentsQuery.refreshing.value" @click="refreshAll">
           <RefreshCw :class="cn('size-4', deploymentsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canAdmin" size="sm" @click="openCreate">
+        <Button v-if="canAdmin && !listEmpty && deploymentsQuery.data.value !== undefined" size="sm" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
-          {{ $t('networking.dns.newDeployment') }}
+          {{ $t('networking.dnsPage.register') }}
         </Button>
       </template>
     </PageHeader>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('networking.dns.cardTitle') }}
-        </CardTitle>
-        <CardDescription>
-          {{ $t('networking.dns.cardDescription') }}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <DataTable
-          state-key="deployments"
-          :columns="visibleColumns"
-          :rows="sortedDeployments"
-          :row-key="(dep) => dep.id"
-          :row-expanded="isDriftOpen"
-          :loading="deploymentsQuery.loading.value"
-          :error="deploymentsQuery.error.value"
-          searchable
-          :search-placeholder="$t('common.actions.search')"
-          :empty-title="$t('networking.dns.emptyTitle')"
-          :empty-description="$t('networking.dns.emptyDescription')"
-          :no-match-title="$t('networking.shared.noMatchTitle')"
-          :no-match-description="$t('networking.shared.noMatchDescription')"
-          @retry="deploymentsQuery.refresh"
-        >
-          <template #cell-name="{ row: dep }">
-            <div class="flex items-center gap-1.5">
-              <Eye
-                v-if="isObservedEngine(dep.engine)"
-                class="size-3.5 shrink-0 text-muted-foreground"
-                :aria-label="$t('networking.dns.observedAria')"
-              />
-              <span class="font-medium">{{ dep.name }}</span>
-            </div>
-            <div class="font-mono text-xs text-muted-foreground">
-              {{ dep.engine }}{{ dep.engine_version ? ` ${dep.engine_version}` : "" }}
-              <template v-if="listenerProcesses(dep.listeners).length">
-                · {{ listenerProcesses(dep.listeners).join(", ") }}
-              </template>
-            </div>
-          </template>
-          <template #cell-node="{ row: dep }">
-            <div class="truncate" :title="nodeLabel(dep)">{{ nodeLabel(dep) }}</div>
-            <div class="truncate font-mono text-xs text-muted-foreground">{{ shortId(dep.node_id, 12) }}</div>
-          </template>
-          <template #cell-listen="{ row: dep }">
-            <span class="font-mono text-xs">{{ listenSummary(dep) }}</span>
-          </template>
-          <!--
-            Credential and publish history describe an intent Lattice holds,
-            and an observed record holds neither, so those print nothing rather
-            than a "none" that reads as a fact about the operator's daemon.
+    <AttentionList :items="attention" />
 
-            Exposure and zones are different: the server keeps both on an
-            observed record, as the operator's own documentation of what the
-            daemon serves and who can reach it. They are printed in a neutral
-            tone, because on an observed row they are a note and not something
-            Lattice arranged, and they are printed at all because a field no
-            cell ever shows is a field a save can destroy unnoticed.
-          -->
-          <template #cell-exposure="{ row: dep }">
-            <Badge
-              v-if="!isObservedEngine(dep.engine)"
-              :variant="dep.exposure === 'public' ? 'warning' : 'secondary'"
-            >
-              {{ dep.exposure }}
-            </Badge>
-            <Badge v-else-if="dep.exposure" variant="outline">{{ dep.exposure }}</Badge>
-            <span v-else class="text-muted-foreground">·</span>
-          </template>
-          <template #cell-zones="{ row: dep }">
-            <span v-if="!isObservedEngine(dep.engine) || dep.zones.length" class="tabular-nums">
-              {{ dep.zones.length }}
-            </span>
-            <span v-else class="text-muted-foreground">·</span>
-          </template>
-          <!--
-            Truncation is the cap's other half, and it goes with it: the column
-            reserves its width now, and a hostname printed in full is the
-            point. The tooltip was the only recovery before, and a keyboard or
-            touch reader has no way to open one.
-          -->
-          <template #cell-hostname="{ row: dep }">
-            <div class="font-mono text-xs">{{ dep.hostname || $t('common.misc.none') }}</div>
-          </template>
-          <template #cell-status="{ row: dep }">
-            <Badge :variant="statusVariant(dep.status)">{{ dep.status }}</Badge>
-            <div v-if="dep.last_error" class="mt-1 max-w-[180px] truncate text-xs text-destructive" :title="dep.last_error">{{ dep.last_error }}</div>
-          </template>
-          <!--
-            The observed half of the page. A record Lattice deploys has an
-            intent to compare against; a record it only watches has nothing but
-            the node's own report, so this column is the whole verdict: when
-            the certificate lapses, and whether the sockets are still where the
-            operator said they were.
-          -->
-          <template #cell-reality="{ row: dep }">
-            <div v-if="isObservedEngine(dep.engine)" class="space-y-1">
-              <div class="flex flex-wrap items-center gap-1.5">
-                <Badge :variant="driftTone(dep.drift?.status)">
-                  <ShieldAlert v-if="dep.drift?.status === 'drift'" class="size-3" aria-hidden="true" />
-                  {{ $t(`networking.dns.drift.${dep.drift?.status ?? 'unknown'}`) }}
-                </Badge>
-              </div>
-              <div :class="certToneClass(dep)" class="text-xs">{{ certLabel(dep) }}</div>
-              <!--
-                Who owns that countdown. Self-host DNS records the date; a tls
-                monitor is the thing that fires before it arrives. Saying which
-                one, and linking to it, is what stops the two pages
-                contradicting each other, and it is the only way an operator
-                can tell an observed resolver that is watched from one that is
-                not.
-              -->
-              <RouterLink
-                v-if="certWatch(dep).state === 'watched'"
-                :to="{ name: 'monitor-detail', params: { id: certWatch(dep).monitor?.id } }"
-                class="block text-xs text-muted-foreground underline-offset-2 hover:underline"
-                :title="certWatch(dep).monitor?.name"
-              >
-                {{ $t('networking.dns.certWatched', { days: certWatch(dep).thresholdDays }) }}
-              </RouterLink>
-              <RouterLink
-                v-else-if="certWatch(dep).state === 'unwatched'"
-                :to="{ name: 'monitoring' }"
-                class="block text-xs text-warning underline-offset-2 hover:underline"
-              >
-                {{ $t('networking.dns.certUnwatched') }}
-              </RouterLink>
-              <Button
-                v-if="driftFindings(dep).length"
-                variant="ghost"
-                size="sm"
-                class="-ms-2 h-6 px-2 text-xs"
-                :aria-expanded="isDriftOpen(dep)"
-                @click="toggleDrift(dep)"
-              >
-                <ChevronDown
-                  :class="cn('size-3.5 transition-transform', isDriftOpen(dep) && 'rotate-180')"
-                  aria-hidden="true"
-                />
-                {{ $t('networking.dns.driftFindingsToggle', driftFindings(dep).length) }}
-              </Button>
-            </div>
-            <span v-else class="text-xs text-muted-foreground">{{ $t('networking.dns.realityNotObserved') }}</span>
-          </template>
-          <!--
-            The findings, at the table's width instead of a column's. Named by
-            the record they belong to, because a panel under a row still has to
-            say which row it came from once it is scrolled past.
-          -->
-          <template #row-detail="{ row: dep }">
-            <div class="space-y-1.5 rounded-md border border-border bg-background p-3">
-              <p class="text-xs font-medium">
-                {{ $t('networking.dns.driftFindingsTitle', { name: dep.name }) }}
-              </p>
-              <ul class="space-y-1">
-                <li
-                  v-for="(finding, index) in driftFindings(dep)"
-                  :key="index"
-                  class="text-xs leading-relaxed text-muted-foreground"
-                >
-                  {{ finding }}
-                </li>
-              </ul>
-              <p v-if="dep.drift?.reality_collected_at" class="text-xs text-muted-foreground">
-                {{ $t('networking.dns.realityCollected', { time: formatDateTime(dep.drift.reality_collected_at) }) }}
-              </p>
-            </div>
-          </template>
-          <template #cell-credential="{ row: dep }">
-            <span v-if="isObservedEngine(dep.engine)" class="text-muted-foreground">·</span>
-            <Badge v-else-if="dep.has_credential" variant="success">
-              <KeyRound class="size-3" aria-hidden="true" /> {{ $t('networking.dns.credSet') }}
-            </Badge>
-            <Badge v-else variant="outline">{{ $t('networking.dns.credNone') }}</Badge>
-          </template>
-          <template #cell-published="{ row: dep }">
-            <span v-if="isObservedEngine(dep.engine)" class="text-muted-foreground">·</span>
-            <div v-else class="text-xs text-muted-foreground">{{ dep.last_published_at ? formatDateTime(dep.last_published_at) : $t('common.misc.none') }}</div>
-            <div v-if="dep.last_publish_error" class="mt-1 max-w-[180px] truncate text-xs text-destructive" :title="dep.last_publish_error">{{ dep.last_publish_error }}</div>
-          </template>
-          <template #cell-actions="{ row: dep }">
-            <div class="flex flex-wrap items-center justify-end gap-1">
-              <span v-if="isObservedEngine(dep.engine)" class="mr-1 text-xs text-muted-foreground">
-                {{ $t('networking.dns.observedNoActions') }}
-              </span>
-              <Button
-                v-if="canPlan && canPlanDeployment(dep)"
-                variant="outline"
-                size="sm"
-                :disabled="planning === dep.id"
-                @click="plan(dep)"
-              >
-                <RefreshCw v-if="planning === dep.id" class="size-4 animate-spin" aria-hidden="true" />
-                <Play v-else class="size-4" aria-hidden="true" />
-                {{ $t('networking.shared.plan') }}
-              </Button>
-              <Button
-                v-if="canAdmin && canPublishDeployment(dep)"
-                variant="outline"
-                size="sm"
-                :disabled="publishing === dep.id"
-                @click="publishTarget = dep"
-              >
-                <RefreshCw v-if="publishing === dep.id" class="size-4 animate-spin" aria-hidden="true" />
-                <UploadCloud v-else class="size-4" aria-hidden="true" />
-                {{ $t('common.actions.publish') }}
-              </Button>
-              <Button
-                v-if="canAdmin"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('common.actions.edit')"
-                @click="openEdit(dep)"
-              >
-                <Pencil class="size-4" />
-              </Button>
-              <Button
-                v-if="canAdmin"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('common.actions.delete')"
-                @click="deleteTarget = dep"
-              >
-                <Trash2 class="size-4 text-destructive" />
-              </Button>
-            </div>
-          </template>
-        </DataTable>
-      </CardContent>
-    </Card>
+    <SetupChecklist
+      v-if="listEmpty"
+      :title="$t('networking.dns.emptyTitle')"
+      :description="$t('networking.dnsPage.emptyDescription')"
+      :items="setupItems"
+    >
+      <template v-if="canAdmin">
+        <Button size="sm" variant="outline" type="button" @click="openCreate('external')">
+          <Eye aria-hidden="true" />
+          {{ $t('networking.dnsPage.watchExisting') }}
+        </Button>
+        <Button size="sm" variant="outline" type="button" :disabled="!canPlan" :title="!canPlan ? $t('networking.dnsPage.setup.planMissing') : undefined" @click="openCreate('coredns')">
+          <Plus aria-hidden="true" />
+          {{ $t('networking.dnsPage.deployCoredns') }}
+        </Button>
+      </template>
+    </SetupChecklist>
+
+    <DataTable
+      v-else
+      state-key="deployments"
+      :columns="columns"
+      :rows="sortedDeployments"
+      :row-key="(dep) => dep.id"
+      :loading="deploymentsQuery.loading.value"
+      :error="deploymentsQuery.error.value"
+      :has-data="deploymentsQuery.data.value !== undefined"
+      searchable
+      :expression-filter="false"
+      :search-placeholder="$t('networking.dnsPage.searchPlaceholder')"
+      :row-click="(dep, el) => sheet.open(dep.id, el)"
+      :active-row-id="sheet.openId.value"
+      :show-summary="false"
+      :empty-title="$t('networking.dns.emptyTitle')"
+      :empty-description="$t('networking.dns.emptyDescription')"
+      :no-match-title="$t('networking.shared.noMatchTitle')"
+      :no-match-description="$t('networking.shared.noMatchDescription')"
+      @retry="refreshAll"
+    >
+      <template #cell-name="{ row: dep }">
+        <div class="flex items-center gap-1.5">
+          <Eye v-if="isObservedEngine(dep.engine)" class="size-3.5 shrink-0 text-muted-foreground" :aria-label="$t('networking.dns.observedAria')" />
+          <span class="font-medium">{{ dep.name }}</span>
+        </div>
+        <div class="font-mono text-xs text-muted-foreground">
+          {{ dep.engine }}{{ dep.engine_version ? ` ${dep.engine_version}` : "" }}
+        </div>
+      </template>
+      <template #cell-node="{ row: dep }">
+        <NodeLabel :id="dep.node_id" class="text-sm" />
+      </template>
+      <template #cell-listen="{ row: dep }">
+        <span class="whitespace-nowrap font-mono text-xs">{{ listenSummary(dep) }}</span>
+      </template>
+      <template #cell-hostname="{ row: dep }">
+        <span class="whitespace-nowrap font-mono text-xs">{{ dep.hostname || $t('common.misc.none') }}</span>
+      </template>
+      <template #cell-status="{ row: dep }">
+        <span :class="cn('whitespace-nowrap text-xs', STATUS_TONE[dep.status] ?? 'text-muted-foreground')">{{ statusText(dep) }}</span>
+      </template>
+      <template #cell-reality="{ row: dep }">
+        <div v-if="isObservedEngine(dep.engine)" class="space-y-0.5 text-xs">
+          <div :class="dep.drift?.status === 'drift' ? 'text-warning-text' : 'text-muted-foreground'" class="whitespace-nowrap">
+            {{ $t(`networking.dns.drift.${dep.drift?.status ?? 'unknown'}`) }}
+          </div>
+          <div :class="certToneClass(dep)" class="whitespace-nowrap">{{ certLabel(dep) }}</div>
+        </div>
+        <span v-else class="text-xs text-muted-foreground">{{ $t('networking.dns.realityNotObserved') }}</span>
+      </template>
+      <template #cell-actions="{ row: dep }">
+        <RowMenu v-if="canAdmin" :name="dep.name" :items="menuFor(dep)" />
+      </template>
+    </DataTable>
+
+    <ObjectSheet
+      :open="!!sheet.openId.value"
+      :title="openDep ? openDep.name : (sheet.openId.value ?? '')"
+      :subtitle="openDep ? `${openDep.engine}${openDep.engine_version ? ` ${openDep.engine_version}` : ''}` : undefined"
+      :state="sheetState"
+      :error="deploymentsQuery.error.value ? proofReason(deploymentsQuery.error.value) : null"
+      :read-only="!canAdmin"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('networking.dnsPage.goneTitle')"
+      :gone-description="$t('networking.dnsPage.goneDescription')"
+      @close="sheet.close"
+    >
+      <div v-if="openDep" class="space-y-5 text-sm">
+        <p v-if="isObservedEngine(openDep.engine)" class="text-muted-foreground">{{ $t('networking.dnsPage.sheet.observed') }}</p>
+        <pre
+          v-if="openDep.last_error"
+          class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 font-mono text-xs text-foreground"
+        >{{ openDep.last_error }}</pre>
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div class="min-w-0">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colNode') }}</dt>
+            <dd><NodeLabel :id="openDep.node_id" link /></dd>
+          </div>
+          <div>
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colStatus') }}</dt>
+            <dd :class="STATUS_TONE[openDep.status]">{{ statusText(openDep) }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colListen') }}</dt>
+            <dd class="font-mono text-xs">{{ listenSummary(openDep) }}</dd>
+            <dd v-if="listenerProcesses(openDep.listeners).length" class="text-xs text-muted-foreground">
+              {{ listenerProcesses(openDep.listeners).join(", ") }}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colExposure') }}</dt>
+            <dd>{{ openDep.exposure || $t('common.misc.none') }}</dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colHostname') }}</dt>
+            <dd class="break-all font-mono text-xs">{{ openDep.hostname || $t('common.misc.none') }}</dd>
+          </div>
+          <div v-if="!isObservedEngine(openDep.engine)">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.dns.colPublished') }}</dt>
+            <dd class="text-xs">
+              {{ openDep.last_published_at ? formatDateTime(openDep.last_published_at) : $t('common.misc.never') }}
+              <span class="text-muted-foreground">· {{ openDep.has_credential ? $t('networking.dnsPage.sheet.credentialSet') : $t('networking.dnsPage.sheet.credentialNone') }}</span>
+            </dd>
+            <dd v-if="openDep.last_publish_error" class="text-xs text-destructive">{{ openDep.last_publish_error }}</dd>
+          </div>
+        </dl>
+
+        <section v-if="isObservedEngine(openDep.engine)" class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.dns.colReality') }}</h3>
+          <p class="text-sm">
+            <span :class="openDep.drift?.status === 'drift' ? 'text-warning-text' : ''">{{ $t(`networking.dns.drift.${openDep.drift?.status ?? 'unknown'}`) }}</span>
+            <span :class="certToneClass(openDep)"> · {{ certLabel(openDep) }}</span>
+          </p>
+          <RouterLink
+            v-if="certWatch(openDep).state === 'watched'"
+            :to="{ name: 'monitor-detail', params: { id: certWatch(openDep).monitor?.id } }"
+            class="block text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            {{ $t('networking.dns.certWatched', { days: certWatch(openDep).thresholdDays }) }}
+          </RouterLink>
+          <RouterLink
+            v-else-if="certWatch(openDep).state === 'unwatched'"
+            :to="{ name: 'monitoring' }"
+            class="block text-xs text-warning-text underline-offset-2 hover:underline"
+          >
+            {{ $t('networking.dns.certUnwatched') }}
+          </RouterLink>
+          <ul v-if="driftFindings(openDep).length" class="space-y-1 rounded-md border border-border p-3">
+            <li v-for="(finding, index) in driftFindings(openDep)" :key="index" class="text-xs leading-relaxed text-muted-foreground">{{ finding }}</li>
+          </ul>
+          <p v-if="openDep.drift?.reality_collected_at" class="text-xs text-muted-foreground">
+            {{ $t('networking.dns.realityCollected', { time: formatDateTime(openDep.drift.reality_collected_at) }) }}
+          </p>
+        </section>
+
+        <section v-if="openDep.zones.length" class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.dnsPage.sheet.zones', { n: openDep.zones.length }, openDep.zones.length) }}</h3>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <li v-for="zone in openDep.zones" :key="zone.suffix" class="flex flex-wrap items-baseline gap-x-2 px-3 py-2 text-xs">
+              <span class="font-mono text-foreground">{{ zone.suffix }}</span>
+              <span class="text-muted-foreground">{{ zone.mode }}</span>
+              <span v-if="zone.upstreams?.length" class="font-mono text-muted-foreground">{{ zone.upstreams.join(", ") }}</span>
+              <span v-if="zone.records?.length" class="text-muted-foreground">{{ $t('networking.dnsPage.sheet.records', { n: zone.records.length }, zone.records.length) }}</span>
+            </li>
+          </ul>
+        </section>
+      </div>
+      <template v-if="openDep" #actions>
+        <Button
+          v-if="!isObservedEngine(openDep.engine)"
+          variant="outline"
+          size="sm"
+          type="button"
+          :disabled="!canPlan || planning === openDep.id"
+          :title="!canPlan ? $t('networking.dnsPage.setup.planMissing') : undefined"
+          @click="plan(openDep)"
+        >
+          <RefreshCw v-if="planning === openDep.id" class="animate-spin" aria-hidden="true" />
+          <Play v-else aria-hidden="true" />
+          {{ $t('networking.shared.plan') }}
+        </Button>
+        <Button v-if="canPublishDeployment(openDep)" variant="outline" size="sm" type="button" @click="publishTarget = openDep">
+          <UploadCloud aria-hidden="true" />
+          {{ $t('common.actions.publish') }}
+        </Button>
+        <Button variant="outline" size="sm" type="button" @click="openEdit(openDep)">
+          <Pencil aria-hidden="true" />
+          {{ $t('common.actions.edit') }}
+        </Button>
+        <RowMenu :name="openDep.name" :items="menuFor(openDep).filter((item) => item.key === 'delete')" />
+      </template>
+    </ObjectSheet>
 
     <!-- Create / edit dialog -->
     <Dialog :open="dialogOpen" @update:open="onDialogOpenChange">
@@ -1330,16 +1451,15 @@ function closePlan(open: boolean) {
       </DialogScrollContent>
     </Dialog>
 
-    <!-- Publish confirm: this writes public DNS immediately, with no approval. -->
+    <!-- Publish writes public DNS at once (design 23, 3.8, outside-breaking): preview and typed name. -->
     <ConfirmDialog
       :open="!!publishTarget"
-      variant="default"
-      :title="$t('networking.dns.publishTitle')"
-      :description="$t('networking.dns.publishDescription', {
-        hostname: publishTarget?.hostname ?? '',
-        zones: publishZones,
-      })"
-      :confirm-label="$t('common.actions.publish')"
+      :title="$t('networking.dnsPage.publish.title', { hostname: publishTarget?.hostname ?? '' })"
+      :description="$t('networking.dnsPage.publish.description', { zones: publishZones })"
+      :impact="publishPreview"
+      :impact-title="$t('networking.dnsPage.publish.impactTitle')"
+      :typed-confirm="publishTarget?.name"
+      :confirm-label="$t('networking.dnsPage.publish.confirm')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="!!publishing"
       @update:open="(v) => { if (!v) publishTarget = undefined; }"
@@ -1358,16 +1478,15 @@ function closePlan(open: boolean) {
       @confirm="confirmDiscard"
     />
 
-    <!-- Delete confirm dialog -->
+    <!-- Delete: a deployed resolver keeps running on its node; a watched one only loses its watch. -->
     <ConfirmDialog
       :open="!!deleteTarget"
-      :title="$t('networking.dns.deleteTitle')"
-      :description="`${$t('networking.dns.deleteDescription')} ${deleteTarget?.name ?? ''}? ${
-        deleteTarget && isObservedEngine(deleteTarget.engine)
-          ? $t('networking.dns.deleteObserved')
-          : $t('networking.dns.deleteIrreversible')
-      }`"
-      :confirm-label="$t('common.actions.delete')"
+      :title="$t('networking.dnsPage.delete.title', { name: deleteTarget?.name ?? '' })"
+      :description="deleteTarget && isObservedEngine(deleteTarget.engine) ? $t('networking.dnsPage.delete.observedDescription') : $t('networking.dnsPage.delete.corednsDescription')"
+      :impact="deleteImpact"
+      :impact-title="$t(deleteTarget && isObservedEngine(deleteTarget.engine) ? 'networking.dnsPage.delete.observedImpactTitle' : 'networking.dnsPage.delete.impactTitle')"
+      :typed-confirm="deleteTarget && !isObservedEngine(deleteTarget.engine) ? deleteTarget.name : undefined"
+      :confirm-label="$t('networking.dnsPage.delete.confirm')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"
