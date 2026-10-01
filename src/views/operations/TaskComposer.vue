@@ -7,6 +7,11 @@
  * The page keeps this mounted while the operator reads Runs, so a draft
  * survives a look at the list. A queued task is handed to the page, which
  * opens it in the run sheet.
+ *
+ * The target field speaks the console's one token grammar (design 23,
+ * section 2): space-separated `key:value` tokens a node must all match,
+ * with a leading `-` to leave matching nodes out. The retired AND() form is
+ * still evaluated when someone types parentheses, and no longer advertised.
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -149,6 +154,23 @@ function nodeRegion(node: Node): string {
   return [node.geo?.country, node.geo?.region].filter(Boolean).join(" / ") || t("operations.tasks.unknownRegion");
 }
 
+function knownRegion(node: Node): boolean {
+  return !!(node.geo?.country || node.geo?.region);
+}
+
+/** No node reports a region: one line says so, instead of every card saying it twice. */
+const noRegions = computed(() => props.nodes.length > 0 && !props.nodes.some(knownRegion));
+
+/** Every token must match; `-token` must not. Parentheses fall back to the old AND() evaluator. */
+function matchesTargetQuery(node: Node, text: string): boolean {
+  const src = text.trim();
+  if (!src) return true;
+  if (/[()]/.test(src)) return evalFilterExpression(src, (token) => nodeMatchesTargetToken(node, token)).value;
+  return src.split(/\s+/).every((token) =>
+    token.startsWith("-") && token.length > 1 ? !nodeMatchesTargetToken(node, token.slice(1)) : nodeMatchesTargetToken(node, token),
+  );
+}
+
 const allTags = computed(() => {
   const set = new Set<string>();
   for (const node of props.nodes) for (const tag of node.tags ?? []) set.add(tag);
@@ -167,7 +189,7 @@ const filteredTargetNodes = computed(() => {
     .filter((node) => {
       if (targetTag.value !== "all" && !(node.tags ?? []).includes(targetTag.value)) return false;
       if (targetRegion.value !== "all" && nodeRegion(node) !== targetRegion.value) return false;
-      if (targetExpr.value.trim() && !evalFilterExpression(targetExpr.value, (token) => nodeMatchesTargetToken(node, token)).value) return false;
+      if (!matchesTargetQuery(node, targetExpr.value)) return false;
       if (!q) return true;
       return [node.id, node.name, node.role, node.geo?.country, node.geo?.region, node.geo?.city, ...(node.tags ?? [])]
         .filter(Boolean)
@@ -286,6 +308,17 @@ const preflightNotes = computed(() => {
   return notes;
 });
 
+/** Why Queue task is disabled, said beside it: touch has no tooltip. */
+const queueBlocked = computed(() => {
+  if (taskExecutionDisabled.value) return "";
+  const noTargets = !selectedTargets.value.length;
+  const noScript = !script.value.trim();
+  if (noTargets && noScript) return t("operations.tasks.queueNeedsBoth");
+  if (noTargets) return t("operations.tasks.queueNeedsTargets");
+  if (noScript) return t("operations.tasks.queueNeedsScript");
+  return "";
+});
+
 async function createTask() {
   if (taskExecutionDisabled.value) {
     toast.error(t("operations.tasks.taskExecutionDisabled"));
@@ -362,7 +395,7 @@ async function createTask() {
             </div>
           </div>
 
-          <div class="grid grid-cols-1 gap-2 md:grid-cols-[1fr_0.8fr_0.8fr]">
+          <div :class="cn('grid grid-cols-1 gap-2', noRegions ? 'md:grid-cols-[1fr_0.8fr]' : 'md:grid-cols-[1fr_0.8fr_0.8fr]')">
             <div class="relative">
               <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
               <Input v-model="targetSearch" class="pl-8" :placeholder="$t('operations.tasks.targetSearch')" />
@@ -374,7 +407,7 @@ async function createTask() {
                 <SelectItem v-for="tag in allTags" :key="tag" :value="tag">{{ tag }}</SelectItem>
               </SelectContent>
             </Select>
-            <Select v-model="targetRegion">
+            <Select v-if="!noRegions" v-model="targetRegion">
               <SelectTrigger><SelectValue :placeholder="$t('operations.tasks.filterRegion')" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{{ $t('operations.tasks.allRegions') }}</SelectItem>
@@ -389,8 +422,11 @@ async function createTask() {
               v-model="targetExpr"
               class="font-mono text-xs"
               :placeholder="$t('operations.tasks.targetExpressionPlaceholder')"
+              aria-describedby="task-target-expr-hint"
             />
+            <p id="task-target-expr-hint" class="text-xs text-muted-foreground">{{ $t('operations.tasks.targetExpressionHint') }}</p>
           </div>
+          <p v-if="noRegions" class="text-xs text-muted-foreground" data-testid="composer-no-regions">{{ $t('operations.tasks.noRegions') }}</p>
 
           <DataState
             :loading="nodesLoading"
@@ -414,7 +450,7 @@ async function createTask() {
               >
                 <div class="grid min-w-0 gap-1">
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
-                    <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
+                    <span class="truncate text-sm font-medium" :title="node.id">{{ node.name || node.id }}</span>
                     <Badge :variant="statusMeta(describeNodeStatus(node).health).badgeVariant">
                       {{ $t(describeNodeStatus(node).labelKey) }}
                     </Badge>
@@ -427,13 +463,8 @@ async function createTask() {
                       {{ badge }}
                     </Badge>
                   </div>
-                  <div class="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                    <span class="truncate font-mono" :title="node.id">{{ node.id }}</span>
-                    <span aria-hidden="true">·</span>
-                    <span class="truncate" :title="nodeRegion(node)">{{ nodeRegion(node) }}</span>
-                  </div>
-                  <div class="flex max-h-6 flex-wrap gap-1 overflow-hidden">
-                    <Badge variant="outline" class="text-[10px]">{{ nodeRegion(node) }}</Badge>
+                  <p v-if="knownRegion(node)" class="truncate text-xs text-muted-foreground" :title="nodeRegion(node)">{{ nodeRegion(node) }}</p>
+                  <div v-if="(node.tags ?? []).length" class="flex max-h-6 flex-wrap gap-1 overflow-hidden">
                     <Badge v-for="tag in (node.tags ?? []).slice(0, 5)" :key="tag" variant="secondary" class="text-[10px]">{{ tag }}</Badge>
                     <Badge v-if="(node.tags ?? []).length > 5" variant="outline" class="text-[10px]">+{{ (node.tags ?? []).length - 5 }}</Badge>
                   </div>
@@ -544,11 +575,18 @@ async function createTask() {
             <p class="text-xs text-muted-foreground">
               {{ $t('operations.tasks.fanoutHint') }}
             </p>
-            <Button type="submit" :disabled="creating || taskExecutionDisabled || !selectedTargets.length || !script.trim()">
-              <RefreshCw v-if="creating" class="size-4 animate-spin" aria-hidden="true" />
-              <Play v-else class="size-4" aria-hidden="true" />
-              {{ $t('operations.tasks.queueTaskCta') }}
-            </Button>
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <p v-if="queueBlocked" id="task-queue-blocked" class="text-xs text-muted-foreground" data-testid="composer-blocked">{{ queueBlocked }}</p>
+              <Button
+                type="submit"
+                :disabled="creating || taskExecutionDisabled || !selectedTargets.length || !script.trim()"
+                :aria-describedby="queueBlocked ? 'task-queue-blocked' : undefined"
+              >
+                <RefreshCw v-if="creating" class="size-4 animate-spin" aria-hidden="true" />
+                <Play v-else class="size-4" aria-hidden="true" />
+                {{ $t('operations.tasks.queueTaskCta') }}
+              </Button>
+            </div>
           </div>
         </div>
       </form>

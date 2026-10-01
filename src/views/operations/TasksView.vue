@@ -21,11 +21,18 @@
  * node from the sheet) runs the script on hosts now and files no approval,
  * so it opens a confirm that previews the targets and the script it repeats.
  * It asks for no typed name: the preview is what the operator judges, and
- * New task queues a script with no dialog at all. Cancel is reversible
- * (Rerun queues a fresh copy) and acts on one click. Delete is irreversible
- * inside Lattice and confirms with impact lines.
+ * New task queues a script with no dialog at all. Cancel task acts on one
+ * click: it is the brake, and it only stops a run from being handed out.
+ * Its label names the task, so it never reads as a dialog's Cancel beside
+ * Delete. Delete is irreversible inside Lattice and confirms with impact
+ * lines. A token without task:run still sees every action in the row menu,
+ * disabled with the scope it lacks.
+ *
+ * After an action focus stays on the page: Cancel task from the sheet moves
+ * it to the sheet's title (the button is gone), and a deleted run hands it
+ * to the row that took its place.
  */
-import { computed, onScopeDispose, reactive, ref, watch } from "vue";
+import { computed, nextTick, onScopeDispose, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Ban, ChevronLeft, ChevronRight, ExternalLink, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
@@ -375,13 +382,49 @@ function rowMenuButton(id: string): HTMLElement | null {
   return document.querySelector<HTMLElement>(`${rowSelector(id)} [data-testid="row-menu"]`);
 }
 
+/**
+ * The row that takes a deleted run's place: the next row on the page, or
+ * the one before it when the deleted run was last. Set when a delete
+ * succeeds; the confirm and the sheet both close then, and both hand focus
+ * here, so whichever closes last cannot drop it on the document.
+ */
+let afterDelete: { key: string | null } | null = null;
+
+function neighbourKey(id: string): string | null {
+  const list = tasks.value;
+  const at = list.findIndex((task) => task.id === id);
+  if (at < 0) return null;
+  return list[at + 1]?.id ?? list[at - 1]?.id ?? null;
+}
+
+function afterDeleteTarget(): HTMLElement | null {
+  const key = afterDelete?.key;
+  const row = key ? document.querySelector<HTMLElement>(rowSelector(key)) : null;
+  if (row) return row;
+  const table = document.querySelector<HTMLElement>('[data-testid="tasks-table"] table');
+  if (table && table.tabIndex < 0) table.setAttribute("tabindex", "-1");
+  return table;
+}
+
 function confirmReturn(): HTMLElement | null {
+  if (afterDelete) return afterDeleteTarget();
   return confirmOpener?.isConnected ? confirmOpener : null;
 }
 
+function sheetReturn(): HTMLElement | null {
+  if (afterDelete) return afterDeleteTarget();
+  return sheet.returnFocus();
+}
+
 function askDelete(task: TaskView, opener: HTMLElement | null): void {
+  afterDelete = null;
   confirmOpener = opener;
   deleteTarget.value = task;
+}
+
+/** The open sheet keeps the operator: focus its title once its footer changed. */
+function focusSheetTitle(): void {
+  void nextTick(() => document.querySelector<HTMLElement>('[data-testid="object-sheet"] [data-slot="dialog-title"]')?.focus());
 }
 const deleteOpen = computed({
   get: () => !!deleteTarget.value,
@@ -426,6 +469,7 @@ function askRerun(task: TaskView, opener: HTMLElement | null, nodeId?: string): 
     toast.error(t("operations.tasks.taskExecutionDisabled"));
     return;
   }
+  afterDelete = null;
   confirmOpener = opener;
   rerunRequest.value = { task, nodeId };
 }
@@ -509,12 +553,13 @@ async function confirmRerun(): Promise<void> {
   }
 }
 
-async function cancelTask(task: TaskView): Promise<void> {
+async function cancelTask(task: TaskView, fromSheet = false): Promise<void> {
   actionPending.value = task.id;
   try {
     await api.tasks.cancel(task.id);
     toast.success(t("operations.tasks.toastCancelled"));
     await refreshAll();
+    if (fromSheet && sheet.openId.value === task.id) focusSheetTitle();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("operations.tasks.toastCancelFailed"));
   } finally {
@@ -529,6 +574,7 @@ async function confirmDelete(): Promise<void> {
   try {
     await api.tasks.delete(task.id);
     toast.success(t("operations.tasks.toastDeleted"));
+    afterDelete = { key: neighbourKey(task.id) };
     actionPending.value = null;
     deleteTarget.value = null;
     if (sheet.openId.value === task.id) sheet.close();
@@ -551,7 +597,8 @@ const deleteImpact = computed(() => {
 });
 
 function menuItems(task: TaskView): RowMenuItem[] {
-  const disabledReason = executionDisabled.value ? t("operations.tasks.taskExecutionDisabled") : undefined;
+  const scopeReason = canRun.value ? undefined : t("operations.tasks.needsRunScope");
+  const disabledReason = scopeReason ?? (executionDisabled.value ? t("operations.tasks.taskExecutionDisabled") : undefined);
   return [
     {
       key: "plan",
@@ -564,8 +611,7 @@ function menuItems(task: TaskView): RowMenuItem[] {
       key: "rerun",
       label: t("operations.tasks.actions.rerun"),
       icon: RotateCcw,
-      hidden: !canRun.value,
-      disabled: executionDisabled.value || actionPending.value === task.id,
+      disabled: !canRun.value || executionDisabled.value || actionPending.value === task.id,
       reason: disabledReason,
       run: () => askRerun(task, rowMenuButton(task.id)),
     },
@@ -573,8 +619,9 @@ function menuItems(task: TaskView): RowMenuItem[] {
       key: "cancel",
       label: t("operations.tasks.actions.cancel"),
       icon: Ban,
-      hidden: !canRun.value || !taskCancellable(task.status),
-      disabled: actionPending.value === task.id,
+      hidden: !taskCancellable(task.status),
+      disabled: !canRun.value || actionPending.value === task.id,
+      reason: scopeReason,
       run: () => void cancelTask(task),
     },
     {
@@ -582,7 +629,8 @@ function menuItems(task: TaskView): RowMenuItem[] {
       label: t("operations.tasks.actions.delete"),
       icon: Trash2,
       danger: true,
-      hidden: !canRun.value,
+      disabled: !canRun.value,
+      reason: scopeReason,
       run: () => askDelete(task, rowMenuButton(task.id)),
     },
   ];
@@ -593,6 +641,13 @@ function menuItems(task: TaskView): RowMenuItem[] {
 /* ------------------------------------------------------------------ */
 
 const sheet = bindRouteOpen(owned);
+// Another object opened: focus returns to its own opener again.
+watch(
+  () => sheet.openId.value,
+  (id) => {
+    if (id) afterDelete = null;
+  },
+);
 const onScreen = computed(() => tasks.value.find((task) => task.id === sheet.openId.value));
 
 /**
@@ -1034,7 +1089,8 @@ function refreshNow(): void {
 
     <ObjectSheet
       :open="!!sheet.openId.value"
-      :title="$t('operations.tasks.detailTitle', { id: shortId(sheet.openId.value ?? '', 12) })"
+      :title="shortId(sheet.openId.value ?? '', 12)"
+      mono-title
       :subtitle="sheet.openId.value ?? undefined"
       :state="sheetState"
       :read-only="!canRun"
@@ -1042,7 +1098,7 @@ function refreshNow(): void {
       :gone-description="lookupFailure
         ? $t('operations.tasks.sheet.notReadDescription', { reason: lookupFailure })
         : $t('operations.tasks.sheet.goneDescription')"
-      :return-focus="sheet.returnFocus"
+      :return-focus="sheetReturn"
       @close="sheet.close"
     >
       <TaskRunDetail
@@ -1073,7 +1129,7 @@ function refreshNow(): void {
           size="sm"
           type="button"
           :disabled="actionPending === openTask.id"
-          @click="cancelTask(openTask)"
+          @click="cancelTask(openTask, true)"
         >
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.tasks.actions.cancel') }}
