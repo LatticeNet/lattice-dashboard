@@ -292,6 +292,8 @@ const historyRows = computed(() => historyQuery.data.value?.approvals ?? []);
 const historyTotal = computed(() => historyQuery.data.value?.total ?? 0);
 const historyBounds = computed(() => pageBounds(query.offset.value, historyRows.value.length));
 const historyFiltered = computed(() => query.appliedText.value.trim() !== "" || query.range.value.range !== "all");
+/** No plan has ever been filed here and nothing narrows the list: no toolbar over nothing. */
+const historyNothing = computed(() => historyQuery.data.value !== undefined && historyTotal.value === 0 && !historyFiltered.value);
 
 function num(n: number): string {
   return n.toLocaleString(locale.value);
@@ -1039,6 +1041,7 @@ function refreshAll(): void {
       <!-- History: one server query. -->
       <template v-else-if="layer === 'history'">
         <QueryBar
+          v-if="!historyNothing"
           ref="bar"
           testid="approvals-query-bar"
           :applied-text="query.appliedText.value"
