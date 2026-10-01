@@ -9,6 +9,9 @@
  * The script stays behind a second factor (Reveal script), as it always
  * has: a task script can hold credentials, and the list carries only its
  * digest.
+ *
+ * Rerun this node asks the page (`rerunNode`), which confirms with a
+ * preview before anything is queued: a rerun runs on the host now.
  */
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -31,7 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
 
-import { failureReason, latestByNode, resultFailed, RESULT_PAGE_LIMIT } from "./tasksModel";
+import { failureReason, latestByNode, resultFailed, RESULT_PAGE_LIMIT, taskLive } from "./tasksModel";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "warning";
 type NodeRunStatus = "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled";
@@ -45,9 +48,12 @@ const props = defineProps<{
   reruns: TaskView[];
   canRun: boolean;
   executionDisabled: boolean;
+  /** An action on this run is in flight on the page. */
+  busy?: boolean;
 }>();
 
-const emit = defineEmits<{ changed: [] }>();
+/** The node to rerun, and the button that asked, for focus to return to. */
+const emit = defineEmits<{ rerunNode: [nodeId: string, opener: HTMLElement] }>();
 
 const { t } = useI18n();
 
@@ -59,7 +65,7 @@ const nodesById = computed<Record<string, Node>>(() => Object.fromEntries(props.
  * Bodies run to 64 KB per target, so re-reading a settled fan-out on a
  * timer would cost megabytes for nothing.
  */
-const live = computed(() => ["queued", "pending", "leased", "stalled"].includes(props.task.status));
+const live = computed(() => taskLive(props.task.status));
 
 const resultsQuery = useAsyncData<TaskResult[]>(
   (signal) => api.tasks.results({ task_id: props.task.id, limit: RESULT_PAGE_LIMIT }, { signal }).then((r) => unwrap(r, "results") ?? []),
@@ -272,27 +278,8 @@ function execContextVariant(kind: ExecContext["kind"]): BadgeVariant {
 }
 
 /* ------------------------------------------------------------------ */
-/* Rerun one node, reveal the script                                  */
+/* Reveal the script                                                   */
 /* ------------------------------------------------------------------ */
-
-const pendingNode = ref("");
-
-async function rerunNode(row: NodeRow): Promise<void> {
-  if (props.executionDisabled) {
-    toast.error(t("operations.tasks.taskExecutionDisabled"));
-    return;
-  }
-  pendingNode.value = row.nodeId;
-  try {
-    await api.tasks.rerunNode(props.task.id, row.nodeId);
-    toast.success(t("operations.tasks.toastRerunNode", { node: row.node?.name || row.nodeId }));
-    emit("changed");
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("operations.tasks.toastRerunFailed"));
-  } finally {
-    pendingNode.value = "";
-  }
-}
 
 const stepUp = useStepUp({
   required: t("operations.tasks.stepUpRequired"),
@@ -440,8 +427,8 @@ function originText(): string {
                   variant="outline"
                   size="sm"
                   type="button"
-                  :disabled="executionDisabled || pendingNode === row.nodeId"
-                  @click="rerunNode(row)"
+                  :disabled="executionDisabled || busy"
+                  @click="(e: MouseEvent) => emit('rerunNode', row.nodeId, e.currentTarget as HTMLElement)"
                 >
                   <RotateCcw class="size-4" aria-hidden="true" />
                   <span class="sr-only sm:not-sr-only">{{ $t('operations.tasks.actions.rerunNode') }}</span>

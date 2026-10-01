@@ -20,7 +20,9 @@
  * answers results without stderr_head (the server at c08ffaf);
  * `&no-approval-filter` ignores approval_id on the task list (same).
  * `&no-audit-exclude` ignores exclude_action and exclude_decision on the
- * audit query (a server from before a101).
+ * audit query (a server from before a101). `&results-page=<n>` caps a page
+ * of task results at n rows, so a page of fan-outs runs past the pages the
+ * Tasks poll reads.
  *
  * The fake honours the queries the server honours, and refuses what it
  * refuses: task statuses outside the eight, more than 100 task ids.
@@ -137,7 +139,8 @@ function queryResults(params: Record<string, unknown> | undefined) {
   const nodeId = String(params.node_id ?? "").trim();
   const omit = params.omit_output === 1 || params.omit_output === "1";
   const rows = results.filter((r) => (!ids.size || ids.has(r.task_id)) && (!nodeId || r.node_id === nodeId));
-  const limit = params.limit !== undefined ? Math.min(500, Math.max(1, Number(params.limit))) : omit ? rows.length : 100;
+  const cap = Number(flags.get("results-page")) || 500;
+  const limit = params.limit !== undefined ? Math.min(cap, Math.max(1, Number(params.limit))) : omit ? rows.length : Math.min(cap, 100);
   const offset = Math.max(0, Number(params.offset ?? 0));
   const page: TaskResult[] = rows.slice(offset, offset + limit).map((r) => {
     if (!omit) return { ...r };

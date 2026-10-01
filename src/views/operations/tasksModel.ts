@@ -129,6 +129,87 @@ export function resultsRequest(taskIds: readonly string[], offset = 0): { task_i
   return { task_id: taskIds.slice(0, RESULT_ID_LIMIT).join(","), omit_output: 1, limit: RESULT_PAGE_LIMIT, offset };
 }
 
+/** Pages of results the poll reads before it stops (2,000 rows at the server's maximum page). */
+export const RESULT_PAGES_READ = 4;
+
+export interface ResultPages {
+  results: TaskResult[];
+  /**
+   * The server had more rows than the poll read. A row whose targets have
+   * not all reported may then have a failure nobody read, so it must not be
+   * shown as passed.
+   */
+  truncated: boolean;
+  /** Result rows the server sent, for every id asked (what the cap counts). */
+  rowsRead: number;
+}
+
+/**
+ * Every result for the rows on screen, page after page, up to `maxPages`.
+ * A page of 50 fan-outs can hold more than one page of results. A bare
+ * array (an older server) is the whole answer.
+ */
+export async function readResultPages(
+  ids: readonly string[],
+  read: (offset: number) => Promise<TaskResult[] | { results?: TaskResult[]; total?: number }>,
+  maxPages = RESULT_PAGES_READ,
+): Promise<ResultPages> {
+  if (!ids.length) return { results: [], truncated: false, rowsRead: 0 };
+  const wanted = new Set(ids);
+  const results: TaskResult[] = [];
+  let offset = 0;
+  for (let page = 0; page < maxPages; page += 1) {
+    const response = await read(offset);
+    const rows = Array.isArray(response) ? response : (response.results ?? []);
+    results.push(...rows.filter((row) => wanted.has(row.task_id)));
+    if (Array.isArray(response)) return { results, truncated: false, rowsRead: rows.length };
+    offset += rows.length;
+    if (!rows.length || offset >= (response.total ?? offset)) return { results, truncated: false, rowsRead: offset };
+  }
+  return { results, truncated: true, rowsRead: offset };
+}
+
+/** Rows per page when the sheet walks the list for one run. */
+export const TASK_LOOKUP_PAGE = 500;
+
+type TaskListAnswer = TaskListResponse | TaskView[] | { tasks?: TaskView[] };
+
+/**
+ * Find one run by id for the sheet, when it is not on the page on screen.
+ * The task list has no id filter, so this walks it, newest first,
+ * TASK_LOOKUP_PAGE rows at a time. A run found before (`hint`) is looked for
+ * first on a narrower question that must still contain it, its first target
+ * and changed since it was queued (`since` is inclusive and a run's last
+ * change is never before its queue time), so a refresh reads one short page
+ * instead of walking again. The full walk is the fallback, for an older
+ * server that ignores the filters or a run that is gone.
+ */
+export async function findTask(
+  read: (params: TaskListParams) => Promise<TaskListAnswer>,
+  id: string,
+  hint?: TaskView | null,
+  maxPages = 10,
+): Promise<TaskView | null> {
+  async function walk(base: TaskListParams): Promise<TaskView | null> {
+    for (let offset = 0, page = 0; page < maxPages; page += 1) {
+      const response = await read({ ...base, limit: TASK_LOOKUP_PAGE, offset });
+      const list = Array.isArray(response) ? response : (response.tasks ?? []);
+      const found = list.find((task) => task.id === id);
+      if (found) return found;
+      if (Array.isArray(response) || !("total" in response)) return null;
+      offset += list.length;
+      if (!list.length || offset >= response.total) return null;
+    }
+    return null;
+  }
+  const first = hint?.id === id ? hint.targets[0] : undefined;
+  if (first && hint?.created_at) {
+    const found = await walk({ node_id: first, since: hint.created_at });
+    if (found) return found;
+  }
+  return walk({});
+}
+
 export function resultFailed(result: Pick<TaskResult, "error" | "exit_code">): boolean {
   return !!result.error || (result.exit_code ?? 0) !== 0;
 }
@@ -184,9 +265,14 @@ export function failureReason(result: Pick<TaskResult, "exit_code" | "error" | "
   return detail ? `${exit}: ${detail}` : exit;
 }
 
-/** Statuses the server cancels: nothing ran yet, or nothing is answering. */
-export function taskCancellable(status: TaskView["status"]): boolean {
+/** A run that can still change on its own: waiting, running or stalled. */
+export function taskLive(status: TaskView["status"]): boolean {
   return status === "queued" || status === "pending" || status === "leased" || status === "stalled";
+}
+
+/** Statuses the server cancels: every live run (nothing ran yet, or nothing is answering). */
+export function taskCancellable(status: TaskView["status"]): boolean {
+  return taskLive(status);
 }
 
 /**

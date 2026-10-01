@@ -6,12 +6,15 @@ import type { TaskResult, TaskView } from "../../../lib/api/types.ts";
 import {
   TASK_GRAMMAR,
   failureReason,
+  findTask,
   legacyOpenQuery,
   normalizeTaskPage,
+  readResultPages,
   resultsRequest,
   runSummary,
   taskCancellable,
   taskListRequest,
+  taskLive,
 } from "../tasksModel.ts";
 
 const tokens = (text: string) =>
@@ -115,4 +118,67 @@ test("an old /tasks?id= link opens the task in the sheet", () => {
   assert.deepEqual(legacyOpenQuery({ id: "task_abc", status: "failed" }), { status: "failed", open: "task_abc" });
   assert.deepEqual(legacyOpenQuery({ id: "task_abc", open: "task_new" }), { open: "task_new" });
   assert.equal(legacyOpenQuery({ status: "failed" }), null);
+});
+
+const result = (taskId: string, nodeId: string): TaskResult => ({ task_id: taskId, node_id: nodeId, exit_code: 0 }) as TaskResult;
+
+test("the results read says when it stopped before the server ran out of rows", async () => {
+  const pages: number[] = [];
+  const read = async (offset: number) => {
+    pages.push(offset);
+    return { results: Array.from({ length: 500 }, (_, i) => result(i % 2 ? "task_a" : "task_x", `n${offset + i}`)), total: 2600 };
+  };
+  const capped = await readResultPages(["task_a"], read);
+  assert.deepEqual(pages, [0, 500, 1000, 1500]);
+  assert.equal(capped.truncated, true);
+  assert.equal(capped.rowsRead, 2000);
+  assert.equal(capped.results.length, 1000);
+  assert.ok(capped.results.every((row) => row.task_id === "task_a"));
+});
+
+test("the results read is complete when the last page ends at the total, or the server sends a bare array", async () => {
+  const exact = await readResultPages(["task_a"], async (offset) => ({ results: offset < 1000 ? Array.from({ length: 500 }, (_, i) => result("task_a", `n${offset + i}`)) : [], total: 1000 }));
+  assert.equal(exact.truncated, false);
+  assert.equal(exact.results.length, 1000);
+  const bare = await readResultPages(["task_a"], async () => [result("task_a", "n1"), result("task_b", "n1")]);
+  assert.deepEqual(bare, { results: [result("task_a", "n1")], truncated: false, rowsRead: 2 });
+  assert.deepEqual(await readResultPages([], async () => { throw new Error("not called"); }), { results: [], truncated: false, rowsRead: 0 });
+});
+
+test("a run found before is read again on a narrow question that still holds it", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const open = task({ id: "task_open", targets: ["n7", "n8"], created_at: "2026-09-30T08:00:00.123Z", status: "leased" });
+  const read = async (params: Record<string, unknown>) => {
+    calls.push(params);
+    return { tasks: [{ ...open, status: "cancelled" as const }], total: 1, limit: 500, offset: 0 };
+  };
+  const found = await findTask(read, "task_open", open);
+  assert.equal(found?.status, "cancelled");
+  assert.deepEqual(calls, [{ node_id: "n7", since: "2026-09-30T08:00:00.123Z", limit: 500, offset: 0 }]);
+});
+
+test("without a hint, or when the narrow question misses, the lookup walks the whole list", async () => {
+  const rows = Array.from({ length: 1200 }, (_, i) => task({ id: `task_${i}` }));
+  const calls: Array<Record<string, unknown>> = [];
+  const read = async (params: { node_id?: string; limit?: number; offset?: number }) => {
+    calls.push(params);
+    if (params.node_id) return { tasks: [], total: 0, limit: 500, offset: 0 };
+    const offset = params.offset ?? 0;
+    return { tasks: rows.slice(offset, offset + (params.limit ?? 500)), total: rows.length, limit: 500, offset };
+  };
+  assert.equal((await findTask(read, "task_1100"))?.id, "task_1100");
+  assert.deepEqual(calls.map((c) => c.offset), [0, 500, 1000]);
+  calls.length = 0;
+  const hint = task({ id: "task_1100", targets: ["n1"], created_at: "2026-09-30T00:00:00Z" });
+  assert.equal((await findTask(read, "task_1100", hint))?.id, "task_1100");
+  assert.equal(calls[0]?.node_id, "n1");
+  assert.equal(calls.length, 4);
+  assert.equal(await findTask(read, "task_missing"), null);
+});
+
+test("a run is live while it waits, runs or stalls", () => {
+  assert.deepEqual(
+    (["pending", "queued", "leased", "stalled", "finished", "failed", "cancelled", "expired"] as const).filter(taskLive),
+    ["pending", "queued", "leased", "stalled"],
+  );
 });

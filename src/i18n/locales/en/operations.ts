@@ -334,6 +334,20 @@ export default {
         delete: "Delete",
       },
       deleteTitle: "Delete task?",
+      rerunConfirm: {
+        titleAll: "Rerun task {id} on all {n} targets?",
+        titleOne: "Rerun task {id} on {node}?",
+        description:
+          "This runs now. No approval is filed: each node runs the script again as soon as its agent picks it up, and the script can change those hosts.",
+        previewTitle: "What goes out",
+        targetsMany: "Runs on {n} nodes: {names}",
+        targetsOne: "Runs on {name}",
+        script: "Same script as this run: {interpreter}, {size}, sha256 {digest}, timeout {timeout}s",
+        scriptNoDigest: "Same script as this run: {interpreter}, {size}, timeout {timeout}s",
+        capability: "The plan's capability is checked again first; a node that has left its scope is refused.",
+        confirmAll: "Run now on {n} nodes",
+        confirmOne: "Run now on {name}",
+      },
       layers: {
         label: "Task layers",
         runs: "Runs",
@@ -361,6 +375,8 @@ export default {
         cancelled: "Cancelled before it finished",
         notRead: "Results not read",
         noResults: "No result reported",
+        partlyRead: "{reported} of {total} results read; the read stopped early",
+        okPartial: "{reported} of {total} targets answered, none failed",
       },
       metrics: {
         running: "Running",
@@ -374,6 +390,7 @@ export default {
         attempts: "each rerun is its own row",
         clientFiltered: "filtered in this browser: the server does not filter tasks",
         resultsNotRead: "results not read: {reason}",
+        resultsTruncated: "results read stopped at {n} rows; rows it did not reach say so",
       },
       attention: {
         disabled: "Task execution is switched off on this server",

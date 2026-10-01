@@ -272,9 +272,9 @@ export default {
       surveyTemplateHint: "在空脚本框里填入一段探测模板:它会报告哪些东西没能测到,并在什么都没测到时以非零码退出。",
      preflight: {
         andMore: "{names} 等 {count} 台",
-        execDisabled: "会立即失败,agent 拒绝执行任务:{names}",
-        offline: "离线:任务留在队列里等 agent 回来,在那之前不会有结果:{names}",
-        unprivileged: "agent 非特权运行:脚本里需要 root 的部分在这些机器上读不到东西:{names}",
+        execDisabled: "会立即失败，agent 拒绝执行任务：{names}",
+        offline: "离线：任务留在队列里等 agent 回来，在那之前不会有结果：{names}",
+        unprivileged: "agent 非特权运行：脚本里需要 root 的部分在这些机器上读不到东西：{names}",
       },
       execContext: {
         root: "以 root 运行",
@@ -330,6 +330,19 @@ export default {
         delete: "删除",
       },
       deleteTitle: "删除任务？",
+      rerunConfirm: {
+        titleAll: "在全部 {n} 个目标上重跑任务 {id}？",
+        titleOne: "在 {node} 上重跑任务 {id}？",
+        description: "确认后立即执行，不经过审批：各节点的 agent 一取到任务就会再跑一遍这个脚本，脚本可能改动这些主机。",
+        previewTitle: "将要下发的内容",
+        targetsMany: "在 {n} 个节点上运行：{names}",
+        targetsOne: "在 {name} 上运行",
+        script: "脚本与这次运行相同：{interpreter}，{size}，sha256 {digest}，超时 {timeout} 秒",
+        scriptNoDigest: "脚本与这次运行相同：{interpreter}，{size}，超时 {timeout} 秒",
+        capability: "入队前会先按该计划的能力范围重新检查，已经不在范围内的节点会被拒绝。",
+        confirmAll: "立即在 {n} 个节点上运行",
+        confirmOne: "立即在 {name} 上运行",
+      },
       layers: {
         label: "任务分层",
         runs: "运行记录",
@@ -357,6 +370,8 @@ export default {
         cancelled: "没跑完就取消了",
         notRead: "结果没读到",
         noResults: "没有上报结果",
+        partlyRead: "只读到 {total} 个结果中的 {reported} 个，读取提前停止了",
+        okPartial: "{total} 个目标中 {reported} 个已回报，没有失败",
       },
       metrics: {
         running: "运行中",
@@ -370,6 +385,7 @@ export default {
         attempts: "每次重跑单独一行",
         clientFiltered: "在浏览器里筛选：服务器不支持任务筛选",
         resultsNotRead: "结果没读到：{reason}",
+        resultsTruncated: "结果读到 {n} 行就停止了，没读到的行会注明",
       },
       attention: {
         disabled: "本服务器已关闭任务执行",

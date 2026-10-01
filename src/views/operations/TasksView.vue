@@ -16,6 +16,14 @@
  * failed nodes opened to their stderr. Rerun and Cancel live in the row
  * menu, Delete last. The results poll asks only for the rows on screen, by
  * id; paging past page 1 stops the poll so the page holds still.
+ *
+ * The task actions by design 23, section 3.8. Rerun (every target, or one
+ * node from the sheet) runs the script on hosts now and files no approval,
+ * so it opens a confirm that previews the targets and the script it repeats.
+ * It asks for no typed name: the preview is what the operator judges, and
+ * New task queues a script with no dialog at all. Cancel is reversible
+ * (Rerun queues a fresh copy) and acts on one click. Delete is irreversible
+ * inside Lattice and confirms with impact lines.
  */
 import { computed, onScopeDispose, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -29,8 +37,10 @@ import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { provideNodeDirectory } from "@/composables/useNodeDirectory";
 import { useProof } from "@/composables/useProof";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { rowSelector } from "@/composables/routeOpenModel";
 import { useAuthStore } from "@/stores/auth";
-import { formatAge, formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { formatAge, formatBytes, formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { isReporting } from "@/lib/nodeStatus";
 import { leaseAttemptLabel, stalledText, taskLeaseProgress, taskStateStyle } from "@/lib/taskLease";
 import type { TokenResolvers } from "@/lib/queryTokens";
 import { cn } from "@/lib/utils";
@@ -62,12 +72,15 @@ import {
   TASK_RANGES,
   TASK_STATUSES,
   failureReason,
+  findTask,
   legacyOpenQuery,
   normalizeTaskPage,
+  readResultPages,
   resultsRequest,
   runSummary,
   taskCancellable,
   taskListRequest,
+  taskLive,
   type RunSummary,
   type TaskLayer,
   type TaskPage,
@@ -143,24 +156,11 @@ interface RunsRead {
   page: TaskPage;
   /** Results for the rows on screen; null when that read failed. */
   results: TaskResult[] | null;
+  /** The read stopped before the server ran out of result rows. */
+  resultsTruncated: boolean;
+  /** Result rows the read took in, for the proof line when it stopped short. */
+  resultRowsRead: number;
   resultsError: string | null;
-}
-
-async function readResults(ids: string[], signal: AbortSignal): Promise<TaskResult[]> {
-  if (!ids.length) return [];
-  const wanted = new Set(ids);
-  const out: TaskResult[] = [];
-  // A page of 50 fan-outs can hold more than one page of results; read on
-  // until the server says there are no more, within reason.
-  for (let page = 0, offset = 0; page < 4; page += 1) {
-    const response = await api.tasks.results(resultsRequest(ids, offset), { signal });
-    const rows = unwrap(response, "results") ?? [];
-    out.push(...rows.filter((row) => wanted.has(row.task_id)));
-    const total = Array.isArray(response) ? rows.length : ((response as { total?: number }).total ?? rows.length);
-    offset += rows.length;
-    if (!rows.length || offset >= total || Array.isArray(response)) break;
-  }
-  return out;
 }
 
 const runsQuery = useAsyncData<RunsRead>(
@@ -172,11 +172,12 @@ const runsQuery = useAsyncData<RunsRead>(
     });
     const page = normalizeTaskPage(await api.tasks.query(params, { signal }), params);
     try {
-      const results = await readResults(page.tasks.map((task) => task.id), signal);
-      return { page, results, resultsError: null };
+      const ids = page.tasks.map((task) => task.id);
+      const read = await readResultPages(ids, (offset) => api.tasks.results(resultsRequest(ids, offset), { signal }));
+      return { page, results: read.results, resultsTruncated: read.truncated, resultRowsRead: read.rowsRead, resultsError: null };
     } catch (error) {
       if ((error as Error)?.name === "AbortError") throw error;
-      return { page, results: null, resultsError: error instanceof Error ? error.message : String(error) };
+      return { page, results: null, resultsTruncated: false, resultRowsRead: 0, resultsError: error instanceof Error ? error.message : String(error) };
     }
   },
   { immediate: listing.value },
@@ -200,7 +201,9 @@ const counts = computed<TaskCounts | undefined>(() => countsQuery.data.value);
 const POLL_MS = 10_000;
 const polling = computed(() => listing.value && query.offset.value === 0);
 const timer = setInterval(() => {
-  if (polling.value && document.visibilityState !== "hidden") void runsQuery.refresh();
+  if (document.visibilityState === "hidden") return;
+  if (polling.value) void runsQuery.refresh();
+  if (lookupLive.value && !lookupQuery.refreshing.value) void lookupQuery.refresh();
 }, POLL_MS);
 onScopeDispose(() => clearInterval(timer));
 
@@ -217,6 +220,7 @@ const resultsByTask = computed<Map<string, TaskResult[]>>(() => {
   return map;
 });
 const resultsRead = computed(() => runsQuery.data.value?.results !== null && runsQuery.data.value !== undefined);
+const resultsTruncated = computed(() => !!runsQuery.data.value?.resultsTruncated);
 const bounds = computed(() => pageBounds(query.offset.value, tasks.value.length));
 const hasPrev = computed(() => query.offset.value > 0);
 const hasNext = computed(() => bounds.value.to < total.value);
@@ -288,10 +292,29 @@ function leaseText() {
   };
 }
 
+/**
+ * Whether every result this row can have was read. When the read stopped
+ * short of the server's rows, a row whose targets have not all reported may
+ * have a failure beyond the cap, so it is neither passed nor "no result".
+ */
+function resultsComplete(row: RunRow): boolean {
+  if (!resultsRead.value) return false;
+  return !resultsTruncated.value || row.summary.reported >= row.summary.total;
+}
+
+/** A row the read stopped before: how much of it was read, never "passed". */
+function partlyReadLine(summary: RunSummary): { text: string; tone: "warning" } {
+  const text = summary.reported
+    ? t("operations.tasks.result.partlyRead", { reported: summary.reported, total: summary.total })
+    : t("operations.tasks.result.notRead");
+  return { text, tone: "warning" };
+}
+
 /** The Result cell: why it failed, or what it is doing, in one line. */
 function resultLine(row: RunRow): { text: string; tone: "destructive" | "muted" | "warning" } {
   const { task, summary } = row;
   if (summary.firstFailure) return { text: failureReason(summary.firstFailure.result, exitWord), tone: "destructive" };
+  const partlyRead = resultsRead.value && !resultsComplete(row);
   switch (task.status) {
     case "stalled":
       return { text: stalledText(taskLeaseProgress(task), leaseText()), tone: "warning" };
@@ -307,10 +330,16 @@ function resultLine(row: RunRow): { text: string; tone: "destructive" | "muted" 
     case "expired":
       return { text: t("operations.tasks.sheet.expiredNoResult"), tone: "muted" };
     case "failed":
+      if (partlyRead) return partlyReadLine(summary);
       return { text: resultsRead.value ? t("operations.tasks.failedNoResult") : t("operations.tasks.result.notRead"), tone: "destructive" };
     default:
       if (!resultsRead.value) return { text: t("operations.tasks.result.notRead"), tone: "muted" };
-      return summary.reported ? { text: t("operations.tasks.result.ok"), tone: "muted" } : { text: t("operations.tasks.result.noResults"), tone: "muted" };
+      if (partlyRead) return partlyReadLine(summary);
+      if (!summary.reported) return { text: t("operations.tasks.result.noResults"), tone: "muted" };
+      if (summary.reported < summary.total) {
+        return { text: t("operations.tasks.result.okPartial", { reported: summary.reported, total: summary.total }), tone: "muted" };
+      }
+      return { text: t("operations.tasks.result.ok"), tone: "muted" };
   }
 }
 
@@ -329,6 +358,25 @@ const columns = computed<DataTableColumn<RunRow>[]>(() => [
 
 const actionPending = ref<string | null>(null);
 const deleteTarget = ref<TaskView | null>(null);
+
+/**
+ * The control that opened a confirm, where focus lands when it closes. A row
+ * menu item is gone by then, so the row's menu button stands in for it.
+ */
+let confirmOpener: HTMLElement | null = null;
+
+function rowMenuButton(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`${rowSelector(id)} [data-testid="row-menu"]`);
+}
+
+function confirmReturn(): HTMLElement | null {
+  return confirmOpener?.isConnected ? confirmOpener : null;
+}
+
+function askDelete(task: TaskView, opener: HTMLElement | null): void {
+  confirmOpener = opener;
+  deleteTarget.value = task;
+}
 const deleteOpen = computed({
   get: () => !!deleteTarget.value,
   set: (open: boolean) => {
@@ -350,20 +398,104 @@ function toastDispatchError(error: unknown, fallback: string) {
 }
 
 async function refreshAll(): Promise<void> {
-  await Promise.all([runsQuery.refresh(), countsQuery.refresh()]);
+  const reads = [runsQuery.refresh(), countsQuery.refresh()];
+  // A run opened by link is read on its own, not with the page; without
+  // this, Cancel left its sheet on the old status with Cancel still offered.
+  if (sheet.openId.value && !onScreen.value) reads.push(lookupQuery.refresh());
+  await Promise.all(reads);
 }
 
-async function rerunTask(task: TaskView): Promise<void> {
+/* Rerun: runs now, so it confirms with a preview of what goes out. */
+
+const rerunRequest = ref<{ task: TaskView; nodeId?: string } | null>(null);
+const rerunOpen = computed({
+  get: () => !!rerunRequest.value,
+  set: (open: boolean) => {
+    if (!open && !actionPending.value) rerunRequest.value = null;
+  },
+});
+
+function askRerun(task: TaskView, opener: HTMLElement | null, nodeId?: string): void {
   if (executionDisabled.value) {
     toast.error(t("operations.tasks.taskExecutionDisabled"));
     return;
   }
+  confirmOpener = opener;
+  rerunRequest.value = { task, nodeId };
+}
+
+/** The targets a rerun request goes to: one node, or every distinct target. */
+const rerunTargets = computed<string[]>(() => {
+  const request = rerunRequest.value;
+  if (!request) return [];
+  return request.nodeId ? [request.nodeId] : [...new Set(request.task.targets)];
+});
+
+const PREVIEW_NAMES_SHOWN = 6;
+
+function previewNames(names: string[]): string {
+  if (names.length <= PREVIEW_NAMES_SHOWN) return names.join(", ");
+  return t("operations.tasks.preflight.andMore", { names: names.slice(0, PREVIEW_NAMES_SHOWN).join(", "), count: names.length - PREVIEW_NAMES_SHOWN });
+}
+
+const rerunTitle = computed(() => {
+  const request = rerunRequest.value;
+  if (!request) return "";
+  const id = shortId(request.task.id, 12);
+  const targets = rerunTargets.value;
+  return targets.length === 1
+    ? t("operations.tasks.rerunConfirm.titleOne", { id, node: nodeName(targets[0] as string) })
+    : t("operations.tasks.rerunConfirm.titleAll", { id, n: targets.length });
+});
+
+const rerunConfirmLabel = computed(() => {
+  const targets = rerunTargets.value;
+  return targets.length === 1
+    ? t("operations.tasks.rerunConfirm.confirmOne", { name: nodeName(targets[0] as string) })
+    : t("operations.tasks.rerunConfirm.confirmAll", { n: targets.length });
+});
+
+/** What goes out: where it runs, the script it repeats, and what is already true of those nodes. */
+const rerunPreview = computed<string[]>(() => {
+  const request = rerunRequest.value;
+  if (!request) return [];
+  const { task } = request;
+  const targets = rerunTargets.value;
+  const names = targets.map(nodeName);
+  const lines = [
+    targets.length === 1
+      ? t("operations.tasks.rerunConfirm.targetsOne", { name: names[0] })
+      : t("operations.tasks.rerunConfirm.targetsMany", { n: targets.length, names: previewNames(names) }),
+  ];
+  const script = { interpreter: task.interpreter, size: formatBytes(task.script_size_bytes), timeout: task.timeout_sec ?? 0 };
+  lines.push(
+    task.script_sha256
+      ? t("operations.tasks.rerunConfirm.script", { ...script, digest: shortId(task.script_sha256, 12) })
+      : t("operations.tasks.rerunConfirm.scriptNoDigest", script),
+  );
+  if (task.approval_id) lines.push(t("operations.tasks.rerunConfirm.capability"));
+  const known = targets.map((id) => nodes.value.find((node) => node.id === id)).filter((node): node is Node => !!node);
+  const offline = known.filter((node) => !isReporting(node)).map((node) => node.name || node.id);
+  const refused = known
+    .filter((node) => node.agent_runtime?.reported_at && (node.agent_runtime.no_exec || node.agent_runtime.allow_exec === false))
+    .map((node) => node.name || node.id);
+  if (refused.length) lines.push(t("operations.tasks.preflight.execDisabled", { names: previewNames(refused) }));
+  if (offline.length) lines.push(t("operations.tasks.preflight.offline", { names: previewNames(offline) }));
+  return lines;
+});
+
+async function confirmRerun(): Promise<void> {
+  const request = rerunRequest.value;
+  if (!request || actionPending.value) return;
+  const { task, nodeId } = request;
   actionPending.value = task.id;
   try {
-    const next = await api.tasks.rerun(task.id);
-    toast.success(t("operations.tasks.toastRerun"));
+    const next = nodeId ? await api.tasks.rerunNode(task.id, nodeId) : await api.tasks.rerun(task.id);
+    toast.success(nodeId ? t("operations.tasks.toastRerunNode", { node: nodeName(nodeId) }) : t("operations.tasks.toastRerun"));
+    actionPending.value = null;
+    rerunRequest.value = null;
     await refreshAll();
-    if (next?.id) sheet.open(next.id);
+    if (!nodeId && next?.id) sheet.open(next.id);
   } catch (error) {
     toastDispatchError(error, t("operations.tasks.toastRerunFailed"));
   } finally {
@@ -429,7 +561,7 @@ function menuItems(task: TaskView): RowMenuItem[] {
       hidden: !canRun.value,
       disabled: executionDisabled.value || actionPending.value === task.id,
       reason: disabledReason,
-      run: () => void rerunTask(task),
+      run: () => askRerun(task, rowMenuButton(task.id)),
     },
     {
       key: "cancel",
@@ -445,9 +577,7 @@ function menuItems(task: TaskView): RowMenuItem[] {
       icon: Trash2,
       danger: true,
       hidden: !canRun.value,
-      run: () => {
-        deleteTarget.value = task;
-      },
+      run: () => askDelete(task, rowMenuButton(task.id)),
     },
   ];
 }
@@ -461,23 +591,20 @@ const onScreen = computed(() => tasks.value.find((task) => task.id === sheet.ope
 
 /**
  * A run opened by link (the node page, an approval, the audit trace) may not
- * be on this page. The list has no id filter, so the sheet walks the list,
- * newest first, 500 rows at a time, until it finds it.
+ * be on this page. The list has no id filter, so the sheet finds it by
+ * walking the list (findTask); once found, a refresh asks the narrow
+ * question that still holds it. It is read again with every action and,
+ * while it can still change, on the page's 10 s tick, so its status and the
+ * actions it offers do not freeze at the first read.
  */
+let lookupHint: TaskView | null = null;
 const lookupQuery = useAsyncData<TaskView | null>(
   async (signal) => {
     const id = sheet.openId.value;
     if (!id) return null;
-    for (let offset = 0, page = 0; page < 10; page += 1) {
-      const response = await api.tasks.query({ limit: 500, offset }, { signal });
-      const list = Array.isArray(response) ? response : response.tasks ?? [];
-      const found = list.find((task) => task.id === id);
-      if (found) return found;
-      const pageTotal = Array.isArray(response) ? list.length : response.total;
-      offset += list.length;
-      if (!list.length || offset >= pageTotal || Array.isArray(response)) break;
-    }
-    return null;
+    const found = await findTask((params) => api.tasks.query(params, { signal }), id, lookupHint);
+    lookupHint = found;
+    return found;
   },
   { immediate: false },
 );
@@ -500,6 +627,9 @@ const openTask = computed<TaskView | undefined>(() => {
   const found = lookupQuery.data.value;
   return found && found.id === sheet.openId.value ? found : undefined;
 });
+
+/** The open run was read on its own and can still change: the tick reads it again. */
+const lookupLive = computed(() => !onScreen.value && !!openTask.value && taskLive(openTask.value.status));
 
 const sheetState = computed<"ready" | "loading" | "gone">(() => {
   if (openTask.value) return "ready";
@@ -553,6 +683,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
     if (!page.value.serverFiltered) segments.push({ key: "client", text: t("operations.tasks.proof.clientFiltered"), tone: "warning" });
     const resultsError = runsQuery.data.value?.resultsError;
     if (resultsError) segments.push({ key: "results", text: t("operations.tasks.proof.resultsNotRead", { reason: resultsError }), tone: "warning" });
+    else if (resultsTruncated.value) segments.push({ key: "results", text: t("operations.tasks.proof.resultsTruncated", { n: num(runsQuery.data.value?.resultRowsRead ?? 0) }), tone: "warning" });
   }
   return segments;
 });
@@ -697,7 +828,6 @@ const filterGroups = computed<QueryFilterGroup[]>(() => {
 function refreshNow(): void {
   void refreshAll();
   void nodesQuery.refresh();
-  if (sheet.openId.value && !onScreen.value) void lookupQuery.refresh();
 }
 </script>
 
@@ -799,7 +929,7 @@ function refreshNow(): void {
                 {{ $t('operations.tasks.moreTargets', { n: row.summary.total - 1 }) }}
               </span>
             </p>
-            <p v-if="resultsRead && row.summary.reported" class="text-xs tabular" :class="row.summary.failed ? 'text-destructive' : 'text-muted-foreground'">
+            <p v-if="resultsComplete(row) && row.summary.reported" class="text-xs tabular" :class="row.summary.failed ? 'text-destructive' : 'text-muted-foreground'">
               {{ $t('operations.tasks.passCount', { passed: row.summary.passed, total: row.summary.total }) }}
             </p>
           </div>
@@ -917,10 +1047,17 @@ function refreshNow(): void {
         :reruns="openReruns"
         :can-run="canRun"
         :execution-disabled="executionDisabled"
-        @changed="refreshAll"
+        :busy="actionPending === openTask.id"
+        @rerun-node="(nodeId, el) => openTask && askRerun(openTask, el, nodeId)"
       />
       <template v-if="openTask && canRun" #actions>
-        <Button variant="outline" size="sm" type="button" :disabled="executionDisabled || actionPending === openTask.id" @click="rerunTask(openTask)">
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          :disabled="executionDisabled || actionPending === openTask.id"
+          @click="(e: MouseEvent) => openTask && askRerun(openTask, e.currentTarget as HTMLElement)"
+        >
           <RotateCcw class="size-4" aria-hidden="true" />
           {{ $t('operations.tasks.actions.rerun') }}
         </Button>
@@ -935,7 +1072,13 @@ function refreshNow(): void {
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.tasks.actions.cancel') }}
         </Button>
-        <Button variant="ghost" size="sm" type="button" class="ms-auto text-destructive" @click="deleteTarget = openTask">
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          class="ms-auto text-destructive"
+          @click="(e: MouseEvent) => openTask && askDelete(openTask, e.currentTarget as HTMLElement)"
+        >
           <Trash2 class="size-4" aria-hidden="true" />
           {{ $t('operations.tasks.actions.delete') }}
         </Button>
@@ -953,7 +1096,21 @@ function refreshNow(): void {
       :confirm-label="$t('operations.tasks.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="!!deleteTarget && actionPending === deleteTarget.id"
+      :return-focus="confirmReturn"
       @confirm="confirmDelete"
+    />
+
+    <ConfirmDialog
+      v-model:open="rerunOpen"
+      :title="rerunTitle"
+      :description="$t('operations.tasks.rerunConfirm.description')"
+      :impact="rerunPreview"
+      :impact-title="$t('operations.tasks.rerunConfirm.previewTitle')"
+      :confirm-label="rerunConfirmLabel"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="!!rerunRequest && actionPending === rerunRequest.task.id"
+      :return-focus="confirmReturn"
+      @confirm="confirmRerun"
     />
   </div>
 </template>
