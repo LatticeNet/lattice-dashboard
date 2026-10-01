@@ -950,7 +950,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               @click="rowActivatable && onRowActivate(entry.row, $event)"
               @keydown="rowActivatable && onRowKeydown(entry.row, $event)"
             >
-              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-top', selectGutterClass)">
+              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-middle', selectGutterClass)">
                 <Checkbox
                   :model-value="isRowSelected(entry.row)"
                   :aria-label="label.selectRow.value"

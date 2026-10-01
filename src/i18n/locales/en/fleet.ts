@@ -89,6 +89,56 @@ export default {
       },
     },
     nodes: {
+      // The head (design 23, 4.2): counts that are not "online" link to the filter.
+      proof: {
+        nodes: "{n} node | {n} nodes",
+        offline: "{n} offline",
+        neverReported: "{n} never reported",
+        degraded: "{n} degraded",
+        disabled: "{n} disabled",
+        versions: "{n} agent versions",
+        // A column that held one value on every node, said once.
+        uniform: {
+          owner: "every node owned by {value}",
+          agent: "agent {value} everywhere",
+          archOs: "{value} everywhere",
+          agentConfig: "agents allow {value} everywhere",
+          role: "role {value} everywhere",
+        },
+      },
+      groupRow: {
+        summary: "{total} · {online} online",
+        degraded: "{n} degraded",
+        down: "not reporting: {names}",
+      },
+      sheet: {
+        status: "Status",
+        for: "for {age}",
+        lastReport: "last report {when}",
+        tasks: "Tasks",
+        ssh: "SSH",
+        lines: "Lines",
+        agent: "Agent",
+        host: "Host",
+        noAccess: "no access",
+        reading: "reading...",
+        notRead: "not read: {reason}",
+        stalled: "{n} stalled",
+        running: "{n} running",
+        queued: "{n} queued",
+        stalledWord: "stalled",
+        runningWord: "running",
+        queuedWord: "queued",
+        allTasks: "Tasks on this node",
+        openGuard: "Open in SSH Guard",
+        notEnrolled: "sshd facts not reported",
+        openLines: "Lines on this node",
+        notReported: "not reported",
+        goneTitle: "This node is not in the fleet",
+        goneDescription: "It was deleted, or the link names a node this session cannot read.",
+        terminalNoScope: "A terminal needs the terminal:open scope.",
+        terminalNotReporting: "The node is not reporting; a session needs its agent.",
+      },
       title: "Nodes",
       description: "Enroll, inspect, and administer fleet nodes",
       stats: {
@@ -103,6 +153,8 @@ export default {
         upload: "Upload",
       },
       duplicates: {
+        claim: "{names} look like the same machine",
+        open: "Open",
         title: "Lattice found {count} group(s) of nodes that look like the same machine",
         reason: {
           wireguard_key: "same WireGuard key",
@@ -111,6 +163,16 @@ export default {
         },
       },
       groupBy: {
+        by: {
+          owner: "Group by owner",
+          status: "Group by status",
+          country: "Group by country",
+          agent: "Group by agent version",
+          none: "No grouping",
+        },
+        noOwner: "No owner",
+        noCountry: "Not located",
+        noAgent: "No version reported",
         label: "Group by",
         region: "Region",
         country: "Country",
@@ -122,6 +184,7 @@ export default {
         count: "{online}/{total} online",
       },
       filters: {
+        noSource: "no source policy",
         searchPlaceholder: "Search name, ID, or host…",
         status: "Status",
         statusAll: "All statuses",
@@ -165,6 +228,7 @@ export default {
         showFewer: "Show fewer",
       },
       table: {
+        colAgent: "Agent",
         colName: "Node",
         colOwner: "Owner",
         colStatus: "Status",
@@ -525,6 +589,7 @@ export default {
           "Disable {count} of the {selected} selected nodes? They stop accepting work until you enable them again. Nodes already disabled are left alone.",
       },
       confirm: {
+        rotateImpact: "The agent on {name} stops reporting until it runs with the new token.",
         rotateTitle: "Rotate enrollment token",
         rotateDescription:
           'Rotate the enrollment token for "{name}"? The current token stops working immediately and the agent has to be re-enrolled with the new one.',
