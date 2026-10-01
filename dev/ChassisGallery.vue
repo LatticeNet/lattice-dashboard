@@ -131,6 +131,15 @@ const layerTabs: LayerTab<Layer>[] = [
   { value: "groups", label: "Groups", count: 3 },
   { value: "settings", label: "Settings" },
 ];
+// A three-layer row shaped like Approvals, to show the segmented form with
+// every count tone. Not bound to the address: a page has one layer row.
+type ApprovalLayer = "needs" | "history" | "stuck";
+const approvalLayer = ref<ApprovalLayer>("needs");
+const approvalTabs: LayerTab<ApprovalLayer>[] = [
+  { value: "needs", label: "Needs you", count: 3, tone: "warning" },
+  { value: "history", label: "History", count: "1,351" },
+  { value: "stuck", label: "Stuck", count: 1, tone: "destructive" },
+];
 
 /* ------------------------------------------------------------------ */
 /* DataTable, RowMenu, ObjectSheet                                     */
@@ -394,9 +403,14 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
     <!-- 3.4 LayerTabs -->
     <section class="space-y-3" data-gallery="layers">
       <h2 class="text-lg font-semibold">3.4 LayerTabs</h2>
-      <p class="text-xs text-muted-foreground">Bound to ?view=; an old ?tab= link lands on its layer and is rewritten once. At 375 the row scrolls sideways.</p>
+      <p class="text-xs text-muted-foreground">
+        Bound to ?view=; an old ?tab= link lands on its layer and is rewritten once. From 620 px an underline row; below it a
+        segmented control. Six layers do not fit at 375, so the row scrolls sideways with the current layer in view.
+      </p>
       <LayerTabs v-model="layer" :tabs="layerTabs" label="Fleet layers" />
       <p class="font-mono text-xs text-muted-foreground" data-testid="layer-now">layer: {{ layer }}</p>
+      <p class="text-xs text-muted-foreground">Three layers share the width at 375. Counts tint only when they ask for action.</p>
+      <LayerTabs v-model="approvalLayer" :tabs="approvalTabs" label="Approvals layers" data-testid="layer-tabs-three" />
     </section>
 
     <!-- 3.5 to 3.7 DataTable, RowMenu, ObjectSheet -->
@@ -647,7 +661,8 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
       <p class="text-xs text-muted-foreground">
         Tokens whose keys map to the URL and HTTP names (node:[cd]-DMIT-2 writes node_id=). Try
         <code class="font-mono">node:[metix]-dmit-2 decision:deny failed apply</code>, a name that does not exist, or uncheck
-        "names loaded" and search.
+        "names loaded" and search. The empty field's example tokens sit at about 3:1 in dark mode, well below entered text, so
+        they never read as an applied filter.
       </p>
       <label class="flex items-center gap-2 text-xs text-muted-foreground">
         <input v-model="namesReady" type="checkbox" class="size-4" /> names loaded
