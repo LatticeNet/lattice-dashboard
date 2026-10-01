@@ -60,11 +60,17 @@ export interface MapCluster {
 
 const DOWN = new Set<NodeStatus>(["offline", "never_reported"]);
 
-/** The colour a set of statuses earns: offline beats degraded beats the quiet states. */
+/**
+ * The colour a set of statuses earns: offline beats degraded beats the quiet
+ * states. A never-reported node alone is quiet (muted), but beside online
+ * nodes it is one of the cluster's down count, so the cluster cannot read
+ * green while its badge counts it.
+ */
 export function clusterTone(statuses: readonly NodeStatus[]): ClusterTone {
   if (statuses.includes("offline")) return "destructive";
   if (statuses.includes("degraded")) return "warning";
   if (statuses.length > 0 && statuses.every((status) => status !== "online")) return "muted";
+  if (statuses.includes("never_reported")) return "warning";
   return "success";
 }
 

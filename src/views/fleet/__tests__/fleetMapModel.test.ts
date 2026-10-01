@@ -36,6 +36,9 @@ test("a cluster's colour: offline over degraded over quiet states over online", 
   assert.equal(clusterTone(["degraded", "offline"]), "destructive");
   assert.equal(clusterTone(["disabled", "never_reported"]), "muted");
   assert.equal(clusterTone(["online", "disabled"]), "success");
+  // A never-reported node among online ones is in the down count, so the cluster is not green.
+  assert.equal(clusterTone(["online", "never_reported", "online"]), "warning");
+  assert.equal(clusterTone(["never_reported"]), "muted");
 });
 
 test("marks grow with their count and stop growing", () => {
