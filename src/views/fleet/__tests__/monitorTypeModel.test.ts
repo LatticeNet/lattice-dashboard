@@ -153,8 +153,11 @@ test("the tls target error is announced, not left as an unexplained invalid fiel
   // operator already knows. The sentence that says a certificate watch takes
   // host:port has to reach the reader who cannot see the red border.
   const view = readFileSync(new URL("../MonitoringView.vue", import.meta.url), "utf8");
-  const field = view.slice(view.indexOf('id="monitor-target"'), view.indexOf('id="monitor-type"'));
-  assert.ok(field.length > 0, "MonitoringView no longer has a target field before the type select");
+  // The type select now comes first (the empty state opens Create with a
+  // type chosen), so the field runs from the input to the end of its error.
+  const start = view.indexOf('id="monitor-target"');
+  const field = view.slice(start, view.indexOf("</p>", view.indexOf('id="monitor-target-error"', start)) + 4);
+  assert.ok(start >= 0 && field.length > 0, "MonitoringView no longer has a target field with its error");
   assert.match(field, /:aria-describedby="tlsTargetProblem \? 'monitor-target-error' : undefined"/);
   assert.match(field, /id="monitor-target-error"/);
   assert.match(field, /role="alert"/);
