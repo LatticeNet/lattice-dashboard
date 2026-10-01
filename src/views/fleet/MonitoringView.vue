@@ -641,7 +641,8 @@ const deleteImpact = computed(() => {
                   {{ $t(`fleet.monitoring.log.${opt}`) }}
                 </button>
               </div>
-              <Select v-model="logNode">
+              <!-- Only a monitor checked from several nodes has anything to filter by node. -->
+              <Select v-if="logNodeOptions.length > 1" v-model="logNode">
                 <SelectTrigger class="h-8 w-[170px]" :aria-label="$t('fleet.monitoring.log.allNodes')"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{{ $t('fleet.monitoring.log.allNodes') }}</SelectItem>

@@ -489,7 +489,7 @@ export function sshGuardFor(id: string): SSHGuardNodeStatus | undefined {
 export const MONITORS: MonitorView[] = PARAMS.get("monitors") === "some" && SHAPE !== "empty"
   ? [
       { id: "mon_console", name: "Lattice console", type: "http", target: "https://lattice.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: NODES.slice(0, 3).map((n) => n.id), enabled: true, created_at: iso(-20 * DAY) },
-      { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [NODES[0]!.id], enabled: true, created_at: iso(-20 * DAY) },
+      { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [], enabled: true, created_at: iso(-20 * DAY) },
       { id: "mon_hk_tcp", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: NODES.slice(3, 5).map((n) => n.id), enabled: true, created_at: iso(-3 * DAY) },
     ]
   : [];
@@ -498,14 +498,16 @@ export function monitorResults(monitorId: string): MonitorResult[] {
   const monitor = MONITORS.find((m) => m.id === monitorId);
   if (!monitor) return [];
   const out: MonitorResult[] = [];
-  const nodes = monitor.node_ids ?? [];
+  // The control plane dials a tls monitor itself, hourly: its results carry no node.
+  const tls = monitor.type === "tls";
+  const nodes = tls ? [""] : (monitor.node_ids ?? []);
   for (let i = 0; i < 24; i++) {
     for (const node of nodes) {
       const failing = monitorId === "mon_hk_tcp" && i < 3 && node === nodes[0];
       out.push({
         monitor_id: monitorId,
         node_id: node,
-        at: iso(-i * 5 * MINUTE),
+        at: iso(-i * (tls ? 60 : 5) * MINUTE),
         success: !failing,
         latency_ms: failing ? undefined : monitorId === "mon_console" ? 118 + ((i * 7) % 23) : 42 + ((i * 5) % 17),
         error: failing ? "dial tcp 203.0.113.21:443: i/o timeout" : undefined,
