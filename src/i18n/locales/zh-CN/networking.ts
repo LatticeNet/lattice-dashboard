@@ -1137,6 +1137,7 @@ export default {
       record: "记录",
       recordPlaceholder: "选择要提供的内容",
       recordsFailed: "无法读取该插件的记录。",
+      recordMissing: "该插件没有名为 {name} 的记录，请从列表里选一个。",
       noRecords: "该插件还没有可发布的记录。",
       proxyUser: "代理用户",
       proxyUserPlaceholder: "选择代理用户",

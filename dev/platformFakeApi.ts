@@ -58,6 +58,9 @@ export * from "@/lib/api/index";
  *   ?share-expired    ... expired 2 days ago (invented).
  *   ?shares-fail      The share list answers 502.
  *   ?store-fail       Store's bucket read answers 502 (a failed read shows no count).
+ *   ?records-slow     Sub-Store's record list answers after 1.5 s, so the share
+ *                     form's deep link is seen waiting for it.
+ *   ?records-fail     Sub-Store's record list answers 502.
  *   ?store-empty      Store has no bucket of either kind (first run).
  *
  * Shares: production's one share (cd-self, rendered by Sub-Store from the
@@ -75,6 +78,8 @@ const SHARE_EXPIRED = flags.has("share-expired");
 const SHARES_FAIL = flags.has("shares-fail");
 const STORE_FAIL = flags.has("store-fail");
 const STORE_EMPTY = flags.has("store-empty");
+const RECORDS_SLOW = flags.has("records-slow");
+const RECORDS_FAIL = flags.has("records-fail");
 const STORAGE_WRITE_MS = 1500;
 
 const NOW = Date.now();
@@ -185,9 +190,12 @@ const subStore: PluginView = {
   active: true,
 };
 
+// cd-home is invented. Its id has the shape Sub-Store gives an imported
+// collection (migratedKindID), so a link by record name has to be matched
+// against the list instead of being taken as the id.
 const subStoreRecords = [
   { id: "merge-openjobs", name: "merge-openjobs", display_name: "OpenJobs merged" },
-  { id: "cd-home", name: "cd-home", display_name: "Home lines" },
+  { id: "imported-col-cd-home", name: "cd-home", display_name: "Home lines" },
 ];
 
 /* -------------------------------- store -------------------------------- */
@@ -550,7 +558,10 @@ export const api = {
   plugins: {
     list: () => delay([{ ...subStore }]),
     contributions: () => delay([{ ...subStore }]),
-    call: () => delay({ subscriptions: subStoreRecords.map((record) => ({ ...record })) }),
+    call: () =>
+      RECORDS_FAIL
+        ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from latticenet.sub-store (records)")), 120))
+        : delay({ subscriptions: subStoreRecords.map((record) => ({ ...record })) }, RECORDS_SLOW ? 1500 : LATENCY_MS),
   },
 
   approvals: unimplemented,

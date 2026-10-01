@@ -23,7 +23,7 @@
  * new plugin-backed share is unavailable with the reason. Proxy-user shares
  * are server-native and unaffected.
  */
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
@@ -321,6 +321,24 @@ async function loadRecords(): Promise<void> {
 }
 
 watch(() => draft.value.pluginId, loadRecords);
+
+/*
+ * A record the deep link named, chosen once the plugin's records have loaded.
+ * Sub-Store links by record name, and an id can differ from its name
+ * (imported records are "imported-<kind>-<name>"), so the name is matched
+ * against the loaded list and never written as the id. A name that matches
+ * nothing leaves the picker empty and says so.
+ */
+const wantedRecord = ref("");
+const missingRecord = ref("");
+watch([records, recordsLoading], () => {
+  const name = wantedRecord.value;
+  if (!name || recordsLoading.value) return;
+  wantedRecord.value = "";
+  const match = records.value.find((record) => record.id === name || record.name === name);
+  if (match) draft.value.subscriptionId = match.id;
+  else if (!recordsError.value) missingRecord.value = name;
+});
 watch(
   () => draft.value.subscriptionId,
   (id) => {
@@ -343,7 +361,8 @@ const canPublish = computed(() => {
   if (!draft.value.slug.trim() || slugError.value || publishing.value) return false;
   if (expiryFormError(draft.value.expiry, now.value)) return false;
   if (draft.value.kind === "plugin") {
-    return pluginShareAvailable.value && !!draft.value.pluginId && !!draft.value.subscriptionId;
+    const id = draft.value.subscriptionId;
+    return pluginShareAvailable.value && !!draft.value.pluginId && records.value.some((record) => record.id === id);
   }
   return !!draft.value.proxyUserId.trim();
 });
@@ -360,6 +379,8 @@ function openPublish(): void {
     defaultFormat: "",
     expiry: emptyExpiryForm(),
   };
+  wantedRecord.value = "";
+  missingRecord.value = "";
   now.value = Date.now();
   publishOpen.value = true;
   void loadRecords();
@@ -596,22 +617,18 @@ function menuFor(share: SubscriptionShareView) {
  * decision instead of a blank form. The keys are consumed so a reload does not
  * reopen it, and the lens stays pinned so this pane stays mounted.
  */
-async function applyDeepLink(): Promise<void> {
+function applyDeepLink(): void {
   if (!hasShareCreateDeepLink(route.query)) return;
   const name = shareCreateTarget(route.query);
   void router.replace({ query: withoutShareDeepLink(route.query) });
   openPublish();
-  if (!name || !pluginShareAvailable.value) return;
-  await nextTick();
-  // The record may be identified by id or by name depending on the caller.
-  const match = records.value.find((record) => record.id === name || record.name === name);
-  draft.value.subscriptionId = match?.id ?? name;
-  draft.value.slug = suggestShareSlug(match?.display_name || match?.name || name, shares.value.map((s) => s.slug));
+  // Matched by id or name once the records arrive; the slug follows the pick.
+  if (name && pluginShareAvailable.value) wantedRecord.value = name;
 }
 
 onMounted(async () => {
   await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
-  await applyDeepLink();
+  applyDeepLink();
 });
 watch(() => route.query, applyDeepLink);
 </script>
@@ -869,6 +886,9 @@ watch(() => route.query, applyDeepLink);
                 </SelectContent>
               </Select>
               <p v-if="recordsError" class="text-xs text-destructive">{{ recordsError }}</p>
+              <p v-else-if="missingRecord && !draft.subscriptionId" class="text-xs text-warning-text" data-testid="share-record-missing">
+                {{ $t('networking.shares.recordMissing', { name: missingRecord }) }}
+              </p>
               <p v-else-if="!recordsLoading && !records.length && draft.pluginId" class="text-xs text-muted-foreground">
                 {{ $t('networking.shares.noRecords') }}
               </p>

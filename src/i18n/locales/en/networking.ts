@@ -1186,6 +1186,7 @@ export default {
       record: "Record",
       recordPlaceholder: "Choose what to serve",
       recordsFailed: "This plugin's records could not be read.",
+      recordMissing: "This plugin has no record called {name}. Choose one from the list.",
       noRecords: "This plugin has no records to publish yet.",
       proxyUser: "Proxy user",
       proxyUserPlaceholder: "Choose a proxy user",
