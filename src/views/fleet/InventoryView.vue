@@ -173,8 +173,6 @@ const pending = ref(false);
 const deletePending = ref(false);
 const deleteOpen = ref(false);
 const renewPending = ref(false);
-const remindersPending = ref(false);
-const remindersAllPending = ref(false);
 const linkRevealPending = ref("");
 
 // ── Form model (populated when the edit dialog opens) ─────────────────────────
@@ -1114,6 +1112,27 @@ async function saveProfile() {
   }
 }
 
+/**
+ * What a profile delete takes with it, from the saved profile (design 23,
+ * 3.8: irreversible inside Lattice names what stops). The node itself stays.
+ */
+const deleteProfileImpact = computed(() => {
+  const machine = editMachine.value;
+  if (!machine?.id) return [];
+  const out: string[] = [];
+  const monthly = monthlyEquivCents(machine);
+  if (monthly > 0) {
+    out.push(t("fleet.inventory.profile.deleteImpact.cost", { amount: formatMoney(Math.round(monthly), machine.currency || "USD") }));
+  }
+  const date = renewalDate(machine);
+  if (date) {
+    out.push(machine.reminders_enabled ? t("fleet.inventory.profile.deleteImpact.renewalReminders", { date }) : t("fleet.inventory.profile.deleteImpact.renewal", { date }));
+  }
+  if (machine.has_console_url || machine.has_detail_url) out.push(t("fleet.inventory.profile.deleteImpact.links"));
+  if (machine.notes?.trim()) out.push(t("fleet.inventory.profile.deleteImpact.notes"));
+  return out;
+});
+
 async function deleteProfile() {
   if (!profileId.value) return;
   deletePending.value = true;
@@ -1148,19 +1167,6 @@ async function renewProfile() {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.renewalFailed"));
   } finally {
     renewPending.value = false;
-  }
-}
-
-async function runReminders(selectedOnly: boolean) {
-  const flag = selectedOnly ? remindersPending : remindersAllPending;
-  flag.value = true;
-  try {
-    const res = await api.machines.runReminders(selectedOnly ? profileId.value : undefined);
-    toast.success(t("fleet.inventory.toast.remindersFired", { count: res.fired.length }));
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.reminderFailed"));
-  } finally {
-    flag.value = false;
   }
 }
 
@@ -1288,18 +1294,29 @@ const sheetState = computed(() => {
 const previewOpen = ref(false);
 const sendPending = ref(false);
 const todayDay = computed(() => formatDay(new Date()));
+/**
+ * The profile the preview covers: one machine from its editor, or every
+ * machine from the header. The send asks the server for the same scope, so
+ * what the dialog lists is what the button pushes.
+ */
+const previewProfileId = ref<string | undefined>();
+const previewMachine = computed(() => (previewProfileId.value ? machines.value.find((m) => m.id === previewProfileId.value) : undefined));
+const previewPool = computed(() => machines.value.filter((m) => !!m.id && (!previewProfileId.value || m.id === previewProfileId.value)));
+
+function openPreview(id?: string): void {
+  previewProfileId.value = id;
+  previewOpen.value = true;
+}
 
 /** The reminders that fire today by the rules the server evaluates. */
 const firingToday = computed(() =>
-  machines.value
-    .filter((m) => !!m.id)
+  previewPool.value
     .map((m) => ({ machine: m, next: nextReminder(m, todayDay.value) }))
     .filter((entry): entry is { machine: MachineView; next: NonNullable<typeof entry.next> } => !!entry.next && entry.next.inDays === 0),
 );
 /** The next reminder after today, so an empty preview still says when one goes out. */
 const nextFiring = computed(() =>
-  machines.value
-    .filter((m) => !!m.id)
+  previewPool.value
     .map((m) => ({ machine: m, next: nextReminder(m, todayDay.value) }))
     .filter((entry): entry is { machine: MachineView; next: NonNullable<typeof entry.next> } => !!entry.next && entry.next.inDays > 0)
     .sort((a, b) => a.next.inDays - b.next.inDays)[0],
@@ -1326,8 +1343,8 @@ function firingLine(entry: { machine: MachineView; next: { offset: number; renew
 async function sendReminders(): Promise<void> {
   sendPending.value = true;
   try {
-    const res = await api.machines.runReminders();
-    toast.success(t("fleet.inventory.toast.remindersFired", { count: res.fired.length }));
+    const res = await api.machines.runReminders(previewProfileId.value);
+    toast.success(t("fleet.inventory.toast.remindersFired", { count: res.fired.length }, res.fired.length));
     previewOpen.value = false;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.reminderFailed"));
@@ -1345,7 +1362,7 @@ async function sendReminders(): Promise<void> {
         <ProofLine v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
-        <Button v-if="canAdminInventory" variant="outline" size="sm" type="button" @click="previewOpen = true">
+        <Button v-if="canAdminInventory" variant="outline" size="sm" type="button" @click="openPreview()">
           <Bell class="size-4" aria-hidden="true" />
           {{ $t('fleet.inventory.preview.open') }}
         </Button>
@@ -1591,29 +1608,6 @@ async function sendReminders(): Promise<void> {
         </Button>
       </template>
     </ObjectSheet>
-
-    <!-- Preview reminders: what a send would push, then the send behind a typed count (design 23, 3.8). -->
-    <ConfirmDialog
-      v-model:open="previewOpen"
-      :title="$t('fleet.inventory.preview.title')"
-      :description="firingToday.length ? $t('fleet.inventory.preview.description', { n: firingToday.length }, firingToday.length) : $t('fleet.inventory.preview.nothing')"
-      :impact="firingToday.length ? firingToday.map(firingLine) : undefined"
-      :impact-title="$t('fleet.inventory.preview.impactTitle')"
-      :typed-confirm="firingToday.length ? String(firingToday.length) : undefined"
-      :confirm-label="$t('fleet.inventory.preview.send', { n: firingToday.length }, firingToday.length)"
-      :cancel-label="$t('common.actions.close')"
-      :confirm-disabled="firingToday.length === 0"
-      :pending="sendPending"
-      @confirm="sendReminders"
-    >
-      <div class="space-y-1.5 text-xs text-muted-foreground">
-        <p v-if="!canManageNotifications">{{ $t('fleet.inventory.preview.routesUnknown') }}</p>
-        <p v-else-if="renewalRoutes.length">{{ $t('fleet.inventory.preview.routes', { routes: renewalRoutes.join('; ') }) }}</p>
-        <p v-else class="text-warning-text">{{ $t('fleet.inventory.preview.noRoute') }}</p>
-        <p v-if="nextFiring">{{ $t('fleet.inventory.preview.next', { name: displayName(nextFiring.machine), date: nextFiring.next.at, n: nextFiring.next.inDays }) }}</p>
-        <p v-if="firingToday.length">{{ $t('fleet.inventory.preview.dedupe') }}</p>
-      </div>
-    </ConfirmDialog>
 
     <!-- Edit / create dialog.
          A fixed header and footer around a scrolling form, so the machine's
@@ -1982,11 +1976,11 @@ async function sendReminders(): Promise<void> {
                 type="button"
                 variant="ghost"
                 size="sm"
-                :disabled="remindersPending || formDirty"
-                @click="runReminders(true)"
+                :disabled="formDirty"
+                @click="openPreview(profileId)"
               >
                 <Bell class="size-4" aria-hidden="true" />
-                {{ $t('fleet.inventory.profile.runReminders') }}
+                {{ $t('fleet.inventory.preview.open') }}
               </Button>
             </div>
           </section>
@@ -2152,10 +2146,37 @@ async function sendReminders(): Promise<void> {
       </DialogScrollContent>
     </Dialog>
 
+    <!-- Preview reminders: what a send would push, then the send behind a typed count (design 23, 3.8).
+         After the editor in the template, so it stacks above the editor it opens from. -->
+    <ConfirmDialog
+      v-model:open="previewOpen"
+      :title="previewMachine ? $t('fleet.inventory.preview.titleOne', { name: displayName(previewMachine) }) : $t('fleet.inventory.preview.title')"
+      :description="firingToday.length
+        ? $t('fleet.inventory.preview.description', { n: firingToday.length }, firingToday.length)
+        : previewMachine ? $t('fleet.inventory.preview.nothingOne', { name: displayName(previewMachine) }) : $t('fleet.inventory.preview.nothing')"
+      :impact="firingToday.length ? firingToday.map(firingLine) : undefined"
+      :impact-title="$t('fleet.inventory.preview.impactTitle')"
+      :typed-confirm="firingToday.length ? String(firingToday.length) : undefined"
+      :confirm-label="$t('fleet.inventory.preview.send', { n: firingToday.length }, firingToday.length)"
+      :cancel-label="$t('common.actions.close')"
+      :confirm-disabled="firingToday.length === 0"
+      :pending="sendPending"
+      @confirm="sendReminders"
+    >
+      <div class="space-y-1.5 text-xs text-muted-foreground">
+        <p v-if="!canManageNotifications">{{ $t('fleet.inventory.preview.routesUnknown') }}</p>
+        <p v-else-if="renewalRoutes.length">{{ $t('fleet.inventory.preview.routes', { routes: renewalRoutes.join('; ') }) }}</p>
+        <p v-else class="text-warning-text">{{ $t('fleet.inventory.preview.noRoute') }}</p>
+        <p v-if="nextFiring">{{ $t('fleet.inventory.preview.next', { name: displayName(nextFiring.machine), date: nextFiring.next.at, n: nextFiring.next.inDays }) }}</p>
+        <p v-if="firingToday.length">{{ $t('fleet.inventory.preview.dedupe') }}</p>
+      </div>
+    </ConfirmDialog>
+
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.inventory.profile.deleteTitle')"
       :description="editMachine ? $t('fleet.inventory.confirm.delete', { name: displayName(editMachine) }) : ''"
+      :impact="deleteProfileImpact"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deletePending"
