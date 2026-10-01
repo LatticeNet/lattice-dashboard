@@ -575,7 +575,7 @@ const groupBadges = computed(() => {
 
 /** Cross-link a group chip to the Groups page with that group pre-selected. */
 function goToGroup(id: string) {
-  router.push({ name: "groups", query: { selected: id } });
+  router.push({ name: "groups", query: { open: id } });
 }
 
 function goToGroups() {
@@ -778,14 +778,14 @@ function outcomeVariant(outcome: string): "default" | "secondary" | "destructive
 /**
  * Where a timeline entry leads, with the record's own id along for the ride.
  * A bare /approvals drops the operator into a list of hundreds and asks them to
- * find again the row they just clicked; the destination reads ?selected and
- * selects it.
+ * find again the row they just clicked; the destination opens it in its
+ * sheet on ?open= (design 23, 3.5).
  */
 function timelineHref(entry: TimelineEntry): RouteLocationRaw | undefined {
   if (!entry.ref) return undefined;
   return {
     name: entry.ref.kind === "task" ? "tasks" : "approvals",
-    query: { selected: entry.ref.id },
+    query: { open: entry.ref.id },
   };
 }
 
