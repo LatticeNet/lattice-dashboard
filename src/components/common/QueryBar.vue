@@ -25,6 +25,9 @@
  * does not resolve, an unknown enum value) are named per token while typing,
  * and kept after Apply until the next edit, since the canonical spelling
  * Apply writes back no longer holds the token.
+ *
+ * On a coarse pointer every control in the row is at least 44 px tall: the
+ * buttons through the global Button rule, the range and the field here.
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -244,7 +247,7 @@ defineExpose({ draft, submit, revert, settle });
         :model-value="range"
         @update:model-value="(value) => emit('update:range', String(value))"
       >
-        <SelectTrigger class="w-36 sm:w-40" :aria-label="rangeAriaLabel ?? $t('common.query.rangeLabel')">
+        <SelectTrigger class="w-36 sm:w-40 pointer-coarse:min-h-11" :aria-label="rangeAriaLabel ?? $t('common.query.rangeLabel')">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -265,7 +268,7 @@ defineExpose({ draft, submit, revert, settle });
              as a hint. -->
         <Input
           v-model="draft"
-          class="pr-8 pl-8 font-mono text-xs dark:placeholder:text-muted-foreground/55"
+          class="pr-8 pl-8 font-mono text-xs pointer-coarse:min-h-11 dark:placeholder:text-muted-foreground/55"
           autocomplete="off"
           spellcheck="false"
           autocapitalize="off"
@@ -278,7 +281,7 @@ defineExpose({ draft, submit, revert, settle });
         <button
           v-if="draft"
           type="button"
-          class="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          class="touch-target absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           :aria-label="$t('common.query.clear')"
           @click="clear"
         >
@@ -328,7 +331,7 @@ defineExpose({ draft, submit, revert, settle });
           <span class="text-muted-foreground">{{ $t('common.query.since') }}</span>
           <Input
             type="datetime-local"
-            class="w-auto"
+            class="w-auto pointer-coarse:min-h-11"
             :model-value="toLocalInput(since)"
             @change="(e: Event) => emit('update:since', fromLocalInput((e.target as HTMLInputElement).value))"
           />
@@ -337,7 +340,7 @@ defineExpose({ draft, submit, revert, settle });
           <span class="text-muted-foreground">{{ $t('common.query.until') }}</span>
           <Input
             type="datetime-local"
-            class="w-auto"
+            class="w-auto pointer-coarse:min-h-11"
             :model-value="toLocalInput(until)"
             @change="(e: Event) => emit('update:until', fromLocalInput((e.target as HTMLInputElement).value))"
           />
