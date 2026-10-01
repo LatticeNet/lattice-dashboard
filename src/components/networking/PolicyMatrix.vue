@@ -91,7 +91,7 @@ function onDirection(value: unknown) {
           <tr class="bg-muted/40">
             <th
               scope="col"
-              class="sticky left-0 z-10 min-w-[10rem] bg-muted/40 px-3 py-2 text-left text-xs font-medium text-muted-foreground"
+              class="sticky left-0 z-10 min-w-[7rem] sm:min-w-[10rem] bg-muted/40 px-3 py-2 text-left text-xs font-medium text-muted-foreground"
             >
               <span class="inline-flex items-center gap-1">
                 {{ $t("networking.matrix.sourceAxis") }}
@@ -119,7 +119,7 @@ function onDirection(value: unknown) {
           <tr v-for="src in groups" :key="`row-${src.id}`" class="border-t border-border">
             <th
               scope="row"
-              class="sticky left-0 z-10 min-w-[10rem] bg-card px-3 py-2 text-left"
+              class="sticky left-0 z-10 min-w-[7rem] sm:min-w-[10rem] bg-card px-3 py-2 text-left"
             >
               <GroupChip :name="src.name" :color="src.color" />
             </th>

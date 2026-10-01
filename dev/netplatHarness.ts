@@ -21,6 +21,7 @@ import { useThemeStore } from "@/stores/theme";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import DdnsView from "@/views/networking/DdnsView.vue";
+import PolicyView from "@/views/networking/PolicyView.vue";
 
 import "@/style/app.css";
 
@@ -46,8 +47,12 @@ const router = createRouter({
   history: createWebHistory("/dev/"),
   routes: [
     { path: "/netplat-ddns.html", name: "network-ddns", component: DdnsView },
+    { path: "/netplat-policy.html", name: "network-policy", component: PolicyView },
     { path: "/nodes/:id", name: "node-detail", component: placeholder("Node") },
     { path: "/approvals", name: "approvals", component: placeholder("Approvals") },
+    { path: "/groups", name: "groups", component: placeholder("Groups") },
+    { path: "/platform/plugins", name: "platform-plugins", component: placeholder("Plugins") },
+    { path: "/plugins/:pluginId/:route(.*)*", name: "plugin-view", component: placeholder("Plugin page") },
     { path: "/:rest(.*)", redirect: "/netplat-ddns.html" },
   ],
 });
