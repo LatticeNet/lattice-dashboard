@@ -26,7 +26,8 @@ import { bridgeInterfaceFingerprint, interfaceMethodScopes } from "./pluginBridg
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import { useProof } from "@/composables/useProof";
 import CopyButton from "@/components/common/CopyButton.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
@@ -163,6 +164,18 @@ function asRows(data: unknown): Row[] {
   return [];
 }
 const rows = computed<Row[]>(() => asRows(sourceQuery.data.value));
+
+/**
+ * The proof line (design 23, section 3.1): what the plugin's data call last
+ * returned, and when. The call does not poll, so the line carries no age
+ * promise beyond the read itself; a failed call prints the reason, no count.
+ */
+const proof = useProof(sourceQuery);
+const proofSegments = computed<ProofSegment[]>(() =>
+  kind.value === "table" && sourceQuery.data.value !== undefined
+    ? [{ key: "rows", text: t("pluginViews.proofRows", { n: rows.value.length }, rows.value.length) }]
+    : [],
+);
 
 /**
  * A column is sortable and searchable only when every row holds a scalar there.
@@ -360,9 +373,10 @@ function confirmAction() {
   />
 
   <div v-else class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="pageTitle" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
-      <template v-if="hasSource" #status>
-        <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" :poll-ms="sourceQuery.pollMs" />
+    <PageHeader :title="pageTitle">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('pluginViews.providedBy', { plugin: plugin?.name || pluginId }) }}</p>
+        <ProofLine v-if="hasSource && hasAccess" v-bind="proof" :segments="proofSegments" @retry="sourceQuery.refresh" />
       </template>
       <template #actions>
         <Button
@@ -381,6 +395,7 @@ function confirmAction() {
           <Button
             v-for="(a, i) in actions"
             :key="`${i}:${a.label}`"
+            variant="outline"
             size="sm"
             :disabled="!canRunAction(a) || runningIndex !== null"
             :title="actionTitle(a)"
@@ -403,7 +418,11 @@ function confirmAction() {
       :icon="PackageOpen"
       :title="$t('pluginViews.unavailableTitle')"
       :description="$t('pluginViews.unavailableDescription')"
-    />
+    >
+      <Button variant="outline" size="sm" as-child>
+        <RouterLink :to="{ path: '/platform/plugins', query: plugin ? { open: plugin.id } : {} }">{{ $t('pluginViews.openPlugins') }}</RouterLink>
+      </Button>
+    </EmptyState>
 
     <!-- Insufficient scope: a quiet, non-destructive panel (no redirect). -->
     <Card v-else-if="!hasAccess" class="border-border">

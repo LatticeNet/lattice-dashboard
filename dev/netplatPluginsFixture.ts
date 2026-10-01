@@ -5,6 +5,11 @@
  * from the plugins' manifests. Digests, timestamps and runtime messages are
  * invented. `?plugins=failed` stops vpn-core's runner with an error and
  * disables wireguard; `?plugins=empty` installs none.
+ *
+ * `?plugins=declarative` adds `example.leases`, an invented declarative
+ * plugin (a table view fed by a
+ * plugin call), so the host page's own rendering, the path no production
+ * plugin takes, can be seen at /dev/plugins/example.leases/leases.
  */
 import type { PluginInstallationView, PluginView } from "@/lib/api/index";
 
@@ -142,3 +147,45 @@ export function pluginViews(): PluginView[] {
     };
   });
 }
+
+/** The invented declarative plugin, active only in the contributions read. */
+export const DECLARATIVE_PLUGIN: PluginView = {
+  id: "example.leases",
+  name: "Leases (declarative example)",
+  type: "wasm",
+  version: "0.0.1",
+  publisher: "",
+  capabilities: ["kv:read"],
+  status: "active",
+  active: true,
+  ui: {
+    nav: [{ section: "extensions", title: "Leases", route: "leases" }],
+    views: [
+      {
+        route: "leases",
+        title: "Leases",
+        kind: "table",
+        source: { interface: "example.leases/leases", method: "list" },
+        columns: [
+          { key: "host", label: "Host" },
+          { key: "ip", label: "Address", render: "code" },
+          { key: "expires", label: "Expires", render: "relative-time" },
+        ],
+        actions: [
+          { label: "Renew all", interface: "example.leases/leases", method: "renew" },
+          { label: "Export", interface: "example.leases/leases", method: "export" },
+        ],
+      },
+    ],
+  },
+  interfaces: [{ service: "example.leases/leases", methods: ["list", "renew", "export"] }],
+};
+
+export function leaseRows() {
+  return Array.from({ length: 7 }, (_, index) => ({
+    host: `printer-${index + 1}.lan`,
+    ip: `192.168.10.${20 + index}`,
+    expires: iso((index + 1) * 3 * HOUR),
+  }));
+}
+

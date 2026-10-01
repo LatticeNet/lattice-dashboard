@@ -25,6 +25,8 @@ import PolicyView from "@/views/networking/PolicyView.vue";
 import DnsView from "@/views/networking/DnsView.vue";
 import TunnelsView from "@/views/networking/TunnelsView.vue";
 import GeoRoutingView from "@/views/networking/GeoRoutingView.vue";
+import PluginsView from "@/views/platform/PluginsView.vue";
+import PluginView from "@/views/platform/PluginView.vue";
 
 import "@/style/app.css";
 
@@ -54,13 +56,14 @@ const router = createRouter({
     { path: "/netplat-dns.html", name: "network-dns", component: DnsView },
     { path: "/netplat-tunnels.html", name: "network-tunnels", component: TunnelsView },
     { path: "/netplat-geo.html", name: "network-geo-routing", component: GeoRoutingView },
+    { path: "/netplat-plugins.html", name: "platform-plugins", component: PluginsView },
     { path: "/nodes/:id", name: "node-detail", component: placeholder("Node") },
     { path: "/approvals", name: "approvals", component: placeholder("Approvals") },
     { path: "/groups", name: "groups", component: placeholder("Groups") },
     { path: "/monitoring", name: "monitoring", component: placeholder("Monitoring") },
     { path: "/monitoring/:id", name: "monitor-detail", component: placeholder("Monitor") },
-    { path: "/platform/plugins", name: "platform-plugins", component: placeholder("Plugins") },
-    { path: "/plugins/:pluginId/:route(.*)*", name: "plugin-view", component: placeholder("Plugin page") },
+    { path: "/platform/plugins", redirect: (to) => ({ path: "/netplat-plugins.html", query: to.query }) },
+    { path: "/plugins/:pluginId/:route(.*)*", name: "plugin-view", component: PluginView },
     { path: "/:rest(.*)", redirect: "/netplat-ddns.html" },
   ],
 });

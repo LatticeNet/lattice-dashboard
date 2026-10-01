@@ -27,7 +27,7 @@ import type { DDNSUpsertRequest, DDNSView, Principal } from "@/lib/api/index";
 
 import { DDNS, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
-import { PLUGIN_INSTALLS, pluginViews } from "./netplatPluginsFixture";
+import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
 
@@ -213,7 +213,15 @@ export const api = {
   },
   plugins: {
     list: () => read("plugins", () => pluginViews()),
-    contributions: () => read("contributions", () => pluginViews().filter((plugin) => plugin.active)),
+    contributions: () =>
+      read("contributions", () => [
+        ...pluginViews().filter((plugin) => plugin.active),
+        ...(flags.get("plugins") === "declarative" ? [DECLARATIVE_PLUGIN] : []),
+      ]),
+    call: (_id: string, _service: string, method: string) => {
+      if (method === "list") return read("leases", () => leaseRows());
+      return delay({ ok: true }, WRITE_MS);
+    },
     trust: () => delay({ non_official: false, publishers: ["latticenet"], allow_unsigned_host_risk: false }),
     lifecycle: () => read("plugins", () => PLUGIN_INSTALLS.map((install) => ({ ...install }))),
     setLifecycle: async (id: string, status: string) => {
