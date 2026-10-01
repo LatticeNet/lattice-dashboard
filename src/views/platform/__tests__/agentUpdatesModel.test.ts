@@ -12,6 +12,14 @@ test("versions compare numerically, and a prerelease sorts before its release", 
   assert.ok(compareAgentVersion("0.3.9-alpha.10", "0.3.9-alpha.2") > 0);
 });
 
+test("build metadata never makes a release older, and a prerelease keeps every hyphen", () => {
+  assert.equal(compareAgentVersion("0.3.9+abc123", "0.3.9"), 0);
+  assert.equal(agentStanding("v0.3.9+abc123", "0.3.9"), "current");
+  assert.ok(compareAgentVersion("0.3.9-rc.1+abc123", "0.3.9") < 0, "still a prerelease");
+  assert.equal(compareAgentVersion("0.3.9-rc.1+abc123", "0.3.9-rc.1+def456"), 0);
+  assert.ok(compareAgentVersion("0.3.9-alpha-2", "0.3.9-alpha-10") < 0, "the tag after the first hyphen is compared whole");
+});
+
 test("a node stands current, behind or ahead of the latest, and unknown when either was not read", () => {
   assert.equal(agentStanding("0.3.9", "v0.3.9"), "current");
   assert.equal(agentStanding("0.3.3", "0.3.9"), "behind");

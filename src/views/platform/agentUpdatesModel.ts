@@ -14,7 +14,10 @@ export function normalizeAgentVersion(version: string | undefined): string {
 }
 
 function parts(version: string): { core: number[]; pre: string } {
-  const [main = "", pre = ""] = version.split(/[-+]/, 2);
+  const release = version.split("+", 1)[0] ?? "";
+  const dash = release.indexOf("-");
+  const main = dash < 0 ? release : release.slice(0, dash);
+  const pre = dash < 0 ? "" : release.slice(dash + 1);
   return { core: main.split(".").map((part) => Number.parseInt(part, 10) || 0), pre };
 }
 
@@ -22,6 +25,7 @@ function parts(version: string): { core: number[]; pre: string } {
  * Order two agent versions: negative when `a` is older. Numeric on the dotted
  * core; a prerelease sorts before its release (0.3.9-alpha.1 < 0.3.9), and
  * two prereleases compare by their tags, numerically where they are numbers.
+ * Build metadata after "+" never orders a release (0.3.9+abc123 = 0.3.9).
  */
 export function compareAgentVersion(a: string, b: string): number {
   const left = parts(normalizeAgentVersion(a));
