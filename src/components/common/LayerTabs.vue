@@ -72,12 +72,18 @@ function revealActive(): void {
 onMounted(revealActive);
 watch(model, () => nextTick(revealActive));
 
+/*
+ * A 10 px count sits on three grounds: the page (underline form), the
+ * segmented track and the raised current segment. The theme's own inks
+ * fell under 4.5:1 on at least one of them (light muted 4.3 on the track;
+ * dark warning 4.2, destructive 3.2 and muted 3.3 on the lighter raised
+ * segment), so each tone carries its own ink, measured on its tint over all
+ * three: light 5.2 / 5.3 / 5.3, dark 5.3 / 5.5 / 5.1 at the worst ground.
+ */
 const COUNT_TONE = {
-  default: "bg-foreground/[0.07] text-muted-foreground",
-  warning: "bg-warning/15 text-warning-text",
-  /* Light --destructive is 3.8:1 on its own tint at 10 px; the darker ink is
-     5.3:1 there (4.9:1 on the segmented track). Dark already reads at 5.9:1. */
-  destructive: "bg-destructive/12 text-[oklch(0.5_0.2_27.5)] dark:text-destructive",
+  default: "bg-foreground/[0.07] text-[oklch(0.48_0.022_281)] dark:text-[oklch(0.84_0.012_240)]",
+  warning: "bg-warning/15 text-[oklch(0.48_0.12_73)] dark:text-[oklch(0.88_0.13_85)]",
+  destructive: "bg-destructive/12 text-[oklch(0.48_0.2_27.5)] dark:text-[oklch(0.84_0.12_22)]",
 } as const;
 </script>
 
