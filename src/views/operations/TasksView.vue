@@ -89,6 +89,12 @@ import { useOpsQuery } from "./useOpsQuery";
 
 const { t, locale } = useI18n();
 const auth = useAuthStore();
+/**
+ * Rerun, Cancel and Delete all need task:run on every target: the server's
+ * handleRerunTask, handleCancelTask and handleDeleteTask check that one
+ * scope, so one flag gates the three here. A stronger scope for Delete would
+ * be a server change first.
+ */
 const canRun = computed(() => auth.can("task:run"));
 
 /**
