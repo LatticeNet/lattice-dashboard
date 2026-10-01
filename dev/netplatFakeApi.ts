@@ -62,7 +62,8 @@ function read<T>(name: string, value: () => T): Promise<T> {
 }
 
 const principal: Principal = {
-  actor_id: "cdcd",
+  // The signed-in operator is the fixture's one user, as on production.
+  actor_id: USERS[0]?.id ?? "cdcd",
   username: "cdcd",
   scopes: flags.has("scopes")
     ? (flags.get("scopes") ?? "").split(",").filter(Boolean)

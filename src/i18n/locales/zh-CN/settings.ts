@@ -323,6 +323,8 @@ export default {
       },
       deleteTitle: "删除用户?",
       deleteDescription: "删除账号“{name}”。此操作无法撤销。",
+      deleteSelf: "这是你当前登录的账号",
+      deleteLastAdmin: "最后一个完全管理员不能删除",
       deleteImpact: {
         signIn: "{name} 将无法再登录，当前打开的会话立即结束",
         tokens: "这个账号创建的令牌全部吊销：用这些令牌调用 API 的程序会收到 401",

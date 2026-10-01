@@ -334,6 +334,8 @@ export default {
       },
       deleteTitle: "Delete user?",
       deleteDescription: 'Delete the account "{name}". This cannot be undone.',
+      deleteSelf: "This is the account you are signed in with",
+      deleteLastAdmin: "The last full admin cannot be deleted",
       deleteImpact: {
         signIn: "{name} can no longer sign in, and any session open now ends",
         tokens: "Every token this account minted is revoked: anything calling the API with one gets 401",
@@ -424,7 +426,7 @@ export default {
       noScope: "Managing access needs user:admin, token:admin or oidc:admin.",
       proof: {
         users: "{n} user | {n} users",
-        admins: "{n} full admin",
+        admins: "{n} full admin | {n} full admins",
         totp: "{n} of {total} with two-factor",
         tokens: "{n} token | {n} tokens",
         active: "{n} active",

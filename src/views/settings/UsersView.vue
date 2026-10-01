@@ -229,16 +229,29 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (n) {
     const admins = users.value.filter((user) => user.scopes.includes("*")).length;
     const totp = users.value.filter((user) => user.totp_enabled).length;
-    parts.push({ key: "admins", text: t("settings.access.proof.admins", { n: admins }) });
+    parts.push({ key: "admins", text: t("settings.access.proof.admins", { n: admins }, admins) });
     parts.push({ key: "totp", text: t("settings.access.proof.totp", { n: totp, total: n }) });
   }
   return parts;
 });
 
+/*
+ * The server refuses two deletes (handleDeleteUser): the account you are
+ * signed in with, and the last full admin. The menu says so on the item
+ * instead of letting the typed confirm end in a 403 or a 409.
+ */
+const fullAdmins = computed(() => users.value.filter((user) => user.scopes.includes("*")).length);
+function deleteBlocked(user: UserView): string | undefined {
+  if (user.id === auth.principal?.actor_id) return t("settings.users.deleteSelf");
+  if (user.scopes.includes("*") && fullAdmins.value <= 1) return t("settings.users.deleteLastAdmin");
+  return undefined;
+}
+
 function menuFor(user: UserView): RowMenuItem[] {
+  const blocked = deleteBlocked(user);
   return [
     { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(user) },
-    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = user) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, disabled: !!blocked, reason: blocked, run: () => (deleteTarget.value = user) },
   ];
 }
 </script>
