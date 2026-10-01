@@ -202,7 +202,7 @@ const STATUS_TEXT: Record<string, string> = {
         <section v-if="unlocated.length" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="map-unlocated">
           <header class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
             <h2 id="map-unlocated" class="text-sm font-medium">{{ $t('fleet.map.unlocated.title') }}</h2>
-            <span class="text-xs text-muted-foreground">{{ $t('fleet.map.unlocated.hint') }}</span>
+            <span v-if="canAdminNodes" class="text-xs text-muted-foreground">{{ $t('fleet.map.unlocated.hint') }}</span>
           </header>
           <ul class="divide-y divide-border">
             <li v-for="node in unlocated" :key="node.id" class="flex items-center gap-2 px-4 py-2 text-sm">
@@ -216,6 +216,7 @@ const STATUS_TEXT: Record<string, string> = {
               </button>
               <span class="shrink-0 font-mono text-xs text-muted-foreground">{{ node.public_ip || $t('fleet.map.unlocated.noIp') }}</span>
               <RouterLink
+                v-if="canAdminNodes"
                 :to="{ name: 'node-detail', params: { id: node.id }, query: { view: 'settings' }, hash: '#node-geo' }"
                 class="ms-auto shrink-0 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
               >

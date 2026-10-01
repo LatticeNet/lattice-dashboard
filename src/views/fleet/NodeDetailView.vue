@@ -10,7 +10,7 @@
  * Side panels (groups / DDNS / agent-updates / audit) are softened on 403 so a
  * read-only operator sees a quiet section rather than an error wall.
  */
-import { computed, watch, ref } from "vue";
+import { computed, nextTick, reactive, watch, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { toast } from "vue-sonner";
@@ -119,7 +119,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
@@ -130,13 +130,28 @@ const canAdminNodes = computed(() => auth.can("node:admin"));
 const canPlanUpdates = computed(() => auth.can("node:admin") && auth.can("network:plan"));
 const canOpenTerminal = computed(() => auth.can("terminal:open"));
 
-/** Treat 403 as "section not visible" rather than a hard error (per OverviewView). */
-function soften<T>(fetcher: (signal: AbortSignal) => Promise<T>) {
+/**
+ * The softened reads this principal may not make, by `forbiddenAs` key. A
+ * card fed by one says "no access" instead of its empty message: "nothing is
+ * waiting" for an operator who cannot read tasks is a claim nobody checked.
+ */
+const forbidden = reactive(new Set<string>());
+
+/**
+ * Treat 403 as "section not visible" rather than a hard error (per
+ * OverviewView). With `forbiddenAs`, the refusal is remembered in `forbidden`.
+ */
+function soften<T>(fetcher: (signal: AbortSignal) => Promise<T>, forbiddenAs?: string) {
   return async (signal: AbortSignal): Promise<T | undefined> => {
     try {
-      return await fetcher(signal);
+      const value = await fetcher(signal);
+      if (forbiddenAs) forbidden.delete(forbiddenAs);
+      return value;
     } catch (e) {
-      if (e instanceof ApiError && e.isForbidden) return undefined;
+      if (e instanceof ApiError && e.isForbidden) {
+        if (forbiddenAs) forbidden.add(forbiddenAs);
+        return undefined;
+      }
       throw e;
     }
   };
@@ -289,7 +304,7 @@ const agentUpdatesQuery = useAsyncData<AgentUpdatePolicy[] | undefined>(
 );
 
 const auditQuery = useAsyncData<AuditEvent[] | undefined>(
-  soften((signal) => api.audit.query({ node_id: nodeId.value, limit: 40 }, { signal }).then((r) => r.events ?? [])),
+  soften((signal) => api.audit.query({ node_id: nodeId.value, limit: 40 }, { signal }).then((r) => r.events ?? []), "audit"),
   { pollInterval: 15000 },
 );
 
@@ -300,7 +315,7 @@ const auditQuery = useAsyncData<AuditEvent[] | undefined>(
 // run and it grows without bound: measured at 3.2s on this fleet, on a page that
 // polls it every twenty seconds and then throws away all but one node's rows.
 const nodeTasksQuery = useAsyncData<TaskView[] | undefined>(
-  soften((signal) => api.tasks.listForNode(nodeId.value, 100, { signal }).then((r) => unwrap(r, "tasks"))),
+  soften((signal) => api.tasks.listForNode(nodeId.value, 100, { signal }).then((r) => unwrap(r, "tasks")), "tasks"),
   { pollInterval: 20000 },
 );
 const nodeResultsQuery = useAsyncData<TaskResult[] | undefined>(
@@ -310,7 +325,7 @@ const nodeResultsQuery = useAsyncData<TaskResult[] | undefined>(
 // Filtered by the server to this node, without plan text: the timeline prints
 // status, actor and reason and never opens a plan.
 const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
-  soften((signal) => api.approvals.list({ node_id: nodeId.value }, { signal }).then((r) => unwrap(r, "approvals"))),
+  soften((signal) => api.approvals.list({ node_id: nodeId.value }, { signal }).then((r) => unwrap(r, "approvals")), "approvals"),
   { pollInterval: 20000 },
 );
 
@@ -330,6 +345,24 @@ const layerTabs = computed<LayerTab<NodeLayer>[]>(() => [
   { value: "activity", label: t("fleet.nodes.detail.layers.activity") },
   { value: "settings", label: t("fleet.nodes.detail.layers.settings") },
 ]);
+
+// A link to one settings section (the Map's "Set location" lands on
+// ?view=settings#node-geo) scrolls to it once the section has rendered; the
+// router's own scroll only goes to the top. Once per hash, so a later save
+// does not pull the page back.
+const scrolledToHash = ref("");
+watch(
+  () => [layer.value, route.hash, !!node.value] as const,
+  async ([current, hash, ready]) => {
+    if (current !== "settings" || !hash || !ready || scrolledToHash.value === hash) return;
+    await nextTick();
+    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    if (!target) return;
+    scrolledToHash.value = hash;
+    target.scrollIntoView({ block: "start" });
+  },
+  { immediate: true },
+);
 
 const proof = useProof(nodesQuery);
 
@@ -697,6 +730,13 @@ const timeline = computed(() =>
   }),
 );
 const timelineDays = computed(() => groupByDay(timeline.value));
+/** The timeline sources this principal cannot read, named for the line under the card title. */
+const timelineHidden = computed(() => {
+  const names = (["audit", "tasks", "approvals"] as const)
+    .filter((key) => forbidden.has(key))
+    .map((key) => t(`fleet.nodes.detail.activitySource.${key}`));
+  return names.join(locale.value.startsWith("zh") ? "、" : ", ");
+});
 
 // What has not run yet on this machine. The timeline answers what already
 // happened; when a node has been down, the question is what is stacked up
@@ -1526,7 +1566,9 @@ async function saveDebug(): Promise<void> {
                 <CardDescription>{{ $t('fleet.nodes.detail.queueDesc') }}</CardDescription>
               </CardHeader>
               <CardContent>
+                <p v-if="forbidden.has('tasks')" class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.queueNoAccess') }}</p>
                 <DataState
+                  v-else
                   :loading="nodeTasksQuery.loading.value"
                   :error="nodeTasksQuery.error.value"
                   :has-data="nodeTasksQuery.data.value !== undefined"
@@ -1888,12 +1930,13 @@ async function saveDebug(): Promise<void> {
           <CardDescription>{{ $t('fleet.nodes.detail.activityDesc') }}</CardDescription>
         </CardHeader>
         <CardContent>
+          <p v-if="timelineHidden" class="mb-3 text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.activityHidden', { sources: timelineHidden }) }}</p>
           <DataState
             :loading="auditQuery.loading.value"
             :error="auditQuery.error.value"
-            :has-data="auditQuery.data.value !== undefined"
+            :has-data="auditQuery.data.value !== undefined || forbidden.has('audit')"
             :is-empty="timeline.length === 0"
-            :empty-description="$t('fleet.nodes.detail.noActivity')"
+            :empty-description="timelineHidden ? $t('fleet.nodes.detail.noActivityReadable') : $t('fleet.nodes.detail.noActivity')"
             :skeleton-rows="4"
             @retry="auditQuery.refresh"
           >
@@ -2258,7 +2301,7 @@ async function saveDebug(): Promise<void> {
         </SettingsSection>
 
         <!-- Location: moved here from the Map's editor. -->
-        <SettingsSection id="node-geo" :title="$t('fleet.nodes.detail.geo')" :description="$t('fleet.nodes.detail.geoDesc')">
+        <SettingsSection id="node-geo" class="scroll-mt-20" :title="$t('fleet.nodes.detail.geo')" :description="$t('fleet.nodes.detail.geoDesc')">
           <template #status>
             <Badge v-if="hasGeo" variant="outline">{{ geoSourceLabel(node.geo?.source) }}</Badge>
           </template>
@@ -2722,6 +2765,8 @@ async function saveDebug(): Promise<void> {
       <ArrowLeft class="size-4" aria-hidden="true" />
       {{ $t('fleet.nodes.detail.backToNodes') }}
     </Button>
+    <!-- No node to show yet: the line still says what was read, or why not. -->
+    <ProofLine v-bind="proof" @retry="nodesQuery.refresh" />
     <DataState
       :loading="nodesQuery.loading.value"
       :error="nodesQuery.error.value"
