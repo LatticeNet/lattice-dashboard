@@ -594,6 +594,7 @@ async function submitPut() {
             :error="entriesQuery.error.value"
             :page-size="50"
             searchable
+            :expression-filter="false"
             :search-placeholder="$t('platform.shared.searchPaths')"
             :empty-title="$t('platform.static.emptyTitle')"
             :empty-description="$t('platform.static.emptyDescription')"
@@ -638,6 +639,7 @@ async function submitPut() {
             :error="entriesQuery.error.value"
             :page-size="50"
             searchable
+            :expression-filter="false"
             :search-placeholder="$t('platform.shared.searchKeys')"
             :empty-title="$t('platform.kv.emptyTitle')"
             :empty-description="$t('platform.kv.emptyDescription')"

@@ -6,6 +6,11 @@ export default {
       title: "能力准入开关",
       description:
         "哪些能力可以作用于这个舰队的节点。会改变节点的能力一律显式准入;单台机器的决定在节点页上。",
+      proof: {
+        capabilities: "{n} 项能力",
+        enforced: "{n} 项已强制",
+        refusing: "已强制的开关有 {n} 处拒绝",
+      },
       colCapability: "能力",
       colKind: "类型",
       colImpact: "范围",
@@ -167,6 +172,17 @@ export default {
       commit: "提交",
       builtAt: "构建时间",
       unknown: "未知",
+      proof: {
+        server: "服务端 {version}",
+        dashboard: "控制台 {ref}",
+        same: "本页运行的就是这一版",
+        different: "本页运行的是另一版",
+      },
+      mismatch: {
+        claim: "本页运行的控制台是 {tab}，服务端提供的是 {served}",
+        proof: "部署前打开的页面会一直运行当时加载的控制台，刷新后才换成新版。",
+        action: "刷新页面",
+      },
       server: {
         title: "Server",
         description: "lattice-server 报告的运行版本",

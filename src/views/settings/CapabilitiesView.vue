@@ -24,6 +24,8 @@ import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
 import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -48,6 +50,19 @@ const query = useAsyncData<CapabilityImpact[] | undefined>(
 
 const capabilities = computed(() => query.data.value ?? []);
 
+/* The proof line (design 23, section 3.1): the gates as last read. */
+const proof = useProof(query);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const enforced = capabilities.value.filter((c) => c.enforced);
+  const parts: ProofSegment[] = [
+    { key: "capabilities", text: t("settings.capabilities.proof.capabilities", { n: capabilities.value.length }, capabilities.value.length) },
+    { key: "enforced", text: t("settings.capabilities.proof.enforced", { n: enforced.length }) },
+  ];
+  const refusing = enforced.reduce((sum, c) => sum + c.refuse_count, 0);
+  if (refusing) parts.push({ key: "refusing", tone: "warning", text: t("settings.capabilities.proof.refusing", { n: refusing }, refusing) });
+  return parts;
+});
+
 /**
  * Ordered by how much attention each one wants: live gates first, because those
  * are the ones currently refusing anything; then the ones that change nodes and
@@ -64,7 +79,7 @@ const ordered = computed(() =>
 const summary = computed<Metric[]>(() => {
   const live = capabilities.value.filter((c) => c.enforced);
   const mutating = capabilities.value.filter((c) => c.mutates);
-  return [
+  const metrics: Metric[] = [
     { key: "live", label: t("settings.capabilities.metrics.live"), value: live.length, icon: ShieldCheck },
     {
       key: "ungated",
@@ -76,6 +91,10 @@ const summary = computed<Metric[]>(() => {
     },
     { key: "total", label: t("settings.capabilities.metrics.total"), value: capabilities.value.length },
   ];
+  // A failed or pending read states no count (design 23, section 2).
+  if (query.data.value !== undefined) return metrics;
+  const placeholder = query.loading.value ? t("common.proof.reading") : t("common.proof.notReadBare");
+  return metrics.map((metric) => ({ ...metric, value: placeholder, tone: "muted" as const }));
 });
 
 const pending = ref("");
@@ -133,10 +152,12 @@ async function applyToggle() {
        control at the other with a thousand pixels of nothing between, and the
        eye has to cross the screen to connect them. -->
   <div class="page-narrow p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('settings.capabilities.title')"
-      :description="$t('settings.capabilities.description')"
-    />
+    <PageHeader :title="$t('settings.capabilities.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('settings.capabilities.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="query.refresh" />
+      </template>
+    </PageHeader>
 
     <MetricStrip :metrics="summary" :columns="3" />
 
@@ -173,7 +194,9 @@ async function applyToggle() {
             <table class="data-grid min-w-[40rem]">
               <thead>
                 <tr>
-                  <th scope="col">{{ $t('settings.capabilities.colCapability') }}</th>
+                  <!-- The fixed columns add up to 36.5rem; without a floor of its own the
+                       name got what was left of 40rem and read "netgu..." at 375. -->
+                  <th scope="col" class="min-w-[9rem]">{{ $t('settings.capabilities.colCapability') }}</th>
                   <th scope="col" class="w-[9rem]">{{ $t('settings.capabilities.colKind') }}</th>
                   <!-- Two numbers, two columns. One sentence per row put the
                        counts mid-row where they cannot be compared; as columns

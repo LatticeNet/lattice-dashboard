@@ -994,6 +994,11 @@ export default {
     notifications: {
       title: "通知",
       description: "用于告警和监控翻转的外发通知渠道",
+      proof: {
+        channels: "{n} 个渠道",
+        rules: "{n} 条规则",
+        off: "{n} 个已停用",
+      },
       newChannel: "新建渠道",
       newRule: "新建规则",
       channelsTitle: "渠道",

@@ -52,7 +52,9 @@ import {
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import { Button } from "@/components/ui/button";
 import {
@@ -156,6 +158,36 @@ const channelsQuery = useAsyncData((signal) => api.notify.channels({ signal }), 
 const channels = computed(() => channelsQuery.data.value ?? []);
 const rulesQuery = useAsyncData((signal) => api.notify.rules({ signal }), { pollInterval: 12000 });
 const rules = computed(() => rulesQuery.data.value?.rules ?? []);
+
+/*
+ * The proof line (design 23, section 3.1): channels and rules as last read.
+ * Both reads speak for the line, so a failed rules read never leaves a
+ * channel count standing in for the whole page.
+ */
+const proof = useProof([channelsQuery, rulesQuery]);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const parts: ProofSegment[] = [
+    { key: "channels", text: t("platform.notifications.proof.channels", { n: channels.value.length }, channels.value.length) },
+    { key: "rules", text: t("platform.notifications.proof.rules", { n: rules.value.length }, rules.value.length) },
+  ];
+  const off = channels.value.filter((channel) => !channel.enabled).length + rules.value.filter((rule) => !rule.enabled).length;
+  if (off) parts.push({ key: "off", tone: "muted", text: t("platform.notifications.proof.off", { n: off }) });
+  return parts;
+});
+
+/* One menu per row (design 23, section 3.6): Edit, then Delete after the separator. */
+function channelMenu(channel: NotifyChannelView): RowMenuItem[] {
+  return [
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, run: () => openEdit(channel) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, run: () => (deleteTarget.value = channel) },
+  ];
+}
+function ruleMenu(rule: NotifyRuleView): RowMenuItem[] {
+  return [
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, run: () => openRuleEdit(rule) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, run: () => (deleteRuleTarget.value = rule) },
+  ];
+}
 
 // Machines, for the line under each rule that routes inventory.renewal: how
 // many machines it reaches and when the next reminder goes out. Read only
@@ -575,9 +607,10 @@ async function confirmDeleteRule(): Promise<void> {
 
 <template>
   <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('platform.notifications.title')" :description="$t('platform.notifications.description')">
-      <template #status>
-        <FreshnessLabel :last-updated="channelsQuery.lastUpdated.value" :poll-ms="channelsQuery.pollMs" />
+    <PageHeader :title="$t('platform.notifications.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('platform.notifications.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="() => { channelsQuery.refresh(); rulesQuery.refresh(); }" />
       </template>
       <template #actions>
         <Button
@@ -645,7 +678,8 @@ async function confirmDeleteRule(): Promise<void> {
           :error="channelsQuery.error.value"
           :has-data="channelsQuery.data.value !== undefined"
           :page-size="50"
-          searchable
+          :searchable="sortedChannels.length > 6"
+          :expression-filter="false"
           :search-placeholder="$t('platform.shared.searchNames')"
           :empty-title="$t('platform.notifications.emptyTitle')"
           :empty-description="$t('platform.notifications.emptyDescription')"
@@ -673,7 +707,7 @@ async function confirmDeleteRule(): Promise<void> {
             </div>
           </template>
           <template #cell-enabled="{ row }">
-            <Badge :variant="row.enabled ? 'success' : 'secondary'">
+            <Badge :variant="row.enabled ? 'outline' : 'secondary'">
               {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
             </Badge>
           </template>
@@ -681,26 +715,7 @@ async function confirmDeleteRule(): Promise<void> {
             <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex justify-end gap-1">
-              <Button
-                v-if="canManage"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('platform.notifications.editChannelAria')"
-                @click="openEdit(row)"
-              >
-                <Pencil class="size-4" />
-              </Button>
-              <Button
-                v-if="canManage"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('platform.notifications.deleteChannelAria')"
-                @click="deleteTarget = row"
-              >
-                <Trash2 class="size-4 text-destructive" />
-              </Button>
-            </div>
+            <RowMenu v-if="canManage" :name="row.name || row.id" :items="channelMenu(row)" />
           </template>
         </DataTable>
       </CardContent>
@@ -727,7 +742,8 @@ async function confirmDeleteRule(): Promise<void> {
           :has-data="rulesQuery.data.value !== undefined"
           :row-expanded="ruleHasDetail"
           :page-size="50"
-          searchable
+          :searchable="sortedRules.length > 6"
+          :expression-filter="false"
           :search-placeholder="$t('platform.shared.searchNames')"
           :empty-title="$t('platform.notifications.rulesEmptyTitle')"
           :empty-description="$t('platform.notifications.rulesEmptyDescription')"
@@ -783,31 +799,12 @@ async function confirmDeleteRule(): Promise<void> {
             </div>
           </template>
           <template #cell-enabled="{ row }">
-            <Badge :variant="row.enabled ? 'success' : 'secondary'">
+            <Badge :variant="row.enabled ? 'outline' : 'secondary'">
               {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
             </Badge>
           </template>
           <template #cell-actions="{ row }">
-            <div class="flex justify-end gap-1">
-              <Button
-                v-if="canManage"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('platform.notifications.editRuleAria')"
-                @click="openRuleEdit(row)"
-              >
-                <Pencil class="size-4" />
-              </Button>
-              <Button
-                v-if="canManage"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('platform.notifications.deleteRuleAria')"
-                @click="deleteRuleTarget = row"
-              >
-                <Trash2 class="size-4 text-destructive" />
-              </Button>
-            </div>
+            <RowMenu v-if="canManage" :name="row.name || row.id" :items="ruleMenu(row)" />
           </template>
         </DataTable>
       </CardContent>

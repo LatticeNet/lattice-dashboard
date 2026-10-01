@@ -458,6 +458,7 @@ function confirmAction() {
           :error="sourceQuery.error.value"
           :page-size="50"
           :searchable="hasSearchableColumn"
+          :expression-filter="false"
           :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('pluginViews.emptyTitle')"
           :empty-description="$t('pluginViews.emptyDescription')"

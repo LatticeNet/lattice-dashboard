@@ -7,6 +7,11 @@ export default {
       title: "Capability gates",
       description:
         "Which capabilities are allowed to act on this fleet's nodes. Anything that changes a node is opt-in; per-node decisions live on the node.",
+      proof: {
+        capabilities: "{n} capability | {n} capabilities",
+        enforced: "{n} enforced",
+        refusing: "{n} refusal on enforced gates | {n} refusals on enforced gates",
+      },
       colCapability: "Capability",
       colKind: "Kind",
       colImpact: "Scope",
@@ -173,6 +178,17 @@ export default {
       commit: "Commit",
       builtAt: "Built at",
       unknown: "unknown",
+      proof: {
+        server: "server {version}",
+        dashboard: "console {ref}",
+        same: "this tab runs it",
+        different: "this tab runs another build",
+      },
+      mismatch: {
+        claim: "This tab runs console {tab}; the server serves {served}",
+        proof: "A tab left open across a deploy keeps the console it loaded until it reloads.",
+        action: "Reload",
+      },
       server: {
         title: "Server",
         description: "Runtime version reported by lattice-server",

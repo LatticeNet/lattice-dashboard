@@ -1089,6 +1089,11 @@ export default {
     notifications: {
       title: "Notifications",
       description: "Outbound notification channels for alerts and monitor flips",
+      proof: {
+        channels: "{n} channel | {n} channels",
+        rules: "{n} rule | {n} rules",
+        off: "{n} turned off",
+      },
       newChannel: "New channel",
       newRule: "New rule",
       channelsTitle: "Channels",
