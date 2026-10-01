@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
 import {
   CHANGES_QUERY,
+  DUE_WITHIN_DAYS,
   dueThisWeek,
   flappingNodes,
   flipQuery,
@@ -238,7 +239,8 @@ const attention = computed<AttentionItem[]>(() => [
 
 const week = computed(() => dueThisWeek(expiring.data.value?.items ?? []));
 const dueCount = computed(() => week.value.shown.length + week.value.more);
-const overdueCount = computed(() => week.value.shown.filter(isOverdue).length);
+// Counted over the whole week, not the five rows shown: a sixth overdue item is still overdue.
+const overdueCount = computed(() => (expiring.data.value?.items ?? []).filter((item) => item.days <= DUE_WITHIN_DAYS && isOverdue(item)).length);
 
 /** A number, or the reason there is none. */
 function metric(base: Omit<Metric, "value">, state: ReadState, value: () => Pick<Metric, "value" | "hint" | "tone">): Metric {
