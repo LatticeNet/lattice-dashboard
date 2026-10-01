@@ -237,6 +237,16 @@ function onCluster(cluster: MapCluster, event: Event): void {
   emit("select", cluster.ids, event.currentTarget as Element);
 }
 
+/**
+ * The compact map sits inside a link to the Map page, so a click on a mark
+ * has to reach that link; only the interactive map keeps it to itself.
+ */
+function onClusterClick(cluster: MapCluster, event: MouseEvent): void {
+  if (props.compact) return;
+  event.stopPropagation();
+  onCluster(cluster, event);
+}
+
 defineExpose({ reset: () => setViewport({ scale: 1, x: 0, y: 0 }) });
 </script>
 
@@ -276,7 +286,7 @@ defineExpose({ reset: () => setViewport({ scale: 1, x: 0, y: 0 }) });
         :class="cn('fleet-map-mark', !compact && 'cursor-pointer')"
         :data-cluster="cluster.key"
         :data-count="cluster.ids.length"
-        @click.stop="onCluster(cluster, $event)"
+        @click="onClusterClick(cluster, $event)"
         @keydown.enter.prevent="onCluster(cluster, $event)"
         @keydown.space.prevent="onCluster(cluster, $event)"
       >
