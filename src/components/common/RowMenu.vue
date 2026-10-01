@@ -7,7 +7,7 @@
  * <name>". A disabled item says why inline, because touch has no tooltip.
  * Dangerous items sit last, after a separator (chassisModel).
  */
-import { computed, type Component } from "vue";
+import { computed, ref, type Component } from "vue";
 import { useRouter, type RouteLocationRaw } from "vue-router";
 import { MoreHorizontal } from "lucide-vue-next";
 
@@ -48,10 +48,33 @@ const props = withDefaults(
 const router = useRouter();
 const sections = computed(() => rowMenuSections(props.items));
 
+/*
+ * Focus goes back to the trigger before an item's action runs. A dialog the
+ * action opens then remembers the trigger and returns focus to it on close;
+ * run from inside the menu, it remembered the menu item, which is gone by
+ * then, and focus fell to the page. reka focuses the trigger again once the
+ * menu has finished closing, by which time the dialog is open, so that late
+ * focus is cancelled for an item that ran.
+ */
+const trigger = ref<{ $el?: HTMLElement } | null>(null);
+let ranFromMenu = false;
+
 function select(item: RowMenuItem): void {
   if (item.disabled) return;
-  if (item.to) router.push(item.to).catch(() => {});
-  else item.run?.();
+  if (item.to) {
+    router.push(item.to).catch(() => {});
+    return;
+  }
+  if (!item.run) return;
+  trigger.value?.$el?.focus();
+  ranFromMenu = true;
+  item.run();
+}
+
+function onCloseAutoFocus(event: Event): void {
+  if (!ranFromMenu) return;
+  ranFromMenu = false;
+  event.preventDefault();
 }
 </script>
 
@@ -59,6 +82,7 @@ function select(item: RowMenuItem): void {
   <DropdownMenu v-if="sections.safe.length || sections.danger.length" :modal="false">
     <DropdownMenuTrigger as-child>
       <Button
+        ref="trigger"
         variant="ghost"
         size="icon-sm"
         type="button"
@@ -70,7 +94,7 @@ function select(item: RowMenuItem): void {
         <MoreHorizontal aria-hidden="true" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent :align="align" class="w-56">
+    <DropdownMenuContent :align="align" class="w-56" @close-auto-focus="onCloseAutoFocus">
       <DropdownMenuItem
         v-for="item in sections.safe"
         :key="item.key"
