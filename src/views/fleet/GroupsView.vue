@@ -410,7 +410,10 @@ function healthOf(group: GroupView): Health {
 const columns = computed<DataTableColumn<GroupView>[]>(() => [
   { key: "name", label: t("fleet.groups.table.group"), sortable: true, value: (g) => g.name },
   { key: "health", label: t("fleet.groups.table.health"), sortable: true, value: (g) => (g.rollup.total ? g.rollup.online / g.rollup.total : 1) },
-  { key: "leader", label: t("fleet.groups.fieldLeader"), value: (g) => (g.leader_id ? nodeLabel(g.leader_id) : "") },
+  // A column blank on every row says nothing; it shows once some group has a leader.
+  ...(sortedGroups.value.some((g) => g.leader_id)
+    ? [{ key: "leader", label: t("fleet.groups.fieldLeader"), value: (g: GroupView) => (g.leader_id ? nodeLabel(g.leader_id) : "") }]
+    : []),
   { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
 
@@ -486,7 +489,8 @@ const deleteImpact = computed(() => (form.id ? [t("fleet.groups.deleteImpact", {
         <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="groupsQuery.refresh" />
       </template>
       <template #actions>
-        <Button v-if="canAdmin" size="sm" type="button" @click="startCreate">
+        <!-- With no groups the empty state carries New group; the header does not repeat it. -->
+        <Button v-if="canAdmin && !(list && groups.length === 0)" size="sm" type="button" @click="startCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.groups.newGroup') }}
         </Button>

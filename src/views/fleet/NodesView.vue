@@ -576,6 +576,7 @@ const enrollOpen = ref(false);
 /** A node with a name the operator can read in the sheet's error banner. */
 const sheetError = computed(() => (nodesQuery.error.value && nodesQuery.data.value ? proofReason(nodesQuery.error.value) : null));
 const openNode = computed(() => nodes.value.find((node) => node.id === sheet.openId.value));
+const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.value.length === 0);
 </script>
 
 <template>
@@ -586,7 +587,8 @@ const openNode = computed(() => nodes.value.find((node) => node.id === sheet.ope
         <ProofLine v-bind="proof" :segments="proofSegments" @retry="nodesQuery.refresh" />
       </template>
       <template #actions>
-        <Button v-if="canAdminNodes" size="sm" type="button" @click="enrollOpen = true">
+        <!-- An empty fleet's empty state carries Enroll; the header does not repeat it. -->
+        <Button v-if="canAdminNodes && !emptyFleet" size="sm" type="button" @click="enrollOpen = true">
           <Plus aria-hidden="true" />
           {{ $t('fleet.nodes.list.enrollCta') }}
         </Button>
