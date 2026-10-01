@@ -17,6 +17,7 @@ export default {
       },
       posture: {
         secured: "已安全",
+        securedPasswordOff: "已关闭密码登录",
         securedTitle: "密码登录已关，root 不能用密码登录，且存在授权密钥，均来自节点自己的 sshd 上报。",
         passwordOpen: "密码登录开着",
         passwordOpenTitle: "这台节点的 sshd 接受密码登录。这正是本看板要找出的问题：请加固它。",

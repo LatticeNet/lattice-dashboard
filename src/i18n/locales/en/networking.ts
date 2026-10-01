@@ -21,6 +21,7 @@ export default {
       // refused in August or reverted on its own is secure and reads so.
       posture: {
         secured: "secured",
+        securedPasswordOff: "password login off",
         securedTitle: "Password login is off, root cannot log in by password, and an authorized key is present, as the node's own sshd reported it.",
         passwordOpen: "password open",
         passwordOpenTitle: "sshd on this node accepts password login. This is the finding the board exists for: arm it.",
