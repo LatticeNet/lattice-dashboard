@@ -12,8 +12,10 @@
  * never look alike. No icons in either form.
  *
  * When the layers do not fit, the row scrolls sideways inside its own strip,
- * edge to edge, and the current layer is scrolled into view clear of the
- * page gutter. Arrow keys move between layers and Enter opens one (manual
+ * edge to edge, and the strip scrolls sideways until the current layer sits
+ * clear of the page gutter. The page itself never moves: a layer that
+ * settles after a read must not scroll the operator away from the head.
+ * Arrow keys move between layers and Enter opens one (manual
  * activation), so moving focus across the row does not push a history entry
  * per key press. On a coarse pointer every layer is at least 44 px tall.
  *
@@ -45,9 +47,26 @@ const model = defineModel<T>({ required: true });
 
 const strip = ref<HTMLElement | null>(null);
 
+/**
+ * Scroll the strip, and only the strip, until the current layer sits clear of
+ * its gutter. scrollIntoView would also scroll every scrolling ancestor: on a
+ * phone, Approvals settles its default layer after the inbox is read, and
+ * the reveal that followed moved the page's own scroller 686 px down, past
+ * the title and the attention list.
+ */
 function revealActive(): void {
-  const active = strip.value?.querySelector<HTMLElement>('[data-state="active"]');
-  active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const el = strip.value;
+  const active = el?.querySelector<HTMLElement>('[data-state="active"]');
+  if (!el || !active || el.scrollWidth <= el.clientWidth) return;
+  const style = getComputedStyle(el);
+  const padStart = parseFloat(style.scrollPaddingLeft) || 0;
+  const padEnd = parseFloat(style.scrollPaddingRight) || 0;
+  const box = el.getBoundingClientRect();
+  const tab = active.getBoundingClientRect();
+  const left = tab.left - box.left + el.scrollLeft;
+  const right = left + tab.width;
+  if (left - padStart < el.scrollLeft) el.scrollTo({ left: left - padStart });
+  else if (right + padEnd > el.scrollLeft + el.clientWidth) el.scrollTo({ left: right + padEnd - el.clientWidth });
 }
 
 onMounted(revealActive);
@@ -56,7 +75,9 @@ watch(model, () => nextTick(revealActive));
 const COUNT_TONE = {
   default: "bg-foreground/[0.07] text-muted-foreground",
   warning: "bg-warning/15 text-warning-text",
-  destructive: "bg-destructive/12 text-destructive",
+  /* Light --destructive is 3.8:1 on its own tint at 10 px; the darker ink is
+     5.3:1 there (4.9:1 on the segmented track). Dark already reads at 5.9:1. */
+  destructive: "bg-destructive/12 text-[oklch(0.5_0.2_27.5)] dark:text-destructive",
 } as const;
 </script>
 
