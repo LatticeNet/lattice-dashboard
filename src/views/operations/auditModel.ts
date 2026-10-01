@@ -102,6 +102,13 @@ export function auditRequest(input: AuditRequestInput): AuditQueryParams {
  * exclude_action ignores the parameter, and Changes then shows node flips and
  * observe events; the proof line must not say they are hidden. Prefixes match
  * the server's rule: a trailing "*" is optional.
+ *
+ * The page can only prove the parameter was ignored, never that it was
+ * applied: a quiet page from an older server looks the same as a filtered
+ * one. That gap only opens in development. The console ships inside the
+ * server image, pinned by dashboard.ref, and exclude_action has been in
+ * every server since a101 (23f3c58), so the server that serves this build
+ * applies it. A server echo of the applied exclusions would close it.
  */
 export function exclusionsIgnored(
   params: Pick<AuditQueryParams, "exclude_action" | "exclude_decision">,
@@ -132,7 +139,14 @@ export function auditScan(response: { total: number; scanned?: number; complete?
  */
 export const AUDIT_DECISION_CHOICES = ["allow", "deny", "observe"] as const;
 
-/** Where the last Verify chain result is kept between visits (per viewer). */
+/**
+ * Where the last Verify chain result is kept between visits. One key is
+ * enough: localStorage belongs to the page's origin, and the console reads
+ * only its own origin's API (it is baked into the server image), so two
+ * control planes never share the entry. Another operator on the same
+ * control plane sees a result about the same chain, which is still true of
+ * that server; the proof line says when it ran, not that it holds now.
+ */
 export const VERIFY_STORAGE_KEY = "lattice.audit.lastVerify";
 
 export interface StoredVerify {
