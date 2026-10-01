@@ -505,6 +505,12 @@
     [data-button-size="lg"] {
       min-height: 44px;
     }
+
+    /* Text fields and select triggers are 36 px for the same finger. */
+    [data-slot="input"]:not([type="checkbox"], [type="radio"]),
+    [data-slot="select-trigger"] {
+      min-height: 44px;
+    }
   }
 }
 

@@ -26,8 +26,9 @@
  * and kept after Apply until the next edit, since the canonical spelling
  * Apply writes back no longer holds the token.
  *
- * On a coarse pointer every control in the row is at least 44 px tall: the
- * buttons through the global Button rule, the range and the field here.
+ * On a coarse pointer every control in the row is at least 44 px tall,
+ * through the base-layer touch rules for buttons, fields and selects in
+ * app.css; the clear button carries the touch pad.
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -247,7 +248,7 @@ defineExpose({ draft, submit, revert, settle });
         :model-value="range"
         @update:model-value="(value) => emit('update:range', String(value))"
       >
-        <SelectTrigger class="w-36 sm:w-40 pointer-coarse:min-h-11" :aria-label="rangeAriaLabel ?? $t('common.query.rangeLabel')">
+        <SelectTrigger class="w-36 sm:w-40" :aria-label="rangeAriaLabel ?? $t('common.query.rangeLabel')">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -268,7 +269,7 @@ defineExpose({ draft, submit, revert, settle });
              as a hint. -->
         <Input
           v-model="draft"
-          class="pr-8 pl-8 font-mono text-xs pointer-coarse:min-h-11 dark:placeholder:text-muted-foreground/55"
+          class="pr-8 pl-8 font-mono text-xs dark:placeholder:text-muted-foreground/55"
           autocomplete="off"
           spellcheck="false"
           autocapitalize="off"
@@ -331,7 +332,7 @@ defineExpose({ draft, submit, revert, settle });
           <span class="text-muted-foreground">{{ $t('common.query.since') }}</span>
           <Input
             type="datetime-local"
-            class="w-auto pointer-coarse:min-h-11"
+            class="w-auto"
             :model-value="toLocalInput(since)"
             @change="(e: Event) => emit('update:since', fromLocalInput((e.target as HTMLInputElement).value))"
           />
@@ -340,7 +341,7 @@ defineExpose({ draft, submit, revert, settle });
           <span class="text-muted-foreground">{{ $t('common.query.until') }}</span>
           <Input
             type="datetime-local"
-            class="w-auto pointer-coarse:min-h-11"
+            class="w-auto"
             :model-value="toLocalInput(until)"
             @change="(e: Event) => emit('update:until', fromLocalInput((e.target as HTMLInputElement).value))"
           />

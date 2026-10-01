@@ -108,7 +108,7 @@ const lead = computed(() => {
       </span>
       <button
         type="button"
-        class="inline-flex h-6 items-center rounded-sm border border-border px-2 font-sans text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+        class="inline-flex h-6 items-center rounded-sm border border-border px-2 font-sans text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3"
         @click="emit('retry')"
       >
         {{ $t('common.actions.retry') }}
