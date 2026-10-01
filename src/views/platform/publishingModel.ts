@@ -29,6 +29,38 @@ export const PUBLISHING_ORIGINS = ["kv", "static", "plugin"] as const;
 export const PUBLISHING_LENSES = ["all", "kv", "static", "share"] as const;
 export type PublishingLens = (typeof PUBLISHING_LENSES)[number];
 export const PUBLISHING_LENS_PARAM = "origin";
+
+/** Publishing's layers (design 23, section 4.5), on `?view=`. */
+export const PUBLISHING_LAYERS = ["overview", "routes", "tokens", "buckets"] as const;
+export type PublishingLayer = (typeof PUBLISHING_LAYERS)[number];
+export const PUBLISHING_LAYER_PARAM = "view";
+
+/**
+ * The query an old Publishing link should land on, or null when it needs no
+ * rewrite. Before layers, `?origin=` named a lens, `?share=` selected a share
+ * and `?create=1&for=` opened the share form; all three now live on the
+ * Routes layer, and the selected share is the sheet's `?open=`. The create
+ * keys are left for the share pane, which consumes them.
+ */
+export function canonicalPublishingQuery(
+  query: Record<string, QueryValue | undefined>,
+): Record<string, QueryValue> | null {
+  const view = firstString(query[PUBLISHING_LAYER_PARAM]);
+  const share = firstString(query.share);
+  const wantsRoutes = !!share || hasShareCreateDeepLink(query) || !!firstString(query[PUBLISHING_LENS_PARAM]);
+  if (!share && (view || !wantsRoutes)) return null;
+  const next: Record<string, QueryValue> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || key === "share") continue;
+    next[key] = value;
+  }
+  if (!view) next[PUBLISHING_LAYER_PARAM] = "routes";
+  if (share) {
+    next[PUBLISHING_LENS_PARAM] = "share";
+    next.open = share;
+  }
+  return next;
+}
 export const PUBLISHING_DEFAULT_LENS: PublishingLens = "all";
 
 /** Which server origin a lens shows, or undefined for the whole plane. */
@@ -94,6 +126,9 @@ export function withoutShareDeepLink(
     next[key] = value;
   }
   next[PUBLISHING_LENS_PARAM] = "share";
+  // The share pane lives on the Routes layer (design 23, 4.5); pinning it
+  // keeps the pane, and the dialog it just opened, mounted.
+  next[PUBLISHING_LAYER_PARAM] = "routes";
   return next;
 }
 

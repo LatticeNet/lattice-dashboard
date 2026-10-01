@@ -28,6 +28,7 @@ import {
   sortRecords,
   unresolvedShareIds,
   withoutShareDeepLink,
+  canonicalPublishingQuery,
 } from "../publishingModel.ts";
 
 const NOW = new Date("2026-08-19T12:00:00Z");
@@ -266,8 +267,25 @@ test("the create deep link is recognised by its exact marker and consumed onto t
 
   // Consuming the link drops both keys so a reload does not reopen the dialog,
   // and pins the lens so the pane that owns the dialog stays mounted.
-  assert.deepEqual(withoutShareDeepLink({ create: "1", for: "x", q: "team" }), { q: "team", origin: "share" });
-  assert.deepEqual(withoutShareDeepLink({ create: "1", origin: "all" }), { origin: "share" });
+  assert.deepEqual(withoutShareDeepLink({ create: "1", for: "x", q: "team" }), { q: "team", origin: "share", view: "routes" });
+  assert.deepEqual(withoutShareDeepLink({ create: "1", origin: "all" }), { origin: "share", view: "routes" });
+});
+
+test("old lens, selection and create links land on the Routes layer, and the selection opens the sheet", () => {
+  // The exact link Sub-Store's Publish action and attention item navigate to.
+  assert.deepEqual(canonicalPublishingQuery({ origin: "share", create: "1", for: "merge-openjobs" }), {
+    origin: "share",
+    create: "1",
+    for: "merge-openjobs",
+    view: "routes",
+  });
+  assert.deepEqual(canonicalPublishingQuery({ origin: "kv" }), { origin: "kv", view: "routes" });
+  assert.deepEqual(canonicalPublishingQuery({ origin: "share", share: "shr_1" }), { origin: "share", view: "routes", open: "shr_1" });
+  assert.deepEqual(canonicalPublishingQuery({ share: "shr_1" }), { view: "routes", origin: "share", open: "shr_1" });
+  // Already canonical, or nothing to say: no rewrite.
+  assert.equal(canonicalPublishingQuery({}), null);
+  assert.equal(canonicalPublishingQuery({ view: "tokens" }), null);
+  assert.equal(canonicalPublishingQuery({ view: "routes", origin: "kv" }), null);
 });
 
 test("a share names whether its renderer is there, from the plugin list the picker reads", () => {

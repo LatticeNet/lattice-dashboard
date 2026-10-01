@@ -43,6 +43,9 @@ import {
 } from "./storeModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
+import { useProof } from "@/composables/useProof";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -231,6 +234,32 @@ const entriesQuery = useAsyncData<KVEntry[] | StaticObject[]>(
 const rowsFresh = computed(
   () => loadedKind.value === kind.value && loadedBucket.value === activeBucket.value,
 );
+
+/**
+ * The proof line (design 23, section 3.1). Store reads on demand rather than
+ * polling, so the line states what was read without an age promise: the
+ * buckets of this kind, and the entries of the bucket on screen.
+ */
+const proof = useProof([inventoryQuery, entriesQuery]);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const parts: ProofSegment[] = [];
+  if (inventoryQuery.data.value !== undefined) {
+    parts.push({ key: "buckets", text: t("platform.store.proofBuckets", { n: inventory.value.length }, inventory.value.length) });
+  }
+  if (rowsFresh.value && entriesQuery.data.value !== undefined) {
+    const n = entriesQuery.data.value.length;
+    parts.push({
+      key: "entries",
+      text: t(isStatic.value ? "platform.store.proofObjects" : "platform.store.proofEntries", { n, bucket: activeBucket.value }, n),
+    });
+  }
+  return parts;
+});
+
+/** KV and Static as the page's one tab row, the way Publishing's layers read. */
+const kindTabs = computed<LayerTab<StorageKind>[]>(() =>
+  STORAGE_KINDS.map((value) => ({ value, label: value === "static" ? t("platform.store.kindStatic") : t("platform.store.kindKv") })),
+);
 const rows = computed(() => (rowsFresh.value ? (entriesQuery.data.value ?? []) : []));
 
 const kvRows = computed<KVEntry[]>(() =>
@@ -392,7 +421,11 @@ async function submitPut() {
 
 <template>
   <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('platform.store.title')" :description="$t('platform.store.description')">
+    <PageHeader :title="$t('platform.store.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('platform.store.description') }}</p>
+        <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="reload" />
+      </template>
       <template #actions>
         <Button
           v-if="canRead"
@@ -421,20 +454,8 @@ async function submitPut() {
       :what="$t('platform.store.guide.what')"
     />
 
-    <!-- Which store. One control, because the two are one store server-side. -->
-    <div class="inline-flex rounded-lg border border-border p-1" role="group" :aria-label="$t('platform.store.kindLabel')">
-      <Button
-        v-for="option in STORAGE_KINDS"
-        :key="option"
-        :variant="kind === option ? 'secondary' : 'ghost'"
-        size="sm"
-        :aria-pressed="kind === option"
-        @click="kind = option"
-      >
-        <component :is="option === 'static' ? FolderOpen : Database" aria-hidden="true" class="size-4" />
-        {{ option === 'static' ? $t('platform.store.kindStatic') : $t('platform.store.kindKv') }}
-      </Button>
-    </div>
+    <!-- Which store. One tab row, because the two are one store server-side. -->
+    <LayerTabs v-model="kind" :tabs="kindTabs" :label="$t('platform.store.kindLabel')" />
 
     <div v-if="canRead" class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start">
       <!-- ── Buckets that actually exist ──────────────────────────────────── -->
@@ -673,14 +694,6 @@ async function submitPut() {
       <i18n-t keypath="platform.store.readScopeRequired" tag="span" scope="global">
         <template #scope><code class="font-mono">{{ readScope }}</code></template>
       </i18n-t>
-    </p>
-
-    <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-      {{ $t('platform.publishing.movedFromStorage') }}
-      <RouterLink
-        to="/platform/publishing"
-        class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
     </p>
 
     <!-- Static content preview -->

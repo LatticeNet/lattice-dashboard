@@ -60,6 +60,9 @@ const router = createRouter({
   routes: [
     { path: "/publishing", name: "publishing", component: PublishingView },
     { path: "/store", name: "store", component: StoreView },
+    // The pages link to their app paths; land those on the harness routes.
+    { path: "/platform/publishing", redirect: (to) => ({ path: "/publishing", query: to.query }) },
+    { path: "/platform/store", redirect: (to) => ({ path: "/store", query: to.query }) },
     { path: "/:rest(.*)", redirect: "/publishing" },
   ],
 });

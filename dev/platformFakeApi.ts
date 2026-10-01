@@ -24,7 +24,10 @@
 import { ApiError } from "@/lib/api/client";
 import type {
   KVEntry,
+  PluginView,
   Principal,
+  ProxyUserView,
+  SubscriptionShareView,
   PublishingRecord,
   StaticObject,
   StorageBinding,
@@ -51,6 +54,13 @@ export * from "@/lib/api/index";
  *                     answer 500 after 1.5 s, so the confirm dialog's pending
  *                     and failure states can be driven. Without it they
  *                     succeed after the same 1.5 s.
+ *   ?share-expiring   The cd-self share expires in 5 days (invented).
+ *   ?share-expired    ... expired 2 days ago (invented).
+ *   ?shares-fail      The share list answers 502.
+ *
+ * Shares: production's one share (cd-self, rendered by Sub-Store from the
+ * merge-openjobs record), with its token invented. Proxy users and the
+ * Sub-Store record list are the shapes the share form reads.
  */
 const flags = new URLSearchParams(location.search);
 const EMPTY_PLANE = flags.has("empty-plane");
@@ -58,6 +68,9 @@ const NO_ORIGINS = flags.has("no-origins");
 const TOKEN_WRITER = flags.has("token-writer");
 const NO_ADMIN = flags.has("no-admin");
 const STORAGE_FAIL = flags.has("storage-fail");
+const SHARE_EXPIRING = flags.has("share-expiring");
+const SHARE_EXPIRED = flags.has("share-expired");
+const SHARES_FAIL = flags.has("shares-fail");
 const STORAGE_WRITE_MS = 1500;
 
 const NOW = Date.now();
@@ -87,6 +100,9 @@ const principal: Principal = {
     // Reading the storage token list needs these, and an operator without them
     // is the case where the console cannot tell who writes a bucket.
     ...(NO_ADMIN ? [] : ["kv:admin", "static:admin"]),
+    "proxy:admin",
+    "proxy:read",
+    "audit:read",
   ],
   server_allowlist: [],
   csrf_token: "harness",
@@ -130,6 +146,44 @@ const records: PublishingRecord[] = [
     reserved: true,
     admin_scope: "plugin:latticenet.sub-store",
   },
+];
+
+/* -------------------------------- shares ------------------------------- */
+
+const shares: SubscriptionShareView[] = [
+  {
+    id: "shr_cd_self",
+    slug: "cd-self",
+    token: "st_9f2c41d07a6e4b8c93d15e0f",
+    source: { kind: "plugin", plugin_id: "latticenet.sub-store", subscription_id: "merge-openjobs" },
+    default_format: "sing-box",
+    enabled: true,
+    created_at: iso(-21 * DAY),
+    updated_at: iso(-3 * DAY),
+    rotated_at: iso(-3 * DAY),
+    expires_at: SHARE_EXPIRED ? iso(-2 * DAY) : SHARE_EXPIRING ? iso(5 * DAY) : undefined,
+  },
+];
+
+const proxyUsers: ProxyUserView[] = [
+  { id: "pu_cdcd", name: "cdcd" } as ProxyUserView,
+  { id: "pu_family", name: "family" } as ProxyUserView,
+];
+
+const subStore: PluginView = {
+  id: "latticenet.sub-store",
+  name: "Sub-Store companion",
+  type: "system",
+  version: "0.14.0-alpha.1",
+  publisher: "latticenet",
+  capabilities: ["rpc:call", "http:egress", "kv:read", "kv:write", "subscription:serve"],
+  status: "active",
+  active: true,
+};
+
+const subStoreRecords = [
+  { id: "merge-openjobs", name: "merge-openjobs", display_name: "OpenJobs merged" },
+  { id: "cd-home", name: "cd-home", display_name: "Home lines" },
 ];
 
 /* -------------------------------- store -------------------------------- */
@@ -358,10 +412,31 @@ export const api = {
       }),
     bindings: (kind: StorageKind) => delay({ bindings: bindings[kind].map((b) => ({ ...b })) }),
     tokens: (kind: StorageKind) => delay({ tokens: tokens[kind].map((t) => ({ ...t })) }),
+    upsertBucket: async (kind: StorageKind, input: { name: string; display_name?: string; description?: string }) => {
+      await delay(undefined);
+      const next = { id: `bkt_${input.name}`, kind, name: input.name, display_name: input.display_name, description: input.description, created_at: iso(0), updated_at: iso(0) } as StorageBucket;
+      buckets[kind].push(next);
+      return next;
+    },
+    upsertBinding: async (kind: StorageKind, input: { bucket: string; hostname: string; path_prefix?: string; enabled: boolean }) => {
+      await delay(undefined);
+      const next: StorageBinding = { id: `bind_${kind}_${Date.now().toString(36)}`, kind, bucket: input.bucket, hostname: input.hostname, path_prefix: input.path_prefix, enabled: input.enabled, created_at: iso(0), updated_at: iso(0) };
+      bindings[kind].push(next);
+      records.push({ id: next.id, origin: kind, bucket: next.bucket, hostname: next.hostname, any_host: false, path_prefix: next.path_prefix, enabled: next.enabled, reserved: false, admin_scope: `${kind}:admin` });
+      return next;
+    },
+    createToken: async (kind: StorageKind, input: { name: string; access: string; buckets: string[] }) => {
+      await delay(undefined);
+      const view = { id: `tok_${kind}_${Date.now().toString(36)}`, name: input.name, kind, access: input.access, buckets: input.buckets, created_at: iso(0), updated_at: iso(0) } as StorageTokenView;
+      tokens[kind].push(view);
+      return { ...view, token: "lst_harness_7c1e2f9a0b3d4e5f" };
+    },
     deleteBinding: async (kind: StorageKind, id: string) => {
       await delay(undefined, STORAGE_WRITE_MS);
       if (STORAGE_FAIL) throw new ApiError(500, "internal", "storage: delete binding: database is locked");
       bindings[kind] = bindings[kind].filter((b) => b.id !== id);
+      const at = records.findIndex((r) => r.id === id);
+      if (at >= 0) records.splice(at, 1);
       return {};
     },
     revokeToken: async (kind: StorageKind, id: string) => {
@@ -417,7 +492,59 @@ export const api = {
     },
   },
 
+  subscriptionShares: {
+    list: () =>
+      SHARES_FAIL
+        ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (shares)")), 120))
+        : delay(shares.map((share) => ({ ...share }))),
+    create: async (body: { slug: string; source: SubscriptionShareView["source"]; default_format?: string; expires_at?: string }) => {
+      await delay(undefined);
+      const next: SubscriptionShareView = {
+        id: `shr_${body.slug}`,
+        slug: body.slug,
+        token: "st_new_harness_token",
+        source: body.source,
+        default_format: body.default_format,
+        enabled: true,
+        created_at: iso(0),
+        updated_at: iso(0),
+        expires_at: body.expires_at,
+      };
+      shares.push(next);
+      return { ...next };
+    },
+    update: async (id: string, body: { expires_at?: string; clear_expiry?: boolean }) => {
+      await delay(undefined);
+      const share = shares.find((entry) => entry.id === id)!;
+      if (body.clear_expiry) share.expires_at = undefined;
+      else if (body.expires_at) share.expires_at = body.expires_at;
+      return { ...share };
+    },
+    rotate: async (id: string) => {
+      await delay(undefined);
+      const share = shares.find((entry) => entry.id === id)!;
+      share.token = `st_rotated_${Date.now().toString(36)}`;
+      share.rotated_at = iso(0);
+      return { ...share };
+    },
+    refresh: () => delay({ ok: true }),
+    remove: async (id: string) => {
+      await delay(undefined);
+      const at = shares.findIndex((entry) => entry.id === id);
+      if (at >= 0) shares.splice(at, 1);
+    },
+  },
+
+  proxy: {
+    users: () => delay({ users: proxyUsers.map((user) => ({ ...user })) }),
+  },
+
+  plugins: {
+    list: () => delay([{ ...subStore }]),
+    contributions: () => delay([{ ...subStore }]),
+    call: () => delay({ subscriptions: subStoreRecords.map((record) => ({ ...record })) }),
+  },
+
   approvals: unimplemented,
   security: unimplemented,
-  plugins: unimplemented,
 };
