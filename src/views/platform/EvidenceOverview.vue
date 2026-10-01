@@ -12,12 +12,12 @@
  */
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
 import { PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from "reka-ui";
 import { useNow } from "@vueuse/core";
 import { CircleStop, Play, Plus, RefreshCw, X } from "lucide-vue-next";
 
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { api } from "@/lib/api";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -52,8 +52,9 @@ import type { TraceRange } from "./connTraceModel";
 import type { TraceSession } from "@/lib/api";
 
 const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
+// Reads go through the owned route: while Evidence is leaving, the router
+// already describes the next page, whose query is not this page's filters.
+const ownedRoute = useOwnedRoute();
 const ctx = useEvidenceContext();
 
 /* ------------------------------------------------------------------ */
@@ -61,7 +62,7 @@ const ctx = useEvidenceContext();
 /* ------------------------------------------------------------------ */
 
 function exploreTo(partial: Partial<EvidenceQuery>, range: TraceRange = "1h") {
-  const base = writeEvidenceLayer(route.query, "explore");
+  const base = writeEvidenceLayer(ownedRoute.query(), "explore");
   return {
     query: writeEvidenceQuery(base, { ...EMPTY_EVIDENCE_QUERY, ...partial }, { range, since: "", until: "" }),
   };
@@ -84,7 +85,7 @@ const nodeChoices = computed(() => ctx.coverageRows.value.map((row) => ({ id: ro
 // from there rather than from nothing, but only with nodes that can be
 // chosen, once the list of them has loaded.
 const chosen = ref<string[]>([]);
-const seedParam = readEvidenceQuery(route.query).nodeId;
+const seedParam = readEvidenceQuery(ownedRoute.query()).nodeId;
 let seeded = seedParam === "";
 watch(
   nodeChoices,

@@ -12,10 +12,10 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { RefreshCw } from "lucide-vue-next";
 
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { api, type LogLine } from "@/lib/api";
 import { formatDateTime, isZeroTime } from "@/lib/format";
 import DataState from "@/components/common/DataState.vue";
@@ -41,11 +41,13 @@ const LOG_RENDER_CAP = 1500;
 const emit = defineEmits<{ "clear-query": []; "any-time": [] }>();
 
 const { t } = useI18n();
-const route = useRoute();
+// Reads go through the owned route: while Evidence is leaving, the router
+// already describes the next page, whose query is not this page's filters.
+const ownedRoute = useOwnedRoute();
 const ctx = useEvidenceContext();
 
-const question = computed(() => readEvidenceQuery(route.query));
-const filters = computed(() => readConnTraceFilters(route.query));
+const question = computed(() => readEvidenceQuery(ownedRoute.query()));
+const filters = computed(() => readConnTraceFilters(ownedRoute.query()));
 
 const sources = computed(() => ctx.sources.data.value ?? []);
 const source = computed(() =>
@@ -214,8 +216,8 @@ const empty = computed(() =>
   }),
 );
 
-const collectLink = computed(() => ({ query: writeEvidenceLayer(route.query, "collection") }));
-const overviewLink = computed(() => ({ query: writeEvidenceLayer(route.query, "overview") }));
+const collectLink = computed(() => ({ query: writeEvidenceLayer(ownedRoute.query(), "collection") }));
+const overviewLink = computed(() => ({ query: writeEvidenceLayer(ownedRoute.query(), "overview") }));
 
 /**
  * Names in the question searched as typed because their list has not loaded.

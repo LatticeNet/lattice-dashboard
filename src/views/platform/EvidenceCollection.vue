@@ -10,10 +10,10 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
 import { toast } from "vue-sonner";
 import { CircleStop, Play, RefreshCw, ScrollText } from "lucide-vue-next";
 
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { api, type TraceLevel, type TraceLine, type TracePolicy, type TraceSession } from "@/lib/api";
 import { formatDateTime, shortId } from "@/lib/format";
 import DataState from "@/components/common/DataState.vue";
@@ -46,7 +46,9 @@ const TAIL_POLL_MS = 2000;
 const TAIL_LINE_CAP = 2000;
 
 const { t } = useI18n();
-const route = useRoute();
+// Reads go through the owned route: while Evidence is leaving, the router
+// already describes the next page, whose query is not this page's filters.
+const ownedRoute = useOwnedRoute();
 const ctx = useEvidenceContext();
 
 const adminReason = computed(() =>
@@ -155,7 +157,7 @@ function sessionNodes(session: TraceSession): string {
 }
 
 function recordsLink(session: TraceSession) {
-  const base = writeEvidenceLayer(route.query, "explore");
+  const base = writeEvidenceLayer(ownedRoute.query(), "explore");
   return {
     query: writeEvidenceQuery(base, { ...EMPTY_EVIDENCE_QUERY, sessionId: session.id }, { range: "all", since: "", until: "" }),
   };
@@ -256,7 +258,7 @@ const starting = ref(false);
 
 /** The question asked in Explore is usually the capture wanted next. */
 function prefillFromExplore(): void {
-  const q = readEvidenceQuery(route.query);
+  const q = readEvidenceQuery(ownedRoute.query());
   form.value.nodeId = q.nodeId;
   form.value.userId = q.userId;
   form.value.lineUuid = q.lineUuid;
