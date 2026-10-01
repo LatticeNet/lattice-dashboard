@@ -58,7 +58,7 @@ export function agentPlan(node: string, current: string, target: string): string
 
 // ── Deterministic pseudo-random, so two loads of the harness agree ────────────
 
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -69,7 +69,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-const NODE_NAMES = [
+export const NODE_NAMES = [
   "sgp-edge-01",
   "tyo-edge-03",
   "fra-edge-02",
@@ -84,7 +84,7 @@ const NODE_NAMES = [
   "syd-edge-01",
 ];
 
-function nodeIdFor(index: number): string {
+export function nodeIdFor(index: number): string {
   return `node_${(0x2f1a3b + index * 7919).toString(36).padEnd(16, "x").slice(0, 16)}`;
 }
 
