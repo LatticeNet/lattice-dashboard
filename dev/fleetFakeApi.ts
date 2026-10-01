@@ -17,7 +17,9 @@
  * each page's failed and stale states can be drawn: nodes, audit, counts,
  * approvals, expiring, machines, monitors, groups, ddns, geo, tasks, or all.
  * `?fail=nodes:later` lets the first read land and fails every one after it
- * (the stale state). Writes change the in-memory state, so saving, disabling
+ * (the stale state). `?deny=tasks,approvals,audit` answers those reads 403 and
+ * drops their read scopes, for a principal that cannot read them.
+ * `?resultsMs=` slows monitor results. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
  *
  * Only the calls these pages make are implemented; anything else is missing
@@ -68,11 +70,18 @@ const FAIL = new Map(
     }),
 );
 const reads = new Map<string, number>();
+const DENY = new Set((PARAMS.get("deny") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
+const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "approval:read", audit: "audit:read" };
 
 /** Answer, or fail the way `?fail=` asked for this read. */
 function answer<T>(name: string, value: () => T, ms = LATENCY_MS): Promise<T> {
   const count = (reads.get(name) ?? 0) + 1;
   reads.set(name, count);
+  if (DENY.has(name)) {
+    return delay(undefined, ms).then(() => {
+      throw new ApiError(403, "forbidden", `${name} read forbidden: missing scope`);
+    });
+  }
   const mode = FAIL.get(name) ?? FAIL.get("all");
   if (mode === "now" || (mode === "later" && count > 1)) {
     return delay(undefined, ms).then(() => {
@@ -103,7 +112,7 @@ const principal: Principal = {
     "notify:admin",
     "proxy:read",
     "log:read",
-  ],
+  ].filter((scope) => ![...DENY].some((name) => DENIED_SCOPES[name] === scope)),
   server_allowlist: [],
   csrf_token: "harness",
   totp_enabled: true,
@@ -237,7 +246,11 @@ export const api = {
     list: () => answer("groups", () => ({ groups: GROUPS.map((g) => ({ ...g })), ungrouped: ungrouped() })),
     preview: (selector: { members?: string[] }) => delay({ node_ids: selector.members ?? [], count: selector.members?.length ?? 0 }),
     upsert: (input: { id?: string; name: string }) => delay({ ...(GROUPS.find((g) => g.id === input.id) ?? GROUPS[0]!), ...input }),
-    delete: () => delay({ ok: true }),
+    delete: (id: string) => {
+      const index = GROUPS.findIndex((g) => g.id === id);
+      if (index >= 0) GROUPS.splice(index, 1);
+      return delay({ ok: true });
+    },
   },
   sshGuard: {
     status: (ids?: string[]) =>
@@ -299,7 +312,8 @@ export const api = {
   },
   monitors: {
     list: () => answer("monitors", () => ({ monitors: monitors.map((m) => ({ ...m })) })),
-    results: (id: string) => answer("monitors", () => ({ results: monitorResults(id) })),
+    // `?resultsMs=<ms>` slows the results read, so a sheet swapped to another monitor can be seen mid-read.
+    results: (id: string) => answer("monitors", () => ({ results: monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
     create: (input: MonitorCreateInput) => {
       const created = { ...input, id: `mon_${Date.now().toString(36)}`, enabled: true, created_at: new Date().toISOString() } as MonitorView;
       monitors = [...monitors, created];
