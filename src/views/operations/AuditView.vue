@@ -391,8 +391,13 @@ const sheet = bindRouteOpen(owned);
 const openEvent = computed(() => events.value.find((event) => event.id === sheet.openId.value));
 const sheetState = computed<"ready" | "loading" | "gone">(() => {
   if (openEvent.value) return "ready";
-  return auditQuery.data.value === undefined ? "loading" : "gone";
+  if (auditQuery.data.value === undefined) return auditQuery.error.value ? "gone" : "loading";
+  return "gone";
 });
+/** The page was never read, so the event is not known to be missing. */
+const sheetReadFailure = computed<string | null>(() =>
+  auditQuery.data.value === undefined && auditQuery.error.value ? auditQuery.error.value.message : null,
+);
 
 function metadataEntries(event: AuditEvent): Array<[string, string]> {
   return Object.entries(event.metadata ?? {}).map(([key, value]) => [key, typeof value === "string" ? value : JSON.stringify(value)]);
@@ -610,8 +615,10 @@ function refreshNow(): void {
       :subtitle="sheet.openId.value ?? undefined"
       :mono-title="!!openEvent"
       :state="sheetState"
-      :gone-title="$t('operations.audit.sheet.goneTitle')"
-      :gone-description="$t('operations.audit.sheet.goneDescription')"
+      :gone-title="sheetReadFailure ? $t('operations.audit.sheet.notReadTitle') : $t('operations.audit.sheet.goneTitle')"
+      :gone-description="sheetReadFailure
+        ? $t('operations.audit.sheet.notReadDescription', { reason: sheetReadFailure })
+        : $t('operations.audit.sheet.goneDescription')"
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
     >

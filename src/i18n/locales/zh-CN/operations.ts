@@ -217,6 +217,8 @@ export default {
         noTasks: "这个计划没有排入任务。",
         goneTitle: "找不到这个计划",
         goneDescription: "它不存在，或者这个令牌读不到它。",
+        notReadTitle: "没有读到这个计划",
+        notReadDescription: "读取失败：{reason}。每 10 秒会自动重试。",
       },
     },
     tasks: {
@@ -410,6 +412,8 @@ export default {
         expiredNoResult: "还没有 agent 领取就被撤回了",
         goneTitle: "找不到这个任务",
         goneDescription: "它已被删除，或者任务存储已不再保留它。",
+        notReadTitle: "没有读到这个任务",
+        notReadDescription: "读取失败：{reason}。点刷新再试一次。",
       },
       deleteImpact: {
         title: "删除后会怎样",
@@ -642,6 +646,8 @@ export default {
         title: "审计事件",
         goneTitle: "这条事件不在当前页",
         goneDescription: "它不在已加载的这页结果里。用 trace: 条件或更窄的时间范围再找一次。",
+        notReadTitle: "没有读到这条事件",
+        notReadDescription: "读取失败：{reason}。点刷新再试一次。",
         scope: "权限范围",
         token: "令牌",
         eventId: "事件 ID",

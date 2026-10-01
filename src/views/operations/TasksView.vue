@@ -482,10 +482,13 @@ const lookupQuery = useAsyncData<TaskView | null>(
   { immediate: false },
 );
 
+/** The Runs page is still being read for the first time; a failed read is not "still". */
+const listPending = computed(() => listing.value && runsQuery.data.value === undefined && !runsQuery.error.value);
+
 watch(
-  () => [sheet.openId.value, !!onScreen.value, runsQuery.data.value !== undefined] as const,
-  ([id, shown, listed]) => {
-    if (!id || shown || (!listed && listing.value)) return;
+  () => [sheet.openId.value, !!onScreen.value, listPending.value] as const,
+  ([id, shown, pendingList]) => {
+    if (!id || shown || pendingList) return;
     if (lookupQuery.data.value?.id === id) return;
     void lookupQuery.refresh();
   },
@@ -500,10 +503,13 @@ const openTask = computed<TaskView | undefined>(() => {
 
 const sheetState = computed<"ready" | "loading" | "gone">(() => {
   if (openTask.value) return "ready";
-  if (lookupQuery.loading.value || lookupQuery.refreshing.value || (listing.value && runsQuery.data.value === undefined)) return "loading";
+  if (lookupQuery.loading.value || lookupQuery.refreshing.value || listPending.value) return "loading";
   if (lookupQuery.data.value === undefined && !lookupQuery.error.value) return "loading";
   return "gone";
 });
+
+/** The lookup failed: the task was not read, which is not the same as deleted. */
+const lookupFailure = computed<string | null>(() => (openTask.value ? null : (lookupQuery.error.value?.message ?? null)));
 
 const openReruns = computed(() => tasks.value.filter((task) => task.rerun_of_task_id && task.rerun_of_task_id === openTask.value?.id));
 
@@ -691,6 +697,7 @@ const filterGroups = computed<QueryFilterGroup[]>(() => {
 function refreshNow(): void {
   void refreshAll();
   void nodesQuery.refresh();
+  if (sheet.openId.value && !onScreen.value) void lookupQuery.refresh();
 }
 </script>
 
@@ -895,8 +902,10 @@ function refreshNow(): void {
       :subtitle="sheet.openId.value ?? undefined"
       :state="sheetState"
       :read-only="!canRun"
-      :gone-title="$t('operations.tasks.sheet.goneTitle')"
-      :gone-description="$t('operations.tasks.sheet.goneDescription')"
+      :gone-title="lookupFailure ? $t('operations.tasks.sheet.notReadTitle') : $t('operations.tasks.sheet.goneTitle')"
+      :gone-description="lookupFailure
+        ? $t('operations.tasks.sheet.notReadDescription', { reason: lookupFailure })
+        : $t('operations.tasks.sheet.goneDescription')"
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
     >

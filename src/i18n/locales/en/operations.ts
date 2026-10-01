@@ -218,6 +218,8 @@ export default {
         noTasks: "No task was queued for this plan.",
         goneTitle: "This plan is not here",
         goneDescription: "It does not exist, or this token cannot read it.",
+        notReadTitle: "This plan was not read",
+        notReadDescription: "The read failed: {reason}. The sheet tries again every 10 seconds.",
       },
     },
     tasks: {
@@ -414,6 +416,8 @@ export default {
         expiredNoResult: "Withdrawn before any agent took it",
         goneTitle: "This task is not here",
         goneDescription: "It was deleted, or the task store no longer keeps it.",
+        notReadTitle: "This task was not read",
+        notReadDescription: "The read failed: {reason}. Press Refresh to try again.",
       },
       deleteImpact: {
         title: "What happens",
@@ -650,6 +654,8 @@ export default {
         title: "Audit event",
         goneTitle: "This event is not on the page",
         goneDescription: "It is not in the page of results loaded. Search for it with a trace: token or a narrower window.",
+        notReadTitle: "This event was not read",
+        notReadDescription: "The read failed: {reason}. Press Refresh to try again.",
         scope: "Scope",
         token: "Token",
         eventId: "Event id",

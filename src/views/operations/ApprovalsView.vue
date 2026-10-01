@@ -409,6 +409,16 @@ const sheetState = computed<"ready" | "loading" | "gone" | "stale">(() => {
   if (openQuery.error.value) return "gone";
   return "loading";
 });
+/**
+ * Why the open plan is not on screen when the read failed for a reason
+ * other than the plan being absent or unreadable to this token (404, 403):
+ * a failed read never says the plan does not exist.
+ */
+const openReadFailure = computed<string | null>(() => {
+  const error = openQuery.error.value as (Error & { status?: number }) | undefined;
+  if (!error || error.status === 404 || error.status === 403) return null;
+  return error.message;
+});
 
 function changeLabel(approval: ApprovalView): string {
   return `${approval.plugin} · ${approval.action}`;
@@ -1199,8 +1209,10 @@ function refreshAll(): void {
       :state="sheetState"
       :error="openQuery.error.value?.message ?? null"
       :read-only="openRecord?.status === 'pending' && !canDecide(openRecord)"
-      :gone-title="$t('operations.approvals.sheet.goneTitle')"
-      :gone-description="$t('operations.approvals.sheet.goneDescription')"
+      :gone-title="openReadFailure ? $t('operations.approvals.sheet.notReadTitle') : $t('operations.approvals.sheet.goneTitle')"
+      :gone-description="openReadFailure
+        ? $t('operations.approvals.sheet.notReadDescription', { reason: openReadFailure })
+        : $t('operations.approvals.sheet.goneDescription')"
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
     >

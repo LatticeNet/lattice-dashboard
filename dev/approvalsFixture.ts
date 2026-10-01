@@ -23,6 +23,7 @@
  */
 import type { ApprovalCounts, ApprovalView } from "@/lib/api/types";
 import { isStaleAgentUpdateApprovalView } from "@/lib/api/index";
+import { ApiError } from "@/lib/api/client";
 
 export const NOW = Date.now();
 export const MINUTE = 60_000;
@@ -592,7 +593,7 @@ export function fakeApprovalsApi(store: ApprovalView[], options: FakeApprovalsOp
       }
       if (params && typeof params.id === "string") {
         const row = store.find((r) => r.id === params.id);
-        if (!row) return Promise.reject(new Error("approval not found"));
+        if (!row) return Promise.reject(new ApiError(404, "not_found", "approval not found"));
         return answer(url, { approval: toView(row, true) });
       }
       const queried = params && ["status", "node_id", "plugin", "limit", "offset", "since"].some((k) => params[k] !== undefined && params[k] !== "");
@@ -611,7 +612,7 @@ export function fakeApprovalsApi(store: ApprovalView[], options: FakeApprovalsOp
     },
     get(id: string) {
       const row = store.find((r) => r.id === id);
-      if (!row) return Promise.reject(new Error("approval not found"));
+      if (!row) return Promise.reject(new ApiError(404, "not_found", "approval not found"));
       return answer(query({ id }), toView(row, true));
     },
     log,
