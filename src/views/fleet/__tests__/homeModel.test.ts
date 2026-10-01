@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CHANGES_QUERY, dueThisWeek, flappingNodes, flipQuery, homeAttention, nextAfterWeek, readState } from "../homeModel.ts";
+import { CHANGES_QUERY, changesOnly, dueThisWeek, flappingNodes, flipQuery, flipReadPartial, homeAttention, nextAfterWeek, readState } from "../homeModel.ts";
 
 const NOW = Date.parse("2026-09-30T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
@@ -24,6 +24,34 @@ test("the flip read asks for one action over the last day, and changes drop flip
   assert.equal(q.at_from, "2026-09-29T12:00:00.000Z");
   assert.equal(CHANGES_QUERY.exclude_action, "node.online,node.offline");
   assert.equal(CHANGES_QUERY.exclude_decision, "observe");
+});
+
+test("a server that ignores the exclusions has its flips and observe rows dropped, and says so", () => {
+  const rows = [
+    { id: "a", action: "plan.apply", decision: "allow" },
+    { id: "b", action: "node.offline", decision: "allow" },
+    { id: "c", action: "auth.login", decision: "observe" },
+    { id: "d", action: "node.online", decision: "allow" },
+    { id: "e", action: "node.update", decision: "allow" },
+  ];
+  const old = changesOnly(rows);
+  assert.deepEqual(old.events.map((e) => e.id), ["a", "e"]);
+  assert.equal(old.ignored, true);
+  const current = changesOnly([rows[0]!, rows[4]!]);
+  assert.equal(current.ignored, false);
+  assert.equal(current.events.length, 2);
+});
+
+test("a flip read that missed rows makes every flapping count a lower bound", () => {
+  assert.equal(flipReadPartial({ events: new Array(500), total: 500, complete: true }), false);
+  assert.equal(flipReadPartial({ events: new Array(500), total: 731 }), true);
+  assert.equal(flipReadPartial({ events: new Array(20), total: 20, complete: false }), true);
+  const flaps = [{ nodeId: "mac", count: 14, lastAt: NOW }];
+  const nodes = [{ id: "mac", name: "mac-air", status: "online" as const }];
+  const partial = homeAttention({ now: NOW, nodes, flaps, flapsPartial: true }).find((i) => i.kind === "flapping");
+  const whole = homeAttention({ now: NOW, nodes, flaps }).find((i) => i.kind === "flapping");
+  assert.ok(partial?.kind === "flapping" && partial.atLeast === true);
+  assert.ok(whole?.kind === "flapping" && whole.atLeast === false);
 });
 
 test("offline nodes say how long; disabled nodes and online ones are not attention", () => {

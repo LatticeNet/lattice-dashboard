@@ -19,7 +19,9 @@
  * `?fail=nodes:later` lets the first read land and fails every one after it
  * (the stale state). `?deny=tasks,approvals,audit` answers those reads 403 and
  * drops their read scopes, for a principal that cannot read them.
- * `?resultsMs=` slows monitor results. Writes change the in-memory state, so saving, disabling
+ * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
+ * server from before exclude_action (the exclusions are ignored);
+ * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
  *
  * Only the calls these pages make are implemented; anything else is missing
@@ -141,8 +143,9 @@ function fieldMatches(value: string | undefined, want: string | undefined): bool
 
 /** GET /api/audit with the filters the server applies inside its scan. */
 function auditQuery(params: AuditParams = {}) {
-  const excludeActions = (params.exclude_action ?? "").split(",").map((p) => p.trim().replace(/\*$/, "")).filter(Boolean);
-  const excludeDecisions = new Set((params.exclude_decision ?? "").split(",").map((p) => p.trim()).filter(Boolean));
+  const auditMode = PARAMS.get("audit");
+  const excludeActions = auditMode === "old" ? [] : (params.exclude_action ?? "").split(",").map((p) => p.trim().replace(/\*$/, "")).filter(Boolean);
+  const excludeDecisions = new Set(auditMode === "old" ? [] : (params.exclude_decision ?? "").split(",").map((p) => p.trim()).filter(Boolean));
   const from = params.at_from ? Date.parse(params.at_from) : NaN;
   const matched = auditEvents().filter(
     (event: AuditEvent) =>
@@ -155,6 +158,7 @@ function auditQuery(params: AuditParams = {}) {
   );
   const limit = params.limit ?? 100;
   const offset = params.offset ?? 0;
+  if (auditMode === "capped") return { events: matched.slice(offset, offset + limit), total: matched.length, limit, offset, scanned: 200_000, complete: false };
   return { events: matched.slice(offset, offset + limit), total: matched.length, limit, offset, scanned: matched.length + 1200, complete: true };
 }
 

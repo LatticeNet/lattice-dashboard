@@ -34,9 +34,11 @@ import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } f
 import {
   CHANGES_QUERY,
   DUE_WITHIN_DAYS,
+  changesOnly,
   dueThisWeek,
   flappingNodes,
   flipQuery,
+  flipReadPartial,
   homeAttention,
   nextAfterWeek,
   readState,
@@ -80,15 +82,18 @@ const expiring = gated<ExpiringResponse>(can.upcoming, (signal) => api.expiring.
 const ddns = gated<DDNSView[]>(can.ddns, (signal) => api.ddns.list({ signal }), 60_000);
 // Changes only: node flips and observed events (logins, SSH sessions) stay
 // out on the server, so six rows are six changes (design 23, section 4.1).
-const changes = gated<AuditEvent[]>(
+// A server that ignores the exclusions has its flips dropped here, and the
+// section says it did not filter.
+const changes = gated<{ events: AuditEvent[]; ignored: boolean }>(
   can.audit,
-  (signal) => api.audit.query({ ...CHANGES_QUERY, limit: 6 }, { signal }).then((r) => r.events ?? []),
+  (signal) => api.audit.query({ ...CHANGES_QUERY, limit: 6 }, { signal }).then((r) => changesOnly(r.events ?? [])),
   15_000,
 );
-// The offline transitions of the last day, to find the nodes that keep dropping.
-const flips = gated<AuditEvent[]>(
+// The offline transitions of the last day, to find the nodes that keep
+// dropping. A read that missed rows makes every count "at least".
+const flips = gated<{ events: AuditEvent[]; partial: boolean }>(
   can.audit,
-  (signal) => api.audit.query(flipQuery(Date.now()), { signal }).then((r) => r.events ?? []),
+  (signal) => api.audit.query(flipQuery(Date.now()), { signal }).then((r) => ({ events: r.events ?? [], partial: flipReadPartial(r) })),
   60_000,
 );
 
@@ -157,7 +162,8 @@ const attentionModel = computed<HomeAttention[]>(() =>
   homeAttention({
     now: now.value.getTime(),
     nodes: fleet.data.value,
-    flaps: flips.data.value ? flappingNodes(flips.data.value) : undefined,
+    flaps: flips.data.value ? flappingNodes(flips.data.value.events) : undefined,
+    flapsPartial: flips.data.value?.partial,
     counts: taskCounts.data.value,
     ddns: ddns.data.value,
     expiring: expiring.data.value?.items,
@@ -195,7 +201,7 @@ const attention = computed<AttentionItem[]>(() => [
         return {
           key: item.key,
           tone: item.tone,
-          claim: t("overview.attention.flapping", { name: item.name, n: item.count }),
+          claim: t(item.atLeast ? "overview.attention.flappingAtLeast" : "overview.attention.flapping", { name: item.name, n: item.count }),
           proof: t("overview.attention.flappingProof", { age: age(now.value.getTime() - item.lastAt) }),
           action: { label: open, to: nodeSheet(item.nodeId) },
         };
@@ -400,9 +406,15 @@ const changesState = computed(() => stateOf(can.audit, changes));
             {{ $t('common.actions.retry') }}
           </Button>
         </div>
-        <p v-else-if="!changes.data.value?.length" class="px-4 py-5 text-sm text-muted-foreground">{{ $t('overview.changes.empty') }}</p>
-        <ul v-else class="divide-y divide-border">
-          <li v-for="event in changes.data.value" :key="event.id">
+        <p v-else-if="!changes.data.value?.events.length && !changes.data.value?.ignored" class="px-4 py-5 text-sm text-muted-foreground">{{ $t('overview.changes.empty') }}</p>
+        <p
+          v-if="changesState === 'ready' && changes.data.value?.ignored"
+          :class="cn('px-4 text-xs text-muted-foreground', changes.data.value.events.length ? 'border-b border-border py-2' : 'py-5')"
+        >
+          {{ $t('overview.changes.unfiltered', { n: 6 }) }}
+        </p>
+        <ul v-if="changesState === 'ready' && changes.data.value?.events.length" class="divide-y divide-border">
+          <li v-for="event in changes.data.value.events" :key="event.id">
             <RouterLink
               :to="{ name: 'audit', query: { open: event.id } }"
               class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-4 py-2 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:grid-cols-[14rem_minmax(0,1fr)_8rem_8rem]"

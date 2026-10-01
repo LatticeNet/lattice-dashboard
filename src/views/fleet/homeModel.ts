@@ -14,7 +14,7 @@
  *
  * Kept free of Vue so `node --test` covers it directly.
  */
-import type { AuditEvent, DDNSView, ExpiringItem, TaskCounts } from "@/lib/api/types";
+import type { AuditEvent, AuditQueryResponse, DDNSView, ExpiringItem, TaskCounts } from "@/lib/api/types";
 import { compareByAttention, nodeStatus, nodeStatusSince, type NodeStatusInput } from "@/lib/nodeStatus";
 
 /** A node that went offline this many times in the window is flapping. */
@@ -33,6 +33,33 @@ export function flipQuery(now: number): { action: string; at_from: string; limit
 
 /** Recent activity shows changes: node flips and observe events stay out (design 23, 4.1). */
 export const CHANGES_QUERY = { exclude_action: "node.online,node.offline", exclude_decision: "observe" } as const;
+
+/** Whether an audit row is a change by CHANGES_QUERY's rule, matched as the server matches it (action prefixes). */
+export function isChange(event: Pick<AuditEvent, "action" | "decision">): boolean {
+  const prefixes = CHANGES_QUERY.exclude_action.split(",");
+  const decisions: string[] = CHANGES_QUERY.exclude_decision.split(",");
+  return !decisions.includes(event.decision) && !prefixes.some((prefix) => event.action.startsWith(prefix));
+}
+
+/**
+ * The changes in an answer to CHANGES_QUERY. A server from before the
+ * exclusions (pre a101) ignores them and returns flips and observe events;
+ * those are dropped here, and `ignored` says the server did not filter, so
+ * the page does not claim the rows are the latest changes.
+ */
+export function changesOnly<T extends Pick<AuditEvent, "action" | "decision">>(events: readonly T[]): { events: T[]; ignored: boolean } {
+  const kept = events.filter(isChange);
+  return { events: kept, ignored: kept.length < events.length };
+}
+
+/**
+ * Whether the flip read missed offline transitions in the window: the
+ * server returned fewer rows than it counted (the read limit), or its scan
+ * stopped at the cap. Counts from such a read are lower bounds.
+ */
+export function flipReadPartial(response: Pick<AuditQueryResponse, "total" | "complete"> & { events?: readonly unknown[] }): boolean {
+  return response.complete === false || (response.events?.length ?? 0) < response.total;
+}
 
 export interface Flap {
   nodeId: string;
@@ -57,7 +84,7 @@ export function flappingNodes(events: readonly Pick<AuditEvent, "node_id" | "act
 
 export type HomeAttention =
   | { kind: "node"; key: string; tone: "danger" | "warning"; nodeId: string; name: string; status: "offline" | "never_reported" | "degraded"; sinceMs?: number; reason: string }
-  | { kind: "flapping"; key: string; tone: "warning"; nodeId: string; name: string; count: number; lastAt: number }
+  | { kind: "flapping"; key: string; tone: "warning"; nodeId: string; name: string; count: number; lastAt: number; atLeast: boolean }
   | { kind: "stalled"; key: string; tone: "danger"; count: number }
   | { kind: "ddns"; key: string; tone: "warning"; count: number; names: string[]; error: string }
   | { kind: "overdue"; key: string; tone: "danger"; count: number; titles: string[] }
@@ -72,6 +99,8 @@ export interface HomeAttentionInput {
   now: number;
   nodes?: readonly HomeNode[];
   flaps?: readonly Flap[];
+  /** The flip read missed rows (flipReadPartial), so each count is "at least". */
+  flapsPartial?: boolean;
   counts?: Pick<TaskCounts, "stalled">;
   ddns?: readonly Pick<DDNSView, "name" | "last_error">[];
   /** Items from the expiring read; the model keeps those within 7 days. */
@@ -108,7 +137,16 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
     const node = byId.get(flap.nodeId);
     // An offline node already has its row; a disabled one was switched off.
     if (node && ["offline", "disabled"].includes(nodeStatus(node))) continue;
-    out.push({ kind: "flapping", key: `flap:${flap.nodeId}`, tone: "warning", nodeId: flap.nodeId, name: node?.name || flap.nodeId, count: flap.count, lastAt: flap.lastAt });
+    out.push({
+      kind: "flapping",
+      key: `flap:${flap.nodeId}`,
+      tone: "warning",
+      nodeId: flap.nodeId,
+      name: node?.name || flap.nodeId,
+      count: flap.count,
+      lastAt: flap.lastAt,
+      atLeast: !!input.flapsPartial,
+    });
   }
   const stalled = input.counts?.stalled ?? 0;
   if (stalled > 0) out.push({ kind: "stalled", key: "tasks:stalled", tone: "danger", count: stalled });
