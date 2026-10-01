@@ -625,6 +625,17 @@ export default {
     },
 
     map: {
+      proof: {
+        located: "已定位 {located} / {total}",
+        down: "{n} 个未上报",
+        unlocated: "{n} 个未定位",
+      },
+      attention: {
+        unlocated: "{n} 个节点没有位置，地图上没有画出 | {n} 个节点没有位置，地图上没有画出",
+      },
+      listed: {
+        title: "{place} 的 {n} 个节点",
+      },
       aria: "世界地图：{total} 个节点中已定位 {located} 个",
       cluster: {
         one: "{name}，{place}",
@@ -706,6 +717,8 @@ export default {
         opensFirst: "在位置编辑器中打开 {name}",
       },
       unlocated: {
+        hint: "在节点页面设置位置，或者按公网地址查询。",
+        set: "设置位置",
         title: "未定位",
         description: "还有 {count} 个节点需要坐标",
         empty: "所有可见节点都已定位。",

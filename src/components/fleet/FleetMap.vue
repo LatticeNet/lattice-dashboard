@@ -17,7 +17,7 @@
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useElementSize } from "@vueuse/core";
+import { useElementSize, useMediaQuery } from "@vueuse/core";
 import { Minus, Plus, RotateCcw } from "lucide-vue-next";
 
 import { WORLD_RINGS } from "@/lib/map/worldGeo";
@@ -78,9 +78,22 @@ const points = computed(() =>
   }),
 );
 
+/**
+ * Clusters in paint order: the biggest last, so it sits on top. A neighbour
+ * painted later used to cover the centre of a 12-node cluster with its hit
+ * circle, and a click on the "12" opened the neighbour instead.
+ */
 const clusters = computed<MapCluster[]>(() =>
-  clusterPoints(points.value, (CLUSTER_PX * unitsPerPx.value) / viewport.value.scale),
+  clusterPoints(points.value, (CLUSTER_PX * unitsPerPx.value) / viewport.value.scale).sort(
+    (a, b) => a.ids.length - b.ids.length || a.key.localeCompare(b.key),
+  ),
 );
+
+/** A 44 px target where a finger is the pointer; just past the mark where a mouse is. */
+const coarse = useMediaQuery("(pointer: coarse)");
+function hitRadius(cluster: MapCluster): number {
+  return coarse.value ? 22 : clusterRadius(cluster.ids.length, MARK_PX) + 4;
+}
 
 const byId = computed(() => new Map(props.nodes.map((node) => [node.id, node])));
 const landPaths = WORLD_RINGS.map((ring) => ringPath(ring)).filter(Boolean);
@@ -268,8 +281,8 @@ defineExpose({ reset: () => setViewport({ scale: 1, x: 0, y: 0 }) });
         @keydown.space.prevent="onCluster(cluster, $event)"
       >
         <title>{{ clusterLabel(cluster) }}</title>
-        <!-- A generous hit area: 44 px across on a phone. -->
-        <circle v-if="!compact" :cx="screenX(cluster.x)" :cy="screenY(cluster.y)" :r="px(22)" fill="transparent" />
+        <!-- 44 px across on a phone, just past the mark with a mouse. -->
+        <circle v-if="!compact" :cx="screenX(cluster.x)" :cy="screenY(cluster.y)" :r="px(hitRadius(cluster))" fill="transparent" />
         <circle
           v-if="isActive(cluster)"
           :cx="screenX(cluster.x)"
@@ -314,7 +327,10 @@ defineExpose({ reset: () => setViewport({ scale: 1, x: 0, y: 0 }) });
       </g>
     </svg>
 
-    <div v-if="!compact" class="absolute right-2 bottom-2 flex flex-col gap-1">
+    <!-- Below the canvas on a phone, where three 44 px buttons over a 170 px
+         map covered the marks at its right edge (Sydney, Tokyo); over the
+         ocean in the corner from 640 px up. -->
+    <div v-if="!compact" class="flex justify-end gap-1 border-t border-white/10 p-1.5 sm:absolute sm:right-2 sm:bottom-2 sm:flex-col sm:border-0 sm:p-0">
       <button
         type="button"
         class="grid size-8 place-items-center rounded-md border border-white/15 bg-black/50 text-white outline-none hover:bg-black/70 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11"

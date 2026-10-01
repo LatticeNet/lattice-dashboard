@@ -637,6 +637,17 @@ export default {
     },
 
     map: {
+      proof: {
+        located: "{located} of {total} located",
+        down: "{n} not reporting",
+        unlocated: "{n} unlocated",
+      },
+      attention: {
+        unlocated: "{n} node has no location, so the map leaves it out | {n} nodes have no location, so the map leaves them out",
+      },
+      listed: {
+        title: "{n} nodes in {place}",
+      },
       aria: "World map: {located} of {total} nodes located",
       cluster: {
         one: "{name}, {place}",
@@ -718,6 +729,8 @@ export default {
         opensFirst: "Opens {name} in the location editor",
       },
       unlocated: {
+        hint: "Set a location on the node page, or look it up from the public address.",
+        set: "Set location",
         title: "Unlocated",
         description: "{count} nodes still need coordinates",
         empty: "Every visible node has a location.",
