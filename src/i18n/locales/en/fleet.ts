@@ -1174,6 +1174,34 @@ export default {
       quota: "{percent}% of {quota} used",
     },
     monitoring: {
+      noAccessTitle: "Monitors need monitor:read",
+      noAccessDescription: "This session cannot read monitors or their results.",
+      proof: {
+        monitors: "{n} monitor | {n} monitors",
+        enabled: "{n} enabled",
+      },
+      empty: {
+        title: "No monitors yet",
+        description: "Watch an endpoint from your nodes, or watch a certificate so its expiry shows up in Upcoming.",
+        http: "Watch an HTTP endpoint",
+        tls: "Watch a TLS certificate",
+      },
+      table: {
+        name: "Monitor",
+        type: "Type",
+        target: "Target",
+        checks: "Checked from",
+        every: "Every",
+      },
+      sheet: {
+        failingOn: "failing on {n} of {total} nodes",
+        goneTitle: "This monitor is gone",
+        goneDescription: "It was deleted, or the link names a monitor this session cannot read.",
+        success: "Success",
+        average: "Average",
+        failures: "Failures",
+        results: "Results",
+      },
       title: "Monitoring",
       description:
         "TCP and HTTP probes distributed through enrolled agents, plus TLS certificate watches this server runs itself",
@@ -1282,6 +1310,8 @@ export default {
         colObserved: "Observed",
       },
       confirm: {
+        impactHistory: "Its result history is deleted with it.",
+        impactUpcoming: "Its certificate stops appearing in Upcoming.",
         deleteTitle: "Delete monitor",
         delete: 'Delete monitor "{name}"?',
       },

@@ -1158,6 +1158,34 @@ export default {
       quota: "已用 {percent}%，共 {quota}",
     },
     monitoring: {
+      noAccessTitle: "查看监控需要 monitor:read 权限",
+      noAccessDescription: "当前会话无法读取监控及其结果。",
+      proof: {
+        monitors: "{n} 个监控 | {n} 个监控",
+        enabled: "{n} 个已启用",
+      },
+      empty: {
+        title: "还没有监控",
+        description: "从节点探测一个端点，或者监视一张证书，让它的到期时间出现在即将到期列表里。",
+        http: "监控 HTTP 端点",
+        tls: "监控 TLS 证书",
+      },
+      table: {
+        name: "监控",
+        type: "类型",
+        target: "目标",
+        checks: "探测来源",
+        every: "间隔",
+      },
+      sheet: {
+        failingOn: "{total} 个节点中 {n} 个失败",
+        goneTitle: "这个监控已不存在",
+        goneDescription: "它已被删除，或者链接指向的监控当前会话无权查看。",
+        success: "成功率",
+        average: "平均延迟",
+        failures: "失败次数",
+        results: "结果",
+      },
       title: "监控",
       description: "通过已接入的 agent 分发 TCP 与 HTTP 探测,以及由本服务器自己执行的 TLS 证书监控",
       stats: {
@@ -1264,6 +1292,8 @@ export default {
         colObserved: "观测时间",
       },
       confirm: {
+        impactHistory: "它的历史结果会一起删除。",
+        impactUpcoming: "这张证书不再出现在即将到期列表里。",
         deleteTitle: "删除监控",
         delete: "确定删除监控「{name}」吗?",
       },
