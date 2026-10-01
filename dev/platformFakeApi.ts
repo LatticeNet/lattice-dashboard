@@ -57,6 +57,8 @@ export * from "@/lib/api/index";
  *   ?share-expiring   The cd-self share expires in 5 days (invented).
  *   ?share-expired    ... expired 2 days ago (invented).
  *   ?shares-fail      The share list answers 502.
+ *   ?store-fail       Store's bucket read answers 502 (a failed read shows no count).
+ *   ?store-empty      Store has no bucket of either kind (first run).
  *
  * Shares: production's one share (cd-self, rendered by Sub-Store from the
  * merge-openjobs record), with its token invented. Proxy users and the
@@ -71,6 +73,8 @@ const STORAGE_FAIL = flags.has("storage-fail");
 const SHARE_EXPIRING = flags.has("share-expiring");
 const SHARE_EXPIRED = flags.has("share-expired");
 const SHARES_FAIL = flags.has("shares-fail");
+const STORE_FAIL = flags.has("store-fail");
+const STORE_EMPTY = flags.has("store-empty");
 const STORAGE_WRITE_MS = 1500;
 
 const NOW = Date.now();
@@ -406,10 +410,14 @@ export const api = {
 
   storage: {
     buckets: (kind: StorageKind) =>
-      delay({
-        buckets: buckets[kind].map((b) => ({ ...b })),
-        inventory: inventory[kind].map((b) => ({ ...b })),
-      }),
+      STORE_FAIL
+        ? delay(undefined).then(() => {
+            throw new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (storage buckets)");
+          })
+        : delay({
+            buckets: STORE_EMPTY ? [] : buckets[kind].map((b) => ({ ...b })),
+            inventory: STORE_EMPTY ? [] : inventory[kind].map((b) => ({ ...b })),
+          }),
     bindings: (kind: StorageKind) => delay({ bindings: bindings[kind].map((b) => ({ ...b })) }),
     tokens: (kind: StorageKind) => delay({ tokens: tokens[kind].map((t) => ({ ...t })) }),
     upsertBucket: async (kind: StorageKind, input: { name: string; display_name?: string; description?: string }) => {
@@ -451,7 +459,7 @@ export const api = {
     list: (bucket?: string) => {
       const name = bucket || "default";
       requireBucket("kv", name);
-      return delay((kvEntries[name] ?? []).map((e) => ({ ...e })));
+      return delay(STORE_EMPTY ? [] : (kvEntries[name] ?? []).map((e) => ({ ...e })));
     },
     put: async (input: { bucket?: string; key: string; value: string }) => {
       const name = input.bucket || "default";
@@ -470,7 +478,7 @@ export const api = {
     list: (bucket?: string) => {
       const name = bucket || "site";
       requireBucket("static", name);
-      return delay((staticObjects[name] ?? []).map((o) => ({ ...o })));
+      return delay(STORE_EMPTY ? [] : (staticObjects[name] ?? []).map((o) => ({ ...o })));
     },
     put: async (input: { bucket?: string; path: string; content: string; content_type: string }) => {
       const name = input.bucket || "site";
