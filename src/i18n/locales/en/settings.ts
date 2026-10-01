@@ -317,8 +317,12 @@ export default {
           "Leave blank to keep the existing password. Saving this form signs the user out of the console whether or not you change it; their access tokens keep working.",
       },
       deleteTitle: "Delete user?",
-      deleteDescription:
-        'Remove "{name}". This operator immediately loses dashboard and API access; their tokens and SSO links are revoked. This cannot be undone.',
+      deleteDescription: 'Delete the account "{name}". This cannot be undone.',
+      deleteImpact: {
+        signIn: "{name} can no longer sign in, and any session open now ends",
+        tokens: "Every token this account minted is revoked: anything calling the API with one gets 401",
+        sso: "Its single sign-on links are removed",
+      },
       toast: {
         created: "User created",
         updated: "User updated",
@@ -378,8 +382,8 @@ export default {
         scopes: "Scopes",
       },
       revokeTitle: "Revoke token?",
-      revokeDescription:
-        'Revoke "{name}". Any caller using this credential will immediately lose access. This is one-way and cannot be undone.',
+      revokeDescription: 'Revoke "{name}". This is one-way: nothing brings a revoked token back.',
+      revokeImpact: "Anything calling the API with this token gets 401 from now on",
       deleteTitle: "Delete revoked token?",
       deleteDescription:
         'Delete "{name}" from the token list. Only already-revoked tokens can be deleted; audit history is retained.',
@@ -394,6 +398,22 @@ export default {
         revokeFailed: "Revoke failed",
         deleted: "Token deleted",
         deleteFailed: "Delete failed",
+      },
+    },
+    access: {
+      title: "Access",
+      description: "Who can sign in to this console and with what: accounts, API tokens and single sign-on",
+      layersLabel: "Access layers",
+      layers: { users: "Users", tokens: "Tokens", sso: "Single sign-on" },
+      noScope: "Managing access needs user:admin, token:admin or oidc:admin.",
+      proof: {
+        users: "{n} user | {n} users",
+        admins: "{n} full admin",
+        totp: "{n} of {total} with two-factor",
+        tokens: "{n} token | {n} tokens",
+        active: "{n} active",
+        providers: "{n} provider | {n} providers",
+        enabled: "{n} enabled",
       },
     },
   },

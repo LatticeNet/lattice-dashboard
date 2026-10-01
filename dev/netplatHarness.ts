@@ -29,6 +29,10 @@ import PluginsView from "@/views/platform/PluginsView.vue";
 import PluginView from "@/views/platform/PluginView.vue";
 import AgentUpdatesView from "@/views/platform/AgentUpdatesView.vue";
 import WebhooksView from "@/views/platform/WebhooksView.vue";
+import NotificationsView from "@/views/platform/NotificationsView.vue";
+import AccessView from "@/views/settings/AccessView.vue";
+import AboutView from "@/views/settings/AboutView.vue";
+import CapabilitiesView from "@/views/settings/CapabilitiesView.vue";
 
 import "@/style/app.css";
 
@@ -61,7 +65,11 @@ const router = createRouter({
     { path: "/netplat-plugins.html", name: "platform-plugins", component: PluginsView },
     { path: "/netplat-agents.html", name: "platform-agent-updates", component: AgentUpdatesView },
     { path: "/netplat-webhooks.html", name: "platform-webhooks", component: WebhooksView },
-    { path: "/platform/notifications", name: "platform-notifications", component: placeholder("Notifications") },
+    { path: "/netplat-notifications.html", name: "platform-notifications", component: NotificationsView },
+    { path: "/netplat-access.html", name: "settings-access", component: AccessView },
+    { path: "/netplat-about.html", name: "settings-about", component: AboutView },
+    { path: "/netplat-capabilities.html", name: "settings-capabilities", component: CapabilitiesView },
+    { path: "/inventory", name: "inventory", component: placeholder("Inventory") },
     { path: "/nodes/:id", name: "node-detail", component: placeholder("Node") },
     { path: "/approvals", name: "approvals", component: placeholder("Approvals") },
     { path: "/groups", name: "groups", component: placeholder("Groups") },

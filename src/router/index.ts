@@ -93,6 +93,20 @@ const manualChildRoutes: RouteRecordRaw[] = [
     redirect: () => ({ path: WORKERS_REDIRECT_TO.path, query: { ...WORKERS_REDIRECT_TO.query } }),
   },
   {
+    // Users, Access Tokens and SSO became one Access page with a layer each
+    // (design 23, section 4.6). Old links land on their layer, query intact.
+    path: "settings/users",
+    redirect: (to) => ({ path: "/settings/access", query: { ...to.query, view: "users" } }),
+  },
+  {
+    path: "settings/tokens",
+    redirect: (to) => ({ path: "/settings/access", query: { ...to.query, view: "tokens" } }),
+  },
+  {
+    path: "settings/sso",
+    redirect: (to) => ({ path: "/settings/access", query: { ...to.query, view: "sso" } }),
+  },
+  {
     // Plugin-contributed view (design-10). The route stays open (scopes: []) so a
     // wrong/insufficient scope renders a friendly "no access" panel inside the
     // page rather than a redirect; PluginView enforces the contribution's own

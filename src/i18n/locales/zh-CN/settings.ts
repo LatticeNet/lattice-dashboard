@@ -306,7 +306,12 @@ export default {
           "留空则保持现有密码。无论你是否改动密码，保存都会把该用户从控制台登出；他们的访问令牌仍然有效。",
       },
       deleteTitle: "删除用户?",
-      deleteDescription: "移除 “{name}”。该运维账号将立即失去 dashboard 与 API 访问权限,其令牌和 SSO 绑定会被吊销。此操作不可撤销。",
+      deleteDescription: "删除账号“{name}”。此操作无法撤销。",
+      deleteImpact: {
+        signIn: "{name} 将无法再登录，当前打开的会话立即结束",
+        tokens: "这个账号创建的令牌全部吊销：用这些令牌调用 API 的程序会收到 401",
+        sso: "它的单点登录绑定会被移除",
+      },
       toast: {
         created: "用户已创建",
         updated: "用户已更新",
@@ -366,8 +371,8 @@ export default {
         scopes: "权限范围",
       },
       revokeTitle: "吊销令牌?",
-      revokeDescription:
-        "吊销“{name}”。任何使用该凭据的调用方将立即失去访问权限。此操作单向且无法撤销。",
+      revokeDescription: "吊销“{name}”。吊销是单向的，吊销后无法恢复。",
+      revokeImpact: "之后任何用这个令牌调用 API 的请求都会收到 401",
       deleteTitle: "删除已吊销令牌?",
       deleteDescription:
         "从令牌列表中删除“{name}”。只能删除已经吊销的令牌；审计历史仍会保留。",
@@ -382,6 +387,22 @@ export default {
         revokeFailed: "吊销失败",
         deleted: "令牌已删除",
         deleteFailed: "删除失败",
+      },
+    },
+    access: {
+      title: "访问权限",
+      description: "谁可以登录这个控制台、用什么方式登录：账号、API 令牌和单点登录",
+      layersLabel: "访问权限分层",
+      layers: { users: "用户", tokens: "令牌", sso: "单点登录" },
+      noScope: "管理访问权限需要 user:admin、token:admin 或 oidc:admin。",
+      proof: {
+        users: "{n} 个用户",
+        admins: "{n} 个完全管理员",
+        totp: "{total} 个中 {n} 个开启了两步验证",
+        tokens: "{n} 个令牌",
+        active: "{n} 个有效",
+        providers: "{n} 个身份提供方",
+        enabled: "{n} 个已启用",
       },
     },
   },

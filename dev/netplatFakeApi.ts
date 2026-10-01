@@ -14,17 +14,29 @@
  *   ?fail=ddns,nodes  the named reads answer 502 (a failed read shows no counts);
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
  *                     dns, monitors, tunnels, geo, agents, release, artifacts,
- *                     webhooks, channels, rules, deliveries
+ *                     webhooks, channels, rules, deliveries, users, tokens, oidc,
+ *                     version, capabilities, machines
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
  *   ?readonly         the session holds read scopes only
+ *   ?scopes=a,b       the session holds exactly these scopes (Access layers by scope)
  *
  * Page fixtures carry their own switches (netplatPolicyFixture,
  * netplatPluginsFixture, ...); each file's header lists them.
  */
 import { ApiError } from "@/lib/api/client";
-import type { DDNSUpsertRequest, DDNSView, Principal } from "@/lib/api/index";
+import type {
+  DDNSUpsertRequest,
+  DDNSView,
+  NotifyChannelUpsertRequest,
+  NotifyRuleUpsertRequest,
+  OIDCProviderUpsertRequest,
+  Principal,
+  TokenCreateRequest,
+  UserCreateRequest,
+  UserUpdateRequest,
+} from "@/lib/api/index";
 
 import { DDNS, runDdns } from "./netplatDdnsFixture";
 import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netplatPolicyFixture";
@@ -32,6 +44,7 @@ import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./n
 import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
 import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from "./netplatAgentFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
+import { CAPABILITIES, MACHINES, PROVIDERS, TOKENS, USERS, buildInfo } from "./netplatSettingsFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
 
 export * from "@/lib/api/index";
@@ -51,9 +64,11 @@ function read<T>(name: string, value: () => T): Promise<T> {
 const principal: Principal = {
   actor_id: "cdcd",
   username: "cdcd",
-  scopes: flags.has("readonly")
-    ? ["node:read", "ddns:read", "netpolicy:read", "audit:read", "dns:read", "geo:read", "tunnel:read", "notify:read"]
-    : ["*"],
+  scopes: flags.has("scopes")
+    ? (flags.get("scopes") ?? "").split(",").filter(Boolean)
+    : flags.has("readonly")
+      ? ["node:read", "ddns:read", "netpolicy:read", "audit:read", "dns:read", "geo:read", "tunnel:read", "notify:read"]
+      : ["*"],
   server_allowlist: [],
   csrf_token: "harness",
 };
@@ -66,6 +81,83 @@ export const api = {
   },
   nodes: {
     list: () => read("nodes", () => ({ nodes: NODES.map((node) => ({ ...node })) })),
+  },
+  /* Settings: Access (users, tokens, SSO), About, Capability Gates. */
+  users: {
+    list: () => read("users", () => ({ users: USERS.map((user) => ({ ...user })) })),
+    create: async (input: UserCreateRequest) => {
+      await delay(undefined, WRITE_MS);
+      const user = { id: `usr_new_${seq++}`, username: input.username, scopes: input.scopes, server_allowlist: input.server_allowlist, totp_enabled: false, has_password: !!input.password, created_at: iso(0) };
+      USERS.push(user);
+      return { ...user };
+    },
+    update: async (input: UserUpdateRequest) => {
+      await delay(undefined, WRITE_MS);
+      const user = USERS.find((entry) => entry.id === input.id);
+      if (!user) throw new ApiError(404, "not_found", "user not found");
+      user.scopes = input.scopes;
+      if (input.server_allowlist) user.server_allowlist = input.server_allowlist;
+      return { ...user };
+    },
+    delete: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(USERS, id, "user");
+    },
+  },
+  tokens: {
+    list: () => read("tokens", () => TOKENS.map((token) => ({ ...token }))),
+    create: async (input: TokenCreateRequest) => {
+      await delay(undefined, WRITE_MS);
+      const view = { id: `tok_new_${seq++}`, name: input.name, actor_id: "cdcd", scopes: input.scopes, server_allowlist: input.server_allowlist ?? [], created_at: iso(0) };
+      TOKENS.unshift(view);
+      return { id: view.id, token: "lat_pat_harness_0000000000000000000000000000", view: { ...view } };
+    },
+    revoke: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      const token = TOKENS.find((entry) => entry.id === id);
+      if (!token) throw new ApiError(404, "not_found", "token not found");
+      token.revoked_at = iso(0);
+      return { ...token };
+    },
+    delete: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(TOKENS, id, "token");
+    },
+  },
+  oidc: {
+    providers: () => read("oidc", () => ({ providers: PROVIDERS.map((provider) => ({ ...provider })) })),
+    upsertProvider: async (input: OIDCProviderUpsertRequest) => {
+      await delay(undefined, WRITE_MS);
+      const existing = PROVIDERS.find((entry) => entry.id === input.id);
+      const next = { id: existing?.id ?? `oidc_new_${seq++}`, display_name: input.display_name ?? "", issuer: input.issuer, client_id: input.client_id, has_secret: !!input.client_secret || !!existing?.has_secret, scopes: input.scopes, allowed_domains: input.allowed_domains, enabled: input.enabled ?? true };
+      if (existing) Object.assign(existing, next);
+      else PROVIDERS.push(next);
+      return { ...next };
+    },
+    deleteProvider: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      removeById(PROVIDERS, id, "provider");
+      return { status: "deleted" };
+    },
+    testProvider: async (issuer: string) => {
+      await delay(undefined, 600);
+      return issuer.includes("home.example")
+        ? { ok: false, issuer, error: "GET https://auth.home.example/.well-known/openid-configuration: dial tcp: i/o timeout" }
+        : { ok: true, issuer, authorization_endpoint: `${issuer}/o/oauth2/v2/auth`, token_endpoint: `${issuer}/token` };
+    },
+  },
+  version: () => read("version", () => buildInfo(import.meta.env.VITE_GIT_COMMIT)),
+  capabilities: {
+    list: () => read("capabilities", () => ({ capabilities: CAPABILITIES.map((capability) => ({ ...capability })) })),
+    setEnforced: async (capability: string, enforced: boolean) => {
+      await delay(undefined, WRITE_MS);
+      const entry = CAPABILITIES.find((item) => item.capability === capability);
+      if (entry) entry.enforced = enforced;
+      return { ok: true };
+    },
+  },
+  machines: {
+    list: () => read("machines", () => ({ machines: MACHINES.map((machine) => ({ ...machine })) })),
   },
   ddns: {
     list: () => read("ddns", () => DDNS.map((profile) => ({ ...profile }))),
@@ -249,6 +341,31 @@ export const api = {
     webhooks: () => read("webhooks", () => ({ webhooks: WEBHOOKS.map((hook) => ({ ...hook })) })),
     channels: () => read("channels", () => NOTIFY_CHANNELS.map((channel) => ({ ...channel }))),
     rules: () => read("rules", () => ({ rules: NOTIFY_RULES.map((rule) => ({ ...rule })) })),
+    upsertChannel: async (input: NotifyChannelUpsertRequest) => {
+      await delay(undefined, WRITE_MS);
+      const existing = NOTIFY_CHANNELS.find((channel) => channel.id === input.id);
+      const next = { id: existing?.id ?? `ch_new_${seq++}`, name: input.name, kind: input.kind, config_keys: Object.keys(input.config), enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0) };
+      if (existing) Object.assign(existing, next);
+      else NOTIFY_CHANNELS.push(next);
+      return { ...next };
+    },
+    deleteChannel: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(NOTIFY_CHANNELS, id, "channel");
+    },
+    test: async () => delay({ ok: true }, 400),
+    upsertRule: async (input: NotifyRuleUpsertRequest) => {
+      await delay(undefined, WRITE_MS);
+      const existing = NOTIFY_RULES.find((rule) => rule.id === input.id);
+      const next = { id: existing?.id ?? `rule_new_${seq++}`, name: input.name, event_types: input.event_types, channel_ids: input.channel_ids, title_template: input.title_template, body_template: input.body_template, enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0) };
+      if (existing) Object.assign(existing, next);
+      else NOTIFY_RULES.push(next);
+      return { ...next };
+    },
+    deleteRule: async (id: string) => {
+      await delay(undefined, WRITE_MS);
+      return removeById(NOTIFY_RULES, id, "rule");
+    },
     webhookDeliveries: (id: string) => read("deliveries", () => ({ deliveries: deliveriesFor(id) })),
     upsertWebhook: async (input: { id?: string; name: string; event_type: string; title_template: string; body_template?: string; enabled: boolean }) => {
       await delay(undefined, WRITE_MS);
