@@ -39,7 +39,11 @@ const props = withDefaults(
     nodeId: string | null;
     /** The page's node list; undefined until it lands. */
     nodes: readonly Node[] | undefined;
-    /** Why the page's last refresh failed, when it shows the last good list. */
+    /**
+     * Why the page's last read failed. With a list in hand the sheet shows it
+     * as stale; with none it says the read failed and offers Retry. The page
+     * passes null while a retry is in flight, so the sheet shows it loading.
+     */
     error?: string | null;
     returnFocus?: () => HTMLElement | null;
     /** The actions the page allows on this node. */
@@ -48,7 +52,7 @@ const props = withDefaults(
   { error: null, returnFocus: undefined, menuItems: () => [] },
 );
 
-const emit = defineEmits<{ close: []; terminal: [node: Node] }>();
+const emit = defineEmits<{ close: []; terminal: [node: Node]; retry: [] }>();
 
 const { t, locale } = useI18n();
 const auth = useAuthStore();
@@ -56,7 +60,8 @@ const plugins = usePluginContributions();
 
 const node = computed(() => (props.nodeId ? props.nodes?.find((entry) => entry.id === props.nodeId) : undefined));
 const state = computed(() => {
-  if (!props.nodeId || props.nodes === undefined) return "loading" as const;
+  if (!props.nodeId) return "loading" as const;
+  if (props.nodes === undefined) return props.error ? ("failed" as const) : ("loading" as const);
   if (!node.value) return "gone" as const;
   return props.error ? ("stale" as const) : ("ready" as const);
 });
@@ -142,6 +147,7 @@ const STATUS_TONE: Record<string, string> = {
     :gone-title="$t('fleet.nodes.sheet.goneTitle')"
     :gone-description="$t('fleet.nodes.sheet.goneDescription')"
     @close="emit('close')"
+    @retry="emit('retry')"
   >
     <div v-if="node" class="space-y-5 text-sm">
       <!-- Status and why: the first thing an opened node answers. -->

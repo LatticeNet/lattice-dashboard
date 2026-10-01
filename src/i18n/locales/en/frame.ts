@@ -54,6 +54,8 @@ export default {
       goneTitle: "This no longer exists",
       goneDescription: "It was deleted, or the link points at something that never existed.",
       backToList: "Back to the list",
+      failedTitle: "Could not read this",
+      failedDescription: "The read failed before anything came back.",
     },
     rowMenu: {
       label: "Actions for {name}",

@@ -573,8 +573,8 @@ async function runBulk(disabled: boolean): Promise<void> {
 
 const enrollOpen = ref(false);
 
-/** A node with a name the operator can read in the sheet's error banner. */
-const sheetError = computed(() => (nodesQuery.error.value && nodesQuery.data.value ? proofReason(nodesQuery.error.value) : null));
+/** Why the node read failed, for the sheet; null while a first read retries, so the sheet shows it loading. */
+const sheetError = computed(() => (nodesQuery.error.value && !nodesQuery.loading.value ? proofReason(nodesQuery.error.value) : null));
 const openNode = computed(() => nodes.value.find((node) => node.id === sheet.openId.value));
 const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.value.length === 0);
 </script>
@@ -953,6 +953,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
       :menu-items="openNode ? menuFor(openNode).filter((item) => item.key !== 'terminal') : []"
       @close="sheet.close"
       @terminal="openTerminal"
+      @retry="nodesQuery.refresh"
     />
 
     <EnrollSheet :open="enrollOpen" :groups="groupsQuery.data.value ?? []" @close="enrollOpen = false" @enrolled="nodesQuery.refresh" />

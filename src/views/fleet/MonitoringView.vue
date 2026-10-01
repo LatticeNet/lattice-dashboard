@@ -468,7 +468,10 @@ const stateBadge = computed<{ variant: "success" | "destructive" | "secondary"; 
 });
 
 const sheetState = computed(() => {
-  if (!selectedMonitorId.value || monitorsQuery.data.value === undefined) return "loading" as const;
+  if (!selectedMonitorId.value) return "loading" as const;
+  if (monitorsQuery.data.value === undefined) {
+    return monitorsQuery.error.value && !monitorsQuery.loading.value ? ("failed" as const) : ("loading" as const);
+  }
   if (!selectedMonitor.value) return "gone" as const;
   return monitorsQuery.error.value ? ("stale" as const) : ("ready" as const);
 });
@@ -584,6 +587,7 @@ const deleteImpact = computed(() => {
       :gone-title="$t('fleet.monitoring.sheet.goneTitle')"
       :gone-description="$t('fleet.monitoring.sheet.goneDescription')"
       @close="sheet.close"
+      @retry="refreshAll"
     >
       <div v-if="selectedMonitor" class="space-y-5 text-sm">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">

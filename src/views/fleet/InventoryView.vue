@@ -1273,7 +1273,10 @@ const openMachine = computed(() =>
   sheet.openId.value ? machines.value.find((m) => m.id === sheet.openId.value || (!m.id && m.node_id === sheet.openId.value)) : undefined,
 );
 const sheetState = computed(() => {
-  if (!sheet.openId.value || machinesQuery.data.value === undefined) return "loading" as const;
+  if (!sheet.openId.value) return "loading" as const;
+  if (machinesQuery.data.value === undefined) {
+    return machinesQuery.error.value && !machinesQuery.loading.value ? ("failed" as const) : ("loading" as const);
+  }
   if (!openMachine.value) return "gone" as const;
   return machinesQuery.error.value ? ("stale" as const) : ("ready" as const);
 });
@@ -1486,6 +1489,7 @@ async function sendReminders(): Promise<void> {
       :gone-title="$t('fleet.inventory.sheet.goneTitle')"
       :gone-description="$t('fleet.inventory.sheet.goneDescription')"
       @close="sheet.close"
+      @retry="machinesQuery.refresh"
     >
       <div v-if="openMachine" class="space-y-5 text-sm">
         <div class="flex flex-wrap items-center gap-2">

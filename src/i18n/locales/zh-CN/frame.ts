@@ -52,6 +52,8 @@ export default {
       goneTitle: "它已不存在",
       goneDescription: "它已被删除，或者链接指向的对象从未存在。",
       backToList: "返回列表",
+      failedTitle: "读取失败",
+      failedDescription: "还没拿到任何数据，读取就失败了。",
     },
     rowMenu: {
       label: "{name} 的操作",

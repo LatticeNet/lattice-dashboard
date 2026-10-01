@@ -129,7 +129,8 @@ function onSelect(ids: string[], opener: Element): void {
   listedIds.value = ids;
 }
 
-const sheetError = computed(() => (nodesQuery.error.value && nodesQuery.data.value ? proofReason(nodesQuery.error.value) : null));
+/** Why the node read failed, for the sheet; null while a first read retries, so the sheet shows it loading. */
+const sheetError = computed(() => (nodesQuery.error.value && !nodesQuery.loading.value ? proofReason(nodesQuery.error.value) : null));
 
 function openTerminal(node: Node): void {
   if (!auth.can("terminal:open") || !isReporting(node)) return;
@@ -238,6 +239,7 @@ const STATUS_TEXT: Record<string, string> = {
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
       @terminal="openTerminal"
+      @retry="nodesQuery.refresh"
     />
   </div>
 </template>
