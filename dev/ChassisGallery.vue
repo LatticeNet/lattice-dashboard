@@ -238,6 +238,11 @@ const upstreamRows = computed(() =>
   upstreamStatus.value === "all" ? selectRows : selectRows.filter((row) => row.status === upstreamStatus.value),
 );
 
+/* Grouped by the bracketed owner, as Nodes groups by default: the group row carries what spans it. */
+function galleryOwner(row: GalleryNode): string {
+  return /^\[([^\]]+)\]/.exec(row.name)?.[1] ?? "";
+}
+
 const eventColumns: DataTableColumn<EventRow>[] = [
   { key: "what", label: "Change" },
   { key: "who", label: "Actor" },
@@ -504,6 +509,38 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
 
       <p class="text-xs text-muted-foreground">Cards, opt-in, for rows read one at a time (approval events). Desktop keeps the table.</p>
       <DataTable :columns="eventColumns" :rows="eventRows" :row-key="(row) => row.id" narrow-layout="cards" :show-summary="false" />
+
+      <p class="text-xs text-muted-foreground">
+        Grouped (design 23, 3.7): a group row spans the table, carries what spans the group and collapses it. A column sort orders
+        rows inside each group. At 375 the group label stays at the left edge while the columns scroll.
+      </p>
+      <DataTable
+        data-gallery="grouped-table"
+        :columns="selectColumns"
+        :rows="GALLERY_NODES"
+        :row-key="(row) => row.id"
+        :group-key="galleryOwner"
+        :group-order="['cd', 'Metix']"
+        :show-summary="false"
+        :row-click="(row, el) => sheet.open(row.id, el)"
+        :active-row-id="sheet.openId.value"
+      >
+        <template #group="{ group }">
+          <span class="font-medium text-foreground">{{ group.key || 'No owner' }}</span>
+          <span class="font-mono tabular text-muted-foreground">
+            {{ group.rows.length }} · {{ group.rows.filter((row) => row.status === 'online').length }} online
+          </span>
+          <span v-if="group.rows.some((row) => row.status === 'offline')" class="text-destructive">
+            offline: {{ group.rows.filter((row) => row.status === 'offline').map((row) => row.name).join(', ') }}
+          </span>
+        </template>
+        <template #cell-name="{ row }">
+          <span class="font-medium">{{ row.name }}</span>
+        </template>
+        <template #cell-actions="{ row }">
+          <RowMenu :name="row.name" :items="menuFor(row)" />
+        </template>
+      </DataTable>
     </section>
 
     <ObjectSheet
