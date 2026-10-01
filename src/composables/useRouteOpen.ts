@@ -10,7 +10,9 @@
  * gone (a reload, a refresh that re-rendered the rows) it goes to the row
  * carrying the open id (`data-row-key`); when the row is gone too (the object
  * was deleted or filtered out), to the table the row sat in, then to the
- * page heading. Escape never drops the operator at the top of the document.
+ * page's own `fallback` when it gives one (Approvals: the card that took a
+ * decided card's place), then to the page's first table, then to the page
+ * heading. Escape never drops the operator at the top of the document.
  *
  * Reads and writes go through the page's owned route: while the page is
  * leaving, the router already points at the next page, and that page's
@@ -38,7 +40,12 @@ function focusable(el: HTMLElement | null): HTMLElement | null {
   return el;
 }
 
-export function bindRouteOpen(owned: OwnedRoute, param: string = OPEN_PARAM): RouteOpen {
+export interface RouteOpenOptions {
+  /** Where focus goes when the opener, its row and its table are all gone. */
+  fallback?: () => HTMLElement | null;
+}
+
+export function bindRouteOpen(owned: OwnedRoute, param: string = OPEN_PARAM, options: RouteOpenOptions = {}): RouteOpen {
   const openId = computed(() => readOpenId(owned.query(), param));
 
   let opener: HTMLElement | null = null;
@@ -67,6 +74,8 @@ export function bindRouteOpen(owned: OwnedRoute, param: string = OPEN_PARAM): Ro
     const row = id ? document.querySelector<HTMLElement>(rowSelector(id)) : null;
     if (row) return row;
     if (openerTable?.isConnected) return focusable(openerTable);
+    const chosen = options.fallback?.();
+    if (chosen?.isConnected) return focusable(chosen);
     const table = document.querySelector<HTMLElement>("main table");
     if (table) return focusable(table);
     return focusable(document.querySelector<HTMLElement>("main h1, h1"));

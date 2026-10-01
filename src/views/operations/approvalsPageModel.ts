@@ -127,3 +127,28 @@ export function legacyApprovalQuery(query: QueryRecord): Record<string, QueryVal
   } else if (bucket === "all") next.view = "history";
   return next;
 }
+
+/**
+ * The first names a preview prints and how many it leaves out: six, then a
+ * count, the way the rerun and Adopt previews name their nodes.
+ */
+export function namePreview(names: readonly string[], shown = 6): { names: string[]; extra: number } {
+  return { names: names.slice(0, shown), extra: Math.max(0, names.length - shown) };
+}
+
+/**
+ * Why the stuck plans are stuck, one entry per reason, most common first
+ * (ties keep the order the rows came in). The attention list states the
+ * class once and this summary is its proof; the Stuck layer has the rows.
+ */
+export function stuckReasonSummary(rows: readonly Pick<ApprovalView, "waiting">[]): { code: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const code = row.waiting?.code ?? "";
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([code, count], order) => ({ code, count, order }))
+    .sort((a, b) => b.count - a.count || a.order - b.order)
+    .map(({ code, count }) => ({ code, count }));
+}

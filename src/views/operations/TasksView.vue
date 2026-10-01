@@ -148,6 +148,7 @@ const query = useOpsQuery({
   defaultRange: "all",
   unchecked: () => nodesQuery.data.value === undefined,
   noText: () => t("operations.tasks.query.noText"),
+  notFilter: (key) => t("operations.tasks.query.notFilter", { key }),
   owned,
 });
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
@@ -237,7 +238,7 @@ const resultsTruncated = computed(() => !!runsQuery.data.value?.resultsTruncated
 const bounds = computed(() => pageBounds(query.offset.value, tasks.value.length));
 const hasPrev = computed(() => query.offset.value > 0);
 const hasNext = computed(() => bounds.value.to < total.value);
-const filtered = computed(() => query.appliedText.value.trim() !== "" || query.range.value.range !== "all");
+const filtered = computed(() => query.narrowed.value || query.range.value.range !== "all");
 /** Nothing has ever been queued here, and nothing narrows the list. */
 const nothingYet = computed(() => runsQuery.data.value !== undefined && total.value === 0 && !filtered.value);
 

@@ -15,8 +15,21 @@
  * live, the hash of the bytes on screen, why it has not applied, and the
  * tasks it queued. The decision row orders Approve, Approve and queue, and
  * Reject last. Node identity is always a name (NodeLabel).
+ *
+ * Approving never takes fewer steps than rejecting. A single-plan card
+ * leads with Review the plan; Approve and queue lives in the sheet beside
+ * the diff and the hash. A batch approves through a preview in the style
+ * of the rerun and Adopt previews: the nodes (six names, then a count), the
+ * plan hashes the approvals bind to, the offline nodes, and that it
+ * dispatches now. Reject, single or batch, confirms too.
+ *
+ * The attention list names each class of trouble once and points at where
+ * its rows live (the Stuck layer, the stale list in Needs you), so Needs you
+ * stays on the first screen of a phone. After a decision focus moves to the
+ * card that took the decided one's place, or to the sheet's title when the
+ * sheet stays open.
  */
-import { computed, onScopeDispose, ref, watch } from "vue";
+import { computed, nextTick, onScopeDispose, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Ban, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, ExternalLink, FileCode2, Play, RefreshCw, ServerOff } from "lucide-vue-next";
@@ -42,6 +55,7 @@ import { useProof } from "@/composables/useProof";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
 import { approvalStatusMeta } from "@/lib/status";
+import { isReporting } from "@/lib/nodeStatus";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import type { TokenResolvers } from "@/lib/queryTokens";
 import { cn } from "@/lib/utils";
@@ -94,7 +108,9 @@ import {
   defaultApprovalLayer,
   historyRequest,
   legacyApprovalQuery,
+  namePreview,
   normalizeApprovalPage,
+  stuckReasonSummary,
   type ApprovalLayer,
   type ApprovalLayerChoice,
   type ApprovalPage,
@@ -233,7 +249,9 @@ const stuckRows = computed(() =>
   inbox.value.filter(isApprovalStuck).sort((a, b) => (a.updated_at || a.created_at || "").localeCompare(b.updated_at || b.created_at || "")),
 );
 const movingCount = computed(() => inbox.value.filter(isApprovalMoving).length);
-const unexplainedCount = computed(() => inbox.value.filter((row) => row.status === "approved" && !row.waiting).length);
+/** Approved, not applied, and the server sent no reason (a control plane older than the field). */
+const unexplainedRows = computed(() => inbox.value.filter((row) => row.status === "approved" && !row.waiting).sort(newestFirst));
+const unexplainedCount = computed(() => unexplainedRows.value.length);
 const needsCount = computed(() => pendingRows.value.length + staleRows.value.length);
 const eventGroups = computed(() => groupApprovalsIntoEvents(pendingRows.value));
 
@@ -275,6 +293,7 @@ const query = useOpsQuery({
   defaultRange: "all",
   unchecked: () => nodesQuery.data.value === undefined,
   noText: () => t("operations.approvals.query.noText"),
+  notFilter: (key) => (key === "actor" ? t("operations.approvals.query.notFilterActor") : t("operations.approvals.query.notFilter", { key })),
   owned,
 });
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
@@ -304,7 +323,7 @@ onScopeDispose(() => clearInterval(historyTimer));
 const historyRows = computed(() => historyQuery.data.value?.approvals ?? []);
 const historyTotal = computed(() => historyQuery.data.value?.total ?? 0);
 const historyBounds = computed(() => pageBounds(query.offset.value, historyRows.value.length));
-const historyFiltered = computed(() => query.appliedText.value.trim() !== "" || query.range.value.range !== "all");
+const historyFiltered = computed(() => query.narrowed.value || query.range.value.range !== "all");
 /** No plan has ever been filed here and nothing narrows the list: no toolbar over nothing. */
 const historyNothing = computed(() => historyQuery.data.value !== undefined && historyTotal.value === 0 && !historyFiltered.value);
 
@@ -367,7 +386,7 @@ function canDismissWaiting(approval?: ApprovalView): boolean {
 /* The sheet                                                           */
 /* ------------------------------------------------------------------ */
 
-const sheet = bindRouteOpen(owned);
+const sheet = bindRouteOpen(owned, undefined, { fallback: () => afterDecisionTarget() });
 
 const openQuery = useAsyncData<ApprovalView | null>(
   async () => {
@@ -425,6 +444,50 @@ function changeLabel(approval: ApprovalView): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Focus after a decision                                              */
+/* ------------------------------------------------------------------ */
+
+/** The card a decision was made on, by position, so focus can land on the one in its place. */
+let decidedIndex = -1;
+/** The control that opened a confirm; gone when the decision removed its card. */
+let confirmOpener: HTMLElement | null = null;
+
+function rememberOpener(groupKey?: string): void {
+  confirmOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (groupKey !== undefined) decidedIndex = eventGroups.value.findIndex((group) => group.key === groupKey);
+}
+
+function sheetTitle(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-testid="object-sheet"] [data-slot="dialog-title"]');
+}
+
+function activeLayerTab(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-testid="layer-tabs"] [data-state="active"]');
+}
+
+/**
+ * Where focus goes once the control that made a decision is gone: the open
+ * sheet's title, else the card now in the decided card's place (or the last
+ * card), else the current layer's tab. Never the document.
+ */
+function afterDecisionTarget(): HTMLElement | null {
+  if (sheet.openId.value && sheetTitle()) return sheetTitle();
+  if (layer.value === "needs") {
+    const cards = [...document.querySelectorAll<HTMLElement>("[data-event-card] [data-card-primary]")];
+    if (cards.length) return cards[Math.min(Math.max(decidedIndex, 0), cards.length - 1)] ?? null;
+  }
+  return activeLayerTab();
+}
+
+function confirmReturn(): HTMLElement | null {
+  return confirmOpener?.isConnected ? confirmOpener : afterDecisionTarget();
+}
+
+function focusSheetTitle(): void {
+  void nextTick(() => sheetTitle()?.focus());
+}
+
+/* ------------------------------------------------------------------ */
 /* Decisions                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -449,6 +512,8 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
   try {
     await api.approvals.approve(approval.id, queueApply, await decisionDigest(approval));
     toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
+    // The sheet stays open on the decided plan and its footer is gone.
+    if (sheet.openId.value === approval.id) focusSheetTitle();
   } catch (error) {
     const message = error instanceof Error ? error.message : t("operations.approvals.toastFailed");
     const stale = isApprovalStaleError(error);
@@ -462,7 +527,15 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
 
 // One confirm for every closing decision: a single reject, a batch reject,
 // a dismissal. The operator reads what is about to close before it closes.
-const confirm = ref<{ title: string; description: string; label: string; impact?: string[]; run: () => Promise<void> } | null>(null);
+const confirm = ref<{
+  title: string;
+  description: string;
+  label: string;
+  impact?: string[];
+  impactTitle?: string;
+  variant?: "destructive" | "default";
+  run: () => Promise<void>;
+} | null>(null);
 const confirmPending = ref(false);
 const confirmOpen = computed({
   get: () => !!confirm.value,
@@ -483,10 +556,11 @@ async function runConfirmed(): Promise<void> {
   }
 }
 
-function askReject(approval: ApprovalView): void {
+function askReject(approval: ApprovalView, groupKey?: string): void {
+  rememberOpener(groupKey);
   confirm.value = {
-    title: t("operations.approvals.rejectTitle"),
-    description: t("operations.approvals.rejectConfirm", { plugin: approval.plugin, action: approval.action, node: nodeName(approval.node_id) }),
+    title: t("operations.approvals.rejectTitle", { change: changeLabel(approval), node: nodeName(approval.node_id) }),
+    description: t("operations.approvals.rejectConfirm"),
     label: t("operations.approvals.reject"),
     run: () => performReject(approval),
   };
@@ -525,12 +599,39 @@ async function dismiss(approval: ApprovalView): Promise<void> {
 }
 
 function askDismissWaiting(approval: ApprovalView): void {
+  rememberOpener();
   confirm.value = {
     title: t("operations.approvals.waiting.dismissTitle"),
     description: t("operations.approvals.waiting.dismissConfirm", { plugin: approval.plugin, action: approval.action, node: nodeName(approval.waiting?.node_id || approval.node_id) }),
     label: t("operations.approvals.waiting.dismiss"),
     run: () => dismiss(approval),
   };
+}
+
+/**
+ * Clear a stale list in one decision instead of one trip through the sheet
+ * per row. Dismissing is irreversible inside Lattice (the plan stays on
+ * record as dismissed), so it confirms with what happens.
+ */
+function askDismissAll(rows: ApprovalView[]): void {
+  if (!rows.length) return;
+  rememberOpener();
+  confirm.value = {
+    title: t("operations.approvals.needs.dismissAllTitle", { n: rows.length }),
+    description: t("operations.approvals.needs.dismissAllDescription"),
+    label: t("operations.approvals.needs.dismissAll", { n: rows.length }),
+    impact: [t("operations.approvals.needs.dismissAllImpactList"), t("operations.approvals.needs.dismissAllImpactReplan")],
+    impactTitle: t("operations.approvals.needs.dismissAllImpactTitle"),
+    run: () => performDismissAll(rows),
+  };
+}
+
+async function performDismissAll(rows: ApprovalView[]): Promise<void> {
+  const results = await runWithConcurrency(rows, 4, (row) => api.approvals.dismiss(row.id));
+  const { succeeded, failed } = partitionBatchResults(rows, results);
+  if (failed.length === 0) toast.success(t("operations.approvals.needs.toastDismissedAll", { count: succeeded.length }, succeeded.length));
+  else toast.warning(t("operations.approvals.needs.toastDismissPartial", { done: succeeded.length, failed: failed.length, reason: failed[0]?.error ?? "" }));
+  await refreshAfterDecision();
 }
 
 const forceReplan = ref<{ approval: ApprovalView; message: string } | null>(null);
@@ -589,7 +690,14 @@ function eventTitle(group: ApprovalEventGroup<ApprovalView>): string {
       : t("operations.approvals.events.titleFleetUpgradeUnknown");
   }
   if (group.titleKind === "linemeta-sync") return t("operations.approvals.events.titleLinemetaSync");
-  return `${group.plugin} · ${group.title}`;
+  // The action as the plan and the sheet spell it ("sshguard · arm"), not title-cased.
+  return `${group.plugin} · ${group.actionPrefix}`;
+}
+
+function joinPreview(names: string[], shown = 6): string {
+  const preview = namePreview(names, shown);
+  const list = preview.names.join(", ");
+  return preview.extra ? t("operations.approvals.events.andMore", { names: list, count: preview.extra }) : list;
 }
 
 /** The first nodes a card names, by id so NodeLabel prints names, and how many more. */
@@ -600,9 +708,16 @@ function nodePreview(group: ApprovalEventGroup<ApprovalView>): { ids: string[]; 
 
 /** The stale lists Needs you shows: open ones as they are, closed ones folded. */
 const staleParts = computed(() => {
-  const parts: { key: string; title: string; hint: string; rows: ApprovalView[]; foldable: boolean }[] = [];
+  const parts: { key: string; title: string; hint: string; rows: ApprovalView[]; foldable: boolean; dismissable: ApprovalView[] }[] = [];
   if (staleRows.value.length) {
-    parts.push({ key: "stale", title: t("operations.approvals.needs.staleTitle", { n: staleRows.value.length }), hint: t("operations.approvals.staleDescription"), rows: staleRows.value, foldable: false });
+    parts.push({
+      key: "stale",
+      title: t("operations.approvals.needs.staleTitle", { n: staleRows.value.length }),
+      hint: t("operations.approvals.staleDescription"),
+      rows: staleRows.value,
+      foldable: false,
+      dismissable: staleRows.value.filter(canDismissStale),
+    });
   }
   if (staleClosedRows.value.length) {
     parts.push({
@@ -611,6 +726,7 @@ const staleParts = computed(() => {
       hint: t("operations.approvals.needs.staleClosedHint"),
       rows: staleClosedRows.value,
       foldable: true,
+      dismissable: staleClosedRows.value.filter(canDismissStale),
     });
   }
   return parts;
@@ -620,28 +736,75 @@ function eventWriter(group: ApprovalEventGroup<ApprovalView>): string {
   return group.writer === UNKNOWN_WRITER ? t("operations.approvals.events.unknownWriter") : group.writer;
 }
 
-function runBatch(group: ApprovalEventGroup<ApprovalView>, mode: "approve-queue" | "reject"): void {
+function askRejectGroup(group: ApprovalEventGroup<ApprovalView>): void {
   const targets = group.items.filter((item) => item.status === "pending");
   if (!targets.length || batches.value[group.key]?.running) return;
-  if (mode === "reject") {
-    confirm.value = {
-      title: t("operations.approvals.events.rejectAllTitle", { count: targets.length }),
-      description: t("operations.approvals.events.rejectAllConfirm", { count: targets.length, title: eventTitle(group) }),
-      label: t("operations.approvals.events.rejectAll", { count: targets.length }),
-      run: () => performBatch(group, mode, targets),
-    };
+  // One plan is named, not counted ("Reject all 1 approvals?").
+  if (targets.length === 1 && targets[0]) {
+    askReject(targets[0], group.key);
     return;
   }
-  void performBatch(group, mode, targets);
+  rememberOpener(group.key);
+  confirm.value = {
+    title: t("operations.approvals.events.rejectAllTitle", { count: targets.length }),
+    description: t("operations.approvals.events.rejectAllConfirm", { count: targets.length, title: eventTitle(group) }),
+    label: t("operations.approvals.events.rejectAll", { count: targets.length }),
+    run: () => performBatch(group, "reject", targets),
+  };
 }
 
-async function performBatch(group: ApprovalEventGroup<ApprovalView>, mode: "approve-queue" | "reject", targets: ApprovalView[]): Promise<void> {
+/**
+ * Approve a batch through a preview of what goes out. The hashes are read
+ * before the dialog opens, so the preview shows the exact values each
+ * approval sends, and a plan that cannot be read stops here with a reason.
+ */
+async function askApproveGroup(group: ApprovalEventGroup<ApprovalView>): Promise<void> {
+  const targets = group.items.filter((item) => item.status === "pending");
+  if (!targets.length || batches.value[group.key]?.running) return;
+  rememberOpener(group.key);
+  let digests: Map<string, string>;
+  try {
+    digests = new Map(await Promise.all(targets.map(async (item) => [item.id, await decisionDigest(item)] as const)));
+  } catch (error) {
+    toast.error(t("operations.approvals.events.digestsFailed", { message: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
+  const names = [...new Set(targets.map((item) => nodeName(item.node_id)))];
+  const hashes = [...new Set(digests.values())].map((digest) => shortId(digest, 12));
+  const offline = [...new Set(targets.map((item) => item.node_id))]
+    .map((id) => nodes.value.find((node) => node.id === id))
+    .filter((node): node is Node => !!node && !isReporting(node))
+    .map((node) => node.name || node.id);
+  const impact = [
+    names.length === 1 && names[0]
+      ? t("operations.approvals.events.previewNodesOne", { name: names[0] })
+      : t("operations.approvals.events.previewNodes", { n: names.length, names: joinPreview(names) }),
+    t("operations.approvals.events.previewDigests", { digests: joinPreview(hashes, 3) }),
+  ];
+  if (offline.length) impact.push(t("operations.approvals.events.previewOffline", { names: joinPreview(offline) }));
+  confirm.value = {
+    title: t("operations.approvals.events.approveAllTitle", { title: eventTitle(group), count: targets.length }),
+    description: t("operations.approvals.events.approveAllDescription"),
+    label: t("operations.approvals.events.approveAllConfirm", { count: targets.length }),
+    impact,
+    impactTitle: t("operations.approvals.events.previewTitle"),
+    variant: "default",
+    run: () => performBatch(group, "approve-queue", targets, digests),
+  };
+}
+
+async function performBatch(
+  group: ApprovalEventGroup<ApprovalView>,
+  mode: "approve-queue" | "reject",
+  targets: ApprovalView[],
+  digests?: Map<string, string>,
+): Promise<void> {
   batches.value = { ...batches.value, [group.key]: { running: true, done: 0, total: targets.length, failed: 0, error: "" } };
   const results = await runWithConcurrency(
     targets,
     4,
     async (item) => {
-      if (mode === "approve-queue") await api.approvals.approve(item.id, true, await decisionDigest(item));
+      if (mode === "approve-queue") await api.approvals.approve(item.id, true, digests?.get(item.id) ?? (await decisionDigest(item)));
       else await api.approvals.reject(item.id);
     },
     (done, total) => {
@@ -680,7 +843,14 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const counts = countsQuery.data.value;
   if (counts) segments.push({ key: "total", text: t("operations.approvals.proof.plans", { n: num(counts.total) }) });
   if (movingCount.value) segments.push({ key: "moving", text: t("operations.approvals.proof.moving", { n: movingCount.value }) });
-  if (unexplainedCount.value) segments.push({ key: "unexplained", text: t("operations.approvals.proof.unexplained", { n: unexplainedCount.value }), tone: "warning" });
+  if (unexplainedCount.value) {
+    segments.push({
+      key: "unexplained",
+      text: t("operations.approvals.proof.unexplained", { n: unexplainedCount.value }, unexplainedCount.value),
+      tone: "warning",
+      to: { query: { view: "stuck" } },
+    });
+  }
   if (showingHistory.value && historyQuery.data.value) {
     if (historyFiltered.value) segments.push({ key: "match", text: t("operations.approvals.proof.match", { n: num(historyTotal.value) }) });
     if (!historyQuery.data.value.serverFiltered) segments.push({ key: "client", text: t("operations.approvals.proof.clientFiltered"), tone: "warning" });
@@ -688,24 +858,72 @@ const proofSegments = computed<ProofSegment[]>(() => {
   return segments;
 });
 
+/**
+ * The proof of the stuck class in one short line: the reason that matters
+ * most (a failed apply, else the most common) and how many are stuck for
+ * something else. The Stuck layer lists every row with its own reason.
+ */
+function stuckProof(rows: ApprovalView[]): string {
+  const summary = stuckReasonSummary(rows);
+  const lead = summary.find((entry) => entry.code === "task_failed") ?? summary[0];
+  if (!lead) return "";
+  const reason = t(approvalWaitLabelKey(lead.code));
+  const more = rows.length - lead.count;
+  return more > 0
+    ? t("operations.approvals.attention.reasonMore", { reason, n: lead.count, more })
+    : t("operations.approvals.attention.reasonCount", { reason, n: lead.count });
+}
+
+/** Show the stale list in Needs you, scrolled to, for a class with more than one row. */
+function showStale(): void {
+  layerModel.value = "needs";
+  void nextTick(() => document.querySelector('[data-testid="approvals-stale"]')?.scrollIntoView({ block: "start" }));
+}
+
+/**
+ * One line per class, not per plan. Stuck plans have a layer and stale
+ * agent updates have a list in Needs you, so each class is stated once with
+ * where its rows are; listing them item by item repeated the Stuck layer and
+ * pushed the plans waiting on the operator two phone screens down. A class
+ * of one opens its plan directly.
+ */
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = [];
-  for (const row of stuckRows.value) {
+  const stuck = stuckRows.value;
+  const onlyStuck = stuck.length === 1 ? stuck[0] : undefined;
+  if (onlyStuck) {
     items.push({
-      key: `stuck:${row.id}`,
-      tone: row.waiting?.code === "task_failed" ? "danger" : "warning",
-      claim: t("operations.approvals.attention.stuck", { change: changeLabel(row), node: nodeName(row.node_id) }),
-      proof: row.waiting?.reason ?? t(approvalWaitLabelKey(row.waiting?.code)),
-      action: { label: t("operations.approvals.attention.open"), run: () => sheet.open(row.id) },
+      key: "stuck",
+      tone: onlyStuck.waiting?.code === "task_failed" ? "danger" : "warning",
+      claim: t("operations.approvals.attention.stuck", { change: changeLabel(onlyStuck), node: nodeName(onlyStuck.node_id) }),
+      proof: onlyStuck.waiting?.reason ?? t(approvalWaitLabelKey(onlyStuck.waiting?.code)),
+      action: { label: t("operations.approvals.attention.open"), run: () => sheet.open(onlyStuck.id) },
+    });
+  } else if (stuck.length > 1) {
+    items.push({
+      key: "stuck",
+      tone: stuck.some((row) => row.waiting?.code === "task_failed") ? "danger" : "warning",
+      claim: t("operations.approvals.attention.stuckClass", { n: stuck.length }, stuck.length),
+      proof: stuckProof(stuck),
+      action: { label: t("operations.approvals.attention.showStuck"), run: () => (layerModel.value = "stuck") },
     });
   }
-  for (const row of staleRows.value) {
+  const stale = staleRows.value;
+  const onlyStale = stale.length === 1 ? stale[0] : undefined;
+  if (onlyStale) {
     items.push({
-      key: `stale:${row.id}`,
+      key: "stale",
       tone: "warning",
-      claim: t("operations.approvals.attention.stale", { node: nodeName(row.node_id) }),
-      proof: staleReason(row) || undefined,
-      action: { label: t("operations.approvals.attention.open"), run: () => sheet.open(row.id) },
+      claim: t("operations.approvals.attention.stale", { node: nodeName(onlyStale.node_id) }),
+      proof: staleReason(onlyStale) || undefined,
+      action: { label: t("operations.approvals.attention.open"), run: () => sheet.open(onlyStale.id) },
+    });
+  } else if (stale.length > 1) {
+    items.push({
+      key: "stale",
+      tone: "warning",
+      claim: t("operations.approvals.attention.staleClass", { n: stale.length }, stale.length),
+      action: { label: t("operations.approvals.attention.showStale"), run: showStale },
     });
   }
   if (!canApply.value) items.push({ key: "scope", tone: "info", claim: t("operations.approvals.applyRequired") });
@@ -968,38 +1186,47 @@ function refreshAll(): void {
                   </p>
                   <p class="mt-0.5 break-words">{{ batches[group.key]?.error }}</p>
                 </div>
+                <p v-if="!canDecide(group.items[0])" class="text-xs text-muted-foreground" data-testid="approvals-card-readonly">
+                  {{ extraScope(group.items[0]!)
+                    ? $t('operations.approvals.events.readOnlyScope', { scope: extraScope(group.items[0]!) }, group.items.length)
+                    : $t('operations.approvals.events.readOnly', group.items.length) }}
+                </p>
                 <div class="flex flex-wrap items-center gap-2 pt-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    :disabled="!canDecide(group.items[0]) || !!batches[group.key]?.running"
-                    @click="runBatch(group, 'approve-queue')"
-                  >
-                    <Play class="size-4" aria-hidden="true" />
-                    {{ group.items.length === 1 ? $t('operations.approvals.approveAndQueue') : $t('operations.approvals.events.approveAllQueue', { count: group.items.length }) }}
-                  </Button>
+                  <!-- One plan: read it first; Approve and queue is in the sheet beside the diff and the hash. -->
                   <Button
                     v-if="group.items.length === 1"
                     type="button"
-                    variant="outline"
                     size="sm"
+                    data-card-primary
                     :data-row-key="group.items[0]?.id"
                     @click="(event: MouseEvent) => group.items[0] && sheet.open(group.items[0].id, event.currentTarget as HTMLElement)"
                   >
                     <FileCode2 class="size-4" aria-hidden="true" />
                     {{ $t('operations.approvals.needs.review') }}
                   </Button>
-                  <Button v-else type="button" variant="ghost" size="sm" :aria-expanded="expanded.has(group.key)" @click="toggleExpanded(group.key)">
-                    <ChevronDown :class="cn('size-4 transition-transform', expanded.has(group.key) && 'rotate-180')" aria-hidden="true" />
-                    {{ expanded.has(group.key) ? $t('operations.approvals.events.collapse') : $t('operations.approvals.events.expand') }}
-                  </Button>
+                  <template v-else>
+                    <Button
+                      type="button"
+                      size="sm"
+                      data-card-primary
+                      :disabled="!canDecide(group.items[0]) || !!batches[group.key]?.running"
+                      @click="askApproveGroup(group)"
+                    >
+                      <Play class="size-4" aria-hidden="true" />
+                      {{ $t('operations.approvals.events.approveAllQueue', { count: group.items.length }) }}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" :aria-expanded="expanded.has(group.key)" @click="toggleExpanded(group.key)">
+                      <ChevronDown :class="cn('size-4 transition-transform', expanded.has(group.key) && 'rotate-180')" aria-hidden="true" />
+                      {{ expanded.has(group.key) ? $t('operations.approvals.events.collapse') : $t('operations.approvals.events.expand') }}
+                    </Button>
+                  </template>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     class="ms-auto text-destructive"
                     :disabled="!canDecide(group.items[0]) || !!batches[group.key]?.running"
-                    @click="runBatch(group, 'reject')"
+                    @click="askRejectGroup(group)"
                   >
                     <Ban class="size-4" aria-hidden="true" />
                     {{ group.items.length === 1 ? $t('operations.approvals.reject') : $t('operations.approvals.events.rejectAll', { count: group.items.length }) }}
@@ -1031,10 +1258,22 @@ function refreshAll(): void {
           <section v-for="part in staleParts" :key="part.key" class="space-y-2" :data-testid="`approvals-${part.key}`">
             <div class="flex flex-wrap items-center justify-between gap-2">
               <h2 class="text-sm font-medium">{{ part.title }}</h2>
-              <Button v-if="part.foldable" variant="ghost" size="sm" type="button" :aria-expanded="staleClosedOpen" @click="staleClosedOpen = !staleClosedOpen">
-                <ChevronDown :class="cn('size-4 transition-transform', staleClosedOpen && 'rotate-180')" aria-hidden="true" />
-                {{ staleClosedOpen ? $t('operations.approvals.events.collapse') : $t('operations.approvals.needs.showClosed') }}
-              </Button>
+              <div class="flex flex-wrap items-center gap-2">
+                <Button
+                  v-if="part.dismissable.length > 1"
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  :data-testid="`approvals-${part.key}-dismiss-all`"
+                  @click="askDismissAll(part.dismissable)"
+                >
+                  {{ $t('operations.approvals.needs.dismissAll', { n: part.dismissable.length }) }}
+                </Button>
+                <Button v-if="part.foldable" variant="ghost" size="sm" type="button" :aria-expanded="staleClosedOpen" @click="staleClosedOpen = !staleClosedOpen">
+                  <ChevronDown :class="cn('size-4 transition-transform', staleClosedOpen && 'rotate-180')" aria-hidden="true" />
+                  {{ staleClosedOpen ? $t('operations.approvals.events.collapse') : $t('operations.approvals.needs.showClosed') }}
+                </Button>
+              </div>
             </div>
             <p class="text-xs text-muted-foreground">{{ part.hint }}</p>
             <DataTable
@@ -1174,7 +1413,13 @@ function refreshAll(): void {
           @retry="refreshAll"
         >
           <template #empty>
-            <EmptyState tone="positive" :title="$t('operations.approvals.stuckLayer.emptyTitle')" :description="$t('operations.approvals.stuckLayer.emptyDescription')" />
+            <EmptyState
+              tone="positive"
+              :title="$t('operations.approvals.stuckLayer.emptyTitle')"
+              :description="unexplainedCount
+                ? $t('operations.approvals.stuckLayer.emptyDescriptionUnexplained')
+                : $t('operations.approvals.stuckLayer.emptyDescription')"
+            />
           </template>
           <template #cell-change="{ row }">
             <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
@@ -1199,6 +1444,31 @@ function refreshAll(): void {
             <RowMenu :name="changeLabel(row)" :items="stuckMenu(row)" />
           </template>
         </DataTable>
+
+        <!-- Approved, not applied, and no reason from the server: not counted as stuck, since nobody knows. -->
+        <section v-if="unexplainedRows.length" class="space-y-2 pt-3" data-testid="approvals-unexplained">
+          <h2 class="text-sm font-medium">{{ $t('operations.approvals.stuckLayer.unexplainedTitle', { n: unexplainedRows.length }) }}</h2>
+          <p class="text-xs text-muted-foreground">{{ $t('operations.approvals.waiting.unexplainedBody') }}</p>
+          <DataTable
+            :columns="staleColumns.filter((column) => column.key !== 'why')"
+            :rows="unexplainedRows"
+            :row-key="(row) => row.id"
+            :show-summary="false"
+            :row-click="(row, el) => sheet.open(row.id, el)"
+            :active-row-id="sheet.openId.value"
+          >
+            <template #cell-change="{ row }">
+              <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
+            </template>
+            <template #cell-target="{ row }">
+              <NodeLabel v-if="row.node_id" :id="row.node_id" />
+              <span v-else class="text-muted-foreground">{{ $t('common.misc.global') }}</span>
+            </template>
+            <template #cell-updated="{ row }">
+              <span class="whitespace-nowrap text-xs text-muted-foreground" :title="formatDateTime(row.updated_at)">{{ formatRelativeTime(row.updated_at || row.created_at) }}</span>
+            </template>
+          </DataTable>
+        </section>
       </section>
     </template>
 
@@ -1257,9 +1527,12 @@ function refreshAll(): void {
       :title="confirm?.title ?? ''"
       :description="confirm?.description ?? ''"
       :impact="confirm?.impact"
+      :impact-title="confirm?.impactTitle"
+      :variant="confirm?.variant ?? 'destructive'"
       :confirm-label="confirm?.label ?? $t('operations.approvals.reject')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="confirmPending"
+      :return-focus="confirmReturn"
       @confirm="runConfirmed"
     />
 

@@ -221,7 +221,13 @@ export const api = {
     },
     dismiss: (approvalId: string) => {
       const approval = approvals.find((row) => row.id === approvalId);
-      if (!approval?.waiting?.dismissible) return Promise.reject(new ApiError(409, "conflict", "approval is not stale; reject or approve it explicitly"));
+      // The server's rule (handleDismissApproval): an agent update whose
+      // reason is the stale error, whatever its status, or a waiting plan the
+      // server reports as dismissible.
+      const staleAgentUpdate = approval?.plugin === "agentupdate" && (approval.reason ?? "").startsWith("agent update approval is stale");
+      if (!approval || (!staleAgentUpdate && !approval.waiting?.dismissible)) {
+        return Promise.reject(new ApiError(409, "conflict", "approval is not stale; reject or approve it explicitly"));
+      }
       approval.status = "dismissed";
       approval.updated_at = new Date().toISOString();
       approval.waiting = undefined;

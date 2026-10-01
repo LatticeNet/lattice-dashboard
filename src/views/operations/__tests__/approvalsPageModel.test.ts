@@ -8,7 +8,9 @@ import {
   defaultApprovalLayer,
   historyRequest,
   legacyApprovalQuery,
+  namePreview,
   normalizeApprovalPage,
+  stuckReasonSummary,
 } from "../approvalsPageModel.ts";
 
 const tokens = (text: string) =>
@@ -77,4 +79,24 @@ test("old links land on the sheet and the layer they meant", () => {
   assert.deepEqual(legacyApprovalQuery({ bucket: "applied" }), { view: "history", status: "applied" });
   assert.deepEqual(legacyApprovalQuery({ bucket: "stuck", selected: "x", open: "y" }), { open: "y", view: "stuck" });
   assert.equal(legacyApprovalQuery({ view: "history" }), null);
+});
+
+test("a preview names six nodes and counts the rest", () => {
+  const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+  assert.deepEqual(namePreview(names), { names: ["a", "b", "c", "d", "e", "f"], extra: 2 });
+  assert.deepEqual(namePreview(["a", "b"]), { names: ["a", "b"], extra: 0 });
+  assert.deepEqual(namePreview(names, 3), { names: ["a", "b", "c"], extra: 5 });
+});
+
+test("the stuck summary counts each reason once, most common first", () => {
+  const waiting = (code: string) => ({ waiting: { code, blocked: true, reason: "" } }) as Pick<ApprovalView, "waiting">;
+  assert.deepEqual(
+    stuckReasonSummary([waiting("task_failed"), waiting("node_offline"), waiting("node_offline"), waiting("not_queued")]),
+    [
+      { code: "node_offline", count: 2 },
+      { code: "task_failed", count: 1 },
+      { code: "not_queued", count: 1 },
+    ],
+  );
+  assert.deepEqual(stuckReasonSummary([]), []);
 });
