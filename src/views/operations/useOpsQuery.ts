@@ -42,6 +42,11 @@ export interface OpsQueryOptions {
    * saying it names nothing.
    */
   unchecked?: () => boolean;
+  /**
+   * For a collection the server cannot search by text: free text is left out
+   * of the address and the request, and this sentence says so while typing.
+   */
+  noText?: () => string;
   owned?: OwnedRoute;
 }
 
@@ -62,7 +67,12 @@ export function useOpsQuery(options: OpsQueryOptions) {
   }
 
   function parse(text: string) {
-    return parseTokens(text, grammar, options.resolvers());
+    const parsed = parseTokens(text, grammar, options.resolvers());
+    return options.noText ? { ...parsed, text: "" } : parsed;
+  }
+
+  function freeText(text: string): string {
+    return parseTokens(text, grammar, options.resolvers()).text;
   }
 
   function problemText(problem: TokenProblem): string {
@@ -86,7 +96,9 @@ export function useOpsQuery(options: OpsQueryOptions) {
       write(EMPTY_TOKEN_VALUES);
     },
     problems(text: string): string[] {
-      return parse(text).problems.map(problemText);
+      const list = parse(text).problems.map(problemText);
+      if (options.noText && freeText(text)) list.push(options.noText());
+      return list;
     },
     canonical(text: string): string {
       return formatTokens(parse(text), grammar, options.resolvers());

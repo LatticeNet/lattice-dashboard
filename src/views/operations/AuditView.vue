@@ -22,10 +22,11 @@ import { ChevronLeft, ChevronRight, Download, RefreshCw, ShieldCheck } from "luc
 
 import { api, unwrap, type AuditEvent, type AuditVerifyResponse, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { useLayer } from "@/composables/useLayer";
+import { bindLayer } from "@/composables/useLayer";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { useNodeDirectory, provideNodeDirectory } from "@/composables/useNodeDirectory";
 import { useProof, type ProofBinding } from "@/composables/useProof";
-import { useRouteOpen } from "@/composables/useRouteOpen";
+import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { formatAge, formatDateTime, shortId } from "@/lib/format";
 import { type BadgeVariant } from "@/lib/status";
 import type { TokenResolvers } from "@/lib/queryTokens";
@@ -62,7 +63,9 @@ import { useOpsQuery } from "./useOpsQuery";
 
 const { t, locale } = useI18n();
 
-const layer = useLayer<AuditLayer>(() => AUDIT_LAYERS, () => "changes");
+/** One owned route: layer, query and sheet write the same address. */
+const owned = useOwnedRoute();
+const layer = bindLayer<AuditLayer>(owned, () => AUDIT_LAYERS, () => "changes");
 
 /* ------------------------------------------------------------------ */
 /* Nodes, for names in rows and for node: tokens                       */
@@ -92,6 +95,7 @@ const query = useOpsQuery({
   resolvers: () => resolvers.value,
   defaultRange: "24h",
   unchecked: () => nodesQuery.data.value === undefined,
+  owned,
 });
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
 const listing = computed(() => layer.value !== "integrity");
@@ -383,7 +387,7 @@ const columns = computed<DataTableColumn<AuditEvent>[]>(() => [
   { key: "reason", label: t("operations.audit.colReason"), class: "max-w-[22rem]" },
 ]);
 
-const sheet = useRouteOpen();
+const sheet = bindRouteOpen(owned);
 const openEvent = computed(() => events.value.find((event) => event.id === sheet.openId.value));
 const sheetState = computed<"ready" | "loading" | "gone">(() => {
   if (openEvent.value) return "ready";

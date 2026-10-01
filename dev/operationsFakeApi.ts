@@ -15,7 +15,8 @@
  *   empty    a fresh control plane: nothing anywhere.
  *   failing  every read answers 502.
  *
- * Switches: `&scope=read` drops the decide and run scopes; `&no-stderr-head`
+ * Switches: `&scope=read` drops the decide and run scopes; `&exec-off`
+ * answers the version read with task execution switched off; `&no-stderr-head`
  * answers results without stderr_head (the server at c08ffaf);
  * `&no-approval-filter` ignores approval_id on the task list (same).
  *
@@ -140,6 +141,7 @@ function newTask(from: TaskView, targets: string[], origin: TaskView["origin"]):
     started_at: undefined,
     finished_at: undefined,
     rerun_of_task_id: origin === "rerun" ? from.id : undefined,
+    approval_id: origin === "approval" ? from.approval_id : undefined,
     actor_id: "cdcd",
   };
   tasks.unshift(task);
@@ -162,6 +164,7 @@ function guard(read: () => Promise<unknown>): Promise<unknown> {
 
 export const api = {
   auth: { me: () => delay(principal, 40) },
+  version: () => delay({ version: "alpha-0.2.2a102", task_execution_disabled: flags.has("exec-off") }, 40),
   nodes: { list: () => guard(() => delay({ nodes: NODES.map((n) => ({ ...n })) })) },
   approvals: {
     list: (params?: Record<string, unknown>) => guard(() => listing.list(params)),
@@ -246,7 +249,7 @@ export const api = {
       ),
     verify: () => guard(() => delay(FIXTURE === "empty" ? { enabled: true, ok: true, count: 0, anchored: false } : AUDIT_VERIFY, 900)),
   },
-  capabilities: unimplemented,
+  capabilities: { list: () => delay({ capabilities: [] }) },
   plugins: { contributions: () => delay([]) },
   terminal: { list: () => delay({ sessions: [] }) },
 } as unknown as typeof import("@/lib/api/index").api;
