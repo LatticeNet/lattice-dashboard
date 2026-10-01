@@ -3,6 +3,24 @@
 // Namespaces here must not collide with frame.ts or other section files.
 export default {
   fleet: {
+    trustPosture: {
+      title: "Trust posture",
+      description:
+        "What the agents may do and whether this account has a second factor. Exec and terminal come from what each agent last reported, so a node that has not reported since the server restarted counts as having nothing enabled.",
+      rootExec: "Root exec",
+      rootExecHint: "Nodes whose agent runs tasks as root.",
+      terminal: "Browser terminal",
+      terminalHint: "Nodes that accept terminal sessions from the console.",
+      sourcePolicy: "No source policy",
+      sourcePolicyHint: "Nodes without an agent source allowlist.",
+      accountMfa: "Account 2FA",
+      accountMfaHint: "Protects console sessions for this account.",
+      nodes: "{n} node | {n} nodes",
+      notRead: "not read",
+      readOnce: "read when this page opened",
+      mfaOn: "on",
+      mfaOff: "off",
+    },
     groups: {
       title: "Groups",
       description: "Organize your fleet into groups for navigation and policy",
@@ -533,6 +551,13 @@ export default {
     },
 
     map: {
+      aria: "World map: {located} of {total} nodes located",
+      cluster: {
+        one: "{name}, {place}",
+        many: "{n} nodes in {place}",
+        down: "{n} not reporting",
+        somewhere: "an unknown place",
+      },
       title: "Fleet map",
       description: "IP-aware node geography, rendered without external map tiles",
       byLocation: "Global placement",

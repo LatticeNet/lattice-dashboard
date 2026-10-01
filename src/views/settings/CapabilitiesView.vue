@@ -27,6 +27,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import DataState from "@/components/common/DataState.vue";
 import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import TrustPosture from "@/components/fleet/TrustPosture.vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -137,6 +138,8 @@ async function applyToggle() {
       :title="$t('settings.capabilities.title')"
       :description="$t('settings.capabilities.description')"
     />
+
+    <TrustPosture />
 
     <MetricStrip :metrics="summary" :columns="3" />
 

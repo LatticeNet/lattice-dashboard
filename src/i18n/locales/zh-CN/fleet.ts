@@ -2,6 +2,24 @@
 //   export default { <namespace(s)>: { ... } }
 export default {
   fleet: {
+    trustPosture: {
+      title: "信任姿态",
+      description:
+        "agent 被允许做什么，以及当前账号是否开启了二次验证。执行和终端取自每个 agent 最近一次上报，所以服务端重启后还没上报的节点会被算作什么都没开。",
+      rootExec: "Root 执行",
+      rootExecHint: "agent 以 root 身份运行任务的节点。",
+      terminal: "浏览器终端",
+      terminalHint: "接受控制台终端会话的节点。",
+      sourcePolicy: "无来源策略",
+      sourcePolicyHint: "未配置 agent 来源 allowlist 的节点。",
+      accountMfa: "账号 2FA",
+      accountMfaHint: "保护当前账号的控制台会话。",
+      nodes: "{n} 个节点 | {n} 个节点",
+      notRead: "未读取",
+      readOnce: "打开本页时读取",
+      mfaOn: "已开启",
+      mfaOff: "未开启",
+    },
     groups: {
       title: "分组",
       description: "将机群组织为分组,用于导航与策略",
@@ -523,6 +541,13 @@ export default {
     },
 
     map: {
+      aria: "世界地图：{total} 个节点中已定位 {located} 个",
+      cluster: {
+        one: "{name}，{place}",
+        many: "{place} 的 {n} 个节点",
+        down: "{n} 个未上报",
+        somewhere: "未知地点",
+      },
       title: "机群地图",
       description: "基于节点 IP 的地理位置视图,无需外部地图瓦片",
       byLocation: "全球分布",

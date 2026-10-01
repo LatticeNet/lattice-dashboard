@@ -535,6 +535,10 @@ export const api = {
       q?: string;
       at_from?: string;
       at_to?: string;
+      /** Action prefixes to drop inside the scan, at most 16. */
+      exclude_action?: string;
+      /** Decisions to drop inside the scan (allow, deny, observe, warn, dismiss). */
+      exclude_decision?: string;
       limit?: number;
       offset?: number;
     }, opts?: RequestOptions) =>
