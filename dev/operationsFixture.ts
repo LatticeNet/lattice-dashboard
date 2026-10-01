@@ -81,6 +81,33 @@ export function buildNodes(): Node[] {
 export const NODES = buildNodes();
 export const NODE_IDS = NODES.map((node) => node.id);
 
+/**
+ * The nodes the approvals fixture's hand-written rows name (stuck, stale and
+ * pending states). Their ids are their own, so the pending fixture lists them
+ * beside the 34 for names to resolve; names come from each row's waiting
+ * block, so four repeat a name the 34 already use. Invented.
+ */
+export const HAND_WRITTEN_NODES: Node[] = [
+  ["node_ttp3p32iykd4an5w", "[OpenJobs-Data]-tmp", "offline"],
+  ["node_9f2mq7wxbc4l0dhz", "hel-edge-04", "never_reported"],
+  ["node_4kd82mwqxr9tzb1v", "sgp-edge-01", "online"],
+  ["node_1pxv8wq4rm2tzkbd", "fra-edge-02", "online"],
+  ["node_6tzr2wqk8xm1bd4v", "ams-gw-01", "online"],
+  ["node_5wq2rtzk8xm1bd6v", "tyo-edge-03", "online"],
+  ["node_8xm1bd4vzk6tqr2w", "[cd]-wg-hub", "online"],
+  ["node_2wqrtzk85xm1bd6v", "[Metix]-bastion", "online"],
+].map(([id, name, status]) => ({
+  id,
+  name,
+  online: status === "online",
+  reachability: status,
+  status,
+  status_since: iso(-3 * DAY),
+  agent_version: "0.3.9",
+  last_seen: iso(status === "online" ? -4000 : -34 * DAY),
+  tags: ["cd"],
+})) as unknown as Node[];
+
 // ── Approvals ────────────────────────────────────────────────────────────────
 
 /**
@@ -91,8 +118,21 @@ export const NODE_IDS = NODES.map((node) => node.id);
 export function buildApprovals(fixture: string): ApprovalView[] {
   if (fixture === "empty") return [];
   const rand = mulberry32(20260930);
+  // The generator ages rows by status (every applied row older than every
+  // rejected one). Production interleaves them, so the ages are dealt out
+  // again in a seeded shuffle, keeping the 120-day spread. Invented.
+  const generated = generateHistory(rand, 1144, 207, 0);
+  const ages = generated.map((row) => [Date.parse(row.created_at ?? ""), Date.parse(row.updated_at ?? "")] as const);
+  const shuffle = mulberry32(20261001);
+  const order = generated.map((row, i) => ({ row, key: shuffle(), i })).sort((a, b) => a.key - b.key);
+  order.forEach(({ row }, k) => {
+    const [created, updated] = ages[k] as readonly [number, number];
+    row.created_at = new Date(created).toISOString();
+    row.updated_at = new Date(updated).toISOString();
+    if (row.rejected_at) row.rejected_at = row.updated_at;
+  });
   // Newest first, the order the server lists in.
-  const history = generateHistory(rand, 1144, 207, 0).reverse();
+  const history = [...generated].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   const rows = fixture === "pending" ? [...HAND_WRITTEN, ...pendingWave(14), ...history] : history;
   return rows.map((row) => ({ ...row }));
 }

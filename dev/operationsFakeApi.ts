@@ -24,10 +24,11 @@
  * refuses: task statuses outside the eight, more than 100 task ids.
  */
 import { ApiError } from "@/lib/api/client";
+import { sha256Hex } from "@/lib/crypto";
 import type { ApprovalView, Principal, TaskResult, TaskView } from "@/lib/api/types";
 
 import { fakeApprovalsApi } from "./approvalsFixture";
-import { AUDIT_VERIFY, NODES, buildApprovals, buildTasks, countTasks, linkAudit, queryAudit, type AuditQuery } from "./operationsFixture";
+import { AUDIT_VERIFY, HAND_WRITTEN_NODES, NODES, buildApprovals, buildTasks, countTasks, linkAudit, queryAudit, type AuditQuery } from "./operationsFixture";
 
 export * from "@/lib/api/index";
 
@@ -39,6 +40,27 @@ const READ_ONLY = flags.get("scope") === "read";
 const approvals: ApprovalView[] = buildApprovals(FIXTURE === "failing" ? "prod" : FIXTURE);
 const { tasks, results } = buildTasks(FIXTURE === "failing" ? "prod" : FIXTURE, approvals);
 const listing = fakeApprovalsApi(approvals);
+
+/**
+ * The approvals fixture answers plan_sha256 with a stable stand-in, which is
+ * enough for a decision to bind but not for the sheet, which hashes the plan
+ * on screen and compares it with the server's value. This harness answers
+ * the real SHA-256 of each plan, as the server does.
+ */
+const digests = new Map<string, string>();
+const digestsReady = Promise.all(approvals.map(async (row) => digests.set(row.id, await sha256Hex(row.plan ?? ""))));
+
+function realDigest<T>(value: T): T {
+  const fix = (row: ApprovalView) => (digests.has(row.id) ? { ...row, plan_sha256: digests.get(row.id) } : row);
+  if (Array.isArray(value)) return value.map(fix) as T;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.approvals)) return { ...record, approvals: (record.approvals as ApprovalView[]).map(fix) } as T;
+    if (record.approval) return { ...record, approval: fix(record.approval as ApprovalView) } as T;
+    if (typeof record.id === "string" && typeof record.plugin === "string") return fix(record as unknown as ApprovalView) as T;
+  }
+  return value;
+}
 linkAudit(
   approvals.filter((row) => row.status === "applied").slice(0, 200).map((row) => row.id),
   [...new Set(results.slice(0, 400).map((result) => result.task_id))],
@@ -165,11 +187,11 @@ function guard(read: () => Promise<unknown>): Promise<unknown> {
 export const api = {
   auth: { me: () => delay(principal, 40) },
   version: () => delay({ version: "alpha-0.2.2a102", task_execution_disabled: flags.has("exec-off") }, 40),
-  nodes: { list: () => guard(() => delay({ nodes: NODES.map((n) => ({ ...n })) })) },
+  nodes: { list: () => guard(() => delay({ nodes: [...NODES, ...(FIXTURE === "pending" ? HAND_WRITTEN_NODES : [])].map((n) => ({ ...n })) })) },
   approvals: {
-    list: (params?: Record<string, unknown>) => guard(() => listing.list(params)),
+    list: (params?: Record<string, unknown>) => guard(() => digestsReady.then((): Promise<unknown> => listing.list(params)).then(realDigest)),
     counts: (params?: Record<string, unknown>) => guard(() => listing.counts(params)),
-    get: (id: string) => guard(() => listing.get(id)),
+    get: (id: string) => guard(() => digestsReady.then((): Promise<unknown> => listing.get(id)).then(realDigest)),
     approve: (approvalId: string, queueApply: boolean, planSha256?: string) => {
       const approval = approvals.find((row) => row.id === approvalId);
       if (!approval) return Promise.reject(new ApiError(404, "not_found", "approval not found"));

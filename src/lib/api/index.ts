@@ -459,10 +459,11 @@ export const api = {
       ),
     /**
      * Status counts only, no rows: what the Overview and the sidebar need,
-     * at a few hundred bytes instead of the whole listing. `node_id` and
-     * `plugin` narrow the counts; `status` is the breakdown, not a filter.
+     * at a few hundred bytes instead of the whole listing. `node_id`,
+     * `plugin` and `since` (on updated_at) narrow the counts; `status` is the
+     * breakdown, not a filter.
      */
-    counts: (params?: Pick<ApprovalListParams, "node_id" | "plugin">, opts?: RequestOptions) =>
+    counts: (params?: Pick<ApprovalListParams, "node_id" | "plugin" | "since">, opts?: RequestOptions) =>
       http
         .get<{ counts: Partial<ApprovalCounts> }>("/api/network/approvals", { ...params, count: 1 }, opts)
         .then((r) => unwrapApprovalCounts(r)),
