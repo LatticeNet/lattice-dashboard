@@ -169,7 +169,7 @@ export const api = {
   nodes: {
     list: () => answer("nodes", () => ({ nodes: nodes.map((n) => ({ ...n })) })),
     geo: () => answer("geo", () => ({ nodes: nodes.map((n) => ({ ...n })) })),
-    duplicates: () => delay({ groups: SHAPE === "dense" ? [{ reason: "same_machine_id", confidence: "high", signal: "machine-id", node_ids: [nodes[1]!.id, nodes[33]!.id] }] : [] }),
+    duplicates: () => delay({ groups: SHAPE === "dense" ? [{ reason: "host_fingerprint", confidence: "high", signal: "machine-id", node_ids: [nodes[1]!.id, nodes[33]!.id] }] : [] }),
     disable: (id: string, disabled: boolean) => {
       nodes = nodes.map((n) => (n.id === id ? { ...n, disabled: disabled || undefined, status: disabled ? "disabled" : "online" } : n));
       return delay(undefined);
@@ -182,15 +182,25 @@ export const api = {
       const node = nodes.find((n) => n.id === input.node_id)!;
       return delay({ ok: true, name: node.name, role: node.role ?? "", tags: node.tags ?? [], comment: node.comment });
     },
-    nodeCapabilities: () => delay({ capabilities: [] }),
+    // One live gate, allowed through the agent config (invented).
+    nodeCapabilities: () => delay({ effective: [{ capability: "sing-box", enforced: true, allowed: true, source: "derived" }] }),
     capabilities: () => delay({ capabilities: [] }),
     deletePlan: () => delay({ mutated: false, monitors_stripped: 0, ddns: 1, groups: 1 }),
     resolveGeo: (id: string) => delay({ ...nodes.find((n) => n.id === id)! }),
-    updateGeo: (input: { node_id: string }) => delay({ ...nodes.find((n) => n.id === input.node_id)! }),
-    clearGeo: (id: string) => delay({ ...nodes.find((n) => n.id === id)! }),
+    updateGeo: (id: string, geo: Record<string, unknown>) => {
+      nodes = nodes.map((n) => (n.id === id ? { ...n, geo: { ...geo, source: "operator", updated_at: new Date().toISOString() } } : n));
+      return delay({ ...nodes.find((n) => n.id === id)! });
+    },
+    clearGeo: (id: string) => {
+      nodes = nodes.map((n) => (n.id === id ? { ...n, geo: undefined } : n));
+      return delay({ ...nodes.find((n) => n.id === id)! });
+    },
     reconfigureCommand: (input: { node_id: string }) => delay({ node_id: input.node_id, server_url: "https://lattice.example.net", command: "lattice-agent reconfigure --harness" }),
     ipConfig: (input: { node_id: string }) => delay({ ...nodes.find((n) => n.id === input.node_id)! }),
-    setDebug: (input: { node_id: string }) => delay({ ...nodes.find((n) => n.id === input.node_id)! }),
+    setDebug: (id: string, enabled: boolean, collect?: boolean) => {
+      nodes = nodes.map((n) => (n.id === id ? { ...n, agent_debug: { enabled, collect: !!collect } } : n));
+      return delay({ ...nodes.find((n) => n.id === id)! });
+    },
     setCapability: () => delay({ ok: true }),
   },
   approvals: {
@@ -312,6 +322,7 @@ export const api = {
     setEnforced: (capability: string, enforced: boolean) => delay({ capability, enforced, mutates: true, derived: true, allow_count: 30, refuse_count: 4 }),
   },
   plugins: {
-    contributions: () => delay([]),
+    // vpn-core is installed in production; the node sheet links to its Lines.
+    contributions: () => delay([{ id: "latticenet.vpn-core", name: "vpn-core", version: "0.9.0-alpha.1", status: "active", active: true, ui: { nav: [] } }]),
   },
 } as unknown as typeof import("@/lib/api/index").api;

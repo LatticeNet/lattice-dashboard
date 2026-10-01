@@ -12,26 +12,20 @@
  */
 import { computed, watch, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
+import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Activity,
   ArrowDown,
   ArrowLeft,
   ArrowUp,
-  Boxes,
   Clock,
   Crown,
-  DownloadCloud,
   FolderTree,
   Gauge,
   Globe,
-  Info,
   KeyRound,
-  MapPin,
-  Pencil,
   Power,
-  RadioTower,
   RefreshCw,
   RotateCw,
   Server,
@@ -69,6 +63,8 @@ import {
 import { buildNodeQueue, type NodeQueueEntry } from "./nodeTaskQueueModel";
 import { leaseAttemptLabel, stalledText, taskStateStyle } from "@/lib/taskLease";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useLayer } from "@/composables/useLayer";
+import { useProof } from "@/composables/useProof";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { hasNeverReported, statusMeta } from "@/lib/status";
@@ -85,8 +81,10 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
+import StatusDot from "@/components/common/StatusDot.vue";
+import SettingsSection from "@/components/fleet/SettingsSection.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -319,6 +317,21 @@ const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
 const node = computed<Node | undefined>(() =>
   (nodesQuery.data.value ?? []).find((n) => n.id === nodeId.value),
 );
+
+/* ----------------------------------------------------------------- */
+/* Layers (design 23, 4.2): Overview leads with state, Activity is    */
+/* what happened here, Settings holds what changes rarely.            */
+/* ----------------------------------------------------------------- */
+const NODE_LAYERS = ["overview", "activity", "settings"] as const;
+type NodeLayer = (typeof NODE_LAYERS)[number];
+const layer = useLayer<NodeLayer>(() => NODE_LAYERS, () => "overview");
+const layerTabs = computed<LayerTab<NodeLayer>[]>(() => [
+  { value: "overview", label: t("fleet.nodes.detail.layers.overview") },
+  { value: "activity", label: t("fleet.nodes.detail.layers.activity") },
+  { value: "settings", label: t("fleet.nodes.detail.layers.settings") },
+]);
+
+const proof = useProof(nodesQuery);
 
 const launchAllowExec = ref(false);
 const launchAllowRootExec = ref(false);
@@ -814,16 +827,6 @@ function refreshAll() {
 }
 
 /* ----------------------------------------------------------------- */
-/* Cross-links to the vertical function views, pre-scoped to this     */
-/* node via ?node=<id> (the seed-watchers on those views select it).  */
-/* ----------------------------------------------------------------- */
-function goToInventory() {
-  if (node.value) router.push({ name: "inventory", query: { node: node.value.id } });
-}
-function goToMonitoring() {
-  if (node.value) router.push({ name: "monitoring", query: { node: node.value.id } });
-}
-/* ----------------------------------------------------------------- */
 /* Identity editing (name / role / tags). Operator-owned; gated on    */
 /* node:admin like the other admin controls. The form seeds once per  */
 /* node id so the 5s poll never clobbers an in-progress edit.         */
@@ -1297,1184 +1300,1237 @@ async function resolveGeo() {
     resolvingGeo.value = false;
   }
 }
+
+/** What the node page knows and from where: the status read and the agent's version. */
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = node.value;
+  if (!n) return [];
+  const out: ProofSegment[] = [{ key: "status", text: statusBadge.value.label }];
+  if (n.agent_version) out.push({ key: "agent", text: t("fleet.nodes.detail.proofAgent", { version: n.agent_version }) });
+  out.push({ key: "via", text: t("fleet.nodes.detail.proofVia"), tone: "muted" });
+  return out;
+});
+
+/* ----------------------------------------------------------------- */
+/* Location (moved here from the Map's editor, design 23, 4.2). The   */
+/* form seeds once per node id so a poll never clobbers an edit.      */
+/* ----------------------------------------------------------------- */
+const geoCountry = ref("");
+const geoRegion = ref("");
+const geoCity = ref("");
+const geoLat = ref("");
+const geoLon = ref("");
+const geoPending = ref(false);
+const clearGeoOpen = ref(false);
+
+function seedGeo(n?: Node): void {
+  geoCountry.value = n?.geo?.country ?? "";
+  geoRegion.value = n?.geo?.region ?? "";
+  geoCity.value = n?.geo?.city ?? "";
+  geoLat.value = n?.geo?.lat?.toString() ?? "";
+  geoLon.value = n?.geo?.lon?.toString() ?? "";
+}
+watch(() => node.value?.id, () => seedGeo(node.value), { immediate: true });
+
+function parseCoordinate(value: string, limit: number): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && Math.abs(parsed) <= limit ? parsed : undefined;
+}
+
+const geoLatValue = computed(() => parseCoordinate(geoLat.value, 90));
+const geoLonValue = computed(() => parseCoordinate(geoLon.value, 180));
+const geoInvalid = computed(() => geoLatValue.value === undefined || geoLonValue.value === undefined);
+const geoDirty = computed(() => {
+  const g = node.value?.geo;
+  return (
+    geoCountry.value.trim() !== (g?.country ?? "") ||
+    geoRegion.value.trim() !== (g?.region ?? "") ||
+    geoCity.value.trim() !== (g?.city ?? "") ||
+    geoLat.value.trim() !== (g?.lat?.toString() ?? "") ||
+    geoLon.value.trim() !== (g?.lon?.toString() ?? "")
+  );
+});
+
+async function saveGeo(): Promise<void> {
+  const n = node.value;
+  if (!n || !canAdminNodes.value || geoInvalid.value) return;
+  geoPending.value = true;
+  try {
+    await api.nodes.updateGeo(n.id, {
+      country: geoCountry.value.trim() || undefined,
+      region: geoRegion.value.trim() || undefined,
+      city: geoCity.value.trim() || undefined,
+      lat: geoLatValue.value,
+      lon: geoLonValue.value,
+      provider: n.geo?.provider,
+      asn: n.geo?.asn,
+      as_org: n.geo?.as_org,
+    });
+    toast.success(t("fleet.map.toast.locationSaved"));
+    await nodesQuery.refresh();
+    seedGeo(node.value);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.saveFailed"));
+  } finally {
+    geoPending.value = false;
+  }
+}
+
+async function clearGeo(): Promise<void> {
+  const n = node.value;
+  if (!n || !canAdminNodes.value) return;
+  geoPending.value = true;
+  try {
+    await api.nodes.clearGeo(n.id);
+    toast.success(t("fleet.map.toast.locationCleared"));
+    clearGeoOpen.value = false;
+    await nodesQuery.refresh();
+    seedGeo(node.value);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.clearFailed"));
+  } finally {
+    geoPending.value = false;
+  }
+}
+
+// IP discovery saves only when the form differs from the stored override.
+const ipDirty = computed(() => {
+  const c = node.value?.ip_config;
+  return (
+    ipMode.value !== (c?.mode ? c.mode : "inherit") ||
+    ipStaticV4.value.trim() !== (c?.static_ipv4 ?? "") ||
+    ipStaticV6.value.trim() !== (c?.static_ipv6 ?? "") ||
+    ipResolvers.value.split("\n").map((v) => v.trim()).filter(Boolean).join("\n") !== (c?.resolvers ?? []).join("\n") ||
+    !!ipScript.value.trim()
+  );
+});
+
+// Diagnostics: a draft and a Save like every other section, instead of
+// checkboxes that wrote to the node on every click.
+const debugEnabledDraft = ref(false);
+const debugCollectDraft = ref(false);
+function seedDebug(n?: Node): void {
+  debugEnabledDraft.value = !!n?.agent_debug?.enabled;
+  debugCollectDraft.value = !!n?.agent_debug?.collect;
+}
+watch(() => node.value?.id, () => seedDebug(node.value), { immediate: true });
+const debugDirty = computed(
+  () => debugEnabledDraft.value !== !!node.value?.agent_debug?.enabled || (debugEnabledDraft.value && debugCollectDraft.value !== !!node.value?.agent_debug?.collect),
+);
+async function saveDebug(): Promise<void> {
+  await setNodeDebug(debugEnabledDraft.value, debugEnabledDraft.value ? debugCollectDraft.value : false);
+  seedDebug(node.value);
+}
 </script>
 
 <template>
-  <!-- Resolved node: full page with a sticky header over a 2-column body. -->
+  <!-- Resolved node: a one-line sticky header, the proof line, and three layers. -->
   <div v-if="node">
-    <div class="sticky top-0 z-20 border-b border-border bg-background px-4 py-4 sm:px-6">
-      <PageHeader :title="node.name || node.id">
-        <template #status>
-          <FreshnessLabel :last-updated="nodesQuery.lastUpdated.value" :poll-ms="nodesQuery.pollMs" />
-        </template>
-        <template #actions>
-          <Button variant="ghost" size="sm" @click="goBack">
-            <ArrowLeft class="size-4" aria-hidden="true" />
-            {{ $t('fleet.nodes.detail.backToNodes') }}
-          </Button>
-          <Button
-            v-if="canOpenTerminal"
-            size="sm"
-            :disabled="!isReporting(node)"
-            @click="openTerminal"
-          >
-            <SquareTerminal class="size-4" aria-hidden="true" />
-            {{ $t('fleet.nodes.list.openTerminal') }}
-          </Button>
-          <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value" @click="refreshAll">
-            <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-            {{ $t('common.actions.refresh') }}
-          </Button>
-        </template>
-      </PageHeader>
-
-      <!-- Identity row: status / role / tags / groups, last-seen. -->
-      <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
-        <Badge :variant="statusBadge.variant">{{ statusBadge.label }}</Badge>
-        <span v-if="statusSince" class="text-xs text-muted-foreground" :title="statusSince">
-          {{ $t('fleet.nodes.detail.statusSince', { time: formatRelativeTime(statusSince) }) }}
-        </span>
-        <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
-        <Badge v-for="tag in displayTags" :key="tag" variant="outline">{{ tag }}</Badge>
-        <button
-          v-for="g in groupBadges"
-          :key="g.id"
-          type="button"
-          :class="cn(
-            'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-            groupColor(g.color).border,
-            groupColor(g.color).soft,
-            groupColor(g.color).text,
-          )"
-          @click="goToGroup(g.id)"
-        >
-          <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
-          {{ g.name }}
-          <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
-        </button>
-        <span class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground tabular">
-          {{ shortId(node.id, 20) }}
-          <CopyButton :value="node.id" />
-        </span>
-        <span class="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground tabular">
-          <Clock class="size-3.5" aria-hidden="true" />
-          {{ lastSeenText(node) }}
-        </span>
-      </div>
-
-      <!-- Why the word above says what it says. The page has room for the
-           sentence, so it is printed rather than hidden behind a hover: a
-           title attribute is not reachable by keyboard and is not read out. -->
-      <p class="mt-2 flex items-start gap-2 text-sm text-muted-foreground">
-        <Info class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-        <span>{{ statusReason || $t(statusInfo.hintKey) }}</span>
-      </p>
-
-      <div v-if="node.comment" class="mt-3 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        <p class="flex items-start gap-2">
-          <ScrollText class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          <span class="whitespace-pre-wrap">{{ node.comment }}</span>
-        </p>
-      </div>
-
-      <!-- Cross-links to the vertical function views, pre-scoped to this node. -->
-      <div class="mt-3 flex flex-wrap items-center gap-2">
-        <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.relatedViews') }}</span>
-        <Button variant="outline" size="sm" @click="goToInventory">
-          <Boxes class="size-4" aria-hidden="true" />
-          {{ $t('fleet.nodes.detail.viewInventory') }}
-        </Button>
-        <Button variant="outline" size="sm" @click="goToMonitoring">
-          <RadioTower class="size-4" aria-hidden="true" />
-          {{ $t('fleet.nodes.detail.viewMonitoring') }}
-        </Button>
-      </div>
+    <!-- One line (design 23, 4.2): the header took 41% of a phone screen. -->
+    <div class="sticky top-0 z-20 flex min-w-0 items-center gap-2.5 border-b border-border bg-background px-4 py-2.5 sm:px-6">
+      <StatusDot :status="statusInfo.health" />
+      <h1 class="min-w-0 truncate text-lg font-semibold tracking-tight" :title="node.name || node.id">{{ node.name || node.id }}</h1>
+      <span :class="cn('shrink-0 text-sm', statusBadge.variant === 'destructive' ? 'text-destructive' : statusBadge.variant === 'warning' ? 'text-warning-text' : 'text-muted-foreground')">
+        {{ statusBadge.label }}
+      </span>
+      <Button
+        v-if="canOpenTerminal"
+        size="sm"
+        class="ms-auto shrink-0"
+        :disabled="!isReporting(node)"
+        :aria-label="$t('fleet.nodes.list.openTerminal')"
+        @click="openTerminal"
+      >
+        <SquareTerminal class="size-4" aria-hidden="true" />
+        <span class="hidden sm:inline">{{ $t('fleet.nodes.list.openTerminal') }}</span>
+      </Button>
     </div>
 
-    <div class="grid grid-cols-1 min-w-0 gap-6 p-4 sm:p-6 lg:grid-cols-3">
-      <!-- ── Main column ──────────────────────────────────────────── -->
-      <div class="space-y-6 lg:col-span-2">
-        <!-- Capability enrolment. What is allowed to act on this node, as
-             opposed to what this node is (identity, above) or what its agent
-             can currently do (runtime, further down). Those are three different
-             questions and dispatch needs all three. -->
-        <Card v-if="canAdminNodes">
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <ShieldCheck class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.capabilities.title') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.capabilities.description') }}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div class="divide-y divide-border/60">
-              <div
-                v-for="row in (showDormantCapabilities ? allCapabilityRows : capabilityRows)"
-                :key="row.capability"
-                class="flex flex-wrap items-center gap-3 py-2 first:pt-0 last:pb-0"
-              >
-                <div class="min-w-0 flex-1">
-                  <p class="truncate font-mono text-sm">{{ row.capability }}</p>
-                  <p
-                    v-if="capabilityNote(row.record)"
-                    class="truncate text-xs text-muted-foreground"
-                    :title="capabilityNote(row.record)"
-                  >
-                    {{ capabilityNote(row.record) }}
-                  </p>
-                </div>
-                <!-- The effective answer, not just the stored record. A node
-                     allowed because of its own configuration is in scope, and
-                     labelling that "not decided" would read as blocked. -->
-                <Badge :variant="capabilityBadge(row.record).variant">
-                  {{ capabilityBadge(row.record).label }}
-                </Badge>
-                <div class="flex shrink-0 items-center gap-1">
-                  <Button
-                    v-if="row.record?.state !== 'enrolled'"
-                    size="sm"
-                    variant="outline"
-                    :disabled="capabilityPending === row.capability"
-                    @click="setCapability(row.capability, 'enrolled')"
-                  >
-                    {{ $t('fleet.nodes.detail.capabilities.enrol') }}
-                  </Button>
-                  <Button
-                    v-if="row.record?.state !== 'excluded'"
-                    size="sm"
-                    variant="ghost"
-                    :disabled="capabilityPending === row.capability"
-                    @click="openExclude(row.capability)"
-                  >
-                    {{ $t('fleet.nodes.detail.capabilities.exclude') }}
-                  </Button>
-                  <!-- Clearing is not the same as excluding: it removes the
-                       decision so the capability's own default applies again. -->
-                  <Button
-                    v-if="row.record"
-                    size="sm"
-                    variant="ghost"
-                    :disabled="capabilityPending === row.capability"
-                    :title="$t('fleet.nodes.detail.capabilities.clearHint')"
-                    @click="setCapability(row.capability, '')"
-                  >
-                    {{ $t('fleet.nodes.detail.capabilities.clear') }}
-                  </Button>
-                </div>
-              </div>
-            </div>
-            <!-- The capabilities that are declared but not yet gated. Kept out
-                 of the way rather than out of reach: a decision recorded now
-                 will apply the moment that capability goes live. -->
-            <Button
-              v-if="dormantCapabilityRows.length"
-              variant="ghost"
-              size="sm"
-              class="mt-2 text-muted-foreground"
-              @click="showDormantCapabilities = !showDormantCapabilities"
-            >
-              {{ showDormantCapabilities
-                ? $t('fleet.nodes.detail.capabilities.hideDormant')
-                : $t('fleet.nodes.detail.capabilities.showDormant', { count: dormantCapabilityRows.length }) }}
-            </Button>
-          </CardContent>
-        </Card>
-
-        <!-- Identity (operator-owned: name / role / tags). node:admin only. -->
-        <Card v-if="canAdminNodes">
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Pencil class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.identity') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.identityDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div class="grid gap-1.5">
-                <Label for="identity-name">{{ $t('fleet.nodes.detail.identityName') }}</Label>
-                <Input id="identity-name" v-model="editName" :placeholder="node.id" />
-              </div>
-              <div class="grid gap-1.5">
-                <Label for="identity-role">{{ $t('fleet.nodes.detail.identityRole') }}</Label>
-                <Input id="identity-role" v-model="editRole" :placeholder="$t('fleet.nodes.enroll.rolePlaceholder')" />
-              </div>
-            </div>
-            <div class="grid gap-1.5">
-              <Label for="identity-tags">{{ $t('fleet.nodes.detail.identityTags') }}</Label>
-              <div v-if="editTags.length" class="flex flex-wrap gap-1.5">
-                <Badge v-for="tag in editTags" :key="tag" variant="outline" class="gap-1">
-                  {{ tag }}
-                  <button
-                    type="button"
-                    class="text-muted-foreground hover:text-foreground"
-                    :aria-label="$t('fleet.nodes.detail.identityRemoveTag')"
-                    @click="removeTag(tag)"
-                  >
-                    <X class="size-3" aria-hidden="true" />
-                  </button>
-                </Badge>
-              </div>
-              <Input
-                id="identity-tags"
-                v-model="tagDraft"
-                :placeholder="$t('fleet.nodes.detail.identityTagPlaceholder')"
-                @keydown.enter.prevent="addTag"
-              />
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityTagHint') }}</p>
-            </div>
-            <div class="grid gap-1.5">
-              <Label for="identity-comment">{{ $t('fleet.nodes.detail.identityComment') }}</Label>
-              <Textarea
-                id="identity-comment"
-                v-model="editComment"
-                rows="3"
-                :placeholder="$t('fleet.nodes.detail.identityCommentPlaceholder')"
-              />
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
-            </div>
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div class="grid gap-1.5">
-                <Label for="identity-purity">{{ $t('fleet.nodes.detail.identityPurity') }}</Label>
-                <Input
-                  id="identity-purity"
-                  v-model="editPurity"
-                  inputmode="numeric"
-                  placeholder="98"
-                  :aria-invalid="purityInvalid"
-                  :class="cn(purityInvalid && 'border-destructive')"
-                />
-                <p v-if="purityInvalid" class="text-xs text-destructive">
-                  {{ $t('fleet.nodes.detail.identityPurityInvalid') }}
-                </p>
-                <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityPurityHint') }}</p>
-              </div>
-              <div class="grid gap-1.5">
-                <Label for="identity-quality">{{ $t('fleet.nodes.detail.identityQuality') }}</Label>
-                <Input
-                  id="identity-quality"
-                  v-model="editQuality"
-                  :placeholder="$t('fleet.nodes.detail.identityQualityPlaceholder')"
-                />
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityQualityHint') }}</p>
-              </div>
-            </div>
-            <div class="grid gap-1.5">
-              <Label for="identity-inventory-notes">{{ $t('fleet.nodes.detail.identityInventoryNotes') }}</Label>
-              <Textarea
-                id="identity-inventory-notes"
-                v-model="editInventoryNotes"
-                rows="2"
-                :placeholder="$t('fleet.nodes.detail.identityInventoryNotesPlaceholder')"
-              />
-            </div>
-            <div class="grid gap-1.5">
-              <Label for="identity-agent-source-allowlist">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlist') }}</Label>
-              <Textarea
-                id="identity-agent-source-allowlist"
-                v-model="editAgentSourceAllowlist"
-                rows="3"
-                :placeholder="$t('fleet.nodes.detail.identityAgentSourceAllowlistPlaceholder')"
-              />
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlistHint') }}</p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button size="sm" :disabled="identityPending || !identityDirty || purityInvalid" @click="saveIdentity">
-                <RefreshCw v-if="identityPending" class="size-3.5 animate-spin" aria-hidden="true" />
-                {{ $t('common.actions.save') }}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Live status + metrics -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ statusCardTitle }}
-            </CardTitle>
-            <CardDescription>{{ statusCardDesc }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-5">
-            <div class="space-y-2.5">
-              <MetricBar
-                :label="$t('fleet.nodes.metric.cpu')"
-                tone="cpu"
-                :percent="node.metrics?.cpu_percent"
-                :unavailable="noSample"
-              />
-              <MetricBar
-                :label="$t('fleet.nodes.metric.memory')"
-                tone="memory"
-                :used="node.metrics?.memory_used"
-                :total="node.metrics?.memory_total"
-                :unavailable="noSample"
-              />
-              <MetricBar
-                :label="$t('fleet.nodes.metric.disk')"
-                tone="disk"
-                :used="node.metrics?.disk_used"
-                :total="node.metrics?.disk_total"
-                :unavailable="noSample"
-              />
-            </div>
-
-            <!-- In-session CPU trend. -->
-            <div>
-              <p class="mb-1 text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sparklineLabel') }}</p>
-              <svg
-                v-if="hasSpark"
-                :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`"
-                :style="{ height: SPARK_H + 'px' }"
-                class="block w-full"
-                preserveAspectRatio="none"
-                role="img"
-                :aria-label="$t('fleet.nodes.detail.sparklineLabel')"
-              >
-                <polyline
-                  :points="sparkPoints"
-                  fill="none"
-                  :class="['stroke-current', meta.textClass]"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  vector-effect="non-scaling-stroke"
-                />
-              </svg>
-              <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sparklinePending') }}</p>
-            </div>
-
-            <!-- Secondary stats grid. -->
-            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <div class="rounded-md border border-border bg-muted/20 p-3">
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.load') }}</p>
-                <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
-                  <Gauge class="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {{ node.metrics?.load1?.toFixed(2) ?? NO_VALUE }}
-                </p>
-              </div>
-              <div class="rounded-md border border-border bg-muted/20 p-3">
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.uptime') }}</p>
-                <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
-                  <Clock class="size-3.5 text-muted-foreground" aria-hidden="true" />
-                  {{ formatDuration(node.metrics?.uptime_seconds) }}
-                </p>
-              </div>
-              <div class="rounded-md border border-border bg-muted/20 p-3">
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sampleTime') }}</p>
-                <p class="mt-1 font-mono text-sm tabular">{{ formatRelativeTime(node.metrics?.collected_at) }}</p>
-              </div>
-              <div class="rounded-md border border-border bg-muted/20 p-3">
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.download') }}</p>
-                <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
-                  <ArrowDown class="size-3.5 text-success" aria-hidden="true" />
-                  {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
-                </p>
-              </div>
-              <div class="rounded-md border border-border bg-muted/20 p-3">
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.upload') }}</p>
-                <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
-                  <ArrowUp class="size-3.5 text-primary" aria-hidden="true" />
-                  {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
-                </p>
-              </div>
-              <div class="rounded-md border border-border bg-muted/20 p-3">
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.transferred') }}</p>
-                <p class="mt-1 font-mono text-sm tabular">
-                  <span class="text-success">{{ formatBytes(node.metrics?.net_rx_bytes) }}</span>
-                  /
-                  <span class="text-primary">{{ formatBytes(node.metrics?.net_tx_bytes) }}</span>
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Network / IP -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Globe class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.network') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.networkDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
-                <div class="min-w-0">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm" :title="node.public_ip || $t('common.misc.none')">{{ node.public_ip || $t('common.misc.none') }}</p>
-                </div>
-                <CopyButton v-if="node.public_ip" :value="node.public_ip" />
-              </div>
-              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
-                <div class="min-w-0">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIpv6') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm" :title="node.public_ipv6 || $t('common.misc.none')">{{ node.public_ipv6 || $t('common.misc.none') }}</p>
-                </div>
-                <CopyButton v-if="node.public_ipv6" :value="node.public_ipv6" />
-              </div>
-              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
-                <div class="min-w-0">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIp') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm" :title="displayInternalAddress(node.internal_ip, node.public_ip)">{{ displayInternalAddress(node.internal_ip, node.public_ip) }}</p>
-                </div>
-                <CopyButton
-                  v-if="copyableInternalAddress(node.internal_ip, node.public_ip)"
-                  :value="copyableInternalAddress(node.internal_ip, node.public_ip)"
-                />
-              </div>
-              <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
-                <div class="min-w-0">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIpv6') }}</p>
-                  <p class="mt-1 truncate font-mono text-sm" :title="displayInternalAddress(node.internal_ipv6, node.public_ipv6)">{{ displayInternalAddress(node.internal_ipv6, node.public_ipv6) }}</p>
-                </div>
-                <CopyButton
-                  v-if="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
-                  :value="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
-                />
-              </div>
-            </div>
-
-            <!-- IP discovery override (operator-owned; pushed to the agent) -->
-            <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border p-3">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <p class="inline-flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
-                  <Globe class="size-3.5" aria-hidden="true" />
-                  {{ $t('fleet.nodes.detail.ipConfig.title') }}
-                </p>
-                <Badge :variant="node.ip_config?.mode ? 'outline' : 'secondary'">
-                  {{ node.ip_config?.mode ? $t('fleet.nodes.detail.ipConfig.overrideActive') : $t('fleet.nodes.detail.ipConfig.inheriting') }}
-                </Badge>
-              </div>
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.hint') }}</p>
-              <div class="grid gap-1.5 sm:max-w-xs">
-                <Label>{{ $t('fleet.nodes.detail.ipConfig.mode') }}</Label>
-                <Select v-model="ipMode">
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="inherit">{{ $t('fleet.nodes.detail.ipConfig.modeInherit') }}</SelectItem>
-                    <SelectItem value="auto">{{ $t('fleet.nodes.detail.ipConfig.modeAuto') }}</SelectItem>
-                    <SelectItem value="static">{{ $t('fleet.nodes.detail.ipConfig.modeStatic') }}</SelectItem>
-                    <SelectItem value="resolver">{{ $t('fleet.nodes.detail.ipConfig.modeResolver') }}</SelectItem>
-                    <SelectItem value="script">{{ $t('fleet.nodes.detail.ipConfig.modeScript') }}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div v-if="ipMode === 'static' || ipMode === 'auto'" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV4') }}</Label>
-                  <Input v-model="ipStaticV4" placeholder="203.0.113.10" class="font-mono" />
-                </div>
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV6') }}</Label>
-                  <Input v-model="ipStaticV6" placeholder="2001:db8::1" class="font-mono" />
-                </div>
-              </div>
-              <div v-if="ipMode === 'resolver' || ipMode === 'auto'" class="grid gap-1.5">
-                <Label>{{ $t('fleet.nodes.detail.ipConfig.resolvers') }}</Label>
-                <Textarea
-                  v-model="ipResolvers"
-                  rows="2"
-                  class="font-mono"
-                  placeholder="https://api.ipify.org&#10;https://ifconfig.co/ip"
-                />
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.resolversHint') }}</p>
-              </div>
-              <div v-if="ipMode === 'script'" class="grid gap-2">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <Label>{{ $t('fleet.nodes.detail.ipConfig.script') }}</Label>
-                  <Badge v-if="node.ip_config?.script_sha256" variant="outline" class="font-mono" :title="node.ip_config.script_sha256">
-                    {{ shortId(node.ip_config.script_sha256, 16) }}
-                  </Badge>
-                </div>
-                <Textarea
-                  v-model="ipScript"
-                  rows="5"
-                  class="font-mono"
-                  placeholder="curl -fsS https://api.ipify.org&#10;# optional: echo an IPv6 on another line"
-                />
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.scriptHint') }}</p>
-                <p v-if="node.ip_config?.script_sha256 && !ipScript.trim()" class="text-xs text-muted-foreground">
-                  {{ $t('fleet.nodes.detail.ipConfig.scriptPreserveHint') }}
-                </p>
-              </div>
-              <div class="flex flex-wrap gap-2">
-                <Button size="sm" :disabled="ipConfigPending || !canSaveIPConfig" @click="saveIPConfig">
-                  <RefreshCw v-if="ipConfigPending" class="size-3.5 animate-spin" aria-hidden="true" />
-                  {{ $t('common.actions.save') }}
-                </Button>
-                <Button v-if="node.ip_config?.mode" variant="ghost" size="sm" :disabled="ipConfigPending" @click="clearIPOpen = true">
-                  {{ $t('fleet.nodes.detail.ipConfig.clear') }}
-                </Button>
-              </div>
-            </div>
-
-            <!-- Agent launch profile (installer/startup flags; requires rerun command) -->
-            <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border p-3">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p class="inline-flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
-                    <KeyRound class="size-3.5" aria-hidden="true" />
-                    {{ $t('fleet.nodes.detail.launch.title') }}
-                  </p>
-                  <p class="mt-1 text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.launch.hint') }}</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-1.5">
-                  <Badge :variant="node.agent_launch?.updated_at ? 'outline' : 'secondary'">
-                    {{ node.agent_launch?.updated_at ? $t('fleet.nodes.detail.launch.profileSaved') : $t('fleet.nodes.detail.launch.profileUnknown') }}
-                  </Badge>
-                  <Badge :variant="node.agent_runtime?.reported_at ? 'success' : 'secondary'">
-                    {{ node.agent_runtime?.reported_at ? $t('fleet.nodes.detail.launch.runtimeReported') : $t('fleet.nodes.detail.launch.runtimeUnknown') }}
-                  </Badge>
-                  <Badge v-if="launchDirty" variant="outline">
-                    {{ $t('fleet.nodes.detail.launch.unsavedDraft') }}
-                  </Badge>
-                  <Badge v-if="launchRuntimeDrift" variant="secondary">
-                    {{ $t('fleet.nodes.detail.launch.runtimeDrift') }}
-                  </Badge>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
-                <div class="rounded-md border border-border bg-background/60 p-2">
-                  <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.runtimeNow') }}</p>
-                  <p class="mt-1 text-foreground">{{ launchSnapshotSummary(runtimeLaunchSnapshot) }}</p>
-                  <p class="mt-2 font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.taskSandbox') }}</p>
-                  <p class="mt-1 text-foreground">{{ taskSandboxSummary(node.agent_runtime) }}</p>
-                  <p class="mt-1 text-muted-foreground">{{ taskSandboxFeatures(node.agent_runtime) }}</p>
-                  <p v-if="node.agent_runtime?.task_sandbox_warning" class="mt-1 text-warning">
-                    {{ node.agent_runtime.task_sandbox_warning }}
-                  </p>
-                </div>
-                <div class="rounded-md border border-border bg-background/60 p-2">
-                  <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.savedDesired') }}</p>
-                  <p class="mt-1 text-foreground">{{ launchSnapshotSummary(savedLaunchSnapshot) }}</p>
-                </div>
-                <div :class="cn('rounded-md border p-2', launchDirty ? 'border-warning/50 bg-warning/5' : 'border-border bg-background/60')">
-                  <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.draft') }}</p>
-                  <p class="mt-1 text-foreground">{{ launchSnapshotSummary(draftLaunchSnapshot) }}</p>
-                </div>
-              </div>
-              <p class="text-xs" :class="launchDirty ? 'text-warning-foreground' : 'text-muted-foreground'">
-                {{ launchDirty ? $t('fleet.nodes.detail.launch.draftChanges', { changes: launchDiffSummary }) : $t('fleet.nodes.detail.launch.noDraftChanges') }}
-              </p>
-
-              <div class="grid grid-cols-1 min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <Checkbox v-model="launchAllowExec" class="mt-0.5" :disabled="launchNoExec" />
-                  <span>
-                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowExec') }}</span>
-                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowExecHint') }}</span>
-                  </span>
-                </label>
-                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <Checkbox v-model="launchAllowRootExec" class="mt-0.5" :disabled="launchNoExec || !launchAllowExec" />
-                  <span>
-                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowRootExec') }}</span>
-                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowRootExecHint') }}</span>
-                  </span>
-                </label>
-                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <Checkbox v-model="launchNoExec" class="mt-0.5" />
-                  <span>
-                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.noExec') }}</span>
-                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.noExecHint') }}</span>
-                  </span>
-                </label>
-                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <Checkbox v-model="launchAllowTerminal" class="mt-0.5" :disabled="launchNoExec" />
-                  <span>
-                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowTerminal') }}</span>
-                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowTerminalHint') }}</span>
-                  </span>
-                </label>
-                <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
-                  <Checkbox v-model="launchSSHAlerts" class="mt-0.5" />
-                  <span>
-                    <span class="block font-medium">{{ $t('fleet.nodes.enroll.sshAlerts') }}</span>
-                    <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
-                  </span>
-                </label>
-              </div>
-
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
-                  <Select v-model="launchTerminalTransport" :disabled="!launchAllowTerminal">
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="poll">poll</SelectItem>
-                      <SelectItem value="stream">stream</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div class="flex flex-wrap items-center gap-2">
-                <Button size="sm" :disabled="reconfigurePending" @click="generateReconfigureCommand">
-                  <RefreshCw v-if="reconfigurePending" class="size-3.5 animate-spin" aria-hidden="true" />
-                  {{ $t('fleet.nodes.detail.launch.generate') }}
-                </Button>
-                <CopyButton v-if="reconfigureCommand" :value="reconfigureCommand" :label="$t('fleet.nodes.detail.launch.copy')" />
-              </div>
-              <div v-if="reconfigureCommand" class="space-y-2">
-                <p
-                  v-if="reconfigureCommandMismatch"
-                  class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
-                >
-                  {{ $t('fleet.nodes.detail.launch.nodeIdMismatch', { expected: node.id, actual: reconfigureCommandNodeId }) }}
-                </p>
-                <div class="inline-flex w-fit rounded-md border border-border bg-background/70 p-1">
-                  <button
-                    type="button"
-                    :class="cn(
-                      'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                      launchPlatform === 'linux' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
-                    )"
-                    :aria-pressed="launchPlatform === 'linux'"
-                    @click="launchPlatform = 'linux'"
-                  >
-                    {{ $t('fleet.nodes.enroll.platformLinux') }}
-                  </button>
-                  <button
-                    type="button"
-                    :class="cn(
-                      'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                      launchPlatform === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
-                    )"
-                    :aria-pressed="launchPlatform === 'manual'"
-                    @click="launchPlatform = 'manual'"
-                  >
-                    {{ $t('fleet.nodes.enroll.platformManual') }}
-                  </button>
-                </div>
-                <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
-                  {{ reconfigureCommand }}
-                </code>
-              </div>
-            </div>
-
-            <!-- Geolocation -->
-            <div class="rounded-md border border-border p-3">
-              <div class="flex flex-wrap items-center justify-between gap-2">
-                <p class="inline-flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
-                  <MapPin class="size-3.5" aria-hidden="true" />
-                  {{ $t('fleet.nodes.detail.geo') }}
-                </p>
-                <div class="flex items-center gap-2">
-                  <Badge v-if="hasGeo" variant="outline">{{ geoSourceLabel(node.geo?.source) }}</Badge>
-                  <Button
-                    v-if="canAdminNodes"
-                    variant="outline"
-                    size="sm"
-                    :disabled="resolvingGeo"
-                    @click="resolveGeo"
-                  >
-                    <RefreshCw :class="cn('size-4', resolvingGeo && 'animate-spin')" aria-hidden="true" />
-                    {{ $t('fleet.nodes.detail.resolveGeo') }}
-                  </Button>
-                </div>
-              </div>
-              <div v-if="hasGeo" class="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
-                <div>
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoCountry') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.country || $t('common.misc.none') }}</p>
-                </div>
-                <div>
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoRegion') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.region || $t('common.misc.none') }}</p>
-                </div>
-                <div>
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoCity') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.city || $t('common.misc.none') }}</p>
-                </div>
-                <div>
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoAsn') }}</p>
-                  <p class="mt-0.5 font-mono">{{ node.geo?.asn ?? $t('common.misc.none') }}</p>
-                </div>
-                <div class="col-span-2">
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoAsOrg') }}</p>
-                  <p class="mt-0.5 truncate" :title="node.geo?.as_org || $t('common.misc.none')">{{ node.geo?.as_org || $t('common.misc.none') }}</p>
-                </div>
-                <div>
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoProvider') }}</p>
-                  <p class="mt-0.5">{{ node.geo?.provider || $t('common.misc.none') }}</p>
-                </div>
-                <div v-if="node.geo?.updated_at" class="col-span-2 sm:col-span-3">
-                  <p class="text-xs text-muted-foreground">
-                    {{ $t('fleet.nodes.detail.geoUpdated', { time: formatDateTime(node.geo.updated_at) }) }}
-                  </p>
-                </div>
-              </div>
-              <p v-else class="mt-2 text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noGeo') }}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Host facts -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Server class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.hostFacts') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.hostFactsDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <dl v-if="node.host_facts" class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factHostname') }}</dt>
-                <dd class="mt-0.5 truncate font-mono text-sm" :title="node.host_facts.hostname || $t('common.misc.none')">{{ node.host_facts.hostname || $t('common.misc.none') }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factOs') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.os || $t('common.misc.none') }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factPlatform') }}</dt>
-                <dd class="mt-0.5 text-sm">
-                  {{ [node.host_facts.platform, node.host_facts.platform_version].filter(Boolean).join(' ') || $t('common.misc.none') }}
-                </dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factKernel') }}</dt>
-                <dd class="mt-0.5 truncate font-mono text-sm" :title="hostKernel(node.host_facts) || $t('common.misc.none')">{{ hostKernel(node.host_facts) || $t('common.misc.none') }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factArch') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.arch || $t('common.misc.none') }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpu') }}</dt>
-                <dd class="mt-0.5 text-sm">
-                  {{ node.host_facts.cpu_cores ? $t('fleet.nodes.detail.coresValue', { value: node.host_facts.cpu_cores }) : $t('common.misc.none') }}
-                </dd>
-              </div>
-              <div class="sm:col-span-2">
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpuModel') }}</dt>
-                <dd class="mt-0.5 truncate text-sm" :title="node.host_facts.cpu_model || $t('common.misc.none')">{{ node.host_facts.cpu_model || $t('common.misc.none') }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factMemory') }}</dt>
-                <dd class="mt-0.5 font-mono text-sm">{{ formatBytes(node.host_facts.memory_total) }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factSwap') }}</dt>
-                <dd class="mt-0.5 font-mono text-sm">{{ formatBytes(node.host_facts.swap_total) }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factVirtualization') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.virtualization || $t('common.misc.none') }}</dd>
-              </div>
-              <div>
-                <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factBootTime') }}</dt>
-                <dd class="mt-0.5 text-sm">{{ node.host_facts.boot_time ? formatDateTime(node.host_facts.boot_time) : $t('common.misc.none') }}</dd>
-              </div>
-            </dl>
-            <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noHostFacts') }}</p>
-          </CardContent>
-        </Card>
+    <div class="space-y-5 p-4 sm:p-6">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <ProofLine v-bind="proof" :segments="proofSegments" class="min-w-0 flex-1" @retry="refreshAll" />
+        <Button variant="outline" size="sm" :disabled="nodesQuery.refreshing.value" @click="refreshAll">
+          <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+          {{ $t('common.actions.refresh') }}
+        </Button>
       </div>
 
-      <!-- ── Side column ──────────────────────────────────────────── -->
-      <div class="space-y-6">
-        <!-- Group membership -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <FolderTree class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.groups') }}
-            </CardTitle>
-          </CardHeader>
-          <CardContent class="space-y-4">
-            <div v-if="groupBadges.length" class="flex flex-wrap gap-2">
-              <button
-                v-for="g in groupBadges"
-                :key="g.id"
-                type="button"
-                :class="cn(
-                  'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  groupColor(g.color).border,
-                  groupColor(g.color).soft,
-                  groupColor(g.color).text,
-                )"
-                @click="goToGroup(g.id)"
-              >
-                <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
-                {{ g.name }}
-                <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
-              </button>
-            </div>
-            <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.ungrouped') }}</p>
+      <LayerTabs v-model="layer" :tabs="layerTabs" :label="$t('fleet.nodes.detail.layers.label')" />
 
-            <div class="space-y-2 border-t border-border pt-3">
-              <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroups') }}</p>
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroupsHint') }}</p>
-              <Button variant="outline" size="sm" @click="goToGroups">
-                <FolderTree class="size-4" aria-hidden="true" />
-                {{ $t('fleet.nodes.detail.editGroupsInGroups') }}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Agent & updates -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <DownloadCloud class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.agentUpdates') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.agentUpdatesDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-4 text-sm">
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.agentVersion') }}</span>
-              <span class="font-mono">{{ node.agent_version || $t('fleet.nodes.detail.unknown') }}</span>
-            </div>
-            <template v-if="updatePolicy">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.targetVersion') }}</span>
-                <span class="font-mono">{{ updatePolicy.target_version || $t('common.misc.none') }}</span>
-              </div>
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.lastApplied') }}</span>
-                <span class="font-mono">{{ updatePolicy.last_applied_version || $t('common.misc.none') }}</span>
-              </div>
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.lastPlanned') }}</span>
-                <span class="tabular text-xs text-muted-foreground">{{ updatePolicy.last_planned_at ? formatRelativeTime(updatePolicy.last_planned_at) : $t('common.misc.none') }}</span>
-              </div>
-              <div class="flex flex-wrap items-center gap-2 pt-1">
-                <Badge :variant="updatePolicy.enabled ? 'success' : 'secondary'">
-                  {{ updatePolicy.enabled ? $t('fleet.nodes.detail.updatesEnabled') : $t('common.status.disabled') }}
-                </Badge>
-                <Badge v-if="updatePolicy.auto_plan" variant="info">{{ $t('fleet.nodes.detail.autoPlan') }}</Badge>
-              </div>
-              <p v-if="activeAgentUpdateError" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
-                {{ activeAgentUpdateError }}
-              </p>
-              <p v-else-if="agentAppliedVersionMismatch" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning-foreground">
-                {{ $t('fleet.nodes.detail.agentVersionMismatch', { current: node.agent_version, applied: updatePolicy.last_applied_version }) }}
-              </p>
-            </template>
-            <p v-else class="text-muted-foreground">{{ $t('fleet.nodes.detail.noUpdatePolicy') }}</p>
-
-            <div v-if="canAdminNodes" class="space-y-3 rounded-md border border-border bg-muted/20 p-3">
-              <div class="rounded-md border border-border bg-background/60 p-2 text-xs">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <span class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.savedPolicy') }}</span>
-                  <Badge v-if="updateDirty" variant="outline">{{ $t('fleet.nodes.detail.unsavedDraft') }}</Badge>
-                </div>
-                <p class="mt-1 text-foreground">{{ savedUpdateSummary }}</p>
-                <p class="mt-1 text-muted-foreground">{{ $t('fleet.nodes.detail.draftPolicy', { value: draftUpdateSummary }) }}</p>
-              </div>
-              <div class="grid gap-2">
-                <Label for="agent-update-target">{{ $t('fleet.nodes.detail.targetVersion') }}</Label>
-                <Input
-                  id="agent-update-target"
-                  v-model="updateTarget"
-                  class="font-mono"
-                  :placeholder="$t('fleet.nodes.detail.targetVersionPlaceholder')"
-                  @input="touchUpdateDraft"
-                />
-              </div>
-              <label class="flex items-start gap-2 text-sm">
-                <Checkbox v-model="updateAuto" class="mt-0.5" @update:model-value="touchUpdateDraft" />
-                <span>
-                  <span class="block font-medium">{{ $t('fleet.nodes.detail.autoPlan') }}</span>
-                  <span class="block text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.autoUpdateHint') }}</span>
-                </span>
-              </label>
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.updateRequiresExec') }}</p>
-              <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  :disabled="savingUpdatePolicy"
-                  @click="saveAutoUpdate"
-                >
-                  <RefreshCw v-if="savingUpdatePolicy" class="size-4 animate-spin" aria-hidden="true" />
-                  <DownloadCloud v-else class="size-4" aria-hidden="true" />
-                  {{ $t('fleet.nodes.detail.saveAutoUpdate') }}
-                </Button>
-                <Button
-                  v-if="canPlanUpdates"
-                  size="sm"
-                  :disabled="planningUpdate"
-                  @click="planUpdate()"
-                >
-                  <RefreshCw :class="cn('size-4', planningUpdate && 'animate-spin')" aria-hidden="true" />
-                  {{ $t('fleet.nodes.detail.planUpdate') }}
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- DDNS bindings -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Globe class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.ddns') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.ddnsDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-3">
-            <div
-              v-for="d in nodeDdns"
-              :key="d.id"
-              class="rounded-md border border-border p-3"
+      <!-- ───────────── Overview: state first ───────────── -->
+      <template v-if="layer === 'overview'">
+        <section class="space-y-3 rounded-lg border border-border bg-card p-4" :aria-label="$t('fleet.nodes.detail.stateTitle')">
+          <p class="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <StatusDot :status="statusInfo.health" />
+            <span class="font-medium">{{ statusBadge.label }}</span>
+            <span v-if="statusSince" class="text-sm text-muted-foreground" :title="statusSince">
+              {{ $t('fleet.nodes.detail.statusSince', { time: formatRelativeTime(statusSince) }) }}
+            </span>
+            <span class="ms-auto inline-flex items-center gap-1 text-xs text-muted-foreground tabular">
+              <Clock class="size-3.5" aria-hidden="true" />
+              {{ lastSeenText(node) }}
+            </span>
+          </p>
+          <!-- Why the word says what it says, printed rather than hidden behind a hover. -->
+          <p class="text-sm text-muted-foreground">{{ statusReason || $t(statusInfo.hintKey) }}</p>
+          <p v-if="node.comment" class="flex items-start gap-2 rounded-md bg-muted/30 p-2.5 text-sm text-muted-foreground">
+            <ScrollText class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span class="whitespace-pre-wrap">{{ node.comment }}</span>
+          </p>
+          <div class="flex flex-wrap items-center gap-2 text-sm">
+            <Badge v-if="node.role" variant="secondary">{{ node.role }}</Badge>
+            <Badge v-for="tag in displayTags" :key="tag" variant="outline">{{ tag }}</Badge>
+            <button
+              v-for="g in groupBadges"
+              :key="g.id"
+              type="button"
+              :class="cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11',
+                groupColor(g.color).border,
+                groupColor(g.color).soft,
+                groupColor(g.color).text,
+              )"
+              @click="goToGroup(g.id)"
             >
-              <div class="flex items-center justify-between gap-2">
-                <span class="truncate text-sm font-medium" :title="d.name">{{ d.name }}</span>
-                <Badge variant="secondary">{{ d.provider }}</Badge>
-              </div>
-              <p
-                class="mt-1 truncate font-mono text-xs text-muted-foreground"
-                :title="d.domains.join(', ') || $t('common.misc.none')"
-              >
-                {{ d.domains.join(', ') || $t('common.misc.none') }}
-              </p>
-              <p v-if="d.last_run_at" class="mt-1 text-xs text-muted-foreground">
-                {{ $t('fleet.nodes.detail.ddnsLastRun', { time: formatRelativeTime(d.last_run_at) }) }}
-              </p>
-            </div>
-            <p v-if="nodeDdns.length === 0" class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noDdns') }}</p>
-          </CardContent>
-        </Card>
+              <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+              {{ g.name }}
+              <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+            </button>
+            <span class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground tabular">
+              {{ shortId(node.id, 20) }}
+              <CopyButton :value="node.id" />
+            </span>
+          </div>
+          <!-- Where else this node shows up, pre-scoped to it. -->
+          <nav class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-xs" :aria-label="$t('fleet.nodes.detail.relatedViews')">
+            <RouterLink :to="{ name: 'tasks', query: { node_id: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewTasks') }}</RouterLink>
+            <RouterLink :to="{ name: 'network-ssh-guard', query: { node_id: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewSshGuard') }}</RouterLink>
+            <RouterLink :to="{ name: 'inventory', query: { node: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewInventory') }}</RouterLink>
+            <RouterLink :to="{ name: 'monitoring', query: { node: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewMonitoring') }}</RouterLink>
+          </nav>
+        </section>
 
-        <!-- Work still waiting on this node -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <ListOrdered class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.queue') }}
-              <Badge v-if="nodeQueue.entries.length" variant="secondary">{{ nodeQueue.entries.length }}</Badge>
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.queueDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DataState
-              :loading="nodeTasksQuery.loading.value"
-              :error="nodeTasksQuery.error.value"
-              :has-data="nodeTasksQuery.data.value !== undefined"
-              :is-empty="nodeQueue.entries.length === 0"
-              :empty-description="$t('fleet.nodes.detail.queueEmpty')"
-              :skeleton-rows="2"
-              @retry="nodeTasksQuery.refresh"
-            >
-              <ol class="space-y-2">
-                <li
-                  v-for="(entry, index) in nodeQueue.entries"
-                  :key="entry.id"
-                  class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+        <div class="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-3">
+          <div class="min-w-0 space-y-6 lg:col-span-2">
+            <!-- What waits on it. -->
+            <!-- Work still waiting on this node -->
+            <Card>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <ListOrdered class="size-4 text-muted-foreground" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.queue') }}
+                  <Badge v-if="nodeQueue.entries.length" variant="secondary">{{ nodeQueue.entries.length }}</Badge>
+                </CardTitle>
+                <CardDescription>{{ $t('fleet.nodes.detail.queueDesc') }}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DataState
+                  :loading="nodeTasksQuery.loading.value"
+                  :error="nodeTasksQuery.error.value"
+                  :has-data="nodeTasksQuery.data.value !== undefined"
+                  :is-empty="nodeQueue.entries.length === 0"
+                  :empty-description="$t('fleet.nodes.detail.queueEmpty')"
+                  :skeleton-rows="2"
+                  @retry="nodeTasksQuery.refresh"
                 >
-                  <div class="flex min-w-0 items-center gap-3">
-                    <span class="w-5 shrink-0 text-xs text-muted-foreground tabular">{{ index + 1 }}</span>
-                    <div class="min-w-0 space-y-0.5">
-                      <RouterLink
-                        class="block truncate font-mono text-xs hover:underline"
-                        :to="{ name: 'tasks', query: { id: entry.id } }"
-                      >{{ entry.id }}</RouterLink>
-                      <p class="text-xs text-muted-foreground">
-                        {{ entry.interpreter }}
-                        <template v-if="entry.targetCount > 1">
-                          · {{ $t('fleet.nodes.detail.queueFanout', { count: entry.targetCount }) }}
-                        </template>
-                        <template v-if="entry.createdAt">
-                          · {{ formatRelativeTime(entry.createdAt) }}
-                        </template>
-                      </p>
-                      <!-- The lease line is what turns "Running" into evidence: how
-                           long, which attempt, and why the store stopped if it did. -->
-                      <p
-                        v-if="queueLeaseLabel(entry)"
-                        :class="cn('text-xs', taskStateStyle(queueState(entry)).textClass)"
-                        :title="queueLeaseLabel(entry)"
-                      >
-                        {{ queueLeaseLabel(entry) }}
-                      </p>
-                    </div>
-                  </div>
-                  <Badge :variant="queueBadge(entry).variant">
-                    {{ queueBadge(entry).label }}
-                  </Badge>
-                </li>
-              </ol>
-              <p v-if="node && !isReporting(node) && nodeQueue.queued > 0" class="mt-3 text-xs text-muted-foreground">
-                {{ $t('fleet.nodes.detail.queueOfflineHint') }}
-              </p>
-            </DataState>
-          </CardContent>
-        </Card>
-
-        <!-- Recent audit-for-node -->
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <ScrollText class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.activity') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.nodes.detail.activityDesc') }}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DataState
-              :loading="auditQuery.loading.value"
-              :error="auditQuery.error.value"
-              :has-data="auditQuery.data.value !== undefined"
-              :is-empty="timeline.length === 0"
-              :empty-description="$t('fleet.nodes.detail.noActivity')"
-              :skeleton-rows="4"
-              @retry="auditQuery.refresh"
-            >
-              <div class="space-y-4">
-                <section v-for="day in timelineDays" :key="day.day" class="space-y-1">
-                  <p class="text-xs font-medium text-muted-foreground tabular">{{ day.day }}</p>
-                  <ol class="relative space-y-0 border-l border-border pl-4">
-                    <li v-for="entry in day.entries" :key="entry.id" class="relative py-2">
-                      <span
-                        class="absolute -left-[1.4rem] top-2.5 flex size-4 items-center justify-center rounded-full bg-background text-muted-foreground"
-                      >
-                        <component :is="timelineIcon(entry.kind)" class="size-3.5" aria-hidden="true" />
-                      </span>
-                      <div class="flex items-start gap-2">
-                        <div class="min-w-0 flex-1">
-                          <p class="truncate font-mono text-xs tabular" :title="entry.action">
-                            <RouterLink
-                              v-if="timelineHref(entry)"
-                              :to="timelineHref(entry)!"
-                              class="hover:underline"
-                            >
-                              {{ entry.action }}
-                            </RouterLink>
-                            <template v-else>{{ entry.action }}</template>
+                  <ol class="space-y-2">
+                    <li
+                      v-for="(entry, index) in nodeQueue.entries"
+                      :key="entry.id"
+                      class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2"
+                    >
+                      <div class="flex min-w-0 items-center gap-3">
+                        <span class="w-5 shrink-0 text-xs text-muted-foreground tabular">{{ index + 1 }}</span>
+                        <div class="min-w-0 space-y-0.5">
+                          <RouterLink
+                            class="block truncate font-mono text-xs hover:underline"
+                            :to="{ name: 'tasks', query: { id: entry.id } }"
+                          >{{ entry.id }}</RouterLink>
+                          <p class="text-xs text-muted-foreground">
+                            {{ entry.interpreter }}
+                            <template v-if="entry.targetCount > 1">
+                              · {{ $t('fleet.nodes.detail.queueFanout', { count: entry.targetCount }) }}
+                            </template>
+                            <template v-if="entry.createdAt">
+                              · {{ formatRelativeTime(entry.createdAt) }}
+                            </template>
                           </p>
+                          <!-- The lease line is what turns "Running" into evidence: how
+                               long, which attempt, and why the store stopped if it did. -->
                           <p
-                            class="truncate text-xs text-muted-foreground"
-                            :title="[entry.actor, entry.detail].filter(Boolean).join(' · ') || $t('common.misc.none')"
+                            v-if="queueLeaseLabel(entry)"
+                            :class="cn('text-xs', taskStateStyle(queueState(entry)).textClass)"
+                            :title="queueLeaseLabel(entry)"
                           >
-                            <template v-if="entry.actor">{{ entry.actor }}</template>
-                            <template v-if="entry.actor && entry.detail"> · </template>
-                            <template v-if="entry.detail">{{ entry.detail }}</template>
-                            <template v-if="!entry.actor && !entry.detail">{{ $t('common.misc.none') }}</template>
+                            {{ queueLeaseLabel(entry) }}
                           </p>
                         </div>
-                        <Badge :variant="outcomeVariant(entry.outcome)" class="shrink-0">{{ entry.outcome }}</Badge>
-                        <span class="shrink-0 text-xs text-muted-foreground tabular">
-                          {{ formatRelativeTime(entry.at) }}
-                        </span>
                       </div>
+                      <Badge :variant="queueBadge(entry).variant">
+                        {{ queueBadge(entry).label }}
+                      </Badge>
                     </li>
                   </ol>
-                </section>
-                <Button
-                  v-if="timelineHasMore"
-                  variant="outline"
-                  size="sm"
-                  class="w-full"
-                  @click="timelineExpanded = true"
-                >
-                  {{ $t('common.actions.loadMore') }}
-                </Button>
-              </div>
-            </DataState>
-          </CardContent>
-        </Card>
-      </div>
+                  <p v-if="node && !isReporting(node) && nodeQueue.queued > 0" class="mt-3 text-xs text-muted-foreground">
+                    {{ $t('fleet.nodes.detail.queueOfflineHint') }}
+                  </p>
+                </DataState>
+              </CardContent>
+            </Card>
 
-      <!-- ── Admin & danger zone ──────────────────────────────────── -->
-      <Card v-if="canAdminNodes" class="border-destructive/40 lg:col-span-3">
+            <!-- Live status + metrics -->
+            <Card>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
+                  {{ statusCardTitle }}
+                </CardTitle>
+                <CardDescription>{{ statusCardDesc }}</CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-5">
+                <div class="space-y-2.5">
+                  <MetricBar
+                    :label="$t('fleet.nodes.metric.cpu')"
+                    tone="cpu"
+                    :percent="node.metrics?.cpu_percent"
+                    :unavailable="noSample"
+                  />
+                  <MetricBar
+                    :label="$t('fleet.nodes.metric.memory')"
+                    tone="memory"
+                    :used="node.metrics?.memory_used"
+                    :total="node.metrics?.memory_total"
+                    :unavailable="noSample"
+                  />
+                  <MetricBar
+                    :label="$t('fleet.nodes.metric.disk')"
+                    tone="disk"
+                    :used="node.metrics?.disk_used"
+                    :total="node.metrics?.disk_total"
+                    :unavailable="noSample"
+                  />
+                </div>
+
+                <!-- In-session CPU trend. -->
+                <div>
+                  <p class="mb-1 text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sparklineLabel') }}</p>
+                  <svg
+                    v-if="hasSpark"
+                    :viewBox="`0 0 ${SPARK_W} ${SPARK_H}`"
+                    :style="{ height: SPARK_H + 'px' }"
+                    class="block w-full"
+                    preserveAspectRatio="none"
+                    role="img"
+                    :aria-label="$t('fleet.nodes.detail.sparklineLabel')"
+                  >
+                    <polyline
+                      :points="sparkPoints"
+                      fill="none"
+                      :class="['stroke-current', meta.textClass]"
+                      stroke-width="1.5"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      vector-effect="non-scaling-stroke"
+                    />
+                  </svg>
+                  <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sparklinePending') }}</p>
+                </div>
+
+                <!-- Secondary stats grid. -->
+                <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.load') }}</p>
+                    <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
+                      <Gauge class="size-3.5 text-muted-foreground" aria-hidden="true" />
+                      {{ node.metrics?.load1?.toFixed(2) ?? NO_VALUE }}
+                    </p>
+                  </div>
+                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.uptime') }}</p>
+                    <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
+                      <Clock class="size-3.5 text-muted-foreground" aria-hidden="true" />
+                      {{ formatDuration(node.metrics?.uptime_seconds) }}
+                    </p>
+                  </div>
+                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sampleTime') }}</p>
+                    <p class="mt-1 font-mono text-sm tabular">{{ formatRelativeTime(node.metrics?.collected_at) }}</p>
+                  </div>
+                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.download') }}</p>
+                    <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
+                      <ArrowDown class="size-3.5 text-success" aria-hidden="true" />
+                      {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
+                    </p>
+                  </div>
+                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.upload') }}</p>
+                    <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
+                      <ArrowUp class="size-3.5 text-primary" aria-hidden="true" />
+                      {{ formatBytesPerSec(node.metrics?.net_tx_speed) }}
+                    </p>
+                  </div>
+                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                    <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.transferred') }}</p>
+                    <p class="mt-1 font-mono text-sm tabular">
+                      <span class="text-success">{{ formatBytes(node.metrics?.net_rx_bytes) }}</span>
+                      /
+                      <span class="text-primary">{{ formatBytes(node.metrics?.net_tx_bytes) }}</span>
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <!-- Addresses: what the agent reported. Discovery is in Settings. -->
+            <Card>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Globe class="size-4 text-muted-foreground" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.addresses') }}
+                </CardTitle>
+                <CardDescription>{{ $t('fleet.nodes.detail.addressesDesc') }}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+                    <div class="min-w-0">
+                      <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIp') }}</p>
+                      <p class="mt-1 truncate font-mono text-sm" :title="node.public_ip || $t('common.misc.none')">{{ node.public_ip || $t('common.misc.none') }}</p>
+                    </div>
+                    <CopyButton v-if="node.public_ip" :value="node.public_ip" />
+                  </div>
+                  <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+                    <div class="min-w-0">
+                      <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.publicIpv6') }}</p>
+                      <p class="mt-1 truncate font-mono text-sm" :title="node.public_ipv6 || $t('common.misc.none')">{{ node.public_ipv6 || $t('common.misc.none') }}</p>
+                    </div>
+                    <CopyButton v-if="node.public_ipv6" :value="node.public_ipv6" />
+                  </div>
+                  <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+                    <div class="min-w-0">
+                      <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIp') }}</p>
+                      <p class="mt-1 truncate font-mono text-sm" :title="displayInternalAddress(node.internal_ip, node.public_ip)">{{ displayInternalAddress(node.internal_ip, node.public_ip) }}</p>
+                    </div>
+                    <CopyButton
+                      v-if="copyableInternalAddress(node.internal_ip, node.public_ip)"
+                      :value="copyableInternalAddress(node.internal_ip, node.public_ip)"
+                    />
+                  </div>
+                  <div class="flex items-start justify-between gap-2 rounded-md border border-border p-3">
+                    <div class="min-w-0">
+                      <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.internalIpv6') }}</p>
+                      <p class="mt-1 truncate font-mono text-sm" :title="displayInternalAddress(node.internal_ipv6, node.public_ipv6)">{{ displayInternalAddress(node.internal_ipv6, node.public_ipv6) }}</p>
+                    </div>
+                    <CopyButton
+                      v-if="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
+                      :value="copyableInternalAddress(node.internal_ipv6, node.public_ipv6)"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <!-- Host facts -->
+            <Card>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Server class="size-4 text-muted-foreground" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.hostFacts') }}
+                </CardTitle>
+                <CardDescription>{{ $t('fleet.nodes.detail.hostFactsDesc') }}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <dl v-if="node.host_facts" class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factHostname') }}</dt>
+                    <dd class="mt-0.5 truncate font-mono text-sm" :title="node.host_facts.hostname || $t('common.misc.none')">{{ node.host_facts.hostname || $t('common.misc.none') }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factOs') }}</dt>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.os || $t('common.misc.none') }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factPlatform') }}</dt>
+                    <dd class="mt-0.5 text-sm">
+                      {{ [node.host_facts.platform, node.host_facts.platform_version].filter(Boolean).join(' ') || $t('common.misc.none') }}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factKernel') }}</dt>
+                    <dd class="mt-0.5 truncate font-mono text-sm" :title="hostKernel(node.host_facts) || $t('common.misc.none')">{{ hostKernel(node.host_facts) || $t('common.misc.none') }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factArch') }}</dt>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.arch || $t('common.misc.none') }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpu') }}</dt>
+                    <dd class="mt-0.5 text-sm">
+                      {{ node.host_facts.cpu_cores ? $t('fleet.nodes.detail.coresValue', { value: node.host_facts.cpu_cores }) : $t('common.misc.none') }}
+                    </dd>
+                  </div>
+                  <div class="sm:col-span-2">
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpuModel') }}</dt>
+                    <dd class="mt-0.5 truncate text-sm" :title="node.host_facts.cpu_model || $t('common.misc.none')">{{ node.host_facts.cpu_model || $t('common.misc.none') }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factMemory') }}</dt>
+                    <dd class="mt-0.5 font-mono text-sm">{{ formatBytes(node.host_facts.memory_total) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factSwap') }}</dt>
+                    <dd class="mt-0.5 font-mono text-sm">{{ formatBytes(node.host_facts.swap_total) }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factVirtualization') }}</dt>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.virtualization || $t('common.misc.none') }}</dd>
+                  </div>
+                  <div>
+                    <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factBootTime') }}</dt>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.boot_time ? formatDateTime(node.host_facts.boot_time) : $t('common.misc.none') }}</dd>
+                  </div>
+                </dl>
+                <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noHostFacts') }}</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <!-- What runs on it. -->
+          <div class="min-w-0 space-y-6">
+            <!-- DDNS bindings -->
+            <Card>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Globe class="size-4 text-muted-foreground" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.ddns') }}
+                </CardTitle>
+                <CardDescription>{{ $t('fleet.nodes.detail.ddnsDesc') }}</CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-3">
+                <div
+                  v-for="d in nodeDdns"
+                  :key="d.id"
+                  class="rounded-md border border-border p-3"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="truncate text-sm font-medium" :title="d.name">{{ d.name }}</span>
+                    <Badge variant="secondary">{{ d.provider }}</Badge>
+                  </div>
+                  <p
+                    class="mt-1 truncate font-mono text-xs text-muted-foreground"
+                    :title="d.domains.join(', ') || $t('common.misc.none')"
+                  >
+                    {{ d.domains.join(', ') || $t('common.misc.none') }}
+                  </p>
+                  <p v-if="d.last_run_at" class="mt-1 text-xs text-muted-foreground">
+                    {{ $t('fleet.nodes.detail.ddnsLastRun', { time: formatRelativeTime(d.last_run_at) }) }}
+                  </p>
+                </div>
+                <p v-if="nodeDdns.length === 0" class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noDdns') }}</p>
+              </CardContent>
+            </Card>
+
+            <!-- Group membership -->
+            <Card>
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <FolderTree class="size-4 text-muted-foreground" aria-hidden="true" />
+                  {{ $t('fleet.nodes.detail.groups') }}
+                </CardTitle>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <div v-if="groupBadges.length" class="flex flex-wrap gap-2">
+                  <button
+                    v-for="g in groupBadges"
+                    :key="g.id"
+                    type="button"
+                    :class="cn(
+                      'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      groupColor(g.color).border,
+                      groupColor(g.color).soft,
+                      groupColor(g.color).text,
+                    )"
+                    @click="goToGroup(g.id)"
+                  >
+                    <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+                    {{ g.name }}
+                    <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
+                  </button>
+                </div>
+                <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.ungrouped') }}</p>
+
+                <div class="space-y-2 border-t border-border pt-3">
+                  <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroups') }}</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.manageGroupsHint') }}</p>
+                  <Button variant="outline" size="sm" @click="goToGroups">
+                    <FolderTree class="size-4" aria-hidden="true" />
+                    {{ $t('fleet.nodes.detail.editGroupsInGroups') }}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </template>
+
+      <!-- ───────────── Activity: what happened here ───────────── -->
+      <template v-else-if="layer === 'activity'">
+      <!-- Recent audit-for-node -->
+      <Card>
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Power class="size-4 text-destructive" aria-hidden="true" />
-            {{ $t('fleet.nodes.detail.admin') }}
+            <ScrollText class="size-4 text-muted-foreground" aria-hidden="true" />
+            {{ $t('fleet.nodes.detail.activity') }}
           </CardTitle>
-          <CardDescription>{{ $t('fleet.nodes.detail.adminDesc') }}</CardDescription>
+          <CardDescription>{{ $t('fleet.nodes.detail.activityDesc') }}</CardDescription>
         </CardHeader>
-        <CardContent class="space-y-5">
-          <div class="flex flex-wrap gap-2">
-            <Button
-              :variant="node.disabled ? 'outline' : 'destructive'"
-              size="sm"
-              :disabled="pending"
-              @click="requestDisable(!node.disabled)"
-            >
-              <Power class="size-4" aria-hidden="true" />
-              {{ node.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
-            </Button>
-            <Button variant="outline" size="sm" :disabled="pending" @click="rotateOpen = true">
-              <KeyRound class="size-4" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.rotateToken') }}
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              class="ml-auto"
-              :disabled="pending || deletePending"
-              @click="openDeleteDialog"
-            >
-              <Trash2 class="size-4" aria-hidden="true" />
-              {{ $t('fleet.nodes.detail.deleteNode') }}
-            </Button>
-          </div>
-
-          <!-- One-time token reveal (mirrors NodesView). -->
-          <div v-if="rotatedToken" class="grid gap-3 rounded-md border border-warning/40 bg-warning/5 p-4">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p class="text-sm font-medium">{{ $t('fleet.nodes.rotated.tokenFor', { id: rotatedToken.node_id }) }}</p>
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.rotated.hint') }}</p>
-              </div>
-              <CopyButton :value="rotatedToken.token" :label="$t('fleet.nodes.rotated.copyToken')" />
+        <CardContent>
+          <DataState
+            :loading="auditQuery.loading.value"
+            :error="auditQuery.error.value"
+            :has-data="auditQuery.data.value !== undefined"
+            :is-empty="timeline.length === 0"
+            :empty-description="$t('fleet.nodes.detail.noActivity')"
+            :skeleton-rows="4"
+            @retry="auditQuery.refresh"
+          >
+            <div class="space-y-4">
+              <section v-for="day in timelineDays" :key="day.day" class="space-y-1">
+                <p class="text-xs font-medium text-muted-foreground tabular">{{ day.day }}</p>
+                <ol class="relative space-y-0 border-l border-border pl-4">
+                  <li v-for="entry in day.entries" :key="entry.id" class="relative py-2">
+                    <span
+                      class="absolute -left-[1.4rem] top-2.5 flex size-4 items-center justify-center rounded-full bg-background text-muted-foreground"
+                    >
+                      <component :is="timelineIcon(entry.kind)" class="size-3.5" aria-hidden="true" />
+                    </span>
+                    <div class="flex items-start gap-2">
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate font-mono text-xs tabular" :title="entry.action">
+                          <RouterLink
+                            v-if="timelineHref(entry)"
+                            :to="timelineHref(entry)!"
+                            class="hover:underline"
+                          >
+                            {{ entry.action }}
+                          </RouterLink>
+                          <template v-else>{{ entry.action }}</template>
+                        </p>
+                        <p
+                          class="truncate text-xs text-muted-foreground"
+                          :title="[entry.actor, entry.detail].filter(Boolean).join(' · ') || $t('common.misc.none')"
+                        >
+                          <template v-if="entry.actor">{{ entry.actor }}</template>
+                          <template v-if="entry.actor && entry.detail"> · </template>
+                          <template v-if="entry.detail">{{ entry.detail }}</template>
+                          <template v-if="!entry.actor && !entry.detail">{{ $t('common.misc.none') }}</template>
+                        </p>
+                      </div>
+                      <Badge :variant="outcomeVariant(entry.outcome)" class="shrink-0">{{ entry.outcome }}</Badge>
+                      <span class="shrink-0 text-xs text-muted-foreground tabular">
+                        {{ formatRelativeTime(entry.at) }}
+                      </span>
+                    </div>
+                  </li>
+                </ol>
+              </section>
+              <Button
+                v-if="timelineHasMore"
+                variant="outline"
+                size="sm"
+                class="w-full"
+                @click="timelineExpanded = true"
+              >
+                {{ $t('common.actions.loadMore') }}
+              </Button>
             </div>
-            <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">{{ rotatedToken.token }}</code>
-          </div>
-
-          <!-- Agent diagnostics / debug -->
-          <div class="rounded-md border border-border p-4">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div class="space-y-1">
-                <h3 class="text-sm font-medium">{{ $t('fleet.nodes.detail.diagnostics') }}</h3>
-                <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.debugDescription') }}</p>
-              </div>
-              <Badge :variant="node.agent_debug?.enabled ? 'warning' : 'secondary'">
-                {{ node.agent_debug?.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-              </Badge>
-            </div>
-            <div class="mt-4 grid gap-3">
-              <label class="flex items-start gap-3 text-sm">
-                <Checkbox
-                  class="mt-0.5"
-                  :model-value="!!node.agent_debug?.enabled"
-                  :disabled="debugPending"
-                  @update:model-value="(value) => setNodeDebug(value === true, node?.agent_debug?.collect ?? true)"
-                />
-                <span class="space-y-1">
-                  <span class="block font-medium">{{ $t('fleet.nodes.detail.debugEnabled') }}</span>
-                  <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugLocalHint') }}</span>
-                </span>
-              </label>
-              <label class="flex items-start gap-3 text-sm" :class="!node.agent_debug?.enabled && 'opacity-60'">
-                <Checkbox
-                  class="mt-0.5"
-                  :model-value="!!node.agent_debug?.collect"
-                  :disabled="!node.agent_debug?.enabled || debugPending"
-                  @update:model-value="(value) => setNodeDebug(true, value === true)"
-                />
-                <span class="space-y-1">
-                  <span class="block font-medium">{{ $t('fleet.nodes.detail.debugCollect') }}</span>
-                  <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugCollectHint', { path: `agent-debug://${node.id}` }) }}</span>
-                </span>
-              </label>
-            </div>
-          </div>
+          </DataState>
         </CardContent>
       </Card>
+      </template>
+
+      <!-- ───────────── Settings: one save pattern, danger zone last ───────────── -->
+      <div v-else class="max-w-3xl space-y-5">
+        <p v-if="!canAdminNodes" class="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+          {{ $t('fleet.nodes.detail.settingsReadOnly') }}
+        </p>
+
+        <SettingsSection v-if="canAdminNodes" id="node-identity" :title="$t('fleet.nodes.detail.identity')" :description="$t('fleet.nodes.detail.identityDesc')">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="grid gap-1.5">
+              <Label for="identity-name">{{ $t('fleet.nodes.detail.identityName') }}</Label>
+              <Input id="identity-name" v-model="editName" :placeholder="node.id" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="identity-role">{{ $t('fleet.nodes.detail.identityRole') }}</Label>
+              <Input id="identity-role" v-model="editRole" :placeholder="$t('fleet.nodes.enroll.rolePlaceholder')" />
+            </div>
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="identity-tags">{{ $t('fleet.nodes.detail.identityTags') }}</Label>
+            <div v-if="editTags.length" class="flex flex-wrap gap-1.5">
+              <Badge v-for="tag in editTags" :key="tag" variant="outline" class="gap-1">
+                {{ tag }}
+                <button
+                  type="button"
+                  class="text-muted-foreground hover:text-foreground"
+                  :aria-label="$t('fleet.nodes.detail.identityRemoveTag')"
+                  @click="removeTag(tag)"
+                >
+                  <X class="size-3" aria-hidden="true" />
+                </button>
+              </Badge>
+            </div>
+            <Input
+              id="identity-tags"
+              v-model="tagDraft"
+              :placeholder="$t('fleet.nodes.detail.identityTagPlaceholder')"
+              @keydown.enter.prevent="addTag"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityTagHint') }}</p>
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="identity-comment">{{ $t('fleet.nodes.detail.identityComment') }}</Label>
+            <Textarea
+              id="identity-comment"
+              v-model="editComment"
+              rows="3"
+              :placeholder="$t('fleet.nodes.detail.identityCommentPlaceholder')"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityCommentHint') }}</p>
+          </div>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="grid gap-1.5">
+              <Label for="identity-purity">{{ $t('fleet.nodes.detail.identityPurity') }}</Label>
+              <Input
+                id="identity-purity"
+                v-model="editPurity"
+                inputmode="numeric"
+                placeholder="98"
+                :aria-invalid="purityInvalid"
+                :class="cn(purityInvalid && 'border-destructive')"
+              />
+              <p v-if="purityInvalid" class="text-xs text-destructive">
+                {{ $t('fleet.nodes.detail.identityPurityInvalid') }}
+              </p>
+              <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityPurityHint') }}</p>
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="identity-quality">{{ $t('fleet.nodes.detail.identityQuality') }}</Label>
+              <Input
+                id="identity-quality"
+                v-model="editQuality"
+                :placeholder="$t('fleet.nodes.detail.identityQualityPlaceholder')"
+              />
+              <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityQualityHint') }}</p>
+            </div>
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="identity-inventory-notes">{{ $t('fleet.nodes.detail.identityInventoryNotes') }}</Label>
+            <Textarea
+              id="identity-inventory-notes"
+              v-model="editInventoryNotes"
+              rows="2"
+              :placeholder="$t('fleet.nodes.detail.identityInventoryNotesPlaceholder')"
+            />
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="identity-agent-source-allowlist">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlist') }}</Label>
+            <Textarea
+              id="identity-agent-source-allowlist"
+              v-model="editAgentSourceAllowlist"
+              rows="3"
+              :placeholder="$t('fleet.nodes.detail.identityAgentSourceAllowlistPlaceholder')"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.identityAgentSourceAllowlistHint') }}</p>
+          </div>
+          <template #actions>
+            <Button size="sm" :disabled="identityPending || !identityDirty || purityInvalid" @click="saveIdentity">
+              <RefreshCw v-if="identityPending" class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.save') }}
+            </Button>
+          </template>
+        </SettingsSection>
+
+        <SettingsSection v-if="canAdminNodes" id="node-ip" :title="$t('fleet.nodes.detail.ipConfig.title')">
+          <template #status>
+            <Badge :variant="node.ip_config?.mode ? 'outline' : 'secondary'">
+              {{ node.ip_config?.mode ? $t('fleet.nodes.detail.ipConfig.overrideActive') : $t('fleet.nodes.detail.ipConfig.inheriting') }}
+            </Badge>
+          </template>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.hint') }}</p>
+          <div class="grid gap-1.5 sm:max-w-xs">
+            <Label>{{ $t('fleet.nodes.detail.ipConfig.mode') }}</Label>
+            <Select v-model="ipMode">
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="inherit">{{ $t('fleet.nodes.detail.ipConfig.modeInherit') }}</SelectItem>
+                <SelectItem value="auto">{{ $t('fleet.nodes.detail.ipConfig.modeAuto') }}</SelectItem>
+                <SelectItem value="static">{{ $t('fleet.nodes.detail.ipConfig.modeStatic') }}</SelectItem>
+                <SelectItem value="resolver">{{ $t('fleet.nodes.detail.ipConfig.modeResolver') }}</SelectItem>
+                <SelectItem value="script">{{ $t('fleet.nodes.detail.ipConfig.modeScript') }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div v-if="ipMode === 'static' || ipMode === 'auto'" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV4') }}</Label>
+              <Input v-model="ipStaticV4" placeholder="203.0.113.10" class="font-mono" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.detail.ipConfig.staticV6') }}</Label>
+              <Input v-model="ipStaticV6" placeholder="2001:db8::1" class="font-mono" />
+            </div>
+          </div>
+          <div v-if="ipMode === 'resolver' || ipMode === 'auto'" class="grid gap-1.5">
+            <Label>{{ $t('fleet.nodes.detail.ipConfig.resolvers') }}</Label>
+            <Textarea
+              v-model="ipResolvers"
+              rows="2"
+              class="font-mono"
+              placeholder="https://api.ipify.org&#10;https://ifconfig.co/ip"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.resolversHint') }}</p>
+          </div>
+          <div v-if="ipMode === 'script'" class="grid gap-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <Label>{{ $t('fleet.nodes.detail.ipConfig.script') }}</Label>
+              <Badge v-if="node.ip_config?.script_sha256" variant="outline" class="font-mono" :title="node.ip_config.script_sha256">
+                {{ shortId(node.ip_config.script_sha256, 16) }}
+              </Badge>
+            </div>
+            <Textarea
+              v-model="ipScript"
+              rows="5"
+              class="font-mono"
+              placeholder="curl -fsS https://api.ipify.org&#10;# optional: echo an IPv6 on another line"
+            />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.ipConfig.scriptHint') }}</p>
+            <p v-if="node.ip_config?.script_sha256 && !ipScript.trim()" class="text-xs text-muted-foreground">
+              {{ $t('fleet.nodes.detail.ipConfig.scriptPreserveHint') }}
+            </p>
+          </div>
+          <template #actions>
+            <Button size="sm" :disabled="ipConfigPending || !ipDirty || !canSaveIPConfig" @click="saveIPConfig">
+              <RefreshCw v-if="ipConfigPending" class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.save') }}
+            </Button>
+            <Button v-if="node.ip_config?.mode" variant="ghost" size="sm" :disabled="ipConfigPending" @click="clearIPOpen = true">
+              {{ $t('fleet.nodes.detail.ipConfig.clear') }}
+            </Button>
+          </template>
+        </SettingsSection>
+
+        <SettingsSection v-if="canAdminNodes" id="node-launch" :title="$t('fleet.nodes.detail.launch.title')" :description="$t('fleet.nodes.detail.launch.hint')">
+          <template #status>
+          <Badge :variant="node.agent_launch?.updated_at ? 'outline' : 'secondary'">
+            {{ node.agent_launch?.updated_at ? $t('fleet.nodes.detail.launch.profileSaved') : $t('fleet.nodes.detail.launch.profileUnknown') }}
+          </Badge>
+          <Badge :variant="node.agent_runtime?.reported_at ? 'success' : 'secondary'">
+            {{ node.agent_runtime?.reported_at ? $t('fleet.nodes.detail.launch.runtimeReported') : $t('fleet.nodes.detail.launch.runtimeUnknown') }}
+          </Badge>
+          <Badge v-if="launchDirty" variant="outline">
+            {{ $t('fleet.nodes.detail.launch.unsavedDraft') }}
+          </Badge>
+          <Badge v-if="launchRuntimeDrift" variant="secondary">
+            {{ $t('fleet.nodes.detail.launch.runtimeDrift') }}
+          </Badge>
+          </template>
+          <div class="grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
+            <div class="rounded-md border border-border bg-background/60 p-2">
+              <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.runtimeNow') }}</p>
+              <p class="mt-1 text-foreground">{{ launchSnapshotSummary(runtimeLaunchSnapshot) }}</p>
+              <p class="mt-2 font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.taskSandbox') }}</p>
+              <p class="mt-1 text-foreground">{{ taskSandboxSummary(node.agent_runtime) }}</p>
+              <p class="mt-1 text-muted-foreground">{{ taskSandboxFeatures(node.agent_runtime) }}</p>
+              <p v-if="node.agent_runtime?.task_sandbox_warning" class="mt-1 text-warning">
+                {{ node.agent_runtime.task_sandbox_warning }}
+              </p>
+            </div>
+            <div class="rounded-md border border-border bg-background/60 p-2">
+              <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.savedDesired') }}</p>
+              <p class="mt-1 text-foreground">{{ launchSnapshotSummary(savedLaunchSnapshot) }}</p>
+            </div>
+            <div :class="cn('rounded-md border p-2', launchDirty ? 'border-warning/50 bg-warning/5' : 'border-border bg-background/60')">
+              <p class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.draft') }}</p>
+              <p class="mt-1 text-foreground">{{ launchSnapshotSummary(draftLaunchSnapshot) }}</p>
+            </div>
+          </div>
+          <p class="text-xs" :class="launchDirty ? 'text-warning-foreground' : 'text-muted-foreground'">
+            {{ launchDirty ? $t('fleet.nodes.detail.launch.draftChanges', { changes: launchDiffSummary }) : $t('fleet.nodes.detail.launch.noDraftChanges') }}
+          </p>
+
+          <div class="grid grid-cols-1 min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <Checkbox v-model="launchAllowExec" class="mt-0.5" :disabled="launchNoExec" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowExec') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowExecHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <Checkbox v-model="launchAllowRootExec" class="mt-0.5" :disabled="launchNoExec || !launchAllowExec" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowRootExec') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowRootExecHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <Checkbox v-model="launchNoExec" class="mt-0.5" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.noExec') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.noExecHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <Checkbox v-model="launchAllowTerminal" class="mt-0.5" :disabled="launchNoExec" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.allowTerminal') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.allowTerminalHint') }}</span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 rounded-md border border-border bg-background/60 p-3 text-sm">
+              <Checkbox v-model="launchSSHAlerts" class="mt-0.5" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.enroll.sshAlerts') }}</span>
+                <span class="text-xs text-muted-foreground">{{ $t('fleet.nodes.enroll.sshAlertsHint') }}</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div class="grid gap-1.5">
+              <Label>{{ $t('fleet.nodes.enroll.terminalTransport') }}</Label>
+              <Select v-model="launchTerminalTransport" :disabled="!launchAllowTerminal">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="poll">poll</SelectItem>
+                  <SelectItem value="stream">stream</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div v-if="reconfigureCommand" class="space-y-2">
+            <p
+              v-if="reconfigureCommandMismatch"
+              class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive"
+            >
+              {{ $t('fleet.nodes.detail.launch.nodeIdMismatch', { expected: node.id, actual: reconfigureCommandNodeId }) }}
+            </p>
+            <div class="inline-flex w-fit rounded-md border border-border bg-background/70 p-1">
+              <button
+                type="button"
+                :class="cn(
+                  'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                  launchPlatform === 'linux' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                )"
+                :aria-pressed="launchPlatform === 'linux'"
+                @click="launchPlatform = 'linux'"
+              >
+                {{ $t('fleet.nodes.enroll.platformLinux') }}
+              </button>
+              <button
+                type="button"
+                :class="cn(
+                  'rounded px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                  launchPlatform === 'manual' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                )"
+                :aria-pressed="launchPlatform === 'manual'"
+                @click="launchPlatform = 'manual'"
+              >
+                {{ $t('fleet.nodes.enroll.platformManual') }}
+              </button>
+            </div>
+            <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
+              {{ reconfigureCommand }}
+            </code>
+          </div>
+          <template #actions>
+            <Button size="sm" :disabled="reconfigurePending || !launchDirty" @click="generateReconfigureCommand">
+              <RefreshCw v-if="reconfigurePending" class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.launch.generate') }}
+            </Button>
+            <CopyButton v-if="reconfigureCommand" :value="reconfigureCommand" :label="$t('fleet.nodes.detail.launch.copy')" />
+          </template>
+        </SettingsSection>
+
+        <!-- Location: moved here from the Map's editor. -->
+        <SettingsSection id="node-geo" :title="$t('fleet.nodes.detail.geo')" :description="$t('fleet.nodes.detail.geoDesc')">
+          <template #status>
+            <Badge v-if="hasGeo" variant="outline">{{ geoSourceLabel(node.geo?.source) }}</Badge>
+          </template>
+          <div v-if="canAdminNodes" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="grid gap-1.5">
+              <Label for="geo-lat">{{ $t('fleet.map.editor.latitude') }}</Label>
+              <Input id="geo-lat" v-model="geoLat" inputmode="decimal" class="font-mono" :aria-invalid="geoLat.trim() !== '' && geoLatValue === undefined" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="geo-lon">{{ $t('fleet.map.editor.longitude') }}</Label>
+              <Input id="geo-lon" v-model="geoLon" inputmode="decimal" class="font-mono" :aria-invalid="geoLon.trim() !== '' && geoLonValue === undefined" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="geo-country">{{ $t('fleet.map.editor.country') }}</Label>
+              <Input id="geo-country" v-model="geoCountry" placeholder="US" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label for="geo-region">{{ $t('fleet.map.editor.region') }}</Label>
+              <Input id="geo-region" v-model="geoRegion" :placeholder="$t('fleet.map.editor.regionPlaceholder')" />
+            </div>
+            <div class="grid gap-1.5 sm:col-span-2">
+              <Label for="geo-city">{{ $t('fleet.map.editor.city') }}</Label>
+              <Input id="geo-city" v-model="geoCity" :placeholder="$t('fleet.map.editor.cityPlaceholder')" />
+            </div>
+            <p v-if="geoDirty && geoInvalid" class="text-xs text-destructive sm:col-span-2" role="alert">{{ $t('fleet.map.toast.coordinatesRequired') }}</p>
+          </div>
+          <dl v-else-if="hasGeo" class="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            <div><dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoCountry') }}</dt><dd>{{ node.geo?.country || $t('common.misc.none') }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoRegion') }}</dt><dd>{{ node.geo?.region || $t('common.misc.none') }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.geoCity') }}</dt><dd>{{ node.geo?.city || $t('common.misc.none') }}</dd></div>
+          </dl>
+          <p v-else class="text-muted-foreground">{{ $t('fleet.nodes.detail.noGeo') }}</p>
+          <p v-if="hasGeo" class="text-xs text-muted-foreground">
+            {{ [node.geo?.as_org, node.geo?.asn ? `AS${node.geo.asn}` : '', node.geo?.provider].filter(Boolean).join(' · ') }}
+            <template v-if="node.geo?.updated_at"> · {{ $t('fleet.nodes.detail.geoUpdated', { time: formatDateTime(node.geo.updated_at) }) }}</template>
+          </p>
+          <template v-if="canAdminNodes" #actions>
+            <Button size="sm" :disabled="geoPending || !geoDirty || geoInvalid" @click="saveGeo">
+              <RefreshCw v-if="geoPending" class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.save') }}
+            </Button>
+            <Button variant="outline" size="sm" :disabled="resolvingGeo" @click="resolveGeo">
+              <RefreshCw :class="cn('size-4', resolvingGeo && 'animate-spin')" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.resolveGeo') }}
+            </Button>
+            <Button v-if="hasGeo" variant="ghost" size="sm" :disabled="geoPending" @click="clearGeoOpen = true">
+              {{ $t('fleet.map.editor.clear') }}
+            </Button>
+          </template>
+        </SettingsSection>
+
+        <SettingsSection id="node-updates" :title="$t('fleet.nodes.detail.agentUpdates')" :description="$t('fleet.nodes.detail.agentUpdatesDesc')">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.agentVersion') }}</span>
+            <span class="font-mono">{{ node.agent_version || $t('fleet.nodes.detail.unknown') }}</span>
+          </div>
+          <template v-if="updatePolicy">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.targetVersion') }}</span>
+              <span class="font-mono">{{ updatePolicy.target_version || $t('common.misc.none') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.lastApplied') }}</span>
+              <span class="font-mono">{{ updatePolicy.last_applied_version || $t('common.misc.none') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-muted-foreground">{{ $t('fleet.nodes.detail.lastPlanned') }}</span>
+              <span class="tabular text-xs text-muted-foreground">{{ updatePolicy.last_planned_at ? formatRelativeTime(updatePolicy.last_planned_at) : $t('common.misc.none') }}</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 pt-1">
+              <Badge :variant="updatePolicy.enabled ? 'success' : 'secondary'">
+                {{ updatePolicy.enabled ? $t('fleet.nodes.detail.updatesEnabled') : $t('common.status.disabled') }}
+              </Badge>
+              <Badge v-if="updatePolicy.auto_plan" variant="info">{{ $t('fleet.nodes.detail.autoPlan') }}</Badge>
+            </div>
+            <p v-if="activeAgentUpdateError" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
+              {{ activeAgentUpdateError }}
+            </p>
+            <p v-else-if="agentAppliedVersionMismatch" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning-foreground">
+              {{ $t('fleet.nodes.detail.agentVersionMismatch', { current: node.agent_version, applied: updatePolicy.last_applied_version }) }}
+            </p>
+          </template>
+          <p v-else class="text-muted-foreground">{{ $t('fleet.nodes.detail.noUpdatePolicy') }}</p>
+          <div v-if="canAdminNodes" class="space-y-3 border-t border-border pt-4">
+            <div class="rounded-md border border-border bg-background/60 p-2 text-xs">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.savedPolicy') }}</span>
+                <Badge v-if="updateDirty" variant="outline">{{ $t('fleet.nodes.detail.unsavedDraft') }}</Badge>
+              </div>
+              <p class="mt-1 text-foreground">{{ savedUpdateSummary }}</p>
+              <p class="mt-1 text-muted-foreground">{{ $t('fleet.nodes.detail.draftPolicy', { value: draftUpdateSummary }) }}</p>
+            </div>
+            <div class="grid gap-2">
+              <Label for="agent-update-target">{{ $t('fleet.nodes.detail.targetVersion') }}</Label>
+              <Input
+                id="agent-update-target"
+                v-model="updateTarget"
+                class="font-mono"
+                :placeholder="$t('fleet.nodes.detail.targetVersionPlaceholder')"
+                @input="touchUpdateDraft"
+              />
+            </div>
+            <label class="flex items-start gap-2 text-sm">
+              <Checkbox v-model="updateAuto" class="mt-0.5" @update:model-value="touchUpdateDraft" />
+              <span>
+                <span class="block font-medium">{{ $t('fleet.nodes.detail.autoPlan') }}</span>
+                <span class="block text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.autoUpdateHint') }}</span>
+              </span>
+            </label>
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.updateRequiresExec') }}</p>
+          </div>
+          <template v-if="canAdminNodes" #actions>
+            <Button size="sm" :disabled="savingUpdatePolicy || !updateDirty" @click="saveAutoUpdate">
+              <RefreshCw v-if="savingUpdatePolicy" class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.save') }}
+            </Button>
+            <Button v-if="canPlanUpdates" variant="outline" size="sm" :disabled="planningUpdate" @click="planUpdate()">
+              <RefreshCw :class="cn('size-4', planningUpdate && 'animate-spin')" aria-hidden="true" />
+              {{ $t('fleet.nodes.detail.planUpdate') }}
+            </Button>
+          </template>
+        </SettingsSection>
+
+        <SettingsSection v-if="canAdminNodes" id="node-capabilities" :title="$t('fleet.nodes.detail.capabilities.title')" :description="$t('fleet.nodes.detail.capabilities.description')">
+          <p v-if="capabilitiesQuery.data.value !== undefined && allCapabilityRows.length === 0" class="text-muted-foreground">{{ $t('fleet.nodes.detail.capabilities.none') }}</p>
+          <div class="divide-y divide-border/60">
+            <div
+              v-for="row in (showDormantCapabilities ? allCapabilityRows : capabilityRows)"
+              :key="row.capability"
+              class="flex flex-wrap items-center gap-3 py-2 first:pt-0 last:pb-0"
+            >
+              <div class="min-w-0 flex-1">
+                <p class="truncate font-mono text-sm">{{ row.capability }}</p>
+                <p
+                  v-if="capabilityNote(row.record)"
+                  class="truncate text-xs text-muted-foreground"
+                  :title="capabilityNote(row.record)"
+                >
+                  {{ capabilityNote(row.record) }}
+                </p>
+              </div>
+              <!-- The effective answer, not just the stored record. A node
+                   allowed because of its own configuration is in scope, and
+                   labelling that "not decided" would read as blocked. -->
+              <Badge :variant="capabilityBadge(row.record).variant">
+                {{ capabilityBadge(row.record).label }}
+              </Badge>
+              <div class="flex shrink-0 items-center gap-1">
+                <Button
+                  v-if="row.record?.state !== 'enrolled'"
+                  size="sm"
+                  variant="outline"
+                  :disabled="capabilityPending === row.capability"
+                  @click="setCapability(row.capability, 'enrolled')"
+                >
+                  {{ $t('fleet.nodes.detail.capabilities.enrol') }}
+                </Button>
+                <Button
+                  v-if="row.record?.state !== 'excluded'"
+                  size="sm"
+                  variant="ghost"
+                  :disabled="capabilityPending === row.capability"
+                  @click="openExclude(row.capability)"
+                >
+                  {{ $t('fleet.nodes.detail.capabilities.exclude') }}
+                </Button>
+                <!-- Clearing is not the same as excluding: it removes the
+                     decision so the capability's own default applies again. -->
+                <Button
+                  v-if="row.record"
+                  size="sm"
+                  variant="ghost"
+                  :disabled="capabilityPending === row.capability"
+                  :title="$t('fleet.nodes.detail.capabilities.clearHint')"
+                  @click="setCapability(row.capability, '')"
+                >
+                  {{ $t('fleet.nodes.detail.capabilities.clear') }}
+                </Button>
+              </div>
+            </div>
+          </div>
+          <!-- The capabilities that are declared but not yet gated. Kept out
+               of the way rather than out of reach: a decision recorded now
+               will apply the moment that capability goes live. -->
+          <Button
+            v-if="dormantCapabilityRows.length"
+            variant="ghost"
+            size="sm"
+            class="mt-2 text-muted-foreground"
+            @click="showDormantCapabilities = !showDormantCapabilities"
+          >
+            {{ showDormantCapabilities
+              ? $t('fleet.nodes.detail.capabilities.hideDormant')
+              : $t('fleet.nodes.detail.capabilities.showDormant', { count: dormantCapabilityRows.length }) }}
+          </Button>
+        </SettingsSection>
+
+        <SettingsSection v-if="canAdminNodes" id="node-diagnostics" :title="$t('fleet.nodes.detail.diagnostics')" :description="$t('fleet.nodes.detail.debugDescription')">
+          <template #status>
+            <Badge :variant="node.agent_debug?.enabled ? 'warning' : 'secondary'">
+              {{ node.agent_debug?.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
+            </Badge>
+          </template>
+          <label class="flex items-start gap-3">
+            <Checkbox v-model="debugEnabledDraft" class="mt-0.5" :disabled="debugPending" />
+            <span class="space-y-1">
+              <span class="block font-medium">{{ $t('fleet.nodes.detail.debugEnabled') }}</span>
+              <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugLocalHint') }}</span>
+            </span>
+          </label>
+          <label class="flex items-start gap-3" :class="!debugEnabledDraft && 'opacity-60'">
+            <Checkbox v-model="debugCollectDraft" class="mt-0.5" :disabled="!debugEnabledDraft || debugPending" />
+            <span class="space-y-1">
+              <span class="block font-medium">{{ $t('fleet.nodes.detail.debugCollect') }}</span>
+              <span class="block text-muted-foreground">{{ $t('fleet.nodes.detail.debugCollectHint', { path: `agent-debug://${node.id}` }) }}</span>
+            </span>
+          </label>
+          <template #actions>
+            <Button size="sm" :disabled="debugPending || !debugDirty" @click="saveDebug">
+              <RefreshCw v-if="debugPending" class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.save') }}
+            </Button>
+          </template>
+        </SettingsSection>
+
+        <!-- Danger zone, last. Disable is reversible and is not drawn red (design 23, 3.8). -->
+        <SettingsSection v-if="canAdminNodes" id="node-danger" danger :title="$t('fleet.nodes.detail.admin')" :description="$t('fleet.nodes.detail.adminDesc')">
+          <div class="divide-y divide-border">
+            <div class="flex flex-wrap items-center justify-between gap-3 pb-3">
+              <div class="min-w-0">
+                <p class="font-medium">{{ node.disabled ? $t('fleet.nodes.detail.dangerEnableTitle') : $t('fleet.nodes.detail.dangerDisableTitle') }}</p>
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.dangerDisableHint') }}</p>
+              </div>
+              <Button variant="outline" size="sm" :disabled="pending" @click="requestDisable(!node.disabled)">
+                <Power class="size-4" aria-hidden="true" />
+                {{ node.disabled ? $t('common.actions.enable') : $t('common.actions.disable') }}
+              </Button>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div class="min-w-0">
+                <p class="font-medium">{{ $t('fleet.nodes.detail.rotateToken') }}</p>
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.dangerRotateHint') }}</p>
+              </div>
+              <Button variant="outline" size="sm" :disabled="pending" @click="rotateOpen = true">
+                <KeyRound class="size-4" aria-hidden="true" />
+                {{ $t('fleet.nodes.detail.rotateToken') }}
+              </Button>
+            </div>
+            <!-- One-time token reveal (mirrors NodesView). -->
+            <div v-if="rotatedToken" class="grid gap-3 rounded-md border border-warning/40 bg-warning/5 p-4">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p class="text-sm font-medium">{{ $t('fleet.nodes.rotated.tokenFor', { id: rotatedToken.node_id }) }}</p>
+                  <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.rotated.hint') }}</p>
+                </div>
+                <CopyButton :value="rotatedToken.token" :label="$t('fleet.nodes.rotated.copyToken')" />
+              </div>
+              <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">{{ rotatedToken.token }}</code>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-3">
+              <div class="min-w-0">
+                <p class="font-medium">{{ $t('fleet.nodes.detail.deleteNode') }}</p>
+                <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.dangerDeleteHint') }}</p>
+              </div>
+              <Button variant="destructive" size="sm" :disabled="pending || deletePending" @click="openDeleteDialog">
+                <Trash2 class="size-4" aria-hidden="true" />
+                {{ $t('fleet.nodes.detail.deleteNode') }}
+              </Button>
+            </div>
+          </div>
+        </SettingsSection>
+      </div>
     </div>
 
     <!-- Agent update no-op: node already reports target version. -->
@@ -2623,6 +2679,7 @@ async function resolveGeo() {
       :description="$t('fleet.nodes.confirm.disableDescription', { name: nodeLabel })"
       :confirm-label="$t('common.actions.disable')"
       :cancel-label="$t('common.actions.cancel')"
+      variant="default"
       :pending="pending"
       @confirm="confirmDisable"
     />
@@ -2631,6 +2688,7 @@ async function resolveGeo() {
       v-model:open="rotateOpen"
       :title="$t('fleet.nodes.confirm.rotateTitle')"
       :description="$t('fleet.nodes.confirm.rotateDescription', { name: nodeLabel })"
+      :impact="[$t('fleet.nodes.confirm.rotateImpact', { name: nodeLabel })]"
       :confirm-label="$t('fleet.nodes.detail.rotateToken')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="pending"
@@ -2645,6 +2703,16 @@ async function resolveGeo() {
       :cancel-label="$t('common.actions.cancel')"
       :pending="ipConfigPending"
       @confirm="clearIPConfig"
+    />
+
+    <ConfirmDialog
+      v-model:open="clearGeoOpen"
+      :title="$t('fleet.map.confirm.clearTitle')"
+      :description="$t('fleet.map.confirm.clearDescription', { name: nodeLabel })"
+      :confirm-label="$t('fleet.map.editor.clear')"
+      :cancel-label="$t('common.actions.cancel')"
+      :pending="geoPending"
+      @confirm="clearGeo"
     />
   </div>
 
