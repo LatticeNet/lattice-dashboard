@@ -309,7 +309,12 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (listing.value) {
     segments.push({ key: "range", text: rangeText() });
     const s = scan.value;
-    if (s?.kind === "complete") segments.push({ key: "scan", text: t("operations.audit.proof.scanned", { total: num(s.total), scanned: num(s.scanned) }) });
+    // Two segments, scanned first: "3,007 of 5,750 scanned" read as a scan
+    // that stopped partway, which is the capped form's job to say.
+    if (s?.kind === "complete") {
+      segments.push({ key: "scan", text: t("operations.audit.proof.scanned", { n: num(s.scanned) }) });
+      segments.push({ key: "match", text: t("operations.audit.proof.matched", { n: num(s.total) }) });
+    }
     else if (s?.kind === "capped") {
       segments.push({ key: "scan", text: t("operations.audit.proof.capped", { total: num(s.total), scanned: num(s.scanned) }), tone: "warning" });
     } else if (s) segments.push({ key: "scan", text: t("operations.audit.proof.events", { total: num(s.total) }) });

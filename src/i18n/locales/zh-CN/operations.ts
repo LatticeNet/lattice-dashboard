@@ -629,7 +629,8 @@ export default {
         integrity: "完整性",
       },
       proof: {
-        scanned: "扫描 {scanned} 条，匹配 {total} 条",
+        scanned: "扫描 {n} 条",
+        matched: "匹配 {n} 条",
         capped: "至少 {total} 条，扫描到 {scanned} 条时停止",
         events: "{total} 条事件",
         hidden: "已隐藏节点上下线和观察类事件",

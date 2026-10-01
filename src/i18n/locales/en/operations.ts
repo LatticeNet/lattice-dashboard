@@ -637,7 +637,8 @@ export default {
         integrity: "Integrity",
       },
       proof: {
-        scanned: "{total} of {scanned} scanned",
+        scanned: "{n} scanned",
+        matched: "{n} match",
         capped: "at least {total}, scan stopped at {scanned}",
         events: "{total} events",
         hidden: "node flips and observe events hidden",
