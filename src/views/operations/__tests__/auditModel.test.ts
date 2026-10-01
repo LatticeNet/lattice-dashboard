@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { parseTokens, readTokenQuery } from "../../../lib/queryTokens.ts";
-import { AUDIT_GRAMMAR, auditRequest, auditScan, changesExclusions, readStoredVerify } from "../auditModel.ts";
+import { AUDIT_GRAMMAR, auditRequest, auditScan, changesExclusions, exclusionsIgnored, readStoredVerify } from "../auditModel.ts";
 
 const tokens = (text: string) => parseTokens(text, AUDIT_GRAMMAR, { node: { toId: (v) => (v === "[cd]-DMIT-2" ? "node_dmit2" : undefined) } });
 
@@ -67,4 +67,15 @@ test("a stored verify result is read only when it is whole", () => {
     ok: true,
     count: 230000,
   });
+});
+
+test("rows the request excluded mean the server ignored the exclusion", () => {
+  const sent = { exclude_action: "node.online,node.offline", exclude_decision: "observe" };
+  const change = { action: "approval.approve", decision: "allow" };
+  assert.equal(exclusionsIgnored(sent, [change]), false);
+  assert.equal(exclusionsIgnored(sent, [change, { action: "node.offline", decision: "allow" }]), true);
+  assert.equal(exclusionsIgnored(sent, [{ action: "auth.login.prompt", decision: "observe" }]), true);
+  assert.equal(exclusionsIgnored({ exclude_action: "task.*" }, [{ action: "task.create", decision: "allow" }]), true);
+  // Nothing excluded (All events): nothing can be ignored.
+  assert.equal(exclusionsIgnored({}, [{ action: "node.offline", decision: "observe" }]), false);
 });

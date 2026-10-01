@@ -97,6 +97,22 @@ export function auditRequest(input: AuditRequestInput): AuditQueryParams {
   return params;
 }
 
+/**
+ * Whether the server answered rows the request excluded. A server from before
+ * exclude_action ignores the parameter, and Changes then shows node flips and
+ * observe events; the proof line must not say they are hidden. Prefixes match
+ * the server's rule: a trailing "*" is optional.
+ */
+export function exclusionsIgnored(
+  params: Pick<AuditQueryParams, "exclude_action" | "exclude_decision">,
+  events: ReadonlyArray<{ action: string; decision: string }>,
+): boolean {
+  const prefixes = (params.exclude_action ?? "").split(",").filter(Boolean).map((p) => (p.endsWith("*") ? p.slice(0, -1) : p));
+  const decisions = (params.exclude_decision ?? "").split(",").filter(Boolean);
+  if (!prefixes.length && !decisions.length) return false;
+  return events.some((event) => decisions.includes(event.decision) || prefixes.some((prefix) => event.action.startsWith(prefix)));
+}
+
 /** What the proof line says about the scan behind the count. */
 export type AuditScan =
   | { kind: "complete"; total: number; scanned: number }

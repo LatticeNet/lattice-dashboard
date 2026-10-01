@@ -19,6 +19,8 @@
  * answers the version read with task execution switched off; `&no-stderr-head`
  * answers results without stderr_head (the server at c08ffaf);
  * `&no-approval-filter` ignores approval_id on the task list (same).
+ * `&no-audit-exclude` ignores exclude_action and exclude_decision on the
+ * audit query (a server from before a101).
  *
  * The fake honours the queries the server honours, and refuses what it
  * refuses: task statuses outside the eight, more than 100 task ids.
@@ -267,7 +269,10 @@ export const api = {
       guard(() =>
         FIXTURE === "empty"
           ? delay({ events: [], total: 0, limit: Number(params?.limit ?? 100), offset: Number(params?.offset ?? 0), scanned: 0, complete: true }, 120)
-          : delay(queryAudit(params ?? {}), 260),
+          : delay(
+              queryAudit(flags.has("no-audit-exclude") ? { ...params, exclude_action: undefined, exclude_decision: undefined } : (params ?? {})),
+              260,
+            ),
       ),
     verify: () => guard(() => delay(FIXTURE === "empty" ? { enabled: true, ok: true, count: 0, anchored: false } : AUDIT_VERIFY, 900)),
   },

@@ -619,6 +619,7 @@ export default {
         capped: "at least {total}, scan stopped at {scanned}",
         events: "{total} events",
         hidden: "node flips and observe events hidden",
+        notHidden: "this server does not hide node flips or observe events",
         chainVerified: "chain verified {age} ago",
         chainBroken: "chain broken {age} ago",
         chainOff: "no chain configured",

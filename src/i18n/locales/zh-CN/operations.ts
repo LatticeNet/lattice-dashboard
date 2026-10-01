@@ -612,6 +612,7 @@ export default {
         capped: "至少 {total} 条，扫描到 {scanned} 条时停止",
         events: "{total} 条事件",
         hidden: "已隐藏节点上下线和观察类事件",
+        notHidden: "这个服务端不会隐藏节点上下线和观察类事件",
         chainVerified: "{age}前校验通过",
         chainBroken: "{age}前校验失败，审计链已损坏",
         chainOff: "未配置审计链",

@@ -54,8 +54,10 @@ import {
   VERIFY_STORAGE_KEY,
   auditRequest,
   auditScan,
+  exclusionsIgnored,
   readStoredVerify,
   type AuditLayer,
+  type AuditQueryParams,
   type StoredVerify,
 } from "./auditModel";
 import { OPS_RANGES, pageBounds, rangeWindow } from "./opsQueryModel";
@@ -100,18 +102,22 @@ const query = useOpsQuery({
 const bar = ref<InstanceType<typeof QueryBar> | null>(null);
 const listing = computed(() => layer.value !== "integrity");
 
+/** The request behind the rows on screen, so the proof line describes what was asked. */
+const shownParams = ref<AuditQueryParams | null>(null);
+
 const auditQuery = useAsyncData(
-  (signal) =>
-    api.audit.query(
-      auditRequest({
-        layer: layer.value,
-        tokens: query.applied.value,
-        window: rangeWindow(query.range.value, Date.now()),
-        offset: query.offset.value,
-        limit: AUDIT_PAGE_SIZE,
-      }),
-      { signal },
-    ),
+  async (signal) => {
+    const params = auditRequest({
+      layer: layer.value,
+      tokens: query.applied.value,
+      window: rangeWindow(query.range.value, Date.now()),
+      offset: query.offset.value,
+      limit: AUDIT_PAGE_SIZE,
+    });
+    const response = await api.audit.query(params, { signal });
+    shownParams.value = params;
+    return response;
+  },
   { immediate: listing.value },
 );
 
@@ -307,7 +313,15 @@ const proofSegments = computed<ProofSegment[]>(() => {
     else if (s?.kind === "capped") {
       segments.push({ key: "scan", text: t("operations.audit.proof.capped", { total: num(s.total), scanned: num(s.scanned) }), tone: "warning" });
     } else if (s) segments.push({ key: "scan", text: t("operations.audit.proof.events", { total: num(s.total) }) });
-    if (layer.value === "changes") segments.push({ key: "hidden", text: t("operations.audit.proof.hidden"), tone: "muted" });
+    if (layer.value === "changes") {
+      // An older server ignores the exclusions; then say so instead of claiming them.
+      const ignored = !!shownParams.value && exclusionsIgnored(shownParams.value, events.value);
+      segments.push(
+        ignored
+          ? { key: "hidden", text: t("operations.audit.proof.notHidden"), tone: "warning" }
+          : { key: "hidden", text: t("operations.audit.proof.hidden"), tone: "muted" },
+      );
+    }
   }
   segments.push(chainSegment.value);
   return segments;
