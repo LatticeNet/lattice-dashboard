@@ -30,6 +30,7 @@ import { api, unwrap, type Node, type TerminalSession } from "@/lib/api";
 import { describeNodeStatus } from "@/lib/nodeStatus";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import type { QueryValue } from "@/components/common/tableUrlState";
 import { useAuthStore } from "@/stores/auth";
 import { claimViewportPane } from "@/layout/viewportPane";
 import { formatDateTime, shortId } from "@/lib/format";
@@ -203,6 +204,15 @@ function proofText(label: ProofLabel): string {
   }
 }
 
+/**
+ * "sessions are audited" says where: the terminal events in Audit, narrowed
+ * to the chosen node when there is one.
+ */
+const auditedTo = computed(() => ({
+  name: "audit",
+  query: { view: "all", range: "7d", action: "terminal.*", ...(selectedNodeId.value ? { node_id: selectedNodeId.value } : {}) },
+}));
+
 const proofSegments = computed(() =>
   proofLabels({
     node: selectedNode.value,
@@ -215,6 +225,7 @@ const proofSegments = computed(() =>
       key: label.key,
       text: proofText(label),
       tone: label.key === "blocked" ? "warning" : label.key === "transport" || label.key === "shell" ? "strong" : "default",
+      to: label.key === "audited" && auth.can("audit:read") ? auditedTo.value : undefined,
     }),
   ),
 );
@@ -306,6 +317,29 @@ watch(
   { immediate: true },
 );
 
+// --- the address ------------------------------------------------------------
+//
+// The chosen node and the open session are written back with `replace`, so a
+// reload, a copied link or Back lands on the same shell. A one-time
+// `connect=1` from a link never carries over to a node chosen here: it would
+// open a shell on a node the link did not name.
+
+function writeAddress(patch: { node_id?: string; session_id?: string }, dropConnect: boolean): void {
+  if (!ownedRoute.owns()) return;
+  const current = ownedRoute.query();
+  const next: Record<string, QueryValue | undefined> = { ...current };
+  if (dropConnect) delete next.connect;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value) next[key] = value;
+    else delete next[key];
+  }
+  const same = Object.keys({ ...current, ...next }).every((key) => JSON.stringify(current[key]) === JSON.stringify(next[key]));
+  if (!same) ownedRoute.replace(next);
+}
+
+watch(selectedNodeId, (id) => writeAddress({ node_id: id }, id !== routeNodeId.value));
+watch(activeTabId, (id) => writeAddress({ session_id: id }, false));
+
 function dismissTab(id: string) {
   const next = new Set(dismissed.value);
   next.add(id);
@@ -391,12 +425,15 @@ async function connect() {
 }
 
 // `?connect=1` opens once, and prefers a live session on that node if one
-// already exists, the way the Nodes page link expects.
+// already exists, the way the Nodes page link expects. Once tried, the flag
+// leaves the address, so a reload attaches to the session instead of
+// opening another.
 watch(
   [selectedNode, routeConnect, readiness],
   ([node, shouldConnect, ready]) => {
     if (!shouldConnect || routeConnectAttempted || !node || node.id !== routeNodeId.value || !ready.ready) return;
     routeConnectAttempted = true;
+    writeAddress({}, true);
     const existing = tabs.value.find((tab) => tab.live && tab.nodeId === node.id);
     if (existing) activeTabId.value = existing.id;
     else void connect();
