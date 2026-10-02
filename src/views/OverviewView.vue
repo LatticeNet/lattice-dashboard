@@ -40,6 +40,7 @@ import {
   CHANGES_QUERY,
   CHANGES_ROWS,
   DUE_WITHIN_DAYS,
+  FAILED_TASKS_QUERY,
   HOME_ATTENTION_MAX,
   changesOnly,
   dueThisWeek,
@@ -344,7 +345,7 @@ const metrics = computed<Metric[]>(() => [
     approvalCounts,
   ),
   metric(
-    { key: "failed", label: t("overview.metric.failed24h"), to: { name: "tasks", query: { status: "failed", since: "24h" } } },
+    { key: "failed", label: t("overview.metric.failed24h"), to: { name: "tasks", query: { ...FAILED_TASKS_QUERY } } },
     stateOf(can.tasks, taskCounts),
     () => {
       const failed = taskCounts.data.value?.failed_24h ?? 0;
