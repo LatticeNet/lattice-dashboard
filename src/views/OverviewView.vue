@@ -409,7 +409,7 @@ const changesState = computed(() => stateOf(can.audit, changes));
             <RouterLink
               v-if="can.upcoming"
               :to="{ name: 'upcoming' }"
-              class="ms-auto rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              class="ms-auto rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-end"
             >
               {{ $t('overview.due.all') }}
             </RouterLink>
@@ -474,7 +474,7 @@ const changesState = computed(() => stateOf(can.audit, changes));
             <RouterLink
               v-if="can.audit"
               :to="{ name: 'audit' }"
-              class="ms-auto rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              class="ms-auto rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-end"
             >
               {{ $t('common.actions.viewAll') }}
             </RouterLink>

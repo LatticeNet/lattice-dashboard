@@ -311,7 +311,7 @@ const STATUS_TEXT: Record<string, string> = {
               <StatusDot :status="describeNodeStatus(node).health" />
               <button
                 type="button"
-                class="min-w-0 truncate rounded-sm text-left font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                class="min-w-0 truncate rounded-sm text-left font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
                 @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
               >
                 {{ node.name || node.id }}
@@ -320,7 +320,7 @@ const STATUS_TEXT: Record<string, string> = {
               <RouterLink
                 v-if="canAdminNodes"
                 :to="{ name: 'node-detail', params: { id: node.id }, query: { view: 'settings' }, hash: '#node-geo' }"
-                class="ms-auto shrink-0 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+                class="ms-auto shrink-0 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
               >
                 {{ $t('fleet.map.unlocated.set') }}
               </RouterLink>

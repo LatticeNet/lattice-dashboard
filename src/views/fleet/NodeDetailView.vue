@@ -1562,10 +1562,10 @@ async function saveDebug(): Promise<void> {
           </div>
           <!-- Where else this node shows up, pre-scoped to it. -->
           <nav class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-xs" :aria-label="$t('fleet.nodes.detail.relatedViews')">
-            <RouterLink :to="{ name: 'tasks', query: { node_id: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewTasks') }}</RouterLink>
-            <RouterLink :to="{ name: 'network-ssh-guard', query: { node_id: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewSshGuard') }}</RouterLink>
-            <RouterLink :to="{ name: 'inventory', query: { node: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewInventory') }}</RouterLink>
-            <RouterLink :to="{ name: 'monitoring', query: { node: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">{{ $t('fleet.nodes.detail.viewMonitoring') }}</RouterLink>
+            <RouterLink :to="{ name: 'tasks', query: { node_id: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center">{{ $t('fleet.nodes.detail.viewTasks') }}</RouterLink>
+            <RouterLink :to="{ name: 'network-ssh-guard', query: { node_id: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center">{{ $t('fleet.nodes.detail.viewSshGuard') }}</RouterLink>
+            <RouterLink :to="{ name: 'inventory', query: { node: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center">{{ $t('fleet.nodes.detail.viewInventory') }}</RouterLink>
+            <RouterLink :to="{ name: 'monitoring', query: { node: node.id } }" class="text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center">{{ $t('fleet.nodes.detail.viewMonitoring') }}</RouterLink>
           </nav>
         </section>
 
@@ -1604,7 +1604,7 @@ async function saveDebug(): Promise<void> {
                         <span class="w-5 shrink-0 text-xs text-muted-foreground tabular">{{ index + 1 }}</span>
                         <div class="min-w-0 space-y-0.5">
                           <RouterLink
-                            class="block truncate font-mono text-xs hover:underline"
+                            class="block truncate font-mono text-xs hover:underline pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:items-center"
                             :to="{ name: 'tasks', query: { id: entry.id } }"
                           >{{ entry.id }}</RouterLink>
                           <p class="text-xs text-muted-foreground">
@@ -1909,7 +1909,7 @@ async function saveDebug(): Promise<void> {
                     :key="g.id"
                     type="button"
                     :class="cn(
-                      'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11',
                       groupColor(g.color).border,
                       groupColor(g.color).soft,
                       groupColor(g.color).text,

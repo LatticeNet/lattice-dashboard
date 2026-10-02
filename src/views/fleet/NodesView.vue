@@ -708,7 +708,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
               :key="mode"
               type="button"
               :class="cn(
-                'inline-flex items-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-10',
+                'inline-flex items-center justify-center gap-1.5 rounded px-2.5 py-1 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11',
                 layout === mode ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground',
               )"
               :aria-pressed="layout === mode"

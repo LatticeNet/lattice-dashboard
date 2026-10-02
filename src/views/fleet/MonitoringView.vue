@@ -858,7 +858,7 @@ const deleteImpact = computed(() => {
                   v-for="opt in (['all', 'failures', 'slow'] as const)"
                   :key="opt"
                   type="button"
-                  :class="cn('rounded px-2 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-10', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
+                  :class="cn('rounded px-2 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
                   :aria-pressed="logStatus === opt"
                   @click="logStatus = opt"
                 >
@@ -965,7 +965,7 @@ const deleteImpact = computed(() => {
           <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group">
             <button
               type="button"
-              :class="cn('rounded px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-10', assignAll && 'bg-secondary font-medium text-foreground')"
+              :class="cn('rounded px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11', assignAll && 'bg-secondary font-medium text-foreground')"
               :aria-pressed="assignAll"
               @click="assignAll = true"
             >
@@ -973,7 +973,7 @@ const deleteImpact = computed(() => {
             </button>
             <button
               type="button"
-              :class="cn('rounded px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-10', !assignAll && 'bg-secondary font-medium text-foreground')"
+              :class="cn('rounded px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11', !assignAll && 'bg-secondary font-medium text-foreground')"
               :aria-pressed="!assignAll"
               @click="assignAll = false"
             >

@@ -1407,7 +1407,7 @@ async function sendReminders(): Promise<void> {
           :key="option"
           type="button"
           :class="cn(
-            'whitespace-nowrap rounded px-2.5 py-1 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-10',
+            'whitespace-nowrap rounded px-2.5 py-1 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11',
             groupBy === option ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground',
           )"
           :aria-pressed="groupBy === option"

@@ -884,7 +884,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 <button
                   v-if="column.sortable"
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  class="inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                   :class="{
                     'ms-auto flex-row-reverse': column.align === 'right',
                     'mx-auto': column.align === 'center',
@@ -926,7 +926,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               <th :colspan="spannedColumns" scope="rowgroup" class="p-0 text-left font-normal">
                 <button
                   type="button"
-                  class="sticky left-0 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 px-3 py-2 text-left text-xs outline-none md:max-w-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  class="sticky left-0 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 px-3 py-2 text-left text-xs outline-none md:max-w-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset pointer-coarse:min-h-11"
                   :aria-expanded="!entry.collapsed"
                   @click="onToggleGroup(entry.group.key)"
                 >
