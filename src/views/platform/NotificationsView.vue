@@ -739,9 +739,9 @@ async function confirmDeleteRule(): Promise<void> {
             </div>
           </template>
           <template #cell-enabled="{ row }">
-            <Badge :variant="row.enabled ? 'outline' : 'secondary'">
-              {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-            </Badge>
+            <!-- Enabled is the normal state and stays quiet text; only a turned-off row carries a badge. -->
+            <span v-if="row.enabled" class="text-xs text-muted-foreground">{{ $t('common.status.enabled') }}</span>
+            <Badge v-else variant="secondary">{{ $t('common.status.disabled') }}</Badge>
           </template>
           <template #cell-updated_at="{ row }">
             <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
@@ -858,9 +858,9 @@ async function confirmDeleteRule(): Promise<void> {
             </div>
           </template>
           <template #cell-enabled="{ row }">
-            <Badge :variant="row.enabled ? 'outline' : 'secondary'">
-              {{ row.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-            </Badge>
+            <!-- Enabled is the normal state and stays quiet text; only a turned-off row carries a badge. -->
+            <span v-if="row.enabled" class="text-xs text-muted-foreground">{{ $t('common.status.enabled') }}</span>
+            <Badge v-else variant="secondary">{{ $t('common.status.disabled') }}</Badge>
           </template>
           <template #cell-actions="{ row }">
             <RowMenu v-if="canManage" :name="row.name || row.id" :items="ruleMenu(row)" />
