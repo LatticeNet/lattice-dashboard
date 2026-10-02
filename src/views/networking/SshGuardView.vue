@@ -1323,7 +1323,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :aria-pressed="postureFilter === key"
         :title="key === 'all' ? undefined : $t(`networking.sshGuard.posture.${POSTURE_KEY[key]}Title`)"
         :class="cn(
-          'board-chip inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           postureFilter === key
             ? 'border-primary bg-primary/10 text-primary'
             : key === 'password_open' || key === 'partial'
@@ -1351,7 +1351,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :aria-pressed="coverageFilter === key"
         :title="key === 'reverting' || key === 'armPending' ? $t(`networking.sshGuard.coverage.covers.${key}`) : undefined"
         :class="cn(
-          'board-chip inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           coverageFilter === key
             ? 'border-primary bg-primary/10 text-primary'
             : 'border-border text-muted-foreground hover:bg-muted/40',
