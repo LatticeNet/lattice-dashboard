@@ -176,6 +176,7 @@ function openSecurity() {
 <template>
   <header
     class="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-background px-4"
+    data-app-header
   >
     <!-- Mobile hamburger -->
     <Button
