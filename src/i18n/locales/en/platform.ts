@@ -91,6 +91,7 @@ export default {
       sheet: {
         runner: "runner {runner}",
         lifecycleUnread: "Runtime, digest and transitions need plugin:admin.",
+        recover: "The server arms a plugin's runtime when it starts and each time the plugin is activated. To retry, disable it below and activate it again. If the message above names a dependency that is not active, activate that plugin first.",
         transitions: "Lifecycle",
         newer: "Newer version",
         newerUnchecked: "not checked: the server does not read the plugin index",

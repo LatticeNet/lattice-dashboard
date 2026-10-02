@@ -87,6 +87,7 @@ export default {
       sheet: {
         runner: "运行器 {runner}",
         lifecycleUnread: "运行状态、摘要和生命周期记录需要 plugin:admin。",
+        recover: "服务端会在启动时以及每次激活插件时启动它的运行时。要重试，请在下方停用它，再重新激活。如果上面的信息提到某个依赖未激活，请先激活那个插件。",
         transitions: "生命周期",
         newer: "新版本",
         newerUnchecked: "未检查：服务器不读取插件索引",

@@ -180,8 +180,10 @@ const attention = computed<AttentionItem[]>(() => {
 
 const columns = computed<DataTableColumn<PluginRow>[]>(() => [
   { key: "name", label: t("platform.plugins.colName"), sortable: true, searchable: true, value: (row) => `${row.name} ${row.id}` },
-  { key: "version", label: t("platform.plugins.colVersion"), sortable: true, searchable: true, value: (row) => row.version ?? "" },
+  // State before version: at 375 the second column is the one still on screen,
+  // and whether a plugin runs matters more there than which build it is.
   { key: "health", label: t("platform.pluginsPage.colState"), sortable: true, value: (row) => healthOf(row) },
+  { key: "version", label: t("platform.plugins.colVersion"), sortable: true, searchable: true, value: (row) => row.version ?? "" },
   { key: "pages", label: t("platform.pluginsPage.colPages"), searchable: true, value: (row) => row.pages.map((page) => page.title).join(" ") },
   { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
@@ -402,6 +404,10 @@ async function runVerify() {
           v-if="openRow.runtime?.message"
           class="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs text-foreground"
         >{{ openRow.runtime.message }}</pre>
+        <!-- How a failed runtime recovers: the server arms it at startup and on each activation. -->
+        <p v-if="healthOf(openRow) === 'failed' && openRow.lifecycleRead" class="text-xs text-muted-foreground" data-testid="plugin-recover">
+          {{ $t('platform.pluginsPage.sheet.recover') }}
+        </p>
         <p v-if="!openRow.lifecycleRead" class="text-xs text-muted-foreground">{{ $t('platform.pluginsPage.sheet.lifecycleUnread') }}</p>
 
         <section v-if="openRow.pages.length" class="space-y-1.5">
