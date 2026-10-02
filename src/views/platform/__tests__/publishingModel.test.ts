@@ -14,6 +14,7 @@ import {
   lensOrigin,
   originTarget,
   originTargetLabel,
+  pickShareRecord,
   publishablePlugins,
   publishingPlaneEmpty,
   publishingState,
@@ -23,6 +24,7 @@ import {
   routePath,
   routeState,
   shareCreateTarget,
+  shareDeepLink,
   shareRefreshable,
   shareRendererState,
   sortRecords,
@@ -371,4 +373,35 @@ test("old Workers links land on Publishing and say so", () => {
   assert.equal(arrivedFromWorkers({}), false);
   assert.equal(arrivedFromWorkers({ from: "store" }), false);
   assert.equal(arrivedFromWorkers({ q: "workers" }), false);
+});
+
+test("Sub-Store's create link lands on Routes > Shares, opens the share form on its record, and leaves no create or for", () => {
+  // The address Sub-Store's Publish action navigates to, as the router hands it over.
+  const arrival = { origin: "share", create: "1", for: "imported-col-cd-home" };
+  // The page rewrites it onto the Routes layer first; the pane waits for that.
+  const canonical = canonicalPublishingQuery(arrival);
+  assert.ok(canonical, "the page rewrites the arrival");
+  assert.equal(canonicalPublishingQuery(canonical), null, "the rewrite is stable, so the pane may act on it");
+  const link = shareDeepLink(canonical);
+  assert.ok(link, "the rewritten address still opens the form");
+  assert.equal(link.record, "imported-col-cd-home");
+  assert.equal("create" in link.next, false);
+  assert.equal("for" in link.next, false);
+  assert.deepEqual(link.next, { origin: "share", view: "routes" });
+  // Once consumed, the address opens nothing on a reload.
+  assert.equal(shareDeepLink(link.next), null);
+  assert.equal(shareDeepLink({ view: "routes", origin: "share" }), null);
+});
+
+test("a deep link's record is matched by id or by name, never by display name", () => {
+  const records = [
+    { id: "merge-openjobs", name: "merge-openjobs", display_name: "OpenJobs merged" },
+    { id: "imported-col-cd-home", name: "cd-home", display_name: "Home lines" },
+  ];
+  assert.equal(pickShareRecord(records, "merge-openjobs"), "merge-openjobs");
+  assert.equal(pickShareRecord(records, "cd-home"), "imported-col-cd-home", "a name whose id differs");
+  assert.equal(pickShareRecord(records, "imported-col-cd-home"), "imported-col-cd-home");
+  assert.equal(pickShareRecord(records, "OpenJobs merged"), undefined);
+  assert.equal(pickShareRecord(records, ""), undefined);
+  assert.equal(pickShareRecord([], "cd-home"), undefined);
 });

@@ -268,6 +268,7 @@ export default {
         missingHint: "渲染这条分享的 {plugin} 插件没有安装在这台服务器上。重新安装之前无法刷新。",
         inactiveHint: "渲染这条分享的 {plugin} 插件已安装但未启用。在插件页启用之前无法刷新。",
         createUnavailable: "没有已启用的插件声明 subscription:serve，因此这里不能创建由插件提供内容的分享。代理用户分享不受影响：它由这台服务器自己提供。",
+        createNoAccess: "列出插件需要 audit:read，因此这里无法选择由插件提供内容的分享。代理用户分享不受影响：它由这台服务器自己提供。",
         openPlugins: "打开插件页",
       },
       guide: {

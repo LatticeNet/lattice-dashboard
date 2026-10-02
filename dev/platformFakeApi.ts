@@ -57,6 +57,9 @@ export * from "@/lib/api/index";
  *   ?share-expiring   The cd-self share expires in 5 days (invented).
  *   ?share-expired    ... expired 2 days ago (invented).
  *   ?shares-fail      The share list answers 502.
+ *   ?no-audit         The caller lacks audit:read, which /api/plugins needs (it answers 403).
+ *   ?no-shares        The caller lacks proxy:admin, so shares are not theirs to open.
+ *   window.__platformCalls counts the share, record, plugin and proxy-user reads.
  *   ?store-fail       Store's bucket read answers 502 (a failed read shows no count).
  *   ?records-slow     Sub-Store's record list answers after 1.5 s, so the share
  *                     form's deep link is seen waiting for it.
@@ -80,6 +83,14 @@ const STORE_FAIL = flags.has("store-fail");
 const STORE_EMPTY = flags.has("store-empty");
 const RECORDS_SLOW = flags.has("records-slow");
 const RECORDS_FAIL = flags.has("records-fail");
+const NO_AUDIT = flags.has("no-audit");
+const NO_SHARES = flags.has("no-shares");
+
+/** Calls per read, on window.__platformCalls, so a drive can see what a layer reads. */
+function counted(name: string): void {
+  const calls = ((globalThis as { __platformCalls?: Record<string, number> }).__platformCalls ??= {});
+  calls[name] = (calls[name] ?? 0) + 1;
+}
 const STORAGE_WRITE_MS = 1500;
 
 const NOW = Date.now();
@@ -109,9 +120,9 @@ const principal: Principal = {
     // Reading the storage token list needs these, and an operator without them
     // is the case where the console cannot tell who writes a bucket.
     ...(NO_ADMIN ? [] : ["kv:admin", "static:admin"]),
-    "proxy:admin",
+    ...(NO_SHARES ? [] : ["proxy:admin"]),
     "proxy:read",
-    "audit:read",
+    ...(NO_AUDIT ? [] : ["audit:read"]),
   ],
   server_allowlist: [],
   csrf_token: "harness",
@@ -407,6 +418,7 @@ export const api = {
 
   publishing: {
     records: () =>
+      counted("records") ??
       delay({
         records: EMPTY_PLANE || NO_ORIGINS ? [] : records.map((r) => ({ ...r })),
         // No origin the caller may look at. The server answers this way for an
@@ -510,6 +522,7 @@ export const api = {
 
   subscriptionShares: {
     list: () =>
+      counted("shares") ??
       SHARES_FAIL
         ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (shares)")), 120))
         : delay(shares.map((share) => ({ ...share }))),
@@ -552,11 +565,15 @@ export const api = {
   },
 
   proxy: {
-    users: () => delay({ users: proxyUsers.map((user) => ({ ...user })) }),
+    users: () => (counted("proxyUsers"), delay({ users: proxyUsers.map((user) => ({ ...user })) })),
   },
 
   plugins: {
-    list: () => delay([{ ...subStore }]),
+    list: () => {
+      counted("plugins");
+      // /api/plugins wants audit:read, as the server's route does.
+      return NO_AUDIT ? Promise.reject(new ApiError(403, "forbidden", "missing scope audit:read")) : delay([{ ...subStore }]);
+    },
     contributions: () => delay([{ ...subStore }]),
     call: () =>
       RECORDS_FAIL

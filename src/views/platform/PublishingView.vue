@@ -286,6 +286,11 @@ const proofSegments = computed<ProofSegment[]>(() => {
 
 const sheet = useRouteOpen();
 
+/** After a change in the share pane: the page's share list and routes, read again. */
+function reloadShares(): Promise<unknown> {
+  return Promise.all([sharesQuery.refresh(), recordsQuery.refresh()]);
+}
+
 /** Opens a share in the pane's sheet over whatever layer is showing. */
 function openShare(id: string, opener?: HTMLElement | null): void {
   sharesPane.value?.openShare(id, opener);
@@ -412,15 +417,18 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
  * returns focus to this row.
  */
 function openRecord(record: PublishingRecord, el: HTMLElement): void {
-  if (record.origin === "plugin") {
-    if (canSeeShares.value) openShare(shareOf(record), el);
+  // Without proxy:admin the share cannot be opened, so the route opens its own sheet.
+  if (record.origin === "plugin" && canSeeShares.value) {
+    openShare(shareOf(record), el);
     return;
   }
   sheet.open(record.id, el);
 }
 
 /** Whether `?open=` names a share, which the share pane's sheet shows instead of the route sheet. */
-const openIsShare = computed(() => !!sheet.openId.value && !!shares.value?.some((share) => share.id === sheet.openId.value));
+// The same list the share pane decides from (kept across a failed refresh), so
+// one ?open= never opens both sheets.
+const openIsShare = computed(() => !!sheet.openId.value && !!sharesQuery.data.value?.some((share) => share.id === sheet.openId.value));
 /** The row to highlight: a share's route row when the share is open. */
 const activeRouteId = computed(() => {
   const id = sheet.openId.value;
@@ -852,7 +860,17 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
     </DataTable>
 
     <!-- Shares: the table on the share origin; the share sheet and its create form on every layer. -->
-    <PublishingSharesPane v-if="canSeeShares" ref="sharesPane" :show-table="layer === 'routes' && lens === 'share'" />
+    <PublishingSharesPane
+      v-if="canSeeShares"
+      ref="sharesPane"
+      :show-table="layer === 'routes' && lens === 'share'"
+      :shares="sharesQuery.data.value"
+      :shares-error="sharesQuery.error.value ?? null"
+      :shares-loading="sharesQuery.loading.value"
+      :routes="recordsQuery.data.value?.records"
+      :proxy-users="proxyUsersQuery.error.value ? undefined : proxyUsersQuery.data.value"
+      :reload="reloadShares"
+    />
 
     <!-- One storage route: where it answers, what it serves, who may read it. -->
     <ObjectSheet

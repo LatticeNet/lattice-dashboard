@@ -286,6 +286,8 @@ export default {
           "The {plugin} plugin renders this share and is installed but not active. Refresh is unavailable until it is enabled on Plugins.",
         createUnavailable:
           "No active plugin declares subscription:serve, so a plugin-backed share cannot be created here. A proxy-user share can: it is served by this server itself.",
+        createNoAccess:
+          "Listing the plugins needs audit:read, so a plugin-backed share cannot be chosen here. A proxy-user share can: it is served by this server itself.",
         openPlugins: "Open Plugins",
       },
       guide: {

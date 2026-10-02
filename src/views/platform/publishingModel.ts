@@ -132,6 +132,33 @@ export function withoutShareDeepLink(
   return next;
 }
 
+/**
+ * What an arrival on the create deep link does: open the share form on the
+ * record it names, and leave an address with no create keys (so a reload
+ * does not reopen it) on Routes > Shares. Null when the address carries no
+ * deep link.
+ */
+export function shareDeepLink(
+  query: Record<string, QueryValue | undefined>,
+): { record: string; next: Record<string, QueryValue> } | null {
+  if (!hasShareCreateDeepLink(query)) return null;
+  return { record: shareCreateTarget(query), next: withoutShareDeepLink(query) };
+}
+
+/**
+ * The record a deep link names, matched against the plugin's loaded records
+ * by id or by name. Sub-Store links by name, and an imported record's id
+ * ("imported-<kind>-<name>") differs from it; a display name matches
+ * nothing, so it is never written as an id.
+ */
+export function pickShareRecord(
+  records: ReadonlyArray<{ id: string; name?: string }>,
+  wanted: string,
+): string | undefined {
+  if (!wanted) return undefined;
+  return (records.find((record) => record.id === wanted) ?? records.find((record) => record.name === wanted))?.id;
+}
+
 // ── who renders a share ──────────────────────────────────────────────────────
 
 /**

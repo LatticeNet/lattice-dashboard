@@ -14,6 +14,13 @@
  * sheet opens only for an id that is one of the shares, because `?open=`
  * also names the page's own route sheet.
  *
+ * The share list, the routes and the proxy users are the page's reads,
+ * passed in, so one list decides which sheet an `?open=` belongs to and
+ * nothing is polled twice; after a change the pane asks the page to read
+ * them again (`reload`). The pane reads only what is its own: the plugin
+ * list, when its table, sheet or form shows and the caller may read it
+ * (audit:read), and the proxy users and the plugin's records for the form.
+ *
  * This used to be a Networking page of its own. It lives here because a share
  * is a Publishing record, one whose bytes are rendered on request rather than
  * read from a bucket, and because it is core-owned: the route, the token
@@ -61,15 +68,15 @@ import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
-  hasShareCreateDeepLink,
   publishablePlugins as pickPublishablePlugins,
   recordsForShare,
   routeLabel,
   routeState,
-  shareCreateTarget,
   shareRefreshable,
   shareRendererState,
-  withoutShareDeepLink,
+  canonicalPublishingQuery,
+  pickShareRecord,
+  shareDeepLink,
   type RouteState,
   type ShareRendererState,
 } from "@/views/platform/publishingModel";
@@ -119,7 +126,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const props = withDefaults(defineProps<{ showTable?: boolean }>(), { showTable: true });
+const props = withDefaults(
+  defineProps<{
+    /** The share lens is showing: render the table. */
+    showTable?: boolean;
+    /** The page's share list: undefined until a read lands, kept across a failed refresh. */
+    shares?: SubscriptionShareView[];
+    sharesError?: Error | null;
+    sharesLoading?: boolean;
+    /** The page's publishing records, for where a share is reachable. */
+    routes?: PublishingRecord[];
+    /** The page's proxy users, or undefined when they were not read: whether a share resolves. */
+    proxyUsers?: ProxyUserView[];
+    /** Reads the page's shares and routes again, after a change here. */
+    reload?: () => Promise<unknown>;
+  }>(),
+  {
+    showTable: true,
+    shares: undefined,
+    sharesError: null,
+    sharesLoading: false,
+    routes: undefined,
+    proxyUsers: undefined,
+    reload: () => Promise.resolve(),
+  },
+);
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -135,26 +166,44 @@ const sheet = useRouteOpen();
 const selectedId = computed(() => sheet.openId.value ?? "");
 const publishOpen = ref(false);
 
-/**
- * The pane is mounted on every layer, so the reads only its table and sheet
- * use run while one of them shows; the page polls its own copy of the
- * routes for everything else.
- */
-const active = computed(() => props.showTable || !!selectedId.value || publishOpen.value);
+const shares = computed(() => props.shares ?? []);
 
-const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
-  (signal) => api.subscriptionShares.list({ signal }),
-  { pollInterval: 20000 },
+/** On the share lens every `?open=` is a share; elsewhere only an id the page's share list holds. */
+const shareSheetOpen = computed(
+  () => !!selectedId.value && (props.showTable || shares.value.some((share) => share.id === selectedId.value)),
 );
-const shares = computed(() => sharesQuery.data.value ?? []);
+
+/** The pane shows something: its table, a share's sheet or the create form. Its own reads wait for this. */
+const active = computed(() => props.showTable || shareSheetOpen.value || publishOpen.value);
 
 /**
  * The plugin list answers two questions on this pane: which plugins a new share
  * may be created against, and whether the plugin behind an existing share is
  * still there to render it. One read, both answers, so they cannot disagree.
+ * /api/plugins needs audit:read; without it the list is never asked for, a
+ * share's renderer stays unknown, and the form says why a plugin share cannot
+ * be chosen. Read once when the pane first shows something, again on Refresh.
  */
-const pluginsQuery = useAsyncData<PluginView[] | undefined>((signal) => api.plugins.list({ signal }));
+const canReadPlugins = computed(() => auth.can("audit:read"));
+const pluginsQuery = useAsyncData<PluginView[] | undefined>(
+  (signal) => (canReadPlugins.value ? api.plugins.list({ signal }) : Promise.resolve(undefined)),
+  { immediate: false },
+);
 const plugins = computed(() => (pluginsQuery.error.value ? undefined : pluginsQuery.data.value));
+let pluginsRead: Promise<void> | null = null;
+/** The first plugin read, shared by whoever needs it first; nothing without audit:read. */
+function ensurePlugins(): Promise<void> {
+  if (!canReadPlugins.value) return Promise.resolve();
+  pluginsRead ??= pluginsQuery.refresh();
+  return pluginsRead;
+}
+watch(
+  active,
+  (on) => {
+    if (on) void ensurePlugins();
+  },
+  { immediate: true },
+);
 const publishablePlugins = computed(() => pickPublishablePlugins(plugins.value));
 const pluginShareAvailable = computed(() => publishablePlugins.value.length > 0);
 
@@ -171,10 +220,12 @@ function rendererPluginId(share: SubscriptionShareView): string {
  * source kind: which users a new share may point at, and whether the user
  * behind an existing share is still there. The share API accepts any
  * non-empty id and serves a dangling share as an empty 404, so this list is
- * the only place the console can tell. It is read only by a caller who may
- * (the endpoint wants proxy:read, which proxy:admin does not imply), and a
- * list that was not read or failed stays unknown: the dialog falls back to a
- * free-text id and no share is called unresolved on a guess.
+ * the only place the console can tell. Whether a share resolves comes from
+ * the page's read, the one the routes table uses; the form reads its own copy
+ * each time it opens, so a user created since is offered. Both are read only
+ * by a caller who may (the endpoint wants proxy:read, which proxy:admin does
+ * not imply), and a list that was not read or failed stays unknown: the form
+ * falls back to a free-text id and no share is called unresolved on a guess.
  */
 const canReadProxyUsers = computed(() => auth.can("proxy:read"));
 const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
@@ -182,7 +233,7 @@ const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
   { immediate: false },
 );
 const proxyUsers = computed(() => (proxyUsersQuery.error.value ? undefined : proxyUsersQuery.data.value));
-const knownProxyUsers = computed(() => (proxyUsers.value ? new Set(proxyUsers.value.map((user) => user.id)) : undefined));
+const knownProxyUsers = computed(() => (props.proxyUsers ? new Set(props.proxyUsers.map((user) => user.id)) : undefined));
 
 async function loadProxyUsers(): Promise<void> {
   if (canReadProxyUsers.value) await proxyUsersQuery.refresh();
@@ -221,11 +272,6 @@ function select(id: string): void {
   else sheet.close();
 }
 
-/** On the share lens every `?open=` is a share; elsewhere only an id the share list holds. */
-const shareSheetOpen = computed(
-  () => !!selectedId.value && (props.showTable || shares.value.some((share) => share.id === selectedId.value)),
-);
-
 /** Opens a share from outside the table (a route row, an attention item), keeping the opener for focus. */
 function openShare(id: string, opener?: HTMLElement | null): void {
   if (id) sheet.open(id, opener);
@@ -233,8 +279,8 @@ function openShare(id: string, opener?: HTMLElement | null): void {
 
 const sheetState = computed(() => {
   if (!selectedId.value) return "ready" as const;
-  if (selected.value) return sharesQuery.error.value ? ("stale" as const) : ("ready" as const);
-  if (sharesQuery.data.value === undefined) return sharesQuery.error.value ? ("gone" as const) : ("loading" as const);
+  if (selected.value) return props.sharesError ? ("stale" as const) : ("ready" as const);
+  if (props.shares === undefined) return props.sharesError ? ("gone" as const) : ("loading" as const);
   return "gone" as const;
 });
 
@@ -244,21 +290,7 @@ const sheetState = computed(() => {
  * the same URL. The share still owns its token, its default format and its
  * per-client links, because those belong to the origin rather than to the route.
  */
-let lastRoutes: Awaited<ReturnType<typeof api.publishing.records>> | undefined;
-const routesQuery = useAsyncData(
-  async (signal) => {
-    if (!active.value) return lastRoutes;
-    lastRoutes = await api.publishing.records({ signal });
-    return lastRoutes;
-  },
-  { pollInterval: 20000 },
-);
-watch(active, (on) => {
-  if (on) void routesQuery.refresh();
-});
-const selectedRoutes = computed(() =>
-  selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
-);
+const selectedRoutes = computed(() => (selected.value ? recordsForShare(props.routes ?? [], selected.value.id) : []));
 /** The selected share's routes carry its unresolved state, as the routes table does. */
 function selectedRouteState(record: PublishingRecord): RouteState {
   const unresolved =
@@ -286,13 +318,17 @@ const stateVariant: Record<PublishedState, "default" | "secondary" | "destructiv
   unresolved: "destructive",
 };
 
+/** The page's Refresh: the page re-reads the shares and routes; the pane re-reads what it has read itself. */
 async function refresh(): Promise<void> {
-  await Promise.all([sharesQuery.refresh(), routesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
+  await Promise.all([
+    pluginsRead ? (pluginsRead = pluginsQuery.refresh()) : Promise.resolve(),
+    proxyUsersQuery.data.value !== undefined ? loadProxyUsers() : Promise.resolve(),
+  ]);
 }
 
 // The page-level Refresh button reloads this pane too, so one control means
-// one thing for the whole page; the page's Publish menu opens the dialog.
-defineExpose({ refresh, openPublish: () => openPublish(), openShare });
+// one thing for the whole page; the page's Publish menu opens the form.
+defineExpose({ refresh, openPublish: () => void openPublish(), openShare });
 
 // ── publish ────────────────────────────────────────────────────────────────
 //
@@ -374,8 +410,8 @@ watch([records, recordsLoading], () => {
   const name = wantedRecord.value;
   if (!name || recordsLoading.value) return;
   wantedRecord.value = "";
-  const match = records.value.find((record) => record.id === name || record.name === name);
-  if (match) draft.value.subscriptionId = match.id;
+  const match = pickShareRecord(records.value, name);
+  if (match) draft.value.subscriptionId = match;
   else if (!recordsError.value) missingRecord.value = name;
 });
 watch(
@@ -406,8 +442,14 @@ const canPublish = computed(() => {
   return !!draft.value.proxyUserId.trim();
 });
 
-function openPublish(): void {
-  // Plugin absent: the dialog opens on the kind that can still be created, and
+/**
+ * Opens the form, optionally on a record a deep link names. The kind and the
+ * plugin come from the plugin list, so it is read first: a form opened before
+ * it landed would offer the proxy-user kind as if no plugin could serve.
+ */
+async function openPublish(wanted = ""): Promise<void> {
+  await ensurePlugins();
+  // Plugin absent: the form opens on the kind that can still be created, and
   // the plugin kind stays in the picker, disabled, with the reason beside it.
   draft.value = {
     kind: pluginShareAvailable.value ? "plugin" : "core.proxy_user",
@@ -418,7 +460,8 @@ function openPublish(): void {
     defaultFormat: "",
     expiry: emptyExpiryForm(),
   };
-  wantedRecord.value = "";
+  // Matched by id or name once the plugin's records arrive; the slug follows the pick.
+  wantedRecord.value = wanted && pluginShareAvailable.value ? wanted : "";
   missingRecord.value = "";
   now.value = Date.now();
   publishOpen.value = true;
@@ -448,8 +491,9 @@ async function publish(): Promise<void> {
     const created = await api.subscriptionShares.create(body);
     toast.success(t("networking.shares.published", { slug: created.slug }));
     publishOpen.value = false;
+    // The page's list holds the new share before its sheet opens over the current layer.
+    await props.reload();
     select(created.id);
-    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
   } catch (error) {
     toast.error(describe(error, t("networking.shares.publishFailed")));
   } finally {
@@ -480,7 +524,7 @@ async function saveExpiry(): Promise<void> {
     await api.subscriptionShares.update(share.id, expiryUpdateBody(expiryDraft.value, now.value));
     toast.success(t("networking.shares.expiry.saved"));
     expiryOpen.value = false;
-    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
+    await props.reload();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.expiry.saveFailed")));
   } finally {
@@ -538,7 +582,7 @@ async function rotate(): Promise<void> {
     const rotated = await api.subscriptionShares.rotate(share.id);
     toast.success(t("networking.shares.rotated", { slug: rotated.slug }));
     rotateTarget.value = null;
-    await sharesQuery.refresh();
+    await props.reload();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.rotateFailed")));
   } finally {
@@ -555,7 +599,7 @@ async function remove(): Promise<void> {
     toast.success(t("networking.shares.deleted", { slug: share.slug }));
     deleteTarget.value = null;
     if (selectedId.value === share.id) select("");
-    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
+    await props.reload();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.deleteFailed")));
   } finally {
@@ -656,26 +700,29 @@ function menuFor(share: SubscriptionShareView) {
  * decision instead of a blank form. The keys are consumed so a reload does not
  * reopen it, and the lens stays pinned so this pane stays mounted.
  */
-// The pane mounts with the page, so the page's own rewrite of an old link
-// reaches the query watcher before the plugin list has loaded; the form would
-// open on the wrong kind. The link waits for the first reads instead.
-let readsLanded = false;
+// The pane mounts with the page, and the page rewrites an old link onto the
+// Routes layer (canonicalPublishingQuery) as it mounts. Two replaces in
+// flight race, and the page's could land last and put the create keys back,
+// so the link waits for the page's rewrite, which the query watcher brings
+// here. One opening runs at a time, and openPublish waits for the plugin list
+// before it picks the kind.
+let deepLinkOpening = false;
 
-function applyDeepLink(): void {
-  if (!readsLanded || !hasShareCreateDeepLink(route.query)) return;
-  const name = shareCreateTarget(route.query);
-  void router.replace({ query: withoutShareDeepLink(route.query) });
-  openPublish();
-  // Matched by id or name once the records arrive; the slug follows the pick.
-  if (name && pluginShareAvailable.value) wantedRecord.value = name;
+async function applyDeepLink(): Promise<void> {
+  if (canonicalPublishingQuery(route.query)) return;
+  const link = shareDeepLink(route.query);
+  if (!link || deepLinkOpening) return;
+  deepLinkOpening = true;
+  try {
+    void router.replace({ query: link.next });
+    await openPublish(link.record);
+  } finally {
+    deepLinkOpening = false;
+  }
 }
 
-onMounted(async () => {
-  await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
-  readsLanded = true;
-  applyDeepLink();
-});
-watch(() => route.query, applyDeepLink);
+onMounted(() => void applyDeepLink());
+watch(() => route.query, () => void applyDeepLink());
 </script>
 
 <template>
@@ -686,9 +733,9 @@ watch(() => route.query, applyDeepLink);
       :columns="columns"
       :rows="shares"
       :row-key="(row) => row.id"
-      :loading="sharesQuery.loading.value"
-      :error="sharesQuery.error.value"
-      :has-data="sharesQuery.data.value !== undefined"
+      :loading="props.sharesLoading"
+      :error="props.sharesError"
+      :has-data="props.shares !== undefined"
       :page-size="25"
       :searchable="shares.length > 0"
       :expression-filter="false"
@@ -698,7 +745,7 @@ watch(() => route.query, applyDeepLink);
       :show-summary="false"
       :empty-title="$t('networking.shares.emptyTitle')"
       :empty-description="$t('networking.shares.emptyDescription')"
-      @retry="sharesQuery.refresh"
+      @retry="props.reload"
     >
       <template #empty>
         <div class="space-y-3 rounded-xl border border-dashed border-border p-6 text-center">
@@ -760,7 +807,7 @@ watch(() => route.query, applyDeepLink);
       :mono-title="true"
       :mono-subtitle="false"
       :state="sheetState"
-      :error="sharesQuery.error.value ? describe(sharesQuery.error.value, '') : null"
+      :error="props.sharesError ? describe(props.sharesError, '') : null"
       :read-only="!canAdmin"
       :return-focus="sheet.returnFocus"
       :gone-title="$t('platform.publishingPage.shareGoneTitle')"
@@ -894,7 +941,7 @@ watch(() => route.query, applyDeepLink);
           <!-- Plugin absent: the option is there and disabled, and this is why. -->
           <p v-if="!pluginShareAvailable" class="flex items-start gap-1.5 text-xs text-muted-foreground">
             <PlugZap class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-            {{ $t('platform.publishing.renderer.createUnavailable') }}
+            {{ canReadPlugins ? $t('platform.publishing.renderer.createUnavailable') : $t('platform.publishing.renderer.createNoAccess') }}
           </p>
         </div>
 
