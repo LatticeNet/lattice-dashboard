@@ -34,11 +34,13 @@ const props = withDefaults(
      * card's padding. Off, on a page: the rows get their own rounded frame.
      */
     framed?: boolean;
+    /** Rows that offer "Record renewal" (UpcomingList). */
+    renewable?: (item: ExpiringItem) => boolean;
   }>(),
-  { data: undefined, error: undefined, lastUpdated: undefined, items: undefined, filtered: false, framed: true },
+  { data: undefined, error: undefined, lastUpdated: undefined, items: undefined, filtered: false, framed: true, renewable: undefined },
 );
 
-const emit = defineEmits<{ retry: []; clearFilter: [] }>();
+const emit = defineEmits<{ retry: []; clearFilter: []; renew: [item: ExpiringItem] }>();
 
 const rows = computed(() => props.items ?? props.data?.items ?? []);
 const view = computed(() =>
@@ -149,6 +151,8 @@ const serverDetail = computed(() =>
         v-else
         :groups="groups"
         :today="today"
+        :renewable="renewable"
+        @renew="(item: ExpiringItem) => emit('renew', item)"
         :class="framed ? 'border-y border-border' : 'overflow-hidden rounded-lg border border-border'"
       />
 

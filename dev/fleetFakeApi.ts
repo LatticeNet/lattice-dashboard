@@ -257,7 +257,8 @@ export const api = {
   expiring: {
     list: (within = 30) =>
       answer("expiring", () => {
-        const items = expiringItems(within);
+        // Machine rows follow the live profiles, so a recorded renewal moves its row.
+        const items = expiringItems(within, machines);
         return { generated_at: new Date(Date.now() - 12_000).toISOString(), within_days: within, items, totals: sumTotals(items), hidden_kinds: [] };
       }),
   },
@@ -307,7 +308,10 @@ export const api = {
       return delay({ ok: true });
     },
     renew: (id: string, next?: string) => {
-      machines = machines.map((m) => (m.id === id ? { ...m, next_renewal: next ?? iso(30 * DAY), days_until_renewal: 30 } : m));
+      const due = next ?? iso(30 * DAY);
+      const today = Date.parse(`${formatDay(new Date())}T00:00:00Z`);
+      const days = Math.round((Date.parse(due) - today) / DAY);
+      machines = machines.map((m) => (m.id === id ? { ...m, next_renewal: due, days_until_renewal: days } : m));
       return delay({ ...machines.find((m) => m.id === id)! });
     },
     // What the server would send on this run: the machines whose next reminder is today.

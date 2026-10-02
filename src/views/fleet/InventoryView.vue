@@ -53,6 +53,7 @@ import {
   advanceRenewal,
   daysBetween,
   formatDay,
+  manualRenewalTarget,
   monthlyEquivalentCents,
   parseReminderDaysInput,
   rollForwardPast,
@@ -65,6 +66,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RecordRenewalDialog from "@/components/fleet/RecordRenewalDialog.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
@@ -214,6 +216,25 @@ const vendors = computed(() => vendorsQuery.data.value ?? []);
 const notifyChannels = computed(() => notifyChannelsQuery.data.value ?? []);
 const notifyRules = computed(() => notifyRulesQuery.data.value ?? []);
 const canAdminInventory = computed(() => auth.can("inventory:admin"));
+
+/*
+ * Record renewal in one step from the machine's sheet or its row menu
+ * (RecordRenewalDialog), without opening the full editor. The dialog follows
+ * the live list, so it shows what the latest read holds.
+ */
+const renewDialogOpen = ref(false);
+const renewDialogId = ref("");
+const renewDialogMachine = computed(() => machines.value.find((m) => m.id === renewDialogId.value) ?? null);
+
+function canQuickRenew(machine?: MachineView): boolean {
+  return !!machine?.id && canAdminInventory.value && !!renewalDate(machine);
+}
+
+function openRenewal(machine: MachineView): void {
+  if (!machine.id) return;
+  renewDialogId.value = machine.id;
+  renewDialogOpen.value = true;
+}
 const inventoryStepUp = useStepUp({
   required: t("fleet.inventory.stepUp.required"),
   failed: t("fleet.inventory.stepUp.failed"),
@@ -802,16 +823,23 @@ function focusEditorOnOpen(event: Event): void {
 /**
  * Recording a renewal writes to the saved profile and reloads the form from
  * the server's answer, so it waits until other edits are saved or discarded.
- * With auto-roll off it takes the date typed above, the one edit it may carry.
+ * With auto-roll off it takes the date typed above, the one edit it may
+ * carry; left untouched, that date is the one already saved, so it records
+ * one cycle after it instead (manualRenewalTarget) and never the same date.
  */
 const renewBlockedByDraft = computed(() => (autoRoll.value ? formDirty.value : draftBeyondNextRenewal.value));
+const manualRenewTo = computed(() =>
+  manualRenewalTarget(formSnapshot.value?.savedNextRenewal ?? "", nextRenewal.value, renewalCycle.value, draftCycleDays.value),
+);
 const canRecordRenewal = computed(
   () =>
     editHasProfile.value &&
     needsRenewal.value &&
     customCycleValid.value &&
     !renewBlockedByDraft.value &&
-    (autoRoll.value ? !!nextRenewal.value && !!renewalCycle.value : !!nextRenewal.value),
+    (autoRoll.value
+      ? !!nextRenewal.value && !!renewalCycle.value
+      : !!manualRenewTo.value && manualRenewTo.value !== (formSnapshot.value?.savedNextRenewal ?? "")),
 );
 
 /**
@@ -820,8 +848,8 @@ const canRecordRenewal = computed(
  * rolled forward by the cycle, offered beside the preview.
  */
 const renewRollForwardDate = computed(() => {
-  if (autoRoll.value || !needsRenewal.value || !nextRenewal.value || renewBlockedByDraft.value) return undefined;
-  return rollForwardPast(nextRenewal.value, renewalCycle.value, draftCycleDays.value, formatDay(new Date()));
+  if (autoRoll.value || !needsRenewal.value || !manualRenewTo.value || renewBlockedByDraft.value) return undefined;
+  return rollForwardPast(manualRenewTo.value, renewalCycle.value, draftCycleDays.value, formatDay(new Date()));
 });
 
 const renewPreview = computed(() => {
@@ -836,10 +864,11 @@ const renewPreview = computed(() => {
       ? t("fleet.inventory.profile.recordRenewalAutoRollStillPast", { from: nextRenewal.value, to })
       : t("fleet.inventory.profile.recordRenewalAutoRoll", { from: nextRenewal.value, to });
   }
-  if (!nextRenewal.value) return "";
-  return (daysBetween(today, nextRenewal.value) ?? 0) < 0
-    ? t("fleet.inventory.profile.recordRenewalManualPast", { date: nextRenewal.value })
-    : t("fleet.inventory.profile.recordRenewalManual", { date: nextRenewal.value });
+  const to = manualRenewTo.value;
+  if (!to) return "";
+  return (daysBetween(today, to) ?? 0) < 0
+    ? t("fleet.inventory.profile.recordRenewalManualPast", { date: to })
+    : t("fleet.inventory.profile.recordRenewalManual", { date: to });
 });
 
 const storedLinkCount = computed(
@@ -1158,7 +1187,7 @@ async function renewProfile() {
   try {
     const renewed = await api.machines.renew(
       profileId.value,
-      autoRoll.value ? undefined : isoDate(nextRenewal.value),
+      autoRoll.value ? undefined : isoDate(manualRenewTo.value ?? ""),
     );
     toast.success(t("fleet.inventory.toast.renewalRecorded"));
     loadForm(renewed);
@@ -1256,6 +1285,13 @@ function menuFor(machine: MachineView): RowMenuItem[] {
       icon: machine.id ? Pencil : Plus,
       hidden: !canAdminInventory.value,
       run: () => openEdit(machine),
+    },
+    {
+      key: "renew",
+      label: t("fleet.renewal.action"),
+      icon: CalendarClock,
+      hidden: !canQuickRenew(machine),
+      run: () => openRenewal(machine),
     },
     { key: "node", label: t("fleet.inventory.actions.node"), icon: ChevronRight, to: { name: "node-detail", params: { id: machine.node_id } } },
     {
@@ -1619,12 +1655,25 @@ async function sendReminders(): Promise<void> {
         </RouterLink>
       </div>
       <template v-if="canAdminInventory && openMachine" #actions>
+        <Button
+          v-if="canQuickRenew(openMachine)"
+          size="sm"
+          variant="outline"
+          type="button"
+          data-testid="sheet-record-renewal"
+          @click="openRenewal(openMachine)"
+        >
+          <CalendarClock class="size-3.5" aria-hidden="true" />
+          {{ $t('fleet.renewal.action') }}
+        </Button>
         <Button size="sm" type="button" data-edit-button @click="openEdit(openMachine)">
           <component :is="openMachine.id ? Pencil : Plus" class="size-3.5" aria-hidden="true" />
           {{ openMachine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile') }}
         </Button>
       </template>
     </ObjectSheet>
+
+    <RecordRenewalDialog v-model:open="renewDialogOpen" :machine="renewDialogMachine" @recorded="refreshAll" />
 
     <!-- Edit / create dialog.
          A fixed header and footer around a scrolling form, so the machine's
