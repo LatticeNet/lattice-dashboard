@@ -56,7 +56,7 @@ export default {
       failedDescription: "还没拿到任何数据，读取就失败了。",
     },
     rowMenu: {
-      label: "{name} 的操作",
+      label: "「{name}」的操作",
     },
     confirm: {
       impactTitle: "将停止工作的内容",
