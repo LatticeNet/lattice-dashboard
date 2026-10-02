@@ -10,8 +10,13 @@
  * layer, as before); a route opens in the sheet on `?open=`, and the share
  * origin is the share pane, whose rows open the share in the same sheet.
  * Tokens and Buckets list the storage tokens and buckets across both kinds.
- * The three always-open create forms moved into one Publish menu, each in a
- * sheet; the share form is the pane's own dialog.
+ * The create forms sit behind one Publish menu, each in a side sheet on the
+ * layer the operator is on.
+ *
+ * The share pane is mounted on every layer (its table shows only on the share
+ * origin), so a plugin route, an Overview attention item or the Publish menu
+ * opens the share or its form over the current table: nothing rewrites
+ * `?origin=` or changes the rows under the operator.
  *
  * Old links keep working: `?origin=`, `?share=` and the create link
  * Sub-Store's Publish action and attention item navigate to
@@ -274,14 +279,15 @@ const proofSegments = computed<ProofSegment[]>(() => {
 
 const sheet = useRouteOpen();
 
-function shareTo(id: string) {
-  return { query: { view: "routes", origin: "share", open: id } };
+/** Opens a share in the pane's sheet over whatever layer is showing. */
+function openShare(id: string, opener?: HTMLElement | null): void {
+  sharesPane.value?.openShare(id, opener);
 }
 
 const attention = computed<AttentionItem[]>(() => {
   const items: AttentionItem[] = [];
   for (const { share, state } of shareStates.value) {
-    const action = { label: t("platform.publishingPage.attention.open"), to: shareTo(share.id) };
+    const action = { label: t("platform.publishingPage.attention.open"), run: () => openShare(share.id) };
     if (state === "expired") {
       items.push({
         key: `share-expired:${share.id}`,
@@ -393,14 +399,27 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
   { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
 
-/** A share route opens its share; a storage route opens in the sheet. */
+/**
+ * A share route opens its share and a storage route its own sheet, both over
+ * this table: the origin filter stays what the operator chose, and Escape
+ * returns focus to this row.
+ */
 function openRecord(record: PublishingRecord, el: HTMLElement): void {
   if (record.origin === "plugin") {
-    owned.push({ ...owned.query(), view: "routes", origin: "share", open: shareOf(record) });
+    if (canSeeShares.value) openShare(shareOf(record), el);
     return;
   }
   sheet.open(record.id, el);
 }
+
+/** Whether `?open=` names a share, which the share pane's sheet shows instead of the route sheet. */
+const openIsShare = computed(() => !!sheet.openId.value && !!shares.value?.some((share) => share.id === sheet.openId.value));
+/** The row to highlight: a share's route row when the share is open. */
+const activeRouteId = computed(() => {
+  const id = sheet.openId.value;
+  if (!id || !openIsShare.value) return id;
+  return records.value.find((record) => record.origin === "plugin" && shareOf(record) === id)?.id ?? null;
+});
 
 function canDeleteBinding(record: PublishingRecord): boolean {
   return (record.origin === "kv" || record.origin === "static") && !record.reserved && auth.can(`${record.origin}:admin`);
@@ -408,7 +427,7 @@ function canDeleteBinding(record: PublishingRecord): boolean {
 
 function recordMenu(record: PublishingRecord): RowMenuItem[] {
   if (record.origin === "plugin") {
-    return [{ key: "share", label: t("platform.publishingPage.openShare"), icon: Link2, to: shareTo(shareOf(record)) }];
+    return [{ key: "share", label: t("platform.publishingPage.openShare"), icon: Link2, hidden: !canSeeShares.value, run: () => openShare(shareOf(record)) }];
   }
   return [
     {
@@ -431,7 +450,7 @@ function recordMenu(record: PublishingRecord): RowMenuItem[] {
 const openRecordRow = computed(() =>
   layer.value === "routes" && lens.value !== "share" ? records.value.find((record) => record.id === sheet.openId.value) : undefined,
 );
-const routeSheetOpen = computed(() => layer.value === "routes" && lens.value !== "share" && !!sheet.openId.value);
+const routeSheetOpen = computed(() => layer.value === "routes" && lens.value !== "share" && !!sheet.openId.value && !openIsShare.value);
 const routeSheetState = computed(() => {
   if (openRecordRow.value) return recordsQuery.error.value ? ("stale" as const) : ("ready" as const);
   if (recordsQuery.data.value === undefined) return recordsQuery.error.value ? ("gone" as const) : ("loading" as const);
@@ -563,13 +582,9 @@ function onCreated(_kind: StorageKind, mode: StorageCreateMode): void {
   if (mode === "bucket") void bucketsQuery.refresh();
 }
 
-/** The share form belongs to the share pane; open it there, through the create link it already honours. */
+/** The share form is the share pane's, in a side sheet on the current layer like the other creates. */
 function publishShare(): void {
-  if (layer.value === "routes" && lens.value === "share" && sharesPane.value) {
-    sharesPane.value.openPublish();
-    return;
-  }
-  owned.push({ ...owned.query(), view: "routes", origin: "share", create: "1" });
+  sharesPane.value?.openPublish();
 }
 
 const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeShares.value);
@@ -678,9 +693,7 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
         </Button>
       </div>
 
-      <PublishingSharesPane v-if="lens === 'share'" ref="sharesPane" />
-
-      <template v-else>
+      <template v-if="lens !== 'share'">
         <p v-if="nothingVisible" class="rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
           {{ $t('platform.publishing.noOriginsVisible') }}
         </p>
@@ -698,7 +711,7 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
           :expression-filter="false"
           :search-placeholder="$t('platform.publishing.searchRoutes')"
           :row-click="openRecord"
-          :active-row-id="sheet.openId.value"
+          :active-row-id="activeRouteId"
           :show-summary="false"
           :empty-title="$t('platform.publishing.emptyTitle')"
           :empty-description="$t('platform.publishing.emptyDescription')"
@@ -812,6 +825,9 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
         <span class="whitespace-nowrap text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
       </template>
     </DataTable>
+
+    <!-- Shares: the table on the share origin; the share sheet and its create form on every layer. -->
+    <PublishingSharesPane v-if="canSeeShares" ref="sharesPane" :show-table="layer === 'routes' && lens === 'share'" />
 
     <!-- One storage route: where it answers, what it serves, who may read it. -->
     <ObjectSheet

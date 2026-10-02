@@ -3,8 +3,16 @@
  * The share lens of Publishing's Routes layer: the subscription URLs this
  * server serves, and everything that manages them. A row opens the share in
  * the page's sheet on `?open=<share id>` (design 23, section 4.5: Shares
- * stops being a page inside the page); the page's Publish menu opens the
- * create dialog through `openPublish`.
+ * stops being a page inside the page).
+ *
+ * The page mounts this pane on every layer and shows its table only on the
+ * share lens (`showTable`). Its sheet and its create form therefore open over
+ * whatever the operator is looking at: a plugin route in the all-origins
+ * table, an attention item on Overview, or the page's Publish menu open the
+ * share or the form here (`openShare`, `openPublish`) without moving the
+ * operator to the share lens or rewriting `?origin=`. Off the share lens the
+ * sheet opens only for an id that is one of the shares, because `?open=`
+ * also names the page's own route sheet.
  *
  * This used to be a Networking page of its own. It lives here because a share
  * is a Publishing record, one whose bytes are rendered on request rather than
@@ -111,12 +119,28 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const props = withDefaults(defineProps<{ showTable?: boolean }>(), { showTable: true });
+
 const { t } = useI18n();
 const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
 
 const canAdmin = computed(() => auth.can("proxy:admin"));
+
+// The open share is the page's `?open=`, so a share is a link, a reload lands
+// on it, and Escape returns focus to its row. The old `?share=` spelling is
+// rewritten to this by the page.
+const sheet = useRouteOpen();
+const selectedId = computed(() => sheet.openId.value ?? "");
+const publishOpen = ref(false);
+
+/**
+ * The pane is mounted on every layer, so the reads only its table and sheet
+ * use run while one of them shows; the page polls its own copy of the
+ * routes for everything else.
+ */
+const active = computed(() => props.showTable || !!selectedId.value || publishOpen.value);
 
 const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
   (signal) => api.subscriptionShares.list({ signal }),
@@ -190,16 +214,21 @@ function rendererReason(share: SubscriptionShareView): string {
 const busyId = ref("");
 
 // ── selection lives in the URL ─────────────────────────────────────────────
-// The open share is the page's `?open=`, so a share is a link, a reload lands
-// on it, and Escape returns focus to its row. The old `?share=` spelling is
-// rewritten to this by the page.
-const sheet = useRouteOpen();
-const selectedId = computed(() => sheet.openId.value ?? "");
 const selected = computed(() => shares.value.find((share) => share.id === selectedId.value));
 
 function select(id: string): void {
   if (id) sheet.open(id);
   else sheet.close();
+}
+
+/** On the share lens every `?open=` is a share; elsewhere only an id the share list holds. */
+const shareSheetOpen = computed(
+  () => !!selectedId.value && (props.showTable || shares.value.some((share) => share.id === selectedId.value)),
+);
+
+/** Opens a share from outside the table (a route row, an attention item), keeping the opener for focus. */
+function openShare(id: string, opener?: HTMLElement | null): void {
+  if (id) sheet.open(id, opener);
 }
 
 const sheetState = computed(() => {
@@ -215,7 +244,18 @@ const sheetState = computed(() => {
  * the same URL. The share still owns its token, its default format and its
  * per-client links, because those belong to the origin rather than to the route.
  */
-const routesQuery = useAsyncData((signal) => api.publishing.records({ signal }), { pollInterval: 20000 });
+let lastRoutes: Awaited<ReturnType<typeof api.publishing.records>> | undefined;
+const routesQuery = useAsyncData(
+  async (signal) => {
+    if (!active.value) return lastRoutes;
+    lastRoutes = await api.publishing.records({ signal });
+    return lastRoutes;
+  },
+  { pollInterval: 20000 },
+);
+watch(active, (on) => {
+  if (on) void routesQuery.refresh();
+});
 const selectedRoutes = computed(() =>
   selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
 );
@@ -252,14 +292,13 @@ async function refresh(): Promise<void> {
 
 // The page-level Refresh button reloads this pane too, so one control means
 // one thing for the whole page; the page's Publish menu opens the dialog.
-defineExpose({ refresh, openPublish: () => openPublish() });
+defineExpose({ refresh, openPublish: () => openPublish(), openShare });
 
 // ── publish ────────────────────────────────────────────────────────────────
 //
 // The dialog reads the plugin's own records rather than asking for ids as free
 // text, so publishing is a choice rather than a transcription.
 
-const publishOpen = ref(false);
 const publishing = ref(false);
 const draft = ref<{
   kind: ShareSource["kind"];
@@ -617,8 +656,13 @@ function menuFor(share: SubscriptionShareView) {
  * decision instead of a blank form. The keys are consumed so a reload does not
  * reopen it, and the lens stays pinned so this pane stays mounted.
  */
+// The pane mounts with the page, so the page's own rewrite of an old link
+// reaches the query watcher before the plugin list has loaded; the form would
+// open on the wrong kind. The link waits for the first reads instead.
+let readsLanded = false;
+
 function applyDeepLink(): void {
-  if (!hasShareCreateDeepLink(route.query)) return;
+  if (!readsLanded || !hasShareCreateDeepLink(route.query)) return;
   const name = shareCreateTarget(route.query);
   void router.replace({ query: withoutShareDeepLink(route.query) });
   openPublish();
@@ -628,6 +672,7 @@ function applyDeepLink(): void {
 
 onMounted(async () => {
   await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
+  readsLanded = true;
   applyDeepLink();
 });
 watch(() => route.query, applyDeepLink);
@@ -636,6 +681,7 @@ watch(() => route.query, applyDeepLink);
 <template>
   <section class="space-y-4">
     <DataTable
+      v-if="showTable"
       state-key="shares"
       :columns="columns"
       :rows="shares"
@@ -708,7 +754,7 @@ watch(() => route.query, applyDeepLink);
 
     <!-- One share, its URL and the client-specific links, in the page's sheet. -->
     <ObjectSheet
-      :open="!!selectedId"
+      :open="shareSheetOpen"
       :title="selected ? `/${selected.slug}` : selectedId"
       :subtitle="selected ? sourceLabel(selected) : undefined"
       :mono-title="true"
@@ -832,134 +878,124 @@ watch(() => route.query, applyDeepLink);
       </template>
     </ObjectSheet>
 
-    <!-- ── publish dialog ──────────────────────────────────────────────── -->
-    <Dialog v-model:open="publishOpen">
-      <DialogContent class="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.shares.publishTitle') }}</DialogTitle>
-          <DialogDescription>{{ $t('networking.shares.publishDescription') }}</DialogDescription>
-        </DialogHeader>
+    <!-- ── publish form, in the side sheet the page's other create forms use ── -->
+    <ObjectSheet :open="publishOpen" :title="$t('networking.shares.publishTitle')" @close="publishOpen = false">
+      <form v-if="publishOpen" id="share-publish-form" class="space-y-4 text-sm" data-testid="share-publish-form" @submit.prevent="publish">
+        <p class="text-muted-foreground">{{ $t('networking.shares.publishDescription') }}</p>
+        <div class="grid gap-2">
+          <Label>{{ $t('networking.shares.sourceKind') }}</Label>
+          <Select v-model="draft.kind">
+            <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="plugin" :disabled="!pluginShareAvailable">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
+              <SelectItem value="core.proxy_user">{{ $t('networking.shares.kindProxyUser') }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <!-- Plugin absent: the option is there and disabled, and this is why. -->
+          <p v-if="!pluginShareAvailable" class="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <PlugZap class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+            {{ $t('platform.publishing.renderer.createUnavailable') }}
+          </p>
+        </div>
 
-        <div class="space-y-4">
+        <template v-if="draft.kind === 'plugin'">
           <div class="grid gap-2">
-            <Label>{{ $t('networking.shares.sourceKind') }}</Label>
-            <Select v-model="draft.kind">
-              <SelectTrigger><SelectValue /></SelectTrigger>
+            <Label>{{ $t('networking.shares.plugin') }}</Label>
+            <Select v-model="draft.pluginId">
+              <SelectTrigger class="w-full"><SelectValue :placeholder="$t('networking.shares.pluginPlaceholder')" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="plugin" :disabled="!pluginShareAvailable">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
-                <SelectItem value="core.proxy_user">{{ $t('networking.shares.kindProxyUser') }}</SelectItem>
+                <SelectItem v-for="plugin in publishablePlugins" :key="plugin.id" :value="plugin.id">
+                  {{ plugin.name || plugin.id }}
+                </SelectItem>
               </SelectContent>
             </Select>
-            <!-- Plugin absent: the option is there and disabled, and this is why. -->
-            <p v-if="!pluginShareAvailable" class="flex items-start gap-1.5 text-xs text-muted-foreground">
-              <PlugZap class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-              {{ $t('platform.publishing.renderer.createUnavailable') }}
+            <p v-if="!publishablePlugins.length" class="text-xs text-muted-foreground">
+              {{ $t('networking.shares.noPublishablePlugins') }}
             </p>
           </div>
 
-          <template v-if="draft.kind === 'plugin'">
-            <div class="grid gap-2">
-              <Label>{{ $t('networking.shares.plugin') }}</Label>
-              <Select v-model="draft.pluginId">
-                <SelectTrigger><SelectValue :placeholder="$t('networking.shares.pluginPlaceholder')" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="plugin in publishablePlugins" :key="plugin.id" :value="plugin.id">
-                    {{ plugin.name || plugin.id }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="!publishablePlugins.length" class="text-xs text-muted-foreground">
-                {{ $t('networking.shares.noPublishablePlugins') }}
-              </p>
-            </div>
-
-            <div class="grid gap-2">
-              <Label>{{ $t('networking.shares.record') }}</Label>
-              <Select v-model="draft.subscriptionId" :disabled="recordsLoading || !records.length">
-                <SelectTrigger>
-                  <SelectValue :placeholder="recordsLoading ? $t('common.state.loading') : $t('networking.shares.recordPlaceholder')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="record in records" :key="record.id" :value="record.id">
-                    {{ record.display_name || record.name || record.id }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="recordsError" class="text-xs text-destructive">{{ recordsError }}</p>
-              <p v-else-if="missingRecord && !draft.subscriptionId" class="text-xs text-warning-text" data-testid="share-record-missing">
-                {{ $t('networking.shares.recordMissing', { name: missingRecord }) }}
-              </p>
-              <p v-else-if="!recordsLoading && !records.length && draft.pluginId" class="text-xs text-muted-foreground">
-                {{ $t('networking.shares.noRecords') }}
-              </p>
-            </div>
-          </template>
-
-          <div v-else class="grid gap-2">
-            <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
-            <!-- A choice from the users the server has, like the record picker
-                 above. Only when the list could not be read does this fall
-                 back to a typed id, and it says so: a picker that blocked on a
-                 failed list would make one unreadable endpoint stop publishing. -->
-            <template v-if="proxyUsersQuery.loading.value || proxyUsers">
-              <Select v-model="draft.proxyUserId" :disabled="proxyUsersQuery.loading.value || !proxyUsers?.length">
-                <SelectTrigger id="share-proxy-user">
-                  <SelectValue
-                    :placeholder="proxyUsersQuery.loading.value ? $t('common.state.loading') : $t('networking.shares.proxyUserPlaceholder')"
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="user in proxyUsers" :key="user.id" :value="user.id">
-                    <span>{{ user.name || user.id }}</span>
-                    <span v-if="user.name && user.name !== user.id" class="ml-2 font-mono text-xs text-muted-foreground">{{ user.id }}</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="!proxyUsersQuery.loading.value && !proxyUsers?.length" class="text-xs text-muted-foreground">
-                {{ $t('networking.shares.noProxyUsers') }}
-              </p>
-            </template>
-            <template v-else>
-              <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" spellcheck="false" />
-              <p class="text-xs text-muted-foreground">{{ $t('networking.shares.proxyUsersUnread') }}</p>
-            </template>
-          </div>
-
           <div class="grid gap-2">
-            <Label for="share-slug">{{ $t('networking.shares.slug') }}</Label>
-            <Input id="share-slug" v-model="draft.slug" autocomplete="off" spellcheck="false" placeholder="team-nodes" />
-            <p v-if="slugError" class="text-xs text-destructive">{{ slugError }}</p>
-            <p v-else class="text-xs text-muted-foreground">{{ $t('networking.shares.slugHint') }}</p>
-          </div>
-
-          <div class="grid gap-2">
-            <Label>{{ $t('networking.shares.defaultFormat') }}</Label>
-            <Select v-model="draft.defaultFormat">
-              <SelectTrigger><SelectValue :placeholder="$t('networking.shares.formatAuto')" /></SelectTrigger>
+            <Label>{{ $t('networking.shares.record') }}</Label>
+            <Select v-model="draft.subscriptionId" :disabled="recordsLoading || !records.length">
+              <SelectTrigger class="w-full">
+                <SelectValue :placeholder="recordsLoading ? $t('common.state.loading') : $t('networking.shares.recordPlaceholder')" />
+              </SelectTrigger>
               <SelectContent>
-                <SelectItem value="plain">plain</SelectItem>
-                <SelectItem value="base64">base64</SelectItem>
-                <SelectItem value="sing-box">sing-box</SelectItem>
+                <SelectItem v-for="record in records" :key="record.id" :value="record.id">
+                  {{ record.display_name || record.name || record.id }}
+                </SelectItem>
               </SelectContent>
             </Select>
-            <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
+            <p v-if="recordsError" class="text-xs text-destructive">{{ recordsError }}</p>
+            <p v-else-if="missingRecord && !draft.subscriptionId" class="text-xs text-warning-text" data-testid="share-record-missing">
+              {{ $t('networking.shares.recordMissing', { name: missingRecord }) }}
+            </p>
+            <p v-else-if="!recordsLoading && !records.length && draft.pluginId" class="text-xs text-muted-foreground">
+              {{ $t('networking.shares.noRecords') }}
+            </p>
           </div>
+        </template>
 
-          <ShareExpiryFields v-model="draft.expiry" id-prefix="publish" :now="now" />
+        <div v-else class="grid gap-2">
+          <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
+          <!-- A choice from the users the server has, like the record picker
+               above. Only when the list could not be read does this fall
+               back to a typed id, and it says so: a picker that blocked on a
+               failed list would make one unreadable endpoint stop publishing. -->
+          <template v-if="proxyUsersQuery.loading.value || proxyUsers">
+            <Select v-model="draft.proxyUserId" :disabled="proxyUsersQuery.loading.value || !proxyUsers?.length">
+              <SelectTrigger id="share-proxy-user" class="w-full">
+                <SelectValue
+                  :placeholder="proxyUsersQuery.loading.value ? $t('common.state.loading') : $t('networking.shares.proxyUserPlaceholder')"
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="user in proxyUsers" :key="user.id" :value="user.id">
+                  <span>{{ user.name || user.id }}</span>
+                  <span v-if="user.name && user.name !== user.id" class="ml-2 font-mono text-xs text-muted-foreground">{{ user.id }}</span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="!proxyUsersQuery.loading.value && !proxyUsers?.length" class="text-xs text-muted-foreground">
+              {{ $t('networking.shares.noProxyUsers') }}
+            </p>
+          </template>
+          <template v-else>
+            <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" spellcheck="false" />
+            <p class="text-xs text-muted-foreground">{{ $t('networking.shares.proxyUsersUnread') }}</p>
+          </template>
         </div>
 
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button :disabled="!canPublish" @click="publish">
-            <RefreshCw v-if="publishing" class="size-4 animate-spin" aria-hidden="true" />
-            <Link2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('networking.shares.publish') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <div class="grid gap-2">
+          <Label for="share-slug">{{ $t('networking.shares.slug') }}</Label>
+          <Input id="share-slug" v-model="draft.slug" autocomplete="off" spellcheck="false" placeholder="team-nodes" />
+          <p v-if="slugError" class="text-xs text-destructive">{{ slugError }}</p>
+          <p v-else class="text-xs text-muted-foreground">{{ $t('networking.shares.slugHint') }}</p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label>{{ $t('networking.shares.defaultFormat') }}</Label>
+          <Select v-model="draft.defaultFormat">
+            <SelectTrigger class="w-full"><SelectValue :placeholder="$t('networking.shares.formatAuto')" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="plain">plain</SelectItem>
+              <SelectItem value="base64">base64</SelectItem>
+              <SelectItem value="sing-box">sing-box</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
+        </div>
+
+        <ShareExpiryFields v-model="draft.expiry" id-prefix="publish" :now="now" />
+      </form>
+      <template v-if="publishOpen" #actions>
+        <Button type="submit" form="share-publish-form" size="sm" :disabled="!canPublish">
+          <RefreshCw v-if="publishing" class="size-4 animate-spin" aria-hidden="true" />
+          <Link2 v-else class="size-4" aria-hidden="true" />
+          {{ $t('networking.shares.publish') }}
+        </Button>
+      </template>
+    </ObjectSheet>
 
     <!-- ── expiry ──────────────────────────────────────────────────────── -->
     <!-- Editing the expiry is not destructive, so it does not go through

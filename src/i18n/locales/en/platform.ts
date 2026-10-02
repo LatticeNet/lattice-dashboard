@@ -244,7 +244,7 @@ export default {
         serving: "Serving",
         disabled: "Disabled",
         expired: "Expired",
-        unresolved: "unresolved",
+        unresolved: "Unresolved",
       },
       access: {
         anonymous: "Anonymous",
