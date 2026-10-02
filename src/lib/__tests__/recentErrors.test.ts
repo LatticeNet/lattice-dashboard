@@ -36,3 +36,20 @@ test("blank messages are not recorded, and clear empties the list", () => {
   const [entry] = log.add("Rotation failed", 1);
   assert.equal(entry!.id, 2);
 });
+
+test("the log belongs to one principal: a sign-out or another operator starts it empty", () => {
+  const log = new ErrorLog();
+  assert.equal(log.belongTo("user:alice"), true);
+  log.add("Reveal failed: unauthorized (request_id: r7)", 0);
+  // The same principal again (a refresh after sign-in) keeps the list.
+  assert.equal(log.belongTo("user:alice"), false);
+  assert.equal(log.list.length, 1);
+  // Signed out or expired: nobody owns it, and nothing is left to read.
+  assert.equal(log.belongTo(undefined), true);
+  assert.equal(log.list.length, 0);
+  // Errors shown while signed out (stale reads refused after expiry) do not
+  // follow the next operator in.
+  log.add("Refresh failed: unauthorized", 1);
+  assert.equal(log.belongTo("user:bob"), true);
+  assert.deepEqual(log.list, []);
+});

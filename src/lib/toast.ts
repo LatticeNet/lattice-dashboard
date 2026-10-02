@@ -10,7 +10,7 @@
  *   is on the toasts and while the tab is hidden. Successes and notes keep
  *   the default 4 s.
  * - Every error is also kept in the recent errors list the header shows, so a
- *   dismissed or missed one can be read again.
+ *   dismissed or missed one can be read again, until the principal changes.
  *
  * Errors do not stay until dismissed: from 768 px up toasts sit top right,
  * over the header's own controls (search, recent errors, theme, account),
@@ -35,6 +35,15 @@ export const recentErrors = recent;
 
 export function clearRecentErrors(): void {
   recent.value = log.clear();
+}
+
+/**
+ * Tie the recent errors to the signed-in principal: stores/auth calls this
+ * whenever the principal changes, and a different one (or none) starts the
+ * list empty.
+ */
+export function setRecentErrorsOwner(owner: string | undefined): void {
+  if (log.belongTo(owner)) recent.value = log.list;
 }
 
 function plain(value: unknown): string | undefined {

@@ -3,6 +3,7 @@ import { ref, computed } from "vue";
 import { api, ApiError, setCsrfToken, type Principal } from "@/lib/api";
 import { allowsRuntimeScope, allowsScopeGrant } from "@/lib/scopes";
 import { startAuthentication } from "@/lib/webauthn";
+import { setRecentErrorsOwner } from "@/lib/toast";
 
 /**
  * Session/auth state. The cookie is owned by the browser; we only track the
@@ -23,6 +24,9 @@ export const useAuthStore = defineStore("auth", () => {
   function applyPrincipal(p: Principal | undefined) {
     principal.value = p;
     setCsrfToken(p?.csrf_token);
+    // Sign-out, expiry and a different operator signing in all start the
+    // header's recent errors empty; a refresh of the same principal keeps them.
+    setRecentErrorsOwner(p?.actor_id);
   }
 
   /** Runtime scope check, including the server's migration compatibility. */
