@@ -221,12 +221,9 @@ router.beforeEach(async (to) => {
   if (!to.meta.public && auth.principal?.mfa_required && to.name !== "settings-security") {
     return { name: "settings-security", query: { mfa: "required" } };
   }
-  if (!to.meta.public && auth.isAuthenticated) {
-    const required = Array.isArray(to.meta.scopes) ? (to.meta.scopes as string[]) : [];
-    if (required.length > 0 && !auth.canAny(required)) {
-      return { name: "overview" };
-    }
-  }
+  // A route outside the principal's scopes is not redirected: the shell
+  // renders RouteDenied at the same address, naming the page and the scope
+  // (router/accessModel). The server refuses the calls either way.
   if (to.name === "login" && auth.isAuthenticated) {
     if (auth.principal?.mfa_required) {
       return { name: "settings-security", query: { mfa: "required" } };

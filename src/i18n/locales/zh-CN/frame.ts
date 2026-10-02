@@ -277,6 +277,15 @@ export default {
   },
 
   shell: {
+    // 打开账号权限之外的页面时（router/accessModel）。
+    denied: {
+      title: "你无法打开「{page}」",
+      needsOne: "此页面需要 {scope} 权限，你的账号没有。",
+      needsAny: "此页面需要以下任一权限，你的账号都没有：",
+      ask: "管理员可以在「访问权限」页面为你的账号授予权限。",
+      overview: "前往概览",
+      permissions: "查看我的权限",
+    },
     sidebar: {
       toggle: "切换侧边栏",
       primaryNav: "主导航",

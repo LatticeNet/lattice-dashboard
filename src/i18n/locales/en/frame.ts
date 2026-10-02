@@ -282,6 +282,15 @@ export default {
   },
 
   shell: {
+    // A deep link to a page outside the account's scopes (router/accessModel).
+    denied: {
+      title: "You cannot open {page}",
+      needsOne: "This page needs the {scope} scope, and your account does not have it.",
+      needsAny: "This page needs one of these scopes, and your account has none of them:",
+      ask: "An administrator can grant scopes on the Access page.",
+      overview: "Go to Overview",
+      permissions: "See your scopes",
+    },
     sidebar: {
       toggle: "Toggle sidebar",
       primaryNav: "Primary",
