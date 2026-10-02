@@ -1123,6 +1123,8 @@ export default {
       presetsDescription: "从常用 fleet 告警开始,保存前可继续调整渠道或模板。",
       presetsNeedChannel: "请先创建渠道，预设规则需要有发送目标。",
       presetsChannelsUnread: "未读到渠道列表，预设规则暂时没有发送目标。",
+      ruleFormChannelsUnread: "未读到渠道列表。刷新页面后再选择这条规则发往哪里。",
+      newRuleNoAccess: "添加规则需要 notify:admin，当前会话没有这个权限。",
       presets: {
         quota: "配额压力",
         monitor: "监控状态",

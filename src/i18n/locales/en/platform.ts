@@ -1223,6 +1223,8 @@ export default {
       presetsDescription: "Start from the common fleet alerts, then adjust channels or templates before saving.",
       presetsNeedChannel: "Create a channel first. A preset rule has to route somewhere.",
       presetsChannelsUnread: "The channel list was not read, so a preset has nowhere to route yet.",
+      ruleFormChannelsUnread: "The channel list was not read. Refresh the page to choose where this rule sends.",
+      newRuleNoAccess: "Adding a rule needs notify:admin, which this session does not hold.",
       presets: {
         quota: "Quota pressure",
         monitor: "Monitor state",

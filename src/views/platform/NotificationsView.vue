@@ -621,18 +621,24 @@ async function submitRule(): Promise<void> {
 
 /*
  * Webhooks links here with ?newRule=<event type> for a webhook no rule
- * routes: the rule form opens with that event filled in, once the channels
- * are read (it preselects the first one), and the key leaves the address so
- * a reload does not reopen it.
+ * routes: the rule form opens with that event filled in once the channel
+ * read settles (it preselects the first channel; a failed read leaves the
+ * picker saying so), and the key leaves the address so a reload does not
+ * reopen it. A caller who cannot manage rules is told so instead.
  */
 const owned = useOwnedRoute();
 watch(
-  [() => owned.query().newRule, () => channelsQuery.data.value],
-  ([event, list]) => {
-    if (typeof event !== "string" || !event || list === undefined || !canManage.value || !owned.owns()) return;
+  [() => owned.query().newRule, () => channelsQuery.data.value, () => channelsQuery.error.value],
+  ([event, list, error]) => {
+    if (typeof event !== "string" || !event || !owned.owns()) return;
+    if (list === undefined && !error) return;
     const query = { ...owned.query() };
     delete query.newRule;
     owned.replace(query);
+    if (!canManage.value) {
+      toast.info(t("platform.notifications.newRuleNoAccess"));
+      return;
+    }
     openRuleCreate();
     ruleEvents.value = event;
   },
@@ -1054,6 +1060,7 @@ async function confirmDeleteRule(): Promise<void> {
                 </span>
               </label>
             </div>
+            <p v-else-if="!channelsRead" class="text-sm text-muted-foreground" data-testid="rule-channels-unread">{{ $t('platform.notifications.ruleFormChannelsUnread') }}</p>
             <p v-else class="text-sm text-muted-foreground">{{ $t('platform.notifications.createChannelFirst') }}</p>
           </div>
 
