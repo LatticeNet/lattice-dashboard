@@ -53,6 +53,10 @@
   --color-success-text: var(--success-text);
   --color-warning-text: var(--warning-text);
   --color-info-text: var(--info-text);
+  /* Inks for a 10px count pill on its tone's tint (see --count-ink below). */
+  --color-count-ink: var(--count-ink);
+  --color-count-ink-warning: var(--count-ink-warning);
+  --color-count-ink-destructive: var(--count-ink-destructive);
 
   --color-border: var(--border);
   --color-input: var(--input);
@@ -198,6 +202,14 @@
   --success-text: oklch(0.5 0.14 150);
   --warning-text: oklch(0.52 0.13 73);
   --info-text: oklch(0.5 0.13 240);
+  /* A layer count (LayerTabs) is a 10px figure on its tone's tint, and the
+     tint sits on three grounds: the page, the segmented track and the raised
+     current segment. --muted-foreground and the -text steps fell under 4.5:1
+     on at least one of them, so the pill carries its own ink per tone,
+     measured on its tint over all three. */
+  --count-ink: oklch(0.48 0.022 281);
+  --count-ink-warning: oklch(0.48 0.12 73);
+  --count-ink-destructive: oklch(0.48 0.2 27.5);
 
   --border: oklch(0.91 0.006 281);
   --input: oklch(0.91 0.006 281);
@@ -265,6 +277,11 @@
   --success-text: oklch(0.706 0.15 156);
   --warning-text: oklch(0.8 0.16 80);
   --info-text: oklch(0.7 0.12 210);
+  /* Layer count inks (see the light block): lighter than the fills, since the
+     raised segment they sit on is the lightest ground here. */
+  --count-ink: oklch(0.84 0.012 240);
+  --count-ink-warning: oklch(0.88 0.13 85);
+  --count-ink-destructive: oklch(0.84 0.12 22);
 
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 13%);
@@ -495,6 +512,27 @@
     [data-slot="button"],
     .touch-target {
       position: relative;
+    }
+
+    /* A text button at the default, small or large size is 32 to 40 px
+       tall, under the 44 px a finger needs (the wave 1 touch decision). In
+       the base layer, so a control that sets its own min-height keeps it. */
+    [data-button-size="default"],
+    [data-button-size="sm"],
+    [data-button-size="lg"] {
+      min-height: 44px;
+    }
+
+    /* Text fields and select triggers are 36 px for the same finger.
+       A caller's compact height (h-6, h-7, h-8) still becomes 44 px on a
+       coarse pointer, on purpose: every page was rendered at 375 with a
+       touch pointer and none of those controls clipped, overflowed its
+       parent or pushed the page sideways; rows only grew. An icon or a
+       clear button placed inside a field centres with top-1/2 and a
+       translate, never a fixed top offset, which sits 4 px high here. */
+    [data-slot="input"]:not([type="checkbox"], [type="radio"]),
+    [data-slot="select-trigger"] {
+      min-height: 44px;
     }
   }
 }

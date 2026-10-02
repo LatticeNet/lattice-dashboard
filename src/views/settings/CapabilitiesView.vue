@@ -28,6 +28,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import TrustPosture from "@/components/fleet/TrustPosture.vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -141,6 +142,8 @@ async function applyToggle() {
         <ProofLine v-bind="proof" :segments="proofSegments" @retry="query.refresh" />
       </template>
     </PageHeader>
+
+    <TrustPosture />
 
     <!--
       The honesty note (2026-09-01 audit follow-up): this page is where an

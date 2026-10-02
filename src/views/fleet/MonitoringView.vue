@@ -5,18 +5,15 @@ import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
   Activity,
-  CheckCircle2,
-  Funnel,
-  Gauge,
+  Globe,
+  LockKeyhole,
   Pause,
   Play,
   Plus,
   RadioTower,
   RefreshCw,
-  Search,
-  Timer,
   Trash2,
-  XCircle,
+  X,
 } from "lucide-vue-next";
 import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
 import {
@@ -29,33 +26,34 @@ import {
   canSubmitMonitor,
   isServerEvaluated,
   switchMonitorType,
-  tlsTargetError,
+  targetError,
   type ProbeAssignment,
 } from "./monitorTypeModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatPercent, formatRelativeTime, shortId } from "@/lib/format";
-import { evalFilterExpression, tokenMatchesText } from "@/lib/filterExpressions";
 import { cn } from "@/lib/utils";
 
-import { latencyClass } from "@/lib/latency";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { createConfirmReturn } from "./confirmFocus";
+import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
+import { useMonitorHealth } from "./useMonitorHealth";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import StatusDot from "@/components/common/StatusDot.vue";
+import { bindQueryParam } from "@/composables/useQueryParam";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
-import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
-import StatCard from "@/components/common/StatCard.vue";
 import TrendChart from "@/components/common/TrendChart.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -97,15 +95,36 @@ const nodesQuery = useAsyncData(
   },
 );
 
-// Seed from a /monitoring/:id deep link; the monitors watch validates it once
-// the list loads (falling back to the first monitor if the id is unknown).
-const selectedMonitorId = ref(typeof route.params.id === "string" ? route.params.id : "");
+// One monitor open in the sheet on ?open=. An old /monitoring/:id link (the
+// Upcoming list's TLS rows) lands on /monitoring?open=<id> instead.
+const owned = useOwnedRoute();
+const sheet = bindRouteOpen(owned);
+watch(
+  () => route.params.id,
+  (id) => {
+    if (typeof id === "string" && id) router.replace({ name: "monitoring", query: { ...route.query, open: id } }).catch(() => {});
+  },
+  { immediate: true },
+);
+const selectedMonitorId = computed(() => sheet.openId.value ?? "");
+
+/**
+ * ?node=<id> (the node page's Monitoring link) lists the monitors that check
+ * from that node: the ones assigned to every node or to it by name. A
+ * certificate watch runs on the control plane, so it never matches.
+ */
+const nodeFilter = bindQueryParam(owned, "node", {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value: string) => value || undefined,
+});
+const createOpen = ref(false);
 const createPending = ref(false);
 const deletePending = ref(false);
 const deleteOpen = ref(false);
 
 const monitorName = ref("");
-const monitorType = ref<string>("tcp");
+// HTTP first, like the empty state's first watch: the most common probe.
+const monitorType = ref<string>("http");
 const monitorTarget = ref("");
 const intervalSec = ref(AGENT_DEFAULT_INTERVAL_SEC);
 const timeoutSec = ref(AGENT_DEFAULT_TIMEOUT_SEC);
@@ -154,10 +173,17 @@ watch(monitorType, (type, previous) => {
 });
 
 const isCertWatch = computed(() => isServerEvaluated(monitorType.value));
-/** Set once the operator has typed something that is not host:port. */
-const tlsTargetProblem = computed(() =>
-  isCertWatch.value && monitorTarget.value.trim() ? tlsTargetError(monitorTarget.value) : undefined,
+/** Set once the operator has typed a target this type cannot dial. */
+const targetProblem = computed(() =>
+  monitorTarget.value.trim() ? targetError(monitorType.value, monitorTarget.value) : undefined,
 );
+/** A URL typed into a TCP monitor: one click makes it the HTTP monitor it meant to be. */
+const offerHttp = computed(() => monitorType.value === "tcp" && /^https?:\/\//i.test(monitorTarget.value.trim()));
+const targetProblemText = computed(() => {
+  if (!targetProblem.value) return "";
+  if (isCertWatch.value) return t("fleet.monitoring.create.targetTlsError");
+  return monitorType.value === "http" ? t("fleet.monitoring.create.targetHttpError") : t("fleet.monitoring.create.targetTcpError");
+});
 
 
 /** The assignment picker is a checkbox list writing into one array of ids. */
@@ -182,108 +208,30 @@ const selectedMonitor = computed(() =>
 );
 const selectedResults = computed(() => resultsQuery.data.value ?? []);
 
-const monitorSearch = ref("");
-const monitorExpression = ref("");
-
-const monitorExpressionError = computed(() => {
-  const expr = monitorExpression.value.trim();
-  if (!expr) return "";
-  const result = evalFilterExpression(expr, () => true);
-  return result.ok ? "" : result.error ?? t("fleet.monitoring.definitions.expressionInvalid");
-});
-
-function monitorFieldValues(monitor: MonitorView, rawField: string): string[] {
-  const field = rawField.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  switch (field) {
-    case "id":
-    case "monitor":
-    case "monitor_id":
-      return [monitor.id, shortId(monitor.id)];
-    case "name":
-      return [monitor.name];
-    case "type":
-    case "protocol":
-      return [monitor.type];
-    case "target":
-    case "host":
-    case "url":
-      return [monitor.target];
-    case "status":
-    case "state":
-      return [monitor.enabled ? "enabled" : "disabled", monitor.enabled ? "on" : "off"];
-    case "enabled":
-      return [String(monitor.enabled), monitor.enabled ? "true" : "false"];
-    case "interval":
-    case "interval_sec":
-      return [String(monitor.interval_sec)];
-    case "timeout":
-    case "timeout_sec":
-      return [String(monitor.timeout_sec)];
-    case "scope":
-    case "assign":
-    case "assignment":
-      return [monitor.assign_all ? "all" : "selected"];
-    case "node":
-    case "node_id":
-      return monitor.assign_all ? ["all"] : monitor.node_ids ?? [];
-    case "created":
-    case "created_at":
-      return [monitor.created_at ?? ""];
-    case "updated":
-    case "updated_at":
-      return [monitor.updated_at ?? ""];
-    default:
-      return [];
+/**
+ * Each listed monitor's state from its newest results (monitorHealthModel).
+ * The open monitor uses the sheet's own read, which polls faster, so the row
+ * and the sheet's badge agree.
+ */
+const healthRead = useMonitorHealth(monitorsQuery.data, { enabled: () => canReadMonitors.value });
+function healthOf(monitor: MonitorView): MonitorHealth {
+  if (monitor.id === selectedMonitorId.value && resultsQuery.data.value !== undefined) {
+    return monitorHealth(monitor, resultsQuery.data.value, resultsQuery.lastUpdated.value ?? Date.now());
   }
+  return healthRead.health(monitor);
 }
+/** The status read has not answered once yet. */
+const healthReading = computed(() => healthRead.query.data.value === undefined && !healthRead.query.error.value);
 
-function monitorHaystack(monitor: MonitorView): string {
-  return [
-    monitor.id,
-    shortId(monitor.id),
-    monitor.name,
-    monitor.type,
-    monitor.target,
-    monitor.enabled ? "enabled on" : "disabled off",
-    monitor.assign_all ? "all" : "selected",
-    monitor.interval_sec,
-    monitor.timeout_sec,
-    ...(monitor.node_ids ?? []),
-    monitor.created_at,
-    monitor.updated_at,
-  ]
-    .filter((value) => value !== undefined && value !== null && value !== "")
-    .join(" ");
-}
-
-function monitorMatchesExpression(monitor: MonitorView): boolean {
-  const expr = monitorExpression.value.trim();
-  if (!expr || monitorExpressionError.value) return true;
-  const result = evalFilterExpression(expr, (rawToken) => {
-    const splitAt = rawToken.indexOf(":");
-    if (splitAt > 0) {
-      const values = monitorFieldValues(monitor, rawToken.slice(0, splitAt));
-      const needle = rawToken.slice(splitAt + 1).trim();
-      return values.length > 0 && values.some((value) => tokenMatchesText(value, needle));
-    }
-    return tokenMatchesText(monitorHaystack(monitor), rawToken);
-  });
-  return result.ok ? result.value : true;
-}
-
-const sortedMonitors = computed(() => {
-  const q = monitorSearch.value.trim().toLowerCase();
-  return [...monitors.value]
-    .filter(
-      (m) =>
-        monitorMatchesExpression(m) &&
-        (!q || [m.name, m.id, m.target, m.type].some((v) => (v ?? "").toLowerCase().includes(q))),
-    )
-    .sort((a, b) => {
-      if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-      return (a.name || a.id).localeCompare(b.name || b.id);
-    });
-});
+/** Failing first, then stale and silent ones, then the rest by name. Search is the table's own. */
+const sortedMonitors = computed(() =>
+  [...monitors.value].sort((a, b) => {
+    const rank = healthRank(healthOf(a)) - healthRank(healthOf(b));
+    if (rank !== 0) return rank;
+    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+    return (a.name || a.id).localeCompare(b.name || b.id);
+  }),
+);
 
 const sortedResultsAsc = computed(() =>
   [...selectedResults.value].sort((a, b) => timestamp(a.at) - timestamp(b.at)),
@@ -341,19 +289,18 @@ function togglePause() {
   }
 }
 
-// Deep-link: /monitoring?node=<id> seeds the results-log node filter once that
-// node appears in the loaded results (e.g. from a node's "Monitoring" cross-link).
-// Only seeds while the filter is still on its "all" default so it never clobbers
-// a manual choice, and seeds at most once per id.
+// With ?node=<id>, a monitor opened from the list starts its results log on
+// that node once the node appears in the results. Only while the filter is
+// still on "all", so it never clobbers a manual choice, and once per monitor.
 const seededLogNode = ref<string | undefined>(undefined);
 watch(
-  [logNodeOptions, () => route.query.node],
-  ([opts, nodeQ]) => {
-    const id = typeof nodeQ === "string" ? nodeQ : undefined;
-    if (!id || id === seededLogNode.value) return;
+  [logNodeOptions, nodeFilter, selectedMonitorId],
+  ([opts, id, monitorId]) => {
+    const key = `${monitorId}:${id}`;
+    if (!id || !monitorId || key === seededLogNode.value) return;
     if (logNode.value === "all" && opts.includes(id)) {
       logNode.value = id;
-      seededLogNode.value = id;
+      seededLogNode.value = key;
     }
   },
   { immediate: true },
@@ -402,45 +349,16 @@ function formatTrendLatency(n: number): string {
   return String(Math.round(n));
 }
 
-watch(
-  monitors,
-  (list) => {
-    if (list.length === 0) {
-      selectedMonitorId.value = "";
-      return;
-    }
-    const first = list[0];
-    if (first && (!selectedMonitorId.value || !list.some((monitor) => monitor.id === selectedMonitorId.value))) {
-      selectedMonitorId.value = first.id;
-    }
-  },
-  { immediate: true },
-);
-
+// Another monitor opens with nothing of the last one's: no results, no
+// failure line, no paused snapshot and no node filter it may not have.
 watch(selectedMonitorId, (id) => {
-  resultsQuery.refresh();
-  // Keep the URL in sync so the current monitor is shareable/bookmarkable.
-  // replace (not push) avoids polluting history as the operator scans monitors.
-  if (id && route.params.id !== id) {
-    router.replace({ name: "monitor-detail", params: { id } }).catch(() => {});
-  }
+  resultsQuery.data.value = undefined;
+  resultsQuery.error.value = undefined;
+  paused.value = false;
+  frozen.value = null;
+  logNode.value = "all";
+  if (id) void resultsQuery.refresh();
 });
-
-// Honor in-session URL changes (back/forward, a pasted link) when the id is a
-// known monitor. Guarded against the id we just wrote, so there is no loop.
-watch(
-  () => route.params.id,
-  (id) => {
-    if (
-      typeof id === "string" &&
-      id &&
-      id !== selectedMonitorId.value &&
-      monitors.value.some((monitor) => monitor.id === id)
-    ) {
-      selectedMonitorId.value = id;
-    }
-  },
-);
 
 function timestamp(input?: string): number {
   if (!input) return 0;
@@ -460,6 +378,13 @@ function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
 }
 
+/** A cadence in the largest whole unit: "every 1h", not "every 3600s". */
+function cadence(seconds: number): string {
+  if (seconds >= 3600 && seconds % 3600 === 0) return t("fleet.monitoring.definitions.unit.h", { n: seconds / 3600 });
+  if (seconds >= 60 && seconds % 60 === 0) return t("fleet.monitoring.definitions.unit.m", { n: seconds / 60 });
+  return t("fleet.monitoring.definitions.unit.s", { n: seconds });
+}
+
 function assignmentLabel(monitor: MonitorView): string {
   if (isServerEvaluated(monitor.type)) return t("fleet.monitoring.assignment.controlPlane");
   if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
@@ -467,47 +392,22 @@ function assignmentLabel(monitor: MonitorView): string {
   return t("fleet.monitoring.assignment.nodeCount", { count });
 }
 
-function resultVariant(result?: MonitorResult): "success" | "destructive" | "secondary" {
-  if (!result) return "secondary";
-  return result.success ? "success" : "destructive";
-}
-
-function resultLabel(result?: MonitorResult): string {
-  if (!result) return t("fleet.monitoring.result.noResult");
-  return result.success ? t("fleet.monitoring.result.passing") : t("fleet.monitoring.result.failing");
-}
 
 /**
- * Map a latency band token to LITERAL Tailwind classes. latency.ts is the SSOT
- * for the band thresholds; we expand to full static strings here so Tailwind v4's
- * content scanner can see every candidate (runtime-built `bg-${token}` would not
- * be generated). Background tile + matching text color for the legend/labels.
+ * How a result's latency reads. A passing probe is plain text up to the
+ * slow line (SLOW_MS): a pass at 120 ms painted amber beside a green
+ * "passing" said two things at once (design 23, 4.2). Slow passes are amber,
+ * failures red.
  */
-const LATENCY_BG: Record<string, string> = {
-  success: "bg-success/80",
-  "chart-2": "bg-chart-2/80",
-  warning: "bg-warning/80",
-  destructive: "bg-destructive/80",
-  "muted-foreground": "bg-muted-foreground/80",
-};
-const LATENCY_TEXT: Record<string, string> = {
-  success: "text-success",
-  "chart-2": "text-chart-2",
-  warning: "text-warning",
-  destructive: "text-destructive",
-  "muted-foreground": "text-muted-foreground",
-};
-
-/** Heat-strip tile color: a failed probe is loss (destructive); a passing probe
- *  is graded by its latency band via the shared latency scale (src/lib/latency.ts). */
-function resultBarClass(result: MonitorResult): string {
-  if (!result.success) return "bg-destructive/80";
-  return LATENCY_BG[latencyClass(result.latency_ms)] ?? "bg-muted-foreground/80";
+function latencyTone(result: MonitorResult): string {
+  if (!result.success) return "text-destructive";
+  return (result.latency_ms ?? 0) >= SLOW_MS ? "text-warning-text" : "text-foreground";
 }
 
-/** Latency text color (graded) for numeric latency labels. */
-function latencyText(ms?: number): string {
-  return LATENCY_TEXT[latencyClass(ms)] ?? "text-muted-foreground";
+/** Heat-strip tile: green for a pass under the slow line, amber above it, red for a failure. */
+function stripClass(result: MonitorResult): string {
+  if (!result.success) return "bg-destructive/80";
+  return (result.latency_ms ?? 0) >= SLOW_MS ? "bg-warning/80" : "bg-success/70";
 }
 
 function refreshAll() {
@@ -523,32 +423,67 @@ function refreshAll() {
  * monitors the create card is the only thing on the page worth doing, and on a
  * narrow viewport it sits below everything else.
  */
-function focusCreateMonitor() {
-  const el = document.getElementById("monitor-name");
-  if (!(el instanceof HTMLInputElement)) return;
-  el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
+function openCreate(type?: string) {
+  if (type) monitorType.value = type;
+  createOpen.value = true;
 }
+
+function resetCreateForm(): void {
+  monitorName.value = "";
+  // Dropped before the type changes: the form is being emptied on purpose,
+  // so the state held aside for a round trip through tls is not owed back.
+  agentProbeStash.value = undefined;
+  monitorType.value = "http";
+  monitorTarget.value = "";
+  intervalSec.value = AGENT_DEFAULT_INTERVAL_SEC;
+  timeoutSec.value = AGENT_DEFAULT_TIMEOUT_SEC;
+  thresholdDays.value = TLS_DEFAULT_THRESHOLD_DAYS;
+  assignAll.value = true;
+  selectedNodeIds.value = [];
+}
+
+/**
+ * Something typed or picked that closing would throw away. Escape, the close
+ * button and Cancel ask first when it is set, like the Machines editor.
+ */
+const createDirty = computed(
+  () => !!monitorName.value.trim() || !!monitorTarget.value.trim() || !assignAll.value || selectedNodeIds.value.length > 0,
+);
+const createDiscardOpen = ref(false);
+function requestCloseCreate(): void {
+  if (createPending.value) return;
+  if (createDirty.value) {
+    createDiscardOpen.value = true;
+    return;
+  }
+  createOpen.value = false;
+}
+function discardCreate(): void {
+  createDiscardOpen.value = false;
+  createOpen.value = false;
+  resetCreateForm();
+}
+
+/** What the disabled Create still needs, so it does not sit there unexplained. */
+const createMissing = computed(() => {
+  const missing: string[] = [];
+  if (!monitorName.value.trim()) missing.push(t("fleet.monitoring.create.missingName"));
+  if (!monitorTarget.value.trim()) missing.push(t("fleet.monitoring.create.missingTarget"));
+  else if (targetProblem.value) missing.push(t("fleet.monitoring.create.missingValidTarget"));
+  if (!isCertWatch.value && !assignAll.value && selectedNodeIds.value.length === 0) missing.push(t("fleet.monitoring.create.missingNodes"));
+  return missing;
+});
 
 async function createMonitor() {
   if (!canSubmit.value) return;
   createPending.value = true;
   try {
     const created = await api.monitors.create(buildMonitorCreate(monitorForm.value));
-    monitorName.value = "";
-    // Dropped before the type changes: the form is being emptied on purpose,
-    // so the state held aside for a round trip through tls is not owed back.
-    agentProbeStash.value = undefined;
-    monitorType.value = "tcp";
-    monitorTarget.value = "";
-    intervalSec.value = AGENT_DEFAULT_INTERVAL_SEC;
-    timeoutSec.value = AGENT_DEFAULT_TIMEOUT_SEC;
-    thresholdDays.value = TLS_DEFAULT_THRESHOLD_DAYS;
-    assignAll.value = true;
-    selectedNodeIds.value = [];
-    selectedMonitorId.value = created.id;
+    resetCreateForm();
+    createOpen.value = false;
     toast.success(t("fleet.monitoring.toast.created"));
     refreshAll();
+    sheet.open(created.id);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.monitoring.toast.createFailed"));
   } finally {
@@ -557,13 +492,14 @@ async function createMonitor() {
 }
 
 async function deleteMonitor() {
-  if (!selectedMonitor.value) return;
+  const target = deleteTarget.value ?? selectedMonitor.value;
+  if (!target) return;
   deletePending.value = true;
   try {
-    await api.monitors.delete(selectedMonitor.value.id);
+    await api.monitors.delete(target.id);
     toast.success(t("fleet.monitoring.toast.deleted"));
-    selectedMonitorId.value = "";
     deleteOpen.value = false;
+    if (sheet.openId.value === target.id) sheet.close();
     refreshAll();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.monitoring.toast.deleteFailed"));
@@ -571,492 +507,538 @@ async function deleteMonitor() {
     deletePending.value = false;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Head, list and sheet (design 23, 4.2)                               */
+/* ------------------------------------------------------------------ */
+
+const proof = useProof(monitorsQuery);
+const failing = computed(() => failingMonitors(monitors.value, healthOf));
+const staleMonitors = computed(() => monitors.value.filter((monitor) => healthOf(monitor).kind === "stale"));
+const proofSegments = computed<ProofSegment[]>(() => {
+  const out: ProofSegment[] = [{ key: "monitors", text: t("fleet.monitoring.proof.monitors", { n: monitors.value.length }, monitors.value.length) }];
+  if (monitors.value.length) out.push({ key: "enabled", text: t("fleet.monitoring.proof.enabled", { n: enabledCount.value }) });
+  if (failing.value.length) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failing.value.length }) });
+  if (healthRead.query.error.value && healthRead.query.data.value === undefined) {
+    out.push({ key: "status", tone: "warning", text: t("fleet.monitoring.proof.statusNotRead", { reason: healthRead.query.error.value.message }) });
+  } else if (healthRead.capped.value) {
+    out.push({ key: "status", tone: "muted", text: t("fleet.monitoring.proof.statusCapped", { n: healthRead.capped.value }) });
+  }
+  return out;
+});
+
+/**
+ * Failing monitors, then the ones whose results stopped arriving. Each names
+ * the nodes and the newest result's age, and opens the monitor.
+ */
+const attention = computed<AttentionItem[]>(() => {
+  const items: AttentionItem[] = failing.value.map(({ monitor, failing: n, total }) => {
+    const state = healthOf(monitor);
+    const lastAt = state.kind === "failing" ? state.lastAt : 0;
+    return {
+      key: `failing:${monitor.id}`,
+      tone: "danger",
+      claim: t("fleet.monitoring.attention.failing", { name: monitor.name || monitor.id }),
+      proof: [
+        total > 1 ? t("fleet.monitoring.status.failingOn", { n, total }) : t("fleet.monitoring.status.failing"),
+        lastAt ? t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(lastAt) }) : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      action: { label: t("fleet.monitoring.attention.open"), run: () => sheet.open(monitor.id) },
+    };
+  });
+  for (const monitor of staleMonitors.value) {
+    const state = healthOf(monitor);
+    items.push({
+      key: `stale:${monitor.id}`,
+      tone: "warning",
+      claim: t("fleet.monitoring.attention.stale", { name: monitor.name || monitor.id }),
+      proof:
+        state.kind === "stale"
+          ? t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) })
+          : undefined,
+      action: { label: t("fleet.monitoring.attention.open"), run: () => sheet.open(monitor.id) },
+    });
+  }
+  return items;
+});
+
+/** The status cell: words first, colour only for a reading that says something. */
+function statusView(monitor: MonitorView): { text: string; detail?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
+  const state = healthOf(monitor);
+  switch (state.kind) {
+    case "disabled":
+      return { text: t("common.status.disabled"), textClass: "text-muted-foreground" };
+    case "unread":
+      return {
+        text: healthReading.value ? t("overview.read.reading") : t("overview.read.failed"),
+        textClass: "text-muted-foreground",
+      };
+    case "none":
+      return { text: t("fleet.monitoring.status.none"), textClass: "text-muted-foreground" };
+    case "failing":
+      return {
+        text: state.total > 1 ? t("fleet.monitoring.status.failingOn", { n: state.failing, total: state.total }) : t("fleet.monitoring.status.failing"),
+        tone: "destructive",
+        textClass: "text-destructive font-medium",
+      };
+    case "stale":
+      return {
+        text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }),
+        tone: "warning",
+        textClass: "text-warning-text",
+      };
+    case "up":
+      return {
+        text: t("fleet.monitoring.status.up"),
+        detail: state.latencyMs !== undefined ? formatLatency(state.latencyMs) : undefined,
+        tone: "success",
+        textClass: "text-foreground",
+      };
+  }
+}
+
+const listedMonitors = computed(() => {
+  const id = nodeFilter.value;
+  if (!id) return sortedMonitors.value;
+  return sortedMonitors.value.filter(
+    (monitor) => !isServerEvaluated(monitor.type) && (monitor.assign_all || (monitor.node_ids ?? []).includes(id)),
+  );
+});
+
+const columns = computed<DataTableColumn<MonitorView>[]>(() => [
+  { key: "name", label: t("fleet.monitoring.table.name"), sortable: true, searchable: true, value: (m) => m.name || m.id },
+  { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (m) => healthRank(healthOf(m)) },
+  { key: "type", label: t("fleet.monitoring.table.type"), sortable: true, searchable: true },
+  { key: "target", label: t("fleet.monitoring.table.target"), searchable: true },
+  { key: "assignment", label: t("fleet.monitoring.table.checks"), value: (m) => assignmentLabel(m) },
+  { key: "interval", label: t("fleet.monitoring.table.every"), sortable: true, value: (m) => m.interval_sec },
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
+]);
+
+/** A confirm opened from a row menu hands focus back to that menu. */
+const confirmReturn = createConfirmReturn();
+const deleteTarget = ref<MonitorView | undefined>();
+function requestDelete(monitor: MonitorView) {
+  confirmReturn.remember(monitor.id);
+  deleteTarget.value = monitor;
+  deleteOpen.value = true;
+}
+
+function menuFor(monitor: MonitorView): RowMenuItem[] {
+  return [
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdminMonitors.value, run: () => requestDelete(monitor) },
+  ];
+}
+
+/**
+ * The monitor's state from each node's newest result, not from the single
+ * newest row: two nodes reporting in the same minute, one passing and one
+ * timing out, read "passing" before.
+ */
+const latestByNode = computed(() => {
+  const map = new Map<string, MonitorResult>();
+  for (const result of sortedResultsAsc.value) map.set(result.node_id ?? "", result);
+  return [...map.values()];
+});
+const failingNow = computed(() => latestByNode.value.filter((result) => !result.success).length);
+const stateBadge = computed<{ variant: "success" | "destructive" | "secondary"; label: string }>(() => {
+  if (resultsQuery.data.value === undefined) return { variant: "secondary", label: t("common.proof.reading") };
+  if (latestByNode.value.length === 0) return { variant: "secondary", label: t("fleet.monitoring.result.noResult") };
+  // Old results are not a reading: the badge says when the last one came, not "passing".
+  const state = selectedMonitor.value ? healthOf(selectedMonitor.value) : undefined;
+  if (state?.kind === "stale") {
+    return { variant: "secondary", label: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }) };
+  }
+  if (failingNow.value === 0) return { variant: "success", label: t("fleet.monitoring.result.passing") };
+  if (latestByNode.value.length === 1) return { variant: "destructive", label: t("fleet.monitoring.result.failing") };
+  return { variant: "destructive", label: t("fleet.monitoring.sheet.failingOn", { n: failingNow.value, total: latestByNode.value.length }) };
+});
+
+const sheetState = computed(() => {
+  if (!selectedMonitorId.value) return "loading" as const;
+  if (monitorsQuery.data.value === undefined) {
+    return monitorsQuery.error.value && !monitorsQuery.loading.value ? ("failed" as const) : ("loading" as const);
+  }
+  if (!selectedMonitor.value) return "gone" as const;
+  return monitorsQuery.error.value ? ("stale" as const) : ("ready" as const);
+});
+
+/** What deleting a monitor takes with it (design 23, 3.8: inside Lattice, irreversible). */
+const deleteImpact = computed(() => {
+  const monitor = deleteTarget.value;
+  if (!monitor) return [];
+  const lines = [t("fleet.monitoring.confirm.impactHistory")];
+  if (monitor.type === "tls") lines.push(t("fleet.monitoring.confirm.impactUpcoming"));
+  return lines;
+});
 </script>
 
 <template>
-  <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('fleet.monitoring.title')" :description="$t('fleet.monitoring.description')">
-      <template #status>
-        <FreshnessLabel :last-updated="monitorsQuery.lastUpdated.value" :poll-ms="monitorsQuery.pollMs" />
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('fleet.monitoring.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
+        <ProofLine v-if="canReadMonitors" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
-      <template #actions>
-        <Button
-          v-if="canReadMonitors"
-          variant="outline"
-          size="sm"
-          :disabled="monitorsQuery.refreshing.value || resultsQuery.refreshing.value"
-          @click="refreshAll"
-        >
-          <RefreshCw
-            :class="cn('size-4', (monitorsQuery.refreshing.value || resultsQuery.refreshing.value) && 'animate-spin')"
-            aria-hidden="true"
-          />
+      <template v-if="canReadMonitors" #actions>
+        <Button v-if="canAdminMonitors && monitors.length" size="sm" type="button" @click="openCreate()">
+          <Plus class="size-4" aria-hidden="true" />
+          {{ $t('fleet.monitoring.create.title') }}
+        </Button>
+        <Button variant="outline" size="sm" type="button" :disabled="monitorsQuery.refreshing.value" @click="refreshAll">
+          <RefreshCw :class="cn('size-4', monitorsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard :label="$t('fleet.monitoring.stats.monitors')" :value="monitors.length" :icon="RadioTower" />
-      <StatCard :label="$t('fleet.monitoring.stats.enabled')" :value="enabledCount" :icon="Activity" tone="success" />
-      <StatCard :label="$t('fleet.monitoring.stats.selectedSuccess')" :value="selectedSuccessRate" :icon="CheckCircle2" :tone="failureCount > 0 ? 'warning' : 'success'" />
-      <StatCard :label="$t('fleet.monitoring.stats.averageLatency')" :value="averageLatency" :icon="Gauge" />
+    <AttentionList v-if="canReadMonitors" :items="attention" />
+
+    <EmptyState
+      v-if="!canReadMonitors"
+      :icon="RadioTower"
+      :title="$t('fleet.monitoring.noAccessTitle')"
+      :description="$t('fleet.monitoring.noAccessDescription')"
+    />
+
+    <!-- No monitors yet: one sentence and the two watches worth starting with. -->
+    <section
+      v-else-if="monitorsQuery.data.value !== undefined && monitors.length === 0"
+      class="rounded-lg border border-dashed border-border px-5 py-8 text-center"
+      aria-labelledby="monitoring-empty"
+    >
+      <RadioTower class="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
+      <h2 id="monitoring-empty" class="mt-3 text-sm font-medium">{{ $t('fleet.monitoring.empty.title') }}</h2>
+      <p class="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
+        {{ canAdminMonitors ? $t('fleet.monitoring.empty.description') : $t('fleet.monitoring.definitions.emptyReadOnly') }}
+      </p>
+      <div v-if="canAdminMonitors" class="mt-4 flex flex-wrap justify-center gap-2">
+        <Button size="sm" type="button" @click="openCreate('http')">
+          <Globe class="size-4" aria-hidden="true" />
+          {{ $t('fleet.monitoring.empty.http') }}
+        </Button>
+        <Button variant="outline" size="sm" type="button" @click="openCreate('tls')">
+          <LockKeyhole class="size-4" aria-hidden="true" />
+          {{ $t('fleet.monitoring.empty.tls') }}
+        </Button>
+      </div>
+    </section>
+
+    <div v-if="nodeFilter && monitors.length" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <button
+        type="button"
+        class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary hover:bg-primary/20 pointer-coarse:min-h-11"
+        :aria-label="$t('fleet.monitoring.nodeFilter.remove', { node: nodeName(nodeFilter) })"
+        @click="nodeFilter = ''"
+      >
+        <span class="truncate">{{ $t('fleet.monitoring.nodeFilter.chip', { node: nodeName(nodeFilter) }) }}</span>
+        <X class="size-3 shrink-0" aria-hidden="true" />
+      </button>
+      <span class="tabular">{{ $t('fleet.monitoring.nodeFilter.showing', { shown: listedMonitors.length, total: monitors.length }) }}</span>
     </div>
 
-    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-      <Card>
-        <CardHeader>
-          <CardTitle class="flex items-center gap-2">
-            <RadioTower class="size-4 text-muted-foreground" aria-hidden="true" />
-            {{ $t('fleet.monitoring.definitions.title') }}
-          </CardTitle>
-          <CardDescription>{{ $t('fleet.monitoring.definitions.description', { enabled: enabledCount, total: monitors.length }) }}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div class="mb-3 space-y-2">
-            <div class="flex flex-col gap-2 lg:flex-row">
-              <div class="relative min-w-[220px] flex-1">
-                <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-                <Input v-model="monitorSearch" class="pl-8" :placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')" />
-              </div>
-              <div class="relative min-w-[260px] flex-1">
-                <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
-                <Input
-                  v-model="monitorExpression"
-                  class="pl-8 font-mono text-xs"
-                  :class="monitorExpressionError && 'border-destructive focus-visible:ring-destructive/20'"
-                  :placeholder="$t('fleet.monitoring.definitions.expressionPlaceholder')"
-                  :aria-label="$t('fleet.monitoring.definitions.expressionLabel')"
-                />
-              </div>
-            </div>
-            <p class="text-xs" :class="monitorExpressionError ? 'text-destructive' : 'text-muted-foreground'">
-              {{ monitorExpressionError || $t('fleet.monitoring.definitions.expressionHelp') }}
-            </p>
-          </div>
-          <DataState
-            :loading="monitorsQuery.loading.value"
-            :error="monitorsQuery.error.value"
-            :has-data="monitorsQuery.data.value !== undefined"
-            :is-empty="sortedMonitors.length === 0"
-            @retry="monitorsQuery.refresh"
-          >
-            <!-- Two different nothings: a filter that hid everything, and a
-                 server with no monitors at all. Only the second one gets a
-                 create action, and only for a token that can use it. -->
-            <template #empty>
-              <EmptyState
-                :icon="monitors.length ? Search : RadioTower"
-                :title="monitors.length ? $t('fleet.monitoring.definitions.noMatchTitle') : $t('fleet.monitoring.definitions.emptyTitle')"
-                :description="
-                  monitors.length
-                    ? $t('fleet.monitoring.definitions.noMatchDescription')
-                    : canAdminMonitors
-                      ? $t('fleet.monitoring.definitions.emptyDescription')
-                      : $t('fleet.monitoring.definitions.emptyReadOnly')
-                "
-              >
-                <Button v-if="!monitors.length && canAdminMonitors" size="sm" @click="focusCreateMonitor">
-                  <Plus class="size-4" aria-hidden="true" />
-                  {{ $t('fleet.monitoring.definitions.emptyAction') }}
-                </Button>
-              </EmptyState>
-            </template>
-
-            <div class="space-y-3">
-              <button
-                v-for="monitor in sortedMonitors"
-                :key="monitor.id"
-                type="button"
-                :class="cn(
-                  'w-full rounded-lg border border-border p-4 text-left transition-colors hover:bg-muted/35',
-                  selectedMonitorId === monitor.id && 'border-primary bg-primary/5',
-                )"
-                @click="selectedMonitorId = monitor.id"
-              >
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <div class="flex min-w-0 items-center gap-2">
-                      <Activity
-                        :class="cn('size-4 shrink-0', monitor.enabled ? 'text-success' : 'text-muted-foreground')"
-                        aria-hidden="true"
-                      />
-                      <span class="truncate font-medium" :title="monitor.name || monitor.id">{{ monitor.name || monitor.id }}</span>
-                    </div>
-                    <p class="mt-1 break-all font-mono text-xs text-muted-foreground">
-                      {{ monitor.target }}
-                    </p>
-                  </div>
-                  <div class="flex flex-wrap justify-end gap-1.5">
-                    <Badge variant="outline">{{ monitor.type }}</Badge>
-                    <Badge v-if="monitor.type === 'tls'" variant="secondary">
-                      {{ $t('fleet.monitoring.definitions.threshold', { days: monitor.threshold_days ?? 14 }) }}
-                    </Badge>
-                    <Badge :variant="monitor.enabled ? 'success' : 'secondary'">
-                      {{ monitor.enabled ? $t('common.status.enabled') : $t('common.status.disabled') }}
-                    </Badge>
-                    <Badge
-                      v-if="selectedMonitorId === monitor.id"
-                      :variant="resultVariant(latestResult)"
-                    >
-                      {{ resultLabel(latestResult) }}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div class="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  <span class="inline-flex items-center gap-1">
-                    <Timer class="size-3" aria-hidden="true" />
-                    {{ $t('fleet.monitoring.definitions.interval', { interval: monitor.interval_sec, timeout: monitor.timeout_sec }) }}
-                  </span>
-                  <span>{{ assignmentLabel(monitor) }}</span>
-                  <span v-if="monitor.updated_at">{{ $t('fleet.monitoring.definitions.updated', { time: formatRelativeTime(monitor.updated_at) }) }}</span>
-                </div>
-              </button>
-            </div>
-          </DataState>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle class="flex items-center gap-2">
-            <Plus class="size-4 text-muted-foreground" aria-hidden="true" />
-            {{ $t('fleet.monitoring.create.title') }}
-          </CardTitle>
-          <CardDescription>{{ $t('fleet.monitoring.create.description') }}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form v-if="canAdminMonitors" class="space-y-4" @submit.prevent="createMonitor">
-            <div class="grid gap-2">
-              <Label for="monitor-name">{{ $t('fleet.monitoring.create.name') }}</Label>
-              <Input id="monitor-name" v-model="monitorName" required :placeholder="$t('fleet.monitoring.create.namePlaceholder')" />
-            </div>
-
-            <div class="grid gap-2">
-              <Label for="monitor-target">{{ $t('fleet.monitoring.create.target') }}</Label>
-              <Input
-                id="monitor-target"
-                v-model="monitorTarget"
-                required
-                :aria-invalid="!!tlsTargetProblem"
-                :aria-describedby="tlsTargetProblem ? 'monitor-target-error' : undefined"
-                :placeholder="
-                  isCertWatch
-                    ? $t('fleet.monitoring.create.targetTlsPlaceholder')
-                    : monitorType === 'tcp'
-                      ? $t('fleet.monitoring.create.targetTcpPlaceholder')
-                      : $t('fleet.monitoring.create.targetHttpPlaceholder')
-                "
-              />
-              <!--
-                The message carries the reason, so it has to be reachable by
-                the reader who cannot see the red: aria-invalid alone announces
-                "invalid" and stops, which is the one word the operator already
-                knows. Same wiring as the observed hostname field on Self-host
-                DNS.
-              -->
-              <p
-                v-if="tlsTargetProblem"
-                id="monitor-target-error"
-                role="alert"
-                class="text-xs text-destructive"
-              >
-                {{ $t('fleet.monitoring.create.targetTlsError') }}
-              </p>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div class="grid gap-2">
-                <Label for="monitor-type">{{ $t('fleet.monitoring.create.type') }}</Label>
-                <Select v-model="monitorType">
-                  <SelectTrigger id="monitor-type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="option in MONITOR_TYPES" :key="option" :value="option">
-                      {{ option.toUpperCase() }}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <p v-if="isCertWatch" class="text-xs text-muted-foreground">
-                  {{ $t('fleet.monitoring.create.tlsHint') }}
-                </p>
-              </div>
-              <div v-if="isCertWatch" class="grid gap-2">
-                <Label for="monitor-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
-                <Input
-                  id="monitor-threshold"
-                  v-model="thresholdDays"
-                  type="number"
-                  min="1"
-                  :max="TLS_MAX_THRESHOLD_DAYS"
-                />
-                <p class="text-xs text-muted-foreground">
-                  {{ $t('fleet.monitoring.create.thresholdHint', { days: thresholdDays }) }}
-                </p>
-              </div>
-              <div v-else class="grid gap-2">
-                <Label>{{ $t('fleet.monitoring.create.assignment') }}</Label>
-                <div class="grid grid-cols-2 rounded-md border border-input p-1">
-                  <button
-                    type="button"
-                    :class="cn('rounded px-2 py-1.5 text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', assignAll && 'bg-primary text-primary-foreground')"
-                    :aria-pressed="assignAll"
-                    @click="assignAll = true"
-                  >
-                    {{ $t('fleet.monitoring.create.all') }}
-                  </button>
-                  <button
-                    type="button"
-                    :class="cn('rounded px-2 py-1.5 text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', !assignAll && 'bg-primary text-primary-foreground')"
-                    :aria-pressed="!assignAll"
-                    @click="assignAll = false"
-                  >
-                    {{ $t('fleet.monitoring.create.selected') }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div class="grid gap-2">
-                <Label for="monitor-interval">{{ $t('fleet.monitoring.create.intervalSec') }}</Label>
-                <Input id="monitor-interval" v-model="intervalSec" type="number" min="5" max="86400" />
-              </div>
-              <div class="grid gap-2">
-                <Label for="monitor-timeout">{{ $t('fleet.monitoring.create.timeoutSec') }}</Label>
-                <Input id="monitor-timeout" v-model="timeoutSec" type="number" min="1" max="300" />
-              </div>
-            </div>
-
-            <div v-if="!assignAll && !isCertWatch">
-              <DataState
-                v-if="canReadNodes"
-                :loading="nodesQuery.loading.value"
-                :error="nodesQuery.error.value"
-                :has-data="nodesQuery.data.value !== undefined"
-                :is-empty="nodes.length === 0"
-                :empty-title="$t('fleet.monitoring.create.noNodesTitle')"
-                :empty-description="$t('fleet.monitoring.create.noNodesDescription')"
-                :skeleton-rows="2"
-                @retry="nodesQuery.refresh"
-              >
-                <div class="grid max-h-64 gap-2 relative overflow-auto rounded-md border border-border p-2">
-                  <label
-                    v-for="node in nodes"
-                    :key="node.id"
-                    class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40"
-                  >
-                    <Checkbox
-                      :model-value="selectedNodeIds.includes(node.id)"
-                      @update:model-value="(value) => toggleAssignedNode(node.id, value === true)"
-                    />
-                    <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
-                    <Badge :variant="node.online ? 'success' : 'secondary'">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</Badge>
-                  </label>
-                </div>
-              </DataState>
-              <div v-else class="grid gap-2">
-                <Label for="monitor-node-ids">{{ $t('fleet.monitoring.create.nodeIds') }}</Label>
-                <Input
-                  id="monitor-node-ids"
-                  v-model="selectedNodeIdsInput"
-                  :placeholder="$t('fleet.monitoring.create.nodeIdsPlaceholder')"
-                />
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.nodeIdsManualHint') }}</p>
-              </div>
-            </div>
-
-            <Button type="submit" :disabled="createPending || !canSubmit">
-              <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
-              <Plus v-else class="size-4" aria-hidden="true" />
-              {{ $t('fleet.monitoring.create.submit') }}
-            </Button>
-          </form>
-
-          <EmptyState
-            v-else
-            :title="$t('fleet.monitoring.create.readOnlyTitle')"
-            :description="$t('fleet.monitoring.create.readOnlyDescription')"
-          />
-        </CardContent>
-      </Card>
-    </div>
-
-    <Card>
-      <CardHeader>
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle class="flex items-center gap-2">
-              <Activity class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.monitoring.history.title') }}
-            </CardTitle>
-            <CardDescription>
-              <template v-if="selectedMonitor">
-                {{ selectedMonitor.name }} - {{ selectedMonitor.target }}
-              </template>
-              <template v-else>{{ $t('fleet.monitoring.history.selectPrompt') }}</template>
-            </CardDescription>
-          </div>
-          <Button
-            v-if="canAdminMonitors && selectedMonitor"
-            variant="destructive"
-            size="sm"
-            :disabled="deletePending"
-            @click="deleteOpen = true"
-          >
-            <RefreshCw v-if="deletePending" class="size-4 animate-spin" aria-hidden="true" />
-            <Trash2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('common.actions.delete') }}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <DataState
-          :loading="resultsQuery.loading.value && !!selectedMonitor"
-          :error="resultsQuery.error.value"
-          :has-data="resultsQuery.data.value !== undefined"
-          :is-empty="!selectedMonitor || selectedResults.length === 0"
-          :empty-title="selectedMonitor ? $t('fleet.monitoring.history.emptyTitle') : $t('fleet.monitoring.history.noSelectionTitle')"
-          :empty-description="selectedMonitor ? $t('fleet.monitoring.history.emptyDescription') : $t('fleet.monitoring.history.noSelectionDescription')"
-          @retry="resultsQuery.refresh"
+    <DataTable
+      v-if="canReadMonitors && !(monitorsQuery.data.value !== undefined && monitors.length === 0)"
+      state-key="monitors"
+      :columns="columns"
+      :rows="listedMonitors"
+      :row-key="(monitor) => monitor.id"
+      :loading="monitorsQuery.loading.value"
+      :error="monitorsQuery.error.value ?? null"
+      :has-data="monitorsQuery.data.value !== undefined"
+      searchable
+      :expression-filter="false"
+      :search-placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')"
+      :row-click="(monitor, el) => sheet.open(monitor.id, el)"
+      :active-row-id="sheet.openId.value"
+      @retry="monitorsQuery.refresh"
+    >
+      <template #cell-name="{ row }">
+        <span class="flex min-w-0 items-center gap-2">
+          <Activity class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span class="truncate font-medium">{{ row.name || row.id }}</span>
+        </span>
+      </template>
+      <template #cell-status="{ row }">
+        <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs" data-testid="monitor-status">
+          <StatusDot v-if="statusView(row).tone" :tone="statusView(row).tone" :pulse="false" />
+          <span :class="statusView(row).textClass">{{ statusView(row).text }}</span>
+          <span v-if="statusView(row).detail" class="font-mono tabular text-muted-foreground">{{ statusView(row).detail }}</span>
+        </span>
+      </template>
+      <template #cell-type="{ row }">
+        <span class="font-mono text-xs uppercase">{{ row.type }}</span>
+        <span v-if="row.type === 'tls'" class="ms-1.5 text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.threshold', { days: row.threshold_days ?? 14 }) }}</span>
+      </template>
+      <template #cell-target="{ row }">
+        <span class="font-mono text-xs">{{ row.target }}</span>
+      </template>
+      <template #cell-assignment="{ row }">
+        <span class="text-xs text-muted-foreground">{{ assignmentLabel(row) }}</span>
+      </template>
+      <template #cell-interval="{ row }">
+        <span class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.interval', { interval: cadence(row.interval_sec), timeout: cadence(row.timeout_sec) }) }}</span>
+      </template>
+      <template #cell-actions="{ row }">
+        <RowMenu :name="row.name || row.id" :items="menuFor(row)" />
+      </template>
+      <template v-if="nodeFilter" #empty>
+        <EmptyState
+          :icon="RadioTower"
+          :title="$t('fleet.monitoring.nodeFilter.emptyTitle', { node: nodeName(nodeFilter) })"
+          :description="$t('fleet.monitoring.nodeFilter.emptyDescription')"
         >
-          <div class="space-y-5">
-            <div class="rounded-lg border border-border bg-muted/20 p-4">
-              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.latencyTrend') }}</p>
-                  <p class="text-xs text-muted-foreground">
-                    {{ $t('fleet.monitoring.history.successfulProbes') }}
-                    <template v-if="latencyTrend.length">
-                      {{ $t('fleet.monitoring.history.points', { count: latencyTrend.length }) }}
-                    </template>
+          <Button variant="outline" size="sm" type="button" @click="nodeFilter = ''">{{ $t('fleet.monitoring.nodeFilter.showAll') }}</Button>
+        </EmptyState>
+      </template>
+    </DataTable>
+
+    <!-- One monitor: its latest state, trend and results. -->
+    <ObjectSheet
+      :open="!!sheet.openId.value"
+      :title="selectedMonitor?.name || selectedMonitor?.id || sheet.openId.value || ''"
+      :subtitle="selectedMonitor ? `${selectedMonitor.type.toUpperCase()} · ${selectedMonitor.target}` : undefined"
+      :state="sheetState"
+      :error="monitorsQuery.error.value?.message ?? null"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('fleet.monitoring.sheet.goneTitle')"
+      :gone-description="$t('fleet.monitoring.sheet.goneDescription')"
+      @close="sheet.close"
+      @retry="refreshAll"
+    >
+      <div v-if="selectedMonitor" class="space-y-5 text-sm">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Badge :variant="stateBadge.variant">{{ stateBadge.label }}</Badge>
+          <span v-if="latestResult" class="text-xs text-muted-foreground">{{ formatRelativeTime(latestResult.at) }}</span>
+          <span class="text-xs text-muted-foreground">{{ assignmentLabel(selectedMonitor) }}</span>
+        </div>
+        <p v-if="resultsQuery.error.value" class="text-xs text-destructive">{{ resultsQuery.error.value.message }}</p>
+        <p v-else-if="resultsQuery.data.value !== undefined && selectedResults.length === 0" class="text-muted-foreground">
+          {{ $t('fleet.monitoring.history.emptyDescription') }}
+        </p>
+        <template v-if="selectedResults.length">
+          <dl class="grid grid-cols-3 gap-3">
+            <div><dt class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.sheet.success') }}</dt><dd class="font-mono tabular">{{ selectedSuccessRate }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.sheet.average') }}</dt><dd class="font-mono tabular">{{ averageLatency }}</dd></div>
+            <div><dt class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.sheet.failures') }}</dt><dd :class="cn('font-mono tabular', failureCount > 0 && 'text-destructive')">{{ failureCount }}</dd></div>
+          </dl>
+
+          <section class="space-y-2" :aria-label="$t('fleet.monitoring.history.latencyTrend')">
+            <p class="text-xs text-muted-foreground">
+              {{ $t('fleet.monitoring.history.latencyTrend') }} · {{ $t('fleet.monitoring.history.successfulProbes') }}
+              <template v-if="latencyTrend.length">{{ $t('fleet.monitoring.history.points', { count: latencyTrend.length }) }}</template>
+            </p>
+            <TrendChart :values="latencyTrend" tone="info" unit="ms" :height="120" :format-value="formatTrendLatency" />
+          </section>
+
+          <section class="space-y-2" :aria-label="$t('fleet.monitoring.history.recentChecks')">
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.history.recentResults', { count: Math.min(recentResults.length, 48) }) }}</p>
+            <div class="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-1">
+              <Tooltip v-for="result in recentResults.slice(-48)" :key="`${result.monitor_id}:${result.node_id}:${result.at}`">
+                <TooltipTrigger as-child>
+                  <span :class="cn('h-6 rounded-sm', stripClass(result))" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p class="font-medium">{{ nodeName(result.node_id) }}</p>
+                  <p class="text-xs">
+                    {{ result.success ? $t('fleet.monitoring.result.ok') : $t('common.status.failed') }} · {{ formatLatency(result.latency_ms) }}
                   </p>
-                </div>
-                <Badge :variant="resultVariant(latestResult)">{{ resultLabel(latestResult) }}</Badge>
-              </div>
-              <TrendChart
-                :values="latencyTrend"
-                tone="info"
-                unit="ms"
-                :height="140"
-                :format-value="formatTrendLatency"
-              />
+                </TooltipContent>
+              </Tooltip>
             </div>
+          </section>
 
-            <div class="rounded-lg border border-border p-4">
-              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p class="text-sm font-medium">{{ $t('fleet.monitoring.history.recentChecks') }}</p>
-                  <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.history.recentResults', { count: recentResults.length }) }}</p>
-                </div>
-                <div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  <span>{{ $t('fleet.monitoring.history.successSuffix', { rate: selectedSuccessRate }) }}</span>
-                  <span>{{ $t('fleet.monitoring.history.averageSuffix', { latency: averageLatency }) }}</span>
-                </div>
-              </div>
-              <div class="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-1">
-                <Tooltip
-                  v-for="result in recentResults.slice(-48)"
-                  :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
-                >
-                  <TooltipTrigger as-child>
-                    <span :class="cn('h-8 rounded-sm', resultBarClass(result))" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p class="font-medium">{{ nodeName(result.node_id) }}</p>
-                    <p class="text-xs">
-                      <span :class="result.success ? latencyText(result.latency_ms) : 'text-destructive'">
-                        {{ result.success ? $t('fleet.monitoring.result.ok') : $t('common.status.failed') }}
-                      </span>
-                      · {{ formatLatency(result.latency_ms) }}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <p class="mt-3 text-xs text-muted-foreground">
-                {{ $t('fleet.monitoring.history.failuresInHistory', { count: failureCount }) }}
-              </p>
-            </div>
-
+          <section class="space-y-2" :aria-label="$t('fleet.monitoring.sheet.results')">
             <div class="flex flex-wrap items-center gap-2">
-              <div class="flex rounded-md border border-border p-0.5 text-xs">
+              <div class="flex rounded-md border border-border p-0.5 text-xs" role="group" :aria-label="$t('fleet.monitoring.sheet.results')">
                 <button
                   v-for="opt in (['all', 'failures', 'slow'] as const)"
                   :key="opt"
                   type="button"
-                  :class="cn('rounded px-2 py-1 transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
+                  :class="cn('rounded px-2 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11', logStatus === opt ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
                   :aria-pressed="logStatus === opt"
                   @click="logStatus = opt"
                 >
                   {{ $t(`fleet.monitoring.log.${opt}`) }}
                 </button>
               </div>
-              <Select v-model="logNode">
-                <SelectTrigger class="h-8 w-[170px]"><SelectValue /></SelectTrigger>
+              <!-- Only a monitor checked from several nodes has anything to filter by node. -->
+              <Select v-if="logNodeOptions.length > 1" v-model="logNode">
+                <SelectTrigger class="h-8 w-[170px]" :aria-label="$t('fleet.monitoring.log.allNodes')"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{{ $t('fleet.monitoring.log.allNodes') }}</SelectItem>
                   <SelectItem v-for="nid in logNodeOptions" :key="nid" :value="nid">{{ nodeName(nid) }}</SelectItem>
                 </SelectContent>
               </Select>
-              <Button type="button" size="sm" :variant="paused ? 'default' : 'outline'" @click="togglePause">
+              <Button type="button" size="sm" variant="outline" @click="togglePause">
                 <component :is="paused ? Play : Pause" class="size-4" aria-hidden="true" />
                 {{ paused ? $t('fleet.monitoring.log.resume') : $t('fleet.monitoring.log.pause') }}
               </Button>
-              <span v-if="paused && newSincePause > 0" class="text-xs text-muted-foreground">
-                {{ $t('fleet.monitoring.log.newSince', { count: newSincePause }) }}
-              </span>
-              <span class="ms-auto text-xs text-muted-foreground">
-                {{ logCapped
-                  ? $t('fleet.monitoring.log.showingCapped', { count: displayResults.length, total: logMatchTotal, cap: LOG_CAP })
-                  : $t('fleet.monitoring.log.showingOf', { count: displayResults.length, total: logMatchTotal }) }}
-              </span>
+              <span v-if="paused && newSincePause > 0" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.log.newSince', { count: newSincePause }) }}</span>
             </div>
-            <div class="relative overflow-x-auto rounded-lg border border-border">
-              <div class="min-w-[640px]">
-                <div class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
-                  <span>{{ $t('fleet.monitoring.history.colNode') }}</span>
-                  <span>{{ $t('fleet.monitoring.history.colStatus') }}</span>
-                  <span>{{ $t('fleet.monitoring.history.colLatency') }}</span>
-                  <span>{{ $t('fleet.monitoring.history.colObserved') }}</span>
-                </div>
-                <div
-                  v-for="result in displayResults"
-                  :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
-                  class="grid grid-cols-[1fr_96px_96px_132px] gap-3 border-b border-border px-3 py-3 text-sm last:border-b-0"
-                >
-                  <div class="min-w-0">
-                    <p class="truncate font-medium" :title="nodeName(result.node_id)">{{ nodeName(result.node_id) }}</p>
-                    <p v-if="result.error" class="mt-1 break-words text-xs text-destructive">{{ result.error }}</p>
-                  </div>
-                  <div>
-                    <Badge :variant="result.success ? 'success' : 'destructive'">
-                      <CheckCircle2 v-if="result.success" class="size-3" aria-hidden="true" />
-                      <XCircle v-else class="size-3" aria-hidden="true" />
-                      {{ result.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}
-                    </Badge>
-                  </div>
-                  <span class="font-mono text-xs text-muted-foreground">{{ formatLatency(result.latency_ms) }}</span>
-                  <span class="text-xs text-muted-foreground">{{ formatDateTime(result.at) }}</span>
-                </div>
-                <div v-if="displayResults.length === 0" class="px-3 py-6 text-center text-xs text-muted-foreground">
-                  {{ $t('fleet.monitoring.log.empty') }}
-                </div>
-              </div>
-            </div>
+            <p class="text-xs text-muted-foreground">
+              {{ logCapped
+                ? $t('fleet.monitoring.log.showingCapped', { count: displayResults.length, total: logMatchTotal, cap: LOG_CAP })
+                : $t('fleet.monitoring.log.showingOf', { count: displayResults.length, total: logMatchTotal }) }}
+            </p>
+            <ul class="divide-y divide-border rounded-md border border-border">
+              <li
+                v-for="result in displayResults"
+                :key="`${result.monitor_id}:${result.node_id}:${result.at}`"
+                class="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-3 py-2"
+              >
+                <span class="min-w-0">
+                  <span class="block truncate font-medium">{{ nodeName(result.node_id) }}</span>
+                  <span v-if="result.error" class="block break-words text-xs text-destructive">{{ result.error }}</span>
+                  <span class="block text-xs text-muted-foreground">{{ formatDateTime(result.at) }}</span>
+                </span>
+                <span class="text-right">
+                  <span :class="cn('block text-xs font-medium', result.success ? 'text-foreground' : 'text-destructive')">
+                    {{ result.success ? $t('fleet.monitoring.result.ok') : $t('fleet.monitoring.result.fail') }}
+                  </span>
+                  <span v-if="result.latency_ms !== undefined" :class="cn('block font-mono text-xs tabular', latencyTone(result))">{{ formatLatency(result.latency_ms) }}</span>
+                </span>
+              </li>
+              <li v-if="displayResults.length === 0" class="px-3 py-5 text-center text-xs text-muted-foreground">{{ $t('fleet.monitoring.log.empty') }}</li>
+            </ul>
+          </section>
+        </template>
+      </div>
+      <template v-if="canAdminMonitors && selectedMonitor" #actions>
+        <Button variant="outline" size="sm" type="button" class="text-destructive" :disabled="deletePending" @click="requestDelete(selectedMonitor)">
+          <Trash2 class="size-4" aria-hidden="true" />
+          {{ $t('common.actions.delete') }}
+        </Button>
+      </template>
+    </ObjectSheet>
+
+    <!-- Create in a sheet, from the header or the empty state. -->
+    <ObjectSheet :open="createOpen" :title="$t('fleet.monitoring.create.title')" @close="requestCloseCreate">
+      <form id="monitor-create" class="space-y-4" @submit.prevent="createMonitor">
+        <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.create.description') }}</p>
+        <div class="grid gap-2">
+          <Label for="monitor-type">{{ $t('fleet.monitoring.create.type') }}</Label>
+          <Select v-model="monitorType">
+            <SelectTrigger id="monitor-type"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="option in MONITOR_TYPES" :key="option" :value="option">{{ option.toUpperCase() }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p v-if="isCertWatch" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.tlsHint') }}</p>
+        </div>
+        <div class="grid gap-2">
+          <Label for="monitor-name">{{ $t('fleet.monitoring.create.name') }}</Label>
+          <Input id="monitor-name" v-model="monitorName" required :placeholder="$t('fleet.monitoring.create.namePlaceholder')" />
+        </div>
+        <div class="grid gap-2">
+          <Label for="monitor-target">{{ $t('fleet.monitoring.create.target') }}</Label>
+          <Input
+            id="monitor-target"
+            v-model="monitorTarget"
+            required
+            :aria-invalid="!!targetProblem"
+            :aria-describedby="targetProblem ? 'monitor-target-error' : undefined"
+            :placeholder="isCertWatch ? $t('fleet.monitoring.create.targetTlsPlaceholder') : monitorType === 'tcp' ? $t('fleet.monitoring.create.targetTcpPlaceholder') : $t('fleet.monitoring.create.targetHttpPlaceholder')"
+          />
+          <p v-if="targetProblem" id="monitor-target-error" role="alert" class="text-xs text-destructive">
+            {{ targetProblemText }}
+            <button
+              v-if="offerHttp"
+              type="button"
+              class="ms-1 font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              @click="monitorType = 'http'"
+            >
+              {{ $t('fleet.monitoring.create.switchToHttp') }}
+            </button>
+          </p>
+        </div>
+        <div v-if="isCertWatch" class="grid gap-2">
+          <Label for="monitor-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
+          <Input id="monitor-threshold" v-model="thresholdDays" type="number" min="1" :max="TLS_MAX_THRESHOLD_DAYS" />
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.thresholdHint', { days: thresholdDays }) }}</p>
+        </div>
+        <div v-else class="grid gap-2">
+          <Label>{{ $t('fleet.monitoring.create.assignment') }}</Label>
+          <div class="grid grid-cols-2 rounded-md border border-input p-1" role="group">
+            <button
+              type="button"
+              :class="cn('rounded px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11', assignAll && 'bg-secondary font-medium text-foreground')"
+              :aria-pressed="assignAll"
+              @click="assignAll = true"
+            >
+              {{ $t('fleet.monitoring.create.all') }}
+            </button>
+            <button
+              type="button"
+              :class="cn('rounded px-2 py-1.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11', !assignAll && 'bg-secondary font-medium text-foreground')"
+              :aria-pressed="!assignAll"
+              @click="assignAll = false"
+            >
+              {{ $t('fleet.monitoring.create.selected') }}
+            </button>
           </div>
-        </DataState>
-      </CardContent>
-    </Card>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="grid gap-2">
+            <Label for="monitor-interval">{{ $t('fleet.monitoring.create.intervalSec') }}</Label>
+            <Input id="monitor-interval" v-model="intervalSec" type="number" min="5" max="86400" />
+          </div>
+          <div class="grid gap-2">
+            <Label for="monitor-timeout">{{ $t('fleet.monitoring.create.timeoutSec') }}</Label>
+            <Input id="monitor-timeout" v-model="timeoutSec" type="number" min="1" max="300" />
+          </div>
+        </div>
+        <div v-if="!assignAll && !isCertWatch">
+          <div v-if="canReadNodes" class="grid max-h-64 gap-1 overflow-auto rounded-md border border-border p-1.5">
+            <p v-if="nodes.length === 0" class="p-2 text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.noNodesDescription') }}</p>
+            <label v-for="node in nodes" :key="node.id" class="flex items-center gap-2 rounded-md p-2 text-sm hover:bg-muted/40">
+              <Checkbox :model-value="selectedNodeIds.includes(node.id)" @update:model-value="(value) => toggleAssignedNode(node.id, value === true)" />
+              <span class="min-w-0 flex-1 truncate" :title="node.name || node.id">{{ node.name || node.id }}</span>
+              <span class="text-xs text-muted-foreground">{{ node.online ? $t('fleet.monitoring.result.on') : $t('fleet.monitoring.result.off') }}</span>
+            </label>
+          </div>
+          <div v-else class="grid gap-2">
+            <Label for="monitor-node-ids">{{ $t('fleet.monitoring.create.nodeIds') }}</Label>
+            <Input id="monitor-node-ids" v-model="selectedNodeIdsInput" :placeholder="$t('fleet.monitoring.create.nodeIdsPlaceholder')" />
+            <p class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.create.nodeIdsManualHint') }}</p>
+          </div>
+        </div>
+      </form>
+      <template #actions>
+        <p v-if="createMissing.length" class="me-auto text-xs text-muted-foreground" data-testid="create-missing">
+          {{ $t('fleet.monitoring.create.missing', { fields: createMissing.join($t('fleet.monitoring.create.missingJoin')) }) }}
+        </p>
+        <Button variant="outline" size="sm" type="button" @click="requestCloseCreate">{{ $t('common.actions.cancel') }}</Button>
+        <Button type="submit" form="monitor-create" size="sm" :disabled="createPending || !canSubmit">
+          <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
+          <Plus v-else class="size-4" aria-hidden="true" />
+          {{ $t('fleet.monitoring.create.submit') }}
+        </Button>
+      </template>
+    </ObjectSheet>
+
+    <!-- Leaving a typed monitor: say what is lost, keep editing by default. -->
+    <ConfirmDialog
+      v-model:open="createDiscardOpen"
+      :title="$t('fleet.monitoring.create.discard.title')"
+      :description="$t('fleet.monitoring.create.discard.description')"
+      :confirm-label="$t('fleet.monitoring.create.discard.confirm')"
+      :cancel-label="$t('fleet.monitoring.create.discard.keep')"
+      @confirm="discardCreate"
+    />
 
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.monitoring.confirm.deleteTitle')"
-      :description="selectedMonitor ? $t('fleet.monitoring.confirm.delete', { name: selectedMonitor.name || selectedMonitor.id }) : ''"
+      :description="deleteTarget ? $t('fleet.monitoring.confirm.delete', { name: deleteTarget.name || deleteTarget.id }) : ''"
+      :impact="deleteImpact"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deletePending"
+      :return-focus="confirmReturn.target"
       @confirm="deleteMonitor"
     />
   </div>

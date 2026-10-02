@@ -31,6 +31,7 @@ export interface SignalInputs {
   approvalsPending?: number;
   nodesOffline?: number;
   nodesTotal?: number;
+  /** Runs that failed in the last 24 hours (the counts read's failed_24h). */
   tasksFailed?: number;
   /** Targets the store stopped re-leasing: nothing runs and nothing will. */
   tasksStalled?: number;
@@ -76,7 +77,7 @@ export function buildNavSignals(input: SignalInputs): Record<string, NavSignal> 
   const stuck = failed + stalled;
   if ((typeof input.tasksFailed === "number" || typeof input.tasksStalled === "number") && stuck > 0) {
     const parts: string[] = [];
-    if (failed > 0) parts.push(`${failed} failed`);
+    if (failed > 0) parts.push(`${failed} failed in 24h`);
     if (stalled > 0) parts.push(`${stalled} stalled`);
     signals.tasks = {
       count: stuck,

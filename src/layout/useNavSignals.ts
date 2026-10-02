@@ -14,7 +14,7 @@ import { computed } from "vue";
 
 import { api, unwrap } from "@/lib/api";
 import { countNodeStatuses } from "@/lib/nodeStatus";
-import type { ApprovalCounts, Node, TaskView } from "@/lib/api";
+import type { ApprovalCounts, Node, TaskCounts } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { buildNavSignals, type NavSignal } from "./navSignals";
@@ -45,15 +45,20 @@ export function useNavSignals() {
     soft(() => api.approvals.counts()),
     { pollInterval: SIGNAL_POLL_MS },
   );
-  const tasks = useAsyncData<TaskView[] | undefined>(
-    soft(() => (auth.can("task:read") ? api.tasks.list().then((r) => unwrap(r, "tasks")) : Promise.resolve(undefined))),
+  // Counts only, from the server. The sidebar used to read all 1,771 tasks
+  // every thirty seconds to count three statuses, and its failed figure
+  // counted every failure ever, so the badge never cleared. failed_24h moves.
+  // An older server without the counts read answers 404, and the badge says
+  // nothing rather than guess.
+  const tasks = useAsyncData<TaskCounts | undefined>(
+    soft(() => (auth.can("task:read") ? api.tasks.counts() : Promise.resolve(undefined))),
     { pollInterval: SIGNAL_POLL_MS },
   );
 
   const signals = computed<Record<string, NavSignal>>(() => {
     const nodeRows = nodes.data.value;
     const approvalCounts = approvals.data.value;
-    const taskRows = tasks.data.value;
+    const taskCounts = tasks.data.value;
     return buildNavSignals({
       // "Not reporting" is offline plus never reported, by the same status
       // word every page prints. Disabled is off on purpose and degraded still
@@ -64,9 +69,10 @@ export function useNavSignals() {
       })() : undefined,
       nodesTotal: nodeRows?.length,
       approvalsPending: approvalCounts?.pending,
-      tasksFailed: taskRows?.filter((task) => task.status === "failed").length,
-      tasksStalled: taskRows?.filter((task) => task.status === "stalled").length,
-      tasksQueued: taskRows?.filter((task) => task.status === "queued").length,
+      tasksFailed: taskCounts?.failed_24h,
+      tasksStalled: taskCounts?.stalled,
+      // Rows stored as pending were never delivered; they wait like queued ones.
+      tasksQueued: taskCounts ? taskCounts.queued + (taskCounts.pending ?? 0) : undefined,
     });
   });
 

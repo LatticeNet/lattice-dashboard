@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute, useRouter } from "vue-router";
+import { RouterLink, onBeforeRouteLeave, onBeforeRouteUpdate, useRouter, type RouteLocationNormalized } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Crown,
   FolderTree,
+  Pencil,
   Plus,
   RotateCw,
   Search,
   Trash2,
-  X,
 } from "lucide-vue-next";
 import {
   api,
@@ -21,30 +21,33 @@ import {
   type GroupView,
   type Node,
 } from "@/lib/api";
-import { describeNodeStatus } from "@/lib/nodeStatus";
+import { describeNodeStatus, nodeStatus } from "@/lib/nodeStatus";
+import { splitNamePrefix } from "@/lib/fleet";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMediaQuery } from "@/composables/useMediaQuery";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { GROUP_COLOR_TOKENS, groupColor } from "@/lib/groupColors";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
-import DataState from "@/components/common/DataState.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
+import { proofReason } from "@/components/common/proofModel";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { readOpenId } from "@/composables/routeOpenModel";
+import { createConfirmReturn } from "./confirmFocus";
+import type { QueryRecord } from "@/components/common/tableUrlState";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -55,8 +58,6 @@ import {
 } from "@/components/ui/select";
 
 const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("group:read"));
 const canAdmin = computed(() => auth.can("group:admin"));
@@ -64,10 +65,18 @@ const canAdmin = computed(() => auth.can("group:admin"));
 const ROOT_VALUE = "__root__";
 const LEADER_NONE = "__none__";
 
-const groupsQuery = useAsyncData((signal) => api.groups.list({ signal }), { pollInterval: 0 });
+// Rows carry member health, so both reads move: the group rollup gives the
+// counts and the node list the names of members not reporting.
+const POLL_MS = 15000;
+const groupsQuery = useAsyncData((signal) => api.groups.list({ signal }), { pollInterval: POLL_MS });
 const nodesQuery = useAsyncData((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
-  pollInterval: 0,
+  pollInterval: POLL_MS,
 });
+
+/** Counts and names come from two reads; every refresh takes both. */
+async function refreshAll(): Promise<void> {
+  await Promise.all([groupsQuery.refresh(), nodesQuery.refresh()]);
+}
 
 const list = computed(() => groupsQuery.data.value);
 const groups = computed<GroupView[]>(() => list.value?.groups ?? []);
@@ -84,18 +93,6 @@ const sortedGroups = computed(() =>
   [...groups.value].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
 );
 
-/**
- * Nothing to show: no groups, and no editor open.
- *
- * The ungrouped bucket used to count here, which made one fleet state render as
- * two different pages: with the bucket present you got the master-detail and
- * two competing empty states, without it the whole page collapsed into one. The
- * bucket only renders alongside real groups anyway, so it gets no vote.
- */
-const pageEmpty = computed(
-  () => groups.value.length === 0 && !editing.value,
-);
-
 function nodeLabel(id: string): string {
   return nodeById.value[id]?.name || shortId(id, 14);
 }
@@ -103,8 +100,18 @@ function nodeLabel(id: string): string {
 /* ----------------------------------------------------------------- */
 /* Master-detail selection + editor form                              */
 /* ----------------------------------------------------------------- */
-const selectedId = ref<string | undefined>(undefined);
-const editing = ref<"new" | "existing" | null>(null);
+/**
+ * The open group is in the address (?open=<id>), so a reload and a pasted
+ * link land on it; ?open=new is the create form. Editing an existing group
+ * happens in the same sheet.
+ */
+const owned = useOwnedRoute();
+const sheet = bindRouteOpen(owned);
+const NEW_GROUP = "new";
+const creating = computed(() => sheet.openId.value === NEW_GROUP);
+const editingExisting = ref(false);
+const editing = computed<"new" | "existing" | null>(() => (creating.value ? "new" : editingExisting.value ? "existing" : null));
+const selectedId = computed(() => (creating.value ? undefined : sheet.openId.value ?? undefined));
 
 const selectedGroup = computed<GroupView | undefined>(() =>
   groups.value.find((g) => g.id === selectedId.value),
@@ -148,6 +155,11 @@ function slugify(value: string): string {
     .slice(0, 48);
 }
 
+// Declared before loadForm runs: ?open=new loads the create form during setup.
+const memberSearch = ref("");
+const memberQuickTag = ref("");
+const previewCount = ref<number | null>(null);
+
 function loadForm(g?: GroupView) {
   form.id = g?.id;
   form.name = g?.name ?? "";
@@ -167,19 +179,123 @@ function loadForm(g?: GroupView) {
   memberSearch.value = "";
   memberQuickTag.value = "";
   previewCount.value = null;
+  formBaseline.value = formSnapshot();
 }
 
-function selectGroup(g: GroupView) {
-  selectedId.value = g.id;
-  editing.value = "existing";
-  loadForm(g);
+/**
+ * What the editor holds, to tell an edited draft from a loaded one. The
+ * sheet is not modal from 768 px up, so a row click or a row menu while
+ * editing would otherwise drop the draft without a word.
+ */
+function formSnapshot(): string {
+  return JSON.stringify(form);
+}
+const formBaseline = ref("");
+const draftDirty = computed(() => editing.value !== null && formSnapshot() !== formBaseline.value);
+
+const discardOpen = ref(false);
+let afterDiscard: (() => void) | undefined;
+/**
+ * Keep editing returns focus to what asked (a row menu's trigger, a field in
+ * the sheet). Discard lands on the sheet's title when a group is still open,
+ * since what asked may now be a different group's row.
+ */
+const discardReturn = createConfirmReturn();
+let discarded = false;
+function discardFocus(): HTMLElement | null {
+  if (discarded) return document.querySelector<HTMLElement>('[data-testid="object-sheet"] [data-slot="dialog-title"]');
+  return discardReturn.target();
+}
+
+/** Run `action` now, or once the operator agrees to drop the draft. */
+function unlessDraft(action: () => void): void {
+  if (!draftDirty.value) {
+    action();
+    return;
+  }
+  afterDiscard = action;
+  discarded = false;
+  discardReturn.remember();
+  discardOpen.value = true;
+}
+
+function discardDraft(): void {
+  const action = afterDiscard;
+  afterDiscard = undefined;
+  discarded = true;
+  discardOpen.value = false;
+  editingExisting.value = false;
+  formBaseline.value = formSnapshot();
+  action?.();
+}
+
+watch(discardOpen, (open) => {
+  if (!open) afterDiscard = undefined;
+});
+
+/**
+ * Escape, the close button and Cancel ask before they drop an edited draft,
+ * the way the Machines editor does. They ask before writing the address: the
+ * page reads a requested ?open= at once, so asking in a route guard would
+ * come after the editor had already left edit mode.
+ */
+function requestCloseSheet(): void {
+  unlessDraft(() => {
+    editingExisting.value = false;
+    sheet.close();
+  });
+}
+
+/**
+ * Browser back and forward, and a link to another page, change the route
+ * without the page writing it, so a guard asks for those. A route change
+ * that keeps the same group open (a filter typed beside the sheet) passes.
+ * Once the operator discards, the draft is clean and the same navigation
+ * goes through.
+ */
+const router = useRouter();
+function guardDraft(to: RouteLocationNormalized, from: RouteLocationNormalized): boolean {
+  if (!draftDirty.value) return true;
+  const leaving = to.path !== from.path;
+  if (!leaving && readOpenId(to.query) === readOpenId(from.query)) return true;
+  unlessDraft(() => {
+    void (leaving ? router.push(to.fullPath) : router.replace(to.fullPath)).catch(() => {});
+  });
+  return false;
+}
+onBeforeRouteUpdate(guardDraft);
+onBeforeRouteLeave(guardDraft);
+
+/** A row click swaps the open group; the group already open stays as it is. */
+function openGroup(group: GroupView, el?: HTMLElement): void {
+  if (group.id === sheet.openId.value) return;
+  unlessDraft(() => sheet.open(group.id, el));
+}
+
+function startEdit() {
+  if (!selectedGroup.value) return;
+  loadForm(selectedGroup.value);
+  editingExisting.value = true;
 }
 
 function startCreate() {
-  selectedId.value = undefined;
-  editing.value = "new";
-  loadForm(undefined);
+  if (creating.value) return;
+  unlessDraft(() => {
+    editingExisting.value = false;
+    loadForm(undefined);
+    sheet.open(NEW_GROUP);
+  });
 }
+
+// A different group (or none) leaves edit mode; the create form starts empty.
+watch(
+  () => sheet.openId.value,
+  (id) => {
+    editingExisting.value = false;
+    if (id === NEW_GROUP) loadForm(undefined);
+  },
+  { immediate: true },
+);
 
 // Parent options exclude the group itself (server enforces full acyclicity).
 const parentOptions = computed(() =>
@@ -189,9 +305,6 @@ const parentOptions = computed(() =>
 /* ----------------------------------------------------------------- */
 /* Explicit membership picker                                         */
 /* ----------------------------------------------------------------- */
-const memberSearch = ref("");
-const memberQuickTag = ref("");
-
 const filteredNodes = computed(() => {
   const q = memberSearch.value.trim().toLowerCase();
   const base = [...nodes.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
@@ -244,15 +357,10 @@ const leaderOptions = computed(() =>
   form.members.map((id) => ({ id, label: nodeLabel(id) })),
 );
 
-/** Cross-link a resolved member to its node-detail page. */
-function goToNode(id: string) {
-  router.push({ name: "node-detail", params: { id } });
-}
 
 /* ----------------------------------------------------------------- */
 /* Dynamic selector + live preview                                   */
 /* ----------------------------------------------------------------- */
-const previewCount = ref<number | null>(null);
 const previewing = ref(false);
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -328,11 +436,13 @@ async function save() {
   saving.value = true;
   try {
     const saved = await api.groups.upsert(buildUpsert());
-    toast.success(editing.value === "new" ? t("fleet.groups.toast.created") : t("fleet.groups.toast.saved"));
-    await groupsQuery.refresh();
-    selectedId.value = saved.id;
-    editing.value = "existing";
-    loadForm(groups.value.find((g) => g.id === saved.id) ?? saved);
+    const wasNew = creating.value;
+    toast.success(wasNew ? t("fleet.groups.toast.created") : t("fleet.groups.toast.saved"));
+    await refreshAll();
+    editingExisting.value = false;
+    // Saved: the draft is no longer one to guard on the way to its own row.
+    formBaseline.value = formSnapshot();
+    if (wasNew) sheet.open(saved.id);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.groups.toast.saveFailed"));
   } finally {
@@ -342,17 +452,30 @@ async function save() {
 
 const deleteOpen = ref(false);
 const deleting = ref(false);
+/** A confirm opened from a row menu hands focus back to that menu. */
+const confirmReturn = createConfirmReturn();
+/** The group the confirm names; its own ref, so the editor's draft is never touched. */
+const deleteTarget = ref<GroupView | undefined>();
+
+function requestDelete(group: GroupView): void {
+  confirmReturn.remember(group.id);
+  deleteTarget.value = group;
+  deleteOpen.value = true;
+}
 
 async function confirmDelete() {
-  if (!form.id) return;
+  const target = deleteTarget.value;
+  if (!target) return;
   deleting.value = true;
   try {
-    await api.groups.delete(form.id);
+    await api.groups.delete(target.id);
     toast.success(t("fleet.groups.toast.deleted"));
     deleteOpen.value = false;
-    selectedId.value = undefined;
-    editing.value = null;
-    await groupsQuery.refresh();
+    if (sheet.openId.value === target.id) {
+      editingExisting.value = false;
+      sheet.close();
+    }
+    await refreshAll();
   } catch (error) {
     // The server rejects (409) when the group has children or is referenced by
     // a group policy; surface that exact reason rather than a generic message.
@@ -365,396 +488,486 @@ async function confirmDelete() {
   }
 }
 
-// Deep-link: /groups?selected=<id> pre-selects a group once the list loads (e.g.
-// arriving from a node's group chip). It never clobbers an in-progress edit.
+// An old /groups?selected=<id> link (node pages linked group chips there)
+// lands on ?open=<id>, with replace.
 watch(
-  [groups, () => route.query.selected],
-  ([list, sel]) => {
-    if (editing.value) return;
-    const id = typeof sel === "string" ? sel : undefined;
-    if (!id) return;
-    const g = list.find((x) => x.id === id);
-    if (g && selectedId.value !== id) selectGroup(g);
+  () => owned.query().selected,
+  (selected) => {
+    if (!owned.owns() || typeof selected !== "string" || !selected) return;
+    const query: QueryRecord = { ...owned.query(), open: selected };
+    delete query.selected;
+    owned.replace(query);
   },
   { immediate: true },
 );
+
+/* ------------------------------------------------------------------ */
+/* Head, rows and member health (design 23, 4.2)                       */
+/* ------------------------------------------------------------------ */
+
+// The line ages with the group read; a failed node read is its own segment,
+// since the counts still stand without the names.
+const proof = useProof(groupsQuery);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const out: ProofSegment[] = [{ key: "groups", text: t("fleet.groups.proof.groups", { n: groups.value.length }, groups.value.length) }];
+  if (ungrouped.value) out.push({ key: "ungrouped", text: t("fleet.groups.proof.ungrouped", { n: ungrouped.value.rollup.total }), tone: "muted" });
+  if (nodesQuery.error.value) {
+    const reason = proofReason(nodesQuery.error.value);
+    out.push({
+      key: "nodes",
+      text: nodesQuery.data.value ? t("fleet.groups.proof.nodesStale", { reason }) : t("fleet.groups.proof.nodesNotRead", { reason }),
+      tone: nodesQuery.data.value ? "warning" : "destructive",
+    });
+  }
+  return out;
+});
+
+interface Health {
+  total: number;
+  online: number;
+  disabled: number;
+  /** Members not reporting, by name. */
+  down: string[];
+}
+
+function healthOf(group: GroupView): Health {
+  const down = group.resolved_members
+    .map((id) => nodeById.value[id])
+    .filter((node): node is Node => !!node && ["offline", "never_reported"].includes(nodeStatus(node)))
+    .map((node) => splitNamePrefix(node).body);
+  return { total: group.rollup.total, online: group.rollup.online, disabled: group.rollup.disabled ?? 0, down };
+}
+
+/**
+ * On a phone the table is two columns, the group and its menu, with member
+ * health under the name: a third column scrolled behind a pinned name left
+ * 54 px for the one health figure ("5 of 6 c").
+ */
+const wide = useMediaQuery("(min-width: 768px)");
+const columns = computed<DataTableColumn<GroupView>[]>(() => [
+  { key: "name", label: t("fleet.groups.table.group"), sortable: true, value: (g) => g.name, wrap: !wide.value },
+  ...(wide.value
+    ? [{ key: "health", label: t("fleet.groups.table.health"), sortable: true, value: (g: GroupView) => (g.rollup.total ? g.rollup.online / g.rollup.total : 1) }]
+    : []),
+  // A column blank on every row says nothing; it shows once some group has a leader.
+  ...(wide.value && sortedGroups.value.some((g) => g.leader_id)
+    ? [{ key: "leader", label: t("fleet.groups.fieldLeader"), value: (g: GroupView) => (g.leader_id ? nodeLabel(g.leader_id) : "") }]
+    : []),
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
+]);
+
+function menuFor(group: GroupView): RowMenuItem[] {
+  return [
+    {
+      key: "edit",
+      label: t("fleet.groups.edit"),
+      icon: Pencil,
+      hidden: !canAdmin.value,
+      run: () => {
+        if (group.id === sheet.openId.value && editingExisting.value) return;
+        unlessDraft(() => {
+          sheet.open(group.id);
+          void Promise.resolve().then(startEdit);
+        });
+      },
+    },
+    {
+      key: "delete",
+      label: t("common.actions.delete"),
+      icon: Trash2,
+      danger: true,
+      hidden: !canAdmin.value || !!group.system,
+      run: () => requestDelete(group),
+    },
+  ];
+}
+
+const sheetState = computed(() => {
+  if (!sheet.openId.value) return "ready" as const;
+  if (creating.value) return "ready" as const;
+  if (groupsQuery.data.value === undefined) {
+    return groupsQuery.error.value && !groupsQuery.loading.value ? ("failed" as const) : ("loading" as const);
+  }
+  if (!selectedGroup.value) return "gone" as const;
+  return groupsQuery.error.value ? ("stale" as const) : ("ready" as const);
+});
+
+const sheetTitle = computed(() => {
+  if (creating.value) return t("fleet.groups.createTitle");
+  const name = selectedGroup.value?.name ?? sheet.openId.value ?? "";
+  return editingExisting.value ? t("fleet.groups.editNamed", { name }) : name;
+});
+
+/** Members of the open group, worst first, with their status. */
+const openMembers = computed(() =>
+  (selectedGroup.value?.resolved_members ?? [])
+    .map((id) => ({ id, node: nodeById.value[id] }))
+    .sort((a, b) => {
+      const order = (n?: Node) => (n ? ["never_reported", "offline", "degraded", "disabled", "online"].indexOf(nodeStatus(n)) : 5);
+      return order(a.node) - order(b.node) || nodeLabel(a.id).localeCompare(nodeLabel(b.id));
+    }),
+);
+
+function selectorSummary(group: GroupView): string {
+  const sel = group.selector;
+  if (!sel) return "";
+  const parts: string[] = [];
+  if (sel.match_tags_any?.length) parts.push(`${t("fleet.groups.matchTags")}: ${sel.match_tags_any.join(", ")}`);
+  if (sel.match_roles?.length) parts.push(`${t("fleet.groups.matchRoles")}: ${sel.match_roles.join(", ")}`);
+  if (sel.match_country?.length) parts.push(`${t("fleet.groups.matchCountry")}: ${sel.match_country.join(", ")}`);
+  if (sel.match_continent?.length) parts.push(`${t("fleet.groups.matchContinent")}: ${sel.match_continent.join(", ")}`);
+  return parts.join(" · ");
+}
+
+const deleteImpact = computed(() => {
+  const target = deleteTarget.value;
+  if (!target) return [];
+  const members = groups.value.find((g) => g.id === target.id)?.resolved_members.length ?? target.resolved_members.length;
+  return [t("fleet.groups.deleteImpact", { n: members })];
+});
 </script>
 
 <template>
-  <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('fleet.groups.title')" :description="$t('fleet.groups.description')">
-      <template #status>
-        <FreshnessLabel :last-updated="groupsQuery.lastUpdated.value" :poll-ms="groupsQuery.pollMs" />
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('fleet.groups.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('fleet.groups.description') }}</p>
+        <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="groupsQuery.refreshing.value"
-          @click="groupsQuery.refresh"
-        >
-          <RotateCw :class="cn('size-4', groupsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-          {{ $t('common.actions.refresh') }}
-        </Button>
-        <Button v-if="canAdmin" size="sm" @click="startCreate">
+        <!-- With no groups the empty state carries New group; the header does not repeat it. -->
+        <Button v-if="canAdmin && !(list && groups.length === 0)" size="sm" type="button" @click="startCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.groups.newGroup') }}
+        </Button>
+        <Button variant="outline" size="sm" type="button" :disabled="groupsQuery.refreshing.value" @click="refreshAll">
+          <RotateCw :class="cn('size-4', groupsQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+          {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
-    <DataState
-      :loading="groupsQuery.loading.value"
-      :error="groupsQuery.error.value"
-      :has-data="groupsQuery.data.value !== undefined"
-      :is-empty="pageEmpty"
-      @retry="groupsQuery.refresh"
+    <EmptyState v-if="!canRead" :icon="FolderTree" :title="$t('fleet.groups.title')" :description="$t('fleet.groups.needRead')" />
+
+    <template v-else>
+      <!-- Two columns on a phone fit the screen, so the table drops its 640 px
+           scroll floor there instead of scrolling a pinned name. -->
+      <DataTable
+        class="max-md:[&_table]:min-w-0"
+        :columns="columns"
+        :rows="sortedGroups"
+        :row-key="(group) => group.id"
+        :loading="groupsQuery.loading.value"
+        :error="groupsQuery.error.value ?? null"
+        :has-data="groupsQuery.data.value !== undefined"
+        :expression-filter="false"
+        :show-summary="false"
+        :row-click="openGroup"
+        :active-row-id="selectedId ?? null"
+        @retry="refreshAll"
+      >
+        <template #empty>
+          <EmptyState
+            :icon="FolderTree"
+            :title="$t('fleet.groups.emptyTitle')"
+            :description="canAdmin ? $t('fleet.groups.emptyDescription') : $t('fleet.groups.emptyDescriptionReadOnly')"
+          >
+            <Button v-if="canAdmin" size="sm" type="button" @click="startCreate">
+              <Plus class="size-4" aria-hidden="true" />
+              {{ $t('fleet.groups.newGroup') }}
+            </Button>
+          </EmptyState>
+        </template>
+        <template #cell-name="{ row }">
+          <!-- On a phone the cell is sized to the screen less the menu, so a
+               long description truncates instead of widening the table. -->
+          <span class="flex min-w-0 items-center gap-2 max-md:w-[calc(100vw-6.5rem)]">
+            <!-- The group's colour as a square swatch: a round dot in this slot
+                 means online or offline on every other fleet table, and an
+                 amber group read as a warning. -->
+            <span :class="cn('size-2.5 shrink-0 rounded-[2px]', groupColor(row.color).dot)" aria-hidden="true" />
+            <span class="min-w-0">
+              <span class="block truncate font-medium">{{ row.name }}</span>
+              <span v-if="row.description" class="block truncate text-xs text-muted-foreground" :title="row.description">{{ row.description }}</span>
+              <span v-if="!wide" class="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-xs" data-testid="group-health-inline">
+                <span class="tabular">{{ $t('fleet.groups.health.online', { online: healthOf(row).online, total: healthOf(row).total }) }}</span>
+                <span v-if="healthOf(row).disabled" class="text-muted-foreground">{{ $t('fleet.groups.health.disabled', { n: healthOf(row).disabled }) }}</span>
+                <span v-if="healthOf(row).down.length" class="text-destructive">{{ $t('fleet.groups.health.down', { names: healthOf(row).down.slice(0, 3).join(', ') + (healthOf(row).down.length > 3 ? ` +${healthOf(row).down.length - 3}` : '') }) }}</span>
+              </span>
+            </span>
+          </span>
+        </template>
+        <template #cell-health="{ row }">
+          <span class="flex flex-wrap items-baseline gap-x-2 text-xs">
+            <span class="tabular">{{ $t('fleet.groups.health.online', { online: healthOf(row).online, total: healthOf(row).total }) }}</span>
+            <span v-if="healthOf(row).disabled" class="text-muted-foreground">{{ $t('fleet.groups.health.disabled', { n: healthOf(row).disabled }) }}</span>
+            <span v-if="healthOf(row).down.length" class="text-destructive">{{ $t('fleet.groups.health.down', { names: healthOf(row).down.slice(0, 3).join(', ') + (healthOf(row).down.length > 3 ? ` +${healthOf(row).down.length - 3}` : '') }) }}</span>
+          </span>
+        </template>
+        <template #cell-leader="{ row }">
+          <span v-if="row.leader_id" class="inline-flex items-center gap-1 text-xs">
+            <Crown class="size-3 text-warning-text" aria-hidden="true" />
+            {{ nodeLabel(row.leader_id) }}
+          </span>
+        </template>
+        <template #cell-actions="{ row }">
+          <RowMenu :name="row.name" :items="menuFor(row)" />
+        </template>
+      </DataTable>
+
+      <!-- Nodes in no group: a fact about the fleet, not a group to open. -->
+      <p v-if="ungrouped && groups.length" class="text-xs text-muted-foreground">
+        {{ $t('fleet.groups.ungroupedLine', { n: ungrouped.rollup.total, online: ungrouped.rollup.online }) }}
+      </p>
+    </template>
+
+    <!-- One group: its members and their state; the editor is the same sheet. -->
+    <ObjectSheet
+      :open="!!sheet.openId.value"
+      :title="sheetTitle"
+      :subtitle="selectedGroup && !editing ? selectedGroup.slug : undefined"
+      :state="sheetState"
+      :error="groupsQuery.error.value?.message ?? null"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('fleet.groups.sheet.goneTitle')"
+      :gone-description="$t('fleet.groups.sheet.goneDescription')"
+      @close="requestCloseSheet"
+      @retry="refreshAll"
     >
-      <template #empty>
-        <EmptyState
-          :icon="FolderTree"
-          :title="$t('fleet.groups.emptyTitle')"
-          :description="canAdmin ? $t('fleet.groups.emptyDescription') : $t('fleet.groups.emptyDescriptionReadOnly')"
-        >
-          <Button v-if="canAdmin" size="sm" @click="startCreate">
-            <Plus class="size-4" aria-hidden="true" />
-            {{ $t('fleet.groups.newGroup') }}
-          </Button>
-        </EmptyState>
-      </template>
-
-      <div class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-[20rem_1fr]">
-        <!-- Left: group list -->
-        <Card class="h-fit">
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <FolderTree class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.groups.listTitle') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.groups.listDescription') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-1">
-            <EmptyState
-              v-if="groups.length === 0"
-              :icon="FolderTree"
-              :title="$t('fleet.groups.emptyTitle')"
-              :description="$t('fleet.groups.emptyDescription')"
-            >
-              <Button v-if="canAdmin" size="sm" @click="startCreate">
-                <Plus class="size-4" aria-hidden="true" />
-                {{ $t('fleet.groups.newGroup') }}
-              </Button>
-            </EmptyState>
-
-            <template v-else>
-              <button
-                v-for="g in sortedGroups"
-                :key="g.id"
-                type="button"
-                :class="cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-                  selectedId === g.id ? 'bg-muted' : 'hover:bg-muted/50',
-                )"
-                @click="selectGroup(g)"
+      <!-- Read: health, members, how membership is decided. -->
+      <div v-if="!editing && selectedGroup" class="space-y-5 text-sm">
+        <p v-if="selectedGroup.description" class="text-muted-foreground">{{ selectedGroup.description }}</p>
+        <p class="flex flex-wrap items-baseline gap-x-2">
+          <span class="font-medium tabular">{{ $t('fleet.groups.health.online', { online: healthOf(selectedGroup).online, total: healthOf(selectedGroup).total }) }}</span>
+          <span v-if="healthOf(selectedGroup).down.length" class="text-destructive">{{ $t('fleet.groups.health.down', { names: healthOf(selectedGroup).down.join(', ') }) }}</span>
+        </p>
+        <section class="space-y-2" :aria-label="$t('fleet.groups.resolvedTitle')">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('fleet.groups.sheet.membersCount', { n: selectedGroup.resolved_members.length }, selectedGroup.resolved_members.length) }}</h3>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <li v-for="member in openMembers" :key="member.id">
+              <RouterLink
+                :to="{ name: 'node-detail', params: { id: member.id } }"
+                class="flex items-center gap-2 px-3 py-2 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
               >
-                <span :class="cn('size-2.5 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
-                <span class="truncate font-medium" :title="g.name">{{ g.name }}</span>
-                <Badge variant="secondary" class="ml-auto shrink-0 tabular-nums">
-                  {{ g.rollup.online }}/{{ g.rollup.total }}
-                </Badge>
-              </button>
-
-              <!-- Ungrouped: read-only synthetic bucket -->
-              <div
-                v-if="ungrouped"
-                class="mt-2 flex items-center gap-2 rounded-md border border-dashed border-border px-2 py-2 text-sm text-muted-foreground"
-              >
-                <span class="size-2.5 shrink-0 rounded-full bg-muted-foreground/40" aria-hidden="true" />
-                <span class="truncate" :title="$t('fleet.groups.ungrouped')">{{ $t('fleet.groups.ungrouped') }}</span>
-                <Badge variant="outline" class="ml-auto shrink-0 tabular-nums">
-                  {{ ungrouped.rollup.online }}/{{ ungrouped.rollup.total }}
-                </Badge>
-              </div>
-            </template>
-          </CardContent>
-        </Card>
-
-        <!-- Right: editor / detail -->
-        <Card v-if="editing" class="h-fit">
-          <CardHeader>
-            <CardTitle>
-              {{ editing === 'new' ? $t('fleet.groups.createTitle') : (form.name || $t('fleet.groups.editTitle')) }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.groups.editorDescription') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-6">
-            <fieldset :disabled="!canAdmin" class="space-y-6">
-              <!-- Identity -->
-              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div class="grid gap-1.5">
-                  <Label for="grp-name">{{ $t('fleet.groups.fieldName') }}</Label>
-                  <Input id="grp-name" v-model="form.name" :placeholder="$t('fleet.groups.namePlaceholder')" />
-                </div>
-                <div class="grid gap-1.5">
-                  <Label for="grp-slug">{{ $t('fleet.groups.fieldSlug') }}</Label>
-                  <Input
-                    id="grp-slug"
-                    v-model="form.slug"
-                    :disabled="editing === 'existing'"
-                    :placeholder="effectiveSlug || 'web-edge'"
-                  />
-                  <p class="text-xs text-muted-foreground">
-                    {{ editing === 'existing' ? $t('fleet.groups.slugImmutable') : $t('fleet.groups.slugHint') }}
-                  </p>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.groups.fieldColor') }}</Label>
-                  <Select v-model="form.color">
-                    <SelectTrigger class="w-full">
-                      <span class="flex items-center gap-2">
-                        <span :class="cn('size-3 rounded-full', groupColor(form.color).dot)" aria-hidden="true" />
-                        <SelectValue />
-                      </span>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem v-for="token in GROUP_COLOR_TOKENS" :key="token" :value="token">
-                        <span class="flex items-center gap-2">
-                          <span :class="cn('size-3 rounded-full', groupColor(token).dot)" aria-hidden="true" />
-                          {{ token }}
-                        </span>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label for="grp-icon">{{ $t('fleet.groups.fieldIcon') }}</Label>
-                  <Input id="grp-icon" v-model="form.icon" :placeholder="$t('common.misc.optional')" />
-                </div>
-                <div class="grid gap-1.5">
-                  <Label>{{ $t('fleet.groups.fieldParent') }}</Label>
-                  <Select v-model="form.parentId">
-                    <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem :value="ROOT_VALUE">{{ $t('fleet.groups.parentRoot') }}</SelectItem>
-                      <SelectItem v-for="g in parentOptions" :key="g.id" :value="g.id">{{ g.name }}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div class="grid gap-1.5">
-                  <Label for="grp-order">{{ $t('fleet.groups.fieldOrder') }}</Label>
-                  <Input id="grp-order" v-model.number="form.order" type="number" />
-                </div>
-                <div class="grid gap-1.5 sm:col-span-2">
-                  <Label for="grp-desc">{{ $t('fleet.groups.fieldDescription') }}</Label>
-                  <Input id="grp-desc" v-model="form.description" :placeholder="$t('common.misc.optional')" />
-                </div>
-              </div>
-
-              <!-- Explicit membership -->
-              <div class="space-y-2">
-                <div class="flex items-center justify-between">
-                  <Label>{{ $t('fleet.groups.membersTitle') }}</Label>
-                  <span class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersCount', { n: form.members.length }) }}</span>
-                </div>
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersHint') }}</p>
-                <div
-                  v-if="tagOptions.length"
-                  class="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-2 sm:flex-row sm:items-center"
-                >
-                  <div class="grid flex-1 gap-1.5">
-                    <Label class="text-xs">{{ $t('fleet.groups.quickTag') }}</Label>
-                    <Select v-model="memberQuickTag">
-                      <SelectTrigger class="w-full">
-                        <SelectValue :placeholder="$t('fleet.groups.quickTagPlaceholder')" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem v-for="tag in tagOptions" :key="tag" :value="tag">{{ tag }}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div class="flex items-center gap-2 sm:self-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      :disabled="!memberQuickTag || quickTagMatches.length === 0"
-                      @click="selectMembersByTag"
-                    >
-                      {{ $t('fleet.groups.selectTaggedCount', { n: quickTagMatches.length }) }}
-                    </Button>
-                  </div>
-                </div>
-                <div class="relative">
-                  <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-                  <Input v-model="memberSearch" class="pl-9" :placeholder="$t('fleet.groups.memberSearch')" />
-                </div>
-                <!-- The node list is its own request: a failure must not read as
-                     an empty fleet, so it carries its own loading/error/empty. -->
-                <DataState
-                  :loading="nodesQuery.loading.value"
-                  :error="nodesQuery.error.value"
-                  :has-data="nodesQuery.data.value !== undefined"
-                  :is-empty="filteredNodes.length === 0"
-                  :empty-title="$t('fleet.groups.noNodes')"
-                  :skeleton-rows="3"
-                  @retry="nodesQuery.refresh"
-                >
-                  <div class="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border p-1">
-                    <label
-                      v-for="n in filteredNodes"
-                      :key="n.id"
-                      class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted/50"
-                    >
-                      <Checkbox
-                        :model-value="isMember(n.id)"
-                        @update:model-value="(v) => setMember(n.id, v === true)"
-                      />
-                      <StatusDot :status="describeNodeStatus(n).health" :label="''" />
-                      <span class="truncate" :title="n.name || n.id">{{ n.name || n.id }}</span>
-                      <span v-if="n.role" class="ml-auto shrink-0 text-xs text-muted-foreground">{{ n.role }}</span>
-                    </label>
-                  </div>
-                </DataState>
-                <div v-if="form.members.length" class="flex flex-wrap gap-1.5">
-                  <Badge
-                    v-for="id in form.members"
-                    :key="id"
-                    variant="secondary"
-                    class="gap-1"
-                  >
-                    {{ nodeLabel(id) }}
-                    <button
-                      type="button"
-                      class="text-muted-foreground hover:text-foreground"
-                      :aria-label="$t('fleet.groups.removeMember')"
-                      @click.prevent="setMember(id, false)"
-                    >
-                      <X class="size-3" aria-hidden="true" />
-                    </button>
-                  </Badge>
-                </div>
-              </div>
-
-              <!-- Group leader (must be an explicit member; server-validated) -->
-              <div class="grid gap-1.5">
-                <Label>{{ $t('fleet.groups.fieldLeader') }}</Label>
-                <Select v-model="form.leaderId">
-                  <SelectTrigger class="w-full">
-                    <span class="flex items-center gap-2">
-                      <Crown class="size-3.5 text-amber-500" aria-hidden="true" />
-                      <SelectValue :placeholder="$t('fleet.groups.leaderNone')" />
-                    </span>
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem :value="LEADER_NONE">{{ $t('fleet.groups.leaderNone') }}</SelectItem>
-                    <SelectItem v-for="opt in leaderOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.leaderHint') }}</p>
-              </div>
-
-              <!-- Dynamic smart selector -->
-              <div class="space-y-3 rounded-lg border border-border p-3">
-                <div class="flex items-center justify-between">
-                  <Label>{{ $t('fleet.groups.selectorTitle') }}</Label>
-                  <Badge variant="outline">{{ $t('fleet.groups.displayOnly') }}</Badge>
-                </div>
-                <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.selectorHint') }}</p>
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div class="grid gap-1.5">
-                    <Label class="text-xs">{{ $t('fleet.groups.matchTags') }}</Label>
-                    <Input v-model="form.selTags" placeholder="edge, prod" />
-                  </div>
-                  <div class="grid gap-1.5">
-                    <Label class="text-xs">{{ $t('fleet.groups.matchRoles') }}</Label>
-                    <Input v-model="form.selRoles" placeholder="web, db" />
-                  </div>
-                  <div class="grid gap-1.5">
-                    <Label class="text-xs">{{ $t('fleet.groups.matchCountry') }}</Label>
-                    <Input v-model="form.selCountry" placeholder="US, DE" />
-                  </div>
-                  <div class="grid gap-1.5">
-                    <Label class="text-xs">{{ $t('fleet.groups.matchContinent') }}</Label>
-                    <Input v-model="form.selContinent" placeholder="AS, EU" />
-                  </div>
-                </div>
-                <p v-if="hasSelector" class="text-xs text-muted-foreground">
-                  <span v-if="previewing">{{ $t('fleet.groups.previewLoading') }}</span>
-                  <span v-else-if="previewCount !== null">{{ $t('fleet.groups.previewMatches', { n: previewCount }) }}</span>
-                </p>
-              </div>
-
-              <!-- Effective (resolved) membership, read-only -->
-              <div v-if="selectedGroup && editing === 'existing'" class="space-y-2">
-                <Label>{{ $t('fleet.groups.resolvedTitle') }}</Label>
-                <p class="text-xs text-muted-foreground">
-                  {{ $t('fleet.groups.resolvedHint', { n: selectedGroup.resolved_members.length }) }}
-                </p>
-                <div v-if="selectedGroup.resolved_members.length" class="flex flex-wrap gap-1.5">
-                  <button
-                    v-for="id in selectedGroup.resolved_members"
-                    :key="id"
-                    type="button"
-                    class="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    @click="goToNode(id)"
-                  >
-                    {{ nodeLabel(id) }}
-                    <Crown
-                      v-if="id === selectedGroup.leader_id"
-                      class="size-3 shrink-0 text-amber-500"
-                      aria-hidden="true"
-                    />
-                  </button>
-                </div>
-              </div>
-            </fieldset>
-
-            <!-- Actions -->
-            <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-4">
-              <Button
-                v-if="editing === 'existing' && canAdmin && !form.system"
-                variant="ghost"
-                size="sm"
-                @click="deleteOpen = true"
-              >
-                <Trash2 class="size-4 text-destructive" aria-hidden="true" />
-                {{ $t('common.actions.delete') }}
-              </Button>
-              <span v-else></span>
-              <Button :disabled="!canSubmit || saving" @click="save">
-                <RotateCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
-                {{ editing === 'new' ? $t('fleet.groups.createGroup') : $t('common.actions.saveChanges') }}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <!-- Right: nothing selected -->
-        <Card v-else class="h-fit">
-          <CardContent class="py-16">
-            <EmptyState
-              :icon="FolderTree"
-              :title="$t('fleet.groups.noSelectionTitle')"
-              :description="canRead ? $t('fleet.groups.noSelectionDescription') : $t('fleet.groups.needRead')"
-            >
-              <Button v-if="canAdmin" size="sm" @click="startCreate">
-                <Plus class="size-4" aria-hidden="true" />
-                {{ $t('fleet.groups.newGroup') }}
-              </Button>
-            </EmptyState>
-          </CardContent>
-        </Card>
+                <StatusDot v-if="member.node" :status="describeNodeStatus(member.node).health" />
+                <span class="min-w-0 truncate">{{ nodeLabel(member.id) }}</span>
+                <Crown v-if="member.id === selectedGroup.leader_id" class="size-3 shrink-0 text-warning-text" :aria-label="$t('fleet.groups.fieldLeader')" />
+                <span v-if="!(selectedGroup.members ?? []).includes(member.id)" class="ms-auto shrink-0 text-xs text-muted-foreground">{{ $t('fleet.groups.sheet.bySelector') }}</span>
+                <span
+                  v-else-if="member.node && nodeStatus(member.node) !== 'online'"
+                  class="ms-auto shrink-0 text-xs text-muted-foreground"
+                >{{ $t(describeNodeStatus(member.node).labelKey) }}</span>
+              </RouterLink>
+            </li>
+            <li v-if="openMembers.length === 0" class="px-3 py-4 text-xs text-muted-foreground">{{ $t('fleet.groups.sheet.noMembers') }}</li>
+          </ul>
+        </section>
+        <dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2">
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersTitle') }}</dt>
+          <dd>{{ $t('fleet.groups.sheet.explicit', { n: (selectedGroup.members ?? []).length }) }}</dd>
+          <template v-if="selectorSummary(selectedGroup)">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.selectorTitle') }}</dt>
+            <dd class="break-words">{{ selectorSummary(selectedGroup) }}</dd>
+          </template>
+          <template v-if="selectedGroup.parent_id">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.groups.fieldParent') }}</dt>
+            <dd>{{ groups.find((g) => g.id === selectedGroup?.parent_id)?.name ?? selectedGroup.parent_id }}</dd>
+          </template>
+        </dl>
       </div>
-    </DataState>
+
+      <!-- Edit and create. -->
+      <fieldset v-else-if="editing" :disabled="!canAdmin" class="space-y-6 text-sm">
+        <!-- Top-aligned: the slug's hint made its cell taller and pushed Name's input 18 px off. -->
+        <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
+          <div class="grid gap-1.5">
+            <Label for="grp-name">{{ $t('fleet.groups.fieldName') }}</Label>
+            <Input id="grp-name" v-model="form.name" :placeholder="$t('fleet.groups.namePlaceholder')" />
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="grp-slug">{{ $t('fleet.groups.fieldSlug') }}</Label>
+            <Input id="grp-slug" v-model="form.slug" :disabled="editing === 'existing'" :placeholder="effectiveSlug || 'web-edge'" />
+            <p class="text-xs text-muted-foreground">{{ editing === 'existing' ? $t('fleet.groups.slugImmutable') : $t('fleet.groups.slugHint') }}</p>
+          </div>
+          <div class="grid gap-1.5">
+            <Label>{{ $t('fleet.groups.fieldColor') }}</Label>
+            <Select v-model="form.color">
+              <SelectTrigger class="w-full">
+                <span class="flex items-center gap-2">
+                  <span :class="cn('size-3 rounded-[2px]', groupColor(form.color).dot)" aria-hidden="true" />
+                  <SelectValue />
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="token in GROUP_COLOR_TOKENS" :key="token" :value="token">
+                  <span class="flex items-center gap-2">
+                    <span :class="cn('size-3 rounded-[2px]', groupColor(token).dot)" aria-hidden="true" />
+                    {{ token }}
+                  </span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div class="grid gap-1.5">
+            <Label>{{ $t('fleet.groups.fieldParent') }}</Label>
+            <Select v-model="form.parentId">
+              <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="ROOT_VALUE">{{ $t('fleet.groups.parentRoot') }}</SelectItem>
+                <SelectItem v-for="g in parentOptions" :key="g.id" :value="g.id">{{ g.name }}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="grp-icon">{{ $t('fleet.groups.fieldIcon') }}</Label>
+            <Input id="grp-icon" v-model="form.icon" :placeholder="$t('common.misc.optional')" />
+          </div>
+          <div class="grid gap-1.5">
+            <Label for="grp-order">{{ $t('fleet.groups.fieldOrder') }}</Label>
+            <Input id="grp-order" v-model.number="form.order" type="number" />
+          </div>
+          <div class="grid gap-1.5 sm:col-span-2">
+            <Label for="grp-desc">{{ $t('fleet.groups.fieldDescription') }}</Label>
+            <Input id="grp-desc" v-model="form.description" :placeholder="$t('common.misc.optional')" />
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <Label>{{ $t('fleet.groups.membersTitle') }}</Label>
+            <span class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersCount', { n: form.members.length }) }}</span>
+          </div>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.membersHint') }}</p>
+          <div v-if="tagOptions.length" class="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-2 sm:flex-row sm:items-end">
+            <div class="grid flex-1 gap-1.5">
+              <Label class="text-xs">{{ $t('fleet.groups.quickTag') }}</Label>
+              <Select v-model="memberQuickTag">
+                <SelectTrigger class="w-full"><SelectValue :placeholder="$t('fleet.groups.quickTagPlaceholder')" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="tag in tagOptions" :key="tag" :value="tag">{{ tag }}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button type="button" variant="outline" size="sm" :disabled="!memberQuickTag || quickTagMatches.length === 0" @click="selectMembersByTag">
+              {{ $t('fleet.groups.selectTaggedCount', { n: quickTagMatches.length }) }}
+            </Button>
+          </div>
+          <div class="relative">
+            <Search class="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+            <Input v-model="memberSearch" class="ps-9" :placeholder="$t('fleet.groups.memberSearch')" />
+          </div>
+          <p v-if="nodesQuery.error.value" class="text-xs text-destructive">{{ nodesQuery.error.value.message }}</p>
+          <div v-else class="max-h-64 space-y-0.5 overflow-y-auto rounded-md border border-border p-1">
+            <label v-for="n in filteredNodes" :key="n.id" class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-muted/50 pointer-coarse:min-h-11">
+              <Checkbox :model-value="isMember(n.id)" @update:model-value="(v) => setMember(n.id, v === true)" />
+              <StatusDot :status="describeNodeStatus(n).health" :label="''" />
+              <span class="truncate" :title="n.name || n.id">{{ n.name || n.id }}</span>
+              <span v-if="n.role" class="ms-auto shrink-0 text-xs text-muted-foreground">{{ n.role }}</span>
+            </label>
+            <p v-if="filteredNodes.length === 0" class="px-2 py-3 text-xs text-muted-foreground">{{ $t('fleet.groups.noNodes') }}</p>
+          </div>
+        </div>
+
+        <div class="grid gap-1.5">
+          <Label>{{ $t('fleet.groups.fieldLeader') }}</Label>
+          <Select v-model="form.leaderId">
+            <SelectTrigger class="w-full">
+              <span class="flex items-center gap-2">
+                <Crown class="size-3.5 text-warning-text" aria-hidden="true" />
+                <SelectValue :placeholder="$t('fleet.groups.leaderNone')" />
+              </span>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem :value="LEADER_NONE">{{ $t('fleet.groups.leaderNone') }}</SelectItem>
+              <SelectItem v-for="opt in leaderOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.leaderHint') }}</p>
+        </div>
+
+        <div class="space-y-3 rounded-lg border border-border p-3">
+          <Label>{{ $t('fleet.groups.selectorTitle') }}</Label>
+          <p class="text-xs text-muted-foreground">{{ $t('fleet.groups.selectorHint') }}</p>
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div class="grid gap-1.5">
+              <Label class="text-xs">{{ $t('fleet.groups.matchTags') }}</Label>
+              <Input v-model="form.selTags" placeholder="edge, prod" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label class="text-xs">{{ $t('fleet.groups.matchRoles') }}</Label>
+              <Input v-model="form.selRoles" placeholder="web, db" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label class="text-xs">{{ $t('fleet.groups.matchCountry') }}</Label>
+              <Input v-model="form.selCountry" placeholder="US, DE" />
+            </div>
+            <div class="grid gap-1.5">
+              <Label class="text-xs">{{ $t('fleet.groups.matchContinent') }}</Label>
+              <Input v-model="form.selContinent" placeholder="AS, EU" />
+            </div>
+          </div>
+          <p v-if="hasSelector" class="text-xs text-muted-foreground">
+            <span v-if="previewing">{{ $t('fleet.groups.previewLoading') }}</span>
+            <span v-else-if="previewCount !== null">{{ $t('fleet.groups.previewMatches', { n: previewCount }) }}</span>
+          </p>
+        </div>
+      </fieldset>
+
+      <template v-if="canAdmin && (editing || selectedGroup)" #actions>
+        <template v-if="editing">
+          <Button
+            v-if="editing === 'existing' && !form.system"
+            variant="ghost"
+            size="sm"
+            type="button"
+            class="me-auto text-destructive"
+            @click="selectedGroup && requestDelete(selectedGroup)"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+            {{ $t('common.actions.delete') }}
+          </Button>
+          <p v-if="!trimmedName && !saving" class="me-auto text-xs text-muted-foreground" data-testid="group-missing">
+            {{ $t('fleet.groups.missingName') }}
+          </p>
+          <Button variant="outline" size="sm" type="button" @click="creating ? requestCloseSheet() : unlessDraft(() => (editingExisting = false))">
+            {{ $t('common.actions.cancel') }}
+          </Button>
+          <Button size="sm" type="button" :disabled="!canSubmit || saving" @click="save">
+            <RotateCw v-if="saving" class="size-4 animate-spin" aria-hidden="true" />
+            {{ editing === 'new' ? $t('fleet.groups.createGroup') : $t('common.actions.saveChanges') }}
+          </Button>
+        </template>
+        <Button v-else size="sm" type="button" @click="startEdit">
+          <Pencil class="size-4" aria-hidden="true" />
+          {{ $t('fleet.groups.edit') }}
+        </Button>
+      </template>
+    </ObjectSheet>
 
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.groups.deleteTitle')"
-      :description="$t('fleet.groups.deleteDescription', { name: form.name })"
+      :description="$t('fleet.groups.deleteDescription', { name: deleteTarget?.name ?? '' })"
+      :impact="deleteImpact"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
+      :return-focus="confirmReturn.target"
       @confirm="confirmDelete"
+    />
+
+    <!-- Leaving an edited draft: say what is lost, keep editing by default.
+         Destructive like every other discard confirm in the console. -->
+    <ConfirmDialog
+      v-model:open="discardOpen"
+      variant="destructive"
+      :title="$t('fleet.groups.discard.title')"
+      :description="editing === 'new' ? $t('fleet.groups.discard.descriptionNew') : $t('fleet.groups.discard.description', { name: selectedGroup?.name ?? '' })"
+      :confirm-label="$t('fleet.groups.discard.confirm')"
+      :cancel-label="$t('fleet.groups.discard.keep')"
+      :return-focus="discardFocus"
+      @confirm="discardDraft"
     />
   </div>
 </template>

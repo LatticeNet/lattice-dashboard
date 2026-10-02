@@ -37,3 +37,9 @@ test("the badge names sing-box and marks drift", () => {
   assert.deepEqual(agentConfigBadges(node({ agent_launch: { singbox_discover: false }, agent_runtime: { singbox_discover: true } })), ["sing-box:drift"]);
   assert.deepEqual(agentConfigBadges(node({ agent_runtime: { allow_exec: true, singbox_discover: false } })), ["exec"]);
 });
+
+test("no-source is a node without an agent source allowlist", () => {
+  assert.equal(nodeHasAgentCapability(node({}), "no-source"), true);
+  assert.equal(nodeHasAgentCapability(node({ agent_source_allowlist: [] }), "no-source"), true);
+  assert.equal(nodeHasAgentCapability(node({ agent_source_allowlist: ["https://github.com/"] }), "no-source"), false);
+});

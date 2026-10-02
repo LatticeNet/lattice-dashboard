@@ -87,6 +87,12 @@ const props = withDefaults(
     impactTitle?: string;
     /** The name the operator must type before Confirm enables. */
     typedConfirm?: string;
+    /**
+     * Where focus lands when the dialog closes. Left out, it returns to
+     * whatever had focus when the dialog opened, which is gone when a row
+     * menu item opened it.
+     */
+    returnFocus?: () => HTMLElement | null;
   }>(),
   {
     description: undefined,
@@ -98,6 +104,7 @@ const props = withDefaults(
     impact: undefined,
     impactTitle: undefined,
     typedConfirm: undefined,
+    returnFocus: undefined,
   },
 );
 
@@ -142,6 +149,13 @@ function onConfirm() {
   if (props.pending || blocked.value) return;
   emit("confirm");
 }
+
+function onCloseAutoFocus(event: Event) {
+  const target = props.returnFocus?.();
+  if (!target?.isConnected) return;
+  event.preventDefault();
+  target.focus();
+}
 </script>
 
 <template>
@@ -149,7 +163,7 @@ function onConfirm() {
     <!-- A 16 px gutter on a phone, and a title that stops short of the close
          button: a long name ("Revoke the storage token edge-config reader?")
          ran under it at 375. -->
-    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" v-bind="describedBy">
+    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" v-bind="describedBy" @close-auto-focus="onCloseAutoFocus">
       <DialogHeader class="pe-6">
         <DialogTitle>{{ title }}</DialogTitle>
         <DialogDescription v-if="description && !impact?.length">

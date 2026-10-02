@@ -401,6 +401,8 @@ export interface EnrollTokenResponse {
  * alpha-0.2.2a101 answer 404.
  */
 export interface TaskCounts {
+  /** Rows stored as pending before the plugin task host fix; never delivered. */
+  pending?: number;
   queued: number;
   running: number;
   stalled: number;
@@ -424,7 +426,9 @@ export interface TaskView {
   // "expired" is derived by the server: the queue deadline passed, so the
   // task was withdrawn and will not be handed to its agent. Distinct from
   // "failed" on purpose - an offline node is not a script that went wrong.
-  status: "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled";
+  // "pending" is a row the plugin task host stored before its fix and never
+  // delivered; the server lists, counts and cancels it like a queued one.
+  status: "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled" | "pending";
   leased_by?: string;
   rerun_of_task_id?: string;
   rerun_of_node_id?: string;
@@ -440,6 +444,37 @@ export interface TaskView {
   lease_age_seconds?: number;
   stalled_reason?: string;
   target_states?: Record<string, TaskTargetStateView>;
+  /** How the task was queued; list rows from servers since 6a983ee. */
+  origin?: TaskOrigin;
+}
+
+export type TaskOrigin = "approval" | "rerun" | "direct";
+
+/** The list statuses GET /api/tasks accepts in `status`. */
+export type TaskListStatus = TaskView["status"];
+
+/** Query parameters GET /api/tasks honours; any of them selects the envelope. */
+export interface TaskListParams {
+  status?: TaskListStatus | TaskListStatus[];
+  /** RFC 3339 with Z: rows whose last change is at or after it. */
+  since?: string;
+  node_id?: string;
+  origin?: TaskOrigin | TaskOrigin[];
+  /**
+   * Rows queued by one approval. Sent only with `limit`, and the caller keeps
+   * only rows whose approval_id matches: a server without the filter pages
+   * every task instead of narrowing them.
+   */
+  approval_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TaskListResponse {
+  tasks: TaskView[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface TaskTargetStateView {
@@ -463,6 +498,11 @@ export interface TaskResult {
   /** Present on omit_output rows: the size of the body that was not sent. */
   stdout_bytes?: number;
   stderr_bytes?: number;
+  /**
+   * The first non-blank stderr line, sent with omit_output by servers that
+   * have it, so a row can say why a run failed without the body.
+   */
+  stderr_head?: string;
   task_id: string;
   lease_id?: string;
   node_id: string;

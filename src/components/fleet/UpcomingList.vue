@@ -135,7 +135,8 @@ const ROW =
               aria-hidden="true"
             />
             <div class="row-span-2 flex min-w-0 flex-col sm:row-span-1 sm:flex-row sm:items-baseline sm:gap-2">
-              <span class="truncate text-sm font-medium" :title="item.title">{{ item.title }}</span>
+              <!-- In a narrow column the name keeps its width and the subtitle gives way. -->
+              <span class="truncate text-sm font-medium sm:max-w-full sm:shrink-0" :title="item.title">{{ item.title }}</span>
               <span class="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                 <span v-if="subtitle(item)" class="truncate" :title="subtitle(item)">{{ subtitle(item) }}</span>
                 <!-- Icon only at 375, where the words would squeeze out the vendor. -->

@@ -346,6 +346,12 @@ export const api = {
   tasks: {
     list: () => delay({ tasks: tasks.map((t) => ({ ...t })) }),
     counts: () => taskCounts(),
+    // Tasks reads one server page; the fake pages the same rows.
+    query: (params?: { limit?: number; offset?: number }) => {
+      const limit = params?.limit ?? 50;
+      const offset = params?.offset ?? 0;
+      return delay({ tasks: tasks.slice(offset, offset + limit).map((t) => ({ ...t })), total: tasks.length, limit, offset });
+    },
     listForNode: (nodeId: string) =>
       delay({ tasks: tasks.filter((t) => t.targets.includes(nodeId)).map((t) => ({ ...t })) }),
     results: (query?: { node_id?: string }) =>

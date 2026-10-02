@@ -102,6 +102,8 @@ import type {
   SubscriptionShareView,
   TOTPEnrollResponse,
   TaskCounts,
+  TaskListParams,
+  TaskListResponse,
   TaskResult,
   TaskScriptRevealResponse,
   TaskView,
@@ -363,6 +365,21 @@ export const api = {
 
   tasks: {
     list: (opts?: RequestOptions) => http.get<{ tasks: TaskView[] } | TaskView[]>("/api/tasks", undefined, opts),
+    /**
+     * One page of the tasks the operator asked for, filtered on the server
+     * (design 23, section 5). Any parameter selects the envelope, whose total
+     * counts the filtered rows before paging.
+     */
+    query: (params: TaskListParams, opts?: RequestOptions) =>
+      http.get<TaskListResponse>(
+        "/api/tasks",
+        {
+          ...params,
+          status: Array.isArray(params.status) ? params.status.join(",") : params.status,
+          origin: Array.isArray(params.origin) ? params.origin.join(",") : params.origin,
+        },
+        opts,
+      ),
     // The queue's health as numbers; home reads this instead of every task.
     counts: (opts?: RequestOptions) => http.get<TaskCounts>("/api/tasks/counts", undefined, opts),
     // One node's tasks, filtered by the server. The unfiltered list is fine for
@@ -442,10 +459,11 @@ export const api = {
       ),
     /**
      * Status counts only, no rows: what the Overview and the sidebar need,
-     * at a few hundred bytes instead of the whole listing. `node_id` and
-     * `plugin` narrow the counts; `status` is the breakdown, not a filter.
+     * at a few hundred bytes instead of the whole listing. `node_id`,
+     * `plugin` and `since` (on updated_at) narrow the counts; `status` is the
+     * breakdown, not a filter.
      */
-    counts: (params?: Pick<ApprovalListParams, "node_id" | "plugin">, opts?: RequestOptions) =>
+    counts: (params?: Pick<ApprovalListParams, "node_id" | "plugin" | "since">, opts?: RequestOptions) =>
       http
         .get<{ counts: Partial<ApprovalCounts> }>("/api/network/approvals", { ...params, count: 1 }, opts)
         .then((r) => unwrapApprovalCounts(r)),
@@ -535,6 +553,10 @@ export const api = {
       q?: string;
       at_from?: string;
       at_to?: string;
+      /** Action prefixes to drop inside the scan, at most 16. */
+      exclude_action?: string;
+      /** Decisions to drop inside the scan (allow, deny, observe, warn, dismiss). */
+      exclude_decision?: string;
       limit?: number;
       offset?: number;
     }, opts?: RequestOptions) =>

@@ -12,7 +12,7 @@
  *   ?scope=none                       the token lacks terminal:open
  *   ?scope=forbid                     the list itself answers 403
  *   ?session_id=term_other_operator   attach to another operator's session
- *   ?node_id=<id>&connect=1           the Nodes page deep link
+ *   ?node_id=<id>&connect=1           the Nodes page deep link (node_cd_dmit_pro_malibu)
  */
 import { createApp, defineComponent, h } from "vue";
 import { createPinia } from "pinia";
@@ -35,7 +35,7 @@ const SCENARIOS: Array<[label: string, href: string]> = [
   ["no scope", "/dev/terminal.html?scope=none"],
   ["list 403", "/dev/terminal.html?scope=forbid"],
   ["other operator's session", "/dev/terminal.html?session_id=term_other_operator"],
-  ["deep link", "/dev/terminal.html?node_id=node_dmit_pro_malibu&connect=1"],
+  ["deep link", "/dev/terminal.html?node_id=node_cd_dmit_pro_malibu&connect=1"],
 ];
 
 const Shell = defineComponent({
@@ -61,6 +61,8 @@ const router = createRouter({
   routes: [
     { path: "/terminal.html", component: TerminalView },
     { path: "/nodes", component: Placeholder },
+    // The "audited" proof segment links to Audit by name.
+    { path: "/audit", name: "audit", component: Placeholder },
     { path: "/:rest(.*)", redirect: "/terminal.html" },
   ],
 });

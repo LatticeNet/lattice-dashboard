@@ -329,7 +329,12 @@ const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--background))]";
 
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
   if (pinned(index)) {
-    return cn("pin-start [--pin-max:38vw]", !column.wrap && "max-md:truncate", props.selectable && "[--pin-left:2.5rem]");
+    // The pinned selection checkbox (2.5rem) counts inside the 38vw cap
+    // (design 23, 3.7): checkbox plus a 192 px name covered 62% of a phone.
+    const cap = props.selectable
+      ? "[--pin-left:2.5rem] [--pin-max:calc(38vw_-_2.5rem)] [--pin-min:calc(38vw_-_2.5rem)]"
+      : "[--pin-max:38vw]";
+    return cn("pin-start", cap, !column.wrap && "max-md:truncate");
   }
   if (pinnedEnd(column)) return cn("pin-end", props.rowTo && "[--pin-right:2rem]");
   return undefined;
@@ -736,7 +741,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         <div v-if="searchShown && (showSearch || showExpression)" class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
           <div v-if="showSearch" class="relative min-w-0 sm:min-w-[220px]">
             <Search
-              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
             <Input
@@ -748,7 +753,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             <button
               v-if="searchInput"
               type="button"
-              class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               :aria-label="label.clearSearch.value"
               @click="searchInput = ''"
             >
@@ -757,7 +762,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           </div>
           <div v-if="showExpression" class="relative min-w-0 sm:min-w-[240px]">
             <Funnel
-              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
             <Input
@@ -771,7 +776,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             <button
               v-if="expressionInput"
               type="button"
-              class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               :aria-label="label.clearSearch.value"
               @click="expressionInput = ''"
             >
@@ -879,7 +884,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
                 <button
                   v-if="column.sortable"
                   type="button"
-                  class="inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  class="inline-flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                   :class="{
                     'ms-auto flex-row-reverse': column.align === 'right',
                     'mx-auto': column.align === 'center',
@@ -921,7 +926,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               <th :colspan="spannedColumns" scope="rowgroup" class="p-0 text-left font-normal">
                 <button
                   type="button"
-                  class="sticky left-0 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 px-3 py-2 text-left text-xs outline-none md:max-w-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                  class="sticky left-0 flex w-max max-w-[calc(100vw-2rem)] items-center gap-2 px-3 py-2 text-left text-xs outline-none md:max-w-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset pointer-coarse:min-h-11"
                   :aria-expanded="!entry.collapsed"
                   @click="onToggleGroup(entry.group.key)"
                 >
@@ -950,7 +955,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               @click="rowActivatable && onRowActivate(entry.row, $event)"
               @keydown="rowActivatable && onRowKeydown(entry.row, $event)"
             >
-              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-top', selectGutterClass)">
+              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-middle', selectGutterClass)">
                 <Checkbox
                   :model-value="isRowSelected(entry.row)"
                   :aria-label="label.selectRow.value"

@@ -25,6 +25,10 @@
  * does not resolve, an unknown enum value) are named per token while typing,
  * and kept after Apply until the next edit, since the canonical spelling
  * Apply writes back no longer holds the token.
+ *
+ * On a coarse pointer every control in the row is at least 44 px tall,
+ * through the base-layer touch rules for buttons, fields and selects in
+ * app.css; the clear button carries the touch pad.
  */
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -258,9 +262,14 @@ defineExpose({ draft, submit, revert, settle });
 
       <div class="relative min-w-0 flex-1 basis-full sm:basis-72">
         <Search aria-hidden="true" class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <!-- The placeholder holds example tokens in the same mono face as a
+             query. In dark mode the field's muted grey (7.5:1) read like an
+             applied filter, so it drops to about 3:1 there; entered text
+             stays near 18:1. Light mode's 5.3:1 against 17:1 already reads
+             as a hint. -->
         <Input
           v-model="draft"
-          class="pr-8 pl-8 font-mono text-xs"
+          class="pr-8 pl-8 font-mono text-xs dark:placeholder:text-muted-foreground/55"
           autocomplete="off"
           spellcheck="false"
           autocapitalize="off"
@@ -273,7 +282,7 @@ defineExpose({ draft, submit, revert, settle });
         <button
           v-if="draft"
           type="button"
-          class="absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          class="touch-target absolute top-1/2 right-2 -translate-y-1/2 rounded-sm p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           :aria-label="$t('common.query.clear')"
           @click="clear"
         >
