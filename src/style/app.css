@@ -179,7 +179,13 @@
   --muted-foreground: oklch(0.524 0.022 281);
   --accent: oklch(0.95 0.014 279);
   --accent-foreground: oklch(0.30 0.05 279);
-  --destructive: oklch(0.583 0.231 27.5);
+  /* The red is both a fill and, unlike the amber and green, the console's ink
+     for a failure written as text (172 text-destructive uses). At L 0.583 it
+     read 4.76:1 on the card but 4.48 on a table group band (muted/40) and
+     4.29 on --muted, so DDNS's "1 failing" fell under 4.5. At 0.55: card
+     5.35, page 5.21, group band 5.04, muted 4.83, and the foreground on the
+     fill 5.1 (was 4.53). */
+  --destructive: oklch(0.55 0.231 27.5);
   --destructive-foreground: oklch(0.985 0.01 20);
 
   --success: oklch(0.62 0.16 150);
@@ -717,7 +723,9 @@
    `--pin-left` and `--pin-right` offset a pinned cell past a pinned gutter
    (DataTable's selection checkbox, its row chevron). A row that is hovered,
    selected or open sets `--row-bg` to an opaque tint, and the pinned cells
-   paint it, so the row reads as one band instead of stopping at the pin. */
+   paint it, so the row reads as one band instead of stopping at the pin.
+   Otherwise they paint `--table-ground`, the surface the table sits on: a
+   Card sets it to `--card`, and the page background is the fallback. */
 @utility pin-start {
   position: sticky;
   left: var(--pin-left, 0);
@@ -726,7 +734,7 @@
   /* The cap is a hard edge: whatever does not fit wraps or is clipped here,
      never drawn under the next column. */
   overflow: hidden;
-  background-color: var(--row-bg, var(--background));
+  background-color: var(--row-bg, var(--table-ground, var(--background)));
 
   @media (width < 48rem) {
     box-shadow: inset -1px 0 0 var(--border);
@@ -741,7 +749,7 @@
   position: sticky;
   right: var(--pin-right, 0);
   z-index: 10;
-  background-color: var(--row-bg, var(--background));
+  background-color: var(--row-bg, var(--table-ground, var(--background)));
 
   @media (width < 48rem) {
     box-shadow: inset 1px 0 0 var(--border);

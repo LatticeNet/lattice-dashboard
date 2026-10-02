@@ -411,11 +411,11 @@ function changeEvents(): AuditEvent[] {
   const id = (name: string) => nodeByName(name)?.id;
   const rows: AuditEvent[] = [
     { id: "aud_c1", at: at(12 * MINUTE), actor_id: "cdcd", node_id: id("[cd]-racknerd-la"), action: "task.create", decision: "allow" },
-    { id: "aud_c2", at: at(2 * HOUR), actor_id: "cdcd", node_id: id("[Metix]-DMIT-2"), action: "approval.apply", decision: "allow", metadata: { plugin: "vpn-core", kind: "apply-lines" } },
+    { id: "aud_c2", at: at(2 * HOUR), actor_id: "cdcd", node_id: id("[Metix]-DMIT-2"), action: "network.singbox-linemeta.approve", decision: "allow", metadata: { approval_id: "approval_9f2kx81mzq4tw7dn" } },
     { id: "aud_c3", at: at(5 * HOUR), actor_id: "cdcd", node_id: id("[cd]-mac-air"), action: "node.update", decision: "allow" },
     { id: "aud_c4", at: at(9 * HOUR), actor_id: "system", node_id: id("[cd]-hetzner-fsn"), action: "inventory.auto_roll", decision: "allow" },
     { id: "aud_c5", at: at(26 * HOUR), actor_id: "cdcd", action: "ddns.update", decision: "allow" },
-    { id: "aud_c6", at: at(30 * HOUR), actor_id: "cdcd", node_id: id("[Metix]-Aaitr-ATT-VDS"), action: "agentupdate.plan", decision: "allow" },
+    { id: "aud_c6", at: at(30 * HOUR), actor_id: "cdcd", node_id: id("[Metix]-Aaitr-ATT-VDS"), action: "agent.update.plan", decision: "allow" },
     { id: "aud_c7", at: at(31 * HOUR), actor_id: "cdcd", action: "auth.login", decision: "observe" },
     { id: "aud_c8", at: at(40 * HOUR), actor_id: "cdcd", node_id: id("[cd]-Oracle-KIX-arm"), action: "ssh.login", decision: "observe" },
   ];

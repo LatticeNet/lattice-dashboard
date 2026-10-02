@@ -359,8 +359,8 @@ async function runVerify() {
       @retry="refreshAll"
     >
       <template #cell-name="{ row }">
-        <div class="font-medium">{{ row.name }}</div>
-        <div class="font-mono text-xs text-muted-foreground">{{ row.id }}</div>
+        <div class="font-medium max-md:truncate">{{ row.name }}</div>
+        <div class="font-mono text-xs text-muted-foreground max-md:truncate">{{ row.id }}</div>
       </template>
       <template #cell-version="{ row }">
         <span class="whitespace-nowrap font-mono text-xs">{{ row.version || $t('common.misc.none') }}</span>

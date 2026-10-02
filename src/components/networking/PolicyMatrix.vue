@@ -76,11 +76,11 @@ function onDirection(value: unknown) {
         </Select>
       </div>
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span class="inline-flex items-center gap-1"><Check class="size-3.5 text-success" aria-hidden="true" /> {{ $t("networking.matrix.legendAllow") }}</span>
+        <span class="inline-flex items-center gap-1"><Check class="size-3.5 text-success-text" aria-hidden="true" /> {{ $t("networking.matrix.legendAllow") }}</span>
         <span class="inline-flex items-center gap-1"><X class="size-3.5 text-destructive" aria-hidden="true" /> {{ $t("networking.matrix.legendDeny") }}</span>
-        <span class="inline-flex items-center gap-1"><Contrast class="size-3.5 text-warning" aria-hidden="true" /> {{ $t("networking.matrix.legendMixed") }}</span>
-        <span class="inline-flex items-center gap-1"><Minus class="size-3.5 text-muted-foreground/60" aria-hidden="true" /> {{ $t("networking.matrix.legendNone") }}</span>
-        <span class="inline-flex items-center gap-1"><Circle class="size-3.5 text-muted-foreground/60" aria-hidden="true" /> {{ $t("networking.matrix.legendSelf") }}</span>
+        <span class="inline-flex items-center gap-1"><Contrast class="size-3.5 text-warning-text" aria-hidden="true" /> {{ $t("networking.matrix.legendMixed") }}</span>
+        <span class="inline-flex items-center gap-1"><Minus class="size-3.5 text-muted-foreground" aria-hidden="true" /> {{ $t("networking.matrix.legendNone") }}</span>
+        <span class="inline-flex items-center gap-1"><Circle class="size-3.5 text-muted-foreground" aria-hidden="true" /> {{ $t("networking.matrix.legendSelf") }}</span>
       </div>
     </div>
 
@@ -136,7 +136,7 @@ function onDirection(value: unknown) {
               <Badge v-if="externalFor(src.id) > 0" variant="secondary" class="whitespace-nowrap tabular-nums" :title="$t('networking.matrix.externalHint')">
                 {{ $t("networking.matrix.externalRules", { n: externalFor(src.id) }, externalFor(src.id)) }}
               </Badge>
-              <span v-else class="text-muted-foreground/50">{{ $t("common.misc.none") }}</span>
+              <span v-else class="text-muted-foreground">{{ $t("common.misc.none") }}</span>
             </td>
           </tr>
         </tbody>

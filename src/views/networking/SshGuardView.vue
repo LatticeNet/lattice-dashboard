@@ -1418,10 +1418,14 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         <table class="w-full border-collapse text-sm">
           <thead class="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th scope="col" class="sticky left-0 z-10 bg-background px-2 py-2 text-left font-medium max-sm:w-[8.5rem]">
-                <span class="flex items-center gap-2">
+              <!-- On a coarse pointer the checkbox sits in a 44 px lane at the
+                   cell's edge (no start padding, 14 px each side), so its pad
+                   is not cut by the scroller, and the head row is 44 px so the
+                   pad is not cut above or covered by the first row. -->
+              <th scope="col" class="sticky left-0 z-10 bg-background px-2 py-2 text-left font-medium max-sm:w-[min(8.5rem,38vw)] pointer-coarse:h-11 pointer-coarse:ps-0">
+                <span class="flex items-center gap-2 pointer-coarse:gap-0">
                   <Checkbox
-                    class="touch-target"
+                    class="touch-target pointer-coarse:mx-3.5"
                     :model-value="allVisibleSelected"
                     :aria-label="$t('networking.sshGuard.table.selectAllInFilter')"
                     @update:model-value="(v) => toggleSelectAllVisible(v === true)"
@@ -1460,18 +1464,20 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               :class="selectedNodes.has(state.nodeId) ? 'bg-primary/5' : 'hover:bg-muted/30'"
             >
               <td
-                class="sticky left-0 z-10 bg-background px-2 py-1 max-sm:w-[8.5rem]"
+                class="sticky left-0 z-10 bg-background px-2 py-1 max-sm:w-[min(8.5rem,38vw)] pointer-coarse:ps-0"
                 :class="selectedNodes.has(state.nodeId) ? 'shadow-[inset_2px_0_0_var(--primary)]' : ''"
               >
-                <div class="flex items-center gap-2">
+                <!-- The same 44 px lane as the head; the name takes what is left of
+                     136 px, or of 38vw on a phone under 358 px, so the column never passes the cap. -->
+                <div class="flex items-center gap-2 pointer-coarse:gap-0">
                   <Checkbox
-                    class="touch-target"
+                    class="touch-target pointer-coarse:mx-3.5"
                     :model-value="selectedNodes.has(state.nodeId)"
                     :aria-label="$t('networking.sshGuard.scope.selectRow', { node: state.name || state.nodeId })"
                     @click="(e: MouseEvent) => toggleRow(state.nodeId, e)"
                     @update:model-value="() => {}"
                   />
-                  <div class="min-w-0 max-sm:w-24">
+                  <div class="min-w-0 max-sm:w-[calc(min(8.5rem,38vw)_-_2.5rem)] max-sm:pointer-coarse:w-[calc(min(8.5rem,38vw)_-_3.25rem)]">
                     <p class="truncate font-medium max-sm:text-xs" :title="state.name ? `${state.name} (${state.nodeId})` : state.nodeId">
                       {{ state.name || state.nodeId }}
                     </p>

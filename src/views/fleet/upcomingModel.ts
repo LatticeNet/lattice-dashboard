@@ -9,6 +9,7 @@
  * browser sitting in another time zone.
  */
 import type { ExpiringItem, ExpiringResponse, ExpiringTotal } from "@/lib/api/types";
+import { canonicalCurrency } from "@/lib/currency";
 
 /** The kinds the console knows how to name and filter, in the order the chips show them. */
 export const EXPIRING_KINDS = ["machine_renewal", "vpn_user", "share", "tls_certificate"] as const;
@@ -110,7 +111,7 @@ export function groupByWeek(items: readonly ExpiringItem[], todayMs: number): We
 export function sumTotals(items: readonly Pick<ExpiringItem, "cost_cents" | "currency">[]): ExpiringTotal[] {
   const by = new Map<string, ExpiringTotal>();
   for (const item of items) {
-    const currency = item.currency?.trim().toUpperCase();
+    const currency = canonicalCurrency(item.currency);
     if (!currency || !(item.cost_cents > 0)) continue;
     const total = by.get(currency) ?? { currency, cost_cents: 0, count: 0 };
     total.cost_cents += item.cost_cents;
@@ -124,7 +125,7 @@ const AMOUNT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximu
 
 /** `USD 1,234.50`: the code first, as the reminders and the proof line write it. */
 export function formatAmount(cents: number, currency: string): string {
-  return `${currency} ${AMOUNT.format(cents / 100)}`;
+  return `${canonicalCurrency(currency) || currency} ${AMOUNT.format(cents / 100)}`;
 }
 
 export function formatTotals(totals: readonly ExpiringTotal[]): string {

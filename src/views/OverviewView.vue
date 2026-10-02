@@ -30,6 +30,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { useProof } from "@/composables/useProof";
 import { useAuthStore } from "@/stores/auth";
 import { formatAge, formatRelativeTime } from "@/lib/format";
+import { auditActionLabelKey } from "@/lib/auditAction";
 import { proofReason } from "@/components/common/proofModel";
 import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
@@ -374,6 +375,12 @@ const located = computed(() => nodes.value.filter((node) => typeof node.geo?.lat
 /* -------------------------------- changes -------------------------------- */
 
 const changesState = computed(() => stateOf(can.audit, changes));
+
+/** What a change did, for a person; an action without a label keeps its raw name. */
+function changeLabel(action: string): string | null {
+  const key = auditActionLabelKey(action);
+  return key ? t(key) : null;
+}
 </script>
 
 <template>
@@ -499,10 +506,14 @@ const changesState = computed(() => stateOf(can.audit, changes));
                 :to="{ name: 'audit', query: { open: event.id } }"
                 class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5 px-4 py-2 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @xl:grid-cols-[14rem_minmax(0,1fr)_8rem_8rem]"
               >
-                <span class="truncate font-mono text-xs" :title="event.action">{{ event.action }}</span>
+                <!-- The label says what happened; the raw action rides in mono after
+                     the node, so the row still reads as the audit entry it opens. -->
+                <span v-if="changeLabel(event.action)" class="truncate text-sm" :title="event.action">{{ changeLabel(event.action) }}</span>
+                <span v-else class="truncate font-mono text-xs" :title="event.action">{{ event.action }}</span>
                 <span class="col-start-1 row-start-2 flex min-w-0 gap-2 text-xs text-muted-foreground @xl:col-start-2 @xl:row-start-1">
-                  <NodeLabel v-if="event.node_id" :id="event.node_id" :nodes="nodes" />
-                  <span v-else>{{ $t('overview.changes.noNode') }}</span>
+                  <NodeLabel v-if="event.node_id" :id="event.node_id" :nodes="nodes" class="max-w-[60%] shrink-0" />
+                  <span v-else class="shrink-0">{{ $t('overview.changes.noNode') }}</span>
+                  <span v-if="changeLabel(event.action)" class="min-w-0 truncate font-mono" :title="event.action">{{ event.action }}</span>
                 </span>
                 <span class="hidden truncate text-xs text-muted-foreground @xl:block">{{ event.actor_id }}</span>
                 <span class="col-start-2 row-span-2 row-start-1 text-right text-xs text-muted-foreground tabular @xl:col-start-4 @xl:row-span-1" :title="event.at">

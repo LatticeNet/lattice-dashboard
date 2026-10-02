@@ -322,17 +322,24 @@ function pinnedEnd(column: DataTableColumn<T>): boolean {
  * slid the selection checkbox under the pinned first cell, and a pinned
  * actions column slid over the row chevron. Pinned cells paint the row's
  * `--row-bg`, so hover, the open row and a selected row tint all the way
- * across instead of stopping at the pin.
+ * across instead of stopping at the pin. Unhovered, they paint the ground the
+ * table sits on, `--table-ground`: a Card sets it to `--card`, so a pinned
+ * column inside a card is not a page-coloured band.
  */
 const pinsEnd = computed(() => props.narrowLayout === "scroll" && props.columns.some((column) => column.pin === "end"));
-const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--background))]";
+const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--table-ground,var(--background)))]";
 
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
   if (pinned(index)) {
     // The pinned selection checkbox (2.5rem) counts inside the 38vw cap
     // (design 23, 3.7): checkbox plus a 192 px name covered 62% of a phone.
+    // On a coarse pointer the gutter is 2.75rem, so the checkbox's 44 px pad
+    // fits inside its own cell instead of being cut by the table edge and the
+    // pinned name; the name gives up those 4 px. Below md the width is the
+    // cap too: min and max alone let the table hand its spare width to this
+    // column, and the pair ran to 149 px against 142.5 at 375.
     const cap = props.selectable
-      ? "[--pin-left:2.5rem] [--pin-max:calc(38vw_-_2.5rem)] [--pin-min:calc(38vw_-_2.5rem)]"
+      ? "[--pin-left:2.5rem] [--pin-max:calc(38vw_-_2.5rem)] [--pin-min:calc(38vw_-_2.5rem)] pointer-coarse:[--pin-left:2.75rem] pointer-coarse:[--pin-max:calc(38vw_-_2.75rem)] pointer-coarse:[--pin-min:calc(38vw_-_2.75rem)] max-md:w-(--pin-min)"
       : "[--pin-max:38vw]";
     return cn("pin-start", cap, !column.wrap && "max-md:truncate");
   }
@@ -865,9 +872,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         ]"
       >
         <table class="w-full min-w-[640px] text-sm">
-          <thead class="sticky top-0 z-10 bg-background">
+          <thead class="sticky top-0 z-10 bg-[var(--table-ground,var(--background))]">
             <tr class="border-b border-border text-xs text-muted-foreground">
-              <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2', selectGutterClass)">
+              <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2 pointer-coarse:h-12 pointer-coarse:w-11 pointer-coarse:px-3.5', selectGutterClass)">
                 <Checkbox
                   class="touch-target"
                   :model-value="headerCheckboxState"
@@ -944,9 +951,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             </tr>
             <template v-else>
             <tr
-              class="group border-b border-border last:border-0 bg-(--row-bg) [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:[--row-bg:var(--row-hover)] data-[active]:[--row-bg:var(--muted)]"
+              class="group border-b border-border last:border-0 bg-(--row-bg) [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--table-ground,var(--background)))] hover:[--row-bg:var(--row-hover)] data-[active]:[--row-bg:var(--muted)]"
               :class="{
-                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--background))]': selectable && isRowSelected(entry.row),
+                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--table-ground,var(--background)))]': selectable && isRowSelected(entry.row),
                 'cursor-pointer focus-row': rowActivatable,
               }"
               :data-row-key="rowKey(entry.row)"
@@ -956,7 +963,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
               @click="rowActivatable && onRowActivate(entry.row, $event)"
               @keydown="rowActivatable && onRowKeydown(entry.row, $event)"
             >
-              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-middle', selectGutterClass)">
+              <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-middle pointer-coarse:w-11 pointer-coarse:px-3.5', selectGutterClass)">
                 <Checkbox
                   class="touch-target"
                   :model-value="isRowSelected(entry.row)"

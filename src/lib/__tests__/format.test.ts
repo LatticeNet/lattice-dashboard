@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NO_VALUE, formatAge, formatDateTime, isZeroTime } from "../format.ts";
+import { NO_VALUE, formatAge, formatDateTime, formatMoney, isZeroTime } from "../format.ts";
+import { canonicalCurrency, currencyInputCode, currencyRewrittenOnSave } from "../currency.ts";
 
 const GO_ZERO = "0001-01-01T00:00:00Z";
 
@@ -43,4 +44,32 @@ test("an age reads in Chinese units for a zh locale and stays compact otherwise"
   assert.equal(formatAge(5 * 60_000, "zh-CN"), "5 分钟");
   assert.equal(formatAge(3 * 3_600_000, "zh-CN"), "3 小时");
   assert.equal(formatAge(50 * 3_600_000, "zh-CN"), "2 天");
+});
+
+test("CHY is the yuan and reads, formats and saves as CNY", () => {
+  assert.equal(canonicalCurrency("CHY"), "CNY");
+  assert.equal(canonicalCurrency(" chy "), "CNY");
+  assert.equal(canonicalCurrency("cny"), "CNY");
+  assert.equal(canonicalCurrency("USDT"), "USDT");
+  assert.equal(canonicalCurrency(undefined), "");
+  assert.equal(formatMoney(342683, "CHY"), formatMoney(342683, "CNY"));
+  assert.equal(formatMoney(1000, ""), formatMoney(1000, "USD"));
+});
+
+test("a stored code is read as stored; only the editor keeps letters and cuts to five", () => {
+  // Display and totals: case, spaces and the alias, nothing else, so a
+  // six-letter ticker is not cut into a different code.
+  assert.equal(canonicalCurrency("usdtxx"), "USDTXX");
+  assert.equal(canonicalCurrency("US-D"), "US-D");
+  // The editor writes the field: letters only, at most five, alias folded.
+  assert.equal(currencyInputCode(" us-d "), "USD");
+  assert.equal(currencyInputCode("chy"), "CNY");
+  assert.equal(currencyInputCode("USDTXX"), "USDTX");
+  assert.equal(currencyInputCode(undefined), "");
+  // Saving rewrites only what the editor would change, not case or spaces.
+  assert.equal(currencyRewrittenOnSave("CHY"), true);
+  assert.equal(currencyRewrittenOnSave(" chy "), true);
+  assert.equal(currencyRewrittenOnSave("cny"), false);
+  assert.equal(currencyRewrittenOnSave("USDT"), false);
+  assert.equal(currencyRewrittenOnSave(""), false);
 });

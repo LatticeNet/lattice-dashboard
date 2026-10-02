@@ -61,6 +61,7 @@ import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
+import { approvalTitleMessage } from "@/lib/approvalKind";
 import { fieldNumber } from "@/lib/formValue";
 import { cn } from "@/lib/utils";
 
@@ -901,8 +902,8 @@ const planBadges = computed(() => {
   const a = planApproval.value;
   if (!a) return [];
   return [
-    { label: a.status, variant: "warning" as const },
-    { label: `${a.plugin} · ${a.action}`, variant: "outline" as const },
+    { label: t(`common.status.${a.status}`), variant: "warning" as const },
+    { label: t(approvalTitleMessage(a).key, approvalTitleMessage(a).params), variant: "outline" as const },
     { label: t("networking.shared.idLabel", { id: shortId(a.id, 12) }), variant: "secondary" as const },
   ];
 });

@@ -26,8 +26,11 @@ import {
   isApprovalMoving,
   isApprovalStuck,
   type ApprovalInboxItem,
+  AGENT_UPDATE_STALE_FIELDS,
+  describeAgentUpdateStale,
 } from "../approvalsModel.ts";
 import enOperations from "../../../i18n/locales/en/operations.ts";
+import zhOperationsForStale from "../../../i18n/locales/zh-CN/operations.ts";
 import zhOperations from "../../../i18n/locales/zh-CN/operations.ts";
 
 let nextId = 0;
@@ -351,5 +354,46 @@ test("every inbox bucket has a hint in both locales", () => {
     for (const bucket of buckets) {
       assert.equal(typeof hints[bucket], "string", `${name} is missing bucketHint.${bucket}`);
     }
+  }
+});
+
+test("a stale agent update reason reads into fields, causes and the rest verbatim", () => {
+  // Today's server: agentUpdateApprovalStaleReasonWithDetails over agentUpdatePayloadChangeSummary.
+  assert.deepEqual(
+    describeAgentUpdateStale(
+      "agent update policy changed since this approval was planned; changed fields: current_version planned=0.3.6 current=0.3.8; target_version planned=0.3.8 current=0.3.9-alpha.7; re-plan before approving",
+    ),
+    {
+      changes: [
+        { field: "current_version", planned: "0.3.6", current: "0.3.8" },
+        { field: "target_version", planned: "0.3.8", current: "0.3.9-alpha.7" },
+      ],
+      causes: [],
+      other: [],
+    },
+  );
+  // The older wording the fixture and early rows carry.
+  assert.deepEqual(describeAgentUpdateStale("agent update approval is stale; target_version planned=0.3.8 current=0.3.9-alpha.7; re-plan before approving").changes, [
+    { field: "target_version", planned: "0.3.8", current: "0.3.9-alpha.7" },
+  ]);
+  assert.deepEqual(describeAgentUpdateStale('agent update policy changed since this approval was planned; policy "node_x" is disabled; re-plan before approving'), {
+    changes: [],
+    causes: ["policyDisabled"],
+    other: [],
+  });
+  assert.deepEqual(describeAgentUpdateStale("agent update policy changed since this approval was planned; re-plan before approving"), { changes: [], causes: [], other: [] });
+  // Nothing the server said is dropped.
+  assert.deepEqual(
+    describeAgentUpdateStale("agent update policy changed since this approval was planned; current policy is invalid: unknown binary source; re-plan before approving").other,
+    ["current policy is invalid: unknown binary source"],
+  );
+});
+
+test("every stale field and cause has copy in both locales", () => {
+  const causes = ["policyMissing", "policyDisabled", "nodeMissing", "payloadInvalid", "payloadChanged"];
+  for (const messages of [enOperations, zhOperationsForStale]) {
+    const why = (messages as unknown as { operations: { approvals: { staleWhy: { fields: Record<string, string>; causes: Record<string, string> } } } }).operations.approvals.staleWhy;
+    for (const field of AGENT_UPDATE_STALE_FIELDS) assert.equal(typeof why.fields[field], "string", field);
+    for (const cause of causes) assert.equal(typeof why.causes[cause], "string", cause);
   }
 });

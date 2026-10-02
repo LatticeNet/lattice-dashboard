@@ -11,6 +11,12 @@ import type { MatrixCell } from "@/lib/api";
  * Icons follow the spec legend (keep PolicyMatrix's legend in step):
  *   check allow, x deny, contrast mixed, minus none, circle self (same group,
  *   no explicit rule)
+ *
+ * A glyph has to clear 3:1 on the card to be read at all. The rule glyphs use
+ * the -text inks (the light amber and green fills measured 2.47 and 3.3), and
+ * the empty marks are plain muted ink: they read as empty by being grey and
+ * a dash or a ring, not by being faint (at /40 and /50 they measured 1.75 and
+ * 2.04 in light).
  */
 const props = withDefaults(
   defineProps<{
@@ -32,12 +38,12 @@ type Glyph = { icon: Component; tone: string; key: string };
 const glyph = computed<Glyph>(() => {
   const c = props.cell;
   if (c) {
-    if (c.mixed) return { icon: Contrast, tone: "text-warning", key: "mixed" };
-    if (c.action === "allow") return { icon: Check, tone: "text-success", key: "allow" };
+    if (c.mixed) return { icon: Contrast, tone: "text-warning-text", key: "mixed" };
+    if (c.action === "allow") return { icon: Check, tone: "text-success-text", key: "allow" };
     return { icon: X, tone: "text-destructive", key: "deny" };
   }
-  if (props.isSelf) return { icon: Circle, tone: "text-muted-foreground/50", key: "self" };
-  return { icon: Minus, tone: "text-muted-foreground/40", key: "none" };
+  if (props.isSelf) return { icon: Circle, tone: "text-muted-foreground", key: "self" };
+  return { icon: Minus, tone: "text-muted-foreground", key: "none" };
 });
 
 /** Hover summary: protocol/ports/rule-count when a rule exists. */

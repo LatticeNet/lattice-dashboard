@@ -38,6 +38,7 @@ import {
   formatMoney,
   formatRelativeTime,
 } from "@/lib/format";
+import { currencyInputCode, currencyRewrittenOnSave } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_INVENTORY_GROUP,
@@ -56,6 +57,18 @@ import {
   parseReminderDaysInput,
   rollForwardPast,
 } from "./inventoryEditorModel";
+import {
+  aggregateSpend,
+  billingCategory,
+  hasRenewalIntent,
+  isoDay,
+  machinePrice,
+  monthlyEquivCents,
+  renewalDate,
+  renewalSetupIncomplete,
+  type BillingCategory,
+  type CurrencySpend,
+} from "./inventoryCostModel";
 import { DEFAULT_REMIND_DAYS, hasRenewalDate, nextReminder, ruleRoutesRenewals } from "./reminderModel";
 import { nameParts } from "./nodesTableModel";
 
@@ -97,21 +110,11 @@ import {
 } from "@/components/ui/select";
 
 type RenewalTone = "default" | "success" | "warning" | "destructive";
-type BillingCategory = "renewalIncomplete" | "recurring" | "onetime" | "free" | "unpriced" | "unprofiled";
 type GroupBy = InventoryGroupBy;
 
-// Approx. days per month, used to normalise custom-day billing cycles to a
-// monthly-equivalent figure (365.25 / 12).
-const DAYS_PER_MONTH = 30.4375;
-const COMMON_CURRENCIES = ["USD", "CNY", "CHY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
+// No CHY: it is not a currency code, and lib/currency.ts reads it as CNY.
+const COMMON_CURRENCIES = ["USD", "CNY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
 const NO_RENEWAL_CYCLE = "__none";
-// Monthly divisor per named cycle; custom_days is handled separately.
-const CYCLE_DIVISOR: Record<string, number> = {
-  monthly: 1,
-  quarterly: 3,
-  semiannual: 6,
-  annual: 12,
-};
 
 // Trimmed string coercion. Guards against non-string reactive values: shadcn
 // <Input type="number"> binds through defineModel<string|number>, so a numeric
@@ -331,74 +334,7 @@ const renewalCycleSelect = computed({
   },
 });
 
-// ── Cost model ────────────────────────────────────────────────────────────────
-function machinePrice(machine: MachineView): number {
-  return machine.price_cents ?? 0;
-}
-
-function renewalDate(machine?: MachineView): string {
-  const date = formatDate(machine?.next_renewal);
-  if (!date || date.startsWith("0001-")) return "";
-  return date;
-}
-
-function hasRenewalIntent(machine: MachineView): boolean {
-  return !!(
-    machine.renewal_cycle ||
-    renewalDate(machine) ||
-    machine.auto_roll ||
-    machine.reminders_enabled ||
-    machine.remind_days_before?.length
-  );
-}
-
-function renewalSetupIncomplete(machine: MachineView): boolean {
-  if (!hasRenewalIntent(machine)) return false;
-  return !machine.renewal_cycle || !renewalDate(machine);
-}
-
-function billingCategory(machine: MachineView): BillingCategory {
-  if (!machine.id) return "unprofiled";
-  if (renewalSetupIncomplete(machine)) return "renewalIncomplete";
-  const price = machinePrice(machine);
-  if (price > 0) return machine.renewal_cycle ? "recurring" : "onetime";
-  // Price 0/unset: a machine that is being billed (has a renewal cycle or a
-  // tracked renewal date) but has no price entered is "needs pricing"; a machine
-  // with no billing signal at all is genuinely free.
-  return hasRenewalIntent(machine) ? "unpriced" : "free";
-}
-
-// Monthly-equivalent cost in cents for a recurring machine; 0 otherwise.
-function monthlyEquivCents(machine: MachineView): number {
-  if (billingCategory(machine) !== "recurring") return 0;
-  const price = machinePrice(machine);
-  const cycle = machine.renewal_cycle;
-  if (cycle === "custom_days") {
-    const days = machine.cycle_days ?? 0;
-    if (days <= 0) return price; // treat unknown span as monthly
-    return (price * DAYS_PER_MONTH) / days;
-  }
-  const divisor = CYCLE_DIVISOR[cycle as string] ?? 1;
-  return price / divisor;
-}
-
-type CurrencySpend = { currency: string; monthly: number; annual: number; count: number };
-
-function aggregateSpend(list: MachineView[]): CurrencySpend[] {
-  const acc = new Map<string, CurrencySpend>();
-  for (const machine of list) {
-    if (billingCategory(machine) !== "recurring") continue;
-    const cur = machine.currency || "USD";
-    const monthly = monthlyEquivCents(machine);
-    const entry = acc.get(cur) ?? { currency: cur, monthly: 0, annual: 0, count: 0 };
-    entry.monthly += monthly;
-    entry.annual += monthly * 12;
-    entry.count += 1;
-    acc.set(cur, entry);
-  }
-  return [...acc.values()].sort((a, b) => b.monthly - a.monthly);
-}
-
+// ── Cost model (inventoryCostModel.ts) ────────────────────────────────────────
 const spendByCurrency = computed<CurrencySpend[]>(() => aggregateSpend(machines.value));
 // ── Fleet counters ────────────────────────────────────────────────────────────
 const freeCount = computed(() => machines.value.filter((m) => billingCategory(m) === "free").length);
@@ -548,8 +484,9 @@ function normalizeVendorKey(value?: string): string {
   return s(value).toLowerCase();
 }
 
+/** The editor's strict code (lib/currency.ts): a CHY profile opens and saves as CNY. Totals read the stored code. */
 function normalizeCurrency(value: unknown): string {
-  return s(value).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5);
+  return currencyInputCode(s(value));
 }
 
 function nodeInventoryFor(nodeID?: string) {
@@ -601,13 +538,6 @@ function renewalLabel(machine?: MachineView): string {
   if (days < 0) return t("fleet.inventory.renewal.overdue", { days: Math.abs(days) });
   if (days === 0) return t("fleet.inventory.renewal.dueToday");
   return t("fleet.inventory.renewal.daysLeft", { days });
-}
-
-function formatDate(input?: string): string {
-  if (!input) return "";
-  const date = new Date(input);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toISOString().slice(0, 10);
 }
 
 function isoDate(input: string): string | undefined {
@@ -665,6 +595,14 @@ function useCalculatedRenewal(): void {
 // ── Editor: the draft read back, and the unsaved-change guard ─────────────────
 const draftPriceCents = computed(() => parsePriceCents() ?? 0);
 const draftCurrency = computed(() => normalizeCurrency(currency.value) || "USD");
+// Saving a profile stored as "CHY" writes "CNY". Say so while the picker
+// still shows the stored code's canonical form, so the rewrite is not silent.
+const currencyRewriteNote = computed(() => {
+  const stored = editMachine.value?.currency;
+  if (!editHasProfile.value || !currencyRewrittenOnSave(stored)) return "";
+  if (draftCurrency.value !== normalizeCurrency(stored)) return "";
+  return t("fleet.inventory.profile.currencyRewrite", { stored: s(stored).toUpperCase(), code: draftCurrency.value });
+});
 const draftCycleDays = computed(() => Number(s(cycleDays.value)) || 0);
 const draftNextRenewal = computed(() => (needsRenewal.value ? nextRenewal.value || calculatedNextRenewal.value : ""));
 
@@ -959,7 +897,7 @@ function loadForm(machine: MachineView) {
   notes.value = machine.notes || "";
   priceMajor.value = machine.price_cents ? (machine.price_cents / 100).toFixed(2) : "";
   currency.value = normalizeCurrency(machine.currency) || "USD";
-  purchasedAt.value = formatDate(machine.purchased_at);
+  purchasedAt.value = isoDay(machine.purchased_at);
   needsRenewal.value = !!(
     machine.renewal_cycle ||
     machine.next_renewal ||
@@ -969,7 +907,7 @@ function loadForm(machine: MachineView) {
   );
   renewalCycle.value = machine.renewal_cycle || "";
   cycleDays.value = machine.cycle_days ? String(machine.cycle_days) : "";
-  nextRenewal.value = formatDate(machine.next_renewal);
+  nextRenewal.value = isoDay(machine.next_renewal);
   autoRoll.value = !!machine.auto_roll;
   remindersEnabled.value = !!machine.reminders_enabled;
   remindersFollowDate.value = !hasRenewalDate(machine);
@@ -1869,6 +1807,9 @@ async function sendReminders(): Promise<void> {
               {{ needsRenewal ? $t('fleet.inventory.profile.priceHint') : $t('fleet.inventory.profile.priceHintOneTime') }}
               <span v-if="draftMonthlyLabel" class="font-mono text-foreground tabular">{{ draftMonthlyLabel }}</span>
             </p>
+            <p v-if="currencyRewriteNote" class="text-xs text-muted-foreground" data-testid="inventory-currency-rewrite">
+              {{ currencyRewriteNote }}
+            </p>
             <div v-if="needsRenewal" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div class="grid content-start gap-2">
                 <Label for="machine-cycle">{{ $t('fleet.inventory.profile.renewalCycle') }}</Label>
@@ -2100,7 +2041,7 @@ async function sendReminders(): Promise<void> {
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.profile.purchasedAt') }}</dt>
-              <dd>{{ formatDate(editMachine.purchased_at) || $t('common.misc.none') }}</dd>
+              <dd>{{ isoDay(editMachine.purchased_at) || $t('common.misc.none') }}</dd>
             </div>
             <div>
               <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.facts.renewal') }}</dt>

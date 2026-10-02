@@ -720,7 +720,7 @@ async function confirmDeleteRule(): Promise<void> {
           @retry="channelsQuery.refresh"
         >
           <template #cell-name="{ row }">
-            <div class="font-medium">{{ row.name || row.id }}</div>
+            <div class="font-medium max-md:truncate">{{ row.name || row.id }}</div>
           </template>
           <template #cell-kind="{ row }">
             <Badge variant="outline" class="font-mono text-[11px]">{{ row.kind }}</Badge>
@@ -808,8 +808,8 @@ async function confirmDeleteRule(): Promise<void> {
           @retry="rulesQuery.refresh"
         >
           <template #cell-name="{ row }">
-            <div class="font-medium">{{ row.name || row.id }}</div>
-            <div class="mt-1 font-mono text-xs text-muted-foreground">{{ row.id }}</div>
+            <div class="font-medium max-md:truncate">{{ row.name || row.id }}</div>
+            <div class="mt-1 font-mono text-xs text-muted-foreground max-md:truncate">{{ row.id }}</div>
           </template>
           <template #row-detail="{ row }">
             <p

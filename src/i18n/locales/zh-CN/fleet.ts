@@ -946,6 +946,7 @@ export default {
         region: "区域",
         regionPlaceholder: "JP-Tokyo",
         currency: "币种",
+        currencyRewrite: "当前存为 {stored}，这不是标准币种代码。保存后会写为 {code}。",
         price: "价格",
         purchasedAt: "购买日期",
         nextRenewal: "下次续费",

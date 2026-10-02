@@ -125,9 +125,9 @@ function planFor(rand: () => number, plugin: string, node: string, i: number): s
 const HISTORY_PLUGINS: Array<[string, string]> = [
   ["agentupdate", "update-agent"],
   ["singbox-linemeta", "apply-metadata"],
-  ["nftpolicy", "apply-policy"],
+  ["nftpolicy", "apply-ruleset"],
   ["proxycore", "apply-config"],
-  ["sshguard", "arm"],
+  ["sshguard", "sshguard-arm:v1"],
   ["wireguard", "apply-config"],
 ];
 
@@ -383,7 +383,7 @@ export const PENDING_SSH: ApprovalView = {
   id: "approval_9zk2wq8xrt1mdb3n",
   node_id: "node_2wqrtzk85xm1bd6v",
   plugin: "sshguard",
-  action: "arm",
+  action: "sshguard-arm:v1",
   plan: [
     "# Lattice SSH Guard arm plan",
     "",
@@ -446,6 +446,87 @@ export function pendingWave(count: number): ApprovalView[] {
   });
 }
 
+/**
+ * One pending plan of each kind the cards had no title for before titles
+ * came from lib/approvalKind.ts, written the way lattice-server files them
+ * (plugin, action with its digest suffix, method, and the JSON plans that
+ * carry a summary). Node choices and the summaries' names are invented.
+ */
+const SHA = (seed: string) => seed.repeat(64).slice(0, 64);
+export const PENDING_KINDS: ApprovalView[] = [
+  {
+    id: "approval_k1lineuseradd01",
+    node_id: nodeIdFor(1),
+    plugin: "singbox-lineuser",
+    action: `apply-line-user:${SHA("4f")}`,
+    method: "apply_add",
+    plan: JSON.stringify({ op: "add", user_id: "vpnu_alice", line_hash_id: "lh_hk_reality", summary: "sb user add alice@example.com on line hk-reality, node hkg-edge-02" }, null, 2),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-12 * MINUTE),
+    updated_at: iso(-12 * MINUTE),
+  },
+  {
+    id: "approval_k2lineuserrm001",
+    node_id: nodeIdFor(1),
+    plugin: "singbox-lineuser",
+    action: `apply-line-user:${SHA("9c")}`,
+    method: "apply_remove",
+    plan: JSON.stringify({ op: "remove", user_id: "vpnu_bob", line_hash_id: "lh_hk_reality", summary: "sb user remove bob on node hkg-edge-02 (deleted user bob as bob@example.com, credential sha 9c9c9c…)" }, null, 2),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-11 * MINUTE),
+    updated_at: iso(-11 * MINUTE),
+  },
+  {
+    id: "approval_k3netguard00001",
+    node_id: nodeIdFor(4),
+    plugin: "nft",
+    action: "apply-ruleset:netguard-v1",
+    plan: "table inet lattice_guard {\n  chain input {\n    type filter hook input priority 0; policy drop;\n    ct state established,related accept\n    tcp dport { 22, 443 } accept\n  }\n}\n",
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-40 * MINUTE),
+    updated_at: iso(-40 * MINUTE),
+  },
+  {
+    id: "approval_k4linechain0001",
+    node_id: nodeIdFor(2),
+    plugin: "singbox-linechain",
+    action: `apply-line-chain:${SHA("d1")}`,
+    method: "chain_set_apply",
+    plan: JSON.stringify({ summary: "Route hk-reality on hkg-edge-02 through managed target jp-tokyo-1", source_node_id: nodeIdFor(2) }, null, 2),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-2 * HOUR),
+    updated_at: iso(-2 * HOUR),
+  },
+  {
+    id: "approval_k5managedline01",
+    node_id: nodeIdFor(3),
+    plugin: "singbox-managedline",
+    action: `apply-managed-line:${SHA("7e")}`,
+    method: "managed_rollout_apply",
+    plan: JSON.stringify({ summary: "Managed line for carol on lax-edge-01, port 24311", user_id: "vpnu_carol" }, null, 2),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-3 * HOUR),
+    updated_at: iso(-3 * HOUR),
+  },
+  {
+    id: "approval_k6runtimeplugin",
+    node_id: nodeIdFor(5),
+    plugin: "example.lattice-plugin",
+    action: "example.lattice-plugin/reference/plan",
+    method: "plan",
+    plan: JSON.stringify({ summary: "Write /etc/example/reference.conf on one node", targets: [nodeIdFor(5)], steps: ["write file", "reload service"] }, null, 2),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-5 * HOUR),
+    updated_at: iso(-5 * HOUR),
+  },
+];
+
 export const HAND_WRITTEN: ApprovalView[] = [
   OFFLINE,
   NEVER_REPORTED,
@@ -458,6 +539,7 @@ export const HAND_WRITTEN: ApprovalView[] = [
   PENDING_SSH,
   APPLIED,
   STALE,
+  ...PENDING_KINDS,
 ];
 
 /**

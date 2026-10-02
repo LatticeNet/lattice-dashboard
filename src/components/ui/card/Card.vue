@@ -14,7 +14,8 @@ const props = defineProps<{
     data-slot="card"
     :class="
       cn(
-        'bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm',
+        // --table-ground: a table inside paints its pinned cells and header on the card, not the page.
+        'bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm [--table-ground:var(--card)]',
         props.interactive && 'surface-interactive',
         props.class,
       )

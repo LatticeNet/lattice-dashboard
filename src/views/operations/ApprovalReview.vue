@@ -18,6 +18,7 @@ import { api, unwrap, type ApprovalView, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { approvalStatusMeta } from "@/lib/status";
+import { approvalPlanSummary } from "@/lib/approvalKind";
 import { describeNodeStatus } from "@/lib/nodeStatus";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { taskStateStyle } from "@/lib/taskLease";
@@ -41,6 +42,8 @@ const props = defineProps<{
   /** An agent-update plan that no longer matches policy. */
   stale: boolean;
   staleReason: string;
+  /** The server's own English for the stale reason, shown in mono under the translation. */
+  staleRaw?: string;
   canReplan: boolean;
   canDismissStale: boolean;
   canDismissWaiting: boolean;
@@ -65,6 +68,8 @@ const { t } = useI18n();
 /* ------------------------------------------------------------------ */
 
 const waiting = computed(() => (props.approval.status === "approved" ? props.approval.waiting : undefined));
+/** The plan's own sentence, when it is JSON that carries one ("Add alice to hk-reality on [cd]-hkg"). */
+const planSummary = computed(() => approvalPlanSummary(props.approval.plan));
 const stuck = computed(() => isApprovalStuck(props.approval));
 const moving = computed(() => props.approval.status === "approved" && !!props.approval.waiting && !props.approval.waiting.blocked);
 
@@ -140,7 +145,10 @@ function statusLabel(status: string): string {
 
 <template>
   <div class="space-y-6" data-testid="approval-review">
-    <dl class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+    <p v-if="planSummary" class="break-words text-sm text-foreground" data-testid="approval-summary">{{ planSummary }}</p>
+    <!-- Two columns at every width: one field per row at 375 stacked six
+         rows and pushed the plan, the thing being decided, below the fold. -->
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm [&>div]:min-w-0 [&_dd]:break-words">
       <div>
         <dt class="text-xs text-muted-foreground">{{ $t('operations.approvals.columns.status') }}</dt>
         <dd class="flex flex-wrap items-center gap-1">
@@ -242,6 +250,7 @@ function statusLabel(status: string): string {
       <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
       <p class="mt-2 text-xs font-medium text-muted-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
       <p class="mt-1 break-words">{{ staleReason }}</p>
+      <p v-if="staleRaw && staleRaw !== staleReason" class="mt-1 break-words font-mono text-xs" data-testid="approval-stale-raw">{{ staleRaw }}</p>
       <div class="mt-3 flex flex-wrap gap-2">
         <Button v-if="canReplan" type="button" variant="outline" size="sm" :disabled="replanning" @click="emit('replan')">
           <RefreshCw v-if="replanning" class="size-4 animate-spin" aria-hidden="true" />

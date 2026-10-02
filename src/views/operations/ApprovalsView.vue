@@ -57,6 +57,7 @@ import { useAuthStore } from "@/stores/auth";
 import { approvalStatusMeta } from "@/lib/status";
 import { isReporting } from "@/lib/nodeStatus";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { approvalRawLabel, approvalTitleMessage } from "@/lib/approvalKind";
 import type { TokenResolvers } from "@/lib/queryTokens";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +82,7 @@ import ApprovalReview from "./ApprovalReview.vue";
 import {
   UNKNOWN_WRITER,
   approvalWaitLabelKey,
+  describeAgentUpdateStale,
   groupApprovalsIntoEvents,
   isApprovalMoving,
   isApprovalStuck,
@@ -366,10 +368,43 @@ function isStale(approval?: ApprovalView): boolean {
   return isStaleAgentUpdateApprovalView(approval);
 }
 
+/**
+ * Why an agent update plan went stale, in the reader's language. The server
+ * writes the reason in English ("...; changed fields: target_version
+ * planned=0.3.8 current=0.3.9; re-plan before approving"); this says the
+ * same parts as sentences, and anything it cannot place is quoted as the
+ * server wrote it. The raw text stays available through staleRaw.
+ */
 function staleReason(approval?: ApprovalView): string {
   if (!approval || approval.plugin !== "agentupdate") return "";
-  if (approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED) return approval.reason || t("operations.approvals.toastStale");
-  return approval.reason ?? "";
+  const raw = approval.reason?.trim() ?? "";
+  if (!(approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED)) return raw;
+  if (!raw) return t("operations.approvals.toastStale");
+  const detail = describeAgentUpdateStale(raw);
+  const parts: string[] = [];
+  if (detail.changes.length) {
+    const changes = detail.changes
+      .map((change) =>
+        t("operations.approvals.staleWhy.change", {
+          field: t(`operations.approvals.staleWhy.fields.${change.field}`),
+          planned: change.planned || t("operations.approvals.staleWhy.none"),
+          current: change.current || t("operations.approvals.staleWhy.none"),
+        }),
+      )
+      .join(t("operations.approvals.staleWhy.listSeparator"));
+    parts.push(t("operations.approvals.staleWhy.changed", { changes }));
+  }
+  for (const cause of detail.causes) parts.push(t(`operations.approvals.staleWhy.causes.${cause}`));
+  if (detail.other.length) parts.push(t("operations.approvals.staleWhy.other", { detail: detail.other.join("; ") }));
+  if (!detail.changes.length && !detail.causes.length) parts.unshift(t("operations.approvals.staleWhy.unknown"));
+  parts.push(t("operations.approvals.staleWhy.replan"));
+  // Chinese sentences sit against each other; English ones take a space.
+  return parts.join(locale.value.startsWith("zh") ? "" : " ");
+}
+
+/** The server's own words for a stale plan, kept beside the translation. */
+function staleRaw(approval?: ApprovalView): string {
+  return approval?.plugin === "agentupdate" ? (approval.reason?.trim() ?? "") : "";
 }
 
 function canReplan(approval?: ApprovalView): boolean {
@@ -441,8 +476,27 @@ const openReadFailure = computed<string | null>(() => {
   return error.message;
 });
 
+/** The approval's title by its kind; the raw plugin and action ride beside it (changeRaw). */
 function changeLabel(approval: ApprovalView): string {
-  return `${approval.plugin} · ${approval.action}`;
+  const message = approvalTitleMessage(approval);
+  return t(message.key, message.params);
+}
+
+function changeRaw(approval: ApprovalView): string {
+  return approvalRawLabel(approval);
+}
+
+/** The sheet's secondary decision: approve now, queue the apply later. */
+function approveLaterMenu(approval: ApprovalView): RowMenuItem[] {
+  return [
+    {
+      key: "approve-later",
+      label: t("operations.approvals.approveOnly"),
+      icon: CheckCircle2,
+      disabled: !canDecide(approval) || pending.value === approval.id,
+      run: () => void approve(approval, false),
+    },
+  ];
 }
 
 /* ------------------------------------------------------------------ */
@@ -512,6 +566,30 @@ function focusSheetTitle(): void {
   void nextTick(() => sheetTitle()?.focus());
 }
 
+/**
+ * The plan this tab just decided. Its footer leaves on the next read, and
+ * focus goes back to the title as the footer goes: at phone width the sheet
+ * is modal, and a decision taken from the footer's menu was made while the
+ * menu held the sheet's focus scope paused, so the scope still remembered the
+ * menu's trigger and sent focus to the sheet itself when the trigger left.
+ * The title already holds focus by then, and focusing a focused element
+ * fires nothing the scope can record, so it is blurred and focused again in
+ * the same flush as the removal, ahead of the scope's mutation check.
+ */
+let decidedOpenId: string | null = null;
+watch(
+  () => openRecord.value?.status,
+  (status, before) => {
+    if (!decidedOpenId || openRecord.value?.id !== decidedOpenId || before !== "pending" || status === "pending") return;
+    decidedOpenId = null;
+    const title = sheetTitle();
+    if (!title) return;
+    if (document.activeElement === title) title.blur();
+    title.focus();
+  },
+  { flush: "post" },
+);
+
 /* ------------------------------------------------------------------ */
 /* Decisions                                                           */
 /* ------------------------------------------------------------------ */
@@ -572,6 +650,7 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
   decisionError.value = null;
   try {
     await api.approvals.approve(approval.id, queueApply, await decisionDigest(approval));
+    decidedOpenId = approval.id;
     rememberSheetDecision(approval);
     toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
     // The sheet stays open on the decided plan and its footer is gone.
@@ -665,7 +744,7 @@ function askDismissWaiting(approval: ApprovalView, fromRow = false): void {
   rememberOpener(undefined, fromRow ? approval.id : undefined);
   confirm.value = {
     title: t("operations.approvals.waiting.dismissTitle"),
-    description: t("operations.approvals.waiting.dismissConfirm", { plugin: approval.plugin, action: approval.action, node: nodeName(approval.waiting?.node_id || approval.node_id) }),
+    description: t("operations.approvals.waiting.dismissConfirm", { change: changeLabel(approval), node: nodeName(approval.waiting?.node_id || approval.node_id) }),
     label: t("operations.approvals.waiting.dismiss"),
     run: () => dismiss(approval),
   };
@@ -752,9 +831,9 @@ function eventTitle(group: ApprovalEventGroup<ApprovalView>): string {
       ? t("operations.approvals.events.titleFleetUpgrade", { current: group.transition.current, target: group.transition.target })
       : t("operations.approvals.events.titleFleetUpgradeUnknown");
   }
-  if (group.titleKind === "linemeta-sync") return t("operations.approvals.events.titleLinemetaSync");
-  // The action as the plan and the sheet spell it ("sshguard · arm"), not title-cased.
-  return `${group.plugin} · ${group.actionPrefix}`;
+  // Every item in a card shares its kind (it is part of the group key), so the first names them all.
+  const first = group.items[0];
+  return first ? changeLabel(first) : `${group.plugin} · ${group.actionPrefix}`;
 }
 
 function joinPreview(names: string[], shown = 6): string {
@@ -1224,6 +1303,7 @@ function refreshAll(): void {
                 <div class="flex flex-wrap items-start justify-between gap-2">
                   <div class="min-w-0">
                     <p class="text-sm font-medium leading-snug">{{ eventTitle(group) }}</p>
+                    <p class="font-mono text-xs break-all text-muted-foreground">{{ group.plugin }} · {{ group.actionPrefix }}</p>
                     <p class="mt-0.5 text-xs text-muted-foreground">
                       {{ $t('operations.approvals.events.count', { count: group.items.length }, group.items.length) }}
                       · {{ $t('operations.approvals.events.writerBy', { writer: eventWriter(group) }) }}
@@ -1310,7 +1390,7 @@ function refreshAll(): void {
                   >
                     <NodeLabel v-if="item.node_id" :id="item.node_id" class="font-medium" />
                     <span v-else class="font-medium">{{ $t('common.misc.global') }}</span>
-                    <span class="truncate text-xs text-muted-foreground">{{ changeLabel(item) }}</span>
+                    <span class="truncate text-xs text-muted-foreground" :title="changeRaw(item)">{{ changeLabel(item) }}</span>
                     <span class="ms-auto text-xs text-muted-foreground" :title="formatDateTime(item.created_at)">{{ formatRelativeTime(item.created_at) }}</span>
                   </button>
                 </li>
@@ -1349,11 +1429,11 @@ function refreshAll(): void {
               :active-row-id="sheet.openId.value"
             >
               <template #cell-change="{ row }">
-                <p class="truncate text-sm font-medium">{{ changeLabel(row) }}</p>
+                <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
               </template>
               <template #cell-target="{ row }"><NodeLabel :id="row.node_id" /></template>
               <template #cell-why="{ row }">
-                <p class="line-clamp-2 break-words text-xs text-muted-foreground">{{ staleReason(row) }}</p>
+                <p class="line-clamp-2 break-words text-xs text-muted-foreground" :title="staleRaw(row) || undefined">{{ staleReason(row) }}</p>
               </template>
               <template #cell-updated="{ row }">
                 <span class="whitespace-nowrap text-xs text-muted-foreground" :title="formatDateTime(row.updated_at)">{{ formatRelativeTime(row.updated_at || row.created_at) }}</span>
@@ -1414,8 +1494,8 @@ function refreshAll(): void {
           </template>
           <template #cell-change="{ row }">
             <div class="min-w-0">
-              <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
-              <p class="truncate font-mono text-xs text-muted-foreground" :title="row.id">{{ shortId(row.id, 14) }}</p>
+              <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
+              <p class="truncate font-mono text-xs text-muted-foreground" :title="`${changeRaw(row)} · ${row.id}`">{{ changeRaw(row) }} · {{ shortId(row.id, 14) }}</p>
             </div>
           </template>
           <template #cell-status="{ row }">
@@ -1485,7 +1565,7 @@ function refreshAll(): void {
             />
           </template>
           <template #cell-change="{ row }">
-            <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
+            <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
           </template>
           <template #cell-target="{ row }">
             <NodeLabel v-if="row.node_id" :id="row.node_id" />
@@ -1521,7 +1601,7 @@ function refreshAll(): void {
             :active-row-id="sheet.openId.value"
           >
             <template #cell-change="{ row }">
-              <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
+              <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
             </template>
             <template #cell-target="{ row }">
               <NodeLabel v-if="row.node_id" :id="row.node_id" />
@@ -1538,7 +1618,7 @@ function refreshAll(): void {
     <ObjectSheet
       :open="!!sheet.openId.value"
       :title="openRecord ? changeLabel(openRecord) : $t('operations.approvals.sheet.title')"
-      :subtitle="sheet.openId.value ?? undefined"
+      :subtitle="sheet.openId.value ? (openRecord ? `${changeRaw(openRecord)} · ${sheet.openId.value}` : sheet.openId.value) : undefined"
       :state="sheetState"
       :error="openQuery.error.value?.message ?? null"
       :read-only="openRecord?.status === 'pending' && !canDecide(openRecord)"
@@ -1556,6 +1636,7 @@ function refreshAll(): void {
         :plan-error="openQuery.error.value?.message ?? null"
         :stale="isStale(openRecord)"
         :stale-reason="staleReason(openRecord)"
+        :stale-raw="staleRaw(openRecord)"
         :can-replan="canReplan(openRecord)"
         :can-dismiss-stale="canDismissStale(openRecord)"
         :can-dismiss-waiting="canDismissWaiting(openRecord)"
@@ -1568,16 +1649,16 @@ function refreshAll(): void {
         @replan="replan(openRecord)"
         @open-approval="(id) => sheet.open(id)"
       />
+      <!-- Approve and queue is the decision; approving without queueing leaves
+           the plan unapplied (and a102 refuses it for line-user plans), so it
+           waits in the menu beside it instead of sitting first with equal weight. -->
       <template v-if="openRecord && openRecord.status === 'pending' && !isStale(openRecord)" #actions>
-        <Button type="button" variant="outline" size="sm" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="approve(openRecord, false)">
-          <CheckCircle2 class="size-4" aria-hidden="true" />
-          {{ $t('operations.approvals.approveOnly') }}
-        </Button>
         <Button type="button" size="sm" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="approve(openRecord, true)">
           <RefreshCw v-if="pending === openRecord.id" class="size-4 animate-spin" aria-hidden="true" />
           <Play v-else class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.approveAndQueue') }}
         </Button>
+        <RowMenu align="start" :name="changeLabel(openRecord)" :items="approveLaterMenu(openRecord)" />
         <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.reject') }}
