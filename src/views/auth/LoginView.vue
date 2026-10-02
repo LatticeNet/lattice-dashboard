@@ -11,6 +11,7 @@ import {
   CircleAlert,
   ArrowLeft,
   ArrowRight,
+  Clock,
   Fingerprint,
 } from "lucide-vue-next";
 import { useAuthStore } from "@/stores/auth";
@@ -21,11 +22,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { documentTitle } from "@/layout/headerModel";
+import { EXPIRED_REASON } from "@/lib/sessionExpiry";
 
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
-const { t } = useI18n();
+const { t, te } = useI18n();
 
 watchEffect(() => {
   document.title = documentTitle({ page: t("auth.signIn") });
@@ -54,6 +56,24 @@ const totpInput = ref<InstanceType<typeof Input> | null>(null);
 const redirect = computed(() => {
   const r = route.query.redirect;
   return typeof r === "string" && r.startsWith("/") && !r.startsWith("//") ? r : "/";
+});
+
+/**
+ * Sent here by an expired session (router, lib/sessionExpiry): say so, and
+ * name the page signing in returns to, so the bounce does not read as a
+ * crash or a sign-out.
+ */
+function returnPageLabel(path: string): string {
+  const resolved = router.resolve(path);
+  const name = typeof resolved.name === "string" ? resolved.name : "";
+  if (name && te(`nav.items.${name}`)) return t(`nav.items.${name}`);
+  return resolved.path;
+}
+
+const expiredNote = computed(() => {
+  if (route.query.reason !== EXPIRED_REASON) return "";
+  const page = typeof route.query.redirect === "string" ? returnPageLabel(redirect.value) : "";
+  return page ? t("auth.expired", { page }) : t("auth.expiredBare");
 });
 
 function setError(e: unknown) {
@@ -310,6 +330,16 @@ onMounted(async () => {
             </div>
 
             <div class="p-6 pt-0">
+              <div
+                v-if="expiredNote"
+                role="status"
+                data-testid="login-expired"
+                class="mb-4 flex items-start gap-2.5 rounded-md border border-warning/30 bg-warning/10 px-3 py-2.5 text-sm text-warning-text"
+              >
+                <Clock class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <p class="min-w-0 break-words">{{ expiredNote }}</p>
+              </div>
+
               <!-- Inline error -->
               <div
                 v-if="errorMsg"

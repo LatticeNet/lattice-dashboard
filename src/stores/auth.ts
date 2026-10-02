@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import { api, setCsrfToken, type Principal } from "@/lib/api";
+import { api, ApiError, setCsrfToken, type Principal } from "@/lib/api";
 import { allowsRuntimeScope, allowsScopeGrant } from "@/lib/scopes";
 import { startAuthentication } from "@/lib/webauthn";
 
@@ -13,6 +13,8 @@ export const useAuthStore = defineStore("auth", () => {
   const principal = ref<Principal | undefined>(undefined);
   const ready = ref(false); // bootstrap (GET /api/me) has resolved at least once
   const pendingTotpChallenge = ref<string | undefined>(undefined);
+  /** A sign-out is in flight: 401s from reads it overtakes are not an expired session. */
+  const signingOut = ref(false);
 
   const isAuthenticated = computed(() => !!principal.value);
   const scopes = computed(() => principal.value?.scopes ?? []);
@@ -84,17 +86,41 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function logout(): Promise<void> {
+    signingOut.value = true;
     try {
       await api.auth.logout();
     } finally {
       applyPrincipal(undefined);
+      signingOut.value = false;
     }
+  }
+
+  /**
+   * Whether the session is gone: one uncached read of /api/me, after some
+   * other call answered 401. Refused means gone; an answer means the 401
+   * meant something else (a wrong code at step-up, say). Any other failure
+   * is thrown, and decides nothing.
+   */
+  async function sessionGone(): Promise<boolean> {
+    try {
+      await api.auth.me({ signal: new AbortController().signal });
+      return false;
+    } catch (error) {
+      if (error instanceof ApiError && error.isAuth) return true;
+      throw error;
+    }
+  }
+
+  /** The server no longer knows this session: forget the principal so the guard sends the operator to sign in. */
+  function expire(): void {
+    applyPrincipal(undefined);
   }
 
   return {
     principal,
     ready,
     pendingTotpChallenge,
+    signingOut,
     isAuthenticated,
     scopes,
     serverAllowlist,
@@ -107,5 +133,7 @@ export const useAuthStore = defineStore("auth", () => {
     completeTotp,
     loginWebAuthn,
     logout,
+    sessionGone,
+    expire,
   };
 });

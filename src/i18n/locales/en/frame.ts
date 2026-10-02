@@ -342,6 +342,8 @@ export default {
     ssoContinue: "Continue with {provider}",
     ssoOr: "or",
     invalidCredentials: "Invalid username or password.",
+    expired: "Your session expired. Sign in again to return to {page}.",
+    expiredBare: "Your session expired. Sign in again to continue.",
   },
 
   overview: {

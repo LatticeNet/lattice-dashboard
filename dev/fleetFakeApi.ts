@@ -19,6 +19,9 @@
  * `?fail=nodes:later` lets the first read land and fails every one after it
  * (the stale state). `?deny=tasks,approvals,audit` answers those reads 403 and
  * drops their read scopes, for a principal that cannot read them.
+ * `?expire=<ms>` ends the session that long after the page loads: every read
+ * and /api/me then answer 401, reported the way the real client reports them,
+ * and signing in again starts a session that does not expire.
  * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
@@ -27,7 +30,7 @@
  * Only the calls these pages make are implemented; anything else is missing
  * from `api` and fails loudly.
  */
-import { ApiError } from "@/lib/api/client";
+import { ApiError, reportUnauthorized } from "@/lib/api/client";
 import type { AuditEvent, MachineProfileInput, MachineView, MonitorCreateInput, MonitorView, Principal } from "@/lib/api/index";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
@@ -75,10 +78,24 @@ const reads = new Map<string, number>();
 const DENY = new Set((PARAMS.get("deny") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
 const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "approval:read", audit: "audit:read" };
 
+const EXPIRE_MS = Number(PARAMS.get("expire") ?? "");
+let sessionEndsAt = EXPIRE_MS > 0 ? Date.now() + EXPIRE_MS : Number.POSITIVE_INFINITY;
+
+/** The 401 the server sends once a session is gone, reported as the real client reports it. */
+function sessionGone<T>(path: string, ms = LATENCY_MS): Promise<T> | undefined {
+  if (Date.now() < sessionEndsAt) return undefined;
+  return delay(undefined, ms).then(() => {
+    reportUnauthorized(path);
+    throw new ApiError(401, "unauthorized", "session expired");
+  });
+}
+
 /** Answer, or fail the way `?fail=` asked for this read. */
 function answer<T>(name: string, value: () => T, ms = LATENCY_MS): Promise<T> {
   const count = (reads.get(name) ?? 0) + 1;
   reads.set(name, count);
+  const gone = sessionGone<T>(`/api/${name}`, ms);
+  if (gone) return gone;
   if (DENY.has(name)) {
     return delay(undefined, ms).then(() => {
       throw new ApiError(403, "forbidden", `${name} read forbidden: missing scope`);
@@ -177,7 +194,12 @@ function machineFromInput(input: MachineProfileInput & { id?: string }, base?: M
 
 export const api = {
   auth: {
-    me: () => delay(principal),
+    me: () => sessionGone<Principal>("/api/me") ?? delay(principal),
+    login: () => {
+      sessionEndsAt = Number.POSITIVE_INFINITY;
+      return delay({ ok: true });
+    },
+    ssoProviders: () => delay([]),
   },
   nodes: {
     list: () => answer("nodes", () => ({ nodes: nodes.map((n) => ({ ...n })) })),

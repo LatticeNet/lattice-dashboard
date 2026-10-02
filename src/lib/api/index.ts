@@ -135,7 +135,7 @@ import type {
 
 export * from "./types";
 export * from "./approvalsEnvelope";
-export { ApiError, setCsrfToken, getCsrfToken } from "./client";
+export { ApiError, setCsrfToken, getCsrfToken, setUnauthorizedListener } from "./client";
 
 export const API_ERROR_APPROVAL_STALE = "approval_stale";
 export const API_ERROR_AGENT_UPDATE_NOOP = "agent_update_noop";
@@ -182,7 +182,9 @@ export function isAgentUpdateNoopError(error: unknown): error is ApiError {
 /** Typed surface over the lattice-server JSON API, grouped by feature domain. */
 export const api = {
   auth: {
-    me: () => http.get<Principal>("/api/me"),
+    // A signal bypasses the GET cache: the session check after a 401 must ask
+    // the server, not read a /api/me answer from 750 ms ago.
+    me: (opts?: RequestOptions) => http.get<Principal>("/api/me", undefined, opts),
     login: (username: string, password: string) =>
       http.post<LoginResponse>("/api/login", { username, password }),
     loginTotp: (challenge_id: string, code?: string, recovery_code?: string) =>

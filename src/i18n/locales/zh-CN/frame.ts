@@ -337,6 +337,8 @@ export default {
     ssoContinue: "使用 {provider} 继续",
     ssoOr: "或",
     invalidCredentials: "用户名或密码错误。",
+    expired: "登录已过期。重新登录后回到「{page}」。",
+    expiredBare: "登录已过期，请重新登录。",
   },
 
   overview: {

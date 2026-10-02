@@ -65,6 +65,24 @@ export function getCsrfToken(): string {
   return csrfToken;
 }
 
+/**
+ * Told about every 401 with the path that answered it. The router installs
+ * the listener (lib/sessionExpiry decides whether the session is gone); the
+ * client only reports. The dev fakes report through reportUnauthorized too,
+ * so the harness exercises the same path as the real client.
+ */
+let unauthorizedListener: ((path: string) => void) | undefined;
+export function setUnauthorizedListener(listener: ((path: string) => void) | undefined): void {
+  unauthorizedListener = listener;
+}
+export function reportUnauthorized(path: string): void {
+  try {
+    unauthorizedListener?.(path);
+  } catch {
+    // A listener that throws must not turn the caller's ApiError into its own.
+  }
+}
+
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
 export interface RequestOptions {
@@ -174,6 +192,7 @@ async function performRequest<T>(
     const message =
       errBody?.error?.message ||
       (typeof data === "string" && data ? data : res.statusText || "Request failed");
+    if (res.status === 401) reportUnauthorized(path);
     throw new ApiError(res.status, code, message, requestId || errBody?.error?.request_id, data);
   }
 
