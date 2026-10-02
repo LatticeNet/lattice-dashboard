@@ -413,7 +413,7 @@ async function runVerify() {
         <section v-if="openRow.pages.length" class="space-y-1.5">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.pluginsPage.colPages') }}</h3>
           <div class="flex flex-wrap gap-x-4 gap-y-1">
-            <RouterLink v-for="page in openRow.pages" :key="page.route" :to="page.to" class="text-primary underline-offset-4 hover:underline">{{ page.title }}</RouterLink>
+            <RouterLink v-for="page in openRow.pages" :key="page.route" :to="page.to" class="inline-flex items-center text-primary underline-offset-4 hover:underline pointer-coarse:min-h-11 pointer-coarse:min-w-11">{{ page.title }}</RouterLink>
           </div>
         </section>
 

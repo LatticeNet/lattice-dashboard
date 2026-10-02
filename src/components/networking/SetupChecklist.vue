@@ -85,7 +85,7 @@ const summary = computed(() => {
           <RouterLink
             v-if="item.action && item.ready !== true"
             :to="item.action.to"
-            class="ms-7 text-xs text-primary underline-offset-4 hover:underline sm:ms-0"
+            class="ms-7 inline-flex items-center text-xs text-primary underline-offset-4 hover:underline sm:ms-0 pointer-coarse:min-h-11"
           >
             {{ item.action.label }}
           </RouterLink>
