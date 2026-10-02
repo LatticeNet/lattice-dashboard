@@ -386,7 +386,7 @@ const deleteImpact = computed(() => {
   if (!tunnel) return [];
   const lines = [t("networking.tunnelsPage.delete.impactRunning", { node: nodeName(tunnel.node_id) })];
   const hosts = hostnames(tunnel);
-  if (hosts.length) lines.push(t("networking.tunnelsPage.delete.impactHosts", { hosts: hosts.join(", ") }));
+  if (hosts.length) lines.push(t("networking.tunnelsPage.delete.impactHosts", { hosts: hosts.join(", ") }, hosts.length));
   lines.push(t("networking.tunnelsPage.delete.impactNoRemoval"));
   return lines;
 });

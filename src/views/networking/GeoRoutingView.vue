@@ -452,10 +452,30 @@ function menuFor(route: GeoRouting): RowMenuItem[] {
   ];
 }
 
+/**
+ * Two destructive classes (design 23, section 3.8). A routing that was never
+ * applied lives only on this server: deleting it is irreversible inside
+ * Lattice. One that was applied left its zone in the CoreDNS on its DNS
+ * nodes, and the server's delete removes only the record, so those nodes
+ * keep answering the hostname: that is the class that leaves config on a
+ * node, which names each node, says what keeps answering, and asks for the
+ * typed name.
+ */
+const deleteApplied = computed(() => !!deleteTarget.value && routeState(deleteTarget.value) !== "demo" && hasRealTime(deleteTarget.value.last_applied_at));
 const deleteImpact = computed(() => {
   const route = deleteTarget.value;
   if (!route) return [];
-  return [t("networking.geoPage.delete.impactRecord", { hostname: route.hostname }), t("networking.geoPage.delete.impactNodes")];
+  if (!deleteApplied.value) {
+    return [t("networking.geoPage.delete.impactRecord", { hostname: route.hostname }), t("networking.geoPage.delete.impactNodes")];
+  }
+  const ms = Date.parse(route.last_applied_at ?? "");
+  const applied = Number.isFinite(ms) ? formatAge(now.value.getTime() - ms, locale.value) : "";
+  const dnsNodes = route.dns_node_ids ?? [];
+  const lines = dnsNodes.length
+    ? dnsNodes.map((id) => t("networking.geoPage.delete.impactAnswering", { node: nodeName(id), hostname: route.hostname, age: applied }))
+    : [t("networking.geoPage.delete.impactAnsweringUnknown", { hostname: route.hostname, age: applied })];
+  lines.push(t("networking.geoPage.delete.impactNoRemoval"));
+  return lines;
 });
 </script>
 
@@ -765,13 +785,15 @@ const deleteImpact = computed(() => {
       </DialogScrollContent>
     </Dialog>
 
-    <!-- Delete: irreversible inside Lattice (design 23, 3.8); nothing reaches a node. -->
+    <!-- Delete: irreversible inside Lattice for a routing never applied; one that was applied leaves its zone on the DNS nodes (design 23, 3.8). -->
     <ConfirmDialog
       :open="!!deleteTarget"
       :title="$t('networking.geoPage.delete.title', { name: deleteTarget?.name || deleteTarget?.id || '' })"
+      :description="deleteApplied ? $t('networking.geoPage.delete.descriptionApplied') : undefined"
       :impact="deleteImpact"
-      :impact-title="$t('networking.geoPage.delete.impactTitle')"
-      :confirm-label="$t('common.actions.delete')"
+      :impact-title="deleteApplied ? $t('networking.geoPage.delete.impactTitleApplied') : $t('networking.geoPage.delete.impactTitle')"
+      :typed-confirm="deleteApplied ? deleteTarget?.name || deleteTarget?.id : undefined"
+      :confirm-label="deleteApplied ? $t('networking.geoPage.delete.confirmApplied') : $t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"

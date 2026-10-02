@@ -905,6 +905,12 @@ export default {
         impactTitle: "会发生的变化",
         impactRecord: "{hostname} 的路由及其渲染出的配置会从本服务器删除。",
         impactNodes: "不会向任何节点发送内容。",
+        descriptionApplied: "这只会删除本服务器上的记录，不会向 DNS 节点发送任何东西。",
+        impactTitleApplied: "仍在运行的部分",
+        impactAnswering: "{node} 会继续用 {age}前应用的区域应答 {hostname}。",
+        impactAnsweringUnknown: "应用过它的 DNS 节点会继续用 {age}前应用的区域应答 {hostname}。",
+        impactNoRemoval: "记录删掉后，控制台无法再为这个区域安排移除；要停止这些应答，需要到节点上把区域从 CoreDNS 配置里删掉。",
+        confirmApplied: "删除记录",
       },
     },
 
