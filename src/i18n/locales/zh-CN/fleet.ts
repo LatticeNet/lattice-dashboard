@@ -1263,7 +1263,7 @@ export default {
       },
       assignment: {
         allNodes: "全部节点",
-        nodeCount: "{count} 个节点",
+        nodeCount: "{count} 个节点 | {count} 个节点",
         controlPlane: "由控制面直接拨号",
       },
       result: {

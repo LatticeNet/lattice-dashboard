@@ -1280,7 +1280,7 @@ export default {
       },
       assignment: {
         allNodes: "all nodes",
-        nodeCount: "{count} nodes",
+        nodeCount: "{count} node | {count} nodes",
         controlPlane: "dialled by the control plane",
       },
       result: {

@@ -386,7 +386,7 @@ function assignmentLabel(monitor: MonitorView): string {
   if (isServerEvaluated(monitor.type)) return t("fleet.monitoring.assignment.controlPlane");
   if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
   const count = monitor.node_ids?.length ?? 0;
-  return t("fleet.monitoring.assignment.nodeCount", { count });
+  return t("fleet.monitoring.assignment.nodeCount", { count }, count);
 }
 
 
