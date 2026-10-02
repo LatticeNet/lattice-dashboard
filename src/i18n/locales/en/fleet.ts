@@ -696,6 +696,7 @@ export default {
         many: "{n} nodes in {place}",
         down: "{n} not reporting",
         somewhere: "an unknown place",
+        places: "{n} places",
       },
       title: "Fleet map",
       description: "IP-aware node geography, rendered without external map tiles",

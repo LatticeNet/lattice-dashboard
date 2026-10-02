@@ -140,3 +140,46 @@ export function zoomToSplit(members: readonly Pick<MapPoint, "x" | "y">[], radiu
   const want = Math.min(max, Math.max(current * 2, ((radius * current) / spread) * 1.2));
   return want > current + 0.01 ? want : undefined;
 }
+
+/** Points closer than this (map units) are on one spot. */
+const SAME_SPOT = 0.5;
+
+/**
+ * Whether a click should list the members instead of zooming: when no zoom
+ * splits them, or when most of them share one spot, so a zoom would split
+ * off the outliers and leave the rest as one mark. Twelve nodes on one Los
+ * Angeles coordinate took three or four taps before, each zoom peeling off
+ * one neighbour.
+ */
+export function listInsteadOfZoom(members: readonly Pick<MapPoint, "x" | "y">[], zoom: number | undefined): boolean {
+  if (members.length < 2) return false;
+  if (zoom === undefined) return true;
+  let largest = 0;
+  for (const a of members) {
+    let near = 0;
+    for (const b of members) if (Math.hypot(a.x - b.x, a.y - b.y) < SAME_SPOT) near += 1;
+    largest = Math.max(largest, near);
+  }
+  return largest * 2 >= members.length;
+}
+
+/**
+ * Where a cluster is, from all its members: one city, one country with
+ * several cities, or several countries. Named by its first member, "3 nodes
+ * in Osaka, JP" held two Tokyo nodes.
+ */
+export type ClusterPlace =
+  | { kind: "city"; city: string; country?: string }
+  | { kind: "country"; country: string }
+  | { kind: "places"; count: number }
+  | { kind: "unknown" };
+
+export function clusterPlace(geos: readonly ({ city?: string; country?: string } | undefined)[]): ClusterPlace {
+  const cities = new Set(geos.map((geo) => geo?.city?.trim() || "").filter(Boolean));
+  const countries = new Set(geos.map((geo) => geo?.country?.trim() || "").filter(Boolean));
+  if (cities.size === 1 && countries.size <= 1) return { kind: "city", city: [...cities][0]!, country: [...countries][0] };
+  if (countries.size === 1) return { kind: "country", country: [...countries][0]! };
+  if (countries.size > 1) return { kind: "places", count: countries.size };
+  if (cities.size > 1) return { kind: "places", count: cities.size };
+  return { kind: "unknown" };
+}

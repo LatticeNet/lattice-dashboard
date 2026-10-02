@@ -21,13 +21,16 @@ import { useElementSize, useMediaQuery } from "@vueuse/core";
 import { Minus, Plus, RotateCcw } from "lucide-vue-next";
 
 import { WORLD_RINGS } from "@/lib/map/worldGeo";
+import { countryName } from "@/lib/fleet";
 import { nodeStatus, type NodeStatusInput } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import {
   MAP_HEIGHT,
   MAP_WIDTH,
+  clusterPlace,
   clusterPoints,
   clusterRadius,
+  listInsteadOfZoom,
   project,
   ringPath,
   zoomToSplit,
@@ -54,7 +57,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{ select: [ids: string[], opener: Element] }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 /** Screen radius, in px, inside which marks merge. */
 const CLUSTER_PX = 18;
@@ -116,9 +119,19 @@ function px(value: number): number {
   return value * unitsPerPx.value;
 }
 
+/** Named from every member: a city, a country, or how many places. */
 function place(cluster: MapCluster): string {
-  const first = byId.value.get(cluster.ids[0]!);
-  return [first?.geo?.city, first?.geo?.country].filter(Boolean).join(", ");
+  const where = clusterPlace(cluster.ids.map((id) => byId.value.get(id)?.geo));
+  switch (where.kind) {
+    case "city":
+      return [where.city, where.country].filter(Boolean).join(", ");
+    case "country":
+      return countryName(where.country, locale.value);
+    case "places":
+      return t("fleet.map.cluster.places", { n: where.count });
+    default:
+      return "";
+  }
 }
 
 function clusterLabel(cluster: MapCluster): string {
@@ -222,15 +235,16 @@ function onPointerUp(event: PointerEvent): void {
 
 /**
  * One node: the page opens it. Several that a zoom would split: zoom in on
- * them. Several on one spot: the page lists them.
+ * them. Several mostly on one spot, or at the zoom limit: the page lists
+ * them on this click (listInsteadOfZoom).
  */
 function onCluster(cluster: MapCluster, event: Event): void {
   if (props.compact || Date.now() < suppressClickUntil) return;
   if (cluster.ids.length > 1) {
     const members = points.value.filter((point) => cluster.ids.includes(point.id));
     const zoom = zoomToSplit(members, (CLUSTER_PX * unitsPerPx.value) / viewport.value.scale, viewport.value.scale, MAX_ZOOM);
-    if (zoom !== undefined) {
-      focusOn(cluster.x, cluster.y, zoom);
+    if (!listInsteadOfZoom(members, zoom)) {
+      focusOn(cluster.x, cluster.y, zoom!);
       return;
     }
   }

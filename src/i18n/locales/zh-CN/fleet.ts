@@ -684,6 +684,7 @@ export default {
         many: "{place} 的 {n} 个节点",
         down: "{n} 个未上报",
         somewhere: "未知地点",
+        places: "{n} 个地点",
       },
       title: "机群地图",
       description: "基于节点 IP 的地理位置视图,无需外部地图瓦片",

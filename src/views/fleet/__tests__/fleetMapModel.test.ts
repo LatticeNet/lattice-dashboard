@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { clusterPoints, clusterRadius, clusterTone, project, ringPath, zoomToSplit, type MapPoint } from "../fleetMapModel.ts";
+import { clusterPlace, clusterPoints, clusterRadius, clusterTone, listInsteadOfZoom, project, ringPath, zoomToSplit, type MapPoint } from "../fleetMapModel.ts";
 
 test("the projection puts 0,0 in the middle and clamps what is off the map", () => {
   assert.deepEqual(project(0, 0), { x: 500, y: 250 });
@@ -52,4 +52,22 @@ test("a cluster on one spot cannot be split by zooming; a spread one gets a zoom
   const zoom = zoomToSplit([{ x: 100, y: 100 }, { x: 106, y: 100 }], 12, 1);
   assert.ok(zoom !== undefined && zoom >= 2 && zoom <= 5);
   assert.equal(zoomToSplit([{ x: 100, y: 100 }, { x: 106, y: 100 }], 12, 5), undefined);
+});
+
+test("a cluster mostly on one spot lists on the first click instead of zooming", () => {
+  const la = Array.from({ length: 12 }, () => ({ x: 172.2, y: 151.9 }));
+  const near = { x: 174, y: 150 };
+  assert.equal(listInsteadOfZoom([...la, near], 2), true, "12 of 13 on one spot");
+  assert.equal(listInsteadOfZoom([...la, near], undefined), true, "no zoom splits them");
+  const spread = [{ x: 500, y: 100 }, { x: 503, y: 101 }, { x: 506, y: 99 }, { x: 500, y: 100 }];
+  assert.equal(listInsteadOfZoom(spread, 3), true, "two of four on one spot is half");
+  assert.equal(listInsteadOfZoom([{ x: 500, y: 100 }, { x: 503, y: 101 }, { x: 506, y: 99 }], 3), false);
+  assert.equal(listInsteadOfZoom([{ x: 1, y: 1 }], 2), false);
+});
+
+test("a cluster's place comes from all its members", () => {
+  assert.deepEqual(clusterPlace([{ city: "Los Angeles", country: "US" }, { city: "Los Angeles", country: "US" }]), { kind: "city", city: "Los Angeles", country: "US" });
+  assert.deepEqual(clusterPlace([{ city: "Osaka", country: "JP" }, { city: "Tokyo", country: "JP" }, { city: "Tokyo", country: "JP" }]), { kind: "country", country: "JP" });
+  assert.deepEqual(clusterPlace([{ city: "Frankfurt", country: "DE" }, { city: "Amsterdam", country: "NL" }]), { kind: "places", count: 2 });
+  assert.deepEqual(clusterPlace([undefined, {}]), { kind: "unknown" });
 });

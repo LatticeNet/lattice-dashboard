@@ -8,11 +8,13 @@
  *   On one spot: 13 nodes in Los Angeles      Unlocated: 3 nodes [Set location]
  *
  * A cluster that a zoom can split zooms in; one node opens the node sheet on
- * ?open=; several on one spot are listed under the map. Editing a location
+ * ?open=; several mostly on one spot are listed on the first click, in a
+ * panel beside the cluster (under the map on a phone), non-reporting first,
+ * with focus moved into it. Editing a location
  * moved to the node's Settings, so the map no longer opens an editor, and
  * the trackpad hint is for pointers that have a trackpad, not phones.
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
@@ -25,7 +27,9 @@ import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
 import { countryName } from "@/lib/fleet";
-import { describeNodeStatus, isReporting, nodeStatus } from "@/lib/nodeStatus";
+import { compareByAttention, describeNodeStatus, isReporting, nodeStatus } from "@/lib/nodeStatus";
+import { useMediaQuery } from "@/composables/useMediaQuery";
+import { clusterPlace } from "./fleetMapModel";
 import { cn } from "@/lib/utils";
 import { proofReason } from "@/components/common/proofModel";
 
@@ -112,21 +116,77 @@ const attention = computed<AttentionItem[]>(() => {
 
 /* --------------------------- a cluster on one spot --------------------------- */
 
-/** Members of a cluster no zoom can split, listed under the map. */
+/**
+ * Members of a cluster that a zoom would not split. From 768 px they open in
+ * a panel beside the cluster, over the map; on a phone, under the map,
+ * scrolled into view. Either way focus moves to the list's heading, and
+ * Escape or Close gives it back to the cluster. Non-reporting members come
+ * first: the offline node was eighth of twelve.
+ */
 const listedIds = ref<string[]>([]);
-const listed = computed(() => listedIds.value.map((id) => nodes.value.find((node) => node.id === id)).filter((node): node is Node => !!node));
+const listed = computed(() =>
+  listedIds.value
+    .map((id) => nodes.value.find((node) => node.id === id))
+    .filter((node): node is Node => !!node)
+    .sort((a, b) => compareByAttention(a, b) || (a.name || a.id).localeCompare(b.name || b.id)),
+);
 const listedPlace = computed(() => {
-  const first = listed.value[0]?.geo;
-  return [first?.city, first?.country ? countryName(first.country, locale.value) : ""].filter(Boolean).join(", ");
+  const where = clusterPlace(listed.value.map((node) => node.geo));
+  switch (where.kind) {
+    case "city":
+      return [where.city, where.country].filter(Boolean).join(", ");
+    case "country":
+      return countryName(where.country, locale.value);
+    case "places":
+      return t("fleet.map.cluster.places", { n: where.count });
+    default:
+      return "";
+  }
+});
+const wide = useMediaQuery("(min-width: 768px)");
+const mapWrap = ref<HTMLElement | null>(null);
+const listHeading = ref<HTMLElement | null>(null);
+let listOpener: Element | null = null;
+/** Where the cluster sits inside the map, for the panel beside it. */
+const anchor = ref<{ left: number; top: number; width: number; height: number } | null>(null);
+const PANEL_W = 320;
+const panelStyle = computed(() => {
+  const at = anchor.value;
+  if (!at) return {};
+  const maxHeight = Math.max(160, Math.min(360, at.height - 16));
+  const right = at.left + 24 + PANEL_W <= at.width - 8;
+  const left = right ? at.left + 24 : Math.max(8, at.left - 24 - PANEL_W);
+  const top = Math.min(Math.max(8, at.top - 28), Math.max(8, at.height - maxHeight - 8));
+  return { left: `${left}px`, top: `${top}px`, width: `${PANEL_W}px`, maxHeight: `${maxHeight}px` };
 });
 
 function onSelect(ids: string[], opener: Element): void {
   if (ids.length === 1) {
-    listedIds.value = [];
+    closeList(false);
     sheet.open(ids[0]!, opener as HTMLElement);
     return;
   }
+  listOpener = opener;
+  const wrap = mapWrap.value?.getBoundingClientRect();
+  const mark = opener.getBoundingClientRect();
+  anchor.value = wrap
+    ? { left: mark.left + mark.width / 2 - wrap.left, top: mark.top + mark.height / 2 - wrap.top, width: wrap.width, height: wrap.height }
+    : null;
   listedIds.value = ids;
+  void nextTick(() => {
+    const heading = listHeading.value;
+    if (!heading) return;
+    heading.focus({ preventScroll: wide.value });
+    if (!wide.value) heading.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function closeList(returnFocus = true): void {
+  listedIds.value = [];
+  anchor.value = null;
+  const opener = listOpener;
+  listOpener = null;
+  if (returnFocus && (opener instanceof HTMLElement || opener instanceof SVGElement)) opener.focus();
 }
 
 /** Why the node read failed, for the sheet; null while a first read retries, so the sheet shows it loading. */
@@ -169,16 +229,58 @@ const STATUS_TEXT: Record<string, string> = {
     />
     <template v-else-if="nodesQuery.data.value !== undefined">
       <div class="min-w-0 space-y-2">
-        <FleetMap :nodes="nodes" :active-ids="sheet.openId.value ? [sheet.openId.value] : listedIds" @select="onSelect" />
+        <div ref="mapWrap" class="relative">
+          <FleetMap :nodes="nodes" :active-ids="sheet.openId.value ? [sheet.openId.value] : listedIds" @select="onSelect" />
+          <!-- From 768 px: the members beside the cluster they came from. -->
+          <section
+            v-if="listed.length && wide"
+            class="absolute z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
+            :style="panelStyle"
+            aria-labelledby="map-listed"
+            data-testid="map-listed-panel"
+            @keydown.esc.stop.prevent="closeList()"
+          >
+            <header class="flex items-center gap-2 border-b border-border px-3 py-2">
+              <h2 id="map-listed" ref="listHeading" tabindex="-1" class="min-w-0 truncate rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {{ $t('fleet.map.listed.title', { n: listed.length, place: listedPlace || $t('fleet.map.cluster.somewhere') }) }}
+              </h2>
+              <Button variant="ghost" size="sm" class="ms-auto shrink-0" type="button" @click="closeList()">{{ $t('common.actions.close') }}</Button>
+            </header>
+            <ul class="min-h-0 divide-y divide-border overflow-y-auto">
+              <li v-for="node in listed" :key="node.id">
+                <button
+                  type="button"
+                  class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                  @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
+                >
+                  <StatusDot :status="describeNodeStatus(node).health" :pulse="false" />
+                  <span class="min-w-0 truncate font-medium">{{ node.name || node.id }}</span>
+                  <span
+                    v-if="nodeStatus(node) !== 'online'"
+                    :class="cn('ms-auto shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(node).tone])"
+                  >{{ $t(describeNodeStatus(node).labelKey) }}</span>
+                </button>
+              </li>
+            </ul>
+          </section>
+        </div>
         <p class="hidden text-xs text-muted-foreground pointer-fine:block">{{ $t('fleet.map.canvasHint') }}</p>
       </div>
 
       <div class="grid min-w-0 grid-cols-1 items-start gap-5 lg:grid-cols-2">
-        <!-- Several nodes on one spot: no zoom splits them, so they are listed. -->
-        <section v-if="listed.length" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="map-listed">
+        <!-- On a phone: the members under the map, scrolled into view. -->
+        <section
+          v-if="listed.length && !wide"
+          class="overflow-hidden rounded-lg border border-border bg-card"
+          aria-labelledby="map-listed"
+          data-testid="map-listed-panel"
+          @keydown.esc.stop.prevent="closeList()"
+        >
           <header class="flex items-center gap-2 border-b border-border px-4 py-2.5">
-            <h2 id="map-listed" class="text-sm font-medium">{{ $t('fleet.map.listed.title', { n: listed.length, place: listedPlace || $t('fleet.map.cluster.somewhere') }) }}</h2>
-            <Button variant="ghost" size="sm" class="ms-auto" type="button" @click="listedIds = []">{{ $t('common.actions.close') }}</Button>
+            <h2 id="map-listed" ref="listHeading" tabindex="-1" class="rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {{ $t('fleet.map.listed.title', { n: listed.length, place: listedPlace || $t('fleet.map.cluster.somewhere') }) }}
+            </h2>
+            <Button variant="ghost" size="sm" class="ms-auto" type="button" @click="closeList()">{{ $t('common.actions.close') }}</Button>
           </header>
           <ul class="divide-y divide-border">
             <li v-for="node in listed" :key="node.id">
