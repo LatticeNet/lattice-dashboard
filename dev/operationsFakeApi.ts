@@ -34,7 +34,7 @@ import { ApiError } from "@/lib/api/client";
 import { sha256Hex } from "@/lib/crypto";
 import type { ApprovalView, Principal, TaskResult, TaskView } from "@/lib/api/types";
 
-import { fakeApprovalsApi } from "./approvalsFixture";
+import { fakeApprovalsApi, isLineChain } from "./approvalsFixture";
 import { AUDIT_VERIFY, HAND_WRITTEN_NODES, NODES, buildApprovals, buildTasks, countTasks, linkAudit, queryAudit, type AuditQuery } from "./operationsFixture";
 
 export * from "@/lib/api/index";
@@ -208,6 +208,9 @@ export const api = {
       // The server's refusal (server.go): these kinds must queue their apply.
       if (!queueApply && (approval.plugin === "singbox-lineuser" || approval.plugin === "singbox-managedline")) {
         return Promise.reject(new ApiError(400, "bad_request", `${approval.plugin} approvals must queue their apply task: approve with queue_apply, since an approval approved without one can never be applied`));
+      }
+      if (!queueApply && isLineChain(approval)) {
+        return Promise.reject(new ApiError(400, "bad_request", "line chain approvals must atomically queue their apply task"));
       }
       if (flags.has("approve-fail")) {
         return delay(undefined).then(() => {

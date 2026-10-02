@@ -22,7 +22,7 @@
  * nothing.
  */
 import type { ApprovalView, Principal } from "@/lib/api/index";
-import { HAND_WRITTEN, buildApprovalsFixture, fakeApprovalsApi, type FakeRequest } from "./approvalsFixture";
+import { HAND_WRITTEN, buildApprovalsFixture, fakeApprovalsApi, isLineChain, type FakeRequest } from "./approvalsFixture";
 
 export * from "@/lib/api/index";
 
@@ -88,6 +88,7 @@ export const api = {
       if (!queue_apply && (approval.plugin === "singbox-lineuser" || approval.plugin === "singbox-managedline")) {
         return Promise.reject(new Error(`${approval.plugin} approvals must queue their apply task: approve with queue_apply, since an approval approved without one can never be applied`));
       }
+      if (!queue_apply && isLineChain(approval)) return Promise.reject(new Error("line chain approvals must atomically queue their apply task"));
       approval.status = "approved";
       approval.approved_by = "cdcd";
       approval.updated_at = new Date().toISOString();

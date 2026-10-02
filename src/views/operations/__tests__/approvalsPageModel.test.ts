@@ -5,6 +5,7 @@ import { parseTokens } from "../../../lib/queryTokens.ts";
 import type { ApprovalView } from "../../../lib/api/types.ts";
 import {
   APPROVAL_HISTORY_GRAMMAR,
+  LINE_CHAIN_BINDING,
   QUEUE_REQUIRED_PLUGINS,
   approvesWithoutQueue,
   defaultApprovalLayer,
@@ -137,15 +138,29 @@ test("nothing is offered when no decidable plan is left", () => {
   assert.equal(nextToReview([], { id: "a", index: -1 }), null);
 });
 
-test("approve without queueing is offered for every kind but the two the server refuses it for", () => {
-  // lattice-server refuses approve without queue_apply for exactly these
-  // plugins (400: such an approval could never be applied).
+test("approve without queueing is offered for every kind but those the server refuses it for", () => {
+  // lattice-server refuses approve without queue_apply for these plugins and
+  // for line chain approvals (400: such an approval could never be applied).
   assert.deepEqual([...QUEUE_REQUIRED_PLUGINS], ["singbox-lineuser", "singbox-managedline"]);
+  assert.deepEqual(LINE_CHAIN_BINDING, {
+    plugin: "singbox-linechain",
+    service: "network/lines",
+    methods: ["chain_set_apply", "chain_remove_apply"],
+    actionPrefix: "apply-line-chain:",
+  });
   assert.equal(approvesWithoutQueue(row({ plugin: "singbox-lineuser", action: "apply-line-user:9f2c" })), false);
   assert.equal(approvesWithoutQueue(row({ plugin: "singbox-managedline", action: "apply-managed-line:4d1a" })), false);
-  for (const plugin of ["singbox-linechain", "singbox-linemeta", "agentupdate", "proxycore", "nftpolicy", "nft", "sshguard", "wireguard", "cftunnel", "selfdns", "example.plugin"]) {
+  const chain = { plugin: "singbox-linechain", service: "network/lines", action: "apply-line-chain:d1d1" };
+  assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_set_apply" })), false);
+  assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_remove_apply" })), false);
+  for (const plugin of ["singbox-linemeta", "agentupdate", "proxycore", "nftpolicy", "nft", "sshguard", "wireguard", "cftunnel", "selfdns", "example.plugin"]) {
     assert.equal(approvesWithoutQueue(row({ plugin })), true, plugin);
   }
-  // Compared exactly, as the server compares them.
+  // Compared exactly, as the server compares them: a near miss on any part
+  // of the line chain binding is a kind the server lets approve unqueued.
   assert.equal(approvesWithoutQueue(row({ plugin: "singbox-lineuser-v2" })), true);
+  assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_inspect" })), true);
+  assert.equal(approvesWithoutQueue(row({ ...chain, method: undefined })), true);
+  assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_set_apply", service: undefined })), true);
+  assert.equal(approvesWithoutQueue(row({ ...chain, method: "chain_set_apply", action: "apply-line-chains:d1d1" })), true);
 });

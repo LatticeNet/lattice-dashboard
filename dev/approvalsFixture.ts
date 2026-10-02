@@ -89,6 +89,19 @@ export function nodeIdFor(index: number): string {
   return `node_${(0x2f1a3b + index * 7919).toString(36).padEnd(16, "x").slice(0, 16)}`;
 }
 
+/**
+ * lattice-server's isLineChainApproval (server_linechain.go), for the fakes'
+ * approve: the server refuses such an approval without queue_apply.
+ */
+export function isLineChain(approval: ApprovalView): boolean {
+  return (
+    approval.plugin === "singbox-linechain" &&
+    approval.service === "network/lines" &&
+    (approval.method === "chain_set_apply" || approval.method === "chain_remove_apply") &&
+    approval.action.startsWith("apply-line-chain:")
+  );
+}
+
 /** A plan of the size production plans have: a few hundred bytes to 4 KB. */
 function planFor(rand: () => number, plugin: string, node: string, i: number): string {
   switch (plugin) {
@@ -494,6 +507,7 @@ export const PENDING_KINDS: ApprovalView[] = [
     node_id: nodeIdFor(2),
     plugin: "singbox-linechain",
     action: `apply-line-chain:${SHA("d1")}`,
+    service: "network/lines",
     method: "chain_set_apply",
     plan: JSON.stringify({ summary: "Route hk-reality on hkg-edge-02 through managed target jp-tokyo-1", source_node_id: nodeIdFor(2) }, null, 2),
     status: "pending",
