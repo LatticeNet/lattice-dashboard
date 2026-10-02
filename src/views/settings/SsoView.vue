@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
@@ -20,8 +20,10 @@ import {
   type OIDCProviderTestResult,
   type OIDCProviderUpsertRequest,
   type OIDCProviderView,
+  type UserView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { providerDeleteImpact } from "./ssoModel";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
 import { statusMeta } from "@/lib/status";
@@ -220,33 +222,67 @@ const deleteTarget = ref<OIDCProviderView | undefined>();
 const deleting = ref(false);
 
 /*
- * Who a provider delete can lock out (design 23, section 3.8). An account
- * with no password signs in only through SSO or a passkey. The user list
- * does not say which provider an account came through, so with another
- * enabled provider left the lines say "if"; with none left every such
- * account loses SSO. Read once, never polled, and only with user:admin.
+ * Who a provider delete can lock out (ssoModel.providerDeleteImpact). The
+ * accounts are read each time the dialog opens, so an account created since
+ * the page loaded is counted, and read again if user:admin arrives while it
+ * is open. Delete stays disabled until that read lands. Never polled, and
+ * only with user:admin.
  */
 const canReadUsers = computed(() => auth.can("user:admin"));
-const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")), {
-  immediate: canReadUsers.value,
-});
-const ssoOnlyUsers = computed(() =>
-  (usersQuery.data.value ?? []).filter((user) => !user.has_password).map((user) => user.username).sort((a, b) => a.localeCompare(b)),
+const dialogUsers = ref<UserView[] | undefined>();
+const usersReading = ref(false);
+let usersReadSeq = 0;
+
+async function readUsers(): Promise<void> {
+  const mine = ++usersReadSeq;
+  dialogUsers.value = undefined;
+  usersReading.value = true;
+  try {
+    const users = unwrap(await api.users.list(), "users");
+    if (mine === usersReadSeq) dialogUsers.value = users;
+  } catch {
+    // Left unread: the dialog says the accounts were not read and asks for the typed name.
+  } finally {
+    if (mine === usersReadSeq) usersReading.value = false;
+  }
+}
+
+watch(
+  [deleteTarget, canReadUsers],
+  ([target, canRead]) => {
+    if (target && canRead) void readUsers();
+  },
+  { immediate: true },
 );
-const deleteImpact = computed<{ lines: string[]; typed: boolean }>(() => {
+
+const deleteImpact = computed(() => {
   const target = deleteTarget.value;
-  if (!target) return { lines: [], typed: false };
+  if (!target) return { lines: [] as string[], typed: false, waiting: false };
+  const impact = providerDeleteImpact({
+    targetId: target.id,
+    providers: providers.value,
+    users: dialogUsers.value,
+    canReadUsers: canReadUsers.value,
+    usersReading: usersReading.value,
+  });
   const name = target.display_name || target.issuer;
-  const lines = [t("settings.sso.deleteImpact.keep")];
-  if (usersQuery.data.value === undefined) {
-    lines.push(canReadUsers.value ? t("settings.sso.deleteImpact.usersUnread") : t("settings.sso.deleteImpact.usersNoAccess"));
-    return { lines, typed: true };
-  }
-  const othersLeft = providers.value.some((provider) => provider.id !== target.id && provider.enabled);
-  for (const user of ssoOnlyUsers.value) {
-    lines.push(othersLeft ? t("settings.sso.deleteImpact.maybeLocked", { user, name }) : t("settings.sso.deleteImpact.locked", { user }));
-  }
-  return { lines, typed: ssoOnlyUsers.value.length > 0 };
+  const lines = impact.lines.map((line) => {
+    switch (line.kind) {
+      case "keep":
+        return t("settings.sso.deleteImpact.keep");
+      case "locked":
+        return t("settings.sso.deleteImpact.locked", { user: line.user });
+      case "maybeLocked":
+        return t("settings.sso.deleteImpact.maybeLocked", { user: line.user, name });
+      case "usersReading":
+        return t("settings.sso.deleteImpact.usersReading");
+      case "usersUnread":
+        return t("settings.sso.deleteImpact.usersUnread");
+      case "usersNoAccess":
+        return t("settings.sso.deleteImpact.usersNoAccess");
+    }
+  });
+  return { lines, typed: impact.typed, waiting: impact.waiting };
 });
 
 async function confirmDelete() {
@@ -623,6 +659,7 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
       :impact="deleteImpact.lines"
       :impact-title="$t('settings.sso.deleteImpact.title')"
       :typed-confirm="deleteImpact.typed ? deleteTarget?.display_name || deleteTarget?.issuer : undefined"
+      :confirm-disabled="deleteImpact.waiting"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"

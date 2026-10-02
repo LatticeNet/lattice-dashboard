@@ -21,6 +21,7 @@
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
  *   ?readonly         the session holds read scopes only
  *   ?scopes=a,b       the session holds exactly these scopes (Access layers by scope)
+ *   ?users=slow       the account list answers after 1.5 s
  *
  * Page fixtures carry their own switches (netplatPolicyFixture,
  * netplatPluginsFixture, ...); each file's header lists them.
@@ -87,7 +88,11 @@ export const api = {
   },
   /* Settings: Access (users, tokens, SSO), About, Capability Gates. */
   users: {
-    list: () => read("users", () => ({ users: USERS.map((user) => ({ ...user })) })),
+    // ?users=slow holds the account list for 1.5 s, to see the SSO delete confirm wait for it.
+    list: () =>
+      flags.get("users") === "slow"
+        ? delay(undefined, 1500).then(() => read("users", () => ({ users: USERS.map((user) => ({ ...user })) })))
+        : read("users", () => ({ users: USERS.map((user) => ({ ...user })) })),
     create: async (input: UserCreateRequest) => {
       await delay(undefined, WRITE_MS);
       const user = { id: `usr_new_${seq++}`, username: input.username, scopes: input.scopes, server_allowlist: input.server_allowlist, totp_enabled: false, has_password: !!input.password, created_at: iso(0) };

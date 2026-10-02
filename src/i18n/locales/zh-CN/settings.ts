@@ -274,6 +274,7 @@ export default {
         keep: "通过它登录过的运维人员会保留账号、权限、密码和 Passkey。",
         locked: "{user} 没有密码，会失去单点登录；除非它有 Passkey，否则将无法登录。",
         maybeLocked: "{user} 没有密码：如果它通过 {name} 登录，除非有 Passkey 或另一个提供方关联了它，否则将无法登录。",
+        usersReading: "正在读取账号列表，看看谁没有其他登录方式。",
         usersUnread: "未读到账号列表，不知道哪些人没有其他登录方式。",
         usersNoAccess: "读取哪些账号没有密码需要用户管理权限，所以不知道谁会被挡在门外。",
       },
