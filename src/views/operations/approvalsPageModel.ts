@@ -152,3 +152,33 @@ export function stuckReasonSummary(rows: readonly Pick<ApprovalView, "waiting">[
     .sort((a, b) => b.count - a.count || a.order - b.order)
     .map(({ code, count }) => ({ code, count }));
 }
+
+/* ------------------------------------------------------------------ */
+/* After a decision: the next plan to review                           */
+/* ------------------------------------------------------------------ */
+
+/** One pending plan in inbox order, and whether this principal can decide it now. */
+export interface ReviewItem {
+  id: string;
+  decidable: boolean;
+}
+
+/**
+ * The plan to offer once the open one is decided in the sheet, so working
+ * through a queue of 17 is "decide, next" instead of closing, scrolling and
+ * opening the next card each time.
+ *
+ * `order` is the Needs you inbox as it stands (cards in order, each card's
+ * plans in order). `decided.index` is where the decided plan sat when it was
+ * decided; the plan now in its place comes next, wrapping to the top, and
+ * plans this principal cannot decide are skipped. `waiting` counts the plans
+ * still decidable, the decided one excluded. Null when none is left.
+ */
+export function nextToReview(order: readonly ReviewItem[], decided: { id: string; index: number }): { id: string; waiting: number } | null {
+  const rest = order.filter((item) => item.id !== decided.id);
+  const waiting = rest.filter((item) => item.decidable).length;
+  if (waiting === 0) return null;
+  const start = Math.min(Math.max(decided.index, 0), rest.length);
+  const next = rest.slice(start).find((item) => item.decidable) ?? rest.slice(0, start).find((item) => item.decidable);
+  return next ? { id: next.id, waiting } : null;
+}

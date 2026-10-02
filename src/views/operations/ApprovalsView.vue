@@ -109,11 +109,13 @@ import {
   historyRequest,
   legacyApprovalQuery,
   namePreview,
+  nextToReview,
   normalizeApprovalPage,
   stuckReasonSummary,
   type ApprovalLayer,
   type ApprovalLayerChoice,
   type ApprovalPage,
+  type ReviewItem,
 } from "./approvalsPageModel";
 import { pageBounds, rangeWindow } from "./opsQueryModel";
 import { useOpsQuery } from "./useOpsQuery";
@@ -529,11 +531,48 @@ async function refreshAfterDecision(): Promise<void> {
   if (showingHistory.value) void historyQuery.refresh();
 }
 
+/*
+ * After a decision in the sheet the footer offers the next plan in the inbox,
+ * so a queue is worked through as "decide, next" (approvalsPageModel
+ * .nextToReview). Only after a decision made in this sheet: a decided plan
+ * opened from History does not grow a "next" button.
+ */
+const reviewOrder = computed<ReviewItem[]>(() =>
+  eventGroups.value.flatMap((group) => group.items.map((item) => ({ id: item.id, decidable: canDecide(item) && !isStale(item) }))),
+);
+const decidedInSheet = ref<{ id: string; index: number } | null>(null);
+watch(
+  () => sheet.openId.value,
+  (id) => {
+    if (decidedInSheet.value && id !== decidedInSheet.value.id) decidedInSheet.value = null;
+  },
+);
+
+function rememberSheetDecision(approval: ApprovalView): void {
+  if (sheet.openId.value !== approval.id) return;
+  decidedInSheet.value = { id: approval.id, index: reviewOrder.value.findIndex((item) => item.id === approval.id) };
+}
+
+const nextPlan = computed(() => {
+  const decided = decidedInSheet.value;
+  const open = openRecord.value;
+  if (!decided || !open || open.id !== decided.id || open.status === "pending") return null;
+  return nextToReview(reviewOrder.value, decided);
+});
+
+function reviewNext(): void {
+  const next = nextPlan.value;
+  if (!next) return;
+  sheet.open(next.id);
+  focusSheetTitle();
+}
+
 async function approve(approval: ApprovalView, queueApply: boolean): Promise<void> {
   pending.value = approval.id;
   decisionError.value = null;
   try {
     await api.approvals.approve(approval.id, queueApply, await decisionDigest(approval));
+    rememberSheetDecision(approval);
     toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
     // The sheet stays open on the decided plan and its footer is gone.
     if (sheet.openId.value === approval.id) focusSheetTitle();
@@ -594,6 +633,7 @@ async function performReject(approval: ApprovalView): Promise<void> {
   decisionError.value = null;
   try {
     await api.approvals.reject(approval.id);
+    rememberSheetDecision(approval);
     toast.success(t("operations.approvals.toastRejected"));
   } catch (error) {
     const message = error instanceof Error ? error.message : t("operations.approvals.toastRejectFailed");
@@ -1541,6 +1581,12 @@ function refreshAll(): void {
         <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.reject') }}
+        </Button>
+      </template>
+      <template v-else-if="nextPlan" #actions>
+        <Button type="button" size="sm" data-testid="approvals-review-next" @click="reviewNext">
+          {{ $t('operations.approvals.sheet.reviewNext', { n: nextPlan.waiting }) }}
+          <ChevronRight class="size-4" aria-hidden="true" />
         </Button>
       </template>
     </ObjectSheet>
