@@ -1217,7 +1217,10 @@ export default {
         tunnels: "{n} 条隧道",
         hostnames: "{n} 个主机名",
         down: "{n} 条所在节点没有上报",
+        unknown: "{n} 条所在节点本服务器不认识",
+        nodesUnread: "未读到节点：{reason}",
       },
+      unknownNode: "未知节点 {id}",
       setup: {
         cloudflared: "节点上运行着 cloudflared，隧道凭据位于 {path}",
         cloudflaredDetail: "控制台看不到节点上的文件；文件缺失会在计划应用时失败。",

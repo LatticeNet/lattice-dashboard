@@ -280,11 +280,17 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const hosts = tunnels.value.reduce((sum, tunnel) => sum + hostnames(tunnel).length, 0);
   parts.push({ key: "hostnames", text: t("networking.tunnelsPage.proof.hostnames", { n: hosts }, hosts) });
   if (nodesQuery.data.value !== undefined) {
+    // A tunnel bound to a node this server does not know is the red
+    // attention item; the line counts it beside the ones whose node is down.
+    const unknown = tunnels.value.filter((tunnel) => !nodeById.value.has(tunnel.node_id)).length;
+    if (unknown) parts.push({ key: "unknown", text: t("networking.tunnelsPage.proof.unknown", { n: unknown }, unknown), tone: "destructive" });
     const down = tunnels.value.filter((tunnel) => {
       const node = nodeById.value.get(tunnel.node_id);
       return node && !describeNodeStatus(node).reporting;
     }).length;
     if (down) parts.push({ key: "down", text: t("networking.tunnelsPage.proof.down", { n: down }, down), tone: "warning" });
+  } else if (nodesQuery.error.value) {
+    parts.push({ key: "nodes", text: t("networking.tunnelsPage.proof.nodesUnread", { reason: proofReason(nodesQuery.error.value) }), tone: "warning" });
   }
   return parts;
 });
@@ -458,7 +464,12 @@ const deleteImpact = computed(() => {
         <span class="font-medium">{{ tunnelName(tunnel) }}</span>
       </template>
       <template #cell-node="{ row: tunnel }">
-        <NodeLabel :id="tunnel.node_id" class="text-sm" />
+        <!-- A node the list does not hold is named with its full id, never cut to look like a name. -->
+        <span
+          v-if="nodesQuery.data.value !== undefined && !nodeById.has(tunnel.node_id)"
+          class="whitespace-nowrap font-mono text-xs text-destructive"
+        >{{ $t('networking.tunnelsPage.unknownNode', { id: tunnel.node_id }) }}</span>
+        <NodeLabel v-else :id="tunnel.node_id" class="text-sm" />
       </template>
       <template #cell-hostnames="{ row: tunnel }">
         <div class="flex flex-col font-mono text-xs">

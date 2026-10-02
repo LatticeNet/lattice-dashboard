@@ -24,6 +24,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import NodeLabel from "@/components/common/NodeLabel.vue";
+import { useNodeDirectory } from "@/composables/useNodeDirectory";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -39,6 +40,13 @@ import {
 } from "@/components/ui/dialog";
 
 const { t } = useI18n();
+
+/** The Access page's node list, when it was read: a confined id it does not hold is named as unknown, in full. */
+const nodeDirectory = useNodeDirectory();
+function unknownNode(id: string): boolean {
+  const list = nodeDirectory?.value;
+  return !!list && !list.some((node) => node.id === id);
+}
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("user:admin"));
 const isSuperuser = computed(() => auth.scopes.includes("*"));
@@ -320,7 +328,8 @@ function menuFor(user: UserView): RowMenuItem[] {
       <template #cell-server_allowlist="{ row }">
         <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[220px]">
           <Badge v-for="node in row.server_allowlist" :key="node" variant="outline" class="max-w-full">
-            <NodeLabel :id="node" />
+            <span v-if="unknownNode(node)" class="truncate font-mono text-destructive" :title="node">{{ $t('settings.access.unknownNode', { id: node }) }}</span>
+            <NodeLabel v-else :id="node" />
           </Badge>
         </div>
         <span v-else class="text-xs text-muted-foreground">

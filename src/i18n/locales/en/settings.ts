@@ -434,6 +434,7 @@ export default {
       layersLabel: "Access layers",
       layers: { users: "Users", tokens: "Tokens", sso: "Single sign-on" },
       noScope: "Managing access needs user:admin, token:admin or oidc:admin.",
+      unknownNode: "unknown node {id}",
       proof: {
         users: "{n} user | {n} users",
         admins: "{n} full admin | {n} full admins",

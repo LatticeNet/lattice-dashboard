@@ -1270,7 +1270,10 @@ export default {
         tunnels: "{n} tunnel | {n} tunnels",
         hostnames: "{n} hostname | {n} hostnames",
         down: "{n} on a node that is not reporting | {n} on nodes that are not reporting",
+        unknown: "{n} on a node this server does not know | {n} on nodes this server does not know",
+        nodesUnread: "nodes not read: {reason}",
       },
+      unknownNode: "unknown node {id}",
       setup: {
         cloudflared: "cloudflared on the node, with the tunnel's credentials at {path}",
         cloudflaredDetail: "The console cannot see files on a node; a missing file fails when the plan applies.",

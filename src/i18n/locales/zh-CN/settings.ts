@@ -423,6 +423,7 @@ export default {
       layersLabel: "访问权限分层",
       layers: { users: "用户", tokens: "令牌", sso: "单点登录" },
       noScope: "管理访问权限需要 user:admin、token:admin 或 oidc:admin。",
+      unknownNode: "未知节点 {id}",
       proof: {
         users: "{n} 个用户",
         admins: "{n} 个完全管理员",
