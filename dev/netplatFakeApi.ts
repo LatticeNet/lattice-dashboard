@@ -50,6 +50,8 @@ import { NODES, delay, flags, iso } from "./netplatFixture";
 export * from "@/lib/api/index";
 
 const FAILING = new Set((flags.get("fail") ?? "").split(",").filter(Boolean));
+// The agent fixture documents ?release=fail; it is the same switch as ?fail=release.
+if (flags.get("release") === "fail") FAILING.add("release");
 const WRITE_MS = flags.has("slow") ? 1500 : 200;
 
 function read<T>(name: string, value: () => T): Promise<T> {
@@ -309,7 +311,7 @@ export const api = {
   },
   agentUpdates: {
     list: () => read("agents", () => ({ policies: AGENT_POLICIES.map((policy) => ({ ...policy })) })),
-    releases: () => read(flags.get("release") === "fail" ? "release-fail" : "release", () => ({ ...AGENT_RELEASE })),
+    releases: () => read("release", () => ({ ...AGENT_RELEASE })),
     artifacts: () => read("artifacts", () => ({ ...AGENT_ARTIFACTS, artifacts: AGENT_ARTIFACTS.artifacts.map((a) => ({ ...a })) })),
     plan: async (nodeId: string) => {
       await delay(undefined, WRITE_MS);

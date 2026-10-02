@@ -63,6 +63,7 @@ import { cn } from "@/lib/utils";
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import NodeLabel from "@/components/common/NodeLabel.vue";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
@@ -599,7 +600,14 @@ const standingCounts = computed(() => {
 const slices = computed(() => versionDistribution(nodes.value.map((node) => node.agent_version), latest.value));
 const sliceTotal = computed(() => slices.value.reduce((sum, slice) => sum + slice.count, 0));
 
-const proof = useProof([nodesQuery, policiesQuery]);
+/** Whether each read has landed at least once. A cell whose source never did says "not read". */
+const nodesRead = computed(() => nodesQuery.data.value !== undefined);
+const policiesRead = computed(() => policiesQuery.data.value !== undefined);
+
+// The node list is the page's subject; the policies and the release are
+// named in their own segment when they fail, so one failed read never wipes
+// the counts the other reads hold.
+const proof = useProof(nodesQuery);
 
 const proofSegments = computed<ProofSegment[]>(() => {
   const parts: ProofSegment[] = [];
@@ -610,6 +618,9 @@ const proofSegments = computed<ProofSegment[]>(() => {
     }
   } else if (releaseQuery.error.value) {
     parts.push({ key: "latest", text: t("platform.agentUpdatesPage.proof.latestUnread", { reason: proofReason(releaseQuery.error.value) }), tone: "warning" });
+  }
+  if (!policiesRead.value && policiesQuery.error.value) {
+    parts.push({ key: "policies", text: t("platform.agentUpdatesPage.proof.policiesUnread", { reason: proofReason(policiesQuery.error.value) }), tone: "warning" });
   }
   if (nodesQuery.data.value !== undefined) {
     const n = nodes.value.length;
@@ -714,7 +725,17 @@ function policyText(policy: AgentUpdatePolicy): string {
 
 function menuFor(row: FleetRow): RowMenuItem[] {
   if (!row.policy) {
-    return [{ key: "add", label: t("platform.agentUpdatesPage.attention.addPolicy"), icon: Plus, hidden: !canAdmin.value, run: () => addPolicyFor(row.nodeId) }];
+    return [
+      {
+        key: "add",
+        label: t("platform.agentUpdatesPage.attention.addPolicy"),
+        icon: Plus,
+        hidden: !canAdmin.value,
+        disabled: !policiesRead.value,
+        reason: policiesRead.value ? undefined : t("platform.agentUpdatesPage.policiesUnreadReason"),
+        run: () => addPolicyFor(row.nodeId),
+      },
+    ];
   }
   const policy = row.policy;
   return [
@@ -737,6 +758,32 @@ const sheetState = computed(() => {
 /* ------------------------------------------------------------------ */
 
 const bulk = computed(() => bulkPlan(fleetRows.value, latest.value));
+
+/**
+ * Why the head button cannot plan, naming the read that failed. While any of
+ * its three inputs is unread the button carries no count: a zero there would
+ * be a claim about the fleet nobody read.
+ */
+const bulkInputsRead = computed(() => nodesRead.value && policiesRead.value && !!latest.value);
+const bulkReason = computed<string | undefined>(() => {
+  if (!nodesRead.value) return t("platform.agentUpdatesPage.bulk.noNodes");
+  if (!latest.value) return t("platform.agentUpdatesPage.bulk.noLatest");
+  if (!policiesRead.value) return t("platform.agentUpdatesPage.bulk.noPolicies");
+  if (!bulk.value.plan.length) return t("platform.agentUpdatesPage.bulk.none");
+  return undefined;
+});
+
+/**
+ * The table's error banner says "showing the last data", so it speaks only
+ * for a read that once succeeded. A read that never landed shows as "not
+ * read" in its cells and in the proof line instead.
+ */
+const tableError = computed<Error | null>(() => {
+  if (!nodesRead.value && !policiesRead.value) return nodesQuery.error.value ?? policiesQuery.error.value ?? null;
+  if (nodesRead.value && nodesQuery.error.value) return nodesQuery.error.value;
+  if (policiesRead.value && policiesQuery.error.value) return policiesQuery.error.value;
+  return null;
+});
 const bulkOpen = ref(false);
 const bulkRunning = ref(false);
 
@@ -820,13 +867,13 @@ const deleteImpact = computed(() => {
         <Button
           v-if="canPlan"
           size="sm"
-          :disabled="!bulk.plan.length"
-          :title="!latest ? $t('platform.agentUpdatesPage.bulk.noLatest') : !bulk.plan.length ? $t('platform.agentUpdatesPage.bulk.none') : undefined"
+          :disabled="!bulkInputsRead || !bulk.plan.length"
+          :title="bulkReason"
           data-testid="plan-behind"
           @click="bulkOpen = true"
         >
           <Play aria-hidden="true" class="size-4" />
-          {{ $t('platform.agentUpdatesPage.bulk.button', { n: bulk.plan.length }) }}
+          {{ bulkInputsRead ? $t('platform.agentUpdatesPage.bulk.button', { n: bulk.plan.length }) : $t('platform.agentUpdatesPage.bulk.buttonUncounted') }}
         </Button>
       </template>
     </PageHeader>
@@ -863,8 +910,8 @@ const deleteImpact = computed(() => {
         :rows="fleetRows"
         :row-key="(row) => row.nodeId"
         :loading="nodesQuery.loading.value && policiesQuery.loading.value"
-        :error="nodesQuery.data.value === undefined ? nodesQuery.error.value : null"
-        :has-data="nodesQuery.data.value !== undefined || policiesQuery.data.value !== undefined"
+        :error="tableError"
+        :has-data="nodesRead || policiesRead"
         :page-size="50"
         searchable
         :expression-filter="false"
@@ -879,25 +926,29 @@ const deleteImpact = computed(() => {
         @retry="refreshAll"
       >
         <template #cell-name="{ row }">
-          <span class="font-medium">{{ row.name }}</span>
+          <span v-if="nodesRead" class="font-medium">{{ row.name }}</span>
+          <NodeLabel v-else :id="row.nodeId" class="text-xs" />
         </template>
         <template #cell-version="{ row }">
-          <span :class="cn('whitespace-nowrap font-mono text-xs', STANDING_TONE[row.standing])">{{ row.version ? normalizeAgentVersion(row.version) : $t('platform.agentUpdatesPage.noVersion') }}</span>
+          <span v-if="!nodesRead" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
+          <span v-else :class="cn('whitespace-nowrap font-mono text-xs', STANDING_TONE[row.standing])">{{ row.version ? normalizeAgentVersion(row.version) : $t('platform.agentUpdatesPage.noVersion') }}</span>
           <span v-if="row.standing === 'behind'" class="block text-xs text-warning-text">{{ $t('platform.agentUpdatesPage.standing.behind') }}</span>
         </template>
         <template #cell-target="{ row }">
           <span v-if="row.policy" class="whitespace-nowrap font-mono text-xs">{{ targetLabel(row.policy) }}</span>
+          <span v-else-if="!policiesRead" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
           <span v-else class="text-xs text-warning-text">{{ $t('platform.agentUpdatesPage.noPolicy') }}</span>
         </template>
         <template #cell-policy="{ row }">
           <span v-if="row.policy" class="whitespace-nowrap text-xs text-muted-foreground">{{ policyText(row.policy) }}</span>
+          <span v-else-if="!policiesRead" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
           <span v-else class="text-xs text-muted-foreground">-</span>
           <span v-if="row.policy?.last_error" class="block text-xs text-destructive">{{ $t('platform.agentUpdatesPage.policyFailed') }}</span>
           <span v-if="staleApprovalCount(row.nodeId)" class="block text-xs text-warning-text">{{ $t('platform.agentUpdates.staleApprovalBadge', { count: staleApprovalCount(row.nodeId) }) }}</span>
         </template>
         <template #cell-last_planned="{ row }">
           <span class="whitespace-nowrap text-xs text-muted-foreground" :title="row.policy?.last_planned_at ? formatDateTime(row.policy.last_planned_at) : undefined">
-            {{ row.policy?.last_planned_at ? formatRelativeTime(row.policy.last_planned_at) : $t('common.misc.never') }}
+            {{ row.policy?.last_planned_at ? formatRelativeTime(row.policy.last_planned_at) : policiesRead ? $t('common.misc.never') : $t('platform.agentUpdatesPage.notRead') }}
           </span>
         </template>
         <template #cell-actions="{ row }">
@@ -1099,6 +1150,7 @@ const deleteImpact = computed(() => {
             <RouterLink to="/approvals" class="text-primary underline-offset-4 hover:underline">{{ $t('platform.agentUpdates.openApprovals') }}</RouterLink>
           </p>
         </template>
+        <p v-else-if="!policiesRead" class="text-muted-foreground">{{ $t('platform.agentUpdatesPage.sheet.policiesUnread') }}</p>
         <p v-else class="text-warning-text">{{ $t('platform.agentUpdatesPage.sheet.noPolicy') }}</p>
       </div>
       <template v-if="openRow" #actions>
@@ -1114,7 +1166,7 @@ const deleteImpact = computed(() => {
           </Button>
           <RowMenu v-if="canAdmin" :name="openRow.name" :items="menuFor(openRow).filter((item) => item.key === 'delete')" />
         </template>
-        <Button v-else-if="canAdmin" variant="outline" size="sm" type="button" @click="addPolicyFor(openRow.nodeId)">
+        <Button v-else-if="canAdmin && policiesRead" variant="outline" size="sm" type="button" @click="addPolicyFor(openRow.nodeId)">
           <Plus aria-hidden="true" />
           {{ $t('platform.agentUpdatesPage.attention.addPolicy') }}
         </Button>
