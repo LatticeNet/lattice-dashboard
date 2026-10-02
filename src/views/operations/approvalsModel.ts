@@ -449,3 +449,69 @@ export function countApprovalInbox<T extends ApprovalInboxItem>(
   }
   return counts;
 }
+
+// ── Why an agent update plan went stale ─────────────────────────────────────
+
+/**
+ * The fields lattice-server compares when it decides an agent update plan no
+ * longer matches the node's policy (agentUpdatePayloadChangeSummary), in the
+ * order it lists them.
+ */
+export const AGENT_UPDATE_STALE_FIELDS = [
+  "current_version",
+  "target_version",
+  "binary_source",
+  "binary_url",
+  "sha256",
+  "install_path",
+  "service_name",
+] as const;
+export type AgentUpdateStaleField = (typeof AGENT_UPDATE_STALE_FIELDS)[number];
+
+export type AgentUpdateStaleCause = "policyMissing" | "policyDisabled" | "nodeMissing" | "payloadInvalid" | "payloadChanged";
+
+export interface AgentUpdateStaleDetail {
+  /** Each field whose planned value the policy no longer resolves to. */
+  changes: Array<{ field: AgentUpdateStaleField; planned: string; current: string }>;
+  /** A cause the server names instead of field changes. */
+  causes: AgentUpdateStaleCause[];
+  /** What the server said that fits neither, verbatim, so nothing it said is dropped. */
+  other: string[];
+}
+
+const STALE_LEADS = ["agent update policy changed since this approval was planned", "agent update approval is stale"];
+const STALE_TAIL = "re-plan before approving";
+const STALE_CAUSES: Array<[RegExp, AgentUpdateStaleCause]> = [
+  [/^policy ".*" not found$/, "policyMissing"],
+  [/^policy ".*" is disabled$/, "policyDisabled"],
+  [/^node ".*" not found$/, "nodeMissing"],
+  [/^approval payload is invalid$/, "payloadInvalid"],
+  [/^resolved update payload changed$/, "payloadChanged"],
+];
+
+/**
+ * Read the server's English stale reason into parts the console can say in
+ * the reader's language. The server writes "<lead>; changed fields:
+ * target_version planned=0.3.8 current=0.3.9; re-plan before approving" (or
+ * a named cause in place of the fields; older servers wrote "agent update
+ * approval is stale; target_version planned=..."). Segments that match none
+ * of the known shapes are kept verbatim in `other`.
+ */
+export function describeAgentUpdateStale(reason: string): AgentUpdateStaleDetail {
+  const detail: AgentUpdateStaleDetail = { changes: [], causes: [], other: [] };
+  for (const raw of reason.split(";")) {
+    let segment = raw.trim();
+    if (!segment || STALE_LEADS.includes(segment) || segment === STALE_TAIL) continue;
+    segment = segment.replace(/^changed fields:\s*/, "");
+    const change = /^([a-z_0-9]+) planned=(\S*) current=(\S*)$/.exec(segment);
+    const field = change?.[1] as AgentUpdateStaleField | undefined;
+    if (change && field && (AGENT_UPDATE_STALE_FIELDS as readonly string[]).includes(field)) {
+      detail.changes.push({ field, planned: change[2] ?? "", current: change[3] ?? "" });
+      continue;
+    }
+    const cause = STALE_CAUSES.find(([pattern]) => pattern.test(segment))?.[1];
+    if (cause) detail.causes.push(cause);
+    else detail.other.push(segment);
+  }
+  return detail;
+}

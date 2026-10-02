@@ -82,6 +82,7 @@ import ApprovalReview from "./ApprovalReview.vue";
 import {
   UNKNOWN_WRITER,
   approvalWaitLabelKey,
+  describeAgentUpdateStale,
   groupApprovalsIntoEvents,
   isApprovalMoving,
   isApprovalStuck,
@@ -365,10 +366,43 @@ function isStale(approval?: ApprovalView): boolean {
   return isStaleAgentUpdateApprovalView(approval);
 }
 
+/**
+ * Why an agent update plan went stale, in the reader's language. The server
+ * writes the reason in English ("...; changed fields: target_version
+ * planned=0.3.8 current=0.3.9; re-plan before approving"); this says the
+ * same parts as sentences, and anything it cannot place is quoted as the
+ * server wrote it. The raw text stays available through staleRaw.
+ */
 function staleReason(approval?: ApprovalView): string {
   if (!approval || approval.plugin !== "agentupdate") return "";
-  if (approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED) return approval.reason || t("operations.approvals.toastStale");
-  return approval.reason ?? "";
+  const raw = approval.reason?.trim() ?? "";
+  if (!(approval.stale || approval.stale_code === APPROVAL_STALE_AGENT_UPDATE_POLICY_CHANGED)) return raw;
+  if (!raw) return t("operations.approvals.toastStale");
+  const detail = describeAgentUpdateStale(raw);
+  const parts: string[] = [];
+  if (detail.changes.length) {
+    const changes = detail.changes
+      .map((change) =>
+        t("operations.approvals.staleWhy.change", {
+          field: t(`operations.approvals.staleWhy.fields.${change.field}`),
+          planned: change.planned || t("operations.approvals.staleWhy.none"),
+          current: change.current || t("operations.approvals.staleWhy.none"),
+        }),
+      )
+      .join(t("operations.approvals.staleWhy.listSeparator"));
+    parts.push(t("operations.approvals.staleWhy.changed", { changes }));
+  }
+  for (const cause of detail.causes) parts.push(t(`operations.approvals.staleWhy.causes.${cause}`));
+  if (detail.other.length) parts.push(t("operations.approvals.staleWhy.other", { detail: detail.other.join("; ") }));
+  if (!detail.changes.length && !detail.causes.length) parts.unshift(t("operations.approvals.staleWhy.unknown"));
+  parts.push(t("operations.approvals.staleWhy.replan"));
+  // Chinese sentences sit against each other; English ones take a space.
+  return parts.join(locale.value.startsWith("zh") ? "" : " ");
+}
+
+/** The server's own words for a stale plan, kept beside the translation. */
+function staleRaw(approval?: ApprovalView): string {
+  return approval?.plugin === "agentupdate" ? (approval.reason?.trim() ?? "") : "";
 }
 
 function canReplan(approval?: ApprovalView): boolean {
@@ -1359,7 +1393,7 @@ function refreshAll(): void {
               </template>
               <template #cell-target="{ row }"><NodeLabel :id="row.node_id" /></template>
               <template #cell-why="{ row }">
-                <p class="line-clamp-2 break-words text-xs text-muted-foreground">{{ staleReason(row) }}</p>
+                <p class="line-clamp-2 break-words text-xs text-muted-foreground" :title="staleRaw(row) || undefined">{{ staleReason(row) }}</p>
               </template>
               <template #cell-updated="{ row }">
                 <span class="whitespace-nowrap text-xs text-muted-foreground" :title="formatDateTime(row.updated_at)">{{ formatRelativeTime(row.updated_at || row.created_at) }}</span>
@@ -1562,6 +1596,7 @@ function refreshAll(): void {
         :plan-error="openQuery.error.value?.message ?? null"
         :stale="isStale(openRecord)"
         :stale-reason="staleReason(openRecord)"
+        :stale-raw="staleRaw(openRecord)"
         :can-replan="canReplan(openRecord)"
         :can-dismiss-stale="canDismissStale(openRecord)"
         :can-dismiss-waiting="canDismissWaiting(openRecord)"

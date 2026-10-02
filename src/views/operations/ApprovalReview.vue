@@ -42,6 +42,8 @@ const props = defineProps<{
   /** An agent-update plan that no longer matches policy. */
   stale: boolean;
   staleReason: string;
+  /** The server's own English for the stale reason, shown in mono under the translation. */
+  staleRaw?: string;
   canReplan: boolean;
   canDismissStale: boolean;
   canDismissWaiting: boolean;
@@ -248,6 +250,7 @@ function statusLabel(status: string): string {
       <p class="mt-1">{{ $t('operations.approvals.staleDescription') }}</p>
       <p class="mt-2 text-xs font-medium text-muted-foreground">{{ $t('operations.approvals.rejectionReason') }}</p>
       <p class="mt-1 break-words">{{ staleReason }}</p>
+      <p v-if="staleRaw && staleRaw !== staleReason" class="mt-1 break-words font-mono text-xs" data-testid="approval-stale-raw">{{ staleRaw }}</p>
       <div class="mt-3 flex flex-wrap gap-2">
         <Button v-if="canReplan" type="button" variant="outline" size="sm" :disabled="replanning" @click="emit('replan')">
           <RefreshCw v-if="replanning" class="size-4 animate-spin" aria-hidden="true" />
