@@ -117,9 +117,9 @@ const primaryKey = computed(() => steps.value.find((s) => !s.done)?.key);
             aria-hidden="true"
           />
           <div class="min-w-0 flex-1">
-            <p class="flex items-center gap-2 text-sm font-medium">
-              <component :is="step.icon" class="size-4 text-muted-foreground" aria-hidden="true" />
-              <span class="truncate">{{ step.title }}</span>
+            <p class="flex items-start gap-2 text-sm font-medium">
+              <component :is="step.icon" class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span class="min-w-0 break-words">{{ step.title }}</span>
             </p>
             <p class="mt-0.5 text-sm text-muted-foreground">{{ step.description }}</p>
           </div>

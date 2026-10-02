@@ -48,6 +48,29 @@ export function tlsTargetError(target: string): string | undefined {
   return undefined;
 }
 
+/**
+ * Why an agent probe's target is unacceptable, or undefined when it is fine.
+ * The agent dials a tcp target as host:port (the same shape a certificate
+ * watch takes) and sends an http target a GET, so it needs http:// or
+ * https://. The server only checks that a target is present, and a monitor
+ * cannot be edited after it is created, so a TCP monitor saved with a URL
+ * failed every check until it was deleted.
+ */
+export function targetError(type: string, target: string): string | undefined {
+  const value = target.trim();
+  if (!value) return "empty";
+  if (type === "http") {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return "not_url";
+    }
+    return url.protocol === "http:" || url.protocol === "https:" ? undefined : "not_url";
+  }
+  return tlsTargetError(value);
+}
+
 export interface MonitorFormState {
   name: string;
   type: string;
@@ -61,9 +84,8 @@ export interface MonitorFormState {
 
 /** Whether the form as it stands can be submitted at all. */
 export function canSubmitMonitor(form: MonitorFormState): boolean {
-  if (!form.name.trim() || !form.target.trim()) return false;
+  if (!form.name.trim() || targetError(form.type, form.target)) return false;
   if (isServerEvaluated(form.type)) {
-    if (tlsTargetError(form.target)) return false;
     return (
       Number.isInteger(form.thresholdDays) &&
       form.thresholdDays >= 1 &&

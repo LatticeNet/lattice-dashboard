@@ -147,10 +147,11 @@ const approvalTabs: LayerTab<ApprovalLayer>[] = [
 
 const sheet = useRouteOpen();
 const openNode = computed(() => GALLERY_NODES.find((node) => node.id === sheet.openId.value));
-const sheetMode = ref<"auto" | "loading" | "stale" | "readonly">("auto");
+const sheetMode = ref<"auto" | "loading" | "stale" | "failed" | "readonly">("auto");
 const sheetState = computed(() => {
   if (!sheet.openId.value) return "ready" as const;
   if (sheetMode.value === "loading") return "loading" as const;
+  if (sheetMode.value === "failed") return "failed" as const;
   if (!openNode.value) return "gone" as const;
   if (sheetMode.value === "stale") return "stale" as const;
   return "ready" as const;
@@ -424,7 +425,7 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
         <span class="text-muted-foreground">Table:</span>
         <Button v-for="mode in ['rows', 'loading', 'error', 'empty'] as const" :key="mode" size="sm" :variant="tableMode === mode ? 'secondary' : 'ghost'" type="button" @click="tableMode = mode">{{ mode }}</Button>
         <span class="ms-2 text-muted-foreground">Sheet:</span>
-        <Button v-for="mode in ['auto', 'loading', 'stale', 'readonly'] as const" :key="mode" size="sm" :variant="sheetMode === mode ? 'secondary' : 'ghost'" type="button" @click="sheetMode = mode">{{ mode }}</Button>
+        <Button v-for="mode in ['auto', 'loading', 'stale', 'failed', 'readonly'] as const" :key="mode" size="sm" :variant="sheetMode === mode ? 'secondary' : 'ghost'" type="button" @click="sheetMode = mode">{{ mode }}</Button>
         <Button size="sm" variant="ghost" type="button" @click="sheet.open(GONE_NODE_ID)">open a deleted node</Button>
         <Button size="sm" variant="ghost" as-child><RouterLink :to="{ query: { ...route.query, 'nodes.q': 'no-such-node' } }">filter to nothing</RouterLink></Button>
       </div>
@@ -564,9 +565,10 @@ const RANGE_LABEL: Record<string, string> = { "1h": "Last hour", "24h": "Last 24
       :page-to="openNode ? { name: 'node-detail', params: { id: openNode.id } } : undefined"
       :state="sheetState"
       :read-only="sheetMode === 'readonly'"
-      :error="sheetMode === 'stale' ? '502 Bad Gateway' : null"
+      :error="sheetMode === 'stale' || sheetMode === 'failed' ? '502 Bad Gateway' : null"
       :return-focus="sheet.returnFocus"
       @close="sheet.close"
+      @retry="sheetMode = 'auto'"
     >
       <dl v-if="openNode" class="grid gap-3 text-sm sm:grid-cols-2">
         <div><dt class="text-xs text-muted-foreground">Status</dt><dd>{{ openNode.status }}</dd></div>

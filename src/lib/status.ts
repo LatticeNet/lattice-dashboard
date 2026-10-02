@@ -68,7 +68,8 @@ const TREATMENT: Record<NodeHealth, StatusMeta> = {
   degraded: {
     dotStatus: "degraded",
     badgeVariant: "warning",
-    textClass: "text-warning",
+    // Text takes the AA ink (raw --warning measured 2.5:1 on white); fills keep the raw token.
+    textClass: "text-warning-text",
     softBgClass: "bg-warning/5 border-warning/40",
     iconBgClass: "bg-warning/10 text-warning",
   },

@@ -1,1349 +1,348 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+/**
+ * The fleet map (design 23, 4.2): where the nodes are, as status clusters
+ * with counts, and a click that opens the node.
+ *
+ *   observed 4s ago · 31 of 34 located · 2 not reporting · 3 unlocated
+ *   [map: clusters coloured by their worst member, a red count of the down]
+ *   On one spot: 13 nodes in Los Angeles      Unlocated: 3 nodes [Set location]
+ *
+ * A cluster that a zoom can split zooms in; one node opens the node sheet on
+ * ?open=; several mostly on one spot are listed on the first click, in a
+ * panel beside the cluster (under the map on a phone), non-reporting first,
+ * with focus moved into it. Editing a location
+ * moved to the node's Settings, so the map no longer opens an editor, and
+ * the trackpad hint is for pointers that have a trackpad, not phones.
+ */
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
-import {
-  Crosshair,
-  Filter,
-  Globe2,
-  LocateFixed,
-  MapPinned,
-  RefreshCw,
-  Radar,
-  Route,
-  Search,
-  Trash2,
-  WifiOff,
-  X,
-} from "lucide-vue-next";
-import {
-  api,
-  unwrap,
-  type Node,
-  type NodeGeoResolveResult,
-  type NodeGeoView,
-} from "@/lib/api";
-import { NODE_STATUSES, compareByAttention, countNodeStatuses, describeNodeStatus, nodeStatus, nodeStatusReason, type NodeStatus, type NodeStatusTone } from "@/lib/nodeStatus";
-import { statusMeta } from "@/lib/status";
+import { RotateCw } from "lucide-vue-next";
+
+import { api, unwrap, type Node, type NodeGeoResolveResult } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useProof } from "@/composables/useProof";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime } from "@/lib/format";
+import { countryName } from "@/lib/fleet";
+import { compareByAttention, describeNodeStatus, isReporting, nodeStatus } from "@/lib/nodeStatus";
+import { useMediaQuery } from "@/composables/useMediaQuery";
+import { clusterPlace } from "./fleetMapModel";
 import { cn } from "@/lib/utils";
-import { WORLD_RINGS } from "@/lib/map/worldGeo";
-import {
-  evalFilterExpression,
-  nodeHasAgentCapability,
-  nodeHasArchOsToken,
-  nodeHasTagToken,
-  nodeMatchesTargetToken,
-} from "@/lib/nodeFilterExpressions";
+import { proofReason } from "@/components/common/proofModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import DataState from "@/components/common/DataState.vue";
-import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
+import DataState from "@/components/common/DataState.vue";
+import FleetMap from "@/components/fleet/FleetMap.vue";
+import NodeSheet from "@/components/fleet/NodeSheet.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-const MAP_WIDTH = 1000;
-const MAP_HEIGHT = 500;
 
 const auth = useAuthStore();
-const { t } = useI18n();
-const geoQuery = useAsyncData((signal) => api.nodes.geo({ signal }).then((r) => unwrap(r, "nodes")), {
-  pollInterval: 10000,
-});
-
-const selectedNodeId = ref("");
-const country = ref("");
-const region = ref("");
-const city = ref("");
-const lat = ref("");
-const lon = ref("");
-const provider = ref("");
-const asn = ref("");
-const asOrg = ref("");
-const pendingSave = ref(false);
-const resolvingNodeId = ref("");
-const resolvingAll = ref(false);
-const hoveredNodeId = ref("");
-const mapViewport = ref({ scale: 1, x: 0, y: 0 });
-const isPanning = ref(false);
-const panStart = ref({ pointerId: -1, clientX: 0, clientY: 0, x: 0, y: 0, moved: false });
-const suppressMarkerClickUntil = ref(0);
-const locationEditorOpen = ref(false);
-
-type MapStatusFilter = "all" | NodeStatus;
-type AgentCapabilityFilter = "exec" | "root" | "terminal" | "stream" | "poll";
-
-const ARCH_OS_TOKENS = ["linux", "darwin", "amd64", "arm64"] as const;
-const AGENT_CAP_FILTERS: AgentCapabilityFilter[] = ["exec", "root", "terminal", "stream", "poll"];
-const mapSearch = ref("");
-const mapStatusFilter = ref<MapStatusFilter>("all");
-const mapExpr = ref("");
-const activeMapTags = ref<string[]>([]);
-const activeMapArchOs = ref<string[]>([]);
-const activeMapAgentCaps = ref<AgentCapabilityFilter[]>([]);
-const nodes = computed(() => geoQuery.data.value ?? []);
-const filteredNodes = computed(() => {
-  const q = mapSearch.value.trim().toLowerCase();
-  const filtered = [...nodes.value]
-    .sort((a, b) => {
-      const aNode = nodeForFilter(a);
-      const bNode = nodeForFilter(b);
-      // Worst first, the same triage order the Nodes page and Overview use.
-      const byStatus = compareByAttention(aNode, bNode);
-      if (byStatus !== 0) return byStatus;
-      return (a.name || a.id).localeCompare(b.name || b.id);
-    })
-    .filter(
-      (node) =>
-        matchesMapStatus(node) &&
-        matchesMapSearch(node) &&
-        matchesMapExpression(node) &&
-        matchesMapQuickFilters(node),
-    );
-  if (!q) return filtered;
-  return filtered.sort((a, b) => mapSearchScore(b, q) - mapSearchScore(a, q));
-});
-const withGeo = computed(() => nodes.value.filter(hasCoordinates));
-const filteredWithGeo = computed(() => filteredNodes.value.filter(hasCoordinates));
-const withoutGeo = computed(() => filteredNodes.value.filter((n) => !hasCoordinates(n)));
-/** The card lists a short window; the remainder is counted, never dropped silently. */
-const UNLOCATED_SHOWN = 8;
-const unlocatedShown = computed(() => withoutGeo.value.slice(0, UNLOCATED_SHOWN));
-const unlocatedHidden = computed(() => Math.max(0, withoutGeo.value.length - UNLOCATED_SHOWN));
-const withLookupIP = computed(() => nodes.value.filter((n) => lookupIP(n) && !hasCoordinates(n)));
-/** The same six numbers every fleet surface prints, from one pass. */
-const statusCounts = computed(() => countNodeStatuses(nodes.value));
-const onlineCount = computed(() => statusCounts.value.online);
-const notReportingCount = computed(() => statusCounts.value.offline + statusCounts.value.never_reported);
-const countryCount = computed(() => new Set(withGeo.value.map((n) => n.geo?.country).filter(Boolean)).size);
-const autoCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "auto").length);
-const manualCount = computed(() => withGeo.value.filter((n) => n.geo?.source === "operator" || !n.geo?.source).length);
-const coveragePercent = computed(() => (nodes.value.length ? Math.round((withGeo.value.length / nodes.value.length) * 100) : 0));
+const { t, locale } = useI18n();
 const canAdminNodes = computed(() => auth.can("node:admin"));
-const allMapTags = computed(() => {
-  const set = new Set<string>();
-  for (const node of nodes.value) {
-    const n = nodeForFilter(node);
-    if (n.role) set.add(n.role);
-    for (const tag of n.tags ?? []) set.add(tag);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b));
+
+const nodesQuery = useAsyncData<Node[]>((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
+  pollInterval: 10_000,
 });
-const visibleMapTags = computed(() => {
-  const selected = new Set(activeMapTags.value);
-  const ordered = [
-    ...activeMapTags.value.filter((tag) => allMapTags.value.includes(tag)),
-    ...allMapTags.value.filter((tag) => !selected.has(tag)),
-  ];
-  return ordered.slice(0, 14);
-});
-const hiddenMapTagCount = computed(() => Math.max(0, allMapTags.value.length - visibleMapTags.value.length));
-const availableMapArchOs = computed(() =>
-  ARCH_OS_TOKENS.filter((token) => nodes.value.some((node) => nodeHasArchOsToken(nodeForFilter(node), token))),
-);
-const availableMapAgentCaps = computed(() =>
-  AGENT_CAP_FILTERS.filter((cap) => nodes.value.some((node) => mapNodeHasAgentCapability(node, cap))),
-);
-const hasMapFilters = computed(
-  () =>
-    !!mapSearch.value.trim() ||
-    mapStatusFilter.value !== "all" ||
-    !!mapExpr.value.trim() ||
-    activeMapTags.value.length > 0 ||
-    activeMapArchOs.value.length > 0 ||
-    activeMapAgentCaps.value.length > 0,
-);
-const mapExpressionError = computed(() => {
-  if (!mapExpr.value.trim()) return "";
-  const result = evalFilterExpression(mapExpr.value, () => true);
-  return result.ok ? "" : result.error || t("fleet.map.filters.invalidExpression");
-});
+const nodes = computed(() => nodesQuery.data.value ?? []);
+const proof = useProof(nodesQuery);
 
-const plotted = computed(() => {
-  const keyCounts = new Map<string, number>();
-  return filteredWithGeo.value.map((node) => {
-    const latitude = node.geo?.lat ?? 0;
-    const longitude = node.geo?.lon ?? 0;
-    const key = `${latitude.toFixed(1)}:${longitude.toFixed(1)}`;
-    const index = keyCounts.get(key) ?? 0;
-    keyCounts.set(key, index + 1);
-    const projected = project(longitude, latitude);
-    const angle = index * 2.3999632297;
-    const radius = index === 0 ? 0 : Math.min(18, 5 + index * 2);
-    return {
-      node,
-      x: projected.x + Math.cos(angle) * radius,
-      y: projected.y + Math.sin(angle) * radius,
-      selected: selectedNodeId.value === node.id,
-      label: locationLabel(node),
-    };
-  });
-});
+const owned = useOwnedRoute();
+const sheet = bindRouteOpen(owned);
 
-const mapZoom = computed(() => mapViewport.value.scale);
-const mapZoomTransform = computed(() => {
-  const v = mapViewport.value;
-  return `translate(${v.x} ${v.y}) scale(${v.scale})`;
-});
-const mapCursorClass = computed(() => (isPanning.value ? "cursor-grabbing" : "cursor-grab"));
-
-const hoveredPoint = computed(() =>
-  plotted.value.find((point) => point.node.id === hoveredNodeId.value),
-);
-
-const selectedNode = computed<NodeGeoView | undefined>(() =>
-  nodes.value.find((node) => node.id === selectedNodeId.value),
-);
-const selectedLookupIP = computed(() => (selectedNode.value ? lookupIP(selectedNode.value) : ""));
-const selectedCoordinates = computed(() => {
-  const node = selectedNode.value;
-  if (!node || !hasCoordinates(node)) return "";
-  return `${node.geo?.lat?.toFixed(4)}, ${node.geo?.lon?.toFixed(4)}`;
-});
-
-const regions = computed(() => {
-  const groups = new Map<string, { key: string; label: string; nodes: NodeGeoView[]; online: number }>();
-  for (const node of filteredWithGeo.value) {
-    const key = `${node.geo?.country || "??"}:${node.geo?.region || ""}`;
-    const label = [node.geo?.country, node.geo?.region].filter(Boolean).join(" · ") || t("fleet.map.unknownRegion");
-    const group = groups.get(key) ?? { key, label, nodes: [], online: 0 };
-    group.nodes.push(node);
-    if (nodeStatus(node) === "online") group.online += 1;
-    groups.set(key, group);
-  }
-  return Array.from(groups.values()).sort((a, b) => b.nodes.length - a.nodes.length || a.label.localeCompare(b.label));
-});
-
-const landPaths = computed(() => WORLD_RINGS.map(ringToPath).filter(Boolean));
-
-function nodeForFilter(node: NodeGeoView): Node {
-  return node as unknown as Node;
-}
-
-/** The status word the geo view carries, read the same way the Nodes page reads it. */
-function markerStatus(node: NodeGeoView) {
-  return describeNodeStatus(node);
-}
-
-/**
- * Marker colours by status word, taken from the palette rather than copied
- * from it.
- *
- * These were four hand-written oklch literals that no longer matched the
- * success / warning / destructive tokens in app.css and did not change with
- * the theme, so the map drew its own slightly different greens and reds. SVG
- * presentation attributes cannot read a utility class, but `fill-*` and
- * `stroke-*` classes can, and Tailwind generates them from the same tokens
- * everything else here uses.
- *
- * The halo and the ping ring were separately hard-coded green and drawn for
- * any reporting node, which put a green halo around an amber degraded marker.
- * They now take the marker's own colour.
- */
-const MARKER_CLASSES: Record<NodeStatusTone, { fill: string; halo: string; haloSelected: string; ping: string }> = {
-  success: { fill: "fill-success", halo: "fill-success/15", haloSelected: "fill-success/30", ping: "stroke-success/50" },
-  warning: { fill: "fill-warning", halo: "fill-warning/15", haloSelected: "fill-warning/30", ping: "stroke-warning/50" },
-  destructive: {
-    fill: "fill-destructive",
-    halo: "fill-destructive/15",
-    haloSelected: "fill-destructive/30",
-    ping: "stroke-destructive/50",
-  },
-  muted: {
-    fill: "fill-muted-foreground",
-    halo: "fill-muted-foreground/15",
-    haloSelected: "fill-muted-foreground/30",
-    ping: "stroke-muted-foreground/50",
-  },
-};
-
-function markerClasses(node: NodeGeoView) {
-  return MARKER_CLASSES[markerStatus(node).tone];
-}
-
-function mapNodeHasAgentCapability(node: NodeGeoView, cap: AgentCapabilityFilter): boolean {
-  return nodeHasAgentCapability(nodeForFilter(node), cap);
-}
-
-function matchesMapStatus(node: NodeGeoView): boolean {
-  // The filter values are the status words themselves; "all" and the empty
-  // string mean no filter.
-  const want = mapStatusFilter.value;
-  if (!want || want === "all") return true;
-  return nodeStatus(nodeForFilter(node)) === want;
-}
-
-function mapSearchFields(node: NodeGeoView): string[] {
-  const n = nodeForFilter(node);
-  return [
-    n.name,
-    n.id,
-    n.role,
-    n.public_ip,
-    n.public_ipv6,
-    n.internal_ip,
-    n.internal_ipv6,
-    n.host_facts?.hostname,
-    n.host_facts?.arch,
-    n.host_facts?.os,
-    n.host_facts?.platform,
-    n.geo?.country,
-    n.geo?.region,
-    n.geo?.city,
-    n.geo?.provider,
-    n.geo?.as_org,
-    ...(n.tags ?? []),
-  ]
-    .filter((v): v is string => !!v)
-    .map((v) => v.toLowerCase());
-}
-
-function fuzzyMatch(haystack: string, needle: string): boolean {
-  if (!needle) return true;
-  let i = 0;
-  for (let j = 0; j < haystack.length && i < needle.length; j += 1) {
-    if (haystack[j] === needle[i]) i += 1;
-  }
-  return i === needle.length;
-}
-
-function matchesMacAlias(node: NodeGeoView, q: string): boolean {
-  if (!q.includes("mac")) return false;
-  const n = nodeForFilter(node);
-  const osp = `${n.host_facts?.os ?? ""} ${n.host_facts?.platform ?? ""}`.toLowerCase();
-  return osp.includes("darwin");
-}
-
-function matchesMapSearch(node: NodeGeoView): boolean {
-  const q = mapSearch.value.trim().toLowerCase();
-  if (!q) return true;
-  const fields = mapSearchFields(node);
-  if (fields.some((field) => field.includes(q))) return true;
-  if (matchesMacAlias(node, q)) return true;
-  return fields.some((field) => fuzzyMatch(field, q));
-}
-
-function mapSearchScore(node: NodeGeoView, q: string): number {
-  if (!q) return 0;
-  let best = 0;
-  for (const field of mapSearchFields(node)) {
-    if (field === q) best = Math.max(best, 100);
-    else if (field.startsWith(q)) best = Math.max(best, 70);
-    else if (field.includes(q)) best = Math.max(best, 50);
-    else if (fuzzyMatch(field, q)) best = Math.max(best, 20);
-  }
-  if (matchesMacAlias(node, q)) best = Math.max(best, 60);
-  return best;
-}
-
-function matchesMapExpression(node: NodeGeoView): boolean {
-  if (!mapExpr.value.trim()) return true;
-  const result = evalFilterExpression(mapExpr.value, (token) =>
-    nodeMatchesTargetToken(nodeForFilter(node), token),
-  );
-  return result.ok && result.value;
-}
-
-function matchesMapQuickFilters(node: NodeGeoView): boolean {
-  if (activeMapTags.value.length > 0 && !activeMapTags.value.every((tag) => nodeHasTagToken(nodeForFilter(node), tag))) {
-    return false;
-  }
-  if (activeMapArchOs.value.length > 0 && !activeMapArchOs.value.every((token) => nodeHasArchOsToken(nodeForFilter(node), token))) {
-    return false;
-  }
-  if (activeMapAgentCaps.value.length > 0 && !activeMapAgentCaps.value.every((cap) => mapNodeHasAgentCapability(node, cap))) {
-    return false;
-  }
-  return true;
-}
-
-function toggleMapAgentCap(cap: AgentCapabilityFilter) {
-  const next = new Set(activeMapAgentCaps.value);
-  if (next.has(cap)) next.delete(cap);
-  else next.add(cap);
-  activeMapAgentCaps.value = [...next];
-}
-
-function toggleMapArchOs(token: string) {
-  const next = new Set(activeMapArchOs.value);
-  if (next.has(token)) next.delete(token);
-  else next.add(token);
-  activeMapArchOs.value = [...next];
-}
-
-function toggleMapTag(tag: string) {
-  const next = new Set(activeMapTags.value);
-  if (next.has(tag)) next.delete(tag);
-  else next.add(tag);
-  activeMapTags.value = [...next];
-}
-
-function clearMapFilters() {
-  mapSearch.value = "";
-  mapStatusFilter.value = "all";
-  mapExpr.value = "";
-  activeMapTags.value = [];
-  activeMapArchOs.value = [];
-  activeMapAgentCaps.value = [];
-}
-
-function hasCoordinates(node: NodeGeoView) {
+function located(node: Node): boolean {
   return typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number";
 }
+const locatedNodes = computed(() => nodes.value.filter(located));
+const unlocated = computed(() => nodes.value.filter((node) => !located(node)));
+const down = computed(() => nodes.value.filter((node) => ["offline", "never_reported"].includes(nodeStatus(node))));
 
-function project(lonValue: number, latValue: number) {
-  const lonClamped = Math.max(-180, Math.min(180, lonValue));
-  const latClamped = Math.max(-90, Math.min(90, latValue));
-  const x = ((lonClamped + 180) / 360) * MAP_WIDTH;
-  const y = ((90 - latClamped) / 180) * MAP_HEIGHT;
-  return { x, y };
-}
+const proofSegments = computed<ProofSegment[]>(() => {
+  const out: ProofSegment[] = [{ key: "located", text: t("fleet.map.proof.located", { located: locatedNodes.value.length, total: nodes.value.length }) }];
+  if (down.value.length) out.push({ key: "down", text: t("fleet.map.proof.down", { n: down.value.length }), tone: "destructive", to: { name: "nodes", query: { status: "offline" } } });
+  if (unlocated.value.length) out.push({ key: "unlocated", text: t("fleet.map.proof.unlocated", { n: unlocated.value.length }), tone: "muted" });
+  return out;
+});
 
-// Rings are flat [lon,lat,lon,lat,...] pairs (compact bundled world geometry).
-function ringToPath(ring: readonly number[]) {
-  let d = "";
-  for (let i = 0; i + 1 < ring.length; i += 2) {
-    const lon = ring[i];
-    const lat = ring[i + 1];
-    if (lon === undefined || lat === undefined) break;
-    const point = project(lon, lat);
-    d += `${i === 0 ? "M" : "L"}${point.x.toFixed(1)} ${point.y.toFixed(1)} `;
-  }
-  return d ? `${d}Z` : "";
-}
+/* ------------------------------ locate missing ------------------------------ */
 
-function lookupIP(node: NodeGeoView) {
-  return node.public_ip || node.public_ipv6 || "";
-}
+const resolving = ref(false);
 
-function locationLabel(node: NodeGeoView) {
-  return [node.geo?.city, node.geo?.region, node.geo?.country].filter(Boolean).join(", ") || t("fleet.map.noCoordinates");
-}
-
-function sourceLabel(source?: string) {
-  if (source === "auto") return t("fleet.map.source.auto");
-  if (source === "operator" || !source) return t("fleet.map.source.operator");
-  return source;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function clampViewport(next: { scale: number; x: number; y: number }) {
-  const scale = clamp(Math.round(next.scale * 100) / 100, 1, 5);
-  if (scale <= 1) return { scale: 1, x: 0, y: 0 };
-  const slack = 28;
-  return {
-    scale,
-    x: clamp(next.x, MAP_WIDTH * (1 - scale) - slack, slack),
-    y: clamp(next.y, MAP_HEIGHT * (1 - scale) - slack, slack),
-  };
-}
-
-function applyViewport(next: { scale: number; x: number; y: number }) {
-  mapViewport.value = clampViewport(next);
-}
-
-function svgPoint(event: WheelEvent | PointerEvent) {
-  const target = event.currentTarget as SVGSVGElement;
-  const rect = target.getBoundingClientRect();
-  return {
-    x: ((event.clientX - rect.left) / rect.width) * MAP_WIDTH,
-    y: ((event.clientY - rect.top) / rect.height) * MAP_HEIGHT,
-    rect,
-  };
-}
-
-function setZoom(next: number, anchor = { x: MAP_WIDTH / 2, y: MAP_HEIGHT / 2 }) {
-  const current = mapViewport.value;
-  const scale = clamp(Math.round(next * 100) / 100, 1, 5);
-  const worldX = (anchor.x - current.x) / current.scale;
-  const worldY = (anchor.y - current.y) / current.scale;
-  applyViewport({
-    scale,
-    x: anchor.x - worldX * scale,
-    y: anchor.y - worldY * scale,
-  });
-}
-
-function resetViewport() {
-  applyViewport({ scale: 1, x: 0, y: 0 });
-}
-
-function onMapWheel(event: WheelEvent) {
-  const point = svgPoint(event);
-  if (event.ctrlKey || event.metaKey) {
-    const factor = Math.exp(-event.deltaY * 0.006);
-    setZoom(mapViewport.value.scale * factor, point);
-    return;
-  }
-  const dx = (event.deltaX / point.rect.width) * MAP_WIDTH;
-  const dy = (event.deltaY / point.rect.height) * MAP_HEIGHT;
-  applyViewport({
-    ...mapViewport.value,
-    x: mapViewport.value.x - dx,
-    y: mapViewport.value.y - dy,
-  });
-}
-
-function onMapPointerDown(event: PointerEvent) {
-  if (event.button !== 0) return;
-  const target = event.currentTarget as SVGSVGElement;
-  target.setPointerCapture?.(event.pointerId);
-  isPanning.value = true;
-  panStart.value = {
-    pointerId: event.pointerId,
-    clientX: event.clientX,
-    clientY: event.clientY,
-    x: mapViewport.value.x,
-    y: mapViewport.value.y,
-    moved: false,
-  };
-}
-
-function onMapPointerMove(event: PointerEvent) {
-  if (!isPanning.value || panStart.value.pointerId !== event.pointerId) return;
-  const target = event.currentTarget as SVGSVGElement;
-  const rect = target.getBoundingClientRect();
-  const dx = ((event.clientX - panStart.value.clientX) / rect.width) * MAP_WIDTH;
-  const dy = ((event.clientY - panStart.value.clientY) / rect.height) * MAP_HEIGHT;
-  if (Math.abs(dx) + Math.abs(dy) > 2) panStart.value.moved = true;
-  applyViewport({
-    scale: mapViewport.value.scale,
-    x: panStart.value.x + dx,
-    y: panStart.value.y + dy,
-  });
-}
-
-function onMapPointerUp(event: PointerEvent) {
-  if (panStart.value.pointerId !== event.pointerId) return;
-  const target = event.currentTarget as SVGSVGElement;
-  target.releasePointerCapture?.(event.pointerId);
-  if (panStart.value.moved) suppressMarkerClickUntil.value = Date.now() + 180;
-  isPanning.value = false;
-  panStart.value.pointerId = -1;
-}
-
-function markerScreenX(x: number) {
-  const v = mapViewport.value;
-  return v.x + x * v.scale;
-}
-
-function markerScreenY(y: number) {
-  const v = mapViewport.value;
-  return v.y + y * v.scale;
-}
-
-function selectMarkerNode(node: NodeGeoView) {
-  if (Date.now() < suppressMarkerClickUntil.value) return;
-  selectNode(node);
-}
-
-function selectNode(node: NodeGeoView) {
-  selectedNodeId.value = node.id;
-  country.value = node.geo?.country ?? "";
-  region.value = node.geo?.region ?? "";
-  city.value = node.geo?.city ?? "";
-  lat.value = node.geo?.lat?.toString() ?? "";
-  lon.value = node.geo?.lon?.toString() ?? "";
-  provider.value = node.geo?.provider ?? "";
-  asn.value = node.geo?.asn?.toString() ?? "";
-  asOrg.value = node.geo?.as_org ?? "";
-}
-
-function selectFirstNode(groupNodes: NodeGeoView[]) {
-  const node = groupNodes[0];
-  if (node) selectNode(node);
-}
-
-function parseNumber(value: string): number | undefined {
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-async function saveGeo() {
-  if (!selectedNodeId.value) return;
-  const parsedLat = parseNumber(lat.value);
-  const parsedLon = parseNumber(lon.value);
-  if (parsedLat === undefined || parsedLon === undefined) {
-    toast.error(t("fleet.map.toast.coordinatesRequired"));
-    return;
-  }
-  pendingSave.value = true;
-  try {
-    await api.nodes.updateGeo(selectedNodeId.value, {
-      country: country.value.trim() || undefined,
-      region: region.value.trim() || undefined,
-      city: city.value.trim() || undefined,
-      lat: parsedLat,
-      lon: parsedLon,
-      provider: provider.value.trim() || undefined,
-      asn: parseNumber(asn.value),
-      as_org: asOrg.value.trim() || undefined,
-    });
-    toast.success(t("fleet.map.toast.locationSaved"));
-    await geoQuery.refresh();
-    const refreshed = nodes.value.find((node) => node.id === selectedNodeId.value);
-    if (refreshed) selectNode(refreshed);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.saveFailed"));
-  } finally {
-    pendingSave.value = false;
-  }
-}
-
-// Clearing wipes the stored coordinates on the server, so it asks first.
-const clearOpen = ref(false);
-const selectedNodeLabel = computed(
-  () => selectedNode.value?.name || selectedNode.value?.id || "",
-);
-
-async function clearGeo() {
-  if (!selectedNodeId.value) return;
-  pendingSave.value = true;
-  try {
-    await api.nodes.clearGeo(selectedNodeId.value);
-    toast.success(t("fleet.map.toast.locationCleared"));
-    country.value = "";
-    region.value = "";
-    city.value = "";
-    lat.value = "";
-    lon.value = "";
-    provider.value = "";
-    asn.value = "";
-    asOrg.value = "";
-    await geoQuery.refresh();
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.clearFailed"));
-  } finally {
-    pendingSave.value = false;
-    clearOpen.value = false;
-  }
-}
-
-async function resolveSelected() {
-  if (!selectedNodeId.value) return;
-  resolvingNodeId.value = selectedNodeId.value;
-  try {
-    const response = await api.nodes.resolveGeo({ node_id: selectedNodeId.value, overwrite: true });
-    await handleResolveResults(response.results);
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.map.toast.resolveFailed"));
-  } finally {
-    resolvingNodeId.value = "";
-  }
-}
-
-async function resolveMissing() {
-  resolvingAll.value = true;
+async function locateMissing(): Promise<void> {
+  resolving.value = true;
   try {
     const response = await api.nodes.resolveGeo({ all: true, missing_only: true });
-    await handleResolveResults(response.results);
+    report(response.results ?? []);
+    await nodesQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.map.toast.resolveFailed"));
   } finally {
-    resolvingAll.value = false;
+    resolving.value = false;
   }
 }
 
-async function handleResolveResults(results: NodeGeoResolveResult[]) {
-  const updated = results.filter((result) => result.status === "updated").length;
-  const disabled = results.some((result) => result.status === "resolver_disabled");
-  const failed = results.filter((result) => result.status === "lookup_failed" || result.status === "store_failed").length;
-  const noPublicIp = results.filter((result) => result.status === "no_public_ip").length;
-  if (disabled) {
+function report(results: NodeGeoResolveResult[]): void {
+  if (results.some((result) => result.status === "resolver_disabled")) {
     toast.error(t("fleet.map.toast.resolverDisabled"));
     return;
   }
-  if (updated > 0) {
-    // A partly successful batch used to report only the successes: the nodes
-    // whose lookup failed, or that have no public IP, vanished from the toast.
-    const unresolved = failed + noPublicIp;
-    if (unresolved > 0) {
-      toast.warning(t("fleet.map.toast.resolvedWithFailures", { count: updated, failed: unresolved }));
-    } else {
-      toast.success(t("fleet.map.toast.resolved", { count: updated }));
-    }
-    await geoQuery.refresh();
-    const refreshed = nodes.value.find((node) => node.id === selectedNodeId.value);
-    if (refreshed) selectNode(refreshed);
-    return;
-  }
-  if (failed > 0) {
-    toast.error(t("fleet.map.toast.resolvePartial", { count: failed }));
-    return;
-  }
-  if (noPublicIp > 0) {
-    toast.error(t("fleet.map.toast.resolveNoPublicIp", { count: noPublicIp }));
-    return;
-  }
-  toast.info(t("fleet.map.toast.resolveNoop"));
+  const updated = results.filter((result) => result.status === "updated").length;
+  const unresolved = results.filter((result) => ["lookup_failed", "store_failed", "no_public_ip"].includes(result.status)).length;
+  if (updated > 0 && unresolved > 0) toast.warning(t("fleet.map.toast.resolvedWithFailures", { count: updated, failed: unresolved }));
+  else if (updated > 0) toast.success(t("fleet.map.toast.resolved", { count: updated }));
+  else if (unresolved > 0) toast.error(t("fleet.map.toast.resolveNoPublicIp", { count: unresolved }));
+  else toast.info(t("fleet.map.toast.resolveNoop"));
 }
+
+const attention = computed<AttentionItem[]>(() => {
+  if (!unlocated.value.length) return [];
+  const names = unlocated.value.slice(0, 3).map((node) => node.name || node.id).join(", ");
+  return [
+    {
+      key: "unlocated",
+      tone: "info",
+      claim: t("fleet.map.attention.unlocated", { n: unlocated.value.length }, unlocated.value.length),
+      proof: unlocated.value.length > 3 ? `${names} +${unlocated.value.length - 3}` : names,
+      action: canAdminNodes.value ? { label: t("fleet.map.actions.resolveMissing"), run: () => void locateMissing() } : undefined,
+    },
+  ];
+});
+
+/* --------------------------- a cluster on one spot --------------------------- */
+
+/**
+ * Members of a cluster that a zoom would not split. From 768 px they open in
+ * a panel beside the cluster, over the map; on a phone, under the map,
+ * scrolled into view. Either way focus moves to the list's heading, and
+ * Escape or Close gives it back to the cluster. Non-reporting members come
+ * first: the offline node was eighth of twelve.
+ */
+const listedIds = ref<string[]>([]);
+const listed = computed(() =>
+  listedIds.value
+    .map((id) => nodes.value.find((node) => node.id === id))
+    .filter((node): node is Node => !!node)
+    .sort((a, b) => compareByAttention(a, b) || (a.name || a.id).localeCompare(b.name || b.id)),
+);
+const listedPlace = computed(() => {
+  const where = clusterPlace(listed.value.map((node) => node.geo));
+  switch (where.kind) {
+    case "city":
+      return [where.city, where.country].filter(Boolean).join(", ");
+    case "country":
+      return countryName(where.country, locale.value);
+    case "places":
+      return t("fleet.map.cluster.places", { n: where.count });
+    default:
+      return "";
+  }
+});
+const wide = useMediaQuery("(min-width: 768px)");
+const mapWrap = ref<HTMLElement | null>(null);
+const listHeading = ref<HTMLElement | null>(null);
+let listOpener: Element | null = null;
+/** Where the cluster sits inside the map, for the panel beside it. */
+const anchor = ref<{ left: number; top: number; width: number; height: number } | null>(null);
+const PANEL_W = 320;
+const panelStyle = computed(() => {
+  const at = anchor.value;
+  if (!at) return {};
+  const maxHeight = Math.max(160, Math.min(360, at.height - 16));
+  const right = at.left + 24 + PANEL_W <= at.width - 8;
+  const left = right ? at.left + 24 : Math.max(8, at.left - 24 - PANEL_W);
+  const top = Math.min(Math.max(8, at.top - 28), Math.max(8, at.height - maxHeight - 8));
+  return { left: `${left}px`, top: `${top}px`, width: `${PANEL_W}px`, maxHeight: `${maxHeight}px` };
+});
+
+function onSelect(ids: string[], opener: Element): void {
+  if (ids.length === 1) {
+    closeList(false);
+    sheet.open(ids[0]!, opener as HTMLElement);
+    return;
+  }
+  listOpener = opener;
+  const wrap = mapWrap.value?.getBoundingClientRect();
+  const mark = opener.getBoundingClientRect();
+  anchor.value = wrap
+    ? { left: mark.left + mark.width / 2 - wrap.left, top: mark.top + mark.height / 2 - wrap.top, width: wrap.width, height: wrap.height }
+    : null;
+  listedIds.value = ids;
+  void nextTick(() => {
+    const heading = listHeading.value;
+    if (!heading) return;
+    heading.focus({ preventScroll: wide.value });
+    if (!wide.value) heading.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function closeList(returnFocus = true): void {
+  listedIds.value = [];
+  anchor.value = null;
+  const opener = listOpener;
+  listOpener = null;
+  if (returnFocus && (opener instanceof HTMLElement || opener instanceof SVGElement)) opener.focus();
+}
+
+/** Why the node read failed, for the sheet; null while a first read retries, so the sheet shows it loading. */
+const sheetError = computed(() => (nodesQuery.error.value && !nodesQuery.loading.value ? proofReason(nodesQuery.error.value) : null));
+
+function openTerminal(node: Node): void {
+  if (!auth.can("terminal:open") || !isReporting(node)) return;
+  window.open(`/terminal?node_id=${encodeURIComponent(node.id)}&connect=1`, "_blank", "noopener");
+}
+
+const STATUS_TEXT: Record<string, string> = {
+  success: "text-muted-foreground",
+  warning: "text-warning-text",
+  destructive: "text-destructive",
+  muted: "text-muted-foreground",
+};
 </script>
 
 <template>
-  <div class="space-y-6 p-4 sm:p-6">
-    <PageHeader :title="$t('fleet.map.title')" :description="$t('fleet.map.description')">
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('fleet.map.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('fleet.map.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="nodesQuery.refresh" />
+      </template>
       <template #actions>
-        <Button
-          v-if="canAdminNodes"
-          variant="outline"
-          size="sm"
-          :disabled="resolvingAll || withLookupIP.length === 0"
-          @click="resolveMissing"
-        >
-          <Radar :class="cn('size-4', resolvingAll && 'animate-spin')" aria-hidden="true" />
-          {{ $t('fleet.map.actions.resolveMissing') }}
-        </Button>
-        <Button variant="outline" size="sm" :disabled="geoQuery.refreshing.value" @click="geoQuery.refresh">
-          <RefreshCw :class="cn('size-4', geoQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+        <Button variant="outline" size="sm" type="button" :disabled="nodesQuery.refreshing.value" @click="nodesQuery.refresh">
+          <RotateCw :class="cn('size-4', nodesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
       </template>
     </PageHeader>
 
-    <div class="grid grid-cols-1 gap-2 md:grid-cols-4">
-      <div class="rounded-lg border border-border bg-card p-3">
-        <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.coverage') }}</p>
-        <div class="mt-1.5 flex items-end justify-between gap-3">
-          <p class="text-xl font-semibold">{{ coveragePercent }}%</p>
-          <p class="text-xs text-muted-foreground">{{ withGeo.length }}/{{ nodes.length }}</p>
-        </div>
-        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-          <div class="h-full rounded-full bg-primary" :style="{ width: `${coveragePercent}%` }" />
-        </div>
-      </div>
-      <div class="rounded-lg border border-border bg-card p-3">
-        <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.online') }}</p>
-        <div class="mt-1.5 flex items-baseline gap-2">
-          <p class="text-xl font-semibold">{{ onlineCount }}</p>
-          <p class="text-xs text-muted-foreground">
-            {{ $t('fleet.map.stats.degraded', { count: statusCounts.degraded }) }} · {{ $t('fleet.map.stats.notReporting', { count: notReportingCount }) }}
-          </p>
-        </div>
-      </div>
-      <div class="rounded-lg border border-border bg-card p-3">
-        <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.regions') }}</p>
-        <div class="mt-1.5 flex items-baseline gap-2">
-          <p class="text-xl font-semibold">{{ countryCount }}</p>
-          <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.countries') }}</p>
-        </div>
-      </div>
-      <div class="rounded-lg border border-border bg-card p-3">
-        <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('fleet.map.stats.sources') }}</p>
-        <div class="mt-1.5 flex items-baseline gap-2">
-          <p class="text-xl font-semibold">{{ autoCount }}</p>
-          <p class="text-xs text-muted-foreground">{{ $t('fleet.map.stats.manual', { count: manualCount }) }}</p>
-        </div>
-      </div>
-    </div>
+    <AttentionList :items="attention" />
 
-    <div v-if="nodes.length > 0" class="rounded-lg border border-border bg-card/80 p-3">
-      <div class="flex flex-col gap-2 lg:flex-row lg:items-center">
-        <div class="relative min-w-[220px] flex-1">
-          <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input
-            v-model="mapSearch"
-            class="h-8 pl-8 text-sm"
-            :placeholder="$t('fleet.map.filters.searchPlaceholder')"
-            :aria-label="$t('fleet.map.filters.searchPlaceholder')"
-          />
-        </div>
-
-        <Select v-model="mapStatusFilter">
-          <SelectTrigger class="h-8 lg:w-36">
-            <SelectValue :placeholder="$t('fleet.map.filters.status')" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{{ $t('fleet.map.filters.statusAll') }}</SelectItem>
-            <SelectItem v-for="status in NODE_STATUSES" :key="status" :value="status">{{ $t(describeNodeStatus(status).labelKey) }}</SelectItem>
-          </SelectContent>
-        </Select>
-
-        <div class="relative min-w-[260px] flex-[1.15]">
-          <Filter class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input
-            id="map-node-expression"
-            v-model="mapExpr"
-            class="h-8 pl-8 font-mono text-xs"
-            :placeholder="$t('fleet.map.filters.expressionPlaceholder')"
-            :aria-label="$t('fleet.map.filters.expression')"
-          />
-        </div>
-
-        <Button v-if="hasMapFilters" variant="ghost" size="sm" class="h-8 px-2 text-xs" @click="clearMapFilters">
-          <X class="size-3.5" aria-hidden="true" />
-          {{ $t('fleet.map.filters.clear') }}
-        </Button>
-      </div>
-
-      <div
-        v-if="availableMapAgentCaps.length || availableMapArchOs.length || visibleMapTags.length"
-        class="mt-2 flex flex-wrap items-center gap-1.5"
-      >
-        <span class="mr-1 text-[11px] font-medium uppercase text-muted-foreground">
-          {{ $t('fleet.map.filters.quick') }}
-        </span>
-        <button
-          v-for="cap in availableMapAgentCaps"
-          :key="`map-agent:${cap}`"
-          type="button"
-          :class="cn(
-            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
-            activeMapAgentCaps.includes(cap)
-              ? 'border-warning bg-warning/10 text-warning-foreground'
-              : 'border-border text-muted-foreground hover:bg-muted/40',
-          )"
-          :aria-pressed="activeMapAgentCaps.includes(cap)"
-          @click="toggleMapAgentCap(cap)"
-        >
-          {{ $t(`fleet.nodes.filters.agentCaps.${cap}`) }}
-        </button>
-        <span
-          v-if="availableMapAgentCaps.length && (availableMapArchOs.length || visibleMapTags.length)"
-          class="mx-1 h-3.5 w-px bg-border"
-          aria-hidden="true"
-        ></span>
-        <button
-          v-for="token in availableMapArchOs"
-          :key="`map-arch:${token}`"
-          type="button"
-          :class="cn(
-            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
-            activeMapArchOs.includes(token)
-              ? 'border-info bg-info/10 text-info'
-              : 'border-border text-muted-foreground hover:bg-muted/40',
-          )"
-          :aria-pressed="activeMapArchOs.includes(token)"
-          @click="toggleMapArchOs(token)"
-        >
-          {{ token }}
-        </button>
-        <span
-          v-if="availableMapArchOs.length && visibleMapTags.length"
-          class="mx-1 h-3.5 w-px bg-border"
-          aria-hidden="true"
-        ></span>
-        <button
-          v-for="tag in visibleMapTags"
-          :key="`map-tag:${tag}`"
-          type="button"
-          :class="cn(
-            'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors surface-interactive',
-            activeMapTags.includes(tag)
-              ? 'border-primary bg-primary/10 text-primary'
-              : 'border-border text-muted-foreground hover:bg-muted/40',
-          )"
-          :aria-pressed="activeMapTags.includes(tag)"
-          @click="toggleMapTag(tag)"
-        >
-          {{ tag }}
-        </button>
-        <span v-if="hiddenMapTagCount > 0" class="text-[11px] text-muted-foreground">
-          {{ $t('fleet.map.filters.moreTags', { count: hiddenMapTagCount }) }}
-        </span>
-      </div>
-
-      <div class="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{{ $t('fleet.map.filters.showing', { shown: filteredNodes.length, mapped: filteredWithGeo.length, total: nodes.length }) }}</span>
-        <span v-if="mapExpressionError" class="text-destructive">{{ mapExpressionError }}</span>
-      </div>
-    </div>
-
-    <div class="grid grid-cols-1 min-w-0 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <Card class="self-start overflow-hidden">
-        <CardHeader>
-          <CardTitle class="flex items-center gap-2">
-            <Globe2 class="size-4 text-muted-foreground" aria-hidden="true" />
-            {{ $t('fleet.map.byLocation') }}
-          </CardTitle>
-          <CardDescription>{{ $t('fleet.map.coordinatesSummary', { withGeo: filteredWithGeo.length, total: filteredNodes.length }) }}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <DataState
-            :loading="geoQuery.loading.value"
-            :error="geoQuery.error.value"
-            :is-empty="nodes.length === 0"
-            :empty-title="$t('fleet.map.emptyTitle')"
-            :empty-description="$t('fleet.map.emptyDescription')"
-            @retry="geoQuery.refresh"
+    <EmptyState
+      v-if="nodesQuery.data.value !== undefined && nodes.length === 0"
+      :title="$t('fleet.map.emptyTitle')"
+      :description="$t('fleet.map.emptyDescription')"
+    />
+    <template v-else-if="nodesQuery.data.value !== undefined">
+      <div class="min-w-0 space-y-2">
+        <div ref="mapWrap" class="relative">
+          <FleetMap :nodes="nodes" :active-ids="sheet.openId.value ? [sheet.openId.value] : listedIds" @select="onSelect" />
+          <!-- From 768 px: the members beside the cluster they came from. -->
+          <section
+            v-if="listed.length && wide"
+            class="absolute z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
+            :style="panelStyle"
+            aria-labelledby="map-listed"
+            data-testid="map-listed-panel"
+            @keydown.esc.stop.prevent="closeList()"
           >
-            <div class="relative overflow-hidden rounded-lg border border-border bg-[oklch(0.18_0.025_265)] text-slate-100">
-              <svg
-                :viewBox="`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`"
-                :class="cn('aspect-[2/1] w-full select-none touch-none', mapCursorClass)"
-                role="img"
-                :aria-label="$t('fleet.map.mapAria')"
-                @wheel.prevent="onMapWheel"
-                @pointerdown="onMapPointerDown"
-                @pointermove="onMapPointerMove"
-                @pointerup="onMapPointerUp"
-                @pointercancel="onMapPointerUp"
-              >
-                <defs>
-                  <pattern id="fleet-grid" width="62.5" height="52" patternUnits="userSpaceOnUse">
-                    <path d="M 62.5 0 L 0 0 0 52" fill="none" stroke="oklch(0.78 0.03 250 / 0.12)" stroke-width="1" />
-                  </pattern>
-                  <filter id="fleet-marker-shadow" x="-80%" y="-80%" width="260%" height="260%">
-                    <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="rgb(0 0 0)" flood-opacity="0.36" />
-                  </filter>
-                  <filter id="fleet-glow" x="-160%" y="-160%" width="420%" height="420%">
-                    <feGaussianBlur stdDeviation="3.4" result="blur" />
-                    <feMerge>
-                      <feMergeNode in="blur" />
-                      <feMergeNode in="SourceGraphic" />
-                    </feMerge>
-                  </filter>
-                </defs>
-
-                <!-- Flat ocean: one solid surface colour from the map canvas class. -->
-                <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" class="map-ocean" />
-                <rect :width="MAP_WIDTH" :height="MAP_HEIGHT" fill="url(#fleet-grid)" />
-
-                <g :transform="mapZoomTransform">
-                  <g opacity="0.34">
-                    <path v-for="x in [125, 250, 375, 500, 625, 750, 875]" :key="`meridian-${x}`" :d="`M ${x} 32 V 488`" stroke="oklch(0.84 0.035 250 / 0.28)" stroke-width="1" />
-                    <path v-for="y in [104, 208, 312, 416]" :key="`parallel-${y}`" :d="`M 42 ${y} H 958`" stroke="oklch(0.84 0.035 250 / 0.22)" stroke-width="1" />
-                  </g>
-
-                  <g>
-                    <path
-                      v-for="(landPath, index) in landPaths"
-                      :key="`land-${index}`"
-                      :d="landPath"
-                      fill="oklch(0.32 0.03 215 / 0.72)"
-                      stroke="oklch(0.64 0.05 210 / 0.55)"
-                      stroke-width="0.5"
-                      stroke-linejoin="round"
-                      vector-effect="non-scaling-stroke"
-                    />
-                  </g>
-
-                </g>
-
-                <g v-for="point in plotted" :key="point.node.id">
-                  <circle
-                    v-if="markerStatus(point.node).reporting"
-                    :cx="markerScreenX(point.x)"
-                    :cy="markerScreenY(point.y)"
-                    :class="cn('map-ping', markerClasses(point.node).ping)"
-                    r="2.2"
-                    fill="none"
-                    stroke-width="1"
-                  />
-                  <g
-                    role="button"
-                    tabindex="0"
-                    class="map-marker cursor-pointer"
-                    :aria-label="$t('fleet.map.markerAria', { node: point.node.name || point.node.id, location: point.label })"
-                    @click.stop="selectMarkerNode(point.node)"
-                    @mouseenter="hoveredNodeId = point.node.id"
-                    @mouseleave="hoveredNodeId = ''"
-                    @focus="hoveredNodeId = point.node.id"
-                    @blur="hoveredNodeId = ''"
-                    @keydown.enter.prevent="selectMarkerNode(point.node)"
-                    @keydown.space.prevent="selectMarkerNode(point.node)"
-                  >
-                    <title>{{ point.node.name || point.node.id }} · {{ point.label }}</title>
-                    <circle
-                      :cx="markerScreenX(point.x)"
-                      :cy="markerScreenY(point.y)"
-                      r="8"
-                      fill="transparent"
-                    />
-                    <circle
-                      v-if="markerStatus(point.node).reporting"
-                      :cx="markerScreenX(point.x)"
-                      :cy="markerScreenY(point.y)"
-                      :r="point.selected || hoveredNodeId === point.node.id ? 5.8 : 4"
-                      :class="point.selected ? markerClasses(point.node).haloSelected : markerClasses(point.node).halo"
-                    />
-                    <circle
-                      :cx="markerScreenX(point.x)"
-                      :cy="markerScreenY(point.y)"
-                      :r="point.selected || hoveredNodeId === point.node.id ? 3.5 : 2.2"
-                      :class="markerClasses(point.node).fill"
-                      :stroke="point.selected ? 'oklch(0.96 0.02 95)' : 'oklch(0.16 0.02 260 / 0.65)'"
-                      :stroke-width="point.selected ? 1.35 : 0.9"
-                      :opacity="markerStatus(point.node).reporting ? 1 : 0.82"
-                    />
-                  </g>
-                </g>
-
-              </svg>
-
-              <div v-if="filteredWithGeo.length === 0" class="absolute inset-0 grid place-items-center p-6 text-center">
-                <div class="max-w-sm rounded-lg border border-border bg-card p-4 text-card-foreground">
-                  <MapPinned class="mx-auto size-5 text-muted-foreground" aria-hidden="true" />
-                  <p class="mt-2 text-sm font-medium">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedTitle') : $t('fleet.map.mapEmptyTitle') }}</p>
-                  <p class="mt-1 text-xs text-muted-foreground">{{ hasMapFilters ? $t('fleet.map.filters.noLocatedDescription') : $t('fleet.map.mapEmptyDescription') }}</p>
-                </div>
-              </div>
-
-              <div class="absolute left-4 top-4 flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">{{ $t('fleet.map.legend.online') }}</Badge>
-                <Badge variant="secondary">{{ $t('fleet.map.legend.offline') }}</Badge>
-              </div>
-
-              <div class="absolute right-4 top-4 flex items-center gap-1 rounded-md border border-border bg-card p-1 text-card-foreground">
+            <header class="flex items-center gap-2 border-b border-border px-3 py-2">
+              <h2 id="map-listed" ref="listHeading" tabindex="-1" class="min-w-0 truncate rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                {{ $t('fleet.map.listed.title', { n: listed.length, place: listedPlace || $t('fleet.map.cluster.somewhere') }) }}
+              </h2>
+              <Button variant="ghost" size="sm" class="ms-auto shrink-0" type="button" @click="closeList()">{{ $t('common.actions.close') }}</Button>
+            </header>
+            <ul class="min-h-0 divide-y divide-border overflow-y-auto">
+              <li v-for="node in listed" :key="node.id">
                 <button
                   type="button"
-                  class="rounded px-2 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
-                  :disabled="mapZoom <= 1"
-                  :aria-label="$t('fleet.map.zoomOut')"
-                  @click="setZoom(mapZoom - 0.2)"
+                  class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                  @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
                 >
-                  -
-                </button>
-                <span class="min-w-10 text-center text-xs tabular text-muted-foreground">{{ Math.round(mapZoom * 100) }}%</span>
-                <button
-                  type="button"
-                  class="rounded px-2 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
-                  :disabled="mapZoom >= 5"
-                  :aria-label="$t('fleet.map.zoomIn')"
-                  @click="setZoom(mapZoom + 0.2)"
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  class="rounded px-2 py-1 text-xs font-medium outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
-                  :disabled="mapZoom <= 1 && mapViewport.x === 0 && mapViewport.y === 0"
-                  :aria-label="$t('fleet.map.resetView')"
-                  @click="resetViewport"
-                >
-                  {{ $t('fleet.map.resetShort') }}
-                </button>
-              </div>
-
-              <div class="absolute bottom-4 left-4 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-                {{ $t('fleet.map.canvasHint') }}
-              </div>
-
-              <div
-                v-if="hoveredPoint"
-                class="pointer-events-none absolute z-10 w-64 rounded-lg border border-border bg-popover p-3 text-xs text-popover-foreground shadow-xl"
-                :style="{
-                  left: `${(markerScreenX(hoveredPoint.x) / MAP_WIDTH) * 100}%`,
-                  top: `${(markerScreenY(hoveredPoint.y) / MAP_HEIGHT) * 100}%`,
-                  transform: 'translate(-50%, calc(-100% - 12px))',
-                }"
-              >
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-semibold" :title="hoveredPoint.node.name || hoveredPoint.node.id">
-                      {{ hoveredPoint.node.name || hoveredPoint.node.id }}
-                    </p>
-                    <p class="mt-1 text-muted-foreground">{{ hoveredPoint.label }}</p>
-                  </div>
-                  <Badge :variant="statusMeta(markerStatus(hoveredPoint.node).health).badgeVariant" class="shrink-0" :title="nodeStatusReason(hoveredPoint.node)">
-                    {{ $t(markerStatus(hoveredPoint.node).labelKey) }}
-                  </Badge>
-                </div>
-                <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-muted-foreground">
-                  <span>{{ $t('fleet.map.hover.ip') }}</span>
-                  <span class="truncate text-right font-mono" :title="lookupIP(hoveredPoint.node) || $t('common.misc.none')">
-                    {{ lookupIP(hoveredPoint.node) || $t('common.misc.none') }}
-                  </span>
-                  <span>{{ $t('fleet.map.hover.source') }}</span>
-                  <span class="truncate text-right" :title="sourceLabel(hoveredPoint.node.geo?.source)">
-                    {{ sourceLabel(hoveredPoint.node.geo?.source) }}
-                  </span>
-                  <span>{{ $t('fleet.map.hover.coords') }}</span>
+                  <StatusDot :status="describeNodeStatus(node).health" :pulse="false" />
+                  <span class="min-w-0 truncate font-medium">{{ node.name || node.id }}</span>
                   <span
-                    class="truncate text-right font-mono"
-                    :title="`${hoveredPoint.node.geo?.lat?.toFixed(2)}, ${hoveredPoint.node.geo?.lon?.toFixed(2)}`"
-                  >
-                    {{ hoveredPoint.node.geo?.lat?.toFixed(2) }}, {{ hoveredPoint.node.geo?.lon?.toFixed(2) }}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </DataState>
-        </CardContent>
-      </Card>
+                    v-if="nodeStatus(node) !== 'online'"
+                    :class="cn('ms-auto shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(node).tone])"
+                  >{{ $t(describeNodeStatus(node).labelKey) }}</span>
+                </button>
+              </li>
+            </ul>
+          </section>
+        </div>
+        <p class="hidden text-xs text-muted-foreground pointer-fine:block">{{ $t('fleet.map.canvasHint') }}</p>
+      </div>
 
-      <div class="space-y-4 xl:max-h-[min(74vh,720px)] xl:overflow-y-auto xl:pr-1">
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Route class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.map.regions.title') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.map.regions.description') }}</CardDescription>
-          </CardHeader>
-          <CardContent class="max-h-[420px] space-y-3 overflow-y-auto pr-1">
-            <div v-if="regions.length === 0" class="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-              {{ $t('fleet.map.regions.empty') }}
-            </div>
-            <!-- The click opens the region's first node in the location editor,
-                 so the row says that outright rather than implying a region view. -->
-            <button
-              v-for="group in regions"
-              :key="group.key"
-              type="button"
-              class="w-full rounded-md border border-border p-3 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              @click="selectFirstNode(group.nodes)"
-            >
-              <div class="flex items-center justify-between gap-3">
-                <span class="text-sm font-medium">{{ group.label }}</span>
-                <Badge variant="outline">{{ group.online }}/{{ group.nodes.length }}</Badge>
-              </div>
-              <p
-                class="mt-1 truncate text-xs text-muted-foreground"
-                :title="group.nodes.map((node) => node.name || node.id).join(', ')"
+      <div class="grid min-w-0 grid-cols-1 items-start gap-5 lg:grid-cols-2">
+        <!-- On a phone: the members under the map, scrolled into view. -->
+        <section
+          v-if="listed.length && !wide"
+          class="overflow-hidden rounded-lg border border-border bg-card"
+          aria-labelledby="map-listed"
+          data-testid="map-listed-panel"
+          @keydown.esc.stop.prevent="closeList()"
+        >
+          <header class="flex items-center gap-2 border-b border-border px-4 py-2.5">
+            <h2 id="map-listed" ref="listHeading" tabindex="-1" class="rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {{ $t('fleet.map.listed.title', { n: listed.length, place: listedPlace || $t('fleet.map.cluster.somewhere') }) }}
+            </h2>
+            <Button variant="ghost" size="sm" class="ms-auto" type="button" @click="closeList()">{{ $t('common.actions.close') }}</Button>
+          </header>
+          <ul class="divide-y divide-border">
+            <li v-for="node in listed" :key="node.id">
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
               >
-                {{ group.nodes.map((node) => node.name || node.id).join(", ") }}
-              </p>
-              <p v-if="group.nodes[0]" class="mt-1 text-[11px] text-muted-foreground">
-                {{ $t('fleet.map.regions.opensFirst', { name: group.nodes[0].name || group.nodes[0].id }) }}
-              </p>
-            </button>
-          </CardContent>
-        </Card>
+                <StatusDot :status="describeNodeStatus(node).health" />
+                <span class="min-w-0 truncate font-medium">{{ node.name || node.id }}</span>
+                <span
+                  v-if="nodeStatus(node) !== 'online'"
+                  :class="cn('ms-auto shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(node).tone])"
+                >{{ $t(describeNodeStatus(node).labelKey) }}</span>
+              </button>
+            </li>
+          </ul>
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <WifiOff class="size-4 text-muted-foreground" aria-hidden="true" />
-              {{ $t('fleet.map.unlocated.title') }}
-            </CardTitle>
-            <CardDescription>{{ $t('fleet.map.unlocated.description', { count: withoutGeo.length }) }}</CardDescription>
-          </CardHeader>
-          <CardContent class="space-y-2">
-            <div v-if="withoutGeo.length === 0" class="rounded-md border border-border p-3 text-sm text-muted-foreground">
-              {{ $t('fleet.map.unlocated.empty') }}
-            </div>
-            <button
-              v-for="node in unlocatedShown"
-              :key="node.id"
-              type="button"
-              class="flex w-full items-center justify-between gap-3 rounded-md border border-border p-3 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              @click="selectNode(node)"
-            >
-              <span class="min-w-0">
-                <span class="flex items-center gap-2">
-                  <StatusDot :status="markerStatus(node).health" :pulse="markerStatus(node).reporting" />
-                  <span class="truncate text-sm font-medium" :title="node.name || node.id">{{ node.name || node.id }}</span>
-                </span>
-                <span class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <template v-if="lookupIP(node)">{{ lookupIP(node) }}</template>
-                  <Badge v-else variant="outline" class="border-destructive/40 text-destructive">
-                    {{ $t('fleet.map.unlocated.noIp') }}
-                  </Badge>
-                </span>
-              </span>
-              <Badge v-if="node.role" variant="outline">{{ node.role }}</Badge>
-            </button>
-            <p v-if="unlocatedHidden > 0" class="px-1 text-xs text-muted-foreground">
-              {{ $t('fleet.map.unlocated.more', { count: unlocatedHidden }) }}
-            </p>
-          </CardContent>
-        </Card>
+        <!-- Nodes without coordinates: where to set them. -->
+        <section v-if="unlocated.length" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="map-unlocated">
+          <header class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2.5">
+            <h2 id="map-unlocated" class="text-sm font-medium">{{ $t('fleet.map.unlocated.title') }}</h2>
+            <span v-if="canAdminNodes" class="text-xs text-muted-foreground">{{ $t('fleet.map.unlocated.hint') }}</span>
+          </header>
+          <ul class="divide-y divide-border">
+            <li v-for="node in unlocated" :key="node.id" class="flex items-center gap-2 px-4 py-2 text-sm">
+              <StatusDot :status="describeNodeStatus(node).health" />
+              <button
+                type="button"
+                class="min-w-0 truncate rounded-sm text-left font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
+                @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
+              >
+                {{ node.name || node.id }}
+              </button>
+              <span class="shrink-0 font-mono text-xs text-muted-foreground">{{ node.public_ip || $t('fleet.map.unlocated.noIp') }}</span>
+              <RouterLink
+                v-if="canAdminNodes"
+                :to="{ name: 'node-detail', params: { id: node.id }, query: { view: 'settings' }, hash: '#node-geo' }"
+                class="ms-auto shrink-0 text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              >
+                {{ $t('fleet.map.unlocated.set') }}
+              </RouterLink>
+            </li>
+          </ul>
+        </section>
       </div>
+    </template>
+    <div v-else-if="nodesQuery.loading.value" class="grid aspect-[2/1] place-items-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
+      {{ $t('common.proof.reading') }}
     </div>
+    <!-- The first read failed: no map is drawn from nothing. -->
+    <DataState v-else :loading="false" :error="nodesQuery.error.value ?? null" @retry="nodesQuery.refresh" />
 
-    <Card class="overflow-hidden">
-      <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div class="flex min-w-0 items-start gap-3">
-          <div class="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <LocateFixed class="size-4" aria-hidden="true" />
-          </div>
-          <div class="min-w-0 space-y-1">
-            <div class="flex flex-wrap items-center gap-2">
-              <p class="font-medium leading-none">{{ $t('fleet.map.editor.title') }}</p>
-              <Badge v-if="selectedNode?.geo" variant="outline">{{ sourceLabel(selectedNode.geo.source) }}</Badge>
-              <Badge v-else variant="outline">{{ $t('fleet.map.noCoordinates') }}</Badge>
-            </div>
-            <p
-              class="truncate text-sm text-muted-foreground"
-              :title="selectedNode
-                ? [selectedNodeLabel, selectedCoordinates || locationLabel(selectedNode), selectedLookupIP].filter(Boolean).join(' · ')
-                : $t('fleet.map.editor.description')"
-            >
-              <template v-if="selectedNode">
-                {{ selectedNode.name || selectedNode.id }}
-                <span class="text-muted-foreground/70"> · </span>
-                {{ selectedCoordinates || locationLabel(selectedNode) }}
-                <span v-if="selectedLookupIP" class="text-muted-foreground/70"> · {{ selectedLookupIP }}</span>
-              </template>
-              <template v-else>
-                {{ $t('fleet.map.editor.description') }}
-              </template>
-            </p>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap items-center gap-2 sm:justify-end">
-          <Button
-            v-if="canAdminNodes"
-            type="button"
-            variant="outline"
-            size="sm"
-            :disabled="!selectedNodeId || !selectedLookupIP || resolvingNodeId === selectedNodeId"
-            @click="resolveSelected"
-          >
-            <Crosshair :class="cn('size-4', resolvingNodeId === selectedNodeId && 'animate-spin')" aria-hidden="true" />
-            {{ $t('fleet.map.editor.auto') }}
-          </Button>
-          <Button type="button" variant="outline" size="sm" @click="locationEditorOpen = !locationEditorOpen">
-            {{ locationEditorOpen ? $t('common.actions.close') : $t('fleet.map.editor.title') }}
-          </Button>
-        </div>
-      </div>
-
-      <div
-        class="grid transition-[grid-template-rows] duration-200 ease-out"
-        :class="locationEditorOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'"
-      >
-        <div class="overflow-hidden">
-          <CardContent class="border-t border-border pt-4">
-            <form v-if="canAdminNodes" class="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-[minmax(220px,320px)_1fr_auto]" @submit.prevent="saveGeo">
-              <div class="grid gap-2">
-                <Label for="geo-node">{{ $t('fleet.map.editor.node') }}</Label>
-                <select
-                  id="geo-node"
-                  v-model="selectedNodeId"
-                  class="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                  @change="selectedNode && selectNode(selectedNode)"
-                >
-                  <option value="">{{ $t('fleet.map.editor.selectNode') }}</option>
-                  <option v-for="node in nodes" :key="node.id" :value="node.id">
-                    {{ node.name || node.id }}
-                  </option>
-                </select>
-                <div v-if="selectedNode" class="space-y-1 text-xs text-muted-foreground">
-                  <p>{{ selectedLookupIP || $t('fleet.map.unlocated.noIp') }}</p>
-                  <p v-if="selectedNode.geo?.updated_at">
-                    {{ $t('fleet.map.editor.lastUpdated', { time: formatDateTime(selectedNode.geo.updated_at) }) }}
-                  </p>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div class="grid gap-2">
-                  <Label for="geo-lat">{{ $t('fleet.map.editor.latitude') }}</Label>
-                  <Input id="geo-lat" v-model="lat" inputmode="decimal" placeholder="37.7749" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-lon">{{ $t('fleet.map.editor.longitude') }}</Label>
-                  <Input id="geo-lon" v-model="lon" inputmode="decimal" placeholder="-122.4194" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-country">{{ $t('fleet.map.editor.country') }}</Label>
-                  <Input id="geo-country" v-model="country" maxlength="2" placeholder="US" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-region">{{ $t('fleet.map.editor.region') }}</Label>
-                  <Input id="geo-region" v-model="region" :placeholder="$t('fleet.map.editor.regionPlaceholder')" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-city">{{ $t('fleet.map.editor.city') }}</Label>
-                  <Input id="geo-city" v-model="city" :placeholder="$t('fleet.map.editor.cityPlaceholder')" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-provider">{{ $t('fleet.map.editor.provider') }}</Label>
-                  <Input id="geo-provider" v-model="provider" :placeholder="$t('fleet.map.editor.providerPlaceholder')" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-asn">{{ $t('fleet.map.editor.asn') }}</Label>
-                  <Input id="geo-asn" v-model="asn" inputmode="numeric" />
-                </div>
-                <div class="grid gap-2">
-                  <Label for="geo-asorg">{{ $t('fleet.map.editor.asOrg') }}</Label>
-                  <Input id="geo-asorg" v-model="asOrg" />
-                </div>
-              </div>
-
-              <div class="flex flex-col gap-2 lg:items-end lg:justify-end">
-                <Button type="submit" :disabled="pendingSave || !selectedNodeId">
-                  <RefreshCw v-if="pendingSave" class="size-4 animate-spin" aria-hidden="true" />
-                  <LocateFixed v-else class="size-4" aria-hidden="true" />
-                  {{ $t('fleet.map.editor.save') }}
-                </Button>
-                <Button type="button" variant="outline" :disabled="pendingSave || !selectedNodeId" @click="clearOpen = true">
-                  <Trash2 class="size-4" aria-hidden="true" />
-                  {{ $t('fleet.map.editor.clear') }}
-                </Button>
-              </div>
-            </form>
-            <div v-else class="rounded-md border border-border p-4 text-sm text-muted-foreground">
-              {{ $t('fleet.map.editor.adminRequired') }}
-            </div>
-          </CardContent>
-        </div>
-      </div>
-    </Card>
-
-    <ConfirmDialog
-      v-model:open="clearOpen"
-      :title="$t('fleet.map.confirm.clearTitle')"
-      :description="$t('fleet.map.confirm.clearDescription', { name: selectedNodeLabel })"
-      :confirm-label="$t('fleet.map.editor.clear')"
-      :cancel-label="$t('common.actions.cancel')"
-      :pending="pendingSave"
-      @confirm="clearGeo"
+    <NodeSheet
+      :node-id="sheet.openId.value"
+      :nodes="nodesQuery.data.value"
+      :error="sheetError"
+      :return-focus="sheet.returnFocus"
+      @close="sheet.close"
+      @terminal="openTerminal"
+      @retry="nodesQuery.refresh"
     />
   </div>
 </template>
-
-<style scoped>
-/* The map canvas stays dark in both themes (light markers, light graticule),
-   so the ocean is one flat colour matching the canvas background. */
-.map-ocean {
-  fill: oklch(0.18 0.025 265);
-}
-
-/* Keyboard focus on a marker: SVG cannot carry a box-shadow ring, so the
-   focused group gets a real outline instead of nothing at all. */
-.map-marker:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-
-/* Subtle expanding ping on online node markers: refined, not flashy. */
-.map-ping {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: map-ping 2.6s ease-out infinite;
-}
-@keyframes map-ping {
-  0% {
-    transform: scale(1);
-    opacity: 0.55;
-  }
-  70%,
-  100% {
-    transform: scale(3.4);
-    opacity: 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .map-ping {
-    animation: none;
-    opacity: 0;
-  }
-}
-</style>

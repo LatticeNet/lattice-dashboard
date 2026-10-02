@@ -15,7 +15,7 @@
  *    no canvas, no echarts, no runtime style/script injection.
  *  - A footer with net rx/tx, uptime, and last-seen.
  *  - Optional per-node actions as icon buttons at the end of the footer,
- *    revealed on hover or focus the way {@link NodeTable}'s action cell is.
+ *    revealed on hover or focus.
  *
  * Presentational only. It does NOT fetch and does NOT record samples (a parent
  * owns the poll loop and `record()`s into the shared buffer). User-facing text is

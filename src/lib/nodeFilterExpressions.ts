@@ -29,6 +29,10 @@ export function nodeHasAgentCapability(node: Node, token: string): boolean {
     case "singbox-drift":
     case "sing-box-drift":
       return singboxDrift(node);
+    // No agent source allowlist: any address may serve this agent its
+    // binaries. Trust posture counts these and links here.
+    case "no-source":
+      return (node.agent_source_allowlist ?? []).length === 0;
     default:
       return false;
   }

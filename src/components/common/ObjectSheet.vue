@@ -17,12 +17,14 @@
  * States: `loading` before the object is known, `gone` when it no longer
  * exists (it offers the collection back; the page may name what is gone with
  * `goneTitle` and `goneDescription`), `stale` when the page shows the last
- * good read after a failed refresh, `ready` otherwise. `readOnly` hides the
- * action footer and says why there is none.
+ * good read after a failed refresh, `failed` when the first read failed and
+ * there is nothing to show (it states `error` and offers Retry, which emits
+ * `retry`), `ready` otherwise. `readOnly` hides the action footer and says
+ * why there is none.
  */
 import { computed, ref } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
-import { ArrowUpRight, SearchX } from "lucide-vue-next";
+import { ArrowUpRight, CircleAlert, SearchX } from "lucide-vue-next";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -38,9 +40,9 @@ const props = withDefaults(
     subtitle?: string;
     /** The object's own page, when it has one. */
     pageTo?: RouteLocationRaw;
-    state?: "ready" | "loading" | "gone" | "stale";
+    state?: "ready" | "loading" | "gone" | "stale" | "failed";
     readOnly?: boolean;
-    /** Why the last refresh failed, for the stale note. */
+    /** Why the last read failed, for the stale note and the failed state. */
     error?: string | null;
     /** Where focus goes on close; from useRouteOpen. */
     returnFocus?: () => HTMLElement | null;
@@ -70,7 +72,7 @@ const props = withDefaults(
 const beside = useMediaQuery("(min-width: 768px)");
 const header = ref<HTMLElement | null>(null);
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; retry: [] }>();
 
 function onOpenChange(value: boolean): void {
   if (!value) emit("close");
@@ -119,7 +121,9 @@ const showBody = computed(() => props.state === "ready" || props.state === "stal
           <DialogTitle
             :class="
               cn(
-                'truncate rounded-xs text-base font-semibold tracking-[-0.01em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                // w-fit: the focus ring hugs the title instead of drawing a
+                // full-width box that read as a text field after a reload.
+                'w-fit max-w-full truncate rounded-xs text-base font-semibold tracking-[-0.01em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                 monoTitle && 'font-mono',
               )
             "
@@ -164,6 +168,15 @@ const showBody = computed(() => props.state === "ready" || props.state === "stal
           <p class="text-sm font-medium">{{ goneTitle ?? $t('common.sheet.goneTitle') }}</p>
           <p class="text-sm text-muted-foreground">{{ goneDescription ?? $t('common.sheet.goneDescription') }}</p>
           <Button variant="outline" size="sm" type="button" @click="emit('close')">{{ $t('common.sheet.backToList') }}</Button>
+        </div>
+        <div v-else-if="state === 'failed'" class="flex flex-col items-start gap-3 py-6" role="alert">
+          <CircleAlert class="size-5 text-destructive" aria-hidden="true" />
+          <p class="text-sm font-medium">{{ $t('common.sheet.failedTitle') }}</p>
+          <p class="text-sm break-words text-muted-foreground">{{ error ?? $t('common.sheet.failedDescription') }}</p>
+          <div class="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" type="button" @click="emit('retry')">{{ $t('common.actions.retry') }}</Button>
+            <Button variant="ghost" size="sm" type="button" @click="emit('close')">{{ $t('common.sheet.backToList') }}</Button>
+          </div>
         </div>
         <slot v-if="showBody" />
       </div>

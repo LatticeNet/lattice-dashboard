@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink, useRoute, useRouter } from "vue-router";
+import { RouterLink } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -9,11 +9,8 @@ import {
   BookOpen,
   Boxes,
   CalendarClock,
-  CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
   Cpu,
-  Eye,
   ExternalLink,
   HardDrive,
   KeyRound,
@@ -25,7 +22,6 @@ import {
   Save,
   Search,
   Trash2,
-  Wallet,
 } from "lucide-vue-next";
 import {
   api,
@@ -43,7 +39,6 @@ import {
   formatBytes,
   formatMoney,
   formatRelativeTime,
-  shortId,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -62,29 +57,26 @@ import {
   parseReminderDaysInput,
   rollForwardPast,
 } from "./inventoryEditorModel";
-import { DEFAULT_REMIND_DAYS, hasRenewalDate, nextReminder } from "./reminderModel";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { DEFAULT_REMIND_DAYS, hasRenewalDate, nextReminder, ruleRoutesRenewals } from "./reminderModel";
+import { nameParts } from "./nodesTableModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
-import { useQueryParam } from "@/composables/useQueryParam";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindQueryParam } from "@/composables/useQueryParam";
+import { bindRouteOpen } from "@/composables/useRouteOpen";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
-import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
-import StatCard from "@/components/common/StatCard.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -131,12 +123,8 @@ function s(value: unknown): string {
 
 const auth = useAuthStore();
 const { t } = useI18n();
-const route = useRoute();
-const router = useRouter();
 const INVENTORY_GUIDE_URL = "https://latticenet.github.io/guide/operations#machine-inventory";
 const NOTIFICATIONS_ROUTE = "/platform/notifications";
-const FX_TARGET_KEY = "lattice:inventory:fx-target";
-const FX_RATES_KEY = "lattice:inventory:fx-rates";
 const warningPanelClass =
   "rounded-md border border-amber-400/60 bg-amber-500/15 p-3 text-xs text-foreground shadow-sm dark:border-amber-300/40 dark:bg-amber-400/15";
 
@@ -164,15 +152,20 @@ const notifyRulesQuery = useAsyncData(
 );
 
 // ── View state ──────────────────────────────────────────────────────────────
-const search = ref("");
-// The grouping lives in the address bar (see inventoryGroupingModel), so the
-// Renewal view survives a reload and back/forward restores it. One way: read
-// from `?group=`, written only by the operator's change, so nothing rewrites
-// the next page's `?group=` while Inventory is leaving.
-const groupBy = useQueryParam<GroupBy>("group", {
+const owned = useOwnedRoute();
+// Search and grouping live in the address bar, so a reload and back/forward
+// land on the same list. One way: read from the query, written only by the
+// operator's change, so nothing rewrites the next page's keys while leaving.
+const search = bindQueryParam<string>(owned, "q", {
+  parse: (raw) => (typeof raw === "string" ? raw : ""),
+  format: (value) => (value.trim() ? value : undefined),
+});
+const groupBy = bindQueryParam<GroupBy>(owned, "group", {
   parse: (raw) => parseInventoryGroup(raw),
   format: (group) => (group === DEFAULT_INVENTORY_GROUP ? undefined : group),
 });
+/** One machine open in the sheet: its profile id, or its node id when it has no profile. */
+const sheet = bindRouteOpen(owned);
 
 // ── Edit dialog state ─────────────────────────────────────────────────────────
 const editOpen = ref(false);
@@ -181,8 +174,6 @@ const pending = ref(false);
 const deletePending = ref(false);
 const deleteOpen = ref(false);
 const renewPending = ref(false);
-const remindersPending = ref(false);
-const remindersAllPending = ref(false);
 const linkRevealPending = ref("");
 
 // ── Form model (populated when the edit dialog opens) ─────────────────────────
@@ -216,11 +207,6 @@ const consoleUrl = ref("");
 const detailUrl = ref("");
 const clearConsoleUrl = ref(false);
 const clearDetailUrl = ref(false);
-const fxDialogOpen = ref(false);
-const fxTarget = ref(loadFXTarget());
-const fxRates = ref<Record<string, string>>(loadFXRates());
-const fxTargetDraft = ref(fxTarget.value);
-const fxRatesDraft = ref<Record<string, string>>({ ...fxRates.value });
 
 const machines = computed(() => machinesQuery.data.value ?? []);
 const nodes = computed(() => nodesQuery.data.value ?? []);
@@ -316,8 +302,6 @@ const nodeChoices = computed(() => {
 const currencyOptions = computed(() => {
   const items = new Set<string>(COMMON_CURRENCIES);
   if (currency.value) items.add(normalizeCurrency(currency.value));
-  if (fxTarget.value) items.add(normalizeCurrency(fxTarget.value));
-  if (fxTargetDraft.value) items.add(normalizeCurrency(fxTargetDraft.value));
   for (const entry of spendByCurrency.value) items.add(normalizeCurrency(entry.currency));
   return [...items].filter(Boolean).sort((a, b) => a.localeCompare(b));
 });
@@ -397,93 +381,8 @@ function aggregateSpend(list: MachineView[]): CurrencySpend[] {
 }
 
 const spendByCurrency = computed<CurrencySpend[]>(() => aggregateSpend(machines.value));
-const primarySpend = computed<CurrencySpend | undefined>(() => spendByCurrency.value[0]);
-const primaryMonthlyLabel = computed(() => {
-  const p = primarySpend.value;
-  if (!p) return t("fleet.inventory.spend.none");
-  return t("fleet.inventory.spend.perMonth", {
-    amount: formatMoney(Math.round(p.monthly), p.currency),
-  });
-});
-const spendCurrencyLabels = computed(() =>
-  spendByCurrency.value.map((entry) =>
-    t("fleet.inventory.spend.perMonth", {
-      amount: formatMoney(Math.round(entry.monthly), entry.currency),
-    }),
-  ),
-);
-const totalSpendEstimate = computed(() => estimateTotalSpend(spendByCurrency.value));
-const draftSpendEstimate = computed(() =>
-  estimateTotalSpend(spendByCurrency.value, normalizeCurrency(fxTargetDraft.value) || "USD", fxRatesDraft.value),
-);
-const spendCardValue = computed(() => {
-  if (spendByCurrency.value.length === 0) return t("fleet.inventory.spend.none");
-  const target = normalizeCurrency(fxTarget.value) || "USD";
-  const estimate = totalSpendEstimate.value;
-  if (!estimate) return primaryMonthlyLabel.value;
-  return t("fleet.inventory.spend.perMonth", {
-    amount: formatMoney(estimate.monthlyCents, target),
-  });
-});
-const spendCardHint = computed(() => {
-  const parts = spendCurrencyLabels.value.slice(0, 3);
-  const remaining = spendCurrencyLabels.value.length - parts.length;
-  if (remaining > 0) parts.push(t("fleet.inventory.spend.moreCurrencies", { count: remaining }));
-  if (freeCount.value > 0) parts.push(t("fleet.inventory.spend.free", { count: freeCount.value }));
-  const missing = totalSpendEstimate.value?.missing ?? [];
-  if (missing.length > 0) parts.push(t("fleet.inventory.spend.missingShort", { currencies: missing.join(", ") }));
-  return parts.join(" · ");
-});
-const fxRateDraftRows = computed(() => buildFXRateRows(fxTargetDraft.value, fxRatesDraft.value));
-
-function buildFXRateRows(targetValue: string, rates: Record<string, string>) {
-  const target = normalizeCurrency(targetValue) || "USD";
-  return spendByCurrency.value
-    .filter((item) => normalizeCurrency(item.currency) !== target)
-    .map((entry) => {
-      const rate = fxRateFor(entry.currency, targetValue, rates);
-      return {
-        ...entry,
-        currency: normalizeCurrency(entry.currency),
-        target,
-        rateValue: fxRateValue(entry.currency, targetValue, rates),
-        missing: !rate,
-        convertedMonthlyCents: rate ? Math.round(entry.monthly * rate) : undefined,
-        convertedAnnualCents: rate ? Math.round(entry.annual * rate) : undefined,
-      };
-    });
-}
-
 // ── Fleet counters ────────────────────────────────────────────────────────────
-const profiledCount = computed(() => machines.value.filter((m) => !!m.id).length);
-const missingCount = computed(() => machines.value.filter((m) => !m.id).length);
-const recurringCount = computed(
-  () => machines.value.filter((m) => billingCategory(m) === "recurring").length,
-);
-const onetimeCount = computed(
-  () => machines.value.filter((m) => billingCategory(m) === "onetime").length,
-);
 const freeCount = computed(() => machines.value.filter((m) => billingCategory(m) === "free").length);
-const renewalSoonCount = computed(
-  () =>
-    machines.value.filter((m) => {
-      if (!renewalDate(m)) return false;
-      const days = m.days_until_renewal;
-      return days !== undefined && days >= 0 && days <= 14;
-    }).length,
-);
-const overdueCount = computed(
-  () =>
-    machines.value.filter((m) => {
-      if (!renewalDate(m)) return false;
-      const days = m.days_until_renewal;
-      return days !== undefined && days < 0;
-    }).length,
-);
-const trackedRenewalCount = computed(() => machines.value.filter((m) => !!renewalDate(m)).length);
-const remindersEnabledCount = computed(
-  () => machines.value.filter((m) => m.reminders_enabled).length,
-);
 
 // ── Search + grouping ─────────────────────────────────────────────────────────
 const filteredMachines = computed(() => {
@@ -572,43 +471,32 @@ const groups = computed<MachineGroup[]>(() => {
 
 const groupOptions = INVENTORY_GROUPS;
 
-// ── Deep links, once the list loads ──────────────────────────────────────────
-// ?node=<node id> opens that node's editor for an admin, as it always has.
-// ?machine=<profile id> is the link the Upcoming list gives a renewal: it
-// opens the editor for an admin, and for anyone else it marks the machine's
-// card and scrolls to it, so a reader still lands on the row they followed.
-const seededNodeQuery = ref<string | undefined>(undefined);
-const highlightedKey = ref<string | undefined>(undefined);
-/**
- * The card a ?machine= link opened the editor for. Nothing was clicked, so
- * the dialog has no trigger to hand focus back to on close; this names the
- * row that should get it.
- */
-const openedFromLink = ref<string | undefined>(undefined);
+// ── Deep links ────────────────────────────────────────────────────────────────
+// ?machine=<profile id> (the link the Upcoming list gives a renewal) and
+// ?node=<node id> (the node page's link) open that machine's sheet: once the
+// list has loaded they are rewritten to ?open=, with replace, so a reload and
+// Back keep the sheet and the old keys stop at the first read.
 watch(
-  [machines, () => route.query.node, () => route.query.machine],
+  [machines, () => owned.query().node, () => owned.query().machine],
   ([list, nodeQ, machineQ]) => {
+    if (!owned.owns()) return;
     const nodeId = typeof nodeQ === "string" ? nodeQ : undefined;
     const profileId = typeof machineQ === "string" ? machineQ : undefined;
-    const key = nodeId ? `node:${nodeId}` : profileId ? `machine:${profileId}` : undefined;
-    if (!profileId) highlightedKey.value = undefined;
-    if (!key || key === seededNodeQuery.value || list.length === 0) return;
-    const m = list.find((x) => (nodeId ? x.node_id === nodeId : x.id === profileId));
-    seededNodeQuery.value = key;
-    if (!m) return;
-    if (canAdminInventory.value) {
-      openEdit(m);
-      if (profileId) openedFromLink.value = machineKey(m);
-    } else if (profileId) {
-      const cardKey = machineKey(m);
-      highlightedKey.value = cardKey;
-      void nextTick(() =>
-        document.querySelector(`[data-machine-key="${CSS.escape(cardKey)}"]`)?.scrollIntoView({ block: "center" }),
-      );
-    }
+    if ((!nodeId && !profileId) || list.length === 0) return;
+    const m = list.find((x) => (profileId ? x.id === profileId : x.node_id === nodeId));
+    const query = { ...owned.query() };
+    delete query.node;
+    delete query.machine;
+    if (m) query.open = sheetId(m);
+    owned.replace(query);
   },
   { immediate: true },
 );
+
+/** The id a machine's sheet opens on. */
+function sheetId(machine: MachineView): string {
+  return machine.id || machine.node_id;
+}
 
 // ── Reminder indicator ─────────────────────────────────────────────────────
 function reminderWhen(inDays: number, at: string): string {
@@ -643,114 +531,6 @@ function normalizeVendorKey(value?: string): string {
 
 function normalizeCurrency(value: unknown): string {
   return s(value).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5);
-}
-
-function loadFXTarget(): string {
-  if (typeof localStorage === "undefined") return "USD";
-  return normalizeCurrency(localStorage.getItem(FX_TARGET_KEY)) || "USD";
-}
-
-function loadFXRates(): Record<string, string> {
-  if (typeof localStorage === "undefined") return { "USDT->USD": "1", "USDC->USD": "1" };
-  try {
-    const parsed = JSON.parse(localStorage.getItem(FX_RATES_KEY) || "{}") as Record<string, unknown>;
-    const out: Record<string, string> = { "USDT->USD": "1", "USDC->USD": "1" };
-    for (const [key, value] of Object.entries(parsed)) {
-      const pair = normalizeFXRateKey(key);
-      if (pair) out[pair] = s(value);
-    }
-    return out;
-  } catch {
-    return { "USDT->USD": "1", "USDC->USD": "1" };
-  }
-}
-
-function persistFX() {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(FX_TARGET_KEY, normalizeCurrency(fxTarget.value) || "USD");
-  localStorage.setItem(FX_RATES_KEY, JSON.stringify(fxRates.value));
-}
-
-function fxPairKey(source: string, target = normalizeCurrency(fxTarget.value) || "USD"): string {
-  return `${normalizeCurrency(source)}->${normalizeCurrency(target) || "USD"}`;
-}
-
-function normalizeFXRateKey(key: string): string {
-  const [source, target] = key.includes("->") ? key.split("->") : [key, "USD"];
-  const src = normalizeCurrency(source);
-  const dst = normalizeCurrency(target);
-  return src && dst ? `${src}->${dst}` : "";
-}
-
-function fxRateValue(
-  currencyCode: string,
-  targetValue = fxTarget.value,
-  rates: Record<string, string> = fxRates.value,
-): string {
-  const cur = normalizeCurrency(currencyCode);
-  const target = normalizeCurrency(targetValue) || "USD";
-  if (!cur || cur === target) return "1";
-  const pair = fxPairKey(cur, target);
-  if (rates[pair] != null) return rates[pair];
-  // Compatibility with the original USD-targeted localStorage shape.
-  if (target === "USD" && rates[cur] != null) return rates[cur];
-  return "";
-}
-
-function openFXDialog() {
-  fxTargetDraft.value = normalizeCurrency(fxTarget.value) || "USD";
-  fxRatesDraft.value = { ...fxRates.value };
-  fxDialogOpen.value = true;
-}
-
-function setDraftFXRate(currencyCode: string, value: string) {
-  const cur = normalizeCurrency(currencyCode);
-  const target = normalizeCurrency(fxTargetDraft.value) || "USD";
-  if (!cur || cur === target) return;
-  fxRatesDraft.value = { ...fxRatesDraft.value, [fxPairKey(cur, target)]: value };
-}
-
-function saveFXSettings() {
-  fxTarget.value = normalizeCurrency(fxTargetDraft.value) || "USD";
-  fxRates.value = { ...fxRatesDraft.value };
-  persistFX();
-  fxDialogOpen.value = false;
-}
-
-function fxRateFor(
-  currencyCode: string,
-  targetValue = fxTarget.value,
-  rates: Record<string, string> = fxRates.value,
-): number | undefined {
-  const cur = normalizeCurrency(currencyCode);
-  const target = normalizeCurrency(targetValue) || "USD";
-  if (!cur) return undefined;
-  if (cur === target) return 1;
-  const parsed = Number(s(fxRateValue(cur, target, rates)));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function estimateTotalSpend(
-  spend: CurrencySpend[],
-  targetValue = fxTarget.value,
-  rates: Record<string, string> = fxRates.value,
-): { monthlyCents: number; annualCents: number; missing: string[] } | undefined {
-  if (spend.length === 0) return undefined;
-  let monthlyMajor = 0;
-  const missing: string[] = [];
-  for (const entry of spend) {
-    const rate = fxRateFor(entry.currency, targetValue, rates);
-    if (!rate) {
-      missing.push(entry.currency);
-      continue;
-    }
-    monthlyMajor += (entry.monthly / 100) * rate;
-  }
-  return {
-    monthlyCents: Math.round(monthlyMajor * 100),
-    annualCents: Math.round(monthlyMajor * 12 * 100),
-    missing: [...new Set(missing)].sort(),
-  };
 }
 
 function nodeInventoryFor(nodeID?: string) {
@@ -992,11 +772,6 @@ watch(editOpen, (open) => {
   if (open) return;
   formSnapshot.value = undefined;
   discardOpen.value = false;
-  // A ?node= or ?machine= deep link opened the editor; left behind, it
-  // reopens the editor on the next reload.
-  if (route.query.node !== undefined || route.query.machine !== undefined) {
-    router.replace({ query: { ...route.query, node: undefined, machine: undefined } }).catch(() => {});
-  }
 });
 
 /** Every way out of the editor comes through here: Escape, the overlay, the close button and Cancel. */
@@ -1021,26 +796,7 @@ function discardChanges(): void {
  */
 function focusEditorOnOpen(event: Event): void {
   event.preventDefault();
-  // Arriving from the Upcoming list is about the renewal, so start there
-  // rather than at Label and Region with Delete in view.
-  const renewal = openedFromLink.value ? document.getElementById("machine-section-renewal") : null;
-  if (renewal) {
-    renewal.focus({ preventScroll: true });
-    renewal.scrollIntoView({ block: "start" });
-    return;
-  }
   document.querySelector<HTMLElement>("[data-editor-title]")?.focus({ preventScroll: true });
-}
-
-/** Back to the row a ?machine= link opened; a clicked Edit gets focus back from the dialog itself. */
-function restoreFocusOnClose(event: Event): void {
-  const key = openedFromLink.value;
-  if (!key) return;
-  event.preventDefault();
-  openedFromLink.value = undefined;
-  document
-    .querySelector<HTMLElement>(`[data-machine-key="${CSS.escape(key)}"] [data-edit-button]`)
-    ?.focus();
 }
 
 /**
@@ -1236,7 +992,6 @@ function syncVendorDetailsFromSelection() {
 }
 
 function openEdit(machine: MachineView) {
-  openedFromLink.value = undefined;
   editKey.value = machineKey(machine);
   loadForm(machine);
   editOpen.value = true;
@@ -1324,10 +1079,6 @@ watch(vendor, (next, prev) => {
   syncVendorDetailsFromSelection();
 });
 
-watch(fxTarget, () => {
-  fxTarget.value = normalizeCurrency(fxTarget.value) || "USD";
-  persistFX();
-});
 
 async function refreshAll() {
   await Promise.all([machinesQuery.refresh(), nodesQuery.refresh(), vendorsQuery.refresh()]);
@@ -1361,6 +1112,27 @@ async function saveProfile() {
     pending.value = false;
   }
 }
+
+/**
+ * What a profile delete takes with it, from the saved profile (design 23,
+ * 3.8: irreversible inside Lattice names what stops). The node itself stays.
+ */
+const deleteProfileImpact = computed(() => {
+  const machine = editMachine.value;
+  if (!machine?.id) return [];
+  const out: string[] = [];
+  const monthly = monthlyEquivCents(machine);
+  if (monthly > 0) {
+    out.push(t("fleet.inventory.profile.deleteImpact.cost", { amount: formatMoney(Math.round(monthly), machine.currency || "USD") }));
+  }
+  const date = renewalDate(machine);
+  if (date) {
+    out.push(machine.reminders_enabled ? t("fleet.inventory.profile.deleteImpact.renewalReminders", { date }) : t("fleet.inventory.profile.deleteImpact.renewal", { date }));
+  }
+  if (machine.has_console_url || machine.has_detail_url) out.push(t("fleet.inventory.profile.deleteImpact.links"));
+  if (machine.notes?.trim()) out.push(t("fleet.inventory.profile.deleteImpact.notes"));
+  return out;
+});
 
 async function deleteProfile() {
   if (!profileId.value) return;
@@ -1399,50 +1171,213 @@ async function renewProfile() {
   }
 }
 
-async function runReminders(selectedOnly: boolean) {
-  const flag = selectedOnly ? remindersPending : remindersAllPending;
-  flag.value = true;
+/* ------------------------------------------------------------------ */
+/* Machines as a grouped table (design 23, 4.2)                        */
+/* ------------------------------------------------------------------ */
+
+const proof = useProof(machinesQuery);
+
+/** The head states each currency rather than converting only what it has a rate for. */
+const proofSegments = computed<ProofSegment[]>(() => {
+  const out: ProofSegment[] = [{ key: "machines", text: t("fleet.inventory.proof.machines", { n: machines.value.length }, machines.value.length) }];
+  for (const entry of spendByCurrency.value) {
+    out.push({ key: `spend-${entry.currency}`, text: t("fleet.inventory.spend.perMonth", { amount: formatMoney(Math.round(entry.monthly), entry.currency) }), tone: "strong" });
+  }
+  const within30 = machines.value.filter((m) => renewalDate(m) && m.days_until_renewal !== undefined && m.days_until_renewal >= 0 && m.days_until_renewal <= 30).length;
+  if (within30 > 0) out.push({ key: "renew30", text: t("fleet.inventory.proof.renew30", { n: within30 }), to: { query: { group: "renewal" } } });
+  if (freeCount.value > 0) out.push({ key: "free", text: t("fleet.inventory.spend.free", { count: freeCount.value }), tone: "muted" });
+  return out;
+});
+
+const overdueMachines = computed(() =>
+  machines.value.filter((m) => !m.auto_roll && renewalDate(m) && m.days_until_renewal !== undefined && m.days_until_renewal < 0),
+);
+const incompleteMachines = computed(() => machines.value.filter((m) => renewalSetupIncomplete(m)));
+
+const attention = computed<AttentionItem[]>(() => {
+  const out: AttentionItem[] = [];
+  const names = (list: MachineView[]) => {
+    const shown = list.slice(0, 3).map(displayName).join(", ");
+    return list.length > 3 ? `${shown} +${list.length - 3}` : shown;
+  };
+  if (overdueMachines.value.length) {
+    out.push({
+      key: "overdue",
+      tone: "danger",
+      claim: t("fleet.inventory.attention.overdue", { n: overdueMachines.value.length }, overdueMachines.value.length),
+      proof: names(overdueMachines.value),
+      action: { label: t("fleet.inventory.attention.open"), run: () => sheet.open(sheetId(overdueMachines.value[0]!)) },
+    });
+  }
+  if (incompleteMachines.value.length) {
+    out.push({
+      key: "incomplete",
+      tone: "warning",
+      claim: t("fleet.inventory.attention.incomplete", { n: incompleteMachines.value.length }, incompleteMachines.value.length),
+      proof: names(incompleteMachines.value),
+      action: { label: t("fleet.inventory.attention.open"), run: () => sheet.open(sheetId(incompleteMachines.value[0]!)) },
+    });
+  }
+  return out;
+});
+
+/** Rows in group order, each group ordered the way the old card wall ordered it. */
+const tableRows = computed(() => groups.value.flatMap((group) => group.machines));
+const groupOfRow = computed(() => {
+  const map = new Map<string, string>();
+  for (const group of groups.value) for (const machine of group.machines) map.set(machineKey(machine), group.key);
+  return map;
+});
+const groupByKey = computed(() => new Map(groups.value.map((group) => [group.key, group])));
+const groupKeyFn = computed(() => (groupBy.value === "none" ? undefined : (machine: MachineView) => groupOfRow.value.get(machineKey(machine)) ?? ""));
+const groupOrderKeys = computed(() => groups.value.map((group) => group.key));
+const collapsedGroups = ref(new Set<string>());
+
+function renewalSortValue(machine: MachineView): number {
+  return renewalDate(machine) && machine.days_until_renewal !== undefined ? machine.days_until_renewal : Number.MAX_SAFE_INTEGER;
+}
+
+const columns = computed<DataTableColumn<MachineView>[]>(() => [
+  { key: "name", label: t("fleet.inventory.table.machine"), sortable: true, value: (m) => displayName(m).toLowerCase() },
+  { key: "vendor", label: t("fleet.inventory.table.provider"), sortable: true, value: (m) => m.vendor ?? "" },
+  { key: "region", label: t("fleet.inventory.table.region"), sortable: true, value: (m) => m.region ?? "" },
+  { key: "price", label: t("fleet.inventory.table.price"), sortable: true, value: (m) => machinePrice(m) },
+  { key: "monthly", label: t("fleet.inventory.table.monthly"), align: "right", sortable: true, value: (m) => monthlyEquivCents(m) },
+  { key: "renewal", label: t("fleet.inventory.table.renewal"), sortable: true, value: renewalSortValue },
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
+]);
+
+function menuFor(machine: MachineView): RowMenuItem[] {
+  return [
+    {
+      key: "edit",
+      label: machine.id ? t("fleet.inventory.actions.edit") : t("fleet.inventory.actions.addProfile"),
+      icon: machine.id ? Pencil : Plus,
+      hidden: !canAdminInventory.value,
+      run: () => openEdit(machine),
+    },
+    { key: "node", label: t("fleet.inventory.actions.node"), icon: ChevronRight, to: { name: "node-detail", params: { id: machine.node_id } } },
+    {
+      key: "console",
+      label: t("fleet.inventory.list.openConsole"),
+      icon: ExternalLink,
+      hidden: !machine.has_console_url || !canAdminInventory.value,
+      disabled: !!linkRevealPending.value,
+      run: () => void revealMachineLink(machine, "console"),
+    },
+    {
+      key: "detail",
+      label: t("fleet.inventory.list.openDetail"),
+      icon: ExternalLink,
+      hidden: !machine.has_detail_url || !canAdminInventory.value,
+      disabled: !!linkRevealPending.value,
+      run: () => void revealMachineLink(machine, "detail"),
+    },
+  ];
+}
+
+const openMachine = computed(() =>
+  sheet.openId.value ? machines.value.find((m) => m.id === sheet.openId.value || (!m.id && m.node_id === sheet.openId.value)) : undefined,
+);
+const sheetState = computed(() => {
+  if (!sheet.openId.value) return "loading" as const;
+  if (machinesQuery.data.value === undefined) {
+    return machinesQuery.error.value && !machinesQuery.loading.value ? ("failed" as const) : ("loading" as const);
+  }
+  if (!openMachine.value) return "gone" as const;
+  return machinesQuery.error.value ? ("stale" as const) : ("ready" as const);
+});
+
+/* ------------------------------------------------------------------ */
+/* Preview reminders (design 23, 3.8: sends show what goes out)         */
+/* ------------------------------------------------------------------ */
+
+const previewOpen = ref(false);
+const sendPending = ref(false);
+const todayDay = computed(() => formatDay(new Date()));
+/**
+ * The profile the preview covers: one machine from its editor, or every
+ * machine from the header. The send asks the server for the same scope, so
+ * what the dialog lists is what the button pushes.
+ */
+const previewProfileId = ref<string | undefined>();
+const previewMachine = computed(() => (previewProfileId.value ? machines.value.find((m) => m.id === previewProfileId.value) : undefined));
+const previewPool = computed(() => machines.value.filter((m) => !!m.id && (!previewProfileId.value || m.id === previewProfileId.value)));
+
+function openPreview(id?: string): void {
+  previewProfileId.value = id;
+  previewOpen.value = true;
+}
+
+/** The reminders that fire today by the rules the server evaluates. */
+const firingToday = computed(() =>
+  previewPool.value
+    .map((m) => ({ machine: m, next: nextReminder(m, todayDay.value) }))
+    .filter((entry): entry is { machine: MachineView; next: NonNullable<typeof entry.next> } => !!entry.next && entry.next.inDays === 0),
+);
+/** The next reminder after today, so an empty preview still says when one goes out. */
+const nextFiring = computed(() =>
+  previewPool.value
+    .map((m) => ({ machine: m, next: nextReminder(m, todayDay.value) }))
+    .filter((entry): entry is { machine: MachineView; next: NonNullable<typeof entry.next> } => !!entry.next && entry.next.inDays > 0)
+    .sort((a, b) => a.next.inDays - b.next.inDays)[0],
+);
+const renewalRoutes = computed(() =>
+  enabledNotifyRules.value
+    .filter((rule) => ruleRoutesRenewals(rule))
+    .map((rule) => {
+      const channels = (rule.channel_ids ?? []).map((id) => notifyChannels.value.find((channel) => channel.id === id)?.name ?? id);
+      return `${channels.join(", ")} (${rule.name})`;
+    }),
+);
+
+function firingLine(entry: { machine: MachineView; next: { offset: number; renewal: string } }): string {
+  const when = entry.next.offset < 0
+    ? t("fleet.inventory.preview.overdueLine", { date: entry.next.renewal })
+    : entry.next.offset === 0
+      ? t("fleet.inventory.preview.todayLine", { date: entry.next.renewal })
+      : t("fleet.inventory.preview.beforeLine", { n: entry.next.offset, date: entry.next.renewal }, entry.next.offset);
+  const cost = machinePrice(entry.machine) > 0 ? ` · ${formatMoney(machinePrice(entry.machine), entry.machine.currency || "USD")}` : "";
+  return `${displayName(entry.machine)}: ${when}${cost}`;
+}
+
+async function sendReminders(): Promise<void> {
+  sendPending.value = true;
   try {
-    const res = await api.machines.runReminders(selectedOnly ? profileId.value : undefined);
-    toast.success(t("fleet.inventory.toast.remindersFired", { count: res.fired.length }));
+    const res = await api.machines.runReminders(previewProfileId.value);
+    toast.success(t("fleet.inventory.toast.remindersFired", { count: res.fired.length }, res.fired.length));
+    previewOpen.value = false;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.reminderFailed"));
   } finally {
-    flag.value = false;
+    sendPending.value = false;
   }
 }
 </script>
 
 <template>
-  <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('fleet.inventory.title')" :description="$t('fleet.inventory.description')">
-      <template #status>
-        <FreshnessLabel :last-updated="machinesQuery.lastUpdated.value" :poll-ms="machinesQuery.pollMs" />
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('fleet.inventory.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
-        <div class="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" as-child>
-            <a :href="INVENTORY_GUIDE_URL" target="_blank" rel="noreferrer">
-              <BookOpen class="size-4" aria-hidden="true" />
-              {{ $t('common.actions.docs') }}
-            </a>
-          </Button>
-          <Button variant="outline" size="sm" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
-            <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
-            {{ $t('common.actions.refresh') }}
-          </Button>
-          <Button
-            v-if="canAdminInventory"
-            variant="outline"
-            size="sm"
-            :disabled="remindersAllPending"
-            @click="runReminders(false)"
-          >
-            <RefreshCw v-if="remindersAllPending" class="size-4 animate-spin" aria-hidden="true" />
-            <Bell v-else class="size-4" aria-hidden="true" />
-            {{ $t('fleet.inventory.facts.runAllReminders') }}
-          </Button>
-        </div>
+        <Button v-if="canAdminInventory" variant="outline" size="sm" type="button" :disabled="machinesQuery.data.value !== undefined && machines.length === 0" @click="openPreview()">
+          <Bell class="size-4" aria-hidden="true" />
+          {{ $t('fleet.inventory.preview.open') }}
+        </Button>
+        <Button variant="outline" size="sm" as-child>
+          <a :href="INVENTORY_GUIDE_URL" target="_blank" rel="noreferrer">
+            <BookOpen class="size-4" aria-hidden="true" />
+            {{ $t('common.actions.docs') }}
+          </a>
+        </Button>
+        <Button variant="outline" size="sm" type="button" :disabled="machinesQuery.refreshing.value" @click="refreshAll">
+          <RefreshCw :class="cn('size-4', machinesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
+          {{ $t('common.actions.refresh') }}
+        </Button>
       </template>
     </PageHeader>
     <datalist id="inventory-currencies">
@@ -1452,429 +1387,244 @@ async function runReminders(selectedOnly: boolean) {
       <option v-for="item in vendors" :key="item.id" :value="item.name" />
     </datalist>
 
-    <!-- KPI board -->
-    <!-- min-w-0 on every card: a grid item's minimum is its content, so at 375
-         the spend card's longest line pushed the page 20px wider than the
-         viewport instead of truncating. -->
-    <div class="grid grid-cols-1 auto-rows-[8rem] gap-4 sm:grid-cols-2 xl:grid-cols-4 [&>*]:min-w-0">
-      <StatCard :label="$t('fleet.inventory.stats.machines')" :value="machines.length" :icon="Boxes"
-        :hint="$t('fleet.inventory.stats.profiledHint', { profiled: profiledCount, missing: missingCount })"
-        class="h-full py-0" hint-placement="bottom" />
-      <button
-        type="button"
-        class="group block h-full rounded-xl text-left focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-        :aria-label="$t('fleet.inventory.spend.configureRates')"
-        :title="$t('fleet.inventory.spend.configureRates')"
-        @click="openFXDialog"
-      >
-        <Card class="relative h-full overflow-hidden py-0 transition-colors group-hover:bg-muted/20">
-          <CardContent class="flex h-full items-start gap-3 p-4">
-            <div class="flex shrink-0 items-center justify-center rounded-lg bg-accent p-2 text-accent-foreground">
-              <Wallet class="size-4" aria-hidden="true" />
-            </div>
-            <div class="flex h-full min-w-0 flex-1 flex-col">
-              <div class="flex min-w-0 items-center gap-2">
-                <p class="text-sm text-muted-foreground">{{ $t('fleet.inventory.stats.monthlySpend') }}</p>
-                <Badge v-if="totalSpendEstimate?.missing.length" variant="warning" class="shrink-0">
-                  {{ $t('fleet.inventory.spend.missingRate') }}
-                </Badge>
-              </div>
-              <p class="mt-1 truncate text-2xl font-semibold tabular leading-none text-foreground" :title="spendCardValue">
-                {{ spendCardValue }}
-              </p>
-              <p v-if="spendCardHint" class="mt-auto truncate text-xs text-muted-foreground" :title="spendCardHint">
-                {{ spendCardHint }}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </button>
-      <StatCard :label="$t('fleet.inventory.stats.renewalRisk')" :value="renewalSoonCount" :icon="CalendarClock"
-        :tone="overdueCount > 0 ? 'destructive' : renewalSoonCount > 0 ? 'warning' : 'success'"
-        :hint="$t('fleet.inventory.stats.overdueHint', { count: overdueCount })"
-        class="h-full py-0" hint-placement="bottom" />
-      <StatCard :label="$t('fleet.inventory.stats.coverage')" :value="`${profiledCount} / ${machines.length}`"
-        :icon="CheckCircle2" :tone="missingCount > 0 ? 'warning' : 'success'"
-        :hint="$t('fleet.inventory.stats.needsProfileHint', { count: missingCount })"
-        class="h-full py-0" hint-placement="bottom" />
-    </div>
+    <AttentionList :items="attention" />
 
-    <!-- Billing composition + spend-by-currency -->
-    <Card>
-      <CardHeader class="pb-3">
-        <CardTitle class="flex items-center gap-2 text-base">
-          <CircleDollarSign class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('fleet.inventory.summary.title') }}
-        </CardTitle>
-        <CardDescription>{{ $t('fleet.inventory.summary.description') }}</CardDescription>
-      </CardHeader>
-      <CardContent class="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-[1fr_1.2fr]">
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2">
-          <div class="rounded-lg border border-border bg-muted/20 p-3">
-            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.billing.recurring') }}</p>
-            <p class="mt-1 text-xl font-semibold tabular">{{ recurringCount }}</p>
-          </div>
-          <div class="rounded-lg border border-border bg-muted/20 p-3">
-            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.billing.onetime') }}</p>
-            <p class="mt-1 text-xl font-semibold tabular">{{ onetimeCount }}</p>
-          </div>
-          <div class="rounded-lg border border-border bg-muted/20 p-3">
-            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.billing.free') }}</p>
-            <p class="mt-1 text-xl font-semibold tabular text-success">{{ freeCount }}</p>
-          </div>
-          <div class="rounded-lg border border-border bg-muted/20 p-3">
-            <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.summary.renewals') }}</p>
-            <p class="mt-1 text-xl font-semibold tabular">{{ trackedRenewalCount }} / {{ profiledCount }}</p>
-            <p class="mt-0.5 text-xs text-muted-foreground">{{ $t('fleet.inventory.summary.remindersEnabled', { count: remindersEnabledCount }) }}</p>
-          </div>
-        </div>
-
-        <div class="rounded-lg border border-border p-3">
-          <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.inventory.spend.breakdown') }}</p>
-          <div v-if="spendByCurrency.length" class="mt-2 space-y-2">
-            <div v-for="entry in spendByCurrency" :key="entry.currency" class="space-y-1">
-              <div class="flex items-center justify-between text-sm">
-                <span class="font-medium">{{ entry.currency }}</span>
-                <span class="tabular text-muted-foreground">
-                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(Math.round(entry.monthly), entry.currency) }) }}
-                  · {{ $t('fleet.inventory.spend.perYear', { amount: formatMoney(Math.round(entry.annual), entry.currency) }) }}
-                </span>
-              </div>
-              <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  class="h-full rounded-full bg-primary"
-                  :style="{ width: `${primarySpend ? Math.max(4, (entry.monthly / primarySpend.monthly) * 100) : 0}%` }"
-                />
-              </div>
-              <p class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.machineCount', { count: entry.count }) }}</p>
-            </div>
-          </div>
-          <p v-else class="mt-2 text-sm text-muted-foreground">{{ $t('fleet.inventory.spend.none') }}</p>
-        </div>
-      </CardContent>
-    </Card>
-
-    <Dialog v-model:open="fxDialogOpen">
-      <DialogScrollContent class="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle class="flex items-center gap-2">
-            <Wallet class="size-4 text-muted-foreground" aria-hidden="true" />
-            {{ $t('fleet.inventory.spend.rateDialogTitle') }}
-          </DialogTitle>
-          <DialogDescription>
-            {{ $t('fleet.inventory.spend.rateDialogDescription') }}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div class="grid gap-4">
-          <div class="rounded-lg border border-border bg-muted/20 p-3">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p class="text-sm font-medium">{{ $t('fleet.inventory.spend.estimatedTotal') }}</p>
-                <p v-if="draftSpendEstimate" class="mt-0.5 text-xs text-muted-foreground">
-                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(draftSpendEstimate.monthlyCents, fxTargetDraft) }) }}
-                  · {{ $t('fleet.inventory.spend.perYear', { amount: formatMoney(draftSpendEstimate.annualCents, fxTargetDraft) }) }}
-                </p>
-                <p class="mt-1 text-[11px] text-muted-foreground">{{ $t('fleet.inventory.spend.rateCardHint') }}</p>
-              </div>
-              <div class="grid gap-1.5">
-                <Label for="inventory-fx-target" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.spend.target') }}</Label>
-                <Select v-model="fxTargetDraft">
-                  <SelectTrigger id="inventory-fx-target" size="sm" class="w-32">
-                    <SelectValue :placeholder="$t('fleet.inventory.spend.target')" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem v-for="cur in currencyOptions" :key="`target-${cur}`" :value="cur">
-                      {{ cur }}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <p v-if="draftSpendEstimate?.missing.length" class="mt-3 rounded-md border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs text-foreground">
-              {{ $t('fleet.inventory.spend.missingRates', { currencies: draftSpendEstimate.missing.join(', ') }) }}
-            </p>
-          </div>
-
-          <div v-if="fxRateDraftRows.length" class="grid gap-2">
-            <div
-              v-for="entry in fxRateDraftRows"
-              :key="`rate-draft-${entry.currency}`"
-              :class="cn(
-                'grid gap-2 rounded-md border p-2.5 sm:grid-cols-[minmax(90px,auto)_minmax(0,1fr)_minmax(120px,auto)] sm:items-center',
-                entry.missing ? 'border-amber-400/50 bg-amber-500/10' : 'border-border bg-muted/20',
-              )"
-            >
-              <div class="min-w-0">
-                <p class="text-xs font-medium">{{ $t('fleet.inventory.spend.pair', { source: entry.currency, target: entry.target }) }}</p>
-                <p class="text-[11px] text-muted-foreground">
-                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(Math.round(entry.monthly), entry.currency) }) }}
-                </p>
-              </div>
-              <div class="flex min-w-0 items-center gap-2">
-                <span class="shrink-0 text-xs text-muted-foreground">1 {{ entry.currency }} =</span>
-                <Input
-                  class="h-8 min-w-24 flex-1 text-xs tabular"
-                  inputmode="decimal"
-                  :aria-label="$t('fleet.inventory.spend.rateInput', { source: entry.currency, target: entry.target })"
-                  :placeholder="entry.target"
-                  :model-value="entry.rateValue"
-                  @update:model-value="(value) => setDraftFXRate(entry.currency, String(value ?? ''))"
-                />
-                <span class="shrink-0 text-xs text-muted-foreground">{{ entry.target }}</span>
-              </div>
-              <div class="text-xs sm:text-right">
-                <span v-if="entry.convertedMonthlyCents != null" class="font-medium tabular">
-                  {{ $t('fleet.inventory.spend.perMonth', { amount: formatMoney(entry.convertedMonthlyCents, entry.target) }) }}
-                </span>
-                <Badge v-else variant="warning">{{ $t('fleet.inventory.spend.missingRate') }}</Badge>
-              </div>
-            </div>
-          </div>
-          <p v-else class="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            {{ $t('fleet.inventory.spend.singleCurrency') }}
-          </p>
-        </div>
-
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button type="button" @click="saveFXSettings">
-            <Save class="size-4" aria-hidden="true" />
-            {{ $t('fleet.inventory.spend.saveRates') }}
-          </Button>
-        </DialogFooter>
-      </DialogScrollContent>
-    </Dialog>
-
-    <!-- Controls: search + group-by -->
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div class="relative w-full sm:max-w-xs">
-        <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-        <Input v-model="search" class="pl-9" :placeholder="$t('fleet.inventory.search.placeholder')" />
+    <!-- What the list shows: search and grouping, both in the address. -->
+    <div v-if="machines.length > 0 || search" class="flex flex-wrap items-center gap-2">
+      <div class="relative min-w-0 flex-[1_1_16rem]">
+        <Search class="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <Input
+          v-model="search"
+          type="search"
+          class="ps-9"
+          :placeholder="$t('fleet.inventory.search.placeholder')"
+          :aria-label="$t('fleet.inventory.search.placeholder')"
+        />
       </div>
-      <div class="flex items-center gap-2">
-        <span class="text-xs font-medium text-muted-foreground">{{ $t('fleet.inventory.group.by') }}</span>
-        <div class="inline-flex flex-wrap gap-1 rounded-lg border border-border bg-muted/30 p-1" role="group" :aria-label="$t('fleet.inventory.group.by')">
-          <button
-            v-for="opt in groupOptions"
-            :key="opt"
-            type="button"
-            :aria-pressed="groupBy === opt"
-            :class="cn(
-              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
-              groupBy === opt ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-            )"
-            @click="groupBy = opt"
-          >
-            {{ $t(`fleet.inventory.group.${opt}`) }}
-          </button>
-        </div>
+      <div class="inline-flex max-w-full overflow-x-auto rounded-md border border-input bg-background p-0.5" role="group" :aria-label="$t('fleet.inventory.group.by')">
+        <button
+          v-for="option in groupOptions"
+          :key="option"
+          type="button"
+          :class="cn(
+            'whitespace-nowrap rounded px-2.5 py-1 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11',
+            groupBy === option ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground',
+          )"
+          :aria-pressed="groupBy === option"
+          @click="groupBy = option"
+        >
+          {{ $t(`fleet.inventory.group.${option}`) }}
+        </button>
       </div>
     </div>
 
-    <!-- Machine groups -->
-    <DataState
+    <DataTable
+      v-model:collapsed-groups="collapsedGroups"
+      state-key="machines"
+      :columns="columns"
+      :rows="tableRows"
+      :row-key="(machine) => machineKey(machine)"
       :loading="machinesQuery.loading.value"
-      :error="machinesQuery.error.value"
+      :error="machinesQuery.error.value ?? null"
       :has-data="machinesQuery.data.value !== undefined"
-      :is-empty="machines.length === 0"
-      :empty-title="$t('fleet.inventory.list.emptyTitle')"
-      :empty-description="$t('fleet.inventory.list.emptyDescription')"
+      :expression-filter="false"
+      :show-summary="false"
+      :group-key="groupKeyFn"
+      :group-order="groupOrderKeys"
+      :row-click="(machine, el) => sheet.open(sheetId(machine), el)"
+      :active-row-id="openMachine ? machineKey(openMachine) : null"
       @retry="machinesQuery.refresh"
     >
-      <EmptyState
-        v-if="groups.length === 0"
-        :title="$t('fleet.inventory.list.noMatchTitle')"
-        :description="$t('fleet.inventory.list.noMatchDescription')"
-      />
-      <div v-else class="space-y-6">
-        <section v-for="group in groups" :key="group.key" class="space-y-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <h3 class="text-sm font-semibold">{{ group.label }}</h3>
-              <Badge variant="secondary">{{ group.machines.length }}</Badge>
-            </div>
-            <span v-if="group.spend.length" class="text-xs text-muted-foreground tabular">
-              {{ groupSpendLabel(group.spend) }}
-            </span>
-          </div>
+      <template #empty>
+        <EmptyState
+          v-if="search"
+          :icon="Search"
+          :title="$t('fleet.inventory.list.noMatchTitle')"
+          :description="$t('fleet.inventory.list.noMatchDescription')"
+        />
+        <!-- No nodes at all is not a scope problem: say where machines come from. -->
+        <EmptyState
+          v-else-if="nodesQuery.data.value !== undefined && nodes.length === 0"
+          :icon="Boxes"
+          :title="$t('fleet.inventory.list.noNodesTitle')"
+          :description="$t('fleet.inventory.list.noNodesDescription')"
+        >
+          <Button variant="outline" size="sm" as-child>
+            <RouterLink :to="{ name: 'nodes' }">{{ $t('fleet.inventory.list.goToNodes') }}</RouterLink>
+          </Button>
+        </EmptyState>
+        <EmptyState v-else :icon="Boxes" :title="$t('fleet.inventory.list.emptyTitle')" :description="$t('fleet.inventory.list.emptyDescription')" />
+      </template>
 
-          <div class="grid grid-cols-1 min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            <div
-              v-for="machine in group.machines"
-              :key="machineKey(machine)"
-              :data-machine-key="machineKey(machine)"
-              :class="cn(
-                'flex flex-col rounded-lg border border-border p-4 transition-colors hover:border-primary/40',
-                highlightedKey === machineKey(machine) && 'border-primary ring-2 ring-primary/30',
-              )"
+      <template #group="{ group }">
+        <span class="font-medium text-foreground">{{ groupByKey.get(group.key)?.label ?? group.key }}</span>
+        <span class="tabular text-muted-foreground">{{ group.rows.length }}</span>
+        <span v-if="groupByKey.get(group.key)?.spend.length" class="tabular text-foreground">
+          {{ groupSpendLabel(groupByKey.get(group.key)!.spend) }}
+        </span>
+      </template>
+
+      <template #cell-name="{ row }">
+        <span class="flex min-w-0 items-center gap-2">
+          <StatusDot :status="row.online ? 'online' : 'offline'" />
+          <span class="flex min-w-0 font-medium" :title="row.node_name || row.node_id">
+            <span class="truncate">{{ nameParts(displayName(row))[0] }}</span><span class="shrink-0">{{ nameParts(displayName(row))[1] }}</span>
+          </span>
+          <span v-if="!row.id" class="shrink-0 text-xs text-muted-foreground">{{ $t('fleet.inventory.billing.unprofiled') }}</span>
+        </span>
+      </template>
+      <template #cell-vendor="{ row }">
+        <span class="text-sm">{{ row.vendor || '' }}</span>
+      </template>
+      <template #cell-region="{ row }">
+        <span class="text-sm text-muted-foreground">{{ row.region || '' }}</span>
+      </template>
+      <template #cell-price="{ row }">
+        <span class="whitespace-nowrap text-sm">
+          <span class="font-mono text-xs tabular">{{ formatPrice(row) }}</span>
+          <span v-if="row.renewal_cycle" class="text-xs text-muted-foreground"> · {{ formatCycle(row) }}</span>
+        </span>
+      </template>
+      <template #cell-monthly="{ row }">
+        <!-- A free machine says so; a blank cell read as a value not entered. -->
+        <span v-if="billingCategory(row) === 'free' && !formatMonthlyEquiv(row)" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.inventory.billing.free') }}</span>
+        <span v-else class="whitespace-nowrap font-mono text-xs tabular">{{ formatMonthlyEquiv(row) }}</span>
+      </template>
+      <template #cell-renewal="{ row }">
+        <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
+          <span v-if="renewalDate(row)" class="font-mono tabular text-muted-foreground">{{ renewalDate(row) }}</span>
+          <span
+            :class="cn(
+              renewalTone(row) === 'destructive' && 'font-medium text-destructive',
+              renewalTone(row) === 'warning' && 'font-medium text-warning-text',
+              (renewalTone(row) === 'default' || renewalTone(row) === 'success') && 'text-muted-foreground',
+            )"
+          >{{ renewalLabel(row) }}</span>
+          <template v-if="row.id && hasRenewalDate(row)">
+            <Bell v-if="row.reminders_enabled" class="size-3.5 text-muted-foreground" aria-hidden="true" />
+            <BellOff v-else class="size-3.5 text-muted-foreground" aria-hidden="true" />
+            <span class="sr-only">{{ reminderHint(row) }}</span>
+          </template>
+        </span>
+      </template>
+      <template #cell-actions="{ row }">
+        <RowMenu :name="displayName(row)" :items="menuFor(row)" />
+      </template>
+    </DataTable>
+
+    <!-- One machine: cost, renewal, reminder, provider and links. The editor opens from here. -->
+    <ObjectSheet
+      :open="!!sheet.openId.value"
+      :title="openMachine ? displayName(openMachine) : sheet.openId.value ?? ''"
+      :subtitle="openMachine ? [openMachine.node_name, openMachine.host_facts?.hostname].filter(Boolean).join(' · ') : undefined"
+      :state="sheetState"
+      :error="machinesQuery.error.value?.message ?? null"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('fleet.inventory.sheet.goneTitle')"
+      :gone-description="$t('fleet.inventory.sheet.goneDescription')"
+      @close="sheet.close"
+      @retry="machinesQuery.refresh"
+    >
+      <div v-if="openMachine" class="space-y-5 text-sm">
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge :variant="billingBadgeVariant(billingCategory(openMachine))">{{ $t(`fleet.inventory.billing.${billingCategory(openMachine)}`) }}</Badge>
+          <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <StatusDot :status="openMachine.online ? 'online' : 'offline'" />
+            {{ openMachine.online ? $t('common.nodeStatus.online') : $t('common.nodeStatus.offline') }}
+          </span>
+        </div>
+        <dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-2.5">
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.table.price') }}</dt>
+          <dd>
+            <span class="font-mono text-xs">{{ formatPrice(openMachine) }}</span>
+            <span v-if="openMachine.renewal_cycle" class="text-muted-foreground"> · {{ formatCycle(openMachine) }}</span>
+            <span v-if="formatMonthlyEquiv(openMachine)" class="block text-xs text-muted-foreground">{{ formatMonthlyEquiv(openMachine) }}</span>
+          </dd>
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.table.renewal') }}</dt>
+          <dd>
+            <span v-if="renewalDate(openMachine)" class="font-mono text-xs">{{ renewalDate(openMachine) }} · </span>
+            <span :class="renewalTone(openMachine) === 'destructive' ? 'text-destructive' : renewalTone(openMachine) === 'warning' ? 'text-warning-text' : undefined">{{ renewalLabel(openMachine) }}</span>
+            <span v-if="openMachine.auto_roll" class="block text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.autoRoll') }}</span>
+          </dd>
+          <template v-if="openMachine.id && hasRenewalDate(openMachine)">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.reminder') }}</dt>
+            <dd class="inline-flex items-start gap-1.5">
+              <Bell v-if="openMachine.reminders_enabled" class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <BellOff v-else class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span>{{ reminderHint(openMachine) }}</span>
+            </dd>
+          </template>
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.table.provider') }}</dt>
+          <dd class="min-w-0">
+            <a
+              v-if="openMachine.vendor && vendorProfileFor(openMachine)?.url"
+              :href="vendorProfileFor(openMachine)?.url"
+              target="_blank"
+              rel="noreferrer"
+              class="inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:text-foreground"
             >
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0">
-                  <div class="flex min-w-0 items-center gap-2">
-                    <StatusDot :status="machine.online ? 'online' : 'offline'" :pulse="machine.online" />
-                    <span class="truncate font-medium" :title="displayName(machine)">{{ displayName(machine) }}</span>
-                  </div>
-                  <p
-                    class="mt-1 truncate font-mono text-xs text-muted-foreground"
-                    :title="[machine.node_id, machine.host_facts?.hostname].filter(Boolean).join(' · ')"
-                  >
-                    {{ shortId(machine.node_id, 14) }}
-                    <template v-if="machine.host_facts?.hostname"> · {{ machine.host_facts.hostname }}</template>
-                  </p>
-                </div>
-                <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                  <Button variant="ghost" size="sm" as-child>
-                    <RouterLink :to="{ name: 'node-detail', params: { id: machine.node_id } }">
-                      {{ $t('fleet.inventory.actions.node') }}
-                    </RouterLink>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    data-edit-button
-                    @click="openEdit(machine)"
-                  >
-                    <component :is="canAdminInventory ? (machine.id ? Pencil : Plus) : Eye" class="size-3.5" aria-hidden="true" />
-                    {{ canAdminInventory ? (machine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile')) : $t('fleet.inventory.actions.details') }}
-                  </Button>
-                </div>
-              </div>
-
-              <div class="mt-3 flex flex-wrap gap-1.5">
-                <Badge :variant="billingBadgeVariant(billingCategory(machine))">
-                  {{ $t(`fleet.inventory.billing.${billingCategory(machine)}`) }}
-                </Badge>
-                <a
-                  v-if="machine.vendor && vendorProfileFor(machine)?.url"
-                  :href="vendorProfileFor(machine)?.url"
-                  target="_blank"
-                  rel="noreferrer"
-                  class="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-                >
-                  <img
-                    v-if="vendorProfileFor(machine)?.logo_url"
-                    :src="vendorProfileFor(machine)?.logo_url"
-                    alt=""
-                    class="size-3 rounded-sm object-contain"
-                  />
-                  {{ machine.vendor }}
-                  <ExternalLink class="size-3" aria-hidden="true" />
-                </a>
-                <Badge v-else-if="machine.vendor" variant="outline">{{ machine.vendor }}</Badge>
-                <Badge
-                  v-if="nodeInventoryFor(machine.node_id)?.purity_percent != null"
-                  variant="success"
-                >
-                  {{ $t('fleet.inventory.purityBadge', { percent: nodeInventoryFor(machine.node_id)?.purity_percent }) }}
-                </Badge>
-                <!-- Left out when the billing chip already says "Renewal setup needed". -->
-                <Badge
-                  v-if="billingCategory(machine) !== 'renewalIncomplete'"
-                  :variant="renewalTone(machine) === 'destructive' ? 'destructive' : renewalTone(machine) === 'warning' ? 'warning' : 'secondary'"
-                >
-                  {{ renewalLabel(machine) }}
-                </Badge>
-                <!-- The date beside the countdown: "12d left" says how soon, the
-                     date says when, and a renewal view is read for both. -->
-                <!-- The date and its bell wrap as one piece, so a narrow card
-                     never strands the bell on a line of its own. -->
-                <span class="inline-flex items-center gap-1 self-center">
-                <span
-                  v-if="renewalDate(machine) && !renewalSetupIncomplete(machine) && machine.days_until_renewal !== undefined"
-                  class="font-mono text-xs tabular text-muted-foreground"
-                >{{ renewalDate(machine) }}</span>
-                <!-- Whether this renewal reminds anyone: a bell, struck through
-                     when off, and the next reminder on hover or focus. -->
-                <Tooltip v-if="machine.id && hasRenewalDate(machine)">
-                  <TooltipTrigger as-child>
-                    <span
-                      tabindex="0"
-                      role="img"
-                      :aria-label="reminderHint(machine)"
-                      data-testid="reminder-indicator"
-                      class="inline-flex rounded-sm p-0.5 text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <!-- Full muted-foreground for both: the strike-through
-                           says off, and a dimmed icon fell under 3:1 in light. -->
-                      <Bell v-if="machine.reminders_enabled" class="size-3.5" aria-hidden="true" />
-                      <BellOff v-else class="size-3.5" aria-hidden="true" />
-                    </span>
-                  </TooltipTrigger>
-                  <!-- On the popover surface the console's data hovers use, and
-                       below the bell, so it never sits on the card's title
-                       or its Node and Edit buttons. -->
-                  <TooltipContent
-                    side="bottom"
-                    align="start"
-                    :side-offset="6"
-                    :collision-padding="8"
-                    class="max-w-64 border border-border bg-popover text-popover-foreground shadow-(--shadow-overlay)"
-                  >
-                    {{ reminderHint(machine) }}
-                  </TooltipContent>
-                </Tooltip>
-                </span>
-              </div>
-
-              <div class="mt-3 grid gap-1.5 text-xs text-muted-foreground">
-                <div class="flex items-center justify-between">
-                  <span class="inline-flex items-center gap-1">
-                    <CircleDollarSign class="size-3" aria-hidden="true" />
-                    {{ formatPrice(machine) }}
-                    <span v-if="machine.renewal_cycle" class="text-muted-foreground/70">· {{ formatCycle(machine) }}</span>
-                  </span>
-                  <span v-if="formatMonthlyEquiv(machine)" class="tabular">{{ formatMonthlyEquiv(machine) }}</span>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span>{{ machine.region || $t('fleet.inventory.list.regionUnset') }}</span>
-                  <span v-if="machine.updated_at">{{ $t('fleet.inventory.list.updated', { time: formatRelativeTime(machine.updated_at) }) }}</span>
-                </div>
-              </div>
-
-              <div v-if="machine.has_console_url || machine.has_detail_url" class="mt-3 flex flex-wrap gap-1.5">
-                <Button
-                  v-if="machine.has_console_url && canAdminInventory"
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="h-7 px-2 text-xs"
-                  :disabled="!!linkRevealPending"
-                  @click="revealMachineLink(machine, 'console')"
-                >
-                  <RefreshCw v-if="linkRevealPending === linkPendingKey(machine, 'console')" class="size-3 animate-spin" aria-hidden="true" />
-                  <ExternalLink v-else class="size-3" aria-hidden="true" />
-                  {{ $t('fleet.inventory.list.openConsole') }}
-                </Button>
-                <Badge v-else-if="machine.has_console_url" variant="info">
-                  <LinkIcon class="size-3" aria-hidden="true" />
-                  {{ $t('fleet.inventory.list.consoleLinkStored') }}
-                </Badge>
-                <Button
-                  v-if="machine.has_detail_url && canAdminInventory"
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  class="h-7 px-2 text-xs"
-                  :disabled="!!linkRevealPending"
-                  @click="revealMachineLink(machine, 'detail')"
-                >
-                  <RefreshCw v-if="linkRevealPending === linkPendingKey(machine, 'detail')" class="size-3 animate-spin" aria-hidden="true" />
-                  <ExternalLink v-else class="size-3" aria-hidden="true" />
-                  {{ $t('fleet.inventory.list.openDetail') }}
-                </Button>
-                <Badge v-else-if="machine.has_detail_url" variant="info">
-                  <LinkIcon class="size-3" aria-hidden="true" />
-                  {{ $t('fleet.inventory.list.detailLinkStored') }}
-                </Badge>
-              </div>
-            </div>
-          </div>
-        </section>
+              {{ openMachine.vendor }}
+              <ExternalLink class="size-3" aria-hidden="true" />
+            </a>
+            <span v-else>{{ openMachine.vendor || $t('fleet.inventory.group.unknownVendor') }}</span>
+          </dd>
+          <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.table.region') }}</dt>
+          <dd>{{ openMachine.region || $t('fleet.inventory.list.regionUnset') }}</dd>
+          <template v-if="nodeInventoryFor(openMachine.node_id)?.purity_percent != null">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.purity') }}</dt>
+            <dd>{{ $t('fleet.inventory.purityBadge', { percent: nodeInventoryFor(openMachine.node_id)?.purity_percent }) }}</dd>
+          </template>
+          <template v-if="openMachine.notes">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.notes') }}</dt>
+            <dd class="whitespace-pre-wrap text-muted-foreground">{{ openMachine.notes }}</dd>
+          </template>
+          <template v-if="openMachine.updated_at">
+            <dt class="text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.updated') }}</dt>
+            <dd class="text-xs text-muted-foreground">{{ formatRelativeTime(openMachine.updated_at) }}</dd>
+          </template>
+        </dl>
+        <div v-if="openMachine.has_console_url || openMachine.has_detail_url" class="flex flex-wrap gap-2">
+          <Button
+            v-if="openMachine.has_console_url && canAdminInventory"
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="!!linkRevealPending"
+            @click="revealMachineLink(openMachine, 'console')"
+          >
+            <RefreshCw v-if="linkRevealPending === linkPendingKey(openMachine, 'console')" class="size-3.5 animate-spin" aria-hidden="true" />
+            <ExternalLink v-else class="size-3.5" aria-hidden="true" />
+            {{ $t('fleet.inventory.list.openConsole') }}
+          </Button>
+          <span v-else-if="openMachine.has_console_url" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.list.consoleLinkStored') }}</span>
+          <Button
+            v-if="openMachine.has_detail_url && canAdminInventory"
+            type="button"
+            variant="outline"
+            size="sm"
+            :disabled="!!linkRevealPending"
+            @click="revealMachineLink(openMachine, 'detail')"
+          >
+            <RefreshCw v-if="linkRevealPending === linkPendingKey(openMachine, 'detail')" class="size-3.5 animate-spin" aria-hidden="true" />
+            <ExternalLink v-else class="size-3.5" aria-hidden="true" />
+            {{ $t('fleet.inventory.list.openDetail') }}
+          </Button>
+          <span v-else-if="openMachine.has_detail_url" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.list.detailLinkStored') }}</span>
+        </div>
+        <RouterLink
+          :to="{ name: 'node-detail', params: { id: openMachine.node_id } }"
+          class="inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+        >
+          {{ $t('fleet.inventory.sheet.nodePage') }}
+        </RouterLink>
       </div>
-    </DataState>
+      <template v-if="canAdminInventory && openMachine" #actions>
+        <Button size="sm" type="button" data-edit-button @click="openEdit(openMachine)">
+          <component :is="openMachine.id ? Pencil : Plus" class="size-3.5" aria-hidden="true" />
+          {{ openMachine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile') }}
+        </Button>
+      </template>
+    </ObjectSheet>
 
     <!-- Edit / create dialog.
          A fixed header and footer around a scrolling form, so the machine's
@@ -1891,7 +1641,6 @@ async function runReminders(selectedOnly: boolean) {
       <DialogContent
         class="flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
         @open-auto-focus="focusEditorOnOpen"
-        @close-auto-focus="restoreFocusOnClose"
       >
         <DialogHeader class="gap-1.5 border-b border-border px-5 pt-5 pr-12 pb-4 text-left sm:px-6">
           <!-- No id here: reka names the dialog by its own title id, and
@@ -2244,11 +1993,11 @@ async function runReminders(selectedOnly: boolean) {
                 type="button"
                 variant="ghost"
                 size="sm"
-                :disabled="remindersPending || formDirty"
-                @click="runReminders(true)"
+                :disabled="formDirty"
+                @click="openPreview(profileId)"
               >
                 <Bell class="size-4" aria-hidden="true" />
-                {{ $t('fleet.inventory.profile.runReminders') }}
+                {{ $t('fleet.inventory.preview.open') }}
               </Button>
             </div>
           </section>
@@ -2414,10 +2163,37 @@ async function runReminders(selectedOnly: boolean) {
       </DialogScrollContent>
     </Dialog>
 
+    <!-- Preview reminders: what a send would push, then the send behind a typed count (design 23, 3.8).
+         After the editor in the template, so it stacks above the editor it opens from. -->
+    <ConfirmDialog
+      v-model:open="previewOpen"
+      :title="previewMachine ? $t('fleet.inventory.preview.titleOne', { name: displayName(previewMachine) }) : $t('fleet.inventory.preview.title')"
+      :description="firingToday.length
+        ? $t('fleet.inventory.preview.description', { n: firingToday.length }, firingToday.length)
+        : previewMachine ? $t('fleet.inventory.preview.nothingOne', { name: displayName(previewMachine) }) : $t('fleet.inventory.preview.nothing')"
+      :impact="firingToday.length ? firingToday.map(firingLine) : undefined"
+      :impact-title="$t('fleet.inventory.preview.impactTitle')"
+      :typed-confirm="firingToday.length ? String(firingToday.length) : undefined"
+      :confirm-label="$t('fleet.inventory.preview.send', { n: firingToday.length }, firingToday.length)"
+      :cancel-label="$t('common.actions.close')"
+      :confirm-disabled="firingToday.length === 0"
+      :pending="sendPending"
+      @confirm="sendReminders"
+    >
+      <div class="space-y-1.5 text-xs text-muted-foreground">
+        <p v-if="!canManageNotifications">{{ $t('fleet.inventory.preview.routesUnknown') }}</p>
+        <p v-else-if="renewalRoutes.length">{{ $t('fleet.inventory.preview.routes', { routes: renewalRoutes.join('; ') }) }}</p>
+        <p v-else class="text-warning-text">{{ $t('fleet.inventory.preview.noRoute') }}</p>
+        <p v-if="nextFiring">{{ $t('fleet.inventory.preview.next', { name: displayName(nextFiring.machine), date: nextFiring.next.at, n: nextFiring.next.inDays }, nextFiring.next.inDays) }}</p>
+        <p v-if="firingToday.length">{{ $t('fleet.inventory.preview.dedupe') }}</p>
+      </div>
+    </ConfirmDialog>
+
     <ConfirmDialog
       v-model:open="deleteOpen"
       :title="$t('fleet.inventory.profile.deleteTitle')"
       :description="editMachine ? $t('fleet.inventory.confirm.delete', { name: displayName(editMachine) }) : ''"
+      :impact="deleteProfileImpact"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deletePending"
