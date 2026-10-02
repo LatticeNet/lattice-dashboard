@@ -679,6 +679,8 @@ export default {
     },
     setup: {
       summary: "{total} 项前置条件中 {ready} 项已就绪",
+      summaryPartial: "已检查的 {checked} 项中 {ready} 项就绪 · {unchecked} 项未检查",
+      summaryNone: "{total} 项前置条件都未检查",
       ready: "已就绪",
       missing: "缺失",
       unchecked: "未检查",

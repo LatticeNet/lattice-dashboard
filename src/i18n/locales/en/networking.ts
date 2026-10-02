@@ -713,6 +713,8 @@ export default {
     },
     setup: {
       summary: "{ready} of {total} prerequisite ready | {ready} of {total} prerequisites ready",
+      summaryPartial: "{ready} of {checked} checked ready · {unchecked} not checked",
+      summaryNone: "{total} prerequisite not checked | {total} prerequisites not checked",
       ready: "ready",
       missing: "missing",
       unchecked: "not checked",

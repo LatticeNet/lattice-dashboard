@@ -12,10 +12,13 @@
  * actions; a `description` slot replaces the description prop when the copy
  * carries markup (a path set as code).
  *
- * The summary counts ready items over all items, so "1 of 2" with one item
- * not checked never claims the second is missing; the item says so itself.
+ * The summary counts ready items over the items that were checked and names
+ * the ones that were not ("2 of 2 checked ready · 1 not checked"), so an
+ * item the console cannot see or could not read is never counted as not
+ * ready; with nothing checked it says only that.
  */
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import { Check, CircleDashed, X } from "lucide-vue-next";
 
@@ -38,8 +41,17 @@ const props = defineProps<{
   items: SetupItem[];
 }>();
 
+const { t } = useI18n();
+
 const ready = computed(() => props.items.filter((item) => item.ready === true).length);
 const total = computed(() => props.items.length);
+const unchecked = computed(() => props.items.filter((item) => item.ready === null).length);
+const summary = computed(() => {
+  if (!unchecked.value) return t("networking.setup.summary", { ready: ready.value, total: total.value }, total.value);
+  if (unchecked.value === total.value) return t("networking.setup.summaryNone", { total: total.value }, total.value);
+  const checked = total.value - unchecked.value;
+  return t("networking.setup.summaryPartial", { ready: ready.value, checked, unchecked: unchecked.value });
+});
 </script>
 
 <template>
@@ -50,7 +62,7 @@ const total = computed(() => props.items.length);
       <p v-else-if="description" class="max-w-prose text-sm text-muted-foreground">{{ description }}</p>
     </div>
     <div class="space-y-2">
-      <p class="text-xs font-medium text-muted-foreground" data-testid="setup-summary">{{ $t('networking.setup.summary', { ready, total }, total) }}</p>
+      <p class="text-xs font-medium text-muted-foreground" data-testid="setup-summary">{{ summary }}</p>
       <ul class="divide-y divide-border rounded-md border border-border">
         <li v-for="item in items" :key="item.key" class="flex flex-wrap items-start gap-x-3 gap-y-1 px-3 py-2.5 text-sm">
           <component
