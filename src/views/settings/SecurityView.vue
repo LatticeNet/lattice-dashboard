@@ -19,7 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-vue-next";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { api, ApiError, type TOTPEnrollResponse, type WebAuthnCredentialView } from "@/lib/api";
 import {
   isPasskeyCancellation,

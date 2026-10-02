@@ -17,7 +17,7 @@
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Power, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-vue-next";
 import { api, type PluginLifecycleStatus, type PluginVerifyResponse } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";

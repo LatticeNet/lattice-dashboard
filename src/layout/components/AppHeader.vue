@@ -28,6 +28,7 @@ import { NAV } from "@/router/nav";
 import { usePluginContributions } from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
 import AppearanceMenu from "./AppearanceMenu.vue";
+import RecentErrors from "./RecentErrors.vue";
 
 const props = defineProps<{ mobileOpen: boolean }>();
 
@@ -243,6 +244,8 @@ function openSecurity() {
       >
         <Search class="size-4" aria-hidden="true" />
       </Button>
+
+      <RecentErrors />
 
       <ThemeToggle />
 

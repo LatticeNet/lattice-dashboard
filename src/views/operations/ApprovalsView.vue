@@ -31,7 +31,7 @@
  */
 import { computed, nextTick, onScopeDispose, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Ban, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardList, ExternalLink, FileCode2, Play, RefreshCw, ServerOff } from "lucide-vue-next";
 
 import {

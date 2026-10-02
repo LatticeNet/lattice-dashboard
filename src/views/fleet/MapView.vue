@@ -17,7 +17,7 @@
 import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { RotateCw } from "lucide-vue-next";
 
 import { api, unwrap, type Node, type NodeGeoResolveResult } from "@/lib/api";

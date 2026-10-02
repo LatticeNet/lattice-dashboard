@@ -17,7 +17,7 @@
  */
 import { computed, onScopeDispose, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { ChevronLeft, ChevronRight, Download, RefreshCw, ShieldCheck } from "lucide-vue-next";
 
 import { api, unwrap, type AuditEvent, type AuditVerifyResponse, type Node } from "@/lib/api";

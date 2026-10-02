@@ -15,7 +15,7 @@
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { TriangleAlert } from "lucide-vue-next";
 
 import { api, type CapabilityImpact } from "@/lib/api";

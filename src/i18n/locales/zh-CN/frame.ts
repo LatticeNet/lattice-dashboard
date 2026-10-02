@@ -286,6 +286,15 @@ export default {
       overview: "前往概览",
       permissions: "查看我的权限",
     },
+    // 页头的最近错误列表（lib/toast、RecentErrors.vue）。
+    errors: {
+      open: "{n} 条最近的错误 | {n} 条最近的错误",
+      title: "最近的错误",
+      clear: "清空",
+      copy: "复制这条错误",
+      repeated: "出现 {n} 次",
+      note: "本标签页打开以来显示过的错误，不会保存。",
+    },
     sidebar: {
       toggle: "切换侧边栏",
       primaryNav: "主导航",

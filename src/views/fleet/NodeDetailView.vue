@@ -13,7 +13,7 @@
 import { computed, nextTick, reactive, watch, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import {
   Activity,
   ArrowDown,

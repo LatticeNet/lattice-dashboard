@@ -291,6 +291,15 @@ export default {
       overview: "Go to Overview",
       permissions: "See your scopes",
     },
+    // The header's list of errors this tab showed (lib/toast, RecentErrors.vue).
+    errors: {
+      open: "{n} recent error | {n} recent errors",
+      title: "Recent errors",
+      clear: "Clear",
+      copy: "Copy this error",
+      repeated: "shown {n} times",
+      note: "Errors this tab has shown since it opened. They are not saved.",
+    },
     sidebar: {
       toggle: "Toggle sidebar",
       primaryNav: "Primary",
