@@ -1421,6 +1421,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               <th scope="col" class="sticky left-0 z-10 bg-background px-2 py-2 text-left font-medium max-sm:w-[8.5rem]">
                 <span class="flex items-center gap-2">
                   <Checkbox
+                    class="touch-target"
                     :model-value="allVisibleSelected"
                     :aria-label="$t('networking.sshGuard.table.selectAllInFilter')"
                     @update:model-value="(v) => toggleSelectAllVisible(v === true)"
@@ -1464,6 +1465,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               >
                 <div class="flex items-center gap-2">
                   <Checkbox
+                    class="touch-target"
                     :model-value="selectedNodes.has(state.nodeId)"
                     :aria-label="$t('networking.sshGuard.scope.selectRow', { node: state.name || state.nodeId })"
                     @click="(e: MouseEvent) => toggleRow(state.nodeId, e)"
@@ -1496,7 +1498,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   :title="postureOf(state.nodeId).reason ?? $t(`networking.sshGuard.posture.${POSTURE_KEY[postureOf(state.nodeId).posture]}Title`)"
                   :data-posture="postureOf(state.nodeId).posture"
                 >
-                  <Lock v-if="postureOf(state.nodeId).posture === 'secured'" aria-hidden="true" />
+                  <Lock v-if="postureOf(state.nodeId).posture === 'secured'" class="shrink-0" aria-hidden="true" />
                   {{ $t(postureLabelKey(state.nodeId)) }}
                 </Badge>
                 <!-- HISTORY: what became of the last arm plan, as one muted
@@ -1639,7 +1641,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               <td class="px-2 py-1 align-top text-xs whitespace-nowrap">
                 <button
                   type="button"
-                  class="reason-toggle text-left underline-offset-4 hover:underline"
+                  class="reason-toggle touch-target text-left underline-offset-4 hover:underline"
                   :class="knockCell(state).tone"
                   :title="knockCell(state).title"
                   @click="openKnock(state.nodeId)"

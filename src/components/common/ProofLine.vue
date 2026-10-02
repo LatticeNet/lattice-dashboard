@@ -133,7 +133,7 @@ const lead = computed(() => {
         <RouterLink
           v-if="segment.to"
           :to="segment.to"
-          :class="cn('rounded-sm underline decoration-dotted underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring', segmentClass(segment))"
+          :class="cn('rounded-sm underline decoration-dotted underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center', segmentClass(segment))"
         >
           {{ segment.text }}
         </RouterLink>
