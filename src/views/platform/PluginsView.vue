@@ -1,47 +1,54 @@
 <script setup lang="ts">
+/**
+ * Plugins (design 23, section 4.5): is each plugin running, at what version,
+ * and which pages it adds.
+ *
+ * One list for every reader. The two tabs split the same four bundles by
+ * permission (Registered for audit:read, Lifecycle for plugin:admin); the
+ * list now merges whichever reads the session holds (pluginsModel), so a
+ * reader without either still sees every active plugin and its pages. A
+ * row opens the plugin in the sheet on `?open=`: capabilities, the artifact
+ * digest, runtime and transitions, with the lifecycle moves. Disable is a
+ * reversible move (design 23, 3.8), so it is never red. Verify manifest is
+ * the signing ceremony's tool and sits as a secondary action.
+ *
+ * The server does not read the plugin index, so whether a newer version
+ * exists is not checked; the proof line says so instead of guessing.
+ */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import {
-  Blocks,
-  CircleDot,
-  Play,
-  Power,
-  RefreshCw,
-  ShieldAlert,
-  ShieldCheck,
-} from "lucide-vue-next";
-import {
-  api,
-  type PluginInstallationView,
-  type PluginLifecycleStatus,
-  type PluginVerifyResponse,
-  type PluginView,
-} from "@/lib/api";
+import { Power, RefreshCw, ShieldAlert, ShieldCheck } from "lucide-vue-next";
+import { api, type PluginLifecycleStatus, type PluginVerifyResponse } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePluginContributions } from "@/composables/usePluginContributions";
+import { useProof } from "@/composables/useProof";
+import { useRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime, shortId } from "@/lib/format";
+import { formatAge, formatDateTime, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { proofReason } from "@/components/common/proofModel";
+import {
+  mergePluginRows,
+  nextLifecycleStates,
+  pluginHealth,
+  type PluginHealth,
+  type PluginLifecycleTarget,
+  type PluginRow,
+} from "./pluginsModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useRouteTab } from "@/composables/useRouteTab";
 import {
   Dialog,
   DialogDescription,
@@ -51,118 +58,155 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
 const canAudit = computed(() => auth.can("audit:read"));
 const canAdmin = computed(() => auth.can("plugin:admin"));
 const canVerify = computed(() => auth.can("plugin:verify"));
-const {
-  refresh: refreshPluginContributions,
-  removeCachedPlugin,
-} = usePluginContributions();
 
-/**
- * Tab lives in the URL so a lifecycle view can be linked to. The allowed set
- * narrows with the operator's scopes: without audit:read the registered tab is
- * not rendered, so a link to it resolves to lifecycle instead of a dead panel.
- */
-const tab = useRouteTab<"registered" | "lifecycle">(
-  () => (canAudit.value ? ["registered", "lifecycle"] : ["lifecycle"]),
-  () => (canAudit.value ? "registered" : "lifecycle"),
-);
-
-// ── Registered plugins (audit:read) ────────────────────────────────────────
 const registeredQuery = useAsyncData((signal) => api.plugins.list({ signal }), {
   pollInterval: 15000,
   immediate: canAudit.value,
 });
-const registered = computed(() => registeredQuery.data.value ?? []);
-const sortedRegistered = computed(() =>
-  [...registered.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
-);
-
-// ── Lifecycle (plugin:admin) ────────────────────────────────────────────────
 const lifecycleQuery = useAsyncData((signal) => api.plugins.lifecycle({ signal }), {
   pollInterval: 15000,
   immediate: canAdmin.value,
 });
-const lifecycle = computed(() => lifecycleQuery.data.value ?? []);
-const sortedLifecycle = computed(() =>
-  [...lifecycle.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
-);
+const contributionsQuery = useAsyncData((signal) => api.plugins.contributions(signal), { pollInterval: 15000 });
+const { refresh: refreshPluginContributions, removeCachedPlugin } = usePluginContributions();
 
-function refreshAll() {
-  if (canAudit.value) registeredQuery.refresh();
-  if (canAdmin.value) lifecycleQuery.refresh();
+/** The reads this session holds; the proof line speaks for the weakest of them. */
+const reads = computed(() => [
+  ...(canAdmin.value ? [lifecycleQuery] : []),
+  ...(canAudit.value ? [registeredQuery] : []),
+  contributionsQuery,
+]);
+const proof = useProof([lifecycleQuery, registeredQuery, contributionsQuery].filter((query) => reads.value.includes(query)));
+
+const rows = computed<PluginRow[]>(() =>
+  mergePluginRows(registeredQuery.data.value, lifecycleQuery.data.value, contributionsQuery.data.value),
+);
+const anyRead = computed(() => reads.value.some((query) => query.data.value !== undefined));
+/** The table's error: only when no read landed, so a partial answer still lists what it has. */
+const tableError = computed(() => (anyRead.value ? null : (reads.value.find((query) => query.error.value)?.error.value ?? null)));
+
+function refreshAll(): void {
+  if (canAudit.value) void registeredQuery.refresh();
+  if (canAdmin.value) void lifecycleQuery.refresh();
+  void contributionsQuery.refresh();
   void refreshPluginContributions();
 }
 
-const registeredColumns = computed<DataTableColumn<PluginView>[]>(() => [
-  { key: "id", label: t("platform.plugins.colId"), sortable: true, searchable: true, class: "font-mono text-xs text-muted-foreground" },
-  { key: "name", label: t("platform.plugins.colName"), sortable: true, searchable: true, value: (p) => p.name || p.id },
-  { key: "type", label: t("platform.plugins.colType"), sortable: true },
-  { key: "version", label: t("platform.plugins.colVersion"), sortable: true },
-  { key: "publisher", label: t("platform.plugins.colPublisher"), sortable: true, searchable: true },
-  { key: "capabilities", label: t("platform.plugins.colCapabilities") },
+const HEALTH_TONE: Record<PluginHealth, string> = {
+  running: "text-muted-foreground",
+  failed: "text-destructive",
+  missing: "text-destructive",
+  stopped: "text-warning-text",
+  disabled: "text-muted-foreground",
+  pending: "text-muted-foreground",
+  unknown: "text-muted-foreground",
+};
+
+function healthOf(row: PluginRow): PluginHealth {
+  return pluginHealth(row);
+}
+
+function healthText(row: PluginRow): string {
+  const health = healthOf(row);
+  if (health === "unknown" && row.status === "active") return t("platform.pluginsPage.health.active");
+  return t(`platform.pluginsPage.health.${health}`);
+}
+
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = rows.value.length;
+  const parts: ProofSegment[] = [{ key: "plugins", text: t("platform.pluginsPage.proof.plugins", { n }, n) }];
+  const count = (health: PluginHealth) => rows.value.filter((row) => healthOf(row) === health).length;
+  const active = rows.value.filter((row) => row.status === "active").length;
+  parts.push({ key: "active", text: t("platform.pluginsPage.proof.active", { n: active }) });
+  const failed = count("failed") + count("missing");
+  if (failed) parts.push({ key: "failed", text: t("platform.pluginsPage.proof.failed", { n: failed }), tone: "destructive" });
+  const stopped = count("stopped");
+  if (stopped) parts.push({ key: "stopped", text: t("platform.pluginsPage.proof.stopped", { n: stopped }), tone: "warning" });
+  if (!canAdmin.value) parts.push({ key: "runtime", text: t("platform.pluginsPage.proof.runtimeUnread"), tone: "muted" });
+  parts.push({ key: "newer", text: t("platform.pluginsPage.proof.newerUnchecked"), tone: "muted" });
+  return parts;
+});
+
+const sheet = useRouteOpen();
+
+const attention = computed<AttentionItem[]>(() => {
+  const items: AttentionItem[] = [];
+  for (const row of rows.value) {
+    const health = healthOf(row);
+    const open = { label: t("platform.pluginsPage.attention.open"), run: () => sheet.open(row.id) };
+    if (health === "failed") {
+      items.push({
+        key: `failed:${row.id}`,
+        tone: "danger",
+        claim: t("platform.pluginsPage.attention.failedClaim", { name: row.name }),
+        proof: row.runtime?.message ?? t("platform.pluginsPage.attention.noMessage"),
+        action: open,
+      });
+    } else if (health === "missing") {
+      items.push({
+        key: `missing:${row.id}`,
+        tone: "danger",
+        claim: t("platform.pluginsPage.attention.missingClaim", { name: row.name }),
+        proof: t("platform.pluginsPage.attention.missingProof"),
+        action: open,
+      });
+    } else if (health === "stopped") {
+      items.push({
+        key: `stopped:${row.id}`,
+        tone: "warning",
+        claim: t("platform.pluginsPage.attention.stoppedClaim", { name: row.name }),
+        proof: row.runtime?.message ?? t("platform.pluginsPage.attention.stoppedProof"),
+        action: open,
+      });
+    } else if (health === "disabled") {
+      items.push({
+        key: `disabled:${row.id}`,
+        tone: "info",
+        claim: t("platform.pluginsPage.attention.disabledClaim", { name: row.name }),
+        proof: row.transitions.find((entry) => entry.key === "disabled")
+          ? t("platform.pluginsPage.attention.disabledSince", { when: formatDateTime(row.transitions.find((entry) => entry.key === "disabled")!.at) })
+          : undefined,
+        action: open,
+      });
+    }
+  }
+  return items;
+});
+
+const columns = computed<DataTableColumn<PluginRow>[]>(() => [
+  { key: "name", label: t("platform.plugins.colName"), sortable: true, searchable: true, value: (row) => `${row.name} ${row.id}` },
+  // State before version: at 375 the second column is the one still on screen,
+  // and whether a plugin runs matters more there than which build it is.
+  { key: "health", label: t("platform.pluginsPage.colState"), sortable: true, value: (row) => healthOf(row) },
+  { key: "version", label: t("platform.plugins.colVersion"), sortable: true, searchable: true, value: (row) => row.version ?? "" },
+  { key: "pages", label: t("platform.pluginsPage.colPages"), searchable: true, value: (row) => row.pages.map((page) => page.title).join(" ") },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
 
-const lifecycleColumns = computed<DataTableColumn<PluginInstallationView>[]>(() => [
-  { key: "name", label: t("platform.plugins.colName"), sortable: true, searchable: true, value: (p) => p.name || p.id },
-  { key: "type", label: t("platform.plugins.colType"), sortable: true },
-  { key: "version", label: t("platform.plugins.colVersion"), sortable: true },
-  { key: "status", label: t("platform.plugins.colStatus"), sortable: true },
-  { key: "runtime", label: t("platform.plugins.colRuntime"), value: (p) => p.runtime?.state ?? "" },
-  { key: "available", label: t("platform.plugins.colAvailable"), sortable: true },
-  { key: "artifact_sha256", label: t("platform.plugins.colArtifact"), sortable: true },
-  { key: "capabilities", label: t("platform.plugins.colCapabilities") },
-  { key: "actions", label: t("platform.plugins.colActions"), align: "right" },
-]);
+const openRow = computed(() => rows.value.find((row) => row.id === sheet.openId.value));
+const sheetState = computed(() => {
+  if (!sheet.openId.value) return "ready" as const;
+  if (openRow.value) return proof.value.state === "stale" ? ("stale" as const) : ("ready" as const);
+  if (!anyRead.value) return proof.value.state === "failed" ? ("gone" as const) : ("loading" as const);
+  return "gone" as const;
+});
 
-// ── Lifecycle status / runtime badges ───────────────────────────────────────
-function statusVariant(status: string): "secondary" | "success" | "warning" | "outline" {
-  switch (status) {
-    case "active":
-      return "success";
-    case "disabled":
-      return "warning";
-    case "verified":
-    case "installed":
-      return "secondary";
-    default:
-      return "outline";
-  }
+function ago(at: string | undefined): string {
+  if (!at) return "";
+  const ms = Date.parse(at);
+  return Number.isNaN(ms) ? "" : formatAge(Date.now() - ms, locale.value);
 }
 
-function runtimeVariant(state?: string): "success" | "secondary" | "destructive" | "outline" {
-  switch (state) {
-    case "armed":
-      return "success";
-    case "stopped":
-      return "secondary";
-    case "failed":
-      return "destructive";
-    default:
-      return "outline";
-  }
-}
+/* ------------------------------------------------------------------ */
+/* Lifecycle moves                                                     */
+/* ------------------------------------------------------------------ */
 
-/** Contextual valid next states for the lifecycle state machine. */
-function nextStates(row: PluginInstallationView): PluginLifecycleStatus[] {
-  switch (row.status) {
-    case "verified":
-      return ["installed"];
-    case "installed":
-      return ["active"];
-    case "active":
-      return ["disabled"];
-    case "disabled":
-      return ["active"];
-    default:
-      return [];
-  }
-}
-
-function transitionLabel(status: PluginLifecycleStatus): string {
+function transitionLabel(status: PluginLifecycleTarget): string {
   switch (status) {
     case "installed":
       return t("platform.plugins.install");
@@ -170,38 +214,55 @@ function transitionLabel(status: PluginLifecycleStatus): string {
       return t("platform.plugins.activate");
     case "disabled":
       return t("common.actions.disable");
-    case "verified":
-      return t("platform.plugins.markVerified");
-    default:
-      return status;
   }
 }
 
-// ── Lifecycle transition confirm dialog ─────────────────────────────────────
-const transitionTarget = ref<
-  { row: PluginInstallationView; status: PluginLifecycleStatus } | undefined
->(undefined);
+function menuFor(row: PluginRow): RowMenuItem[] {
+  const pages = row.pages.map((page) => ({ key: `page:${page.route}`, label: t("platform.pluginsPage.openPage", { page: page.title }), to: page.to }));
+  const moves = canAdmin.value && row.lifecycleRead
+    ? nextLifecycleStates(row.status).map((status) => ({
+        key: `move:${status}`,
+        label: transitionLabel(status),
+        icon: Power,
+        run: () => requestTransition(row, status),
+      }))
+    : [];
+  return [...pages, ...moves];
+}
+
+const transitionTarget = ref<{ row: PluginRow; status: PluginLifecycleTarget } | undefined>(undefined);
 const transitioning = ref(false);
 
-function requestTransition(row: PluginInstallationView, status: PluginLifecycleStatus) {
+function requestTransition(row: PluginRow, status: PluginLifecycleTarget) {
   transitionTarget.value = { row, status };
 }
+
+const transitionImpact = computed(() => {
+  const target = transitionTarget.value;
+  if (!target) return [];
+  if (target.status === "disabled") {
+    const lines = [t("platform.pluginsPage.disable.runtime", { name: target.row.name })];
+    if (target.row.pages.length) lines.push(t("platform.pluginsPage.disable.pages", { pages: target.row.pages.map((page) => page.title).join(", ") }));
+    lines.push(t("platform.pluginsPage.disable.calls"));
+    return lines;
+  }
+  return [];
+});
 
 async function confirmTransition() {
   if (!transitionTarget.value) return;
   const { row, status } = transitionTarget.value;
   transitioning.value = true;
   try {
-    await api.plugins.setLifecycle(row.id, status);
+    await api.plugins.setLifecycle(row.id, status as PluginLifecycleStatus);
     if (status === "disabled") removeCachedPlugin(row.id);
     await Promise.all([
-      lifecycleQuery.refresh(),
+      canAdmin.value ? lifecycleQuery.refresh() : Promise.resolve(),
       refreshPluginContributions(),
+      contributionsQuery.refresh(),
       canAudit.value ? registeredQuery.refresh() : Promise.resolve(),
     ]);
-    toast.success(
-      t("platform.plugins.transitionDone", { name: row.name || row.id, status }),
-    );
+    toast.success(t("platform.plugins.transitionDone", { name: row.name, status }));
     transitionTarget.value = undefined;
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.plugins.transitionFailed"));
@@ -260,205 +321,174 @@ async function runVerify() {
 </script>
 
 <template>
-  <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('platform.plugins.title')"
-      :description="$t('platform.plugins.description')"
-    >
-      <template #status>
-        <FreshnessLabel
-          :last-updated="tab === 'lifecycle' ? lifecycleQuery.lastUpdated.value : registeredQuery.lastUpdated.value"
-          :poll-ms="tab === 'lifecycle' ? lifecycleQuery.pollMs : registeredQuery.pollMs"
-        />
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('platform.plugins.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('platform.pluginsPage.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" :disabled="registeredQuery.refreshing.value || lifecycleQuery.refreshing.value" @click="refreshAll">
-          <RefreshCw
-            aria-hidden="true"
-            :class="cn('size-4', (registeredQuery.refreshing.value || lifecycleQuery.refreshing.value) && 'animate-spin')"
-          />
+        <Button variant="outline" size="sm" :disabled="proof.state === 'refreshing'" @click="refreshAll">
+          <RefreshCw aria-hidden="true" :class="cn('size-4', proof.state === 'refreshing' && 'animate-spin')" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canVerify" size="sm" @click="openVerify">
+        <Button v-if="canVerify" variant="ghost" size="sm" @click="openVerify">
           <ShieldCheck aria-hidden="true" class="size-4" />
           {{ $t('platform.plugins.verifyManifest') }}
         </Button>
       </template>
     </PageHeader>
 
-    <Tabs v-model="tab">
-      <TabsList class="w-full sm:w-auto">
-        <!-- Without audit:read the registered list has nothing to show, so the
-             tab is dropped rather than leading to a dead panel. -->
-        <TabsTrigger v-if="canAudit" value="registered">{{ $t('platform.plugins.tabRegistered') }}</TabsTrigger>
-        <TabsTrigger value="lifecycle">{{ $t('platform.plugins.tabLifecycle') }}</TabsTrigger>
-      </TabsList>
+    <AttentionList :items="attention" />
 
-      <!-- Registered tab -->
-      <TabsContent v-if="canAudit" value="registered">
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <Blocks aria-hidden="true" class="size-4 text-muted-foreground" />
-              {{ $t('platform.plugins.registeredTitle') }}
-            </CardTitle>
-            <CardDescription>{{ $t('platform.plugins.registeredHint') }}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DataTable
-              state-key="registered"
-              :columns="registeredColumns"
-              :rows="sortedRegistered"
-              :row-key="(plugin) => plugin.id"
-              :loading="registeredQuery.loading.value"
-              :error="registeredQuery.error.value"
-              :has-data="registeredQuery.data.value !== undefined"
-              :page-size="50"
-              searchable
-              :search-placeholder="$t('platform.shared.searchNames')"
-              :empty-title="$t('platform.plugins.registeredEmptyTitle')"
-              :empty-description="$t('platform.plugins.registeredEmptyDescription')"
-              :no-match-title="$t('platform.shared.noMatchesTitle')"
-              :no-match-description="$t('platform.shared.noMatchesDescription')"
-              @retry="registeredQuery.refresh"
-            >
-              <template #cell-id="{ row }">
-                <span class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 18) }}</span>
-              </template>
-              <template #cell-name="{ row }">
-                <span class="font-medium">{{ row.name || row.id }}</span>
-              </template>
-              <template #cell-type="{ row }">
-                <Badge variant="outline">{{ row.type }}</Badge>
-              </template>
-              <template #cell-version="{ row }">
-                <span class="font-mono text-xs">{{ row.version || $t('common.misc.none') }}</span>
-              </template>
-              <template #cell-publisher="{ row }">
-                <span class="text-xs text-muted-foreground">{{ row.publisher || $t('common.misc.none') }}</span>
-              </template>
-              <template #cell-capabilities="{ row }">
-                <div class="flex flex-wrap gap-1">
-                  <Badge v-for="cap in row.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                  <span v-if="!row.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                </div>
-              </template>
-            </DataTable>
-          </CardContent>
-        </Card>
-      </TabsContent>
+    <DataTable
+      state-key="plugins"
+      :columns="columns"
+      :rows="rows"
+      :row-key="(row) => row.id"
+      :loading="!anyRead && proof.state === 'loading'"
+      :error="tableError"
+      :has-data="anyRead"
+      :searchable="rows.length > 6"
+      :expression-filter="false"
+      :row-click="(row, el) => sheet.open(row.id, el)"
+      :active-row-id="sheet.openId.value"
+      :show-summary="false"
+      :empty-title="$t('platform.plugins.registeredEmptyTitle')"
+      :empty-description="$t('platform.plugins.registeredEmptyDescription')"
+      @retry="refreshAll"
+    >
+      <template #cell-name="{ row }">
+        <div class="font-medium">{{ row.name }}</div>
+        <div class="font-mono text-xs text-muted-foreground">{{ row.id }}</div>
+      </template>
+      <template #cell-version="{ row }">
+        <span class="whitespace-nowrap font-mono text-xs">{{ row.version || $t('common.misc.none') }}</span>
+      </template>
+      <template #cell-health="{ row }">
+        <span :class="cn('whitespace-nowrap text-xs', HEALTH_TONE[healthOf(row)])">{{ healthText(row) }}</span>
+        <span v-if="healthOf(row) === 'running' && row.runtime?.started_at" class="block text-xs text-muted-foreground" :title="formatDateTime(row.runtime.started_at)">
+          {{ $t('platform.pluginsPage.since', { age: ago(row.runtime.started_at) }) }}
+        </span>
+      </template>
+      <template #cell-pages="{ row }">
+        <div v-if="row.pages.length" class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+          <RouterLink v-for="page in row.pages" :key="page.route" :to="page.to" class="whitespace-nowrap text-primary underline-offset-4 hover:underline" @click.stop>
+            {{ page.title }}
+          </RouterLink>
+        </div>
+        <span v-else class="text-xs text-muted-foreground">{{ row.status === 'active' ? $t('platform.pluginsPage.noPages') : $t('platform.pluginsPage.pagesWhenActive') }}</span>
+      </template>
+      <template #cell-actions="{ row }">
+        <RowMenu v-if="menuFor(row).length" :name="row.name" :items="menuFor(row)" />
+      </template>
+    </DataTable>
 
-      <!-- Lifecycle tab -->
-      <TabsContent value="lifecycle">
-        <Card>
-          <CardHeader>
-            <CardTitle class="flex items-center gap-2">
-              <CircleDot aria-hidden="true" class="size-4 text-muted-foreground" />
-              {{ $t('platform.plugins.lifecycleTitle') }}
-            </CardTitle>
-            <CardDescription>
-              {{ $t('platform.plugins.lifecycleHint') }}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DataTable
-              state-key="lifecycle"
-              v-if="canAdmin"
-              :columns="lifecycleColumns"
-              :rows="sortedLifecycle"
-              :row-key="(row) => row.id"
-              :loading="lifecycleQuery.loading.value"
-              :error="lifecycleQuery.error.value"
-              :has-data="lifecycleQuery.data.value !== undefined"
-              :page-size="50"
-              searchable
-              :search-placeholder="$t('platform.shared.searchNames')"
-              :empty-title="$t('platform.plugins.lifecycleEmptyTitle')"
-              :empty-description="$t('platform.plugins.lifecycleEmptyDescription')"
-              :no-match-title="$t('platform.shared.noMatchesTitle')"
-              :no-match-description="$t('platform.shared.noMatchesDescription')"
-              @retry="lifecycleQuery.refresh"
-            >
-              <template #cell-name="{ row }">
-                <div class="font-medium">{{ row.name || row.id }}</div>
-                <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
-              </template>
-              <template #cell-type="{ row }">
-                <Badge variant="outline">{{ row.type }}</Badge>
-              </template>
-              <template #cell-version="{ row }">
-                <span class="font-mono text-xs">{{ row.version || $t('common.misc.none') }}</span>
-              </template>
-              <template #cell-status="{ row }">
-                <Badge :variant="statusVariant(row.status)">{{ row.status }}</Badge>
-              </template>
-              <template #cell-runtime="{ row }">
-                <Badge v-if="row.runtime" :variant="runtimeVariant(row.runtime.state)">{{ row.runtime.state }}</Badge>
-                <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-              </template>
-              <template #cell-available="{ row }">
-                <Badge :variant="row.available ? 'success' : 'secondary'">{{ row.available ? $t('common.misc.yes') : $t('common.misc.no') }}</Badge>
-              </template>
-              <template #cell-artifact_sha256="{ row }">
-                <div v-if="row.artifact_sha256" class="flex items-center gap-1">
-                  <code class="font-mono text-xs text-muted-foreground">{{ shortId(row.artifact_sha256, 12) }}</code>
-                  <CopyButton :value="row.artifact_sha256" />
-                </div>
-                <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-              </template>
-              <template #cell-capabilities="{ row }">
-                <div class="flex flex-wrap gap-1">
-                  <Badge v-for="cap in row.capabilities" :key="cap" variant="secondary" class="font-mono">{{ cap }}</Badge>
-                  <span v-if="!row.capabilities.length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                </div>
-              </template>
-              <template #cell-actions="{ row }">
-                <div class="flex items-center justify-end gap-1">
-                  <Button
-                    v-for="status in nextStates(row)"
-                    :key="status"
-                    size="sm"
-                    :variant="status === 'disabled' ? 'destructive' : 'outline'"
-                    @click="requestTransition(row, status)"
-                  >
-                    <Power v-if="status === 'disabled'" aria-hidden="true" class="size-4" />
-                    <Play v-else aria-hidden="true" class="size-4" />
-                    {{ transitionLabel(status) }}
-                  </Button>
-                  <span v-if="!nextStates(row).length" class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-                </div>
-              </template>
-            </DataTable>
-            <p v-else class="text-sm text-muted-foreground">
-              <i18n-t keypath="platform.plugins.adminScopeRequired" tag="span" scope="global">
-                <template #scope><code class="font-mono">plugin:admin</code></template>
-              </i18n-t>
-            </p>
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
+    <ObjectSheet
+      :open="!!sheet.openId.value"
+      :title="openRow ? openRow.name : (sheet.openId.value ?? '')"
+      :subtitle="openRow ? `${openRow.id}${openRow.version ? ` · ${openRow.version}` : ''}` : undefined"
+      :state="sheetState"
+      :error="proof.error"
+      :read-only="!canAdmin"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('platform.pluginsPage.goneTitle')"
+      :gone-description="$t('platform.pluginsPage.goneDescription')"
+      @close="sheet.close"
+    >
+      <div v-if="openRow" class="space-y-5 text-sm">
+        <p :class="HEALTH_TONE[healthOf(openRow)] === 'text-muted-foreground' ? 'text-foreground' : HEALTH_TONE[healthOf(openRow)]">
+          {{ healthText(openRow) }}<span v-if="openRow.runtime?.runner" class="text-muted-foreground"> · {{ $t('platform.pluginsPage.sheet.runner', { runner: openRow.runtime.runner }) }}</span>
+        </p>
+        <pre
+          v-if="openRow.runtime?.message"
+          class="whitespace-pre-wrap break-words rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-xs text-foreground"
+        >{{ openRow.runtime.message }}</pre>
+        <!-- How a failed runtime recovers: the server arms it at startup and on each activation. -->
+        <p v-if="healthOf(openRow) === 'failed' && openRow.lifecycleRead" class="text-xs text-muted-foreground" data-testid="plugin-recover">
+          {{ $t('platform.pluginsPage.sheet.recover') }}
+        </p>
+        <p v-if="!openRow.lifecycleRead" class="text-xs text-muted-foreground">{{ $t('platform.pluginsPage.sheet.lifecycleUnread') }}</p>
 
-    <!-- Transition confirm dialog -->
+        <section v-if="openRow.pages.length" class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.pluginsPage.colPages') }}</h3>
+          <div class="flex flex-wrap gap-x-4 gap-y-1">
+            <RouterLink v-for="page in openRow.pages" :key="page.route" :to="page.to" class="inline-flex items-center text-primary underline-offset-4 hover:underline pointer-coarse:min-h-11 pointer-coarse:min-w-11">{{ page.title }}</RouterLink>
+          </div>
+        </section>
+
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.plugins.colCapabilities') }}</h3>
+          <div v-if="openRow.capabilities.length" class="flex flex-wrap gap-1.5">
+            <Badge v-for="cap in openRow.capabilities" :key="cap" variant="outline" class="font-mono">{{ cap }}</Badge>
+          </div>
+          <p v-else class="text-xs text-muted-foreground">{{ $t('platform.plugins.noneDeclared') }}</p>
+        </section>
+
+        <section v-if="openRow.lifecycleRead" class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.plugins.artifactSha256') }}</h3>
+          <div v-if="openRow.artifactSha256" class="flex items-start gap-1">
+            <code class="min-w-0 break-all font-mono text-xs">{{ openRow.artifactSha256 }}</code>
+            <CopyButton :value="openRow.artifactSha256" />
+          </div>
+          <p v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</p>
+          <p v-if="openRow.available === false" class="text-xs text-destructive">{{ $t('platform.pluginsPage.attention.missingProof') }}</p>
+        </section>
+
+        <section v-if="openRow.transitions.length" class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.pluginsPage.sheet.transitions') }}</h3>
+          <ol class="divide-y divide-border rounded-md border border-border">
+            <li v-for="entry in openRow.transitions" :key="entry.key" class="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-2 text-xs">
+              <span class="text-foreground">{{ $t(`platform.pluginsPage.transition.${entry.key}`) }}</span>
+              <span class="text-muted-foreground" :title="formatDateTime(entry.at)">{{ formatDateTime(entry.at) }}</span>
+            </li>
+          </ol>
+        </section>
+
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div v-if="openRow.publisher">
+            <dt class="text-xs text-muted-foreground">{{ $t('platform.plugins.colPublisher') }}</dt>
+            <dd>{{ openRow.publisher }}</dd>
+          </div>
+          <div v-if="openRow.type">
+            <dt class="text-xs text-muted-foreground">{{ $t('platform.plugins.colType') }}</dt>
+            <dd>{{ openRow.type }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-muted-foreground">{{ $t('platform.pluginsPage.sheet.newer') }}</dt>
+            <dd class="text-muted-foreground">{{ $t('platform.pluginsPage.sheet.newerUnchecked') }}</dd>
+          </div>
+        </dl>
+      </div>
+      <template v-if="openRow && canAdmin && openRow.lifecycleRead && nextLifecycleStates(openRow.status).length" #actions>
+        <Button
+          v-for="status in nextLifecycleStates(openRow.status)"
+          :key="status"
+          variant="outline"
+          size="sm"
+          type="button"
+          @click="requestTransition(openRow, status)"
+        >
+          <Power aria-hidden="true" />
+          {{ transitionLabel(status) }}
+        </Button>
+      </template>
+    </ObjectSheet>
+
+    <!-- A lifecycle move is reversible (design 23, 3.8): never filled red. Disable names what stops. -->
     <ConfirmDialog
       :open="!!transitionTarget"
-      :title="$t('platform.plugins.confirmTransitionTitle')"
+      variant="default"
+      :title="transitionTarget ? $t(`platform.pluginsPage.confirm.${transitionTarget.status}`, { name: transitionTarget.row.name }) : ''"
+      :description="transitionTarget?.status === 'active' ? $t('platform.plugins.activatingStarts') : transitionTarget?.status === 'installed' ? $t('platform.pluginsPage.confirm.installDescription') : undefined"
+      :impact="transitionImpact.length ? transitionImpact : undefined"
+      :impact-title="$t('platform.pluginsPage.disable.title')"
       :confirm-label="transitionTarget ? transitionLabel(transitionTarget.status) : $t('common.actions.confirm')"
       :cancel-label="$t('common.actions.cancel')"
-      :variant="transitionTarget?.status === 'disabled' ? 'destructive' : 'default'"
       :pending="transitioning"
       @update:open="(v) => { if (!v) transitionTarget = undefined; }"
       @confirm="confirmTransition"
-    >
-      <p class="text-sm text-muted-foreground">
-        {{ $t('platform.plugins.confirmTransitionMove') }}
-        <span class="font-medium text-foreground">{{ transitionTarget?.row.name || transitionTarget?.row.id }}</span>
-        {{ $t('platform.plugins.confirmTransitionFrom') }} <Badge :variant="statusVariant(transitionTarget?.row.status ?? '')">{{ transitionTarget?.row.status }}</Badge>
-        {{ $t('platform.plugins.confirmTransitionTo') }} <Badge :variant="statusVariant(transitionTarget?.status ?? '')">{{ transitionTarget?.status }}</Badge>?
-        <template v-if="transitionTarget?.status === 'active'"> {{ $t('platform.plugins.activatingStarts') }}</template>
-        <template v-else-if="transitionTarget?.status === 'disabled'"> {{ $t('platform.plugins.disablingStops') }}</template>
-      </p>
-    </ConfirmDialog>
+    />
 
     <!-- Verify dialog -->
     <Dialog v-model:open="verifyOpen">

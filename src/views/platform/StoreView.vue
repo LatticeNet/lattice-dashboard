@@ -19,7 +19,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
-import { Database, FolderOpen, Lock, Pencil, Plus, RefreshCw, Save } from "lucide-vue-next";
+import { Database, Eye, FolderOpen, Lock, Pencil, Plus, RefreshCw, Save } from "lucide-vue-next";
 import {
   api,
   type KVEntry,
@@ -43,6 +43,11 @@ import {
 } from "./storeModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { proofReason } from "@/components/common/proofModel";
+import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
+import { useProof } from "@/composables/useProof";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -206,14 +211,19 @@ const activeWritable = computed(() => canWrite.value && bucketWritable(activeFac
 const activeContentAvailable = computed(() => bucketContentAvailable(activeFacts.value));
 
 // ── Entries in the active bucket ─────────────────────────────────────────────
-// The fetcher records what it actually loaded. Switching kind keeps the last
-// good rows in the composable, and rendering KV entries through the static
-// columns would show an empty table over real data, so the table only trusts
-// rows whose kind and bucket still match what the page is asking for.
-const loadedKind = ref<StorageKind | undefined>(undefined);
-const loadedBucket = ref("");
-
-const entriesQuery = useAsyncData<KVEntry[] | StaticObject[]>(
+// Each read carries the kind and bucket it loaded. Switching kind keeps the
+// last good rows in the composable, and rendering KV entries through the
+// static columns would show an empty table over real data (or throw sorting
+// them by path), so the table only trusts rows whose kind and bucket still
+// match what the page is asking for. The labels travel with the rows: set
+// apart from them, a render could land between the label and the rows and
+// sort the old kind's rows as the new kind's.
+interface EntriesRead {
+  kind: StorageKind;
+  bucket: string;
+  rows: KVEntry[] | StaticObject[];
+}
+const entriesQuery = useAsyncData<EntriesRead>(
   async (signal) => {
     const forKind = kind.value;
     const forBucket = activeBucket.value;
@@ -221,17 +231,49 @@ const entriesQuery = useAsyncData<KVEntry[] | StaticObject[]>(
       forKind === "static"
         ? await api.static.list(forBucket, { signal })
         : await api.kv.list(forBucket, { signal });
-    loadedKind.value = forKind;
-    loadedBucket.value = forBucket;
-    return rows;
+    return { kind: forKind, bucket: forBucket, rows };
   },
   { pollInterval: 0, immediate: false },
 );
 
 const rowsFresh = computed(
-  () => loadedKind.value === kind.value && loadedBucket.value === activeBucket.value,
+  () => entriesQuery.data.value?.kind === kind.value && entriesQuery.data.value?.bucket === activeBucket.value,
 );
-const rows = computed(() => (rowsFresh.value ? (entriesQuery.data.value ?? []) : []));
+
+/**
+ * The proof line (design 23, section 3.1). Store reads on demand rather than
+ * polling, so the line states what was read without an age promise: the
+ * buckets of this kind, and the entries of the bucket on screen.
+ */
+// The bucket list is the page's own read. The entries of the bucket on screen
+// are a segment: a reserved bucket is never fetched, which is the server's
+// rule rather than a failure, so it reads as a quiet fact with no retry, and
+// a failed entries read is named without wiping the bucket count.
+const proof = useProof(inventoryQuery);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const parts: ProofSegment[] = [];
+  if (inventoryQuery.data.value !== undefined) {
+    parts.push({ key: "buckets", text: t("platform.store.proofBuckets", { n: inventory.value.length }, inventory.value.length) });
+  }
+  if (activeReserved.value) {
+    parts.push({ key: "entries", text: t("platform.store.proofReserved", { bucket: activeBucket.value }) });
+  } else if (entriesQuery.error.value && !entriesQuery.refreshing.value) {
+    parts.push({ key: "entries", tone: "warning", text: t("platform.store.proofEntriesUnread", { bucket: activeBucket.value, reason: proofReason(entriesQuery.error.value) }) });
+  } else if (rowsFresh.value && entriesQuery.data.value !== undefined) {
+    const n = entriesQuery.data.value.rows.length;
+    parts.push({
+      key: "entries",
+      text: t(isStatic.value ? "platform.store.proofObjects" : "platform.store.proofEntries", { n, bucket: activeBucket.value }, n),
+    });
+  }
+  return parts;
+});
+
+/** KV and Static as the page's one tab row, the way Publishing's layers read. */
+const kindTabs = computed<LayerTab<StorageKind>[]>(() =>
+  STORAGE_KINDS.map((value) => ({ value, label: value === "static" ? t("platform.store.kindStatic") : t("platform.store.kindKv") })),
+);
+const rows = computed(() => (rowsFresh.value ? (entriesQuery.data.value?.rows ?? []) : []));
 
 const kvRows = computed<KVEntry[]>(() =>
   isStatic.value
@@ -260,12 +302,13 @@ watch(
 );
 
 watch(
-  [kind, activeBucket, canRead, activeReserved],
+  [kind, activeBucket, canRead, activeReserved, () => inventoryQuery.loading.value],
   () => {
     // A reserved bucket is listed by name and never fetched. The server would
     // refuse it anyway; asking would only turn a deliberate refusal into an
-    // error panel that reads like a fault.
-    if (!canRead.value || activeReserved.value) return;
+    // error panel that reads like a fault. Whether a bucket is reserved comes
+    // from the inventory, so a deep link waits for that read first.
+    if (!canRead.value || activeReserved.value || inventoryQuery.loading.value) return;
     entriesQuery.refresh();
   },
   { immediate: true },
@@ -283,7 +326,7 @@ const kvColumns = computed<DataTableColumn<KVEntry>[]>(() => {
   // an enabled pencil beside that sentence is what made the note read as
   // decoration.
   if (activeWritable.value) {
-    cols.push({ key: "actions", label: t("platform.kv.colActions"), align: "right" });
+    cols.push({ key: "actions", label: "", class: "w-12", pin: "end" });
   }
   return cols;
 });
@@ -299,10 +342,21 @@ const staticColumns = computed<DataTableColumn<StaticObject>[]>(() => {
   // bucket has neither action available: its listing carries no bytes to
   // preview and the server refuses a write. The card above says why once.
   if (activeContentAvailable.value) {
-    cols.push({ key: "actions", label: t("platform.static.colActions"), align: "right" });
+    cols.push({ key: "actions", label: "", class: "w-12", pin: "end" });
   }
   return cols;
 });
+
+/* One menu per row (design 23, section 3.6), in place of inline buttons and a pencil. */
+function staticMenu(row: StaticObject): RowMenuItem[] {
+  return [
+    { key: "preview", label: t("platform.static.preview"), icon: Eye, run: () => (previewTarget.value = row) },
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !activeWritable.value, run: () => openEditStatic(row) },
+  ];
+}
+function kvMenu(row: KVEntry): RowMenuItem[] {
+  return [{ key: "edit", label: t("common.actions.edit"), icon: Pencil, run: () => openEditKV(row) }];
+}
 
 // ── Row expand (long KV values) ──────────────────────────────────────────────
 const expanded = ref<Set<string>>(new Set());
@@ -392,7 +446,11 @@ async function submitPut() {
 
 <template>
   <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('platform.store.title')" :description="$t('platform.store.description')">
+    <PageHeader :title="$t('platform.store.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('platform.store.description') }}</p>
+        <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="reload" />
+      </template>
       <template #actions>
         <Button
           v-if="canRead"
@@ -421,20 +479,8 @@ async function submitPut() {
       :what="$t('platform.store.guide.what')"
     />
 
-    <!-- Which store. One control, because the two are one store server-side. -->
-    <div class="inline-flex rounded-lg border border-border p-1" role="group" :aria-label="$t('platform.store.kindLabel')">
-      <Button
-        v-for="option in STORAGE_KINDS"
-        :key="option"
-        :variant="kind === option ? 'secondary' : 'ghost'"
-        size="sm"
-        :aria-pressed="kind === option"
-        @click="kind = option"
-      >
-        <component :is="option === 'static' ? FolderOpen : Database" aria-hidden="true" class="size-4" />
-        {{ option === 'static' ? $t('platform.store.kindStatic') : $t('platform.store.kindKv') }}
-      </Button>
-    </div>
+    <!-- Which store. One tab row, because the two are one store server-side. -->
+    <LayerTabs v-model="kind" :tabs="kindTabs" :label="$t('platform.store.kindLabel')" />
 
     <div v-if="canRead" class="grid grid-cols-1 min-w-0 gap-6 lg:grid-cols-[minmax(240px,300px)_1fr] lg:items-start">
       <!-- ── Buckets that actually exist ──────────────────────────────────── -->
@@ -573,6 +619,7 @@ async function submitPut() {
             :error="entriesQuery.error.value"
             :page-size="50"
             searchable
+            :expression-filter="false"
             :search-placeholder="$t('platform.shared.searchPaths')"
             :empty-title="$t('platform.static.emptyTitle')"
             :empty-description="$t('platform.static.emptyDescription')"
@@ -596,14 +643,7 @@ async function submitPut() {
               <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
             </template>
             <template #cell-actions="{ row }">
-              <div class="flex items-center justify-end gap-1">
-                <Button variant="ghost" size="sm" @click="previewTarget = row">
-                  {{ $t('platform.static.preview') }}
-                </Button>
-                <Button v-if="activeWritable" variant="outline" size="sm" @click="openEditStatic(row)">
-                  {{ $t('common.actions.edit') }}
-                </Button>
-              </div>
+              <RowMenu :name="row.path" :items="staticMenu(row)" />
             </template>
           </DataTable>
 
@@ -617,6 +657,7 @@ async function submitPut() {
             :error="entriesQuery.error.value"
             :page-size="50"
             searchable
+            :expression-filter="false"
             :search-placeholder="$t('platform.shared.searchKeys')"
             :empty-title="$t('platform.kv.emptyTitle')"
             :empty-description="$t('platform.kv.emptyDescription')"
@@ -653,16 +694,7 @@ async function submitPut() {
               <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
             </template>
             <template #cell-actions="{ row }">
-              <div class="flex items-center justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="$t('common.actions.edit')"
-                  @click="openEditKV(row)"
-                >
-                  <Pencil class="size-4" />
-                </Button>
-              </div>
+              <RowMenu :name="row.key" :items="kvMenu(row)" />
             </template>
           </DataTable>
         </CardContent>
@@ -673,14 +705,6 @@ async function submitPut() {
       <i18n-t keypath="platform.store.readScopeRequired" tag="span" scope="global">
         <template #scope><code class="font-mono">{{ readScope }}</code></template>
       </i18n-t>
-    </p>
-
-    <p class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-      {{ $t('platform.publishing.movedFromStorage') }}
-      <RouterLink
-        to="/platform/publishing"
-        class="rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >{{ $t('platform.publishing.openPublishing') }}</RouterLink>
     </p>
 
     <!-- Static content preview -->

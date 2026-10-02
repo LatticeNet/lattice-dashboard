@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   BARK_LEVELS,
   buildConfig,
+  channelDeleteImpact,
   channelSaveGate,
   configComplete,
   droppedStoredKeys,
@@ -163,4 +164,69 @@ test("a kind change hands the stored config to the kind-changed hint instead of 
 /** A key the form has no input for (set through the API) is replaced away just the same, so it is listed too. */
 test("stored keys the form cannot re-enter are listed as dropped", () => {
   assert.deepEqual(droppedStoredKeys(bark, ["base_url", "key", "sound"], { base_url: "b", key: "k" }), ["sound"]);
+});
+
+// ── channel delete impact ────────────────────────────────────────────────────
+
+const barkInfo = { id: "ch_bark_info", name: "Bark info", enabled: true };
+const barkUrgent = { id: "ch_bark_urgent", name: "Bark urgent", enabled: true };
+const telegram = { id: "ch_tg", name: "Telegram ops", enabled: true };
+const rule = (id: string, name: string, channel_ids: string[], event_types: string[] = ["node.offline"], enabled = true) => ({ id, name, channel_ids, event_types, enabled });
+
+test("a rule whose only channel is deleted stops reaching anyone, is named with its events, and needs the typed name", () => {
+  const impact = channelDeleteImpact(barkUrgent, [rule("r1", "Node offline", ["ch_bark_urgent"])], [barkInfo, barkUrgent]);
+  assert.deepEqual(impact.lines, [{ kind: "silenced", rule: "Node offline", events: "node.offline" }]);
+  assert.equal(impact.typed, true);
+});
+
+test("a rule that keeps another enabled channel is named with it and does not need the typed name", () => {
+  const impact = channelDeleteImpact(barkInfo, [rule("r1", "Backups", ["ch_bark_info", "ch_tg"], ["backup.finished"])], [barkInfo, telegram]);
+  assert.deepEqual(impact.lines, [{ kind: "kept", rule: "Backups", others: ["Telegram ops"] }]);
+  assert.equal(impact.typed, false);
+});
+
+test("a disabled or deleted other channel does not keep a rule alive", () => {
+  const impact = channelDeleteImpact(
+    barkInfo,
+    [rule("r1", "Backups", ["ch_bark_info", "ch_tg", "ch_gone"], ["backup.finished"])],
+    [barkInfo, { ...telegram, enabled: false }],
+  );
+  assert.equal(impact.lines[0]?.kind, "silenced");
+  assert.equal(impact.typed, true);
+});
+
+test("silenced rules come before kept ones, and a disabled rule is not counted", () => {
+  const impact = channelDeleteImpact(
+    barkInfo,
+    [
+      rule("r2", "VPN quota", ["ch_bark_info", "ch_tg"], ["proxy.quota"]),
+      rule("r1", "Machine renewals", ["ch_bark_info"], ["inventory.renewal"]),
+      rule("r3", "Old rule", ["ch_bark_info"], ["*"], false),
+    ],
+    [barkInfo, telegram],
+  );
+  assert.deepEqual(impact.lines.map((line) => line.kind), ["silenced", "kept"]);
+  assert.equal(impact.typed, true);
+});
+
+test("a rule with no event types is named as matching every event", () => {
+  const impact = channelDeleteImpact(barkInfo, [rule("r1", "Everything", ["ch_bark_info"], [])], [barkInfo]);
+  assert.deepEqual(impact.lines, [{ kind: "silenced", rule: "Everything", events: "*" }]);
+});
+
+test("unread rules never claim nothing stops, and ask for the typed name", () => {
+  const impact = channelDeleteImpact(barkInfo, undefined, [barkInfo]);
+  assert.deepEqual(impact.lines, [{ kind: "rulesUnread" }]);
+  assert.equal(impact.typed, true);
+});
+
+test("with no enabled rule every enabled channel gets everything, so the channel just stops receiving", () => {
+  assert.deepEqual(channelDeleteImpact(barkInfo, [rule("r1", "Off", ["ch_tg"], ["*"], false)], [barkInfo, telegram]).lines, [{ kind: "noRules" }]);
+  assert.deepEqual(channelDeleteImpact({ ...barkInfo, enabled: false }, [], [barkInfo]).lines, []);
+});
+
+test("a channel no enabled rule routes to receives nothing today", () => {
+  const impact = channelDeleteImpact(barkInfo, [rule("r1", "Node offline", ["ch_bark_urgent"])], [barkInfo, barkUrgent]);
+  assert.deepEqual(impact.lines, [{ kind: "unrouted" }]);
+  assert.equal(impact.typed, false);
 });

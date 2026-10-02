@@ -3,7 +3,8 @@ import { computed, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Lock, PackageOpen, Play, Puzzle, RefreshCw } from "lucide-vue-next";
+// A contributed action is a plugin call, not a plan, so it carries no play icon (design 23, 4.4 keeps that for "create a plan").
+import { Lock, PackageOpen, Puzzle, RefreshCw } from "lucide-vue-next";
 import {
   api,
   type PluginViewAction,
@@ -26,7 +27,8 @@ import { bridgeInterfaceFingerprint, interfaceMethodScopes } from "./pluginBridg
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import { useProof } from "@/composables/useProof";
 import CopyButton from "@/components/common/CopyButton.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
@@ -163,6 +165,18 @@ function asRows(data: unknown): Row[] {
   return [];
 }
 const rows = computed<Row[]>(() => asRows(sourceQuery.data.value));
+
+/**
+ * The proof line (design 23, section 3.1): what the plugin's data call last
+ * returned, and when. The call does not poll, so the line carries no age
+ * promise beyond the read itself; a failed call prints the reason, no count.
+ */
+const proof = useProof(sourceQuery);
+const proofSegments = computed<ProofSegment[]>(() =>
+  kind.value === "table" && sourceQuery.data.value !== undefined
+    ? [{ key: "rows", text: t("pluginViews.proofRows", { n: rows.value.length }, rows.value.length) }]
+    : [],
+);
 
 /**
  * A column is sortable and searchable only when every row holds a scalar there.
@@ -360,9 +374,10 @@ function confirmAction() {
   />
 
   <div v-else class="p-4 sm:p-6 space-y-6">
-    <PageHeader :title="pageTitle" :description="$t('pluginViews.providedBy', { plugin: plugin?.name || pluginId })">
-      <template v-if="hasSource" #status>
-        <FreshnessLabel :last-updated="sourceQuery.lastUpdated.value" :poll-ms="sourceQuery.pollMs" />
+    <PageHeader :title="pageTitle">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('pluginViews.providedBy', { plugin: plugin?.name || pluginId }) }}</p>
+        <ProofLine v-if="hasSource && hasAccess" v-bind="proof" :segments="proofSegments" @retry="sourceQuery.refresh" />
       </template>
       <template #actions>
         <Button
@@ -381,13 +396,13 @@ function confirmAction() {
           <Button
             v-for="(a, i) in actions"
             :key="`${i}:${a.label}`"
+            variant="outline"
             size="sm"
             :disabled="!canRunAction(a) || runningIndex !== null"
             :title="actionTitle(a)"
             @click="onActionClick(i, a)"
           >
             <RefreshCw v-if="runningIndex === i" class="size-4 animate-spin" aria-hidden="true" />
-            <Play v-else class="size-4" aria-hidden="true" />
             {{ a.label }}
           </Button>
         </template>
@@ -403,7 +418,11 @@ function confirmAction() {
       :icon="PackageOpen"
       :title="$t('pluginViews.unavailableTitle')"
       :description="$t('pluginViews.unavailableDescription')"
-    />
+    >
+      <Button variant="outline" size="sm" as-child>
+        <RouterLink :to="{ path: '/platform/plugins', query: plugin ? { open: plugin.id } : {} }">{{ $t('pluginViews.openPlugins') }}</RouterLink>
+      </Button>
+    </EmptyState>
 
     <!-- Insufficient scope: a quiet, non-destructive panel (no redirect). -->
     <Card v-else-if="!hasAccess" class="border-border">
@@ -428,7 +447,7 @@ function confirmAction() {
 
     <!-- table (PRIMARY): the proof path, fed by POST /api/plugins/call. -->
     <Card v-else-if="kind === 'table'">
-      <CardContent class="pt-6">
+      <CardContent>
         <DataTable
           state-key="records"
           v-if="hasSource"
@@ -438,7 +457,9 @@ function confirmAction() {
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
           :page-size="50"
+          :show-summary="false"
           :searchable="hasSearchableColumn"
+          :expression-filter="false"
           :search-placeholder="$t('common.actions.search')"
           :empty-title="$t('pluginViews.emptyTitle')"
           :empty-description="$t('pluginViews.emptyDescription')"
@@ -493,7 +514,7 @@ function confirmAction() {
 
     <!-- kv / detail: object → description list. -->
     <Card v-else-if="kind === 'kv' || kind === 'detail'">
-      <CardContent class="pt-6">
+      <CardContent>
         <DataState
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
@@ -520,7 +541,7 @@ function confirmAction() {
 
     <!-- markdown: plain text, no new heavy dep, strict CSP holds. -->
     <Card v-else-if="kind === 'markdown'">
-      <CardContent class="pt-6">
+      <CardContent>
         <DataState
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
@@ -551,7 +572,6 @@ function confirmAction() {
             @click="onActionClick(i, a)"
           >
             <RefreshCw v-if="runningIndex === i" class="size-4 animate-spin" aria-hidden="true" />
-            <Play v-else class="size-4" aria-hidden="true" />
             {{ a.label }}
           </Button>
         </div>
@@ -613,7 +633,6 @@ function confirmAction() {
             <Button type="button" variant="outline" @click="formOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="runningIndex !== null">
               <RefreshCw v-if="runningIndex !== null" class="size-4 animate-spin" aria-hidden="true" />
-              <Play v-else class="size-4" aria-hidden="true" />
               {{ $t('pluginViews.submit') }}
             </Button>
           </DialogFooter>

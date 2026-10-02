@@ -155,3 +155,71 @@ export function channelSaveGate(input: {
   const dropped = droppedStoredKeys(input.fields, input.storedKeys, input.config);
   return { dropped, blocked: dropped.length > 0 && !input.clearAcknowledged };
 }
+
+// ── what a channel delete stops ─────────────────────────────────────────────
+
+export type ChannelDeleteLine =
+  | { kind: "silenced"; rule: string; events: string }
+  | { kind: "kept"; rule: string; others: string[] }
+  | { kind: "noRules" }
+  | { kind: "unrouted" }
+  | { kind: "rulesUnread" };
+
+export interface ChannelDeleteImpact {
+  lines: ChannelDeleteLine[];
+  /** The operator types the channel's name before Delete enables. */
+  typed: boolean;
+}
+
+interface ChannelLike {
+  id: string;
+  name?: string;
+  enabled: boolean;
+}
+
+interface RuleLike {
+  id: string;
+  name?: string;
+  enabled: boolean;
+  channel_ids?: string[] | null;
+  event_types?: string[] | null;
+}
+
+/**
+ * What deleting a channel stops (design 23, section 3.8).
+ *
+ * Once one enabled rule exists, only rules deliver, so an enabled rule whose
+ * every other channel is gone or disabled stops reaching anyone: those come
+ * first, with their events, and the operator types the channel's name.
+ * Rules that keep another enabled channel are named with it. With no enabled
+ * rule every enabled channel gets everything, so the channel simply stops
+ * receiving. With the rules unread nothing is claimed either way, and the
+ * typed name is asked for.
+ */
+export function channelDeleteImpact(
+  target: ChannelLike,
+  rules: readonly RuleLike[] | undefined,
+  channels: readonly ChannelLike[],
+): ChannelDeleteImpact {
+  if (!rules) return { lines: [{ kind: "rulesUnread" }], typed: true };
+  const enabledRules = rules.filter((rule) => rule.enabled);
+  if (!enabledRules.length) return { lines: target.enabled ? [{ kind: "noRules" }] : [], typed: false };
+  const name = (entry: { id: string; name?: string }) => entry.name || entry.id;
+  const silenced: ChannelDeleteLine[] = [];
+  const kept: ChannelDeleteLine[] = [];
+  for (const rule of [...enabledRules].sort((a, b) => name(a).localeCompare(name(b)))) {
+    const routed = rule.channel_ids ?? [];
+    if (!routed.includes(target.id)) continue;
+    const others = routed
+      .filter((id) => id !== target.id)
+      .map((id) => channels.find((channel) => channel.id === id && channel.enabled))
+      .filter((channel): channel is ChannelLike => !!channel)
+      .map(name);
+    // A rule with no event types matches every event, as the dispatcher reads it.
+    const events = (rule.event_types?.length ? rule.event_types : ["*"]).join(", ");
+    if (others.length) kept.push({ kind: "kept", rule: name(rule), others });
+    else silenced.push({ kind: "silenced", rule: name(rule), events });
+  }
+  if (!silenced.length && !kept.length) return { lines: [{ kind: "unrouted" }], typed: false };
+  return { lines: [...silenced, ...kept], typed: silenced.length > 0 };
+}

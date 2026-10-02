@@ -20,8 +20,6 @@ import {
   Bell,
   CalendarClock,
   KeyRound,
-  Fingerprint,
-  Ticket,
   Palette,
   Info,
   UserCog,
@@ -166,9 +164,9 @@ export const NAV: NavSection[] = [
       // look, node:admin to change, so the entry appears for anyone who can see
       // the fleet and the page itself gates the switches.
       { name: "settings-capabilities", title: "Capability Gates", path: "/settings/capabilities", icon: ShieldCheck, scopes: ["node:read"] },
-      { name: "settings-sso", title: "Single Sign-On", path: "/settings/sso", icon: Fingerprint, scopes: ["oidc:admin"] },
-      { name: "settings-users", title: "Users", path: "/settings/users", icon: UserCog, scopes: ["user:admin"] },
-      { name: "settings-tokens", title: "Access Tokens", path: "/settings/tokens", icon: Ticket, scopes: ["token:admin"] },
+      // Users, Access Tokens and SSO are one page (design 23, section 4.6);
+      // any of the three scopes opens it and each layer checks its own.
+      { name: "settings-access", title: "Access", path: "/settings/access", icon: UserCog, scopes: ["user:admin", "token:admin", "oidc:admin"] },
       { name: "settings-appearance", title: "Appearance", path: "/settings/appearance", icon: Palette, scopes: [] },
       { name: "settings-about", title: "About", path: "/settings/about", icon: Info, scopes: [] },
     ],

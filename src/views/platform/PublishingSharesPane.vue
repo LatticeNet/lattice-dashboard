@@ -1,7 +1,25 @@
 <script setup lang="ts">
 /**
- * The share lens of Publishing: the subscription URLs this server serves, and
- * everything that manages them.
+ * The share lens of Publishing's Routes layer: the subscription URLs this
+ * server serves, and everything that manages them. A row opens the share in
+ * the page's sheet on `?open=<share id>` (design 23, section 4.5: Shares
+ * stops being a page inside the page).
+ *
+ * The page mounts this pane on every layer and shows its table only on the
+ * share lens (`showTable`). Its sheet and its create form therefore open over
+ * whatever the operator is looking at: a plugin route in the all-origins
+ * table, an attention item on Overview, or the page's Publish menu open the
+ * share or the form here (`openShare`, `openPublish`) without moving the
+ * operator to the share lens or rewriting `?origin=`. Off the share lens the
+ * sheet opens only for an id that is one of the shares, because `?open=`
+ * also names the page's own route sheet.
+ *
+ * The share list, the routes and the proxy users are the page's reads,
+ * passed in, so one list decides which sheet an `?open=` belongs to and
+ * nothing is polled twice; after a change the pane asks the page to read
+ * them again (`reload`). The pane reads only what is its own: the plugin
+ * list, when its table, sheet or form shows and the caller may read it
+ * (audit:read), and the proxy users and the plugin's records for the form.
  *
  * This used to be a Networking page of its own. It lives here because a share
  * is a Publishing record, one whose bytes are rendered on request rather than
@@ -20,7 +38,7 @@
  * new plugin-backed share is unavailable with the reason. Proxy-user shares
  * are server-native and unaffected.
  */
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
@@ -45,19 +63,20 @@ import type {
   SubscriptionShareView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
-  hasShareCreateDeepLink,
   publishablePlugins as pickPublishablePlugins,
   recordsForShare,
   routeLabel,
   routeState,
-  shareCreateTarget,
   shareRefreshable,
   shareRendererState,
-  withoutShareDeepLink,
+  canonicalPublishingQuery,
+  pickShareRecord,
+  shareDeepLink,
   type RouteState,
   type ShareRendererState,
 } from "@/views/platform/publishingModel";
@@ -80,10 +99,10 @@ import {
   type PublishedState,
 } from "@/views/platform/publishedModel";
 
-import PageHeader from "@/components/common/PageHeader.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu from "@/components/common/RowMenu.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import ShareExpiryFields from "@/components/networking/ShareExpiryFields.vue";
 import { Button } from "@/components/ui/button";
@@ -107,8 +126,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-/** The query key that selects a share, so a detail panel is a link. */
-const SHARE_SELECT_PARAM = "share";
+const props = withDefaults(
+  defineProps<{
+    /** The share lens is showing: render the table. */
+    showTable?: boolean;
+    /** The page's share list: undefined until a read lands, kept across a failed refresh. */
+    shares?: SubscriptionShareView[];
+    sharesError?: Error | null;
+    sharesLoading?: boolean;
+    /** The page's publishing records, for where a share is reachable. */
+    routes?: PublishingRecord[];
+    /** The page's proxy users, or undefined when they were not read: whether a share resolves. */
+    proxyUsers?: ProxyUserView[];
+    /** Reads the page's shares and routes again, after a change here. */
+    reload?: () => Promise<unknown>;
+  }>(),
+  {
+    showTable: true,
+    shares: undefined,
+    sharesError: null,
+    sharesLoading: false,
+    routes: undefined,
+    proxyUsers: undefined,
+    reload: () => Promise.resolve(),
+  },
+);
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -117,19 +159,51 @@ const router = useRouter();
 
 const canAdmin = computed(() => auth.can("proxy:admin"));
 
-const sharesQuery = useAsyncData<SubscriptionShareView[] | undefined>(
-  (signal) => api.subscriptionShares.list({ signal }),
-  { pollInterval: 20000 },
+// The open share is the page's `?open=`, so a share is a link, a reload lands
+// on it, and Escape returns focus to its row. The old `?share=` spelling is
+// rewritten to this by the page.
+const sheet = useRouteOpen();
+const selectedId = computed(() => sheet.openId.value ?? "");
+const publishOpen = ref(false);
+
+const shares = computed(() => props.shares ?? []);
+
+/** On the share lens every `?open=` is a share; elsewhere only an id the page's share list holds. */
+const shareSheetOpen = computed(
+  () => !!selectedId.value && (props.showTable || shares.value.some((share) => share.id === selectedId.value)),
 );
-const shares = computed(() => sharesQuery.data.value ?? []);
+
+/** The pane shows something: its table, a share's sheet or the create form. Its own reads wait for this. */
+const active = computed(() => props.showTable || shareSheetOpen.value || publishOpen.value);
 
 /**
  * The plugin list answers two questions on this pane: which plugins a new share
  * may be created against, and whether the plugin behind an existing share is
  * still there to render it. One read, both answers, so they cannot disagree.
+ * /api/plugins needs audit:read; without it the list is never asked for, a
+ * share's renderer stays unknown, and the form says why a plugin share cannot
+ * be chosen. Read once when the pane first shows something, again on Refresh.
  */
-const pluginsQuery = useAsyncData<PluginView[] | undefined>((signal) => api.plugins.list({ signal }));
+const canReadPlugins = computed(() => auth.can("audit:read"));
+const pluginsQuery = useAsyncData<PluginView[] | undefined>(
+  (signal) => (canReadPlugins.value ? api.plugins.list({ signal }) : Promise.resolve(undefined)),
+  { immediate: false },
+);
 const plugins = computed(() => (pluginsQuery.error.value ? undefined : pluginsQuery.data.value));
+let pluginsRead: Promise<void> | null = null;
+/** The first plugin read, shared by whoever needs it first; nothing without audit:read. */
+function ensurePlugins(): Promise<void> {
+  if (!canReadPlugins.value) return Promise.resolve();
+  pluginsRead ??= pluginsQuery.refresh();
+  return pluginsRead;
+}
+watch(
+  active,
+  (on) => {
+    if (on) void ensurePlugins();
+  },
+  { immediate: true },
+);
 const publishablePlugins = computed(() => pickPublishablePlugins(plugins.value));
 const pluginShareAvailable = computed(() => publishablePlugins.value.length > 0);
 
@@ -146,10 +220,12 @@ function rendererPluginId(share: SubscriptionShareView): string {
  * source kind: which users a new share may point at, and whether the user
  * behind an existing share is still there. The share API accepts any
  * non-empty id and serves a dangling share as an empty 404, so this list is
- * the only place the console can tell. It is read only by a caller who may
- * (the endpoint wants proxy:read, which proxy:admin does not imply), and a
- * list that was not read or failed stays unknown: the dialog falls back to a
- * free-text id and no share is called unresolved on a guess.
+ * the only place the console can tell. Whether a share resolves comes from
+ * the page's read, the one the routes table uses; the form reads its own copy
+ * each time it opens, so a user created since is offered. Both are read only
+ * by a caller who may (the endpoint wants proxy:read, which proxy:admin does
+ * not imply), and a list that was not read or failed stays unknown: the form
+ * falls back to a free-text id and no share is called unresolved on a guess.
  */
 const canReadProxyUsers = computed(() => auth.can("proxy:read"));
 const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
@@ -157,7 +233,7 @@ const proxyUsersQuery = useAsyncData<ProxyUserView[] | undefined>(
   { immediate: false },
 );
 const proxyUsers = computed(() => (proxyUsersQuery.error.value ? undefined : proxyUsersQuery.data.value));
-const knownProxyUsers = computed(() => (proxyUsers.value ? new Set(proxyUsers.value.map((user) => user.id)) : undefined));
+const knownProxyUsers = computed(() => (props.proxyUsers ? new Set(props.proxyUsers.map((user) => user.id)) : undefined));
 
 async function loadProxyUsers(): Promise<void> {
   if (canReadProxyUsers.value) await proxyUsersQuery.refresh();
@@ -189,23 +265,24 @@ function rendererReason(share: SubscriptionShareView): string {
 const busyId = ref("");
 
 // ── selection lives in the URL ─────────────────────────────────────────────
-// The routes table on the whole plane links a plugin route to its share, and a
-// selected share is what an operator sends to another. Selecting refines the
-// page rather than leaving it, so it replaces the entry like a table filter.
-const selectedId = computed(() => {
-  const raw = route.query[SHARE_SELECT_PARAM];
-  const value = Array.isArray(raw) ? raw.find((entry) => typeof entry === "string") : raw;
-  return typeof value === "string" ? value : "";
-});
 const selected = computed(() => shares.value.find((share) => share.id === selectedId.value));
 
 function select(id: string): void {
-  if (id === selectedId.value) return;
-  const query = { ...route.query };
-  if (id) query[SHARE_SELECT_PARAM] = id;
-  else delete query[SHARE_SELECT_PARAM];
-  router.replace({ query }).catch(() => {});
+  if (id) sheet.open(id);
+  else sheet.close();
 }
+
+/** Opens a share from outside the table (a route row, an attention item), keeping the opener for focus. */
+function openShare(id: string, opener?: HTMLElement | null): void {
+  if (id) sheet.open(id, opener);
+}
+
+const sheetState = computed(() => {
+  if (!selectedId.value) return "ready" as const;
+  if (selected.value) return props.sharesError ? ("stale" as const) : ("ready" as const);
+  if (props.shares === undefined) return props.sharesError ? ("gone" as const) : ("loading" as const);
+  return "gone" as const;
+});
 
 /**
  * Where a share is reachable comes from the publishing records, so this pane
@@ -213,10 +290,7 @@ function select(id: string): void {
  * the same URL. The share still owns its token, its default format and its
  * per-client links, because those belong to the origin rather than to the route.
  */
-const routesQuery = useAsyncData((signal) => api.publishing.records({ signal }), { pollInterval: 20000 });
-const selectedRoutes = computed(() =>
-  selected.value ? recordsForShare(routesQuery.data.value?.records ?? [], selected.value.id) : [],
-);
+const selectedRoutes = computed(() => (selected.value ? recordsForShare(props.routes ?? [], selected.value.id) : []));
 /** The selected share's routes carry its unresolved state, as the routes table does. */
 function selectedRouteState(record: PublishingRecord): RouteState {
   const unresolved =
@@ -244,20 +318,23 @@ const stateVariant: Record<PublishedState, "default" | "secondary" | "destructiv
   unresolved: "destructive",
 };
 
+/** The page's Refresh: the page re-reads the shares and routes; the pane re-reads what it has read itself. */
 async function refresh(): Promise<void> {
-  await Promise.all([sharesQuery.refresh(), routesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
+  await Promise.all([
+    pluginsRead ? (pluginsRead = pluginsQuery.refresh()) : Promise.resolve(),
+    proxyUsersQuery.data.value !== undefined ? loadProxyUsers() : Promise.resolve(),
+  ]);
 }
 
 // The page-level Refresh button reloads this pane too, so one control means
-// one thing for the whole page.
-defineExpose({ refresh });
+// one thing for the whole page; the page's Publish menu opens the form.
+defineExpose({ refresh, openPublish: () => void openPublish(), openShare });
 
 // ── publish ────────────────────────────────────────────────────────────────
 //
 // The dialog reads the plugin's own records rather than asking for ids as free
 // text, so publishing is a choice rather than a transcription.
 
-const publishOpen = ref(false);
 const publishing = ref(false);
 const draft = ref<{
   kind: ShareSource["kind"];
@@ -319,6 +396,24 @@ async function loadRecords(): Promise<void> {
 }
 
 watch(() => draft.value.pluginId, loadRecords);
+
+/*
+ * A record the deep link named, chosen once the plugin's records have loaded.
+ * Sub-Store links by record name, and an id can differ from its name
+ * (imported records are "imported-<kind>-<name>"), so the name is matched
+ * against the loaded list and never written as the id. A name that matches
+ * nothing leaves the picker empty and says so.
+ */
+const wantedRecord = ref("");
+const missingRecord = ref("");
+watch([records, recordsLoading], () => {
+  const name = wantedRecord.value;
+  if (!name || recordsLoading.value) return;
+  wantedRecord.value = "";
+  const match = pickShareRecord(records.value, name);
+  if (match) draft.value.subscriptionId = match;
+  else if (!recordsError.value) missingRecord.value = name;
+});
 watch(
   () => draft.value.subscriptionId,
   (id) => {
@@ -341,13 +436,20 @@ const canPublish = computed(() => {
   if (!draft.value.slug.trim() || slugError.value || publishing.value) return false;
   if (expiryFormError(draft.value.expiry, now.value)) return false;
   if (draft.value.kind === "plugin") {
-    return pluginShareAvailable.value && !!draft.value.pluginId && !!draft.value.subscriptionId;
+    const id = draft.value.subscriptionId;
+    return pluginShareAvailable.value && !!draft.value.pluginId && records.value.some((record) => record.id === id);
   }
   return !!draft.value.proxyUserId.trim();
 });
 
-function openPublish(): void {
-  // Plugin absent: the dialog opens on the kind that can still be created, and
+/**
+ * Opens the form, optionally on a record a deep link names. The kind and the
+ * plugin come from the plugin list, so it is read first: a form opened before
+ * it landed would offer the proxy-user kind as if no plugin could serve.
+ */
+async function openPublish(wanted = ""): Promise<void> {
+  await ensurePlugins();
+  // Plugin absent: the form opens on the kind that can still be created, and
   // the plugin kind stays in the picker, disabled, with the reason beside it.
   draft.value = {
     kind: pluginShareAvailable.value ? "plugin" : "core.proxy_user",
@@ -358,6 +460,9 @@ function openPublish(): void {
     defaultFormat: "",
     expiry: emptyExpiryForm(),
   };
+  // Matched by id or name once the plugin's records arrive; the slug follows the pick.
+  wantedRecord.value = wanted && pluginShareAvailable.value ? wanted : "";
+  missingRecord.value = "";
   now.value = Date.now();
   publishOpen.value = true;
   void loadRecords();
@@ -386,8 +491,9 @@ async function publish(): Promise<void> {
     const created = await api.subscriptionShares.create(body);
     toast.success(t("networking.shares.published", { slug: created.slug }));
     publishOpen.value = false;
+    // The page's list holds the new share before its sheet opens over the current layer.
+    await props.reload();
     select(created.id);
-    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
   } catch (error) {
     toast.error(describe(error, t("networking.shares.publishFailed")));
   } finally {
@@ -418,7 +524,7 @@ async function saveExpiry(): Promise<void> {
     await api.subscriptionShares.update(share.id, expiryUpdateBody(expiryDraft.value, now.value));
     toast.success(t("networking.shares.expiry.saved"));
     expiryOpen.value = false;
-    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
+    await props.reload();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.expiry.saveFailed")));
   } finally {
@@ -476,7 +582,7 @@ async function rotate(): Promise<void> {
     const rotated = await api.subscriptionShares.rotate(share.id);
     toast.success(t("networking.shares.rotated", { slug: rotated.slug }));
     rotateTarget.value = null;
-    await sharesQuery.refresh();
+    await props.reload();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.rotateFailed")));
   } finally {
@@ -493,7 +599,7 @@ async function remove(): Promise<void> {
     toast.success(t("networking.shares.deleted", { slug: share.slug }));
     deleteTarget.value = null;
     if (selectedId.value === share.id) select("");
-    await Promise.all([sharesQuery.refresh(), routesQuery.refresh()]);
+    await props.reload();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.deleteFailed")));
   } finally {
@@ -531,26 +637,8 @@ async function copy(text: string, message: string): Promise<void> {
 
 // ── table ──────────────────────────────────────────────────────────────────
 
-/**
- * At xl the detail column sits beside the table, selected or not, and leaves
- * it about 700px. Format and Last rotated pushed Serves, with its
- * renderer-absent marker, out of view at that width, so at xl they leave the
- * table: both are in the detail, and below xl the detail stacks under a
- * full-width table that has room for them. They are hidden rather than
- * removed from the column list, so a sort on Last rotated survives, and they
- * are hidden whether or not a share is selected, so a click on a row does not
- * pull two columns out from under it.
- *
- * Slug and Serves carry `max-w-0`: in an auto-layout table a nowrap span
- * claims its whole text as the column's minimum, so the token path alone
- * held Slug at 460px and the table overflowed whatever else was hidden. A zero
- * max-width makes the two columns share what the fixed ones leave and lets
- * the truncation inside them actually truncate.
- */
-const FOLDED_BESIDE_DETAIL = "xl:hidden";
-
 const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
-  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true, class: "max-w-0" },
+  { key: "slug", label: t("networking.shares.columns.slug"), sortable: true, searchable: true },
   {
     key: "state",
     label: t("networking.shares.columns.state"),
@@ -565,14 +653,13 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
     sortable: true,
     searchable: true,
     filterAliases: ["plugin", "record"],
-    class: "max-w-0",
     value: (row) => sourceLabel(row),
   },
   {
     key: "format",
     label: t("networking.shares.columns.format"),
     sortable: true,
-    class: cn("w-[8rem]", FOLDED_BESIDE_DETAIL),
+    class: "w-[8rem]",
     value: (row) => row.default_format || "",
   },
   {
@@ -580,10 +667,29 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
     label: t("networking.shares.columns.rotated"),
     sortable: true,
     align: "right",
-    class: cn("w-[9rem]", FOLDED_BESIDE_DETAIL),
+    class: "w-[9rem]",
     value: (row) => row.rotated_at || row.created_at,
   },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
+
+/** The share's state as text: live is quiet, a share that stops answering is loud. */
+const STATE_TONE: Record<PublishedState, string> = {
+  live: "text-muted-foreground",
+  paused: "text-muted-foreground",
+  expiring: "text-warning-text",
+  expired: "text-destructive",
+  unresolved: "text-destructive",
+};
+
+function menuFor(share: SubscriptionShareView) {
+  return [
+    { key: "refresh", label: t("networking.shares.refreshSource"), icon: RefreshCw, hidden: !canAdmin.value, disabled: busyId.value === share.id || !shareRefreshable(rendererState(share)), reason: shareRefreshable(rendererState(share)) ? undefined : rendererReason(share), run: () => void refreshSource(share) },
+    { key: "expiry", label: t("networking.shares.expiry.change"), icon: CalendarClock, hidden: !canAdmin.value, run: () => openExpiry(share) },
+    { key: "rotate", label: t("networking.shares.rotate"), icon: KeyRound, hidden: !canAdmin.value, run: () => askRotate(share) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => askDelete(share) },
+  ];
+}
 
 // ── deep link from a plugin ────────────────────────────────────────────────
 
@@ -594,391 +700,349 @@ const columns = computed<DataTableColumn<SubscriptionShareView>[]>(() => [
  * decision instead of a blank form. The keys are consumed so a reload does not
  * reopen it, and the lens stays pinned so this pane stays mounted.
  */
+// The pane mounts with the page, and the page rewrites an old link onto the
+// Routes layer (canonicalPublishingQuery) as it mounts. Two replaces in
+// flight race, and the page's could land last and put the create keys back,
+// so the link waits for the page's rewrite, which the query watcher brings
+// here. One opening runs at a time, and openPublish waits for the plugin list
+// before it picks the kind.
+let deepLinkOpening = false;
+
 async function applyDeepLink(): Promise<void> {
-  if (!hasShareCreateDeepLink(route.query)) return;
-  const name = shareCreateTarget(route.query);
-  void router.replace({ query: withoutShareDeepLink(route.query) });
-  openPublish();
-  if (!name || !pluginShareAvailable.value) return;
-  await nextTick();
-  // The record may be identified by id or by name depending on the caller.
-  const match = records.value.find((record) => record.id === name || record.name === name);
-  draft.value.subscriptionId = match?.id ?? name;
-  draft.value.slug = suggestShareSlug(match?.display_name || match?.name || name, shares.value.map((s) => s.slug));
+  if (canonicalPublishingQuery(route.query)) return;
+  const link = shareDeepLink(route.query);
+  if (!link || deepLinkOpening) return;
+  deepLinkOpening = true;
+  try {
+    void router.replace({ query: link.next });
+    await openPublish(link.record);
+  } finally {
+    deepLinkOpening = false;
+  }
 }
 
-onMounted(async () => {
-  await Promise.all([sharesQuery.refresh(), pluginsQuery.refresh(), loadProxyUsers()]);
-  await applyDeepLink();
-});
-watch(() => route.query, applyDeepLink);
+onMounted(() => void applyDeepLink());
+watch(() => route.query, () => void applyDeepLink());
 </script>
 
 <template>
   <section class="space-y-4">
-    <PageHeader
-      level="section"
-      :title="$t('networking.shares.title')"
-      :description="$t('networking.shares.description')"
+    <DataTable
+      v-if="showTable"
+      state-key="shares"
+      :columns="columns"
+      :rows="shares"
+      :row-key="(row) => row.id"
+      :loading="props.sharesLoading"
+      :error="props.sharesError"
+      :has-data="props.shares !== undefined"
+      :page-size="25"
+      :searchable="shares.length > 0"
+      :expression-filter="false"
+      :search-placeholder="$t('networking.shares.searchPlaceholder')"
+      :row-click="(row, el) => sheet.open(row.id, el)"
+      :active-row-id="sheet.openId.value"
+      :show-summary="false"
+      :empty-title="$t('networking.shares.emptyTitle')"
+      :empty-description="$t('networking.shares.emptyDescription')"
+      @retry="props.reload"
     >
-      <template #status>
-        <FreshnessLabel :last-updated="sharesQuery.lastUpdated.value" :poll-ms="sharesQuery.pollMs" />
+      <template #empty>
+        <div class="space-y-3 rounded-xl border border-dashed border-border p-6 text-center">
+          <p class="text-sm font-medium">{{ $t('networking.shares.emptyTitle') }}</p>
+          <p class="mx-auto max-w-prose text-sm text-muted-foreground">{{ $t('networking.shares.emptyDescription') }}</p>
+          <Button v-if="canAdmin" size="sm" variant="outline" @click="openPublish">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t('networking.shares.publish') }}
+          </Button>
+        </div>
       </template>
-      <template #actions>
-        <Button v-if="canAdmin" size="sm" @click="openPublish">
-          <Plus class="size-4" aria-hidden="true" />
+      <template #cell-slug="{ row }">
+        <div class="min-w-0">
+          <p class="truncate font-medium" :title="`/${row.slug}`">/{{ row.slug }}</p>
+          <p class="truncate font-mono text-xs text-muted-foreground" :title="sharePath(row)">{{ sharePath(row) }}</p>
+        </div>
+      </template>
+      <template #cell-state="{ row }">
+        <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[shareState(row)])">
+          {{ $t('networking.shares.state.' + shareState(row)) }}
+        </span>
+        <span v-if="row.expires_at && shareState(row) !== 'expired'" class="block text-xs text-muted-foreground" :title="formatDateTime(row.expires_at)">
+          {{ formatRelativeTime(row.expires_at) }}
+        </span>
+      </template>
+      <template #cell-source="{ row }">
+        <div class="min-w-0">
+          <span class="block truncate text-sm" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span>
+          <!-- Plugin absent, said on the row: the share exists, its renderer
+               does not, and the two facts read together. -->
+          <span
+            v-if="rendererState(row) === 'missing' || rendererState(row) === 'inactive'"
+            class="mt-0.5 flex items-center gap-1 text-xs text-warning-text"
+            :title="rendererReason(row)"
+          >
+            <PlugZap class="size-3 shrink-0" aria-hidden="true" />
+            {{ $t(`platform.publishing.renderer.${rendererState(row)}`) }}
+          </span>
+        </div>
+      </template>
+      <template #cell-format="{ row }">
+        <span class="text-sm text-muted-foreground">{{ row.default_format || $t('networking.shares.formatAuto') }}</span>
+      </template>
+      <template #cell-rotated="{ row }">
+        <span class="text-sm tabular" :title="formatDateTime(row.rotated_at || row.created_at)">
+          {{ formatRelativeTime(row.rotated_at || row.created_at) }}
+        </span>
+      </template>
+      <template #cell-actions="{ row }">
+        <RowMenu v-if="canAdmin" :name="`/${row.slug}`" :items="menuFor(row)" />
+      </template>
+    </DataTable>
+
+    <!-- One share, its URL and the client-specific links, in the page's sheet. -->
+    <ObjectSheet
+      :open="shareSheetOpen"
+      :title="selected ? `/${selected.slug}` : selectedId"
+      :subtitle="selected ? sourceLabel(selected) : undefined"
+      :mono-title="true"
+      :mono-subtitle="false"
+      :state="sheetState"
+      :error="props.sharesError ? describe(props.sharesError, '') : null"
+      :read-only="!canAdmin"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('platform.publishingPage.shareGoneTitle')"
+      :gone-description="$t('platform.publishingPage.shareGoneDescription')"
+      @close="sheet.close"
+    >
+      <div v-if="selected" class="space-y-4 text-sm">
+        <p :class="STATE_TONE[shareState(selected)] === 'text-muted-foreground' ? 'text-foreground' : STATE_TONE[shareState(selected)]">
+          {{ $t('networking.shares.state.' + shareState(selected)) }}
+        </p>
+        <div>
+          <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.url') }}</p>
+          <div class="mt-1 flex items-start gap-2">
+            <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">{{ shareUrl(selected) }}</code>
+            <CopyButton :value="shareUrl(selected)" :label="$t('common.actions.copy')" />
+          </div>
+          <p class="mt-1.5 text-xs text-muted-foreground">{{ $t('networking.shares.tokenNote') }}</p>
+        </div>
+
+        <!-- A dangling proxy user is one specific reason for a 404, and it
+             gets its own sentence in place of the general one. -->
+        <div v-if="shareState(selected) === 'unresolved'" class="rounded-md border-l-2 border-destructive bg-muted/40 px-3 py-2 text-xs">
+          {{ $t('networking.shares.unresolvedHint') }}
+        </div>
+        <div v-else-if="!serving(selected)" class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs">
+          {{ $t('networking.shares.notServing') }}
+        </div>
+
+        <div
+          v-if="rendererState(selected) === 'missing' || rendererState(selected) === 'inactive'"
+          class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
+        >
+          <p class="font-medium">{{ $t(`platform.publishing.renderer.${rendererState(selected)}`) }}</p>
+          <p class="mt-1 text-muted-foreground">{{ rendererReason(selected) }}</p>
+          <RouterLink
+            to="/platform/plugins"
+            class="mt-1 inline-block rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >{{ $t('platform.publishing.renderer.openPlugins') }}</RouterLink>
+        </div>
+
+        <div v-if="selectedRoutes.length">
+          <p class="text-xs font-medium text-muted-foreground">{{ $t('platform.publishing.shareRouteTitle') }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ $t('platform.publishing.shareRouteDescription') }}</p>
+          <div v-for="record in selectedRoutes" :key="record.id" class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <code class="rounded bg-muted px-2 py-1 font-mono">{{ routeLabel(record, $t('platform.publishing.anyHost')) }}</code>
+            <!-- The same rule the routes table applies, so this cannot say
+                 serving under a callout saying the URL returns 404. -->
+            <span :class="selectedRouteState(record) === 'unresolved' ? 'text-destructive' : 'text-muted-foreground'">
+              {{ $t(`platform.publishing.state.${selectedRouteState(record)}`) }}
+            </span>
+            <span v-if="record.reserved" class="text-muted-foreground" :title="$t('platform.publishing.reservedHint')">· {{ $t('platform.publishing.reserved') }}</span>
+          </div>
+        </div>
+
+        <div>
+          <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.clientLinks') }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">{{ $t('networking.shares.clientLinksHint') }}</p>
+          <div class="mt-2 grid grid-cols-2 gap-1.5">
+            <Button
+              v-for="target in SHARE_TARGETS"
+              :key="target.id"
+              variant="outline"
+              size="sm"
+              class="justify-between"
+              :title="clientUrl(origin, selected, target.id)"
+              @click="copy(clientUrl(origin, selected, target.id), $t('networking.shares.copiedClient', { target: target.label }))"
+            >
+              <span class="truncate">{{ target.label }}</span>
+              <MonitorSmartphone class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+
+        <dl class="grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs">
+          <div>
+            <dt class="text-muted-foreground">{{ $t('networking.shares.columns.format') }}</dt>
+            <dd>{{ selected.default_format || $t('networking.shares.formatAuto') }}</dd>
+          </div>
+          <div>
+            <dt class="text-muted-foreground">{{ $t('networking.shares.created') }}</dt>
+            <dd>{{ formatRelativeTime(selected.created_at) }}</dd>
+          </div>
+          <div v-if="selected.rotated_at">
+            <dt class="text-muted-foreground">{{ $t('networking.shares.rotatedAt') }}</dt>
+            <dd>{{ formatRelativeTime(selected.rotated_at) }}</dd>
+          </div>
+          <!-- Shown even when there is none: "no expiry" and "expires next week"
+               look the same to someone scanning, and only one is safe to hand out. -->
+          <div>
+            <dt class="text-muted-foreground">{{ $t('networking.shares.expires') }}</dt>
+            <dd v-if="selected.expires_at" :title="formatDateTime(selected.expires_at)">
+              {{ formatDateTime(selected.expires_at) }}
+              <span class="text-muted-foreground">· {{ formatRelativeTime(selected.expires_at) }}</span>
+            </dd>
+            <dd v-else class="text-muted-foreground">{{ $t('networking.shares.expiry.never') }}</dd>
+          </div>
+        </dl>
+      </div>
+      <template v-if="selected" #actions>
+        <Button
+          variant="outline"
+          size="sm"
+          :disabled="busyId === selected.id || !shareRefreshable(rendererState(selected))"
+          :title="rendererReason(selected)"
+          @click="refreshSource(selected)"
+        >
+          <RefreshCw :class="cn('size-4', busyId === selected.id && 'animate-spin')" aria-hidden="true" />
+          {{ $t('networking.shares.refreshSource') }}
+        </Button>
+        <Button variant="outline" size="sm" :disabled="busyId === selected.id" @click="openExpiry(selected)">
+          <CalendarClock class="size-4" aria-hidden="true" />
+          {{ $t('networking.shares.expiry.change') }}
+        </Button>
+        <RowMenu :name="`/${selected.slug}`" :items="menuFor(selected).filter((item) => item.key === 'rotate' || item.key === 'delete')" />
+      </template>
+    </ObjectSheet>
+
+    <!-- ── publish form, in the side sheet the page's other create forms use ── -->
+    <ObjectSheet :open="publishOpen" :title="$t('networking.shares.publishTitle')" @close="publishOpen = false">
+      <form v-if="publishOpen" id="share-publish-form" class="space-y-4 text-sm" data-testid="share-publish-form" @submit.prevent="publish">
+        <p class="text-muted-foreground">{{ $t('networking.shares.publishDescription') }}</p>
+        <div class="grid gap-2">
+          <Label>{{ $t('networking.shares.sourceKind') }}</Label>
+          <Select v-model="draft.kind">
+            <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="plugin" :disabled="!pluginShareAvailable">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
+              <SelectItem value="core.proxy_user">{{ $t('networking.shares.kindProxyUser') }}</SelectItem>
+            </SelectContent>
+          </Select>
+          <!-- Plugin absent: the option is there and disabled, and this is why. -->
+          <p v-if="!pluginShareAvailable" class="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <PlugZap class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+            {{ canReadPlugins ? $t('platform.publishing.renderer.createUnavailable') : $t('platform.publishing.renderer.createNoAccess') }}
+          </p>
+        </div>
+
+        <template v-if="draft.kind === 'plugin'">
+          <div class="grid gap-2">
+            <Label>{{ $t('networking.shares.plugin') }}</Label>
+            <Select v-model="draft.pluginId">
+              <SelectTrigger class="w-full"><SelectValue :placeholder="$t('networking.shares.pluginPlaceholder')" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="plugin in publishablePlugins" :key="plugin.id" :value="plugin.id">
+                  {{ plugin.name || plugin.id }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="!publishablePlugins.length" class="text-xs text-muted-foreground">
+              {{ $t('networking.shares.noPublishablePlugins') }}
+            </p>
+          </div>
+
+          <div class="grid gap-2">
+            <Label>{{ $t('networking.shares.record') }}</Label>
+            <Select v-model="draft.subscriptionId" :disabled="recordsLoading || !records.length">
+              <SelectTrigger class="w-full">
+                <SelectValue :placeholder="recordsLoading ? $t('common.state.loading') : $t('networking.shares.recordPlaceholder')" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="record in records" :key="record.id" :value="record.id">
+                  {{ record.display_name || record.name || record.id }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="recordsError" class="text-xs text-destructive">{{ recordsError }}</p>
+            <p v-else-if="missingRecord && !draft.subscriptionId" class="text-xs text-warning-text" data-testid="share-record-missing">
+              {{ $t('networking.shares.recordMissing', { name: missingRecord }) }}
+            </p>
+            <p v-else-if="!recordsLoading && !records.length && draft.pluginId" class="text-xs text-muted-foreground">
+              {{ $t('networking.shares.noRecords') }}
+            </p>
+          </div>
+        </template>
+
+        <div v-else class="grid gap-2">
+          <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
+          <!-- A choice from the users the server has, like the record picker
+               above. Only when the list could not be read does this fall
+               back to a typed id, and it says so: a picker that blocked on a
+               failed list would make one unreadable endpoint stop publishing. -->
+          <template v-if="proxyUsersQuery.loading.value || proxyUsers">
+            <Select v-model="draft.proxyUserId" :disabled="proxyUsersQuery.loading.value || !proxyUsers?.length">
+              <SelectTrigger id="share-proxy-user" class="w-full">
+                <SelectValue
+                  :placeholder="proxyUsersQuery.loading.value ? $t('common.state.loading') : $t('networking.shares.proxyUserPlaceholder')"
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="user in proxyUsers" :key="user.id" :value="user.id">
+                  <span>{{ user.name || user.id }}</span>
+                  <span v-if="user.name && user.name !== user.id" class="ml-2 font-mono text-xs text-muted-foreground">{{ user.id }}</span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="!proxyUsersQuery.loading.value && !proxyUsers?.length" class="text-xs text-muted-foreground">
+              {{ $t('networking.shares.noProxyUsers') }}
+            </p>
+          </template>
+          <template v-else>
+            <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" spellcheck="false" />
+            <p class="text-xs text-muted-foreground">{{ $t('networking.shares.proxyUsersUnread') }}</p>
+          </template>
+        </div>
+
+        <div class="grid gap-2">
+          <Label for="share-slug">{{ $t('networking.shares.slug') }}</Label>
+          <Input id="share-slug" v-model="draft.slug" autocomplete="off" spellcheck="false" placeholder="team-nodes" />
+          <p v-if="slugError" class="text-xs text-destructive">{{ slugError }}</p>
+          <p v-else class="text-xs text-muted-foreground">{{ $t('networking.shares.slugHint') }}</p>
+        </div>
+
+        <div class="grid gap-2">
+          <Label>{{ $t('networking.shares.defaultFormat') }}</Label>
+          <Select v-model="draft.defaultFormat">
+            <SelectTrigger class="w-full"><SelectValue :placeholder="$t('networking.shares.formatAuto')" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="plain">plain</SelectItem>
+              <SelectItem value="base64">base64</SelectItem>
+              <SelectItem value="sing-box">sing-box</SelectItem>
+            </SelectContent>
+          </Select>
+          <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
+        </div>
+
+        <ShareExpiryFields v-model="draft.expiry" id-prefix="publish" :now="now" />
+      </form>
+      <template v-if="publishOpen" #actions>
+        <Button type="submit" form="share-publish-form" size="sm" :disabled="!canPublish">
+          <RefreshCw v-if="publishing" class="size-4 animate-spin" aria-hidden="true" />
+          <Link2 v-else class="size-4" aria-hidden="true" />
           {{ $t('networking.shares.publish') }}
         </Button>
       </template>
-    </PageHeader>
-
-    <!-- The single column below xl is minmax(0,1fr) too: an implicit auto track
-         grows to the token path's unbreakable width and pushed the whole pane
-         past a phone's edge. -->
-    <div class="grid grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
-      <DataTable
-        state-key="shares"
-        :columns="columns"
-        :rows="shares"
-        :row-key="(row) => row.id"
-        :loading="sharesQuery.loading.value"
-        :error="sharesQuery.error.value"
-        :page-size="25"
-        searchable
-        :search-placeholder="$t('networking.shares.searchPlaceholder')"
-        :empty-title="$t('networking.shares.emptyTitle')"
-        :empty-description="$t('networking.shares.emptyDescription')"
-        @row-select="select($event.id)"
-        @retry="sharesQuery.refresh"
-      >
-        <template #cell-slug="{ row }">
-          <div class="min-w-0">
-            <p
-              :class="cn('truncate font-medium', selectedId === row.id && 'text-primary')"
-              :title="`/${row.slug}`"
-            >/{{ row.slug }}</p>
-            <p class="truncate font-mono text-xs text-muted-foreground" :title="sharePath(row)">
-              {{ sharePath(row) }}
-            </p>
-          </div>
-        </template>
-
-        <template #cell-state="{ row }">
-          <Badge :variant="stateVariant[shareState(row)]">
-            {{ $t('networking.shares.state.' + shareState(row)) }}
-          </Badge>
-        </template>
-
-        <template #cell-source="{ row }">
-          <div class="min-w-0">
-            <span class="block truncate text-sm" :title="sourceLabel(row)">{{ sourceLabel(row) }}</span>
-            <!-- Plugin absent, said on the row: the share exists, its renderer
-                 does not, and the two facts read together. -->
-            <span
-              v-if="rendererState(row) === 'missing' || rendererState(row) === 'inactive'"
-              class="mt-0.5 flex items-center gap-1 text-xs text-warning"
-              :title="rendererReason(row)"
-            >
-              <PlugZap class="size-3 shrink-0" aria-hidden="true" />
-              {{ $t(`platform.publishing.renderer.${rendererState(row)}`) }}
-            </span>
-          </div>
-        </template>
-
-        <template #cell-format="{ row }">
-          <span class="text-sm text-muted-foreground">
-            {{ row.default_format || $t('networking.shares.formatAuto') }}
-          </span>
-        </template>
-
-        <template #cell-rotated="{ row }">
-          <span class="text-sm tabular" :title="formatDateTime(row.rotated_at || row.created_at)">
-            {{ formatRelativeTime(row.rotated_at || row.created_at) }}
-          </span>
-        </template>
-      </DataTable>
-
-      <!-- Detail: one share, its URL, and the client-specific links. -->
-      <div class="space-y-4">
-        <div v-if="!selected" class="rounded-lg border border-dashed border-border p-6 text-center">
-          <Link2 class="mx-auto size-5 text-muted-foreground" aria-hidden="true" />
-          <p class="mt-2 text-sm font-medium">{{ $t('networking.shares.selectTitle') }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ $t('networking.shares.selectHint') }}</p>
-        </div>
-
-        <div v-else class="rounded-lg border border-border">
-          <div class="flex items-start justify-between gap-3 border-b border-border p-4">
-            <div class="min-w-0">
-              <p class="truncate font-medium" :title="`/${selected.slug}`">/{{ selected.slug }}</p>
-              <p class="truncate text-xs text-muted-foreground" :title="sourceLabel(selected)">{{ sourceLabel(selected) }}</p>
-            </div>
-            <Badge :variant="stateVariant[shareState(selected)]">
-              {{ $t('networking.shares.state.' + shareState(selected)) }}
-            </Badge>
-          </div>
-
-          <div class="space-y-3 p-4">
-            <div>
-              <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.url') }}</p>
-              <div class="mt-1 flex items-start gap-2">
-                <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">{{ shareUrl(selected) }}</code>
-                <CopyButton :value="shareUrl(selected)" :label="$t('common.actions.copy')" />
-              </div>
-              <p class="mt-1.5 text-xs text-muted-foreground">{{ $t('networking.shares.tokenNote') }}</p>
-            </div>
-
-            <!-- A dangling proxy user is one specific reason for a 404, and it
-                 gets its own sentence in place of the general one. -->
-            <div
-              v-if="shareState(selected) === 'unresolved'"
-              class="rounded-md border-l-2 border-destructive bg-muted/40 px-3 py-2 text-xs"
-            >
-              {{ $t('networking.shares.unresolvedHint') }}
-            </div>
-            <div
-              v-else-if="!serving(selected)"
-              class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
-            >
-              {{ $t('networking.shares.notServing') }}
-            </div>
-
-            <div
-              v-if="rendererState(selected) === 'missing' || rendererState(selected) === 'inactive'"
-              class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
-            >
-              <p class="font-medium">{{ $t(`platform.publishing.renderer.${rendererState(selected)}`) }}</p>
-              <p class="mt-1 text-muted-foreground">{{ rendererReason(selected) }}</p>
-              <RouterLink
-                to="/platform/plugins"
-                class="mt-1 inline-block rounded-sm text-primary outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              >{{ $t('platform.publishing.renderer.openPlugins') }}</RouterLink>
-            </div>
-
-            <div v-if="selectedRoutes.length">
-              <p class="text-xs font-medium text-muted-foreground">{{ $t('platform.publishing.shareRouteTitle') }}</p>
-              <p class="mt-1 text-xs text-muted-foreground">{{ $t('platform.publishing.shareRouteDescription') }}</p>
-              <div
-                v-for="record in selectedRoutes"
-                :key="record.id"
-                class="mt-2 flex flex-wrap items-center gap-2 text-xs"
-              >
-                <code class="rounded bg-muted px-2 py-1 font-mono">{{ routeLabel(record, $t('platform.publishing.anyHost')) }}</code>
-                <!-- The same rule the routes table applies, so this badge cannot
-                     say Serving under a callout saying the URL returns 404. -->
-                <Badge :variant="selectedRouteState(record) === 'unresolved' ? 'destructive' : 'outline'">
-                  {{ $t(`platform.publishing.state.${selectedRouteState(record)}`) }}
-                </Badge>
-                <Badge v-if="record.reserved" variant="outline" :title="$t('platform.publishing.reservedHint')">
-                  {{ $t('platform.publishing.reserved') }}
-                </Badge>
-              </div>
-            </div>
-
-            <div>
-              <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.clientLinks') }}</p>
-              <p class="mt-1 text-xs text-muted-foreground">{{ $t('networking.shares.clientLinksHint') }}</p>
-              <div class="mt-2 grid grid-cols-2 gap-1.5">
-                <Button
-                  v-for="target in SHARE_TARGETS"
-                  :key="target.id"
-                  variant="outline"
-                  size="sm"
-                  class="justify-between"
-                  :title="clientUrl(origin, selected, target.id)"
-                  @click="copy(clientUrl(origin, selected, target.id), $t('networking.shares.copiedClient', { target: target.label }))"
-                >
-                  <span class="truncate">{{ target.label }}</span>
-                  <MonitorSmartphone class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
-                </Button>
-              </div>
-            </div>
-
-            <dl class="grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs">
-              <div>
-                <dt class="text-muted-foreground">{{ $t('networking.shares.columns.format') }}</dt>
-                <dd>{{ selected.default_format || $t('networking.shares.formatAuto') }}</dd>
-              </div>
-              <div>
-                <dt class="text-muted-foreground">{{ $t('networking.shares.created') }}</dt>
-                <dd>{{ formatRelativeTime(selected.created_at) }}</dd>
-              </div>
-              <div v-if="selected.rotated_at">
-                <dt class="text-muted-foreground">{{ $t('networking.shares.rotatedAt') }}</dt>
-                <dd>{{ formatRelativeTime(selected.rotated_at) }}</dd>
-              </div>
-              <!-- Shown even when there is none: "no expiry row" and "expires next
-                   week" look the same to someone scanning the panel, and only one
-                   of them is safe to hand out. -->
-              <div>
-                <dt class="text-muted-foreground">{{ $t('networking.shares.expires') }}</dt>
-                <dd v-if="selected.expires_at" :title="formatDateTime(selected.expires_at)">
-                  {{ formatDateTime(selected.expires_at) }}
-                  <span class="text-muted-foreground">· {{ formatRelativeTime(selected.expires_at) }}</span>
-                </dd>
-                <dd v-else class="text-muted-foreground">{{ $t('networking.shares.expiry.never') }}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <div v-if="canAdmin" class="flex flex-wrap gap-2 border-t border-border p-4">
-            <Button
-              variant="outline"
-              size="sm"
-              :disabled="busyId === selected.id || !shareRefreshable(rendererState(selected))"
-              :title="rendererReason(selected)"
-              @click="refreshSource(selected)"
-            >
-              <RefreshCw :class="cn('size-4', busyId === selected.id && 'animate-spin')" aria-hidden="true" />
-              {{ $t('networking.shares.refreshSource') }}
-            </Button>
-            <Button variant="outline" size="sm" :disabled="busyId === selected.id" @click="openExpiry(selected)">
-              <CalendarClock class="size-4" aria-hidden="true" />
-              {{ $t('networking.shares.expiry.change') }}
-            </Button>
-            <Button variant="outline" size="sm" :disabled="busyId === selected.id" @click="askRotate(selected)">
-              <KeyRound class="size-4" aria-hidden="true" />
-              {{ $t('networking.shares.rotate') }}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              class="ml-auto text-destructive"
-              :disabled="busyId === selected.id"
-              @click="askDelete(selected)"
-            >
-              <Trash2 class="size-4" aria-hidden="true" />
-              {{ $t('common.actions.delete') }}
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── publish dialog ──────────────────────────────────────────────── -->
-    <Dialog v-model:open="publishOpen">
-      <DialogContent class="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{{ $t('networking.shares.publishTitle') }}</DialogTitle>
-          <DialogDescription>{{ $t('networking.shares.publishDescription') }}</DialogDescription>
-        </DialogHeader>
-
-        <div class="space-y-4">
-          <div class="grid gap-2">
-            <Label>{{ $t('networking.shares.sourceKind') }}</Label>
-            <Select v-model="draft.kind">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="plugin" :disabled="!pluginShareAvailable">{{ $t('networking.shares.kindPlugin') }}</SelectItem>
-                <SelectItem value="core.proxy_user">{{ $t('networking.shares.kindProxyUser') }}</SelectItem>
-              </SelectContent>
-            </Select>
-            <!-- Plugin absent: the option is there and disabled, and this is why. -->
-            <p v-if="!pluginShareAvailable" class="flex items-start gap-1.5 text-xs text-muted-foreground">
-              <PlugZap class="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-              {{ $t('platform.publishing.renderer.createUnavailable') }}
-            </p>
-          </div>
-
-          <template v-if="draft.kind === 'plugin'">
-            <div class="grid gap-2">
-              <Label>{{ $t('networking.shares.plugin') }}</Label>
-              <Select v-model="draft.pluginId">
-                <SelectTrigger><SelectValue :placeholder="$t('networking.shares.pluginPlaceholder')" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="plugin in publishablePlugins" :key="plugin.id" :value="plugin.id">
-                    {{ plugin.name || plugin.id }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="!publishablePlugins.length" class="text-xs text-muted-foreground">
-                {{ $t('networking.shares.noPublishablePlugins') }}
-              </p>
-            </div>
-
-            <div class="grid gap-2">
-              <Label>{{ $t('networking.shares.record') }}</Label>
-              <Select v-model="draft.subscriptionId" :disabled="recordsLoading || !records.length">
-                <SelectTrigger>
-                  <SelectValue :placeholder="recordsLoading ? $t('common.state.loading') : $t('networking.shares.recordPlaceholder')" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="record in records" :key="record.id" :value="record.id">
-                    {{ record.display_name || record.name || record.id }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="recordsError" class="text-xs text-destructive">{{ recordsError }}</p>
-              <p v-else-if="!recordsLoading && !records.length && draft.pluginId" class="text-xs text-muted-foreground">
-                {{ $t('networking.shares.noRecords') }}
-              </p>
-            </div>
-          </template>
-
-          <div v-else class="grid gap-2">
-            <Label for="share-proxy-user">{{ $t('networking.shares.proxyUser') }}</Label>
-            <!-- A choice from the users the server has, like the record picker
-                 above. Only when the list could not be read does this fall
-                 back to a typed id, and it says so: a picker that blocked on a
-                 failed list would make one unreadable endpoint stop publishing. -->
-            <template v-if="proxyUsersQuery.loading.value || proxyUsers">
-              <Select v-model="draft.proxyUserId" :disabled="proxyUsersQuery.loading.value || !proxyUsers?.length">
-                <SelectTrigger id="share-proxy-user">
-                  <SelectValue
-                    :placeholder="proxyUsersQuery.loading.value ? $t('common.state.loading') : $t('networking.shares.proxyUserPlaceholder')"
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="user in proxyUsers" :key="user.id" :value="user.id">
-                    <span>{{ user.name || user.id }}</span>
-                    <span v-if="user.name && user.name !== user.id" class="ml-2 font-mono text-xs text-muted-foreground">{{ user.id }}</span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p v-if="!proxyUsersQuery.loading.value && !proxyUsers?.length" class="text-xs text-muted-foreground">
-                {{ $t('networking.shares.noProxyUsers') }}
-              </p>
-            </template>
-            <template v-else>
-              <Input id="share-proxy-user" v-model="draft.proxyUserId" autocomplete="off" spellcheck="false" />
-              <p class="text-xs text-muted-foreground">{{ $t('networking.shares.proxyUsersUnread') }}</p>
-            </template>
-          </div>
-
-          <div class="grid gap-2">
-            <Label for="share-slug">{{ $t('networking.shares.slug') }}</Label>
-            <Input id="share-slug" v-model="draft.slug" autocomplete="off" spellcheck="false" placeholder="team-nodes" />
-            <p v-if="slugError" class="text-xs text-destructive">{{ slugError }}</p>
-            <p v-else class="text-xs text-muted-foreground">{{ $t('networking.shares.slugHint') }}</p>
-          </div>
-
-          <div class="grid gap-2">
-            <Label>{{ $t('networking.shares.defaultFormat') }}</Label>
-            <Select v-model="draft.defaultFormat">
-              <SelectTrigger><SelectValue :placeholder="$t('networking.shares.formatAuto')" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="plain">plain</SelectItem>
-                <SelectItem value="base64">base64</SelectItem>
-                <SelectItem value="sing-box">sing-box</SelectItem>
-              </SelectContent>
-            </Select>
-            <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
-          </div>
-
-          <ShareExpiryFields v-model="draft.expiry" id-prefix="publish" :now="now" />
-        </div>
-
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button variant="outline">{{ $t('common.actions.cancel') }}</Button>
-          </DialogClose>
-          <Button :disabled="!canPublish" @click="publish">
-            <RefreshCw v-if="publishing" class="size-4 animate-spin" aria-hidden="true" />
-            <Link2 v-else class="size-4" aria-hidden="true" />
-            {{ $t('networking.shares.publish') }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </ObjectSheet>
 
     <!-- ── expiry ──────────────────────────────────────────────────────── -->
     <!-- Editing the expiry is not destructive, so it does not go through

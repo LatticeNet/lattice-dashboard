@@ -7,7 +7,6 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
-  ShieldCheck,
   ShieldOff,
   Trash2,
   TriangleAlert,
@@ -21,24 +20,20 @@ import {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, shortId } from "@/lib/format";
-import { statusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 import ScopePicker from "@/components/settings/ScopePicker.vue";
 import { SCOPE_CATALOG } from "@/lib/scopes";
 
-import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
+import NodeLabel from "@/components/common/NodeLabel.vue";
+import { useNodeDirectory } from "@/composables/useNodeDirectory";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -55,6 +50,13 @@ import {
 } from "@/components/ui/dialog";
 
 const { t } = useI18n();
+
+/** The Access page's node list, when it was read: a confined id it does not hold is named as unknown, in full. */
+const nodeDirectory = useNodeDirectory();
+function unknownNode(id: string): boolean {
+  const list = nodeDirectory?.value;
+  return !!list && !list.some((node) => node.id === id);
+}
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("token:admin"));
 
@@ -272,8 +274,13 @@ async function confirmDelete() {
 const activeCount = computed(() => tokens.value.filter((token) => !isRevoked(token)).length);
 
 // Token status → shared visual treatment (active=online green, revoked=offline red).
-function tokenMeta(token: TokenView) {
-  return statusMeta(isRevoked(token) ? "offline" : "online");
+/*
+ * The normal state is the quiet one (design 23, section 4.5's rule for
+ * Publishing, applied here): an active token is what a token is, and a
+ * revoked one no longer opens anything, so neither earns a state colour.
+ */
+function tokenBadge(token: TokenView): "outline" | "secondary" {
+  return isRevoked(token) ? "secondary" : "outline";
 }
 
 // DataTable columns. Cells are rendered via #cell-<key> slots so every existing
@@ -311,140 +318,111 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
   },
   { key: "actions", label: t("settings.tokens.list.actions"), align: "right" },
 ]);
+
+/* The proof line (design 23, section 3.1): read once, so no age promise. */
+const proof = useProof(tokensQuery);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = tokens.value.length;
+  const parts: ProofSegment[] = [{ key: "tokens", text: t("settings.access.proof.tokens", { n }, n) }];
+  if (n) parts.push({ key: "active", text: t("settings.access.proof.active", { n: activeCount.value }) });
+  return parts;
+});
+
+function menuFor(token: (typeof tokens.value)[number]): RowMenuItem[] {
+  return [
+    { key: "revoke", label: t("settings.tokens.list.revoke"), icon: ShieldOff, danger: true, hidden: !canAdmin.value || isRevoked(token), run: () => (revokeTarget.value = token) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value || !isRevoked(token), run: () => (deleteTarget.value = token) },
+  ];
+}
 </script>
 
 <template>
-  <div class="page-narrow p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('settings.tokens.title')"
-      :description="$t('settings.tokens.description')"
-    >
-      <template #status>
-        <FreshnessLabel :last-updated="tokensQuery.lastUpdated.value" :poll-ms="tokensQuery.pollMs" />
-      </template>
-      <template #actions>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="tokensQuery.refreshing.value"
-          @click="tokensQuery.refresh"
-        >
+  <!-- One layer of the Access page (design 23, section 4.6): the page owns the heading and the tab row. -->
+  <section class="space-y-4">
+    <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+      <div class="min-w-0 space-y-1">
+        <p class="max-w-prose text-sm text-muted-foreground">{{ $t("settings.tokens.explainer.body") }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="tokensQuery.refresh" />
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <Button variant="outline" size="sm" :disabled="tokensQuery.refreshing.value" @click="tokensQuery.refresh">
           <RefreshCw :class="cn('size-4', tokensQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t("common.actions.refresh") }}
         </Button>
-        <Button v-if="canAdmin" size="sm" @click="openCreate">
+        <Button v-if="canAdmin && tokens.length" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t("settings.tokens.newToken") }}
         </Button>
+      </div>
+    </div>
+
+    <DataTable
+      state-key="tokens"
+      :columns="columns"
+      :rows="sortedTokens"
+      :row-key="(token) => token.id"
+      :loading="tokensQuery.loading.value"
+      :error="tokensQuery.error.value"
+      :has-data="tokensQuery.data.value !== undefined"
+      :searchable="tokens.length > 6"
+      :expression-filter="false"
+      :search-placeholder="$t('common.actions.search')"
+      :empty-title="$t('settings.tokens.list.emptyTitle')"
+      :empty-description="$t('settings.tokens.list.emptyDescription')"
+      @retry="tokensQuery.refresh"
+    >
+      <template #empty>
+        <EmptyState :icon="KeyRound" :title="$t('settings.tokens.list.emptyTitle')" :description="$t('settings.tokens.list.emptyDescription')">
+          <Button v-if="canAdmin" size="sm" @click="openCreate">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t("settings.tokens.newToken") }}
+          </Button>
+        </EmptyState>
       </template>
-    </PageHeader>
 
-    <Card class="border-primary/30 bg-primary/5">
-      <CardContent class="flex items-start gap-3 p-4">
-        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
-        <div class="space-y-1 text-sm">
-          <p class="font-medium">{{ $t("settings.tokens.explainer.title") }}</p>
-          <p class="text-muted-foreground">
-            {{ $t("settings.tokens.explainer.body") }}
-          </p>
+      <template #cell-name="{ row }">
+        <div class="font-medium">{{ row.name || row.id }}</div>
+        <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+      </template>
+
+      <template #cell-actor="{ row }">
+        <span class="break-all font-mono text-xs text-muted-foreground">{{ row.actor_id }}</span>
+      </template>
+
+      <template #cell-scopes="{ row }">
+        <div class="flex flex-wrap gap-1 md:max-w-[260px]">
+          <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
+            {{ scope }}
+          </Badge>
         </div>
-      </CardContent>
-    </Card>
+      </template>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t("settings.tokens.list.title") }}
-        </CardTitle>
-        <CardDescription>
-          {{ $t("settings.tokens.list.count", { active: activeCount, total: tokens.length }) }}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <DataTable
-          state-key="tokens"
-          :columns="columns"
-          :rows="sortedTokens"
-          :row-key="(token) => token.id"
-          :loading="tokensQuery.loading.value"
-          :error="tokensQuery.error.value"
-          :has-data="tokensQuery.data.value !== undefined"
-          searchable
-          :search-placeholder="$t('common.actions.search')"
-          :empty-title="$t('settings.tokens.list.emptyTitle')"
-          :empty-description="$t('settings.tokens.list.emptyDescription')"
-          @retry="tokensQuery.refresh"
-        >
-          <template #cell-name="{ row }">
-            <div class="font-medium">{{ row.name || row.id }}</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
-          </template>
+      <template #cell-server_allowlist="{ row }">
+        <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+          <Badge v-for="node in row.server_allowlist" :key="node" variant="secondary" class="max-w-full">
+            <span v-if="unknownNode(node)" class="truncate font-mono text-destructive" :title="node">{{ $t('settings.access.unknownNode', { id: node }) }}</span>
+            <NodeLabel v-else :id="node" />
+          </Badge>
+        </div>
+        <span v-else class="text-xs text-muted-foreground">{{ $t("common.misc.all") }}</span>
+      </template>
 
-          <template #cell-actor="{ row }">
-            <span class="break-all font-mono text-xs text-muted-foreground">{{ row.actor_id }}</span>
-          </template>
+      <template #cell-created_at="{ row }">
+        <span class="tabular text-xs text-muted-foreground">
+          {{ row.created_at ? formatDateTime(row.created_at) : $t("common.misc.none") }}
+        </span>
+      </template>
 
-          <template #cell-scopes="{ row }">
-            <div class="flex flex-wrap gap-1 md:max-w-[260px]">
-              <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
-                {{ scope }}
-              </Badge>
-            </div>
-          </template>
+      <template #cell-status="{ row }">
+        <Badge :variant="tokenBadge(row)">
+          {{ isRevoked(row) ? $t("common.status.revoked") : $t("common.status.active") }}
+        </Badge>
+      </template>
 
-          <template #cell-server_allowlist="{ row }">
-            <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[200px]">
-              <Badge
-                v-for="node in row.server_allowlist"
-                :key="node"
-                variant="secondary"
-                class="font-mono"
-              >
-                {{ node }}
-              </Badge>
-            </div>
-            <Badge v-else variant="info">{{ $t("common.misc.all") }}</Badge>
-          </template>
-
-          <template #cell-created_at="{ row }">
-            <span class="tabular text-xs text-muted-foreground">
-              {{ row.created_at ? formatDateTime(row.created_at) : $t("common.misc.none") }}
-            </span>
-          </template>
-
-          <template #cell-status="{ row }">
-            <Badge :variant="tokenMeta(row).badgeVariant">
-              {{ isRevoked(row) ? $t("common.status.revoked") : $t("common.status.active") }}
-            </Badge>
-          </template>
-
-          <template #cell-actions="{ row }">
-            <div class="flex justify-end gap-1">
-              <Button
-                v-if="canAdmin && !isRevoked(row)"
-                variant="ghost"
-                size="sm"
-                @click="revokeTarget = row"
-              >
-                <ShieldOff class="size-4 text-destructive" aria-hidden="true" />
-                {{ $t("settings.tokens.list.revoke") }}
-              </Button>
-              <Button
-                v-if="canAdmin && isRevoked(row)"
-                variant="ghost"
-                size="sm"
-                class="text-destructive"
-                @click="deleteTarget = row"
-              >
-                <Trash2 class="size-4" aria-hidden="true" />
-                {{ $t("common.actions.delete") }}
-              </Button>
-            </div>
-          </template>
-        </DataTable>
-      </CardContent>
-    </Card>
+      <template #cell-actions="{ row }">
+        <RowMenu v-if="canAdmin" :name="row.name || row.id" :items="menuFor(row)" />
+      </template>
+    </DataTable>
 
     <!-- Create dialog -->
     <Dialog :open="formOpen" @update:open="onFormOpenChange">
@@ -613,6 +591,8 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
       :open="!!revokeTarget"
       :title="$t('settings.tokens.revokeTitle')"
       :description="$t('settings.tokens.revokeDescription', { name: revokeTarget?.name || revokeTarget?.id })"
+      :impact="[$t('settings.tokens.revokeImpact')]"
+      :typed-confirm="revokeTarget?.name || revokeTarget?.id"
       :confirm-label="$t('settings.tokens.list.revoke')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="revoking"
@@ -631,5 +611,5 @@ const columns = computed<DataTableColumn<TokenView>[]>(() => [
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"
       @confirm="confirmDelete"
     />
-  </div>
+  </section>
 </template>

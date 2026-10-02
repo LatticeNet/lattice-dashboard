@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
-  KeyRound,
+  Fingerprint,
   Lock,
   Pencil,
   Plug,
@@ -20,25 +20,22 @@ import {
   type OIDCProviderTestResult,
   type OIDCProviderUpsertRequest,
   type OIDCProviderView,
+  type UserView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { providerDeleteImpact } from "./ssoModel";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
 import { statusMeta } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
-import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -224,6 +221,70 @@ function confirmDisableLast() {
 const deleteTarget = ref<OIDCProviderView | undefined>();
 const deleting = ref(false);
 
+/*
+ * Who a provider delete can lock out (ssoModel.providerDeleteImpact). The
+ * accounts are read each time the dialog opens, so an account created since
+ * the page loaded is counted, and read again if user:admin arrives while it
+ * is open. Delete stays disabled until that read lands. Never polled, and
+ * only with user:admin.
+ */
+const canReadUsers = computed(() => auth.can("user:admin"));
+const dialogUsers = ref<UserView[] | undefined>();
+const usersReading = ref(false);
+let usersReadSeq = 0;
+
+async function readUsers(): Promise<void> {
+  const mine = ++usersReadSeq;
+  dialogUsers.value = undefined;
+  usersReading.value = true;
+  try {
+    const users = unwrap(await api.users.list(), "users");
+    if (mine === usersReadSeq) dialogUsers.value = users;
+  } catch {
+    // Left unread: the dialog says the accounts were not read and asks for the typed name.
+  } finally {
+    if (mine === usersReadSeq) usersReading.value = false;
+  }
+}
+
+watch(
+  [deleteTarget, canReadUsers],
+  ([target, canRead]) => {
+    if (target && canRead) void readUsers();
+  },
+  { immediate: true },
+);
+
+const deleteImpact = computed(() => {
+  const target = deleteTarget.value;
+  if (!target) return { lines: [] as string[], typed: false, waiting: false };
+  const impact = providerDeleteImpact({
+    targetId: target.id,
+    providers: providers.value,
+    users: dialogUsers.value,
+    canReadUsers: canReadUsers.value,
+    usersReading: usersReading.value,
+  });
+  const name = target.display_name || target.issuer;
+  const lines = impact.lines.map((line) => {
+    switch (line.kind) {
+      case "keep":
+        return t("settings.sso.deleteImpact.keep");
+      case "locked":
+        return t("settings.sso.deleteImpact.locked", { user: line.user });
+      case "maybeLocked":
+        return t("settings.sso.deleteImpact.maybeLocked", { user: line.user, name });
+      case "usersReading":
+        return t("settings.sso.deleteImpact.usersReading");
+      case "usersUnread":
+        return t("settings.sso.deleteImpact.usersUnread");
+      case "usersNoAccess":
+        return t("settings.sso.deleteImpact.usersNoAccess");
+    }
+  });
+  return { lines, typed: impact.typed, waiting: impact.waiting };
+});
+
 async function confirmDelete() {
   if (!deleteTarget.value) return;
   deleting.value = true;
@@ -241,8 +302,8 @@ async function confirmDelete() {
 
 // Shared status treatment: enabled→online (success), disabled→unknown (secondary);
 // secret set→online (success), missing→degraded (warning).
-const enabledMeta = (provider: OIDCProviderView) =>
-  statusMeta(provider.enabled ? "online" : "unknown");
+// Enabled is the normal state, so it stays quiet; a missing secret keeps its warning.
+const enabledBadge = (provider: OIDCProviderView): "outline" | "secondary" => (provider.enabled ? "outline" : "secondary");
 const secretMeta = (provider: OIDCProviderView) =>
   statusMeta(provider.has_secret ? "online" : "degraded");
 
@@ -284,167 +345,129 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
   { key: "allowed_domains", label: t("settings.sso.list.allowedDomains") },
   { key: "actions", label: t("settings.sso.list.actions"), align: "right" },
 ]);
+
+/* The proof line (design 23, section 3.1): read once, so no age promise. */
+const proof = useProof(providersQuery);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = providers.value.length;
+  const parts: ProofSegment[] = [{ key: "providers", text: t("settings.access.proof.providers", { n }, n) }];
+  if (n) parts.push({ key: "enabled", text: t("settings.access.proof.enabled", { n: providers.value.filter((provider) => provider.enabled).length }) });
+  return parts;
+});
+
+function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
+  return [
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(provider) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = provider) },
+  ];
+}
 </script>
 
 <template>
-  <div class="page-narrow p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('settings.sso.title')"
-      :description="$t('settings.sso.description')"
-    >
-      <template #status>
-        <FreshnessLabel :last-updated="providersQuery.lastUpdated.value" :poll-ms="providersQuery.pollMs" />
-      </template>
-      <template #actions>
-        <Button variant="outline" size="sm" as-child>
+  <!-- One layer of the Access page (design 23, section 4.6): the page owns the heading and the tab row. -->
+  <section class="space-y-4">
+    <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+      <div class="min-w-0 space-y-1">
+        <p class="max-w-prose text-sm text-muted-foreground">{{ $t("settings.sso.explainer.body") }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="providersQuery.refresh" />
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" size="sm" as-child>
           <a :href="SSO_GUIDE_URL" target="_blank" rel="noreferrer">
             <ExternalLink class="size-4" aria-hidden="true" />
             {{ $t("settings.sso.guide") }}
           </a>
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          :disabled="providersQuery.refreshing.value"
-          @click="providersQuery.refresh"
-        >
+        <Button variant="outline" size="sm" :disabled="providersQuery.refreshing.value" @click="providersQuery.refresh">
           <RefreshCw :class="cn('size-4', providersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t("common.actions.refresh") }}
         </Button>
-        <Button v-if="canAdmin" size="sm" @click="openCreate">
+        <Button v-if="canAdmin && providers.length" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t("settings.sso.newProvider") }}
         </Button>
+      </div>
+    </div>
+
+    <DataTable
+      state-key="providers"
+      :columns="columns"
+      :rows="sortedProviders"
+      :row-key="(provider) => provider.id"
+      :loading="providersQuery.loading.value"
+      :error="providersQuery.error.value"
+      :has-data="providersQuery.data.value !== undefined"
+      :searchable="providers.length > 6"
+      :expression-filter="false"
+      :search-placeholder="$t('common.actions.search')"
+      :empty-title="$t('settings.sso.list.emptyTitle')"
+      :empty-description="$t('settings.sso.list.emptyDescription')"
+      @retry="providersQuery.refresh"
+    >
+      <template #empty>
+        <EmptyState :icon="Fingerprint" :title="$t('settings.sso.list.emptyTitle')" :description="$t('settings.sso.list.emptyDescription')">
+          <Button v-if="canAdmin" size="sm" @click="openCreate">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t("settings.sso.newProvider") }}
+          </Button>
+        </EmptyState>
       </template>
-    </PageHeader>
 
-    <Card class="border-primary/30 bg-primary/5">
-      <CardContent class="flex items-start gap-3 p-4">
-        <ShieldCheck class="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
-        <div class="space-y-1 text-sm">
-          <p class="font-medium">{{ $t("settings.sso.explainer.title") }}</p>
-          <p class="text-muted-foreground">
-            {{ $t("settings.sso.explainer.body") }}
-          </p>
-          <a
-            :href="SSO_GUIDE_URL"
-            target="_blank"
-            rel="noreferrer"
-            class="inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline"
-          >
-            {{ $t("settings.sso.explainer.guideLink") }}
-            <ExternalLink class="size-3.5" aria-hidden="true" />
-          </a>
+      <template #cell-display_name="{ row }">
+        <div class="font-medium">{{ row.display_name || row.issuer }}</div>
+        <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+      </template>
+
+      <template #cell-issuer="{ row }">
+        <!-- A width of its own, so the scrolling table at 375 does not wrap a URL one letter per line. -->
+        <span class="line-clamp-2 block w-48 break-all font-mono text-xs text-muted-foreground lg:w-60" :title="row.issuer">{{ row.issuer }}</span>
+      </template>
+
+      <template #cell-client_id="{ row }">
+        <span class="line-clamp-2 block w-40 break-all font-mono text-xs text-muted-foreground lg:w-44" :title="row.client_id">{{ row.client_id }}</span>
+      </template>
+
+      <template #cell-secret="{ row }">
+        <Badge :variant="secretMeta(row).badgeVariant">
+          <Lock v-if="row.has_secret" class="size-3" aria-hidden="true" />
+          <Unlock v-else class="size-3" aria-hidden="true" />
+          {{ row.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
+        </Badge>
+      </template>
+
+      <template #cell-status="{ row }">
+        <Badge :variant="enabledBadge(row)">
+          {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
+        </Badge>
+      </template>
+
+      <template #cell-scopes="{ row }">
+        <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+          <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
+            {{ scope }}
+          </Badge>
         </div>
-      </CardContent>
-    </Card>
+        <span v-else class="text-xs text-muted-foreground">{{ $t("common.misc.none") }}</span>
+      </template>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <KeyRound class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t("settings.sso.list.title") }}
-        </CardTitle>
-        <CardDescription>
-          {{ $t("settings.sso.list.count", { count: providers.length }) }}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <DataTable
-          state-key="providers"
-          :columns="columns"
-          :rows="sortedProviders"
-          :row-key="(provider) => provider.id"
-          :loading="providersQuery.loading.value"
-          :error="providersQuery.error.value"
-          :has-data="providersQuery.data.value !== undefined"
-          searchable
-          :search-placeholder="$t('common.actions.search')"
-          :empty-title="$t('settings.sso.list.emptyTitle')"
-          :empty-description="$t('settings.sso.list.emptyDescription')"
-          @retry="providersQuery.refresh"
-        >
-          <template #cell-display_name="{ row }">
-            <div class="font-medium">{{ row.display_name || row.issuer }}</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
-          </template>
+      <template #cell-allowed_domains="{ row }">
+        <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
+          <Badge
+            v-for="domain in row.allowed_domains"
+            :key="domain"
+            variant="outline"
+            class="font-mono"
+          >
+            {{ domain }}
+          </Badge>
+        </div>
+        <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
+      </template>
 
-          <template #cell-issuer="{ row }">
-            <span
-              class="break-all font-mono text-xs text-muted-foreground md:line-clamp-2 md:max-w-[240px]"
-              :title="row.issuer"
-            >{{ row.issuer }}</span>
-          </template>
-
-          <template #cell-client_id="{ row }">
-            <span
-              class="break-all font-mono text-xs text-muted-foreground md:max-w-[180px]"
-              :title="row.client_id"
-            >{{ row.client_id }}</span>
-          </template>
-
-          <template #cell-secret="{ row }">
-            <Badge :variant="secretMeta(row).badgeVariant">
-              <Lock v-if="row.has_secret" class="size-3" aria-hidden="true" />
-              <Unlock v-else class="size-3" aria-hidden="true" />
-              {{ row.has_secret ? $t("common.status.set") : $t("common.status.missing") }}
-            </Badge>
-          </template>
-
-          <template #cell-status="{ row }">
-            <Badge :variant="enabledMeta(row).badgeVariant">
-              {{ row.enabled ? $t("common.status.enabled") : $t("common.status.disabled") }}
-            </Badge>
-          </template>
-
-          <template #cell-scopes="{ row }">
-            <div v-if="(row.scopes ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
-              <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
-                {{ scope }}
-              </Badge>
-            </div>
-            <span v-else class="text-xs text-muted-foreground">{{ $t("common.misc.none") }}</span>
-          </template>
-
-          <template #cell-allowed_domains="{ row }">
-            <div v-if="(row.allowed_domains ?? []).length" class="flex flex-wrap gap-1 md:max-w-[200px]">
-              <Badge
-                v-for="domain in row.allowed_domains"
-                :key="domain"
-                variant="outline"
-                class="font-mono"
-              >
-                {{ domain }}
-              </Badge>
-            </div>
-            <span v-else class="text-xs text-muted-foreground">{{ $t("settings.sso.list.anyDomain") }}</span>
-          </template>
-
-          <template #cell-actions="{ row }">
-            <div class="flex justify-end gap-1">
-              <Button
-                v-if="canAdmin"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('common.actions.edit')"
-                @click="openEdit(row)"
-              >
-                <Pencil class="size-4" />
-              </Button>
-              <Button
-                v-if="canAdmin"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('common.actions.delete')"
-                @click="deleteTarget = row"
-              >
-                <Trash2 class="size-4 text-destructive" />
-              </Button>
-            </div>
-          </template>
-        </DataTable>
-      </CardContent>
-    </Card>
+      <template #cell-actions="{ row }">
+        <RowMenu v-if="canAdmin" :name="row.display_name || row.id" :items="menuFor(row)" />
+      </template>
+    </DataTable>
 
     <!-- Create / Edit dialog -->
     <Dialog v-model:open="formOpen">
@@ -632,12 +655,16 @@ const columns = computed<DataTableColumn<OIDCProviderView>[]>(() => [
     <ConfirmDialog
       :open="!!deleteTarget"
       :title="$t('settings.sso.deleteTitle')"
-      :description="$t('settings.sso.deleteDescription', { name: deleteTarget?.display_name || deleteTarget?.issuer })"
+      :description="$t('settings.sso.deleteDescriptionShort', { name: deleteTarget?.display_name || deleteTarget?.issuer })"
+      :impact="deleteImpact.lines"
+      :impact-title="$t('settings.sso.deleteImpact.title')"
+      :typed-confirm="deleteImpact.typed ? deleteTarget?.display_name || deleteTarget?.issuer : undefined"
+      :confirm-disabled="deleteImpact.waiting"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"
       @confirm="confirmDelete"
     />
-  </div>
+  </section>
 </template>

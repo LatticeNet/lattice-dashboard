@@ -701,6 +701,8 @@ const postureFilter = computed<PostureFilter>({
 });
 
 const counts = computed(() => coverageCounts(states.value, scopeOf, now.value));
+/** No node list was ever read (a failed poll keeps the last good one). */
+const nodesNotRead = computed(() => !!nodesQuery.error.value && !nodesQuery.data.value);
 const postureChipCounts = computed<Record<PostureFilter, number>>(() => ({ all: states.value.length, ...postures.value }));
 const visibleStates = computed(() =>
   filterByCoverage(
@@ -782,6 +784,19 @@ function rowReveal(state: NodeGuardState) {
 }
 
 const POSTURE_KEY: Record<SshPosture, string> = { secured: "secured", password_open: "passwordOpen", partial: "partial", unknown: "unknown" };
+
+/**
+ * The posture badge's word. "secured" beside an amber legacy port on the same
+ * row read as a contradiction (design 23, 4.4): the badge only ever meant
+ * password login is off, so on such a row it says that.
+ */
+function postureLabelKey(nodeId: string): string {
+  const posture = postureOf(nodeId).posture;
+  if (posture === "secured" && evidence.value.get(nodeId)?.sshd?.kind === "legacy") {
+    return "networking.sshGuard.posture.securedPasswordOff";
+  }
+  return `networking.sshGuard.posture.${POSTURE_KEY[posture]}`;
+}
 
 /**
  * Secured is the outline badge in the success colour rather than the filled
@@ -1242,7 +1257,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         >
           <div class="min-w-0 flex-1 basis-40">
             <p class="truncate text-sm font-medium" :title="state.nodeId">{{ state.name || state.nodeId }}</p>
-            <p class="truncate font-mono text-xs text-muted-foreground">{{ state.nodeId }}</p>
+            <p v-if="state.name" class="truncate font-mono text-xs text-muted-foreground">{{ state.nodeId }}</p>
           </div>
           <div
             v-if="revertDeadline(state)"
@@ -1272,15 +1287,31 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
       </ul>
     </section>
 
+    <!-- Without the node list the board holds only the nodes that have SSH
+         Guard history, so the chips count part of the fleet. Said here,
+         beside the counts it qualifies; "Not armed" is mostly the nodes
+         that are missing, so it prints no count at all. -->
+    <p
+      v-if="states.length && nodesNotRead"
+      class="text-xs text-warning-text"
+      data-testid="nodes-not-read"
+    >
+      {{ $t('networking.sshGuard.coverage.nodesNotRead', { n: states.length }) }}
+    </p>
     <!-- Coverage chips: the filter and the count are the same control, so
          they can never disagree. -->
-    <!-- Two chip rows. Posture first: it is the triage entry point, and the
-         one password-open chip is what an operator asking "which nodes are
-         not secure" clicks. Arm history second: what is still in motion.
-         The two compose. -->
+    <!-- Two chip groups in one strip. Posture first: it is the triage entry
+         point, and the one password-open chip is what an operator asking
+         "which nodes are not secure" clicks. Arm history second: what is
+         still in motion. The two compose. At phone width the strip scrolls
+         sideways, edge to edge, instead of wrapping into five lines. -->
     <div
       v-if="states.length"
-      class="flex flex-wrap gap-1"
+      class="flex items-center gap-1 max-sm:-mx-4 max-sm:overflow-x-auto max-sm:px-4 max-sm:pb-1 sm:flex-wrap sm:gap-y-1.5"
+      data-testid="chip-strip"
+    >
+    <div
+      class="flex shrink-0 gap-1 sm:flex-wrap"
       role="group"
       :aria-label="$t('networking.sshGuard.coverage.postureLabel')"
       data-testid="posture-chips"
@@ -1292,7 +1323,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :aria-pressed="postureFilter === key"
         :title="key === 'all' ? undefined : $t(`networking.sshGuard.posture.${POSTURE_KEY[key]}Title`)"
         :class="cn(
-          'board-chip inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           postureFilter === key
             ? 'border-primary bg-primary/10 text-primary'
             : key === 'password_open' || key === 'partial'
@@ -1306,9 +1337,9 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         <span class="font-mono tabular">{{ postureChipCounts[key] }}</span>
       </button>
     </div>
+    <span aria-hidden="true" class="mx-1 h-5 w-px shrink-0 bg-border" />
     <div
-      v-if="states.length"
-      class="flex flex-wrap gap-1"
+      class="flex shrink-0 gap-1 sm:flex-wrap"
       role="group"
       :aria-label="$t('networking.sshGuard.coverage.filterLabel')"
       data-testid="history-chips"
@@ -1320,7 +1351,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :aria-pressed="coverageFilter === key"
         :title="key === 'reverting' || key === 'armPending' ? $t(`networking.sshGuard.coverage.covers.${key}`) : undefined"
         :class="cn(
-          'board-chip inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+          'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           coverageFilter === key
             ? 'border-primary bg-primary/10 text-primary'
             : 'border-border text-muted-foreground hover:bg-muted/40',
@@ -1328,8 +1359,12 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         @click="coverageFilter = key"
       >
         {{ $t(`networking.sshGuard.coverage.filter.${key}`) }}
-        <span class="font-mono tabular">{{ counts[key] }}</span>
+        <!-- "Not armed" and "Excluded" are mostly the nodes with no history,
+             which the board does not hold without the node list; a count
+             would disagree with the rows the chip filters to. -->
+        <span class="font-mono tabular">{{ (key === 'open' || key === 'excluded') && nodesNotRead ? $t('common.proof.notReadBare') : counts[key] }}</span>
       </button>
+    </div>
     </div>
 
     <DataState
@@ -1459,7 +1494,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                   :data-posture="postureOf(state.nodeId).posture"
                 >
                   <Lock v-if="postureOf(state.nodeId).posture === 'secured'" aria-hidden="true" />
-                  {{ $t(`networking.sshGuard.posture.${POSTURE_KEY[postureOf(state.nodeId).posture]}`) }}
+                  {{ $t(postureLabelKey(state.nodeId)) }}
                 </Badge>
                 <!-- HISTORY: what became of the last arm plan, as one muted
                      line. A stage still in motion keeps its word so the next

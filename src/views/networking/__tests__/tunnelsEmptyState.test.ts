@@ -35,26 +35,28 @@ test("EmptyState carries a notice, and renders it above the steps", () => {
   assert.match(emptyState.slice(notice - 200, notice), /text-left/, "the notice is not left-aligned");
 });
 
-test("the Tunnels no-demo sentence is a notice on the empty state, not a paragraph after the button", () => {
-  const block = tunnels.slice(tunnels.indexOf("<EmptyState"), tunnels.indexOf("</EmptyState>"));
-  assert.ok(block.length > 0, "TunnelsView no longer renders an EmptyState");
-  assert.match(block, /<template #notice>/);
-  assert.match(block, /keypath="networking\.tunnels\.noDemo"/);
-  assert.doesNotMatch(
-    tunnels,
-    /text-center[^>]*>\s*\{\{ \$t\('networking\.tunnels\.noDemo'\) \}\}/,
-    "the centred paragraph after the button is back",
+test("the Tunnels no-demo sentence leads the empty state, above the checklist and the button", () => {
+  const block = tunnels.slice(tunnels.indexOf("<SetupChecklist"), tunnels.indexOf("</SetupChecklist>"));
+  assert.ok(block.length > 0, "TunnelsView no longer renders its setup checklist");
+  assert.match(block, /<template #description>/);
+  assert.match(block, /keypath="networking\.tunnelsPage\.emptyDescription"/);
+  // The button is the checklist's default slot, so it reads after the caveat.
+  assert.ok(block.indexOf("#description") < block.indexOf("networking.tunnels.newTunnel"));
+  const checklist = readFileSync(new URL("../../../components/networking/SetupChecklist.vue", import.meta.url), "utf8");
+  assert.ok(
+    checklist.indexOf('<slot name="description" />') < checklist.indexOf("<ul"),
+    "the description no longer renders above the checklist",
   );
-  // The button still exists, and now reads after the caveat rather than before it.
-  assert.ok(block.indexOf("#notice") < block.indexOf("networking.tunnels.newTunnel"));
 });
 
 test("the credentials path is set as a path, in one place, in both locales", () => {
   assert.match(tunnels, /const CREDENTIALS_PATH = "\/etc\/cloudflared\/<tunnel id>\.json";/);
   assert.match(tunnels, /<code class="whitespace-nowrap font-mono[^"]*">\{\{ CREDENTIALS_PATH \}\}<\/code>/);
   for (const [locale, messages] of [["en", enNetworking], ["zh-CN", zhNetworking]] as const) {
-    const copy = (messages as { networking: { tunnels: { noDemo: string } } }).networking.tunnels.noDemo;
-    assert.match(copy, /\{path\}/, `${locale} noDemo lost its path slot`);
-    assert.doesNotMatch(copy, /\/etc\/cloudflared/, `${locale} noDemo still hard-codes the path in prose`);
+    const page = (messages as { networking: { tunnelsPage: { emptyDescription: string; setup: { cloudflared: string } } } }).networking.tunnelsPage;
+    for (const copy of [page.emptyDescription, page.setup.cloudflared]) {
+      assert.match(copy, /\{path\}/, `${locale} tunnels copy lost its path slot`);
+      assert.doesNotMatch(copy, /\/etc\/cloudflared/, `${locale} tunnels copy hard-codes the path in prose`);
+    }
   }
 });

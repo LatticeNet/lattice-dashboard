@@ -46,11 +46,11 @@ const title = computed(() => {
   if (!c) return props.isSelf ? t("networking.matrix.selfTitle") : t("networking.matrix.noneTitle");
   const proto = c.protocols?.length ? c.protocols.join("/") : t("common.misc.all");
   const ports = c.ports?.length ? `:${c.ports.join(",")}` : "";
-  return t("networking.matrix.cellTitle", {
-    action: c.action,
-    proto: `${proto}${ports}`,
-    count: c.rule_count,
-  });
+  return t(
+    "networking.matrix.cellTitle",
+    { action: c.action, proto: `${proto}${ports}`, count: c.rule_count },
+    c.rule_count,
+  );
 });
 
 const subLabel = computed(() => {

@@ -16,7 +16,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { ShieldCheck, TriangleAlert } from "lucide-vue-next";
+import { TriangleAlert } from "lucide-vue-next";
 
 import { api, type CapabilityImpact } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -24,8 +24,9 @@ import { useAuthStore } from "@/stores/auth";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
-import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import TrustPosture from "@/components/fleet/TrustPosture.vue";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,24 @@ const query = useAsyncData<CapabilityImpact[] | undefined>(
 
 const capabilities = computed(() => query.data.value ?? []);
 
+/* The proof line (design 23, section 3.1): the gates as last read. */
+const proof = useProof(query);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const enforced = capabilities.value.filter((c) => c.enforced);
+  const parts: ProofSegment[] = [
+    { key: "capabilities", text: t("settings.capabilities.proof.capabilities", { n: capabilities.value.length }, capabilities.value.length) },
+    { key: "enforced", text: t("settings.capabilities.proof.enforced", { n: enforced.length }) },
+  ];
+  // The changing capabilities still open: the work remaining, not a fault, so
+  // it carries no state colour. Static configuration belongs on this line,
+  // not in a numbers strip (design 23, section 3.3).
+  const ungated = capabilities.value.filter((c) => c.mutates && !c.enforced).length;
+  if (ungated) parts.push({ key: "ungated", text: t("settings.capabilities.proof.ungated", { n: ungated }, ungated) });
+  const refusing = enforced.reduce((sum, c) => sum + c.refuse_count, 0);
+  if (refusing) parts.push({ key: "refusing", tone: "warning", text: t("settings.capabilities.proof.refusing", { n: refusing }, refusing) });
+  return parts;
+});
+
 /**
  * Ordered by how much attention each one wants: live gates first, because those
  * are the ones currently refusing anything; then the ones that change nodes and
@@ -61,23 +80,6 @@ const ordered = computed(() =>
     return rank(a) - rank(b) || a.capability.localeCompare(b.capability);
   }),
 );
-
-const summary = computed<Metric[]>(() => {
-  const live = capabilities.value.filter((c) => c.enforced);
-  const mutating = capabilities.value.filter((c) => c.mutates);
-  return [
-    { key: "live", label: t("settings.capabilities.metrics.live"), value: live.length, icon: ShieldCheck },
-    {
-      key: "ungated",
-      label: t("settings.capabilities.metrics.ungated"),
-      value: mutating.filter((c) => !c.enforced).length,
-      // Not a fault: an ungated capability behaves the way it always did. It is
-      // worth counting because it is the work remaining, not because it is broken.
-      tone: "muted",
-    },
-    { key: "total", label: t("settings.capabilities.metrics.total"), value: capabilities.value.length },
-  ];
-});
 
 const pending = ref("");
 const confirmOpen = ref(false);
@@ -134,14 +136,14 @@ async function applyToggle() {
        control at the other with a thousand pixels of nothing between, and the
        eye has to cross the screen to connect them. -->
   <div class="page-narrow p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('settings.capabilities.title')"
-      :description="$t('settings.capabilities.description')"
-    />
+    <PageHeader :title="$t('settings.capabilities.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('settings.capabilities.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="query.refresh" />
+      </template>
+    </PageHeader>
 
     <TrustPosture />
-
-    <MetricStrip :metrics="summary" :columns="3" />
 
     <!--
       The honesty note (2026-09-01 audit follow-up): this page is where an
@@ -176,7 +178,9 @@ async function applyToggle() {
             <table class="data-grid min-w-[40rem]">
               <thead>
                 <tr>
-                  <th scope="col">{{ $t('settings.capabilities.colCapability') }}</th>
+                  <!-- The fixed columns add up to 36.5rem; without a floor of its own the
+                       name got what was left of 40rem and read "netgu..." at 375. -->
+                  <th scope="col" class="min-w-[9rem]">{{ $t('settings.capabilities.colCapability') }}</th>
                   <th scope="col" class="w-[9rem]">{{ $t('settings.capabilities.colKind') }}</th>
                   <!-- Two numbers, two columns. One sentence per row put the
                        counts mid-row where they cannot be compared; as columns
@@ -209,7 +213,7 @@ async function applyToggle() {
                       capability.refuse_count === 0
                         ? 'text-muted-foreground'
                         : !capability.enforced && capability.allow_count === 0
-                          ? 'text-warning'
+                          ? 'text-warning-text'
                           : 'text-foreground',
                     )"
                     :title="capability.mutates && !capability.derived
@@ -217,6 +221,8 @@ async function applyToggle() {
                       : undefined"
                   >
                     {{ capability.refuse_count }}
+                    <!-- An open gate refuses nothing yet; the number is what turning it on would refuse. -->
+                    <span v-if="!capability.enforced" class="block text-xs text-muted-foreground">{{ $t('settings.capabilities.ifOn') }}</span>
                   </td>
                   <td>
                     <Badge :variant="capability.enforced ? 'success' : 'outline'">

@@ -7,7 +7,7 @@
  * <name>". A disabled item says why inline, because touch has no tooltip.
  * Dangerous items sit last, after a separator (chassisModel).
  */
-import { computed, type Component } from "vue";
+import { computed, ref, type Component } from "vue";
 import { useRouter, type RouteLocationRaw } from "vue-router";
 import { MoreHorizontal } from "lucide-vue-next";
 
@@ -48,17 +48,67 @@ const props = withDefaults(
 const router = useRouter();
 const sections = computed(() => rowMenuSections(props.items));
 
+/*
+ * RowMenu decides where focus goes when the menu closes; reka's own return is
+ * cancelled every time, through its public close-auto-focus event.
+ *
+ * - An item that runs puts focus on the trigger before its action, so a
+ *   dialog the action opens remembers the trigger and returns focus there.
+ *   Run from inside the menu, the dialog remembered the menu item, which is
+ *   gone by the time it closes, and focus fell to the page. Focus then stays
+ *   where the action left it (on the trigger, or in the dialog).
+ * - A click or focus outside the menu leaves focus where the user put it.
+ * - Any other close (Escape, a second click on the trigger) returns focus to
+ *   the trigger.
+ *
+ * Letting reka decide went wrong both ways: its late return focused the
+ * trigger after a dialog the item opened already held focus, and cancelling
+ * only that return left reka's own "interacted outside" flag set by the
+ * hand-made trigger focus, so the menu's next Escape dropped focus to the page.
+ */
+const trigger = ref<{ $el?: HTMLElement } | null>(null);
+let leaveFocus = false;
+
+function triggerEl(): HTMLElement | undefined {
+  return trigger.value?.$el;
+}
+
+function onOpenChange(open: boolean): void {
+  if (open) leaveFocus = false;
+}
+
+function onInteractOutside(event: Event): void {
+  const target = event.target;
+  if (target instanceof Node && triggerEl()?.contains(target)) return;
+  leaveFocus = true;
+}
+
 function select(item: RowMenuItem): void {
   if (item.disabled) return;
-  if (item.to) router.push(item.to).catch(() => {});
-  else item.run?.();
+  if (item.to) {
+    router.push(item.to).catch(() => {});
+    return;
+  }
+  if (!item.run) return;
+  triggerEl()?.focus();
+  leaveFocus = true;
+  item.run();
+}
+
+function onCloseAutoFocus(event: Event): void {
+  event.preventDefault();
+  if (leaveFocus) return;
+  // Late, as reka does it: the menu content is still being torn down.
+  const el = triggerEl();
+  setTimeout(() => el?.focus(), 0);
 }
 </script>
 
 <template>
-  <DropdownMenu v-if="sections.safe.length || sections.danger.length" :modal="false">
+  <DropdownMenu v-if="sections.safe.length || sections.danger.length" :modal="false" @update:open="onOpenChange">
     <DropdownMenuTrigger as-child>
       <Button
+        ref="trigger"
         variant="ghost"
         size="icon-sm"
         type="button"
@@ -70,7 +120,12 @@ function select(item: RowMenuItem): void {
         <MoreHorizontal aria-hidden="true" />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent :align="align" class="w-56">
+    <DropdownMenuContent
+      :align="align"
+      class="w-56"
+      @interact-outside="onInteractOutside"
+      @close-auto-focus="onCloseAutoFocus"
+    >
       <DropdownMenuItem
         v-for="item in sections.safe"
         :key="item.key"

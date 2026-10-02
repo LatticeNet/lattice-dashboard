@@ -91,7 +91,7 @@ function onDirection(value: unknown) {
           <tr class="bg-muted/40">
             <th
               scope="col"
-              class="sticky left-0 z-10 min-w-[10rem] bg-muted/40 px-3 py-2 text-left text-xs font-medium text-muted-foreground"
+              class="sticky left-0 z-10 min-w-[7rem] sm:min-w-[10rem] bg-muted/40 px-3 py-2 text-left text-xs font-medium text-muted-foreground"
             >
               <span class="inline-flex items-center gap-1">
                 {{ $t("networking.matrix.sourceAxis") }}
@@ -110,6 +110,7 @@ function onDirection(value: unknown) {
             <th
               scope="col"
               class="min-w-[4.5rem] border-l border-border px-2 py-2 text-center text-xs font-medium text-muted-foreground"
+              :title="$t('networking.matrix.externalHint')"
             >
               {{ $t("networking.matrix.externalCol") }}
             </th>
@@ -119,7 +120,7 @@ function onDirection(value: unknown) {
           <tr v-for="src in groups" :key="`row-${src.id}`" class="border-t border-border">
             <th
               scope="row"
-              class="sticky left-0 z-10 min-w-[10rem] bg-card px-3 py-2 text-left"
+              class="sticky left-0 z-10 min-w-[7rem] sm:min-w-[10rem] bg-card px-3 py-2 text-left"
             >
               <GroupChip :name="src.name" :color="src.color" />
             </th>
@@ -132,8 +133,8 @@ function onDirection(value: unknown) {
               />
             </td>
             <td class="border-l border-border px-2 py-2 text-center">
-              <Badge v-if="externalFor(src.id) > 0" variant="secondary" class="tabular-nums">
-                {{ externalFor(src.id) }}
+              <Badge v-if="externalFor(src.id) > 0" variant="secondary" class="whitespace-nowrap tabular-nums" :title="$t('networking.matrix.externalHint')">
+                {{ $t("networking.matrix.externalRules", { n: externalFor(src.id) }, externalFor(src.id)) }}
               </Badge>
               <span v-else class="text-muted-foreground/50">{{ $t("common.misc.none") }}</span>
             </td>

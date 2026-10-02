@@ -6,6 +6,9 @@
  * ApiError, unwrap, the CSRF helpers); only `api` is replaced, and only the
  * calls SSH Guard and its stores make are implemented. Anything else throws,
  * loudly, so a new call path is noticed rather than silently fed nothing.
+ *
+ * Fixture switches on the page's query string: `?fail=nodes` makes the fleet
+ * read answer 502 (a failed read shows no count); `?empty` serves no node.
  */
 import { ApiError } from "@/lib/api/client";
 import type {
@@ -25,6 +28,10 @@ import type {
 
 import { NO_KNOCK_NODE, SUPERSEDED_CODE, fixtureId, fixtureIso, toApiNodes } from "./sshGuardFixture";
 import { state } from "./fixtureState";
+
+const harnessFlags = new URLSearchParams(window.location.search);
+const FAIL_NODES = harnessFlags.get("fail") === "nodes";
+const NO_NODES = harnessFlags.has("empty");
 
 export * from "@/lib/api/index";
 
@@ -228,7 +235,12 @@ export const api = {
     },
   },
   nodes: {
-    list: () => delay({ nodes: toApiNodes(state.nodes) as Node[] }),
+    list: () =>
+      FAIL_NODES
+        ? delay(undefined).then(() => {
+            throw new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (nodes)");
+          })
+        : delay({ nodes: NO_NODES ? [] : (toApiNodes(state.nodes) as Node[]) }),
     capabilities: () => delay({ capabilities: state.capabilities.map((c) => ({ ...c })), known: [] }),
     setCapability: async (input: { node_id: string; capability: string; state: "enrolled" | "excluded" | ""; reason?: string }) => {
       await delay(undefined);

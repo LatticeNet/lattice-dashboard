@@ -17,18 +17,15 @@ import { cn } from "@/lib/utils";
 import ScopePicker from "@/components/settings/ScopePicker.vue";
 import { SCOPE_CATALOG } from "@/lib/scopes";
 
-import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { useProof } from "@/composables/useProof";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
+import EmptyState from "@/components/common/EmptyState.vue";
+import NodeLabel from "@/components/common/NodeLabel.vue";
+import { useNodeDirectory } from "@/composables/useNodeDirectory";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -43,6 +40,13 @@ import {
 } from "@/components/ui/dialog";
 
 const { t } = useI18n();
+
+/** The Access page's node list, when it was read: a confined id it does not hold is named as unknown, in full. */
+const nodeDirectory = useNodeDirectory();
+function unknownNode(id: string): boolean {
+  const list = nodeDirectory?.value;
+  return !!list && !list.some((node) => node.id === id);
+}
 const auth = useAuthStore();
 const canAdmin = computed(() => auth.can("user:admin"));
 const isSuperuser = computed(() => auth.scopes.includes("*"));
@@ -224,104 +228,131 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
   },
   { key: "actions", label: t("settings.users.list.actions"), align: "right" },
 ]);
+
+/* The proof line (design 23, section 3.1): read once, so no age promise. */
+const proof = useProof(usersQuery);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = users.value.length;
+  const parts: ProofSegment[] = [{ key: "users", text: t("settings.access.proof.users", { n }, n) }];
+  if (n) {
+    const admins = users.value.filter((user) => user.scopes.includes("*")).length;
+    const totp = users.value.filter((user) => user.totp_enabled).length;
+    parts.push({ key: "admins", text: t("settings.access.proof.admins", { n: admins }, admins) });
+    parts.push({ key: "totp", text: t("settings.access.proof.totp", { n: totp, total: n }) });
+  }
+  return parts;
+});
+
+/*
+ * The server refuses two deletes (handleDeleteUser): the account you are
+ * signed in with, and the last full admin. The menu says so on the item
+ * instead of letting the typed confirm end in a 403 or a 409.
+ */
+const fullAdmins = computed(() => users.value.filter((user) => user.scopes.includes("*")).length);
+function deleteBlocked(user: UserView): string | undefined {
+  if (user.id === auth.principal?.actor_id) return t("settings.users.deleteSelf");
+  if (user.scopes.includes("*") && fullAdmins.value <= 1) return t("settings.users.deleteLastAdmin");
+  return undefined;
+}
+
+function menuFor(user: UserView): RowMenuItem[] {
+  const blocked = deleteBlocked(user);
+  return [
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(user) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, disabled: !!blocked, reason: blocked, run: () => (deleteTarget.value = user) },
+  ];
+}
 </script>
 
 <template>
-  <div class="page-narrow p-4 sm:p-6 space-y-6">
-    <PageHeader :title="$t('settings.users.title')" :description="$t('settings.users.description')">
-      <template #status>
-        <FreshnessLabel :last-updated="usersQuery.lastUpdated.value" :poll-ms="usersQuery.pollMs" />
-      </template>
-      <template #actions>
+  <!-- One layer of the Access page (design 23, section 4.6): the page owns the heading and the tab row. -->
+  <section class="space-y-4">
+    <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+      <div class="min-w-0 space-y-1">
+        <p class="text-sm text-muted-foreground">{{ $t('settings.users.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="usersQuery.refresh" />
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" :disabled="usersQuery.refreshing.value" @click="usersQuery.refresh">
           <RefreshCw :class="cn('size-4', usersQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button v-if="canAdmin" size="sm" @click="openCreate">
+        <Button v-if="canAdmin && users.length" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('settings.users.newUser') }}
         </Button>
+      </div>
+    </div>
+
+    <DataTable
+      state-key="users"
+      :columns="columns"
+      :rows="sortedUsers"
+      :row-key="(user) => user.id"
+      :loading="usersQuery.loading.value"
+      :error="usersQuery.error.value"
+      :has-data="usersQuery.data.value !== undefined"
+      :searchable="users.length > 6"
+      :expression-filter="false"
+      :search-placeholder="$t('common.actions.search')"
+      :empty-title="$t('settings.users.list.emptyTitle')"
+      :empty-description="$t('settings.users.list.emptyDescription')"
+      @retry="usersQuery.refresh"
+    >
+      <template #empty>
+        <EmptyState :icon="UserCog" :title="$t('settings.users.list.emptyTitle')" :description="$t('settings.users.list.emptyDescription')">
+          <Button v-if="canAdmin" size="sm" @click="openCreate">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t('settings.users.newUser') }}
+          </Button>
+        </EmptyState>
       </template>
-    </PageHeader>
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <UserCog class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('settings.users.list.title') }}
-        </CardTitle>
-        <CardDescription>{{ $t('settings.users.list.description') }}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <DataTable
-          state-key="users"
-          :columns="columns"
-          :rows="sortedUsers"
-          :row-key="(user) => user.id"
-          :loading="usersQuery.loading.value"
-          :error="usersQuery.error.value"
-          :has-data="usersQuery.data.value !== undefined"
-          searchable
-          :search-placeholder="$t('common.actions.search')"
-          :empty-title="$t('settings.users.list.emptyTitle')"
-          :empty-description="$t('settings.users.list.emptyDescription')"
-          @retry="usersQuery.refresh"
-        >
-          <template #cell-username="{ row }">
-            <div class="font-medium">{{ row.username }}</div>
-            <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
-          </template>
+      <template #cell-username="{ row }">
+        <div class="font-medium">{{ row.username }}</div>
+        <div class="font-mono text-xs text-muted-foreground">{{ shortId(row.id, 16) }}</div>
+      </template>
 
-          <template #cell-scopes="{ row }">
-            <Badge v-if="row.scopes.includes('*')" variant="default" class="font-mono">
-              {{ $t('settings.users.fullAdmin') }}
-            </Badge>
-            <div v-else class="flex flex-wrap gap-1 md:max-w-[320px]">
-              <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
-                {{ scope }}
-              </Badge>
-              <span v-if="!row.scopes.length" class="text-xs text-muted-foreground">{{ $t('settings.users.noScopes') }}</span>
-            </div>
-          </template>
+      <template #cell-scopes="{ row }">
+        <Badge v-if="row.scopes.includes('*')" variant="default" class="font-mono">
+          {{ $t('settings.users.fullAdmin') }}
+        </Badge>
+        <div v-else class="flex flex-wrap gap-1 md:max-w-[320px]">
+          <Badge v-for="scope in row.scopes" :key="scope" variant="outline" class="font-mono">
+            {{ scope }}
+          </Badge>
+          <span v-if="!row.scopes.length" class="text-xs text-muted-foreground">{{ $t('settings.users.noScopes') }}</span>
+        </div>
+      </template>
 
-          <template #cell-server_allowlist="{ row }">
-            <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[220px]">
-              <Badge v-for="node in row.server_allowlist" :key="node" variant="outline" class="font-mono">
-                {{ node }}
-              </Badge>
-            </div>
-            <span v-else class="text-xs text-muted-foreground">
-              {{ $t('settings.users.list.allNodes') }}
-            </span>
-          </template>
+      <template #cell-server_allowlist="{ row }">
+        <div v-if="row.server_allowlist?.length" class="flex flex-wrap gap-1 md:max-w-[220px]">
+          <Badge v-for="node in row.server_allowlist" :key="node" variant="outline" class="max-w-full">
+            <span v-if="unknownNode(node)" class="truncate font-mono text-destructive" :title="node">{{ $t('settings.access.unknownNode', { id: node }) }}</span>
+            <NodeLabel v-else :id="node" />
+          </Badge>
+        </div>
+        <span v-else class="text-xs text-muted-foreground">
+          {{ $t('settings.users.list.allNodes') }}
+        </span>
+      </template>
 
-          <template #cell-login="{ row }">
-            <div class="flex flex-wrap gap-1">
-              <Badge v-if="row.has_password" variant="secondary">{{ $t('settings.users.list.password') }}</Badge>
-              <Badge v-else variant="info">{{ $t('settings.users.list.ssoOnly') }}</Badge>
-              <Badge v-if="row.totp_enabled" variant="success">{{ $t('settings.users.list.totp') }}</Badge>
-            </div>
-          </template>
+      <template #cell-login="{ row }">
+        <div class="flex flex-wrap gap-1">
+          <Badge v-if="row.has_password" variant="secondary">{{ $t('settings.users.list.password') }}</Badge>
+          <Badge v-else variant="info">{{ $t('settings.users.list.ssoOnly') }}</Badge>
+          <Badge v-if="row.totp_enabled" variant="success">{{ $t('settings.users.list.totp') }}</Badge>
+        </div>
+      </template>
 
-          <template #cell-created_at="{ row }">
-            <span class="tabular text-xs text-muted-foreground">{{ row.created_at ? formatDateTime(row.created_at) : $t('common.misc.none') }}</span>
-          </template>
+      <template #cell-created_at="{ row }">
+        <span class="tabular text-xs text-muted-foreground">{{ row.created_at ? formatDateTime(row.created_at) : $t('common.misc.none') }}</span>
+      </template>
 
-          <template #cell-actions="{ row }">
-            <div class="flex justify-end gap-1">
-              <Button v-if="canAdmin" variant="ghost" size="sm" @click="openEdit(row)">
-                <Pencil class="size-4" aria-hidden="true" />
-                {{ $t('common.actions.edit') }}
-              </Button>
-              <Button v-if="canAdmin" variant="ghost" size="sm" @click="deleteTarget = row">
-                <Trash2 class="size-4 text-destructive" aria-hidden="true" />
-                {{ $t('common.actions.delete') }}
-              </Button>
-            </div>
-          </template>
-        </DataTable>
-      </CardContent>
-    </Card>
+      <template #cell-actions="{ row }">
+        <RowMenu v-if="canAdmin" :name="row.username" :items="menuFor(row)" />
+      </template>
+    </DataTable>
 
     <!-- Create / edit dialog -->
     <Dialog :open="formOpen" @update:open="(v) => (formOpen = v)">
@@ -414,11 +445,17 @@ const columns = computed<DataTableColumn<UserView>[]>(() => [
       :open="!!deleteTarget"
       :title="$t('settings.users.deleteTitle')"
       :description="$t('settings.users.deleteDescription', { name: deleteTarget?.username })"
+      :impact="deleteTarget ? [
+        $t('settings.users.deleteImpact.signIn', { name: deleteTarget.username }),
+        $t('settings.users.deleteImpact.tokens'),
+        $t('settings.users.deleteImpact.sso'),
+      ] : undefined"
+      :typed-confirm="deleteTarget?.username"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"
       @confirm="confirmDelete"
     />
-  </div>
+  </section>
 </template>

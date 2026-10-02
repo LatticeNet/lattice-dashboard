@@ -1,7 +1,20 @@
 <script setup lang="ts">
+/**
+ * Geo-Routing (design 23, section 4.4): one DNS apex answered by the nearest
+ * healthy node, rendered as a CoreDNS zone.
+ *
+ * While nothing real exists (no routing, or only the demo) the page leads
+ * with a checklist read from live state: answering nodes online with a
+ * public IP, coordinates on them, a node that runs Lattice's CoreDNS to load
+ * the zone, and, honestly, that the GeoLite2 file on that node cannot be
+ * checked. The demo row reads "preview, reaches no node", never a green
+ * "configured" beside "last applied: never". A row opens the routing in the
+ * sheet on `?open=`; Preview config, Edit and Delete sit in one row menu.
+ */
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
+import { useNow } from "@vueuse/core";
 import {
   AlertTriangle,
   FileCode2,
@@ -9,7 +22,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Route,
   Trash2,
 } from "lucide-vue-next";
 import {
@@ -21,26 +33,31 @@ import {
   type Node,
 } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
-import { isDemoObject, onlyDemos } from "@/lib/demo";
+import { isDemoObject } from "@/lib/demo";
+import { geoDeleteImpact, hasRealTime } from "./geoRoutingModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime, shortId } from "@/lib/format";
+import { formatAge, shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import { useProof } from "@/composables/useProof";
+import { useRouteOpen } from "@/composables/useRouteOpen";
+import { provideNodeDirectory } from "@/composables/useNodeDirectory";
+import { describeNodeStatus } from "@/lib/nodeStatus";
+import { proofReason } from "@/components/common/proofModel";
+import { isObservedEngine } from "./dnsExternalModel";
 import PageHeader from "@/components/common/PageHeader.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import DataState from "@/components/common/DataState.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
-import EmptyState from "@/components/common/EmptyState.vue";
+import NodeLabel from "@/components/common/NodeLabel.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import SetupChecklist, { type SetupItem } from "@/components/networking/SetupChecklist.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -64,48 +81,11 @@ import {
 
 type Strategy = "geoip" | "all-healthy";
 
-/**
- * Go's `omitempty` does not drop a zero time.Time, so a routing that was never
- * applied arrives as "0001-01-01T00:00:00Z" and formats into a real-looking
- * year-1 date instead of falling through to "never".
- */
-function hasRealTime(value?: string): boolean {
-  return !!value && !value.startsWith("0001");
-}
-
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
 const canRead = computed(() => auth.can("geo:read"));
 const canAdmin = computed(() => auth.can("geo:admin"));
 const canReadNodes = computed(() => auth.can("node:read"));
-
-/**
- * What an operator has to have before a geo-routing can be authored and
- * rendered, in the order they have to have it.
- *
- * A seeded example is the tempting alternative and the wrong one: a routing
- * has to name real node ids to be renderable at all, so a demo would be
- * indistinguishable from a live one on a control plane driving production
- * nodes. Teaching the loop costs an empty screen and risks nothing.
- */
-const prerequisites = computed(() => [
-  {
-    title: t("networking.geoRouting.prereqNodesTitle"),
-    detail: t("networking.geoRouting.prereqNodesDetail"),
-  },
-  {
-    title: t("networking.geoRouting.prereqGeoTitle"),
-    detail: t("networking.geoRouting.prereqGeoDetail"),
-  },
-  {
-    title: t("networking.geoRouting.prereqDnsNodeTitle"),
-    detail: t("networking.geoRouting.prereqDnsNodeDetail"),
-  },
-  {
-    title: t("networking.geoRouting.prereqDatabaseTitle"),
-    detail: t("networking.geoRouting.prereqDatabaseDetail"),
-  },
-]);
 
 const routesQuery = useAsyncData(
   (signal) => {
@@ -127,16 +107,6 @@ const nodesQuery = useAsyncData(
 
 const routes = computed(() => routesQuery.data.value ?? []);
 
-/**
- * Whether the only thing on this page is the demo. A control plane that drives
- * production nodes must not seed itself with fake rows, but geo-routing is the
- * one page here whose whole loop (author, render, checksum) touches no node at
- * all, so one honestly named record can show the loop working instead of an
- * empty screen. The explanation stands only while nothing real exists beside
- * it, and it names the delete call so the demo is never load-bearing.
- */
-const firstRun = computed(() => onlyDemos(routes.value.map((route) => route.name)));
-
 const nodes = computed(() => nodesQuery.data.value ?? []);
 
 const sortedRoutes = computed(() =>
@@ -144,36 +114,8 @@ const sortedRoutes = computed(() =>
 );
 
 function nodeName(id: string): string {
-  return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
+  return nodes.value.find((node) => node.id === id)?.name || id;
 }
-
-function strategyVariant(strategy: string): "info" | "secondary" {
-  return strategy === "geoip" ? "info" : "secondary";
-}
-
-/**
- * The routings table, through the shared DataTable.
- *
- * It was a hand-rolled `<table>` in an `overflow-x-auto`, which on a phone
- * showed Name, Hostname and Strategy and cut everything after them off past
- * the card edge with no scrollbar and no hint that a swipe was available. The
- * whole Actions cell went with it, including the delete button the first-run
- * copy tells the reader to use, so the page's own instruction pointed at a
- * control the reader could not see. DataTable stacks each row into a
- * definition list below `md`, which is the layout that keeps a nine-column row
- * readable at 375.
- */
-const columns = computed<DataTableColumn<GeoRouting>[]>(() => [
-  { key: "name", label: t("networking.geoRouting.colName"), sortable: true, searchable: true, value: (route) => route.name || route.id },
-  { key: "hostname", label: t("networking.geoRouting.colHostname"), sortable: true, searchable: true },
-  { key: "strategy", label: t("networking.geoRouting.colStrategy"), sortable: true, searchable: true },
-  { key: "nodes", label: t("networking.geoRouting.colNodes"), align: "right", sortable: true, value: (route) => route.node_ids?.length ?? 0 },
-  { key: "dns", label: t("networking.geoRouting.colDns"), align: "right", sortable: true, value: (route) => route.dns_node_ids?.length ?? 0 },
-  { key: "status", label: t("networking.geoRouting.colStatus"), sortable: true, value: (route) => route.status ?? "" },
-  { key: "lastApplied", label: t("networking.geoRouting.colLastApplied"), sortable: true, value: (route) => (hasRealTime(route.last_applied_at) ? route.last_applied_at : "") },
-  { key: "lastError", label: t("networking.geoRouting.colLastError"), value: (route) => route.last_error ?? "" },
-  { key: "actions", label: t("networking.geoRouting.colActions"), align: "right" },
-]);
 
 // ── Create / edit dialog ────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -331,174 +273,352 @@ async function openPlan(route: GeoRouting) {
 const continentEntries = computed(() =>
   Object.entries(plan.value?.continent_choice ?? {}).sort((a, b) => a[0].localeCompare(b[0])),
 );
+/* ------------------------------------------------------------------ */
+/* Head, attention, setup checklist, sheet (design 23, section 4.4)    */
+/* ------------------------------------------------------------------ */
+
+provideNodeDirectory(computed(() => nodesQuery.data.value));
+const proof = useProof(routesQuery);
+const sheet = useRouteOpen();
+const now = useNow({ interval: 60_000 });
+
+/** Self-host DNS, to say whether a routing's DNS node can serve its zone. Needs dns:admin. */
+const canReadDns = computed(() => auth.can("dns:admin"));
+const dnsQuery = useAsyncData(
+  (signal) => api.dns.deployments({ signal }).then((r) => unwrap(r, "deployments")),
+  { pollInterval: 60_000, immediate: canReadDns.value },
+);
+
+/** Nodes that run a CoreDNS Lattice deployed (the only engine that can load a rendered zone). */
+const dnsNodeIds = computed<Set<string> | null>(() => {
+  if (!canReadDns.value || dnsQuery.data.value === undefined) return null;
+  return new Set(dnsQuery.data.value.filter((dep) => !isObservedEngine(dep.engine)).map((dep) => dep.node_id));
+});
+
+const realRoutes = computed(() => routes.value.filter((route) => !isDemoObject(route.name)));
+const demoRoutes = computed(() => routes.value.filter((route) => isDemoObject(route.name)));
+
+type RouteState = "demo" | "failed" | "applied" | "unapplied";
+
+function routeState(route: GeoRouting): RouteState {
+  if (isDemoObject(route.name)) return "demo";
+  if (route.last_error) return "failed";
+  return hasRealTime(route.last_applied_at) ? "applied" : "unapplied";
+}
+
+const STATE_TONE: Record<RouteState, string> = {
+  demo: "text-muted-foreground",
+  failed: "text-destructive",
+  applied: "text-muted-foreground",
+  unapplied: "text-muted-foreground",
+};
+
+function stateText(route: GeoRouting): string {
+  const state = routeState(route);
+  if (state === "applied") {
+    const ms = Date.parse(route.last_applied_at!);
+    return t("networking.geoPage.state.appliedAgo", { age: formatAge(now.value.getTime() - ms, locale.value) });
+  }
+  return t(`networking.geoPage.state.${state}`);
+}
+
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = realRoutes.value.length;
+  const parts: ProofSegment[] = [{ key: "routings", text: t("networking.geoPage.proof.routings", { n }, n) }];
+  if (demoRoutes.value.length) parts.push({ key: "demo", text: t("networking.geoPage.proof.demo", { n: demoRoutes.value.length }, demoRoutes.value.length), tone: "muted" });
+  const failed = realRoutes.value.filter((route) => route.last_error).length;
+  const applied = realRoutes.value.filter((route) => routeState(route) === "applied").length;
+  if (applied) parts.push({ key: "applied", text: t("networking.geoPage.proof.applied", { n: applied }) });
+  if (failed) parts.push({ key: "failed", text: t("networking.geoPage.proof.failed", { n: failed }), tone: "destructive" });
+  return parts;
+});
+
+function refreshAll(): void {
+  if (canRead.value) void routesQuery.refresh();
+  if (canReadNodes.value) void nodesQuery.refresh();
+  if (canReadDns.value) void dnsQuery.refresh();
+}
+
+/** DNS nodes of a routing that run no Lattice CoreDNS, or null when Self-host DNS was not read. */
+function dnsNodesWithoutDns(route: GeoRouting): string[] | null {
+  const ids = dnsNodeIds.value;
+  if (!ids) return null;
+  return (route.dns_node_ids ?? []).filter((id) => !ids.has(id));
+}
+
+const attention = computed<AttentionItem[]>(() => {
+  const items: AttentionItem[] = [];
+  for (const route of sortedRoutes.value) {
+    if (isDemoObject(route.name)) continue;
+    const open = { label: t("networking.geoPage.attention.open"), run: () => sheet.open(route.id) };
+    if (route.last_error) {
+      items.push({
+        key: `failed:${route.id}`,
+        tone: "danger",
+        claim: t("networking.geoPage.attention.failedClaim", { hostname: route.hostname }),
+        proof: route.last_error.split("\n")[0],
+        action: open,
+      });
+    }
+    const missing = dnsNodesWithoutDns(route);
+    if (missing && missing.length) {
+      items.push({
+        key: `nodns:${route.id}`,
+        tone: "warning",
+        claim: t("networking.geoPage.attention.noDnsClaim", { hostname: route.hostname }),
+        proof: t("networking.geoPage.attention.noDnsProof", { nodes: missing.map(nodeName).join(", ") }, missing.length),
+        action: { label: t("networking.geoPage.setup.dnsAction"), to: { name: "network-dns" } },
+      });
+    }
+  }
+  return items;
+});
+
+/** The checklist stands while nothing real exists: empty, or only the demo. */
+const showSetup = computed(() => routesQuery.data.value !== undefined && realRoutes.value.length === 0);
+
+const setupItems = computed<SetupItem[]>(() => {
+  const nodesRead = canReadNodes.value && nodesQuery.data.value !== undefined;
+  const answering = nodes.value.filter((node) => describeNodeStatus(node).reporting && !!node.public_ip).length;
+  const located = nodes.value.filter((node) => Number.isFinite(node.geo?.lat) && Number.isFinite(node.geo?.lon)).length;
+  const dnsIds = dnsNodeIds.value;
+  const notRead = (error: unknown) => (error ? t("networking.setup.notRead", { reason: proofReason(error) }) : undefined);
+  return [
+    {
+      key: "answer",
+      label: t("networking.geoPage.setup.answer"),
+      ready: nodesRead ? answering > 0 : null,
+      detail: nodesRead ? t("networking.geoPage.setup.answerDetail", { n: answering, total: nodes.value.length }) : canReadNodes.value ? notRead(nodesQuery.error.value) : t("networking.geoPage.setup.nodesScope"),
+    },
+    {
+      key: "geo",
+      label: t("networking.geoPage.setup.coordinates"),
+      ready: nodesRead ? located > 0 : null,
+      detail: nodesRead ? t("networking.geoPage.setup.coordinatesDetail", { n: located, total: nodes.value.length }) : undefined,
+    },
+    {
+      key: "dns",
+      label: t("networking.geoPage.setup.dns"),
+      ready: dnsIds ? dnsIds.size > 0 : null,
+      detail: dnsIds
+        ? dnsIds.size > 0
+          ? t("networking.geoPage.setup.dnsDetail", { nodes: [...dnsIds].map(nodeName).join(", ") })
+          : t("networking.geoPage.setup.dnsNone")
+        : canReadDns.value
+          ? notRead(dnsQuery.error.value)
+          : t("networking.geoPage.setup.dnsScope"),
+      action: { label: t("networking.geoPage.setup.dnsAction"), to: { name: "network-dns" } },
+    },
+    {
+      key: "mmdb",
+      label: t("networking.geoPage.setup.database"),
+      ready: null,
+      detail: t("networking.geoPage.setup.databaseDetail"),
+    },
+  ];
+});
+
+const columns = computed<DataTableColumn<GeoRouting>[]>(() => [
+  { key: "name", label: t("networking.geoRouting.colName"), sortable: true, searchable: true, value: (route) => route.name || route.id },
+  { key: "hostname", label: t("networking.geoRouting.colHostname"), sortable: true, searchable: true },
+  { key: "strategy", label: t("networking.geoRouting.colStrategy"), sortable: true },
+  { key: "nodes", label: t("networking.geoRouting.colNodes"), align: "right", sortable: true, value: (route) => route.node_ids?.length ?? 0 },
+  { key: "dns", label: t("networking.geoPage.colDnsNode"), searchable: true, value: (route) => (route.dns_node_ids ?? []).map(nodeName).join(" ") },
+  { key: "status", label: t("networking.geoRouting.colStatus"), sortable: true, value: (route) => routeState(route) },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
+]);
+
+const openRoute = computed(() => routes.value.find((route) => route.id === sheet.openId.value));
+const sheetState = computed(() => {
+  if (!sheet.openId.value) return "ready" as const;
+  if (openRoute.value) return routesQuery.error.value ? ("stale" as const) : ("ready" as const);
+  if (routesQuery.data.value === undefined) return routesQuery.error.value ? ("gone" as const) : ("loading" as const);
+  return "gone" as const;
+});
+
+function menuFor(route: GeoRouting): RowMenuItem[] {
+  return [
+    { key: "preview", label: t("networking.geoRouting.previewConfig"), icon: FileCode2, hidden: !canRead.value, disabled: planning.value === route.id, run: () => void openPlan(route) },
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canAdmin.value, run: () => openEdit(route) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canAdmin.value, run: () => (deleteTarget.value = route) },
+  ];
+}
+
+/** Which destructive class this delete is, and its lines (geoRoutingModel.geoDeleteImpact). */
+const deleteClass = computed(() => (deleteTarget.value ? geoDeleteImpact(deleteTarget.value) : undefined));
+const deleteApplied = computed(() => !!deleteClass.value?.applied);
+const deleteImpact = computed(() =>
+  (deleteClass.value?.lines ?? []).map((line) => {
+    switch (line.kind) {
+      case "record":
+        return t("networking.geoPage.delete.impactRecord", { hostname: line.hostname });
+      case "nothingSent":
+        return t("networking.geoPage.delete.impactNodes");
+      case "answering":
+        return t("networking.geoPage.delete.impactAnswering", { node: nodeName(line.nodeId), hostname: line.hostname, age: appliedAge(line.appliedAt) });
+      case "answeringUnknown":
+        return t("networking.geoPage.delete.impactAnsweringUnknown", { hostname: line.hostname, age: appliedAge(line.appliedAt) });
+      case "noRemoval":
+        return t("networking.geoPage.delete.impactNoRemoval");
+    }
+  }),
+);
+
+function appliedAge(at: string): string {
+  const ms = Date.parse(at);
+  return Number.isFinite(ms) ? formatAge(now.value.getTime() - ms, locale.value) : "";
+}
 </script>
 
 <template>
-  <div class="p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('networking.geoRouting.title')"
-      :description="$t('networking.geoRouting.description')"
-    >
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('networking.geoRouting.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('networking.geoRouting.description') }}</p>
+        <ProofLine v-if="canRead" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+      </template>
       <template #actions>
-        <Button
-          v-if="canRead"
-          variant="outline"
-          size="sm"
-          :disabled="routesQuery.refreshing.value"
-          @click="routesQuery.refresh"
-        >
+        <Button v-if="canRead" variant="outline" size="sm" :disabled="routesQuery.refreshing.value" @click="refreshAll">
           <RefreshCw :class="cn('size-4', routesQuery.refreshing.value && 'animate-spin')" aria-hidden="true" />
           {{ $t('common.actions.refresh') }}
         </Button>
-        <Button
-          v-if="canAdmin"
-          size="sm"
-          @click="openCreate"
-        >
+        <Button v-if="canAdmin && !showSetup && routesQuery.data.value !== undefined" size="sm" @click="openCreate">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('networking.geoRouting.newRouting') }}
         </Button>
       </template>
     </PageHeader>
 
-    <!--
-      First run. The demo is one real record on the real control plane, so the
-      page has to say what it is, what a routing does, and what a routing of
-      the operator's own would have to name. It disappears the moment a record
-      that is not a demo exists.
-    -->
-    <Card v-if="firstRun" class="border-dashed">
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <FileCode2 class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('networking.geoRouting.demo.title') }}
-        </CardTitle>
-        <CardDescription>{{ $t('networking.geoRouting.demo.what') }}</CardDescription>
-      </CardHeader>
-      <CardContent class="space-y-2 text-sm text-muted-foreground">
-        <p>{{ $t('networking.geoRouting.demo.real') }}</p>
-        <p>{{ $t('networking.geoRouting.demo.remove') }}</p>
-      </CardContent>
-    </Card>
+    <AttentionList :items="attention" />
 
-    <Card>
-      <CardHeader>
-        <CardTitle class="flex items-center gap-2">
-          <Route class="size-4 text-muted-foreground" aria-hidden="true" />
-          {{ $t('networking.geoRouting.routings') }}
-        </CardTitle>
-        <CardDescription>
-          {{ routes.length === 1 ? $t('networking.geoRouting.apexRecord', { count: routes.length }) : $t('networking.geoRouting.apexRecords', { count: routes.length }) }}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <DataTable
-          state-key="geoRoutings"
-          :columns="columns"
-          :rows="sortedRoutes"
-          :row-key="(route) => route.id"
-          :loading="routesQuery.loading.value"
-          :error="routesQuery.error.value"
-          :has-data="routesQuery.data.value !== undefined"
-          searchable
-          :search-placeholder="$t('common.actions.search')"
-          :empty-title="$t('networking.geoRouting.emptyTitle')"
-          :empty-description="$t('networking.geoRouting.emptyDescription')"
-          :no-match-title="$t('networking.shared.noMatchTitle')"
-          :no-match-description="$t('networking.shared.noMatchDescription')"
-          @retry="routesQuery.refresh"
-        >
-          <template #empty>
-            <EmptyState
-              :icon="Route"
-              :title="$t('networking.geoRouting.emptyTitle')"
-              :description="$t('networking.geoRouting.emptyDescription')"
-              :steps="prerequisites"
-            >
-              <Button v-if="canAdmin" size="sm" @click="openCreate">
-                <Plus aria-hidden="true" class="size-4" />
-                {{ $t('networking.geoRouting.newRouting') }}
-              </Button>
-            </EmptyState>
-          </template>
-          <template #cell-name="{ row: route }">
-            <div class="flex items-center gap-1.5">
-              <span class="font-medium">{{ route.name || route.id }}</span>
-              <Badge v-if="isDemoObject(route.name)" variant="outline">
-                {{ $t('networking.geoRouting.demo.badge') }}
-              </Badge>
-            </div>
-            <div class="font-mono text-xs text-muted-foreground">{{ shortId(route.id, 16) }}</div>
-          </template>
-          <template #cell-hostname="{ row: route }">
-            <span class="font-mono text-xs">{{ route.hostname }}</span>
-          </template>
-          <template #cell-strategy="{ row: route }">
-            <Badge :variant="strategyVariant(route.strategy)">{{ route.strategy }}</Badge>
-          </template>
-          <template #cell-nodes="{ row: route }">
-            <span class="tabular">{{ route.node_ids?.length ?? 0 }}</span>
-          </template>
-          <template #cell-dns="{ row: route }">
-            <span class="tabular">{{ route.dns_node_ids?.length ?? 0 }}</span>
-          </template>
-          <template #cell-status="{ row: route }">
-            <Badge v-if="route.status" :variant="route.status === 'configured' ? 'success' : 'warning'">
-              {{ route.status }}
-            </Badge>
-            <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-          </template>
-          <template #cell-lastApplied="{ row: route }">
-            <span class="text-xs text-muted-foreground">
-              {{ hasRealTime(route.last_applied_at) ? formatDateTime(route.last_applied_at) : $t('common.misc.never') }}
-            </span>
-          </template>
-          <template #cell-lastError="{ row: route }">
-            <span
-              v-if="route.last_error"
-              class="line-clamp-3 block max-w-[180px] break-words text-xs text-destructive"
-              :title="route.last_error"
-            >
-              {{ route.last_error }}
-            </span>
-            <span v-else class="text-xs text-muted-foreground">{{ $t('common.misc.none') }}</span>
-          </template>
-          <template #cell-actions="{ row: route }">
-            <div class="flex flex-wrap justify-end gap-1">
-              <Button
-                v-if="canRead"
-                variant="ghost"
-                size="sm"
-                :disabled="planning === route.id"
-                @click="openPlan(route)"
-              >
-                <RefreshCw v-if="planning === route.id" class="size-4 animate-spin" aria-hidden="true" />
-                <FileCode2 v-else class="size-4" aria-hidden="true" />
-                {{ $t('networking.geoRouting.previewConfig') }}
-              </Button>
-              <Button
-                v-if="canAdmin"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('common.actions.edit')"
-                @click="openEdit(route)"
-              >
-                <Pencil class="size-4" />
-              </Button>
-              <Button
-                v-if="canAdmin"
-                variant="ghost"
-                size="icon-sm"
-                :aria-label="$t('common.actions.delete')"
-                @click="deleteTarget = route"
-              >
-                <Trash2 class="size-4 text-destructive" />
-              </Button>
-            </div>
-          </template>
-        </DataTable>
-      </CardContent>
-    </Card>
+    <SetupChecklist
+      v-if="showSetup"
+      :title="routes.length ? $t('networking.geoPage.setupTitleDemo') : $t('networking.geoRouting.emptyTitle')"
+      :description="routes.length ? $t('networking.geoPage.demoNote', { name: demoRoutes[0]?.name ?? '' }) : $t('networking.geoPage.emptyDescription')"
+      :items="setupItems"
+    >
+      <Button v-if="canAdmin" size="sm" variant="outline" type="button" @click="openCreate">
+        <Plus aria-hidden="true" />
+        {{ $t('networking.geoRouting.newRouting') }}
+      </Button>
+    </SetupChecklist>
+
+    <DataTable
+      v-if="!(showSetup && routes.length === 0)"
+      state-key="geoRoutings"
+      :columns="columns"
+      :rows="sortedRoutes"
+      :row-key="(route) => route.id"
+      :loading="routesQuery.loading.value"
+      :error="routesQuery.error.value"
+      :has-data="routesQuery.data.value !== undefined"
+      :searchable="realRoutes.length > 0"
+      :expression-filter="false"
+      :search-placeholder="$t('networking.geoPage.searchPlaceholder')"
+      :row-click="(route, el) => sheet.open(route.id, el)"
+      :active-row-id="sheet.openId.value"
+      :show-summary="false"
+      :empty-title="canRead ? $t('networking.geoRouting.emptyTitle') : $t('networking.geoPage.needRead')"
+      :empty-description="canRead ? $t('networking.geoPage.emptyDescription') : ''"
+      :no-match-title="$t('networking.shared.noMatchTitle')"
+      :no-match-description="$t('networking.shared.noMatchDescription')"
+      @retry="refreshAll"
+    >
+      <template #cell-name="{ row: route }">
+        <div class="flex items-center gap-1.5">
+          <span class="font-medium">{{ route.name || route.id }}</span>
+          <Badge v-if="isDemoObject(route.name)" variant="outline">{{ $t('networking.geoRouting.demo.badge') }}</Badge>
+        </div>
+      </template>
+      <template #cell-hostname="{ row: route }">
+        <span class="whitespace-nowrap font-mono text-xs">{{ route.hostname }}</span>
+      </template>
+      <template #cell-strategy="{ row: route }">
+        <span class="whitespace-nowrap text-xs">{{ route.strategy }}</span>
+      </template>
+      <template #cell-nodes="{ row: route }">
+        <span class="font-mono text-xs tabular-nums">{{ route.node_ids?.length ?? 0 }}</span>
+      </template>
+      <template #cell-dns="{ row: route }">
+        <div class="flex flex-col text-xs">
+          <NodeLabel v-for="id in route.dns_node_ids ?? []" :key="id" :id="id" />
+        </div>
+      </template>
+      <template #cell-status="{ row: route }">
+        <span :class="cn('whitespace-nowrap text-xs', STATE_TONE[routeState(route)])">{{ stateText(route) }}</span>
+      </template>
+      <template #cell-actions="{ row: route }">
+        <RowMenu :name="route.name || route.id" :items="menuFor(route)" />
+      </template>
+    </DataTable>
+
+    <ObjectSheet
+      :open="!!sheet.openId.value"
+      :title="openRoute ? (openRoute.name || openRoute.id) : (sheet.openId.value ?? '')"
+      :subtitle="openRoute?.hostname"
+      :state="sheetState"
+      :error="routesQuery.error.value ? proofReason(routesQuery.error.value) : null"
+      :read-only="!canAdmin"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('networking.geoPage.goneTitle')"
+      :gone-description="$t('networking.geoPage.goneDescription')"
+      @close="sheet.close"
+    >
+      <div v-if="openRoute" class="space-y-5 text-sm">
+        <p v-if="isDemoObject(openRoute.name)" class="text-muted-foreground">{{ $t('networking.geoPage.sheet.demo') }}</p>
+        <p :class="STATE_TONE[routeState(openRoute)]">{{ stateText(openRoute) }}</p>
+        <pre
+          v-if="openRoute.last_error"
+          class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 font-mono text-xs text-foreground"
+        >{{ openRoute.last_error }}</pre>
+        <dl class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+          <div>
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.geoRouting.colStrategy') }}</dt>
+            <dd>{{ openRoute.strategy }} <span class="text-muted-foreground">· TTL {{ openRoute.ttl ?? 60 }}s</span></dd>
+          </div>
+          <div class="min-w-0">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.geoPage.sheet.database') }}</dt>
+            <dd class="break-all font-mono text-xs">{{ openRoute.geoip_db_path || '/etc/coredns/GeoLite2-City.mmdb' }}</dd>
+          </div>
+          <div v-if="openRoute.last_rendered_sha" class="min-w-0">
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.geoPage.sheet.rendered') }}</dt>
+            <dd class="font-mono text-xs">{{ shortId(openRoute.last_rendered_sha, 12) }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs text-muted-foreground">{{ $t('networking.geoPage.sheet.delegation') }}</dt>
+            <dd>{{ openRoute.publish_ns ? $t('networking.geoPage.sheet.delegationOn') : $t('networking.geoPage.sheet.delegationOff') }}</dd>
+          </div>
+        </dl>
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.geoPage.sheet.answering', { n: openRoute.node_ids?.length ?? 0 }) }}</h3>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <li v-for="id in openRoute.node_ids ?? []" :key="id" class="px-3 py-2 text-xs"><NodeLabel :id="id" link /></li>
+          </ul>
+        </section>
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('networking.geoPage.sheet.serving', { n: openRoute.dns_node_ids?.length ?? 0 }) }}</h3>
+          <ul class="divide-y divide-border rounded-md border border-border">
+            <li v-for="id in openRoute.dns_node_ids ?? []" :key="id" class="flex flex-wrap items-center gap-x-2 px-3 py-2 text-xs">
+              <NodeLabel :id="id" link />
+              <span v-if="dnsNodeIds && !dnsNodeIds.has(id)" class="text-warning-text">{{ $t('networking.geoPage.sheet.noDns') }}</span>
+              <span v-else-if="dnsNodeIds" class="text-muted-foreground">{{ $t('networking.geoPage.sheet.runsDns') }}</span>
+            </li>
+          </ul>
+        </section>
+      </div>
+      <template v-if="openRoute" #actions>
+        <Button variant="outline" size="sm" type="button" :disabled="planning === openRoute.id" @click="openPlan(openRoute)">
+          <RefreshCw v-if="planning === openRoute.id" class="animate-spin" aria-hidden="true" />
+          <FileCode2 v-else aria-hidden="true" />
+          {{ $t('networking.geoRouting.previewConfig') }}
+        </Button>
+        <Button variant="outline" size="sm" type="button" @click="openEdit(openRoute)">
+          <Pencil aria-hidden="true" />
+          {{ $t('common.actions.edit') }}
+        </Button>
+        <RowMenu :name="openRoute.name || openRoute.id" :items="menuFor(openRoute).filter((item) => item.key === 'delete')" />
+      </template>
+    </ObjectSheet>
 
     <!-- Create / edit dialog -->
     <Dialog v-model:open="formOpen">
@@ -656,15 +776,15 @@ const continentEntries = computed(() =>
       </DialogScrollContent>
     </Dialog>
 
-    <!-- Delete confirmation -->
+    <!-- Delete: irreversible inside Lattice for a routing never applied; one that was applied leaves its zone on the DNS nodes (design 23, 3.8). -->
     <ConfirmDialog
       :open="!!deleteTarget"
-      :title="$t('networking.geoRouting.deleteTitle')"
-      :description="$t('networking.geoRouting.deleteDescription', {
-        name: deleteTarget?.name || deleteTarget?.id || '',
-        hostname: deleteTarget?.hostname ?? '',
-      })"
-      :confirm-label="$t('common.actions.delete')"
+      :title="$t('networking.geoPage.delete.title', { name: deleteTarget?.name || deleteTarget?.id || '' })"
+      :description="deleteApplied ? $t('networking.geoPage.delete.descriptionApplied') : undefined"
+      :impact="deleteImpact"
+      :impact-title="deleteApplied ? $t('networking.geoPage.delete.impactTitleApplied') : $t('networking.geoPage.delete.impactTitle')"
+      :typed-confirm="deleteClass?.typed ? deleteTarget?.name || deleteTarget?.id : undefined"
+      :confirm-label="deleteApplied ? $t('networking.geoPage.delete.confirmApplied') : $t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
       @update:open="(v) => { if (!v) deleteTarget = undefined; }"

@@ -14,6 +14,7 @@ import {
   lensOrigin,
   originTarget,
   originTargetLabel,
+  pickShareRecord,
   publishablePlugins,
   publishingPlaneEmpty,
   publishingState,
@@ -23,11 +24,13 @@ import {
   routePath,
   routeState,
   shareCreateTarget,
+  shareDeepLink,
   shareRefreshable,
   shareRendererState,
   sortRecords,
   unresolvedShareIds,
   withoutShareDeepLink,
+  canonicalPublishingQuery,
 } from "../publishingModel.ts";
 
 const NOW = new Date("2026-08-19T12:00:00Z");
@@ -266,8 +269,25 @@ test("the create deep link is recognised by its exact marker and consumed onto t
 
   // Consuming the link drops both keys so a reload does not reopen the dialog,
   // and pins the lens so the pane that owns the dialog stays mounted.
-  assert.deepEqual(withoutShareDeepLink({ create: "1", for: "x", q: "team" }), { q: "team", origin: "share" });
-  assert.deepEqual(withoutShareDeepLink({ create: "1", origin: "all" }), { origin: "share" });
+  assert.deepEqual(withoutShareDeepLink({ create: "1", for: "x", q: "team" }), { q: "team", origin: "share", view: "routes" });
+  assert.deepEqual(withoutShareDeepLink({ create: "1", origin: "all" }), { origin: "share", view: "routes" });
+});
+
+test("old lens, selection and create links land on the Routes layer, and the selection opens the sheet", () => {
+  // The exact link Sub-Store's Publish action and attention item navigate to.
+  assert.deepEqual(canonicalPublishingQuery({ origin: "share", create: "1", for: "merge-openjobs" }), {
+    origin: "share",
+    create: "1",
+    for: "merge-openjobs",
+    view: "routes",
+  });
+  assert.deepEqual(canonicalPublishingQuery({ origin: "kv" }), { origin: "kv", view: "routes" });
+  assert.deepEqual(canonicalPublishingQuery({ origin: "share", share: "shr_1" }), { origin: "share", view: "routes", open: "shr_1" });
+  assert.deepEqual(canonicalPublishingQuery({ share: "shr_1" }), { view: "routes", origin: "share", open: "shr_1" });
+  // Already canonical, or nothing to say: no rewrite.
+  assert.equal(canonicalPublishingQuery({}), null);
+  assert.equal(canonicalPublishingQuery({ view: "tokens" }), null);
+  assert.equal(canonicalPublishingQuery({ view: "routes", origin: "kv" }), null);
 });
 
 test("a share names whether its renderer is there, from the plugin list the picker reads", () => {
@@ -353,4 +373,35 @@ test("old Workers links land on Publishing and say so", () => {
   assert.equal(arrivedFromWorkers({}), false);
   assert.equal(arrivedFromWorkers({ from: "store" }), false);
   assert.equal(arrivedFromWorkers({ q: "workers" }), false);
+});
+
+test("Sub-Store's create link lands on Routes > Shares, opens the share form on its record, and leaves no create or for", () => {
+  // The address Sub-Store's Publish action navigates to, as the router hands it over.
+  const arrival = { origin: "share", create: "1", for: "imported-col-cd-home" };
+  // The page rewrites it onto the Routes layer first; the pane waits for that.
+  const canonical = canonicalPublishingQuery(arrival);
+  assert.ok(canonical, "the page rewrites the arrival");
+  assert.equal(canonicalPublishingQuery(canonical), null, "the rewrite is stable, so the pane may act on it");
+  const link = shareDeepLink(canonical);
+  assert.ok(link, "the rewritten address still opens the form");
+  assert.equal(link.record, "imported-col-cd-home");
+  assert.equal("create" in link.next, false);
+  assert.equal("for" in link.next, false);
+  assert.deepEqual(link.next, { origin: "share", view: "routes" });
+  // Once consumed, the address opens nothing on a reload.
+  assert.equal(shareDeepLink(link.next), null);
+  assert.equal(shareDeepLink({ view: "routes", origin: "share" }), null);
+});
+
+test("a deep link's record is matched by id or by name, never by display name", () => {
+  const records = [
+    { id: "merge-openjobs", name: "merge-openjobs", display_name: "OpenJobs merged" },
+    { id: "imported-col-cd-home", name: "cd-home", display_name: "Home lines" },
+  ];
+  assert.equal(pickShareRecord(records, "merge-openjobs"), "merge-openjobs");
+  assert.equal(pickShareRecord(records, "cd-home"), "imported-col-cd-home", "a name whose id differs");
+  assert.equal(pickShareRecord(records, "imported-col-cd-home"), "imported-col-cd-home");
+  assert.equal(pickShareRecord(records, "OpenJobs merged"), undefined);
+  assert.equal(pickShareRecord(records, ""), undefined);
+  assert.equal(pickShareRecord([], "cd-home"), undefined);
 });

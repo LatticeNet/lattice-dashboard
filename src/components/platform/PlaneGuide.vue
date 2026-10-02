@@ -57,16 +57,16 @@ watch(() => props.page, () => {
 
 const bodyId = computed(() => `plane-guide-${props.page}`);
 
-/** The Publishing lens a step opens on, with the card it points at. */
-function publishingControl(origin: "kv" | "static", card: "buckets" | "bindings" | "tokens"): RouteLocationRaw {
-  return { path: "/platform/publishing", query: { origin }, hash: `#publishing-${card}` };
-}
-
+/**
+ * The Publishing layer a step opens on (design 23, section 4.5): buckets and
+ * tokens are layers of their own, and a binding is a route, so the static
+ * binding step lands on Routes narrowed to Static.
+ */
 const steps = computed<{ key: string; to: RouteLocationRaw }[]>(() => [
-  { key: "bucket", to: publishingControl("static", "buckets") },
+  { key: "bucket", to: { path: "/platform/publishing", query: { view: "buckets" } } },
   { key: "object", to: { path: "/platform/store", query: { kind: "static" } } },
-  { key: "binding", to: publishingControl("static", "bindings") },
-  { key: "fetch", to: publishingControl("kv", "tokens") },
+  { key: "binding", to: { path: "/platform/publishing", query: { view: "routes", origin: "static" } } },
+  { key: "fetch", to: { path: "/platform/publishing", query: { view: "tokens" } } },
 ]);
 </script>
 

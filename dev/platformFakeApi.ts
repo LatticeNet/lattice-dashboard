@@ -24,7 +24,10 @@
 import { ApiError } from "@/lib/api/client";
 import type {
   KVEntry,
+  PluginView,
   Principal,
+  ProxyUserView,
+  SubscriptionShareView,
   PublishingRecord,
   StaticObject,
   StorageBinding,
@@ -51,6 +54,21 @@ export * from "@/lib/api/index";
  *                     answer 500 after 1.5 s, so the confirm dialog's pending
  *                     and failure states can be driven. Without it they
  *                     succeed after the same 1.5 s.
+ *   ?share-expiring   The cd-self share expires in 5 days (invented).
+ *   ?share-expired    ... expired 2 days ago (invented).
+ *   ?shares-fail      The share list answers 502.
+ *   ?no-audit         The caller lacks audit:read, which /api/plugins needs (it answers 403).
+ *   ?no-shares        The caller lacks proxy:admin, so shares are not theirs to open.
+ *   window.__platformCalls counts the share, record, plugin and proxy-user reads.
+ *   ?store-fail       Store's bucket read answers 502 (a failed read shows no count).
+ *   ?records-slow     Sub-Store's record list answers after 1.5 s, so the share
+ *                     form's deep link is seen waiting for it.
+ *   ?records-fail     Sub-Store's record list answers 502.
+ *   ?store-empty      Store has no bucket of either kind (first run).
+ *
+ * Shares: production's one share (cd-self, rendered by Sub-Store from the
+ * merge-openjobs record), with its token invented. Proxy users and the
+ * Sub-Store record list are the shapes the share form reads.
  */
 const flags = new URLSearchParams(location.search);
 const EMPTY_PLANE = flags.has("empty-plane");
@@ -58,6 +76,21 @@ const NO_ORIGINS = flags.has("no-origins");
 const TOKEN_WRITER = flags.has("token-writer");
 const NO_ADMIN = flags.has("no-admin");
 const STORAGE_FAIL = flags.has("storage-fail");
+const SHARE_EXPIRING = flags.has("share-expiring");
+const SHARE_EXPIRED = flags.has("share-expired");
+const SHARES_FAIL = flags.has("shares-fail");
+const STORE_FAIL = flags.has("store-fail");
+const STORE_EMPTY = flags.has("store-empty");
+const RECORDS_SLOW = flags.has("records-slow");
+const RECORDS_FAIL = flags.has("records-fail");
+const NO_AUDIT = flags.has("no-audit");
+const NO_SHARES = flags.has("no-shares");
+
+/** Calls per read, on window.__platformCalls, so a drive can see what a layer reads. */
+function counted(name: string): void {
+  const calls = ((globalThis as { __platformCalls?: Record<string, number> }).__platformCalls ??= {});
+  calls[name] = (calls[name] ?? 0) + 1;
+}
 const STORAGE_WRITE_MS = 1500;
 
 const NOW = Date.now();
@@ -87,6 +120,9 @@ const principal: Principal = {
     // Reading the storage token list needs these, and an operator without them
     // is the case where the console cannot tell who writes a bucket.
     ...(NO_ADMIN ? [] : ["kv:admin", "static:admin"]),
+    ...(NO_SHARES ? [] : ["proxy:admin"]),
+    "proxy:read",
+    ...(NO_AUDIT ? [] : ["audit:read"]),
   ],
   server_allowlist: [],
   csrf_token: "harness",
@@ -130,6 +166,47 @@ const records: PublishingRecord[] = [
     reserved: true,
     admin_scope: "plugin:latticenet.sub-store",
   },
+];
+
+/* -------------------------------- shares ------------------------------- */
+
+const shares: SubscriptionShareView[] = [
+  {
+    id: "shr_cd_self",
+    slug: "cd-self",
+    token: "st_9f2c41d07a6e4b8c93d15e0f",
+    source: { kind: "plugin", plugin_id: "latticenet.sub-store", subscription_id: "merge-openjobs" },
+    default_format: "sing-box",
+    enabled: true,
+    created_at: iso(-21 * DAY),
+    updated_at: iso(-3 * DAY),
+    rotated_at: iso(-3 * DAY),
+    expires_at: SHARE_EXPIRED ? iso(-2 * DAY) : SHARE_EXPIRING ? iso(5 * DAY) : undefined,
+  },
+];
+
+const proxyUsers: ProxyUserView[] = [
+  { id: "pu_cdcd", name: "cdcd" } as ProxyUserView,
+  { id: "pu_family", name: "family" } as ProxyUserView,
+];
+
+const subStore: PluginView = {
+  id: "latticenet.sub-store",
+  name: "Sub-Store companion",
+  type: "system",
+  version: "0.14.0-alpha.1",
+  publisher: "latticenet",
+  capabilities: ["rpc:call", "http:egress", "kv:read", "kv:write", "subscription:serve"],
+  status: "active",
+  active: true,
+};
+
+// cd-home is invented. Its id has the shape Sub-Store gives an imported
+// collection (migratedKindID), so a link by record name has to be matched
+// against the list instead of being taken as the id.
+const subStoreRecords = [
+  { id: "merge-openjobs", name: "merge-openjobs", display_name: "OpenJobs merged" },
+  { id: "imported-col-cd-home", name: "cd-home", display_name: "Home lines" },
 ];
 
 /* -------------------------------- store -------------------------------- */
@@ -341,6 +418,7 @@ export const api = {
 
   publishing: {
     records: () =>
+      counted("records") ??
       delay({
         records: EMPTY_PLANE || NO_ORIGINS ? [] : records.map((r) => ({ ...r })),
         // No origin the caller may look at. The server answers this way for an
@@ -352,16 +430,41 @@ export const api = {
 
   storage: {
     buckets: (kind: StorageKind) =>
-      delay({
-        buckets: buckets[kind].map((b) => ({ ...b })),
-        inventory: inventory[kind].map((b) => ({ ...b })),
-      }),
+      STORE_FAIL
+        ? delay(undefined).then(() => {
+            throw new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (storage buckets)");
+          })
+        : delay({
+            buckets: STORE_EMPTY ? [] : buckets[kind].map((b) => ({ ...b })),
+            inventory: STORE_EMPTY ? [] : inventory[kind].map((b) => ({ ...b })),
+          }),
     bindings: (kind: StorageKind) => delay({ bindings: bindings[kind].map((b) => ({ ...b })) }),
     tokens: (kind: StorageKind) => delay({ tokens: tokens[kind].map((t) => ({ ...t })) }),
+    upsertBucket: async (kind: StorageKind, input: { name: string; display_name?: string; description?: string }) => {
+      await delay(undefined);
+      const next = { id: `bkt_${input.name}`, kind, name: input.name, display_name: input.display_name, description: input.description, created_at: iso(0), updated_at: iso(0) } as StorageBucket;
+      buckets[kind].push(next);
+      return next;
+    },
+    upsertBinding: async (kind: StorageKind, input: { bucket: string; hostname: string; path_prefix?: string; enabled: boolean }) => {
+      await delay(undefined);
+      const next: StorageBinding = { id: `bind_${kind}_${Date.now().toString(36)}`, kind, bucket: input.bucket, hostname: input.hostname, path_prefix: input.path_prefix, enabled: input.enabled, created_at: iso(0), updated_at: iso(0) };
+      bindings[kind].push(next);
+      records.push({ id: next.id, origin: kind, bucket: next.bucket, hostname: next.hostname, any_host: false, path_prefix: next.path_prefix, enabled: next.enabled, reserved: false, admin_scope: `${kind}:admin` });
+      return next;
+    },
+    createToken: async (kind: StorageKind, input: { name: string; access: string; buckets: string[] }) => {
+      await delay(undefined);
+      const view = { id: `tok_${kind}_${Date.now().toString(36)}`, name: input.name, kind, access: input.access, buckets: input.buckets, created_at: iso(0), updated_at: iso(0) } as StorageTokenView;
+      tokens[kind].push(view);
+      return { ...view, token: "lst_harness_7c1e2f9a0b3d4e5f" };
+    },
     deleteBinding: async (kind: StorageKind, id: string) => {
       await delay(undefined, STORAGE_WRITE_MS);
       if (STORAGE_FAIL) throw new ApiError(500, "internal", "storage: delete binding: database is locked");
       bindings[kind] = bindings[kind].filter((b) => b.id !== id);
+      const at = records.findIndex((r) => r.id === id);
+      if (at >= 0) records.splice(at, 1);
       return {};
     },
     revokeToken: async (kind: StorageKind, id: string) => {
@@ -376,7 +479,7 @@ export const api = {
     list: (bucket?: string) => {
       const name = bucket || "default";
       requireBucket("kv", name);
-      return delay((kvEntries[name] ?? []).map((e) => ({ ...e })));
+      return delay(STORE_EMPTY ? [] : (kvEntries[name] ?? []).map((e) => ({ ...e })));
     },
     put: async (input: { bucket?: string; key: string; value: string }) => {
       const name = input.bucket || "default";
@@ -395,7 +498,7 @@ export const api = {
     list: (bucket?: string) => {
       const name = bucket || "site";
       requireBucket("static", name);
-      return delay((staticObjects[name] ?? []).map((o) => ({ ...o })));
+      return delay(STORE_EMPTY ? [] : (staticObjects[name] ?? []).map((o) => ({ ...o })));
     },
     put: async (input: { bucket?: string; path: string; content: string; content_type: string }) => {
       const name = input.bucket || "site";
@@ -417,7 +520,67 @@ export const api = {
     },
   },
 
+  subscriptionShares: {
+    list: () =>
+      counted("shares") ??
+      SHARES_FAIL
+        ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (shares)")), 120))
+        : delay(shares.map((share) => ({ ...share }))),
+    create: async (body: { slug: string; source: SubscriptionShareView["source"]; default_format?: string; expires_at?: string }) => {
+      await delay(undefined);
+      const next: SubscriptionShareView = {
+        id: `shr_${body.slug}`,
+        slug: body.slug,
+        token: "st_new_harness_token",
+        source: body.source,
+        default_format: body.default_format,
+        enabled: true,
+        created_at: iso(0),
+        updated_at: iso(0),
+        expires_at: body.expires_at,
+      };
+      shares.push(next);
+      return { ...next };
+    },
+    update: async (id: string, body: { expires_at?: string; clear_expiry?: boolean }) => {
+      await delay(undefined);
+      const share = shares.find((entry) => entry.id === id)!;
+      if (body.clear_expiry) share.expires_at = undefined;
+      else if (body.expires_at) share.expires_at = body.expires_at;
+      return { ...share };
+    },
+    rotate: async (id: string) => {
+      await delay(undefined);
+      const share = shares.find((entry) => entry.id === id)!;
+      share.token = `st_rotated_${Date.now().toString(36)}`;
+      share.rotated_at = iso(0);
+      return { ...share };
+    },
+    refresh: () => delay({ ok: true }),
+    remove: async (id: string) => {
+      await delay(undefined);
+      const at = shares.findIndex((entry) => entry.id === id);
+      if (at >= 0) shares.splice(at, 1);
+    },
+  },
+
+  proxy: {
+    users: () => (counted("proxyUsers"), delay({ users: proxyUsers.map((user) => ({ ...user })) })),
+  },
+
+  plugins: {
+    list: () => {
+      counted("plugins");
+      // /api/plugins wants audit:read, as the server's route does.
+      return NO_AUDIT ? Promise.reject(new ApiError(403, "forbidden", "missing scope audit:read")) : delay([{ ...subStore }]);
+    },
+    contributions: () => delay([{ ...subStore }]),
+    call: () =>
+      RECORDS_FAIL
+        ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from latticenet.sub-store (records)")), 120))
+        : delay({ subscriptions: subStoreRecords.map((record) => ({ ...record })) }, RECORDS_SLOW ? 1500 : LATENCY_MS),
+  },
+
   approvals: unimplemented,
   security: unimplemented,
-  plugins: unimplemented,
 };

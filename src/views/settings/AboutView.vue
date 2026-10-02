@@ -8,7 +8,10 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import PageHeader from "@/components/common/PageHeader.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import { useProof } from "@/composables/useProof";
+import { buildMatch, shortCommit } from "./aboutModel";
 import CopyButton from "@/components/common/CopyButton.vue";
 import DataState from "@/components/common/DataState.vue";
 import { Button } from "@/components/ui/button";
@@ -40,22 +43,53 @@ const dashboardCommitLabel = computed(() =>
 
 function shortRef(value?: string): string {
   if (!value || value === RAW_UNKNOWN) return unknownLabel.value;
-  return value.length > 12 ? value.slice(0, 12) : value;
+  return shortCommit(value);
 }
 
 function displayDate(value?: string): string {
   return value && value !== RAW_UNKNOWN ? formatDateTime(value) : unknownLabel.value;
 }
+
+/*
+ * The proof line (design 23, section 3.1): what the server said it runs and
+ * which console it serves, and whether this tab runs that console. A deploy
+ * is complete when the pair matches; a tab left open across one does not.
+ */
+const proof = useProof(versionQuery);
+const match = computed(() => buildMatch(import.meta.env.VITE_GIT_COMMIT, version.value?.dashboard_ref));
+const proofSegments = computed<ProofSegment[]>(() => {
+  const info = version.value;
+  if (!info) return [];
+  const parts: ProofSegment[] = [
+    { key: "server", tone: "strong", text: t("settings.about.proof.server", { version: info.server_version || unknownLabel.value }) },
+    { key: "dashboard", text: t("settings.about.proof.dashboard", { ref: shortRef(info.dashboard_ref) }) },
+  ];
+  if (match.value === "same") parts.push({ key: "match", tone: "muted", text: t("settings.about.proof.same") });
+  if (match.value === "different") parts.push({ key: "match", tone: "warning", text: t("settings.about.proof.different") });
+  return parts;
+});
+
+const attention = computed<AttentionItem[]>(() =>
+  match.value === "different"
+    ? [
+        {
+          key: "stale-tab",
+          tone: "warning",
+          claim: t("settings.about.mismatch.claim", { tab: shortCommit(dashboardCommit.value), served: shortRef(version.value?.dashboard_ref) }),
+          proof: t("settings.about.mismatch.proof"),
+          action: { label: t("settings.about.mismatch.action"), run: () => window.location.reload() },
+        },
+      ]
+    : [],
+);
 </script>
 
 <template>
   <div class="page-narrow p-4 sm:p-6 space-y-6">
-    <PageHeader
-      :title="$t('settings.about.title')"
-      :description="$t('settings.about.description')"
-    >
-      <template #status>
-        <FreshnessLabel :last-updated="versionQuery.lastUpdated.value" :poll-ms="versionQuery.pollMs" />
+    <PageHeader :title="$t('settings.about.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('settings.about.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="versionQuery.refresh" />
       </template>
       <template #actions>
         <Button
@@ -72,6 +106,8 @@ function displayDate(value?: string): string {
         </Button>
       </template>
     </PageHeader>
+
+    <AttentionList :items="attention" />
 
     <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-2">
       <Card>
@@ -160,7 +196,7 @@ function displayDate(value?: string): string {
             <dl class="grid gap-4 text-sm">
               <div class="grid gap-1">
                 <dt class="text-xs font-medium uppercase text-muted-foreground">
-                  {{ $t('settings.about.version') }}
+                  {{ $t('settings.about.dashboard.tabVersion') }}
                 </dt>
                 <dd>
                   <Badge variant="secondary" class="font-mono">
@@ -172,7 +208,7 @@ function displayDate(value?: string): string {
               <div class="grid gap-1">
                 <dt class="flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
                   <GitCommit class="size-3.5" aria-hidden="true" />
-                  {{ $t('settings.about.commit') }}
+                  {{ $t('settings.about.dashboard.tabCommit') }}
                 </dt>
                 <dd class="flex min-w-0 items-center gap-2">
                   <code class="truncate font-mono text-xs" :title="dashboardCommitLabel">

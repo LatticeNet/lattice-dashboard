@@ -7,11 +7,18 @@ export default {
       title: "Capability gates",
       description:
         "Which capabilities are allowed to act on this fleet's nodes. Anything that changes a node is opt-in; per-node decisions live on the node.",
+      proof: {
+        capabilities: "{n} capability | {n} capabilities",
+        enforced: "{n} enforced",
+        ungated: "{n} that changes nodes not gated | {n} that change nodes not gated",
+        refusing: "{n} refusal on enforced gates | {n} refusals on enforced gates",
+      },
       colCapability: "Capability",
       colKind: "Kind",
       colImpact: "Scope",
       colInScope: "In scope",
-      colRefused: "Refused",
+      colRefused: "Refuses",
+      ifOn: "if turned on",
       colState: "Gate",
       colAction: "Action",
       kindMutates: "Changes nodes",
@@ -20,7 +27,6 @@ export default {
       gatesDescription:
         "A gate that is open behaves the way it always has. Turning one on starts refusing every node that is not in scope for it.",
       empty: "No capabilities are declared.",
-      metrics: { live: "Gates live", ungated: "Changing, not gated", total: "Declared" },
       mutates: "Changes nodes, so it is opt-in",
       reads: "Reads nodes",
       noDerivation: "nothing to infer scope from, so every node needs enrolling",
@@ -173,14 +179,27 @@ export default {
       commit: "Commit",
       builtAt: "Built at",
       unknown: "unknown",
+      proof: {
+        server: "server {version}",
+        dashboard: "console {ref}",
+        same: "this tab runs it",
+        different: "this tab runs another build",
+      },
+      mismatch: {
+        claim: "This tab runs console {tab}; the server serves {served}",
+        proof: "A tab left open across a deploy keeps the console it loaded until it reloads.",
+        action: "Reload",
+      },
       server: {
         title: "Server",
         description: "Runtime version reported by lattice-server",
       },
       dashboard: {
         title: "Dashboard",
-        description: "Static console bundle currently served by this server",
-        bundledRef: "Bundled dashboard ref",
+        description: "The console this tab runs, and the one this server bundles",
+        tabVersion: "This tab's version",
+        tabCommit: "This tab runs",
+        bundledRef: "Server bundles",
         bundledAt: "Bundled at",
       },
     },
@@ -256,6 +275,16 @@ export default {
       disableLastDescription:
         '"{name}" is the last enabled provider. Saving removes single sign-on from the login screen, leaving password and passkey as the only way in. Anyone without a local password will be locked out.',
       deleteTitle: "Delete identity provider?",
+      deleteDescriptionShort: 'Remove "{name}" from the login screen. This cannot be undone.',
+      deleteImpact: {
+        title: "Who loses a way in",
+        keep: "Operators who signed in through it keep their accounts, scopes, passwords and passkeys.",
+        locked: "{user} has no password and loses single sign-on; it is locked out unless it holds a passkey.",
+        maybeLocked: "{user} has no password: if it signs in through {name}, it is locked out unless it holds a passkey or another provider links it.",
+        usersReading: "Reading the accounts to see who has no other way in.",
+        usersUnread: "The accounts were not read, so who has no other way in is not known.",
+        usersNoAccess: "Which accounts have no password needs user admin access to read, so who is locked out is not known.",
+      },
       deleteDescription:
         'Remove "{name}". Operators who signed in through it lose that route and keep their accounts, scopes, passwords, and passkeys. Anyone with no other way in is locked out. This cannot be undone.',
       toast: {
@@ -317,8 +346,14 @@ export default {
           "Leave blank to keep the existing password. Saving this form signs the user out of the console whether or not you change it; their access tokens keep working.",
       },
       deleteTitle: "Delete user?",
-      deleteDescription:
-        'Remove "{name}". This operator immediately loses dashboard and API access; their tokens and SSO links are revoked. This cannot be undone.',
+      deleteDescription: 'Delete the account "{name}". This cannot be undone.',
+      deleteSelf: "This is the account you are signed in with",
+      deleteLastAdmin: "The last full admin cannot be deleted",
+      deleteImpact: {
+        signIn: "{name} can no longer sign in, and any session open now ends",
+        tokens: "Every token this account minted is revoked: anything calling the API with one gets 401",
+        sso: "Its single sign-on links are removed",
+      },
       toast: {
         created: "User created",
         updated: "User updated",
@@ -378,8 +413,8 @@ export default {
         scopes: "Scopes",
       },
       revokeTitle: "Revoke token?",
-      revokeDescription:
-        'Revoke "{name}". Any caller using this credential will immediately lose access. This is one-way and cannot be undone.',
+      revokeDescription: 'Revoke "{name}". This is one-way: nothing brings a revoked token back.',
+      revokeImpact: "Anything calling the API with this token gets 401 from now on",
       deleteTitle: "Delete revoked token?",
       deleteDescription:
         'Delete "{name}" from the token list. Only already-revoked tokens can be deleted; audit history is retained.',
@@ -394,6 +429,23 @@ export default {
         revokeFailed: "Revoke failed",
         deleted: "Token deleted",
         deleteFailed: "Delete failed",
+      },
+    },
+    access: {
+      title: "Access",
+      description: "Who can sign in to this console and with what: accounts, API tokens and single sign-on",
+      layersLabel: "Access layers",
+      layers: { users: "Users", tokens: "Tokens", sso: "Single sign-on" },
+      noScope: "Managing access needs user:admin, token:admin or oidc:admin.",
+      unknownNode: "unknown node {id}",
+      proof: {
+        users: "{n} user | {n} users",
+        admins: "{n} full admin | {n} full admins",
+        totp: "{n} of {total} with two-factor",
+        tokens: "{n} token | {n} tokens",
+        active: "{n} active",
+        providers: "{n} provider | {n} providers",
+        enabled: "{n} enabled",
       },
     },
   },

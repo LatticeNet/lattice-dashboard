@@ -9,9 +9,14 @@
  * request to send, the data fields the templates ask for, and whether anything
  * downstream is actually listening.
  *
- * That last part is why the routing notice exists. A fleet with no channel and
+ * That last part is why the routing check exists. A fleet with no channel and
  * no rule accepts every webhook and delivers none of them, and "202 Accepted"
- * is a convincing thing to see while nothing reaches a phone.
+ * is a convincing thing to see while nothing reaches a phone. It is an
+ * attention item now (design 23, section 3.2).
+ *
+ * A row opens the webhook in the sheet on `?open=` (design 23, section 4.5):
+ * the endpoint, the fields the caller must send, the request, and its recent
+ * deliveries. With no webhook there is no empty "select a webhook" column.
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -33,12 +38,18 @@ import {
   type NotifyWebhookView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useProof } from "@/composables/useProof";
+import { proofReason } from "@/components/common/proofModel";
+import { useRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
-import FreshnessLabel from "@/components/common/FreshnessLabel.vue";
+import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -93,16 +104,14 @@ const rulesQuery = useAsyncData((signal) => api.notify.rules({ signal }), {
 const enabledChannels = computed(() => (channelsQuery.data.value ?? []).filter((c) => c.enabled));
 const enabledRules = computed(() => (rulesQuery.data.value?.rules ?? []).filter((r) => r.enabled));
 
-const selectedId = ref<string | undefined>();
+const sheet = useRouteOpen();
+const selectedId = computed(() => sheet.openId.value ?? undefined);
 const selected = computed(() => webhooks.value.find((h) => h.id === selectedId.value));
-
-// Select the first webhook once the list arrives, so the detail pane is not an
-// empty box on a page that has content.
-watch(webhooks, (list) => {
-  if (!selectedId.value && list.length) selectedId.value = list[0]?.id;
-  if (selectedId.value && !list.some((h) => h.id === selectedId.value)) {
-    selectedId.value = list[0]?.id;
-  }
+const sheetState = computed(() => {
+  if (!selectedId.value) return "ready" as const;
+  if (selected.value) return webhooksQuery.error.value ? ("stale" as const) : ("ready" as const);
+  if (webhooksQuery.data.value === undefined) return webhooksQuery.error.value ? ("gone" as const) : ("loading" as const);
+  return "gone" as const;
 });
 
 const deliveriesQuery = useAsyncData(
@@ -113,7 +122,10 @@ const deliveriesQuery = useAsyncData(
   { pollInterval: 10000 },
 );
 const deliveries = computed(() => deliveriesQuery.data.value?.deliveries ?? []);
-watch(selectedId, () => deliveriesQuery.refresh());
+watch(selectedId, (id) => {
+  if (id) void deliveriesQuery.refresh();
+});
+const deliveriesProof = useProof(deliveriesQuery);
 
 const origin = computed(() => (typeof window === "undefined" ? "" : window.location.origin));
 const selectedUrl = computed(() => (selected.value ? webhookUrl(origin.value, selected.value.path) : ""));
@@ -137,12 +149,79 @@ const routingState = computed<"no-channel" | "no-rule" | "ok">(() => {
   return matches ? "ok" : "no-rule";
 });
 
+/** Whether a rule would route this event type; a rule with no event types matches everything. */
+function routed(event: string): boolean {
+  if (!enabledRules.value.length) return true;
+  return enabledRules.value.some((r) => !r.event_types?.length || r.event_types.includes("*") || r.event_types.includes(event));
+}
+
+// The webhooks are the page's subject; channels and rules answer only "would
+// anything receive this", so a failed read of either is its own segment and
+// never wipes the webhook counts.
+const proof = useProof(webhooksQuery);
+const proofSegments = computed<ProofSegment[]>(() => {
+  const n = webhooks.value.length;
+  const parts: ProofSegment[] = [{ key: "webhooks", text: t("platform.webhooksPage.proof.webhooks", { n }, n) }];
+  if (n) {
+    const enabled = webhooks.value.filter((hook) => hook.enabled).length;
+    parts.push({ key: "enabled", text: t("platform.webhooksPage.proof.enabled", { n: enabled }) });
+  }
+  if (channelsQuery.data.value !== undefined) {
+    parts.push({ key: "channels", text: t("platform.webhooksPage.proof.channels", { n: enabledChannels.value.length }, enabledChannels.value.length) });
+  } else if (channelsQuery.error.value) {
+    parts.push({ key: "channels", tone: "warning", text: t("platform.webhooksPage.proof.channelsUnread", { reason: proofReason(channelsQuery.error.value) }) });
+  }
+  if (rulesQuery.data.value === undefined && rulesQuery.error.value) {
+    parts.push({ key: "rules", tone: "warning", text: t("platform.webhooksPage.proof.rulesUnread", { reason: proofReason(rulesQuery.error.value) }) });
+  }
+  return parts;
+});
+
+/** Webhooks that answer 202 and reach nobody, named with the fix. */
+const attention = computed<AttentionItem[]>(() => {
+  if (!webhooks.value.length || channelsQuery.data.value === undefined) return [];
+  const notifications = { label: t("platform.webhooks.openNotifications"), to: "/platform/notifications" };
+  if (!enabledChannels.value.length) {
+    return [{ key: "no-channel", tone: "warning", claim: t("platform.webhooks.noChannelTitle"), proof: t("platform.webhooks.noChannelDetail"), action: notifications }];
+  }
+  if (rulesQuery.data.value === undefined) return [];
+  return webhooks.value
+    .filter((hook) => hook.enabled && !routed(hook.event_type))
+    .map((hook) => ({
+      key: `no-rule:${hook.id}`,
+      tone: "warning" as const,
+      claim: t("platform.webhooksPage.noRuleClaim", { name: hook.name }),
+      proof: t("platform.webhooks.noRuleDetail", { event: hook.event_type }),
+      // Notifications opens its rule form with this event type filled in.
+      action: canManage.value
+        ? { label: t("platform.webhooksPage.addRule"), to: { path: "/platform/notifications", query: { newRule: hook.event_type } } }
+        : notifications,
+    }));
+});
+
+/** An enabled webhook no rule routes answers 202 and reaches nobody; its row says so, when both reads landed. */
+function reachesNobody(hook: NotifyWebhookView): boolean {
+  if (!hook.enabled || channelsQuery.data.value === undefined) return false;
+  if (!enabledChannels.value.length) return true;
+  return rulesQuery.data.value !== undefined && !routed(hook.event_type);
+}
+
 const columns = computed<DataTableColumn<NotifyWebhookView>[]>(() => [
   { key: "name", label: t("platform.webhooks.colName"), sortable: true, searchable: true },
   { key: "event_type", label: t("platform.webhooks.colEvent"), sortable: true, searchable: true },
   { key: "enabled", label: t("platform.webhooks.colState"), align: "left" },
   { key: "last_used_at", label: t("platform.webhooks.colLastCalled"), sortable: true },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
+
+function menuFor(hook: NotifyWebhookView): RowMenuItem[] {
+  return [
+    { key: "test", label: t("platform.webhooks.sendTest"), icon: Send, hidden: !canManage.value, run: () => { sheet.open(hook.id); openTest(); } },
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !canManage.value, run: () => openEdit(hook) },
+    { key: "rotate", label: t("platform.webhooks.rotate"), icon: KeyRound, hidden: !canManage.value, run: () => openRotate(hook) },
+    { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, hidden: !canManage.value, run: () => openDelete(hook) },
+  ];
+}
 
 const health = computed(() => webhookHealth(deliveries.value));
 
@@ -223,7 +302,7 @@ async function submitForm(): Promise<void> {
     if (editingId.value) {
       toast.success(t("platform.webhooks.updated"));
     } else {
-      selectedId.value = result.id;
+      sheet.open(result.id);
       // Creation is the only moment the plaintext secret exists. Everything
       // else can wait for the poll; this cannot.
       revealed.value = result;
@@ -345,6 +424,7 @@ async function doDelete(): Promise<void> {
     await api.notify.deleteWebhook(target.id);
     toast.success(t("platform.webhooks.deleted"));
     closeConfirm();
+    if (selectedId.value === target.id) sheet.close();
     webhooksQuery.refresh();
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.webhooks.deleteFailed"));
@@ -393,141 +473,104 @@ async function runTest(): Promise<void> {
 </script>
 
 <template>
-  <div class="space-y-6 p-4 sm:p-6">
-    <PageHeader
-      :title="$t('platform.webhooks.title')"
-      :description="$t('platform.webhooks.description')"
-      :section="$t('platform.webhooks.section')"
-    >
-      <template #status>
-        <FreshnessLabel :last-updated="webhooksQuery.lastUpdated.value" :poll-ms="webhooksQuery.pollMs" />
+  <div class="space-y-5 p-4 sm:p-6">
+    <PageHeader :title="$t('platform.webhooks.title')">
+      <template #description>
+        <p class="text-sm text-muted-foreground">{{ $t('platform.webhooks.description') }}</p>
+        <ProofLine v-bind="proof" :segments="proofSegments" @retry="webhooksQuery.refresh()" />
       </template>
       <template #actions>
-        <Button variant="outline" size="sm" @click="webhooksQuery.refresh()">
-          <RefreshCw class="size-4" />
+        <Button variant="outline" size="sm" :disabled="webhooksQuery.refreshing.value" @click="webhooksQuery.refresh()">
+          <RefreshCw :class="['size-4', webhooksQuery.refreshing.value && 'animate-spin']" aria-hidden="true" />
           {{ $t("common.actions.refresh") }}
         </Button>
-        <Button v-if="canManage" size="sm" @click="openCreate">
-          <Plus class="size-4" />
+        <Button v-if="canManage && webhooks.length" size="sm" @click="openCreate">
+          <Plus class="size-4" aria-hidden="true" />
           {{ $t("platform.webhooks.newWebhook") }}
         </Button>
       </template>
     </PageHeader>
 
-    <!--
-      A webhook that fires into a fleet with no channel returns 202 and reaches
-      nobody. Saying so here is the difference between a working integration and
-      one that looks like it works.
-    -->
-    <div
-      v-if="routingState !== 'ok' && webhooks.length"
-      class="flex flex-wrap items-start gap-3 rounded-lg border border-warning/40 bg-warning/5 p-4"
+    <AttentionList :items="attention" />
+
+    <DataTable
+      state-key="webhooks"
+      :columns="columns"
+      :rows="webhooks"
+      :row-key="(hook: NotifyWebhookView) => hook.id"
+      :loading="webhooksQuery.loading.value"
+      :error="webhooksQuery.error.value"
+      :has-data="webhooksQuery.data.value !== undefined"
+      :page-size="25"
+      :searchable="webhooks.length > 6"
+      :expression-filter="false"
+      :search-placeholder="$t('platform.shared.searchNames')"
+      :row-click="(hook: NotifyWebhookView, el: HTMLElement) => sheet.open(hook.id, el)"
+      :active-row-id="sheet.openId.value"
+      :show-summary="false"
+      :empty-title="$t('platform.webhooks.emptyTitle')"
+      :empty-description="$t('platform.webhooks.emptyDescription')"
+      :no-match-title="$t('platform.shared.noMatchesTitle')"
+      :no-match-description="$t('platform.shared.noMatchesDescription')"
+      @retry="webhooksQuery.refresh"
     >
-      <Webhook class="mt-0.5 size-4 shrink-0 text-warning" />
-      <div class="min-w-0 flex-1 space-y-1">
-        <p class="text-sm font-medium text-foreground">
-          {{
-            routingState === "no-channel"
-              ? $t("platform.webhooks.noChannelTitle")
-              : $t("platform.webhooks.noRuleTitle")
-          }}
-        </p>
-        <p class="text-sm text-muted-foreground">
-          {{
-            routingState === "no-channel"
-              ? $t("platform.webhooks.noChannelDetail")
-              : $t("platform.webhooks.noRuleDetail", { event: selected?.event_type ?? "" })
-          }}
-        </p>
-      </div>
-      <Button variant="outline" size="sm" as-child>
-        <RouterLink to="/platform/notifications">
-          {{ $t("platform.webhooks.openNotifications") }}
-        </RouterLink>
-      </Button>
-    </div>
-
-    <div class="grid grid-cols-1 min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,460px)]">
-      <DataTable
-        class="min-w-0"
-        state-key="webhooks"
-        :columns="columns"
-        :rows="webhooks"
-        :row-key="(hook: NotifyWebhookView) => hook.id"
-        :loading="webhooksQuery.loading.value"
-        :error="webhooksQuery.error.value"
-        :has-data="webhooksQuery.data.value !== undefined"
-        :page-size="25"
-        searchable
-        :search-placeholder="$t('platform.shared.searchNames')"
-        :empty-title="$t('platform.webhooks.emptyTitle')"
-        :empty-description="$t('platform.webhooks.emptyDescription')"
-        :no-match-title="$t('platform.shared.noMatchesTitle')"
-        :no-match-description="$t('platform.shared.noMatchesDescription')"
-        @row-select="(hook: NotifyWebhookView) => (selectedId = hook.id)"
-        @retry="webhooksQuery.refresh"
-      >
-        <template #empty>
-          <EmptyState
-            :icon="Webhook"
-            :title="$t('platform.webhooks.emptyTitle')"
-            :description="$t('platform.webhooks.emptyDescription')"
-            :steps="[
-              { title: $t('platform.webhooks.step1Title'), detail: $t('platform.webhooks.step1Detail') },
-              { title: $t('platform.webhooks.step2Title'), detail: $t('platform.webhooks.step2Detail') },
-              { title: $t('platform.webhooks.step3Title'), detail: $t('platform.webhooks.step3Detail') },
-            ]"
-          >
-            <Button v-if="canManage" size="sm" @click="openCreate">
-              <Plus class="size-4" />
-              {{ $t("platform.webhooks.newWebhook") }}
-            </Button>
-          </EmptyState>
-        </template>
-
-        <template #cell-name="{ row }">
-          <span class="font-medium">{{ row.name }}</span>
-        </template>
-        <template #cell-event_type="{ row }">
-          <code class="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ row.event_type }}</code>
-        </template>
-        <template #cell-enabled="{ row }">
-          <Badge :variant="row.enabled ? 'success' : 'secondary'">
-            {{ row.enabled ? $t("platform.webhooks.enabled") : $t("platform.webhooks.disabled") }}
-          </Badge>
-        </template>
-        <template #cell-last_used_at="{ row }">
-          <span class="text-muted-foreground tabular">
-            {{ row.last_used_at ? formatRelativeTime(row.last_used_at) : $t("platform.webhooks.never") }}
-          </span>
-        </template>
-      </DataTable>
-
-      <!--
-        min-w-0: a grid item's default min-width is auto, so without it the
-        preformatted request block below sets this column's floor at its own
-        intrinsic width and the page scrolls sideways at 375 instead of the
-        block scrolling inside itself.
-      -->
-      <div class="min-w-0 space-y-4">
-        <div
-          v-if="!selected"
-          class="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground"
+      <template #empty>
+        <EmptyState
+          :icon="Webhook"
+          :title="$t('platform.webhooks.emptyTitle')"
+          :description="$t('platform.webhooks.emptyDescription')"
+          :steps="[
+            { title: $t('platform.webhooks.step1Title'), detail: $t('platform.webhooks.step1Detail') },
+            { title: $t('platform.webhooks.step2Title'), detail: $t('platform.webhooks.step2Detail') },
+            { title: $t('platform.webhooks.step3Title'), detail: $t('platform.webhooks.step3Detail') },
+          ]"
         >
-          {{ $t("platform.webhooks.selectPrompt") }}
-        </div>
+          <Button v-if="canManage" size="sm" @click="openCreate">
+            <Plus class="size-4" aria-hidden="true" />
+            {{ $t("platform.webhooks.newWebhook") }}
+          </Button>
+        </EmptyState>
+      </template>
 
-        <div v-else class="space-y-4 rounded-lg border border-border bg-card p-4">
-          <div class="flex flex-wrap items-start justify-between gap-2">
-            <div class="min-w-0">
-              <h3 class="truncate text-sm font-semibold text-foreground">{{ selected.name }}</h3>
-              <p class="text-xs text-muted-foreground">
-                {{ $t("platform.webhooks.createdAt", { at: formatDateTime(selected.created_at) }) }}
-              </p>
-            </div>
-            <Badge :variant="healthTone(health)">{{ $t(`platform.webhooks.health.${health}`) }}</Badge>
-          </div>
+      <template #cell-name="{ row }">
+        <span class="font-medium">{{ row.name }}</span>
+      </template>
+      <template #cell-event_type="{ row }">
+        <code class="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ row.event_type }}</code>
+      </template>
+      <template #cell-enabled="{ row }">
+        <span v-if="reachesNobody(row)" class="whitespace-nowrap text-xs font-medium text-warning-text">{{ $t("platform.webhooksPage.reachesNobody") }}</span>
+        <span v-else class="whitespace-nowrap text-xs text-muted-foreground">
+          {{ row.enabled ? $t("platform.webhooks.enabled") : $t("platform.webhooks.disabled") }}
+        </span>
+      </template>
+      <template #cell-last_used_at="{ row }">
+        <span class="whitespace-nowrap text-xs text-muted-foreground tabular">
+          {{ row.last_used_at ? formatRelativeTime(row.last_used_at) : $t("platform.webhooks.never") }}
+        </span>
+      </template>
+      <template #cell-actions="{ row }">
+        <RowMenu v-if="canManage" :name="row.name" :items="menuFor(row)" />
+      </template>
+    </DataTable>
 
+    <!-- One webhook: the endpoint, the caller's half of the contract, and what arrived. -->
+    <ObjectSheet
+      :open="!!selectedId"
+      :title="selected ? selected.name : (selectedId ?? '')"
+      :subtitle="selected ? $t('platform.webhooks.createdAt', { at: formatDateTime(selected.created_at) }) : undefined"
+      :mono-subtitle="false"
+      :state="sheetState"
+      :read-only="!canManage"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('platform.webhooksPage.goneTitle')"
+      :gone-description="$t('platform.webhooksPage.goneDescription')"
+      @close="sheet.close"
+    >
+      <div v-if="selected" class="space-y-4 text-sm">
+        <p :class="health === 'failing' || health === 'rejecting' ? 'text-destructive' : health === 'no_route' ? 'text-warning-text' : health === 'never' ? 'text-muted-foreground' : 'text-foreground'">
+          {{ $t(`platform.webhooks.health.${health}`) }}
+        </p>
           <!-- The endpoint. -->
           <div class="space-y-1.5">
             <p class="text-xs font-medium text-muted-foreground">{{ $t("platform.webhooks.endpoint") }}</p>
@@ -573,32 +616,13 @@ async function runTest(): Promise<void> {
             ><code>{{ selectedCurl }}</code></pre>
           </div>
 
-          <div v-if="canManage" class="flex flex-wrap gap-2 border-t border-border pt-3">
-            <Button variant="outline" size="sm" @click="openTest">
-              <Send class="size-4" />
-              {{ $t("platform.webhooks.sendTest") }}
-            </Button>
-            <Button variant="outline" size="sm" @click="openEdit(selected)">
-              <Pencil class="size-4" />
-              {{ $t("common.actions.edit") }}
-            </Button>
-            <Button variant="outline" size="sm" @click="openRotate(selected)">
-              <KeyRound class="size-4" />
-              {{ $t("platform.webhooks.rotate") }}
-            </Button>
-            <Button variant="outline" size="sm" @click="openDelete(selected)">
-              <Trash2 class="size-4" />
-              {{ $t("common.actions.delete") }}
-            </Button>
-          </div>
-        </div>
 
-        <!-- Recent attempts. -->
-        <div v-if="selected" class="rounded-lg border border-border bg-card">
-          <div class="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-            <h3 class="text-sm font-semibold text-foreground">{{ $t("platform.webhooks.deliveries") }}</h3>
-            <FreshnessLabel :last-updated="deliveriesQuery.lastUpdated.value" :poll-ms="deliveriesQuery.pollMs" />
+        <section class="space-y-2">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 class="text-xs font-medium text-muted-foreground">{{ $t("platform.webhooks.deliveries") }}</h3>
+            <ProofLine v-bind="deliveriesProof" @retry="deliveriesQuery.refresh()" />
           </div>
+          <div class="rounded-md border border-border">
           <p
             v-if="!deliveries.length"
             class="px-4 py-6 text-center text-sm text-muted-foreground"
@@ -619,18 +643,31 @@ async function runTest(): Promise<void> {
               <p class="text-xs text-muted-foreground tabular">
                 {{
                   $t("platform.webhooks.deliveryMeta", {
-                    delivered: d.delivered,
-                    channels: d.channels,
-                    fields: d.fields,
+                    reach: d.channels
+                      ? $t("platform.webhooks.deliveryReach", { delivered: d.delivered, channels: d.channels }, d.channels)
+                      : $t("platform.webhooks.deliveryReachNone"),
+                    fields: $t("platform.webhooks.deliveryFields", { n: d.fields }, d.fields),
                     ip: d.source_ip || "-",
                   })
                 }}
               </p>
             </li>
           </ul>
-        </div>
+          </div>
+        </section>
       </div>
-    </div>
+      <template v-if="selected && canManage" #actions>
+        <Button variant="outline" size="sm" @click="openTest">
+          <Send class="size-4" aria-hidden="true" />
+          {{ $t("platform.webhooks.sendTest") }}
+        </Button>
+        <Button variant="outline" size="sm" @click="openEdit(selected)">
+          <Pencil class="size-4" aria-hidden="true" />
+          {{ $t("common.actions.edit") }}
+        </Button>
+        <RowMenu :name="selected.name" :items="menuFor(selected).filter((item) => item.key === 'rotate' || item.key === 'delete')" />
+      </template>
+    </ObjectSheet>
 
     <!-- Create and edit. -->
     <Dialog :open="formOpen" @update:open="onFormOpenChange">
