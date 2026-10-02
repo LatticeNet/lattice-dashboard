@@ -1359,7 +1359,10 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         @click="coverageFilter = key"
       >
         {{ $t(`networking.sshGuard.coverage.filter.${key}`) }}
-        <span class="font-mono tabular">{{ key === 'open' && nodesNotRead ? $t('common.proof.notReadBare') : counts[key] }}</span>
+        <!-- "Not armed" and "Excluded" are mostly the nodes with no history,
+             which the board does not hold without the node list; a count
+             would disagree with the rows the chip filters to. -->
+        <span class="font-mono tabular">{{ (key === 'open' || key === 'excluded') && nodesNotRead ? $t('common.proof.notReadBare') : counts[key] }}</span>
       </button>
     </div>
     </div>
