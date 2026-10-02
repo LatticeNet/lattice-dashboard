@@ -30,7 +30,7 @@ export default {
       observed: "{age}前观测",
       lastGood: "最后一次成功在 {age}前",
       refreshFailed: "刷新失败：{reason}",
-      noAnswer: "此后没有应答",
+      noAnswer: "之后没有新的应答",
       notRead: "未读取：{reason}",
       notReadBare: "未读取",
     },

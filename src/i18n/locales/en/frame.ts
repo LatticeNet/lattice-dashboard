@@ -32,7 +32,7 @@ export default {
       observed: "observed {age} ago",
       lastGood: "last good {age} ago",
       refreshFailed: "refresh failed: {reason}",
-      noAnswer: "no answer since",
+      noAnswer: "no newer answer",
       notRead: "not read: {reason}",
       notReadBare: "not read",
     },
