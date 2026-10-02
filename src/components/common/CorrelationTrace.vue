@@ -1,36 +1,28 @@
 <script setup lang="ts">
 /**
- * CorrelationTrace: a dialog that reconstructs the full chain of one operation
- * from the audit trail. Given a correlation id, it pulls every audit event that
- * shares it (the request's own timeline), resolves any approval_id / task_id
- * those events reference into the wider plan -> approve -> run lifecycle, and
- * shows the approval's plan binding plus per-node task results. This is the
- * "click any event, see the whole operation" surface the transparency mandate
- * asks for. Read-only; no mutation.
+ * CorrelationTrace: the full chain of one operation, reconstructed from the
+ * audit trail and shown inline where the event is open (the Audit sheet,
+ * design 23, section 4.3). Given a correlation id, it pulls every audit event
+ * that shares it (the request's own timeline), resolves any approval_id /
+ * task_id those events reference into the wider plan -> approve -> run
+ * lifecycle, and shows the approval's plan binding plus per-node task
+ * results. Read-only; no mutation.
  */
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { RouterLink } from "vue-router";
 import { ShieldCheck, Terminal } from "lucide-vue-next";
 import { api, unwrap, type ApprovalView, type AuditEvent, type TaskResult } from "@/lib/api";
 import { formatDateTime, shortId } from "@/lib/format";
 import { referencedApprovalIds, referencedTaskIds, orderTimeline, summarize } from "@/views/operations/traceModel";
 
-import {
-  Dialog,
-  DialogScrollContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import CopyButton from "@/components/common/CopyButton.vue";
 import DataState from "@/components/common/DataState.vue";
+import NodeLabel from "@/components/common/NodeLabel.vue";
 
 const props = defineProps<{
-  open: boolean;
   correlationId: string;
 }>();
-const emit = defineEmits<{ (e: "update:open", value: boolean): void }>();
 
 const { t } = useI18n();
 
@@ -77,9 +69,9 @@ async function load(correlationId: string) {
 }
 
 watch(
-  () => [props.open, props.correlationId] as const,
-  ([open, id]) => {
-    if (open && id) load(id);
+  () => props.correlationId,
+  (id) => {
+    if (id) load(id);
   },
   { immediate: true },
 );
@@ -97,18 +89,7 @@ const summaryOf = summarize;
 </script>
 
 <template>
-  <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogScrollContent class="sm:max-w-2xl">
-      <DialogHeader>
-        <DialogTitle class="flex items-center gap-2">
-          {{ $t('operations.trace.title') }}
-        </DialogTitle>
-        <DialogDescription class="flex flex-wrap items-center gap-2">
-          <span class="font-mono text-xs">{{ correlationId }}</span>
-          <CopyButton :value="correlationId" />
-        </DialogDescription>
-      </DialogHeader>
-
+  <section class="space-y-3" data-testid="correlation-trace">
       <DataState
         :loading="loading"
         :error="error"
@@ -147,12 +128,18 @@ const summaryOf = summarize;
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-medium">{{ appr.plugin }} · {{ appr.action }}</span>
                 <Badge variant="outline">{{ appr.status }}</Badge>
-                <span class="ms-auto font-mono text-xs text-muted-foreground">{{ shortId(appr.id, 12) }}</span>
+                <RouterLink
+                  :to="{ name: 'approvals', query: { open: appr.id } }"
+                  class="ms-auto rounded-sm font-mono text-xs text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+                  :title="appr.id"
+                >
+                  {{ shortId(appr.id, 12) }}
+                </RouterLink>
               </div>
               <p class="mt-1 text-xs text-muted-foreground">
                 {{ $t('operations.trace.plannedBy') }} {{ appr.actor_id || $t('common.misc.none') }}
                 <template v-if="appr.approved_by"> · {{ $t('operations.trace.approvedBy') }} {{ appr.approved_by }}</template>
-                <template v-if="appr.node_id"> · {{ appr.node_id }}</template>
+                <template v-if="appr.node_id"> · <NodeLabel :id="appr.node_id" /></template>
               </p>
             </div>
           </section>
@@ -172,8 +159,14 @@ const summaryOf = summarize;
                 <Badge :variant="(r.exit_code ?? 0) === 0 && !r.error ? 'success' : 'destructive'">
                   {{ r.error ? $t('operations.trace.errored') : $t('operations.trace.exit', { code: r.exit_code ?? 0 }) }}
                 </Badge>
-                <span class="font-mono text-xs">{{ r.node_id }}</span>
-                <span class="ms-auto truncate font-mono text-xs text-muted-foreground">{{ shortId(r.task_id, 12) }}</span>
+                <NodeLabel :id="r.node_id" class="text-xs" />
+                <RouterLink
+                  :to="{ name: 'tasks', query: { open: r.task_id } }"
+                  class="ms-auto truncate rounded-sm font-mono text-xs text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+                  :title="r.task_id"
+                >
+                  {{ shortId(r.task_id, 12) }}
+                </RouterLink>
               </div>
             </div>
           </section>
@@ -206,6 +199,5 @@ const summaryOf = summarize;
           </section>
         </div>
       </DataState>
-    </DialogScrollContent>
-  </Dialog>
+  </section>
 </template>

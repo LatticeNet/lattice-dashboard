@@ -616,11 +616,11 @@ async function deleteMonitor() {
           <div class="mb-3 space-y-2">
             <div class="flex flex-col gap-2 lg:flex-row">
               <div class="relative min-w-[220px] flex-1">
-                <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+                <Search class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input v-model="monitorSearch" class="pl-8" :placeholder="$t('fleet.monitoring.definitions.searchPlaceholder')" />
               </div>
               <div class="relative min-w-[260px] flex-1">
-                <Funnel class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+                <Funnel class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input
                   v-model="monitorExpression"
                   class="pl-8 font-mono text-xs"

@@ -131,7 +131,8 @@ export const api = {
     plan: () => Promise.reject(new Error("fake api: re-planning is not implemented in the approvals harness")),
   },
   nodes: { list: () => delay({ nodes: [] }) },
-  tasks: unimplemented,
+  // The plan sheet lists the tasks a plan queued; this harness holds none.
+  tasks: { query: (params?: Record<string, unknown>) => delay({ tasks: [], total: 0, limit: Number(params?.limit ?? 20), offset: 0 }) },
   audit: unimplemented,
   capabilities: unimplemented,
   plugins: unimplemented,

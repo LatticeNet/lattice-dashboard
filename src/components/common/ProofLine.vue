@@ -27,8 +27,10 @@ export interface ProofSegment {
   text: string;
   /**
    * `default` is the line's own colour; `strong` marks the fact the line is
-   * about (Terminal's transport and shell); `muted` is quieter still;
-   * `warning` and `destructive` carry a state.
+   * about (Terminal's transport and shell); `muted` is a side note, which
+   * the page shows by placing it after the facts, not by greying it further
+   * (a lighter grey fell to 2.9:1 in light mode); `warning` and
+   * `destructive` carry a state.
    */
   tone?: "default" | "strong" | "muted" | "warning" | "destructive";
   /** A segment with somewhere to go (the audited sessions, the offline nodes). */
@@ -61,14 +63,18 @@ const age = computed(() =>
 const TONE: Record<NonNullable<ProofSegment["tone"]>, string> = {
   default: "",
   strong: "text-foreground",
-  muted: "text-muted-foreground/70",
+  muted: "text-muted-foreground",
   warning: "text-warning-text",
   destructive: "text-destructive",
 };
 
-/** Stale segments are the last good read: shown, but never in a state colour. */
+/**
+ * Stale segments are the last good read: shown, but never in a state colour.
+ * The "last good" lead in amber already says they are old, so they keep the
+ * line's readable grey.
+ */
 function segmentClass(segment: ProofSegment): string {
-  if (props.state === "stale") return "text-muted-foreground/70";
+  if (props.state === "stale") return "text-muted-foreground";
   return TONE[segment.tone ?? "default"];
 }
 
@@ -102,7 +108,7 @@ const lead = computed(() => {
       </span>
       <button
         type="button"
-        class="inline-flex h-6 items-center rounded-sm border border-border px-2 font-sans text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+        class="inline-flex h-6 items-center rounded-sm border border-border px-2 font-sans text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3"
         @click="emit('retry')"
       >
         {{ $t('common.actions.retry') }}

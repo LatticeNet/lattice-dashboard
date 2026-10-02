@@ -128,7 +128,7 @@ const transportByNode = new Map(FLEET.map((entry) => [`node_${slug(entry.name)}`
 const principal: Principal = {
   actor_id: "cdcd",
   username: "cdcd",
-  scopes: scenario === "none" ? ["node:read", "approval:read"] : ["terminal:open", "node:read", "approval:read"],
+  scopes: scenario === "none" ? ["node:read", "approval:read"] : ["terminal:open", "node:read", "approval:read", "audit:read"],
   server_allowlist: [],
   csrf_token: "harness",
 };
