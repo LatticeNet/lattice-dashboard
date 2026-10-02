@@ -11,6 +11,7 @@ import {
   canSubmitMonitor,
   isServerEvaluated,
   switchMonitorType,
+  targetError,
   tlsTargetError,
   usesThreshold,
   type MonitorFormState,
@@ -148,7 +149,7 @@ test("MonitoringView switches type through the reducer instead of overwriting", 
   assert.doesNotMatch(watcher, /assignAll\.value = true/, "the watcher still forces assign-all");
 });
 
-test("the tls target error is announced, not left as an unexplained invalid field", () => {
+test("the target error is announced, not left as an unexplained invalid field", () => {
   // aria-invalid on its own says "invalid" and stops, which is the one word the
   // operator already knows. The sentence that says a certificate watch takes
   // host:port has to reach the reader who cannot see the red border.
@@ -158,7 +159,24 @@ test("the tls target error is announced, not left as an unexplained invalid fiel
   const start = view.indexOf('id="monitor-target"');
   const field = view.slice(start, view.indexOf("</p>", view.indexOf('id="monitor-target-error"', start)) + 4);
   assert.ok(start >= 0 && field.length > 0, "MonitoringView no longer has a target field with its error");
-  assert.match(field, /:aria-describedby="tlsTargetProblem \? 'monitor-target-error' : undefined"/);
+  assert.match(field, /:aria-describedby="targetProblem \? 'monitor-target-error' : undefined"/);
   assert.match(field, /id="monitor-target-error"/);
   assert.match(field, /role="alert"/);
+});
+
+test("an agent probe's target is checked against what the agent dials", () => {
+  // tcp: the agent dials host:port; a URL failed every check and the monitor
+  // could not be edited, only deleted.
+  assert.equal(targetError("tcp", "203.0.113.7:443"), undefined);
+  assert.equal(targetError("tcp", "https://api.example.com/healthz"), "not_host_port");
+  assert.equal(targetError("tcp", "api.example.com"), "not_host_port");
+  // http: the agent sends a GET, so it needs a scheme.
+  assert.equal(targetError("http", "https://api.example.com/healthz"), undefined);
+  assert.equal(targetError("http", "http://10.0.0.5:8080/"), undefined);
+  assert.equal(targetError("http", "api.example.com/healthz"), "not_url");
+  assert.equal(targetError("http", "ftp://example.com"), "not_url");
+  assert.equal(targetError("tls", "dns.roobli.org:8443"), undefined);
+  assert.equal(targetError("http", "  "), "empty");
+  assert.equal(canSubmitMonitor(form({ type: "tcp", target: "https://api.example.com/healthz", assignAll: true })), false);
+  assert.equal(canSubmitMonitor(form({ type: "http", target: "https://api.example.com/healthz", assignAll: true })), true);
 });

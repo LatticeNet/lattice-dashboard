@@ -26,7 +26,7 @@ import {
   canSubmitMonitor,
   isServerEvaluated,
   switchMonitorType,
-  tlsTargetError,
+  targetError,
   type ProbeAssignment,
 } from "./monitorTypeModel";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -43,6 +43,11 @@ import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { createConfirmReturn } from "./confirmFocus";
+import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
+import { useMonitorHealth } from "./useMonitorHealth";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
@@ -118,7 +123,8 @@ const deletePending = ref(false);
 const deleteOpen = ref(false);
 
 const monitorName = ref("");
-const monitorType = ref<string>("tcp");
+// HTTP first, like the empty state's first watch: the most common probe.
+const monitorType = ref<string>("http");
 const monitorTarget = ref("");
 const intervalSec = ref(AGENT_DEFAULT_INTERVAL_SEC);
 const timeoutSec = ref(AGENT_DEFAULT_TIMEOUT_SEC);
@@ -167,10 +173,17 @@ watch(monitorType, (type, previous) => {
 });
 
 const isCertWatch = computed(() => isServerEvaluated(monitorType.value));
-/** Set once the operator has typed something that is not host:port. */
-const tlsTargetProblem = computed(() =>
-  isCertWatch.value && monitorTarget.value.trim() ? tlsTargetError(monitorTarget.value) : undefined,
+/** Set once the operator has typed a target this type cannot dial. */
+const targetProblem = computed(() =>
+  monitorTarget.value.trim() ? targetError(monitorType.value, monitorTarget.value) : undefined,
 );
+/** A URL typed into a TCP monitor: one click makes it the HTTP monitor it meant to be. */
+const offerHttp = computed(() => monitorType.value === "tcp" && /^https?:\/\//i.test(monitorTarget.value.trim()));
+const targetProblemText = computed(() => {
+  if (!targetProblem.value) return "";
+  if (isCertWatch.value) return t("fleet.monitoring.create.targetTlsError");
+  return monitorType.value === "http" ? t("fleet.monitoring.create.targetHttpError") : t("fleet.monitoring.create.targetTcpError");
+});
 
 
 /** The assignment picker is a checkbox list writing into one array of ids. */
@@ -195,9 +208,26 @@ const selectedMonitor = computed(() =>
 );
 const selectedResults = computed(() => resultsQuery.data.value ?? []);
 
-/** Enabled first, then by name. Search is the table's own. */
+/**
+ * Each listed monitor's state from its newest results (monitorHealthModel).
+ * The open monitor uses the sheet's own read, which polls faster, so the row
+ * and the sheet's badge agree.
+ */
+const healthRead = useMonitorHealth(monitorsQuery.data, { enabled: () => canReadMonitors.value });
+function healthOf(monitor: MonitorView): MonitorHealth {
+  if (monitor.id === selectedMonitorId.value && resultsQuery.data.value !== undefined) {
+    return monitorHealth(monitor, resultsQuery.data.value, resultsQuery.lastUpdated.value ?? Date.now());
+  }
+  return healthRead.health(monitor);
+}
+/** The status read has not answered once yet. */
+const healthReading = computed(() => healthRead.query.data.value === undefined && !healthRead.query.error.value);
+
+/** Failing first, then stale and silent ones, then the rest by name. Search is the table's own. */
 const sortedMonitors = computed(() =>
   [...monitors.value].sort((a, b) => {
+    const rank = healthRank(healthOf(a)) - healthRank(healthOf(b));
+    if (rank !== 0) return rank;
     if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
     return (a.name || a.id).localeCompare(b.name || b.id);
   }),
@@ -391,22 +421,58 @@ function openCreate(type?: string) {
   createOpen.value = true;
 }
 
+function resetCreateForm(): void {
+  monitorName.value = "";
+  // Dropped before the type changes: the form is being emptied on purpose,
+  // so the state held aside for a round trip through tls is not owed back.
+  agentProbeStash.value = undefined;
+  monitorType.value = "http";
+  monitorTarget.value = "";
+  intervalSec.value = AGENT_DEFAULT_INTERVAL_SEC;
+  timeoutSec.value = AGENT_DEFAULT_TIMEOUT_SEC;
+  thresholdDays.value = TLS_DEFAULT_THRESHOLD_DAYS;
+  assignAll.value = true;
+  selectedNodeIds.value = [];
+}
+
+/**
+ * Something typed or picked that closing would throw away. Escape, the close
+ * button and Cancel ask first when it is set, like the Machines editor.
+ */
+const createDirty = computed(
+  () => !!monitorName.value.trim() || !!monitorTarget.value.trim() || !assignAll.value || selectedNodeIds.value.length > 0,
+);
+const createDiscardOpen = ref(false);
+function requestCloseCreate(): void {
+  if (createPending.value) return;
+  if (createDirty.value) {
+    createDiscardOpen.value = true;
+    return;
+  }
+  createOpen.value = false;
+}
+function discardCreate(): void {
+  createDiscardOpen.value = false;
+  createOpen.value = false;
+  resetCreateForm();
+}
+
+/** What the disabled Create still needs, so it does not sit there unexplained. */
+const createMissing = computed(() => {
+  const missing: string[] = [];
+  if (!monitorName.value.trim()) missing.push(t("fleet.monitoring.create.missingName"));
+  if (!monitorTarget.value.trim()) missing.push(t("fleet.monitoring.create.missingTarget"));
+  else if (targetProblem.value) missing.push(t("fleet.monitoring.create.missingValidTarget"));
+  if (!isCertWatch.value && !assignAll.value && selectedNodeIds.value.length === 0) missing.push(t("fleet.monitoring.create.missingNodes"));
+  return missing;
+});
+
 async function createMonitor() {
   if (!canSubmit.value) return;
   createPending.value = true;
   try {
     const created = await api.monitors.create(buildMonitorCreate(monitorForm.value));
-    monitorName.value = "";
-    // Dropped before the type changes: the form is being emptied on purpose,
-    // so the state held aside for a round trip through tls is not owed back.
-    agentProbeStash.value = undefined;
-    monitorType.value = "tcp";
-    monitorTarget.value = "";
-    intervalSec.value = AGENT_DEFAULT_INTERVAL_SEC;
-    timeoutSec.value = AGENT_DEFAULT_TIMEOUT_SEC;
-    thresholdDays.value = TLS_DEFAULT_THRESHOLD_DAYS;
-    assignAll.value = true;
-    selectedNodeIds.value = [];
+    resetCreateForm();
     createOpen.value = false;
     toast.success(t("fleet.monitoring.toast.created"));
     refreshAll();
@@ -440,11 +506,91 @@ async function deleteMonitor() {
 /* ------------------------------------------------------------------ */
 
 const proof = useProof(monitorsQuery);
+const failing = computed(() => failingMonitors(monitors.value, healthOf));
+const staleMonitors = computed(() => monitors.value.filter((monitor) => healthOf(monitor).kind === "stale"));
 const proofSegments = computed<ProofSegment[]>(() => {
   const out: ProofSegment[] = [{ key: "monitors", text: t("fleet.monitoring.proof.monitors", { n: monitors.value.length }, monitors.value.length) }];
   if (monitors.value.length) out.push({ key: "enabled", text: t("fleet.monitoring.proof.enabled", { n: enabledCount.value }) });
+  if (failing.value.length) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failing.value.length }) });
+  if (healthRead.query.error.value && healthRead.query.data.value === undefined) {
+    out.push({ key: "status", tone: "warning", text: t("fleet.monitoring.proof.statusNotRead", { reason: healthRead.query.error.value.message }) });
+  } else if (healthRead.capped.value) {
+    out.push({ key: "status", tone: "muted", text: t("fleet.monitoring.proof.statusCapped", { n: healthRead.capped.value }) });
+  }
   return out;
 });
+
+/**
+ * Failing monitors, then the ones whose results stopped arriving. Each names
+ * the nodes and the newest result's age, and opens the monitor.
+ */
+const attention = computed<AttentionItem[]>(() => {
+  const items: AttentionItem[] = failing.value.map(({ monitor, failing: n, total }) => {
+    const state = healthOf(monitor);
+    const lastAt = state.kind === "failing" ? state.lastAt : 0;
+    return {
+      key: `failing:${monitor.id}`,
+      tone: "danger",
+      claim: t("fleet.monitoring.attention.failing", { name: monitor.name || monitor.id }),
+      proof: [
+        total > 1 ? t("fleet.monitoring.status.failingOn", { n, total }) : t("fleet.monitoring.status.failing"),
+        lastAt ? t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(lastAt) }) : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      action: { label: t("fleet.monitoring.attention.open"), run: () => sheet.open(monitor.id) },
+    };
+  });
+  for (const monitor of staleMonitors.value) {
+    const state = healthOf(monitor);
+    items.push({
+      key: `stale:${monitor.id}`,
+      tone: "warning",
+      claim: t("fleet.monitoring.attention.stale", { name: monitor.name || monitor.id }),
+      proof:
+        state.kind === "stale"
+          ? t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) })
+          : undefined,
+      action: { label: t("fleet.monitoring.attention.open"), run: () => sheet.open(monitor.id) },
+    });
+  }
+  return items;
+});
+
+/** The status cell: words first, colour only for a reading that says something. */
+function statusView(monitor: MonitorView): { text: string; detail?: string; tone?: "success" | "warning" | "destructive"; textClass: string } {
+  const state = healthOf(monitor);
+  switch (state.kind) {
+    case "disabled":
+      return { text: t("common.status.disabled"), textClass: "text-muted-foreground" };
+    case "unread":
+      return {
+        text: healthReading.value ? t("overview.read.reading") : t("overview.read.failed"),
+        textClass: "text-muted-foreground",
+      };
+    case "none":
+      return { text: t("fleet.monitoring.status.none"), textClass: "text-muted-foreground" };
+    case "failing":
+      return {
+        text: state.total > 1 ? t("fleet.monitoring.status.failingOn", { n: state.failing, total: state.total }) : t("fleet.monitoring.status.failing"),
+        tone: "destructive",
+        textClass: "text-destructive font-medium",
+      };
+    case "stale":
+      return {
+        text: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }),
+        tone: "warning",
+        textClass: "text-warning-text",
+      };
+    case "up":
+      return {
+        text: t("fleet.monitoring.status.up"),
+        detail: state.latencyMs !== undefined ? formatLatency(state.latencyMs) : undefined,
+        tone: "success",
+        textClass: "text-foreground",
+      };
+  }
+}
 
 const listedMonitors = computed(() => {
   const id = nodeFilter.value;
@@ -456,6 +602,7 @@ const listedMonitors = computed(() => {
 
 const columns = computed<DataTableColumn<MonitorView>[]>(() => [
   { key: "name", label: t("fleet.monitoring.table.name"), sortable: true, searchable: true, value: (m) => m.name || m.id },
+  { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (m) => healthRank(healthOf(m)) },
   { key: "type", label: t("fleet.monitoring.table.type"), sortable: true, searchable: true },
   { key: "target", label: t("fleet.monitoring.table.target"), searchable: true },
   { key: "assignment", label: t("fleet.monitoring.table.checks"), value: (m) => assignmentLabel(m) },
@@ -463,8 +610,11 @@ const columns = computed<DataTableColumn<MonitorView>[]>(() => [
   { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
 
+/** A confirm opened from a row menu hands focus back to that menu. */
+const confirmReturn = createConfirmReturn();
 const deleteTarget = ref<MonitorView | undefined>();
 function requestDelete(monitor: MonitorView) {
+  confirmReturn.remember(monitor.id);
   deleteTarget.value = monitor;
   deleteOpen.value = true;
 }
@@ -489,6 +639,11 @@ const failingNow = computed(() => latestByNode.value.filter((result) => !result.
 const stateBadge = computed<{ variant: "success" | "destructive" | "secondary"; label: string }>(() => {
   if (resultsQuery.data.value === undefined) return { variant: "secondary", label: t("common.proof.reading") };
   if (latestByNode.value.length === 0) return { variant: "secondary", label: t("fleet.monitoring.result.noResult") };
+  // Old results are not a reading: the badge says when the last one came, not "passing".
+  const state = selectedMonitor.value ? healthOf(selectedMonitor.value) : undefined;
+  if (state?.kind === "stale") {
+    return { variant: "secondary", label: t("fleet.monitoring.status.lastResult", { age: formatRelativeTime(state.lastAt) }) };
+  }
   if (failingNow.value === 0) return { variant: "success", label: t("fleet.monitoring.result.passing") };
   if (latestByNode.value.length === 1) return { variant: "destructive", label: t("fleet.monitoring.result.failing") };
   return { variant: "destructive", label: t("fleet.monitoring.sheet.failingOn", { n: failingNow.value, total: latestByNode.value.length }) };
@@ -531,6 +686,8 @@ const deleteImpact = computed(() => {
         </Button>
       </template>
     </PageHeader>
+
+    <AttentionList v-if="canReadMonitors" :items="attention" />
 
     <EmptyState
       v-if="!canReadMonitors"
@@ -593,9 +750,15 @@ const deleteImpact = computed(() => {
     >
       <template #cell-name="{ row }">
         <span class="flex min-w-0 items-center gap-2">
-          <Activity :class="cn('size-4 shrink-0', row.enabled ? 'text-success' : 'text-muted-foreground')" aria-hidden="true" />
+          <Activity class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span class="truncate font-medium">{{ row.name || row.id }}</span>
-          <span v-if="!row.enabled" class="shrink-0 text-xs text-muted-foreground">{{ $t('common.status.disabled') }}</span>
+        </span>
+      </template>
+      <template #cell-status="{ row }">
+        <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-xs" data-testid="monitor-status">
+          <StatusDot v-if="statusView(row).tone" :tone="statusView(row).tone" :pulse="false" />
+          <span :class="statusView(row).textClass">{{ statusView(row).text }}</span>
+          <span v-if="statusView(row).detail" class="font-mono tabular text-muted-foreground">{{ statusView(row).detail }}</span>
         </span>
       </template>
       <template #cell-type="{ row }">
@@ -745,7 +908,7 @@ const deleteImpact = computed(() => {
     </ObjectSheet>
 
     <!-- Create in a sheet, from the header or the empty state. -->
-    <ObjectSheet :open="createOpen" :title="$t('fleet.monitoring.create.title')" @close="createOpen = false">
+    <ObjectSheet :open="createOpen" :title="$t('fleet.monitoring.create.title')" @close="requestCloseCreate">
       <form id="monitor-create" class="space-y-4" @submit.prevent="createMonitor">
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.create.description') }}</p>
         <div class="grid gap-2">
@@ -768,11 +931,21 @@ const deleteImpact = computed(() => {
             id="monitor-target"
             v-model="monitorTarget"
             required
-            :aria-invalid="!!tlsTargetProblem"
-            :aria-describedby="tlsTargetProblem ? 'monitor-target-error' : undefined"
+            :aria-invalid="!!targetProblem"
+            :aria-describedby="targetProblem ? 'monitor-target-error' : undefined"
             :placeholder="isCertWatch ? $t('fleet.monitoring.create.targetTlsPlaceholder') : monitorType === 'tcp' ? $t('fleet.monitoring.create.targetTcpPlaceholder') : $t('fleet.monitoring.create.targetHttpPlaceholder')"
           />
-          <p v-if="tlsTargetProblem" id="monitor-target-error" role="alert" class="text-xs text-destructive">{{ $t('fleet.monitoring.create.targetTlsError') }}</p>
+          <p v-if="targetProblem" id="monitor-target-error" role="alert" class="text-xs text-destructive">
+            {{ targetProblemText }}
+            <button
+              v-if="offerHttp"
+              type="button"
+              class="ms-1 font-medium text-foreground underline underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              @click="monitorType = 'http'"
+            >
+              {{ $t('fleet.monitoring.create.switchToHttp') }}
+            </button>
+          </p>
         </div>
         <div v-if="isCertWatch" class="grid gap-2">
           <Label for="monitor-threshold">{{ $t('fleet.monitoring.create.thresholdDays') }}</Label>
@@ -827,7 +1000,10 @@ const deleteImpact = computed(() => {
         </div>
       </form>
       <template #actions>
-        <Button variant="outline" size="sm" type="button" @click="createOpen = false">{{ $t('common.actions.cancel') }}</Button>
+        <p v-if="createMissing.length" class="me-auto text-xs text-muted-foreground" data-testid="create-missing">
+          {{ $t('fleet.monitoring.create.missing', { fields: createMissing.join($t('fleet.monitoring.create.missingJoin')) }) }}
+        </p>
+        <Button variant="outline" size="sm" type="button" @click="requestCloseCreate">{{ $t('common.actions.cancel') }}</Button>
         <Button type="submit" form="monitor-create" size="sm" :disabled="createPending || !canSubmit">
           <RefreshCw v-if="createPending" class="size-4 animate-spin" aria-hidden="true" />
           <Plus v-else class="size-4" aria-hidden="true" />
@@ -835,6 +1011,16 @@ const deleteImpact = computed(() => {
         </Button>
       </template>
     </ObjectSheet>
+
+    <!-- Leaving a typed monitor: say what is lost, keep editing by default. -->
+    <ConfirmDialog
+      v-model:open="createDiscardOpen"
+      :title="$t('fleet.monitoring.create.discard.title')"
+      :description="$t('fleet.monitoring.create.discard.description')"
+      :confirm-label="$t('fleet.monitoring.create.discard.confirm')"
+      :cancel-label="$t('fleet.monitoring.create.discard.keep')"
+      @confirm="discardCreate"
+    />
 
     <ConfirmDialog
       v-model:open="deleteOpen"
@@ -844,6 +1030,7 @@ const deleteImpact = computed(() => {
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deletePending"
+      :return-focus="confirmReturn.target"
       @confirm="deleteMonitor"
     />
   </div>
