@@ -5,7 +5,7 @@ import {
 } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
 import { setUnauthorizedListener } from "@/lib/api";
-import { createSessionWatch, expiredSignInLocation } from "@/lib/sessionExpiry";
+import { installSessionExpiry } from "./expiredSession";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
@@ -190,27 +190,8 @@ router.afterEach(() => {
   chunkReloadAttempted = false;
 });
 
-/**
- * An expired session goes to sign-in, once, with the way back: the client
- * reports each 401, sessionExpiry confirms with /api/me that the session is
- * really gone, and then the principal is forgotten and the operator lands on
- * sign-in with a note and ?redirect= to the page they were on. Leaving the
- * shell unmounts every page, which stops their polling.
- */
-const sessionWatch = createSessionWatch({
-  sessionGone: () => useAuthStore().sessionGone(),
-  signedIn: () => {
-    const auth = useAuthStore();
-    return auth.isAuthenticated && !auth.signingOut;
-  },
-  onExpired: () => {
-    const from = router.currentRoute.value;
-    useAuthStore().expire();
-    if (from.meta.public) return;
-    void router.replace(expiredSignInLocation(from.fullPath));
-  },
-});
-setUnauthorizedListener((path) => void sessionWatch.report(path));
+// An expired session goes to sign-in with the way back (router/expiredSession).
+installSessionExpiry(router, useAuthStore, setUnauthorizedListener);
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore();

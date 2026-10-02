@@ -32,6 +32,11 @@ export interface PendingNavigation {
    * cancelled does not end the pending state.
    */
   isPending(): boolean;
+  /**
+   * Where the pending navigation is going, or null when none is. The current
+   * route still names the page being left until the navigation lands.
+   */
+  target(): RouteLocationNormalized | null;
   /** Called each time the pending navigation ends. Returns an unsubscribe. */
   onSettled(listener: () => void): () => void;
 }
@@ -62,10 +67,10 @@ const trackers = new WeakMap<object, PendingNavigation>();
  * navigation for as long as it waits.
  */
 export function trackPendingNavigation(router: NavigationHooks): PendingNavigation {
-  let pending: object | null = null;
+  let pending: RouteLocationNormalized | null = null;
   const listeners = new Set<() => void>();
 
-  function settle(to: object) {
+  function settle(to: RouteLocationNormalized) {
     if (to !== pending) return;
     pending = null;
     for (const listener of [...listeners]) listener();
@@ -79,6 +84,7 @@ export function trackPendingNavigation(router: NavigationHooks): PendingNavigati
 
   const tracker: PendingNavigation = {
     isPending: () => pending !== null,
+    target: () => pending,
     onSettled(listener) {
       listeners.add(listener);
       return () => {
