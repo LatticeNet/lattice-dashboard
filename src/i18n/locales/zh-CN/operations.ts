@@ -69,6 +69,29 @@ export default {
       approvalNote: "审批提示",
       rejectionReason: "驳回原因",
       approveErrorTitle: "审批失败",
+      /** 按审批类型的标题(lib/approvalKind.ts);原始插件与动作以等宽字留在旁边。 */
+      kinds: {
+        agentUpdate: "升级节点 agent",
+        lineMetaSync: "同步线路元数据",
+        lineUserAdd: "把 VPN 用户加入线路",
+        lineUserUpdate: "更新线路上的 VPN 用户",
+        lineUserRemove: "从线路移除 VPN 用户",
+        lineUserChange: "调整线路上的 VPN 用户",
+        managedLineRollout: "部署托管线路",
+        lineChainSet: "让线路经下游转发",
+        lineChainRemove: "取消线路的下游转发",
+        lineChainChange: "调整线路的下游转发",
+        proxyCoreConfig: "应用代理核心配置",
+        selfDnsConfig: "应用自建 DNS 配置",
+        networkPolicy: "应用网络策略",
+        netguardRuleset: "应用 NetGuard 安全组",
+        firewallRuleset: "应用防火墙规则集",
+        tunnelConfig: "应用 Cloudflare Tunnel 配置",
+        wireguardConfig: "应用 WireGuard 配置",
+        sshGuardArm: "用 SSH Guard 加固",
+        sshGuardConfirm: "确认 SSH Guard 加固",
+        generic: "{action}（{plugin}）",
+      },
       events: {
         systemBadge: "系统",
         writerBy: "由 {writer}",
@@ -121,7 +144,7 @@ export default {
         dismiss: "归档这条审批",
         dismissTitle: "归档这条审批？",
         dismissConfirm:
-          "归档 {plugin} / {action}（节点 {node}）？它会连同“为什么一直没应用”的原因一起留档，不会排队也不会执行。如果这个变更仍然需要，请重新生成计划。",
+          "归档“{change}”（节点 {node}）？它会连同“为什么一直没应用”的原因一起留档，不会排队也不会执行。如果这个变更仍然需要，请重新生成计划。",
         notDismissible: "这一条不能在这里归档，只能等它自己走完，或者重新生成计划。",
         showStuck: "看看卡住的那些",
         codes: {

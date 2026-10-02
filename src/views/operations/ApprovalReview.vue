@@ -18,6 +18,7 @@ import { api, unwrap, type ApprovalView, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { usePlanDigest } from "@/composables/usePlanDigest";
 import { approvalStatusMeta } from "@/lib/status";
+import { approvalPlanSummary } from "@/lib/approvalKind";
 import { describeNodeStatus } from "@/lib/nodeStatus";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { taskStateStyle } from "@/lib/taskLease";
@@ -65,6 +66,8 @@ const { t } = useI18n();
 /* ------------------------------------------------------------------ */
 
 const waiting = computed(() => (props.approval.status === "approved" ? props.approval.waiting : undefined));
+/** The plan's own sentence, when it is JSON that carries one ("Add alice to hk-reality on [cd]-hkg"). */
+const planSummary = computed(() => approvalPlanSummary(props.approval.plan));
 const stuck = computed(() => isApprovalStuck(props.approval));
 const moving = computed(() => props.approval.status === "approved" && !!props.approval.waiting && !props.approval.waiting.blocked);
 
@@ -140,6 +143,7 @@ function statusLabel(status: string): string {
 
 <template>
   <div class="space-y-6" data-testid="approval-review">
+    <p v-if="planSummary" class="break-words text-sm text-foreground" data-testid="approval-summary">{{ planSummary }}</p>
     <dl class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
       <div>
         <dt class="text-xs text-muted-foreground">{{ $t('operations.approvals.columns.status') }}</dt>

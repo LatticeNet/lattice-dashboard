@@ -70,6 +70,29 @@ export default {
       approvalNote: "Approval note",
       rejectionReason: "Rejection reason",
       approveErrorTitle: "Approval failed",
+      /** Titles per approval kind (lib/approvalKind.ts); the raw plugin and action stay beside them in mono. */
+      kinds: {
+        agentUpdate: "Update the node agent",
+        lineMetaSync: "Sync line metadata",
+        lineUserAdd: "Add a VPN user to a line",
+        lineUserUpdate: "Update a VPN user on a line",
+        lineUserRemove: "Remove a VPN user from a line",
+        lineUserChange: "Change a VPN user on a line",
+        managedLineRollout: "Roll out a managed line",
+        lineChainSet: "Route a line through a downstream",
+        lineChainRemove: "Remove a line's downstream route",
+        lineChainChange: "Change a line's downstream route",
+        proxyCoreConfig: "Apply the proxy core config",
+        selfDnsConfig: "Apply the self-hosted DNS config",
+        networkPolicy: "Apply network policy",
+        netguardRuleset: "Apply NetGuard security groups",
+        firewallRuleset: "Apply the firewall ruleset",
+        tunnelConfig: "Apply the Cloudflare Tunnel config",
+        wireguardConfig: "Apply the WireGuard config",
+        sshGuardArm: "Arm SSH Guard",
+        sshGuardConfirm: "Confirm the SSH Guard arm",
+        generic: "{action} ({plugin})",
+      },
       events: {
         systemBadge: "system",
         writerBy: "by {writer}",
@@ -122,7 +145,7 @@ export default {
         dismiss: "Dismiss this approval",
         dismissTitle: "Dismiss this approval?",
         dismissConfirm:
-          "Dismiss {plugin} / {action} on {node}? It stays on record with the reason it never applied, and nothing is queued or run. Re-plan if the change is still wanted.",
+          "Dismiss \"{change}\" on {node}? It stays on record with the reason it never applied, and nothing is queued or run. Re-plan if the change is still wanted.",
         notDismissible: "This one cannot be dismissed from here; it has to clear on its own or be re-planned.",
         showStuck: "Show the stuck ones",
         codes: {

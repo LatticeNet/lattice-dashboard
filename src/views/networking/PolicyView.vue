@@ -48,6 +48,7 @@ import { useRouteOpen } from "@/composables/useRouteOpen";
 import { provideNodeDirectory } from "@/composables/useNodeDirectory";
 import { useAuthStore } from "@/stores/auth";
 import { formatAge, formatDateTime, shortId } from "@/lib/format";
+import { approvalTitleMessage } from "@/lib/approvalKind";
 import { cn } from "@/lib/utils";
 import { proofReason } from "@/components/common/proofModel";
 import { NETGUARD_PLUGIN_ID, pluginPagePath } from "@/views/platform/pluginsModel";
@@ -735,8 +736,8 @@ const planBadges = computed(() => {
   const a = planApproval.value;
   if (!a) return [];
   return [
-    { label: a.status, variant: "warning" as const },
-    { label: `${a.plugin} · ${a.action}`, variant: "outline" as const },
+    { label: t(`common.status.${a.status}`), variant: "warning" as const },
+    { label: t(approvalTitleMessage(a).key, approvalTitleMessage(a).params), variant: "outline" as const },
     { label: t("networking.shared.idLabel", { id: shortId(a.id, 12) }), variant: "secondary" as const },
   ];
 });

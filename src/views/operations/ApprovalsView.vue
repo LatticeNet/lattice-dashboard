@@ -57,6 +57,7 @@ import { useAuthStore } from "@/stores/auth";
 import { approvalStatusMeta } from "@/lib/status";
 import { isReporting } from "@/lib/nodeStatus";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
+import { approvalRawLabel, approvalTitleMessage } from "@/lib/approvalKind";
 import type { TokenResolvers } from "@/lib/queryTokens";
 import { cn } from "@/lib/utils";
 
@@ -439,8 +440,14 @@ const openReadFailure = computed<string | null>(() => {
   return error.message;
 });
 
+/** The approval's title by its kind; the raw plugin and action ride beside it (changeRaw). */
 function changeLabel(approval: ApprovalView): string {
-  return `${approval.plugin} · ${approval.action}`;
+  const message = approvalTitleMessage(approval);
+  return t(message.key, message.params);
+}
+
+function changeRaw(approval: ApprovalView): string {
+  return approvalRawLabel(approval);
 }
 
 /* ------------------------------------------------------------------ */
@@ -625,7 +632,7 @@ function askDismissWaiting(approval: ApprovalView, fromRow = false): void {
   rememberOpener(undefined, fromRow ? approval.id : undefined);
   confirm.value = {
     title: t("operations.approvals.waiting.dismissTitle"),
-    description: t("operations.approvals.waiting.dismissConfirm", { plugin: approval.plugin, action: approval.action, node: nodeName(approval.waiting?.node_id || approval.node_id) }),
+    description: t("operations.approvals.waiting.dismissConfirm", { change: changeLabel(approval), node: nodeName(approval.waiting?.node_id || approval.node_id) }),
     label: t("operations.approvals.waiting.dismiss"),
     run: () => dismiss(approval),
   };
@@ -712,9 +719,9 @@ function eventTitle(group: ApprovalEventGroup<ApprovalView>): string {
       ? t("operations.approvals.events.titleFleetUpgrade", { current: group.transition.current, target: group.transition.target })
       : t("operations.approvals.events.titleFleetUpgradeUnknown");
   }
-  if (group.titleKind === "linemeta-sync") return t("operations.approvals.events.titleLinemetaSync");
-  // The action as the plan and the sheet spell it ("sshguard · arm"), not title-cased.
-  return `${group.plugin} · ${group.actionPrefix}`;
+  // Every item in a card shares its kind (it is part of the group key), so the first names them all.
+  const first = group.items[0];
+  return first ? changeLabel(first) : `${group.plugin} · ${group.actionPrefix}`;
 }
 
 function joinPreview(names: string[], shown = 6): string {
@@ -1184,6 +1191,7 @@ function refreshAll(): void {
                 <div class="flex flex-wrap items-start justify-between gap-2">
                   <div class="min-w-0">
                     <p class="text-sm font-medium leading-snug">{{ eventTitle(group) }}</p>
+                    <p class="font-mono text-xs break-all text-muted-foreground">{{ group.plugin }} · {{ group.actionPrefix }}</p>
                     <p class="mt-0.5 text-xs text-muted-foreground">
                       {{ $t('operations.approvals.events.count', { count: group.items.length }, group.items.length) }}
                       · {{ $t('operations.approvals.events.writerBy', { writer: eventWriter(group) }) }}
@@ -1270,7 +1278,7 @@ function refreshAll(): void {
                   >
                     <NodeLabel v-if="item.node_id" :id="item.node_id" class="font-medium" />
                     <span v-else class="font-medium">{{ $t('common.misc.global') }}</span>
-                    <span class="truncate text-xs text-muted-foreground">{{ changeLabel(item) }}</span>
+                    <span class="truncate text-xs text-muted-foreground" :title="changeRaw(item)">{{ changeLabel(item) }}</span>
                     <span class="ms-auto text-xs text-muted-foreground" :title="formatDateTime(item.created_at)">{{ formatRelativeTime(item.created_at) }}</span>
                   </button>
                 </li>
@@ -1309,7 +1317,7 @@ function refreshAll(): void {
               :active-row-id="sheet.openId.value"
             >
               <template #cell-change="{ row }">
-                <p class="truncate text-sm font-medium">{{ changeLabel(row) }}</p>
+                <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
               </template>
               <template #cell-target="{ row }"><NodeLabel :id="row.node_id" /></template>
               <template #cell-why="{ row }">
@@ -1374,8 +1382,8 @@ function refreshAll(): void {
           </template>
           <template #cell-change="{ row }">
             <div class="min-w-0">
-              <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
-              <p class="truncate font-mono text-xs text-muted-foreground" :title="row.id">{{ shortId(row.id, 14) }}</p>
+              <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
+              <p class="truncate font-mono text-xs text-muted-foreground" :title="`${changeRaw(row)} · ${row.id}`">{{ changeRaw(row) }} · {{ shortId(row.id, 14) }}</p>
             </div>
           </template>
           <template #cell-status="{ row }">
@@ -1445,7 +1453,7 @@ function refreshAll(): void {
             />
           </template>
           <template #cell-change="{ row }">
-            <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
+            <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
           </template>
           <template #cell-target="{ row }">
             <NodeLabel v-if="row.node_id" :id="row.node_id" />
@@ -1481,7 +1489,7 @@ function refreshAll(): void {
             :active-row-id="sheet.openId.value"
           >
             <template #cell-change="{ row }">
-              <p class="truncate text-sm font-medium" :title="changeLabel(row)">{{ changeLabel(row) }}</p>
+              <p class="truncate text-sm font-medium" :title="changeRaw(row)">{{ changeLabel(row) }}</p>
             </template>
             <template #cell-target="{ row }">
               <NodeLabel v-if="row.node_id" :id="row.node_id" />
@@ -1498,7 +1506,7 @@ function refreshAll(): void {
     <ObjectSheet
       :open="!!sheet.openId.value"
       :title="openRecord ? changeLabel(openRecord) : $t('operations.approvals.sheet.title')"
-      :subtitle="sheet.openId.value ?? undefined"
+      :subtitle="sheet.openId.value ? (openRecord ? `${changeRaw(openRecord)} · ${sheet.openId.value}` : sheet.openId.value) : undefined"
       :state="sheetState"
       :error="openQuery.error.value?.message ?? null"
       :read-only="openRecord?.status === 'pending' && !canDecide(openRecord)"

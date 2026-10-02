@@ -20,12 +20,18 @@
  * `runWithConcurrency`, which only orchestrates the caller's worker.
  */
 
+import { approvalActionPrefix, approvalKind } from "@/lib/approvalKind";
+
+export { approvalActionPrefix };
+
 /** Minimal structural shape the grouping logic needs. Compatible with ApprovalView. */
 export interface ApprovalEventItem {
   id: string;
   node_id: string;
   plugin: string;
   action: string;
+  /** The binding's method; it tells a line user add from a remove (lib/approvalKind.ts). */
+  method?: string;
   /** Absent on listing rows; see ApprovalView.plan. */
   plan?: string;
   status: string;
@@ -78,12 +84,6 @@ export const EVENT_NODE_PREVIEW_LIMIT = 6;
  */
 export function isApprovalEventGroupable(item: Pick<ApprovalEventItem, "status">): boolean {
   return item.status === "pending" || item.status === "approved";
-}
-
-/** Action prefix. The part before the first ":" ("apply-metadata:abc…" → "apply-metadata"). */
-export function approvalActionPrefix(action: string): string {
-  const at = action.indexOf(":");
-  return (at === -1 ? action : action.slice(0, at)).trim();
 }
 
 /**
@@ -174,8 +174,14 @@ export function approvalEventTitle(
   return { titleKind: "generic", title: humanizeActionPrefix(actionPrefix) };
 }
 
-function groupKey(writer: string, plugin: string, actionPrefix: string, transition?: VersionTransition): string {
-  return [writer, plugin, actionPrefix, transition ? `${transition.current}→${transition.target}` : ""].join("|");
+/**
+ * Two kinds that share a plugin and prefix are still two events: the firewall
+ * and NetGuard both file "nft · apply-ruleset", and a line user add and remove
+ * differ only by method. The known kind joins the key so each gets its own
+ * card under its own title.
+ */
+function groupKey(writer: string, plugin: string, actionPrefix: string, kind: string, transition?: VersionTransition): string {
+  return [writer, plugin, actionPrefix, kind, transition ? `${transition.current}→${transition.target}` : ""].join("|");
 }
 
 /**
@@ -189,7 +195,7 @@ export function groupApprovalsIntoEvents<T extends ApprovalEventItem>(items: rea
     const writer = approvalWriter(item);
     const prefix = approvalActionPrefix(item.action);
     const transition = item.plugin === "agentupdate" ? parseAgentUpdatePlan(item.plan ?? "").transition : undefined;
-    const key = groupKey(writer, item.plugin, prefix, transition);
+    const key = groupKey(writer, item.plugin, prefix, approvalKind(item) ?? "", transition);
     let group = groups.get(key);
     if (!group) {
       const { titleKind, title } = approvalEventTitle(item.plugin, prefix, transition);

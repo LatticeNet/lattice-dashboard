@@ -14,6 +14,7 @@ import { RouterLink } from "vue-router";
 import { ShieldCheck, Terminal } from "lucide-vue-next";
 import { api, unwrap, type ApprovalView, type AuditEvent, type TaskResult } from "@/lib/api";
 import { formatDateTime, shortId } from "@/lib/format";
+import { approvalRawLabel, approvalTitleMessage } from "@/lib/approvalKind";
 import { referencedApprovalIds, referencedTaskIds, orderTimeline, summarize } from "@/views/operations/traceModel";
 
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,11 @@ const loading = ref(false);
 const error = ref<Error | null>(null);
 const events = ref<AuditEvent[]>([]);
 const approvals = ref<ApprovalView[]>([]);
+
+function approvalTitle(approval: ApprovalView): string {
+  const message = approvalTitleMessage(approval);
+  return t(message.key, message.params);
+}
 const results = ref<TaskResult[]>([]);
 
 async function load(correlationId: string) {
@@ -126,8 +132,11 @@ const summaryOf = summarize;
               class="rounded-md border border-border p-3 text-sm"
             >
               <div class="flex flex-wrap items-center gap-2">
-                <span class="font-medium">{{ appr.plugin }} · {{ appr.action }}</span>
-                <Badge variant="outline">{{ appr.status }}</Badge>
+                <span class="min-w-0">
+                  <span class="block font-medium">{{ approvalTitle(appr) }}</span>
+                  <span class="block break-all font-mono text-xs text-muted-foreground">{{ approvalRawLabel(appr) }}</span>
+                </span>
+                <Badge variant="outline">{{ t(`common.status.${appr.status}`) }}</Badge>
                 <RouterLink
                   :to="{ name: 'approvals', query: { open: appr.id } }"
                   class="ms-auto rounded-sm font-mono text-xs text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"

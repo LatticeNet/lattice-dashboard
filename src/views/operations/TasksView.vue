@@ -48,6 +48,7 @@ import { rowSelector } from "@/composables/routeOpenModel";
 import { useAuthStore } from "@/stores/auth";
 import { formatAge, formatBytes, formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { isReporting } from "@/lib/nodeStatus";
+import { approvalRawLabel, approvalTitleMessage, type ApprovalKindSource } from "@/lib/approvalKind";
 import { leaseAttemptLabel, stalledText, taskLeaseProgress, taskStateStyle } from "@/lib/taskLease";
 import type { TokenResolvers } from "@/lib/queryTokens";
 import { cn } from "@/lib/utils";
@@ -251,22 +252,37 @@ function num(n: number): string {
 /* The plans behind the rows: titles read once per approval and kept   */
 /* ------------------------------------------------------------------ */
 
-const planTitles = reactive(new Map<string, string | null>());
+/** The plugin, action and method of each plan behind a row; titled at render so a language switch follows. */
+const planKinds = reactive(new Map<string, ApprovalKindSource | null>());
 const planWanted = computed(() => [...new Set(tasks.value.map((task) => task.approval_id).filter((id): id is string => !!id))]);
 
 watch(
   planWanted,
   async (ids) => {
-    const missing = ids.filter((id) => !planTitles.has(id));
+    const missing = ids.filter((id) => !planKinds.has(id));
     if (!missing.length || !auth.can("approval:read")) return;
-    for (const id of missing) planTitles.set(id, null);
+    for (const id of missing) planKinds.set(id, null);
     await runWithConcurrency(missing, 4, async (id) => {
       const approval = await api.approvals.get(id);
-      planTitles.set(id, approval ? `${approval.plugin} · ${approval.action.split(":")[0]}` : null);
+      planKinds.set(id, approval ? { plugin: approval.plugin, action: approval.action, method: approval.method } : null);
     });
   },
   { immediate: true },
 );
+
+/** The plan's title by its kind ("Sync line metadata"), or null until it is read. */
+function planTitle(id: string): string | null {
+  const kind = planKinds.get(id);
+  if (!kind) return null;
+  const message = approvalTitleMessage(kind);
+  return t(message.key, message.params);
+}
+
+/** The approval id with the plan's raw plugin and action, for the title attribute. */
+function planRaw(id: string): string {
+  const kind = planKinds.get(id);
+  return kind ? `${approvalRawLabel(kind)} · ${id}` : id;
+}
 
 /* ------------------------------------------------------------------ */
 /* Rows                                                                */
@@ -1018,10 +1034,10 @@ function refreshNow(): void {
               <RouterLink
                 :to="{ name: 'approvals', query: { open: row.task.approval_id } }"
                 class="block max-w-[14rem] truncate rounded-sm text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                :title="row.task.approval_id"
+                :title="planRaw(row.task.approval_id)"
                 data-no-row-nav
               >
-                {{ planTitles.get(row.task.approval_id) || shortId(row.task.approval_id, 14) }}
+                {{ planTitle(row.task.approval_id) || shortId(row.task.approval_id, 14) }}
               </RouterLink>
             </template>
             <template v-else-if="row.task.rerun_of_task_id || row.task.origin === 'rerun'">
@@ -1108,7 +1124,7 @@ function refreshNow(): void {
         v-if="openTask"
         :task="openTask"
         :nodes="nodes"
-        :plan-title="openTask.approval_id ? planTitles.get(openTask.approval_id) : null"
+        :plan-title="openTask.approval_id ? planTitle(openTask.approval_id) : null"
         :reruns="openReruns"
         :can-run="canRun"
         :execution-disabled="executionDisabled"
