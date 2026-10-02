@@ -196,7 +196,7 @@ const attention = computed<AttentionItem[]>(() =>
             <dl class="grid gap-4 text-sm">
               <div class="grid gap-1">
                 <dt class="text-xs font-medium uppercase text-muted-foreground">
-                  {{ $t('settings.about.version') }}
+                  {{ $t('settings.about.dashboard.tabVersion') }}
                 </dt>
                 <dd>
                   <Badge variant="secondary" class="font-mono">
@@ -208,7 +208,7 @@ const attention = computed<AttentionItem[]>(() =>
               <div class="grid gap-1">
                 <dt class="flex items-center gap-1.5 text-xs font-medium uppercase text-muted-foreground">
                   <GitCommit class="size-3.5" aria-hidden="true" />
-                  {{ $t('settings.about.commit') }}
+                  {{ $t('settings.about.dashboard.tabCommit') }}
                 </dt>
                 <dd class="flex min-w-0 items-center gap-2">
                   <code class="truncate font-mono text-xs" :title="dashboardCommitLabel">

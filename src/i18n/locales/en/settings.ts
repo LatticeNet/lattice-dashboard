@@ -196,8 +196,10 @@ export default {
       },
       dashboard: {
         title: "Dashboard",
-        description: "Static console bundle currently served by this server",
-        bundledRef: "Bundled dashboard ref",
+        description: "The console this tab runs, and the one this server bundles",
+        tabVersion: "This tab's version",
+        tabCommit: "This tab runs",
+        bundledRef: "Server bundles",
         bundledAt: "Bundled at",
       },
     },
