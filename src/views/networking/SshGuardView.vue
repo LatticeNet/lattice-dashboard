@@ -1325,7 +1325,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :class="cn(
           'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           postureFilter === key
-            ? 'border-primary bg-primary/10 text-primary'
+            ? 'border-primary bg-primary/10 text-foreground'
             : key === 'password_open' || key === 'partial'
               ? 'border-warning/60 text-warning-text hover:bg-warning/10'
               : 'border-border text-muted-foreground hover:bg-muted/40',
@@ -1353,7 +1353,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :class="cn(
           'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           coverageFilter === key
-            ? 'border-primary bg-primary/10 text-primary'
+            ? 'border-primary bg-primary/10 text-foreground'
             : 'border-border text-muted-foreground hover:bg-muted/40',
         )"
         @click="coverageFilter = key"

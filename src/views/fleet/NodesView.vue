@@ -735,7 +735,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
                   type="button"
                   :class="cn(
                     'rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors pointer-coarse:min-h-11',
-                    agentFilter.includes(token) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/40',
+                    agentFilter.includes(token) ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:bg-muted/40',
                   )"
                   :aria-pressed="agentFilter.includes(token)"
                   @click="toggleAgent(token)"
@@ -753,7 +753,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
                   type="button"
                   :class="cn(
                     'rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors pointer-coarse:min-h-11',
-                    osFilter.includes(token) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/40',
+                    osFilter.includes(token) ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:bg-muted/40',
                   )"
                   :aria-pressed="osFilter.includes(token)"
                   @click="toggleOs(token)"
@@ -771,7 +771,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
                   type="button"
                   :class="cn(
                     'rounded-sm border px-2 py-0.5 text-xs font-medium transition-colors pointer-coarse:min-h-11',
-                    tagFilter.includes(tag) ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/40',
+                    tagFilter.includes(tag) ? 'border-primary bg-primary/10 text-foreground' : 'border-border text-muted-foreground hover:bg-muted/40',
                   )"
                   :aria-pressed="tagFilter.includes(tag)"
                   @click="toggleTag(tag)"
@@ -806,7 +806,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             v-for="filter in applied"
             :key="filter.key"
             type="button"
-            class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary hover:bg-primary/20 pointer-coarse:min-h-11"
+            class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-foreground hover:bg-primary/20 pointer-coarse:min-h-11"
             :aria-label="$t('fleet.nodes.filters.removeFilter', { filter: filter.label })"
             @click="filter.clear()"
           >
