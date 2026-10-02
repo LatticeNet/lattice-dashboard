@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { CHANGES_QUERY, changesOnly, dueThisWeek, flappingNodes, flipQuery, flipReadPartial, homeAttention, nextAfterWeek, readState } from "../homeModel.ts";
+import { CHANGES_QUERY, FAILED_TASKS_QUERY, changesOnly, dueThisWeek, flappingNodes, flipQuery, flipReadPartial, homeAttention, nextAfterWeek, readState } from "../homeModel.ts";
+import { readRange } from "../../operations/opsQueryModel.ts";
 
 const NOW = Date.parse("2026-09-30T12:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
@@ -154,4 +155,12 @@ test("an offline node carries its last report and agent, and failing monitors ge
   const monitors = items.find((item) => item.kind === "monitors");
   assert.ok(monitors && monitors.kind === "monitors");
   assert.deepEqual([monitors.count, monitors.firstId, monitors.tone], [2, "mon_hk", "danger"]);
+});
+
+test("the failed tile opens the failed runs of the last 24 hours, the window it counts", () => {
+  // Tasks reads its window from `range` with "all" as the page default; a
+  // `since` that is not an RFC 3339 instant is ignored there.
+  assert.deepEqual(readRange(FAILED_TASKS_QUERY, "all"), { range: "24h", since: "", until: "" });
+  assert.equal(FAILED_TASKS_QUERY.status, "failed");
+  assert.equal("since" in FAILED_TASKS_QUERY, false);
 });

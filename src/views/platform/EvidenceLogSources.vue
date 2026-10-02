@@ -8,7 +8,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 
 import { api, type LogSource, type LogSourceUpsertRequest } from "@/lib/api";

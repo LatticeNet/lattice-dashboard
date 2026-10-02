@@ -6,7 +6,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { ChevronDown, Plus, RefreshCw } from "lucide-vue-next";
 
 import { api, type AgentLaunchConfig, type EnrollTokenResponse, type GroupView } from "@/lib/api";

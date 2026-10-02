@@ -19,6 +19,8 @@
  * answers the version read with task execution switched off; `&no-stderr-head`
  * answers results without stderr_head (the server at c08ffaf);
  * `&no-approval-filter` ignores approval_id on the task list (same).
+ * `&approve-fail` refuses every approve with a long server message, for the
+ * error toast and the recent errors list.
  * `&no-audit-exclude` ignores exclude_action and exclude_decision on the
  * audit query (a server from before a101). `&results-page=<n>` caps a page
  * of task results at n rows, so a page of fan-outs runs past the pages the
@@ -203,6 +205,11 @@ export const api = {
       const approval = approvals.find((row) => row.id === approvalId);
       if (!approval) return Promise.reject(new ApiError(404, "not_found", "approval not found"));
       if (!planSha256) return Promise.reject(new ApiError(400, "bad_request", "plan_sha256 is required"));
+      if (flags.has("approve-fail")) {
+        return delay(undefined).then(() => {
+          throw new ApiError(409, "conflict", "deciding a line-user plan needs identity read on every node it touches; this token is confined to 3 of 14 nodes", "req_harness_0f3a91");
+        });
+      }
       approval.status = "approved";
       approval.approved_by = "cdcd";
       approval.updated_at = new Date().toISOString();

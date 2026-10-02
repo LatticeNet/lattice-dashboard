@@ -32,7 +32,7 @@ export default {
       observed: "observed {age} ago",
       lastGood: "last good {age} ago",
       refreshFailed: "refresh failed: {reason}",
-      noAnswer: "no answer since",
+      noAnswer: "no newer answer",
       notRead: "not read: {reason}",
       notReadBare: "not read",
     },
@@ -282,6 +282,24 @@ export default {
   },
 
   shell: {
+    // A deep link to a page outside the account's scopes (router/accessModel).
+    denied: {
+      title: "You cannot open {page}",
+      needsOne: "This page needs the {scope} scope, and your account does not have it.",
+      needsAny: "This page needs one of these scopes, and your account has none of them:",
+      ask: "An administrator can grant scopes on the Access page.",
+      overview: "Go to Overview",
+      permissions: "See your scopes",
+    },
+    // The header's list of errors this tab showed (lib/toast, RecentErrors.vue).
+    errors: {
+      open: "{n} recent error | {n} recent errors",
+      title: "Recent errors",
+      clear: "Clear",
+      copy: "Copy this error",
+      repeated: "shown {n} times",
+      note: "Errors this tab has shown since it opened. They are not saved.",
+    },
     sidebar: {
       toggle: "Toggle sidebar",
       primaryNav: "Primary",
@@ -310,7 +328,8 @@ export default {
     command: {
       open: "Open command palette",
       search: "Search…",
-      shortcut: "⌘K",
+      shortcutMac: "⌘K",
+      shortcutOther: "Ctrl K",
       title: "Command palette",
       description: "Search and jump to any page.",
       placeholder: "Type to search pages…",
@@ -341,6 +360,8 @@ export default {
     ssoContinue: "Continue with {provider}",
     ssoOr: "or",
     invalidCredentials: "Invalid username or password.",
+    expired: "Your session expired. Sign in again to return to {page}.",
+    expiredBare: "Your session expired. Sign in again to continue.",
   },
 
   overview: {

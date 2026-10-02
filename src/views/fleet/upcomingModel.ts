@@ -252,22 +252,48 @@ export function quotaPercent(item: Pick<ExpiringItem, "used_bytes" | "quota_byte
 
 // ── where a row goes ────────────────────────────────────────────────────────
 
+/** vpn-core's Users page; `?open=<identity id>` opens that identity's panel. */
+export const VPN_USERS_PATH = "/plugins/latticenet.vpn-core/users";
+
 // Where each kind lives when a row arrives without an href. The server sends
 // `/inventory?machine=<profile id>`, `/plugins/latticenet.vpn-core/users`,
 // `/platform/publishing?origin=share&share=<id>` and `/monitoring/<id>`.
 const FALLBACK_HREF: Partial<Record<string, string>> = {
-  vpn_user: "/plugins/latticenet.vpn-core/users",
+  vpn_user: VPN_USERS_PATH,
   share: "/platform/publishing?origin=share",
   tls_certificate: "/monitoring",
 };
+
+function localPath(href: string | undefined): string | undefined {
+  const trimmed = href?.trim();
+  return trimmed && trimmed.startsWith("/") && !trimmed.startsWith("//") ? trimmed : undefined;
+}
+
+/**
+ * A VPN identity's row opens that identity, not the whole Users list: the
+ * server's href (lattice-server expiring.go, as of e596325) is the bare
+ * Users page, and vpn-core opens an identity's panel from `?open=<id>`
+ * (its page state, which the console passes through the bridge). An href
+ * that already names an object, or points anywhere else, is left alone.
+ */
+function withIdentity(href: string, id: string | undefined): string {
+  if (!id) return href;
+  const [path, query = ""] = href.split("?", 2);
+  if (path !== VPN_USERS_PATH) return href;
+  const params = new URLSearchParams(query);
+  if (params.has("open")) return href;
+  params.set("open", id);
+  return `${path}?${params.toString()}`;
+}
 
 /**
  * The console route a row opens: the server's `href` when it is a path on
  * this origin, otherwise the page that owns the kind, otherwise nothing.
  */
 export function rowHref(item: Pick<ExpiringItem, "href" | "kind"> & { id?: string }): string | undefined {
-  const href = item.href?.trim();
-  if (href && href.startsWith("/") && !href.startsWith("//")) return href;
+  const href = localPath(item.href);
+  if (item.kind === "vpn_user") return withIdentity(href ?? VPN_USERS_PATH, item.id);
+  if (href) return href;
   if (item.kind === "machine_renewal") {
     return item.id ? `/inventory?machine=${encodeURIComponent(item.id)}` : "/inventory?group=renewal";
   }

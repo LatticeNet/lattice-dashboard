@@ -47,3 +47,63 @@ export function toastLift(viewportHeight: number, footers: readonly FooterBox[])
   if (!Number.isFinite(highest)) return null;
   return Math.max(0, Math.ceil(viewportHeight - highest + TOAST_GAP_PX));
 }
+
+/* ------------------------------------------------------------------ */
+/* From 768 px up: clear of a sheet open beside the collection          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * From 768 px up toasts sit top right, which is exactly where an object
+ * sheet beside the collection keeps its title and close button (36 to 44 rem
+ * wide, anchored right). A success toast after "Approve and queue" sat on
+ * both. While such a sheet is open, toasts move left of it, still at the
+ * top; when the room left of the sheet is narrower than a toast (about 768
+ * to 1000 px wide), they drop to the bottom right and rise above the sheet's
+ * footer instead, so neither the header nor Approve and Reject is covered.
+ */
+
+/** Open sheets the toasts must keep clear of. */
+export const TOAST_SHEET_SELECTOR = '[data-slot="sheet-content"][data-state="open"]';
+
+/** vue-sonner's toast width. */
+export const TOAST_WIDTH_PX = 356;
+
+/** vue-sonner's offset from the viewport edge from 600 px up. */
+export const TOAST_VIEWPORT_OFFSET_PX = 24;
+
+/** Space left between a toast and the sheet it moved aside for. */
+export const TOAST_SHEET_GAP_PX = 16;
+
+export interface SheetBox {
+  left: number;
+  right: number;
+}
+
+export type ToastPlacement =
+  | { position: "top-right"; right?: number }
+  | { position: "bottom-right"; bottom: number | null }
+  | { position: "bottom-center"; bottom: number | null };
+
+export interface ToastPlacementInput {
+  viewportWidth: number;
+  viewportHeight: number;
+  /** Below 768 px, where a sheet takes the whole screen. */
+  mobile: boolean;
+  sheets: readonly SheetBox[];
+  footers: readonly FooterBox[];
+}
+
+export function toastPlacement(input: ToastPlacementInput): ToastPlacement {
+  if (input.mobile) return { position: "bottom-center", bottom: toastLift(input.viewportHeight, input.footers) };
+  // Sheets anchored to the right edge and laid out; the leftmost decides.
+  let left = Number.POSITIVE_INFINITY;
+  for (const sheet of input.sheets) {
+    if (sheet.right <= sheet.left || sheet.right < input.viewportWidth - 1 || sheet.left <= 0) continue;
+    left = Math.min(left, sheet.left);
+  }
+  if (!Number.isFinite(left)) return { position: "top-right" };
+  if (left - TOAST_SHEET_GAP_PX >= TOAST_WIDTH_PX + TOAST_VIEWPORT_OFFSET_PX) {
+    return { position: "top-right", right: Math.ceil(input.viewportWidth - left + TOAST_SHEET_GAP_PX) };
+  }
+  return { position: "bottom-right", bottom: toastLift(input.viewportHeight, input.footers) };
+}

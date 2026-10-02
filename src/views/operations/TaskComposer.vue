@@ -15,7 +15,7 @@
  */
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Ban, CheckCircle2, ClipboardList, Lock, Play, RefreshCw, Search, TriangleAlert } from "lucide-vue-next";
 
 import { api, ApiError, type CapabilityImpact, type Node, type TaskView } from "@/lib/api";

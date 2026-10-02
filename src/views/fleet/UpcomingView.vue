@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
 import { RotateCw } from "lucide-vue-next";
-import { api } from "@/lib/api";
+import { api, unwrap, type ExpiringItem, type MachineView } from "@/lib/api";
+import { useAuthStore } from "@/stores/auth";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMachineLinkReveal } from "@/composables/useMachineLinkReveal";
 import { cn } from "@/lib/utils";
 import {
   EXPIRING_KINDS,
@@ -22,6 +25,8 @@ import {
 import PageHeader from "@/components/common/PageHeader.vue";
 import UpcomingBody from "@/components/fleet/UpcomingBody.vue";
 import UpcomingProof from "@/components/fleet/UpcomingProof.vue";
+import RecordRenewalDialog from "@/components/fleet/RecordRenewalDialog.vue";
+import MachineLinkStepUpDialog from "@/components/fleet/MachineLinkStepUpDialog.vue";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -55,6 +60,49 @@ function setKinds(next: KnownKind[]): void {
   if (route.query.kind === wanted) return;
   router.replace({ query: { ...route.query, kind: wanted } }).catch(() => {});
 }
+
+/*
+ * Record renewal from a machine's row, in one step (RecordRenewalDialog).
+ * Offered on machines that do not renew by themselves: those are the rows
+ * that need a hand, and an auto-roll machine's date moves without anyone
+ * (its sheet in Inventory still offers it, to set a different date). The row
+ * knows the due date but not the billing cycle, so the dialog reads the
+ * machine list when it opens; recording refreshes the list, and the row
+ * moves to its new week.
+ */
+const { t } = useI18n();
+const auth = useAuthStore();
+const renewable = (item: ExpiringItem) =>
+  item.kind === "machine_renewal" && item.state !== "auto" && !!item.id && auth.can("inventory:admin");
+const renewOpen = ref(false);
+const renewMachine = ref<MachineView | null>(null);
+const renewLoading = ref(false);
+const renewError = ref<string | null>(null);
+let renewRead = 0;
+
+async function openRenewal(item: ExpiringItem): Promise<void> {
+  const read = ++renewRead;
+  renewOpen.value = true;
+  renewMachine.value = null;
+  renewError.value = null;
+  renewLoading.value = true;
+  try {
+    const found = unwrap(await api.machines.list(), "machines").find((m) => m.id === item.id) ?? null;
+    if (read !== renewRead) return;
+    renewMachine.value = found;
+    if (!found) renewError.value = t("fleet.renewal.gone");
+  } catch (error) {
+    if (read !== renewRead) return;
+    renewError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (read === renewRead) renewLoading.value = false;
+  }
+}
+
+// Paying the provider comes first, so the dialog offers the machine's stored
+// console link; it opens behind the same step-up as on Inventory.
+const { stepUp: linkStepUp, pending: linkPending, reveal: revealLink } = useMachineLinkReveal();
+const canOpenConsole = computed(() => !!renewMachine.value?.has_console_url && auth.can("inventory:admin"));
 
 const chipClass = (active: boolean) =>
   cn(
@@ -115,8 +163,23 @@ const chipClass = (active: boolean) =>
       :items="visible"
       :filtered="kinds.length > 0"
       :now="now.getTime()"
+      :renewable="renewable"
       @retry="query.refresh"
       @clear-filter="setKinds([])"
+      @renew="openRenewal"
     />
+
+    <RecordRenewalDialog
+      v-model:open="renewOpen"
+      :machine="renewMachine"
+      :loading="renewLoading"
+      :error="renewError"
+      machine-link
+      :console-link="canOpenConsole"
+      :console-pending="!!linkPending"
+      @open-console="renewMachine && revealLink(renewMachine, 'console')"
+      @recorded="query.refresh"
+    />
+    <MachineLinkStepUpDialog :step-up="linkStepUp" />
   </div>
 </template>

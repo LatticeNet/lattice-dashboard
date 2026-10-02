@@ -34,7 +34,7 @@
  */
 import { computed, nextTick, onScopeDispose, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Ban, ChevronLeft, ChevronRight, ExternalLink, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
 
 import { api, ApiError, unwrap, type Node, type TaskCounts, type TaskResult, type TaskView } from "@/lib/api";

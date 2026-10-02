@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, watchEffect } from "vue";
 import { storeToRefs } from "pinia";
+import { useRoute } from "vue-router";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { useUiStore } from "@/stores/ui";
+import { useAuthStore } from "@/stores/auth";
+import { missingRouteScopes } from "@/router/accessModel";
 import AppSidebar from "./components/AppSidebar.vue";
 import AppHeader from "./components/AppHeader.vue";
 import TrustBanner from "./components/TrustBanner.vue";
 import CommandPalette from "@/components/common/CommandPalette.vue";
 import RouteProgress from "@/components/common/RouteProgress.vue";
+import RouteDenied from "./components/RouteDenied.vue";
 import { viewportPaneClaimed } from "./viewportPane";
 
 const ui = useUiStore();
@@ -26,6 +30,11 @@ const desktopWidth = computed({
   get: () => ui.sidebarDesktopWidth,
   set: (v: number) => ui.setSidebarDesktopWidth(v),
 });
+
+const route = useRoute();
+const auth = useAuthStore();
+/** The scopes the current route needs and the principal lacks, or null when it may open it. */
+const deniedScopes = computed(() => missingRouteScopes(route.meta.scopes, (scopes) => auth.canAny(scopes)));
 
 const mobileOpen = ref(false);
 const commandOpen = ref(false);
@@ -86,7 +95,8 @@ watchEffect(() => {
                viewport pane (terminal, map) is exempt: it positions itself
                absolute inset-0 against this box and must stay full bleed. -->
           <div :class="viewportPaneClaimed ? 'contents' : 'mx-auto w-full max-w-(--content-max)'">
-            <RouterView v-slot="{ Component, route }">
+            <RouteDenied v-if="deniedScopes" :key="route.path" :scopes="deniedScopes" class="view-enter" />
+            <RouterView v-else v-slot="{ Component, route }">
               <component :is="Component" :key="route.path" class="view-enter" />
             </RouterView>
           </div>

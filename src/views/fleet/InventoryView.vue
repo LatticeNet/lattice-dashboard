@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import {
   Bell,
   BellOff,
@@ -13,8 +13,6 @@ import {
   Cpu,
   ExternalLink,
   HardDrive,
-  KeyRound,
-  Link as LinkIcon,
   MemoryStick,
   Pencil,
   Plus,
@@ -33,7 +31,7 @@ import {
   type NotifyRuleView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { useStepUp } from "@/composables/useStepUp";
+import { useMachineLinkReveal, type MachineLinkKind } from "@/composables/useMachineLinkReveal";
 import { useAuthStore } from "@/stores/auth";
 import {
   formatBytes,
@@ -53,6 +51,7 @@ import {
   advanceRenewal,
   daysBetween,
   formatDay,
+  manualRenewalTarget,
   monthlyEquivalentCents,
   parseReminderDaysInput,
   rollForwardPast,
@@ -65,6 +64,8 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import RecordRenewalDialog from "@/components/fleet/RecordRenewalDialog.vue";
+import MachineLinkStepUpDialog from "@/components/fleet/MachineLinkStepUpDialog.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
@@ -81,7 +82,6 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogScrollContent,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -174,7 +174,6 @@ const pending = ref(false);
 const deletePending = ref(false);
 const deleteOpen = ref(false);
 const renewPending = ref(false);
-const linkRevealPending = ref("");
 
 // ── Form model (populated when the edit dialog opens) ─────────────────────────
 const profileId = ref("");
@@ -214,15 +213,35 @@ const vendors = computed(() => vendorsQuery.data.value ?? []);
 const notifyChannels = computed(() => notifyChannelsQuery.data.value ?? []);
 const notifyRules = computed(() => notifyRulesQuery.data.value ?? []);
 const canAdminInventory = computed(() => auth.can("inventory:admin"));
-const inventoryStepUp = useStepUp({
-  required: t("fleet.inventory.stepUp.required"),
-  failed: t("fleet.inventory.stepUp.failed"),
-  passkeyFailed: t("fleet.inventory.stepUp.passkeyFailed"),
-});
-const stepUpOpen = inventoryStepUp.open;
-const stepUpCode = inventoryStepUp.code;
-const stepUpError = inventoryStepUp.error;
-const stepUpPending = inventoryStepUp.pending;
+
+/*
+ * Record renewal in one step from the machine's sheet or its row menu
+ * (RecordRenewalDialog), without opening the full editor. The dialog follows
+ * the live list, so it shows what the latest read holds.
+ */
+const renewDialogOpen = ref(false);
+const renewDialogId = ref("");
+const renewDialogMachine = computed(() => machines.value.find((m) => m.id === renewDialogId.value) ?? null);
+
+function canQuickRenew(machine?: MachineView): boolean {
+  return !!machine?.id && canAdminInventory.value && !!renewalDate(machine);
+}
+
+function openRenewal(machine: MachineView): void {
+  if (!machine.id) return;
+  renewDialogId.value = machine.id;
+  renewDialogOpen.value = true;
+}
+
+/*
+ * Stored console and detail links open behind a step-up grant. The sheet,
+ * the row menu and the renewal dialog share one grant, so opening the
+ * console from any of them prompts once for the grant's lifetime.
+ */
+const machineLinks = useMachineLinkReveal();
+const linkStepUp = machineLinks.stepUp;
+const linkRevealPending = machineLinks.pending;
+const linkPendingKey = machineLinks.pendingKey;
 
 const editMachine = computed(() =>
   machines.value.find((machine) => machineKey(machine) === editKey.value),
@@ -802,16 +821,23 @@ function focusEditorOnOpen(event: Event): void {
 /**
  * Recording a renewal writes to the saved profile and reloads the form from
  * the server's answer, so it waits until other edits are saved or discarded.
- * With auto-roll off it takes the date typed above, the one edit it may carry.
+ * With auto-roll off it takes the date typed above, the one edit it may
+ * carry; left untouched, that date is the one already saved, so it records
+ * one cycle after it instead (manualRenewalTarget) and never the same date.
  */
 const renewBlockedByDraft = computed(() => (autoRoll.value ? formDirty.value : draftBeyondNextRenewal.value));
+const manualRenewTo = computed(() =>
+  manualRenewalTarget(formSnapshot.value?.savedNextRenewal ?? "", nextRenewal.value, renewalCycle.value, draftCycleDays.value),
+);
 const canRecordRenewal = computed(
   () =>
     editHasProfile.value &&
     needsRenewal.value &&
     customCycleValid.value &&
     !renewBlockedByDraft.value &&
-    (autoRoll.value ? !!nextRenewal.value && !!renewalCycle.value : !!nextRenewal.value),
+    (autoRoll.value
+      ? !!nextRenewal.value && !!renewalCycle.value
+      : !!manualRenewTo.value && manualRenewTo.value !== (formSnapshot.value?.savedNextRenewal ?? "")),
 );
 
 /**
@@ -820,8 +846,8 @@ const canRecordRenewal = computed(
  * rolled forward by the cycle, offered beside the preview.
  */
 const renewRollForwardDate = computed(() => {
-  if (autoRoll.value || !needsRenewal.value || !nextRenewal.value || renewBlockedByDraft.value) return undefined;
-  return rollForwardPast(nextRenewal.value, renewalCycle.value, draftCycleDays.value, formatDay(new Date()));
+  if (autoRoll.value || !needsRenewal.value || !manualRenewTo.value || renewBlockedByDraft.value) return undefined;
+  return rollForwardPast(manualRenewTo.value, renewalCycle.value, draftCycleDays.value, formatDay(new Date()));
 });
 
 const renewPreview = computed(() => {
@@ -836,10 +862,11 @@ const renewPreview = computed(() => {
       ? t("fleet.inventory.profile.recordRenewalAutoRollStillPast", { from: nextRenewal.value, to })
       : t("fleet.inventory.profile.recordRenewalAutoRoll", { from: nextRenewal.value, to });
   }
-  if (!nextRenewal.value) return "";
-  return (daysBetween(today, nextRenewal.value) ?? 0) < 0
-    ? t("fleet.inventory.profile.recordRenewalManualPast", { date: nextRenewal.value })
-    : t("fleet.inventory.profile.recordRenewalManual", { date: nextRenewal.value });
+  const to = manualRenewTo.value;
+  if (!to) return "";
+  return (daysBetween(today, to) ?? 0) < 0
+    ? t("fleet.inventory.profile.recordRenewalManualPast", { date: to })
+    : t("fleet.inventory.profile.recordRenewalManual", { date: to });
 });
 
 const storedLinkCount = computed(
@@ -898,25 +925,9 @@ function groupSpendLabel(spend: CurrencySpend[]): string {
     .join(" · ");
 }
 
-function linkPendingKey(machine: MachineView, kind: "console" | "detail"): string {
-  return `${machine.id || machine.node_id}:${kind}`;
-}
-
-async function revealMachineLink(machine: MachineView, kind: "console" | "detail") {
-  if (!machine.id || !canAdminInventory.value) return;
-  const key = linkPendingKey(machine, kind);
-  if (linkRevealPending.value) return;
-  linkRevealPending.value = key;
-  try {
-    const grant = await inventoryStepUp.request();
-    const revealed = await api.machines.revealLink(machine.id, kind, grant);
-    window.open(revealed.url, "_blank", "noopener,noreferrer");
-    toast.success(t("fleet.inventory.toast.linkOpened"));
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.linkRevealFailed"));
-  } finally {
-    linkRevealPending.value = "";
-  }
+async function revealMachineLink(machine: MachineView, kind: MachineLinkKind) {
+  if (!canAdminInventory.value) return;
+  await machineLinks.reveal(machine, kind);
 }
 
 // ── Edit dialog form lifecycle ────────────────────────────────────────────────
@@ -1158,7 +1169,7 @@ async function renewProfile() {
   try {
     const renewed = await api.machines.renew(
       profileId.value,
-      autoRoll.value ? undefined : isoDate(nextRenewal.value),
+      autoRoll.value ? undefined : isoDate(manualRenewTo.value ?? ""),
     );
     toast.success(t("fleet.inventory.toast.renewalRecorded"));
     loadForm(renewed);
@@ -1256,6 +1267,13 @@ function menuFor(machine: MachineView): RowMenuItem[] {
       icon: machine.id ? Pencil : Plus,
       hidden: !canAdminInventory.value,
       run: () => openEdit(machine),
+    },
+    {
+      key: "renew",
+      label: t("fleet.renewal.action"),
+      icon: CalendarClock,
+      hidden: !canQuickRenew(machine),
+      run: () => openRenewal(machine),
     },
     { key: "node", label: t("fleet.inventory.actions.node"), icon: ChevronRight, to: { name: "node-detail", params: { id: machine.node_id } } },
     {
@@ -1619,12 +1637,32 @@ async function sendReminders(): Promise<void> {
         </RouterLink>
       </div>
       <template v-if="canAdminInventory && openMachine" #actions>
+        <Button
+          v-if="canQuickRenew(openMachine)"
+          size="sm"
+          variant="outline"
+          type="button"
+          data-testid="sheet-record-renewal"
+          @click="openRenewal(openMachine)"
+        >
+          <CalendarClock class="size-3.5" aria-hidden="true" />
+          {{ $t('fleet.renewal.action') }}
+        </Button>
         <Button size="sm" type="button" data-edit-button @click="openEdit(openMachine)">
           <component :is="openMachine.id ? Pencil : Plus" class="size-3.5" aria-hidden="true" />
           {{ openMachine.id ? $t('fleet.inventory.actions.edit') : $t('fleet.inventory.actions.addProfile') }}
         </Button>
       </template>
     </ObjectSheet>
+
+    <RecordRenewalDialog
+      v-model:open="renewDialogOpen"
+      :machine="renewDialogMachine"
+      :console-link="!!renewDialogMachine?.has_console_url && canAdminInventory"
+      :console-pending="!!linkRevealPending"
+      @open-console="renewDialogMachine && revealMachineLink(renewDialogMachine, 'console')"
+      @recorded="refreshAll"
+    />
 
     <!-- Edit / create dialog.
          A fixed header and footer around a scrolling form, so the machine's
@@ -2125,43 +2163,8 @@ async function sendReminders(): Promise<void> {
       @confirm="discardChanges"
     />
 
-    <Dialog v-model:open="stepUpOpen">
-      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="inventoryStepUp.cancel">
-        <DialogHeader>
-          <DialogTitle>{{ $t('fleet.inventory.stepUp.title') }}</DialogTitle>
-          <DialogDescription>{{ $t('fleet.inventory.stepUp.description') }}</DialogDescription>
-        </DialogHeader>
-        <form class="space-y-4" @submit.prevent="inventoryStepUp.submitTotp">
-          <div class="grid gap-2">
-            <Label for="inventory-step-up-code">{{ $t('fleet.inventory.stepUp.code') }}</Label>
-            <Input
-              id="inventory-step-up-code"
-              v-model="stepUpCode"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="8"
-              placeholder="123456"
-            />
-            <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
-          </div>
-          <div class="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="outline" @click="inventoryStepUp.cancel">
-              {{ $t('common.actions.cancel') }}
-            </Button>
-            <Button type="button" variant="outline" :disabled="!!stepUpPending || !inventoryStepUp.supportsPasskey" @click="inventoryStepUp.submitPasskey">
-              <RefreshCw v-if="stepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
-              <KeyRound v-else class="size-4" aria-hidden="true" />
-              {{ $t('fleet.inventory.stepUp.passkey') }}
-            </Button>
-            <Button type="submit" :disabled="!!stepUpPending || !stepUpCode.trim()">
-              <RefreshCw v-if="stepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
-              <LinkIcon v-else class="size-4" aria-hidden="true" />
-              {{ $t('fleet.inventory.stepUp.submit') }}
-            </Button>
-          </div>
-        </form>
-      </DialogScrollContent>
-    </Dialog>
+    <!-- After the editor and the renewal dialog, so it stacks above either one it opens from. -->
+    <MachineLinkStepUpDialog :step-up="linkStepUp" />
 
     <!-- Preview reminders: what a send would push, then the send behind a typed count (design 23, 3.8).
          After the editor in the template, so it stacks above the editor it opens from. -->

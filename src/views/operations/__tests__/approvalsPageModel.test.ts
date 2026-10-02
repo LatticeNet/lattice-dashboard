@@ -9,6 +9,7 @@ import {
   historyRequest,
   legacyApprovalQuery,
   namePreview,
+  nextToReview,
   normalizeApprovalPage,
   stuckReasonSummary,
 } from "../approvalsPageModel.ts";
@@ -99,4 +100,37 @@ test("the stuck summary counts each reason once, most common first", () => {
     ],
   );
   assert.deepEqual(stuckReasonSummary([]), []);
+});
+
+test("after a decision the plan now in its place comes next, wrapping, and undecidable plans are skipped", () => {
+  const order = [
+    { id: "a", decidable: true },
+    { id: "b", decidable: true },
+    { id: "c", decidable: false },
+    { id: "d", decidable: true },
+  ];
+  // Decided the first: the second is next, three left minus the undecidable one.
+  assert.deepEqual(nextToReview(order, { id: "a", index: 0 }), { id: "b", waiting: 2 });
+  // Decided b while c (not decidable) sat after it: d.
+  assert.deepEqual(nextToReview(order, { id: "b", index: 1 }), { id: "d", waiting: 2 });
+  // Decided the last: wrap to the top.
+  assert.deepEqual(nextToReview(order, { id: "d", index: 3 }), { id: "a", waiting: 2 });
+});
+
+test("the next plan is found when the decided plan already left the inbox after a refresh", () => {
+  // The read after the decision no longer lists "b"; the plan in its old place is next.
+  const refreshed = [
+    { id: "a", decidable: true },
+    { id: "c", decidable: true },
+    { id: "d", decidable: true },
+  ];
+  assert.deepEqual(nextToReview(refreshed, { id: "b", index: 1 }), { id: "c", waiting: 3 });
+  // A position past the end (the inbox shrank) wraps to the top.
+  assert.deepEqual(nextToReview(refreshed, { id: "x", index: 9 }), { id: "a", waiting: 3 });
+});
+
+test("nothing is offered when no decidable plan is left", () => {
+  assert.equal(nextToReview([{ id: "a", decidable: true }], { id: "a", index: 0 }), null);
+  assert.equal(nextToReview([{ id: "a", decidable: true }, { id: "b", decidable: false }], { id: "a", index: 0 }), null);
+  assert.equal(nextToReview([], { id: "a", index: -1 }), null);
 });

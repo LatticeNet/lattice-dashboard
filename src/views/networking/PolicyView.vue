@@ -19,7 +19,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { AlertTriangle, FolderTree, Pencil, Play, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import {
   api,

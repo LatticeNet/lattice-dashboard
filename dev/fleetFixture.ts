@@ -315,8 +315,8 @@ export const MACHINES: MachineView[] = FLEET.flatMap((e, index): MachineView[] =
 /* What runs out                                                        */
 /* ------------------------------------------------------------------ */
 
-export function expiringItems(within: number): ExpiringItem[] {
-  const machineRows: ExpiringItem[] = MACHINES.filter((m) => m.next_renewal && m.days_until_renewal !== undefined).map((m) => {
+export function expiringItems(within: number, machines: readonly MachineView[] = MACHINES): ExpiringItem[] {
+  const machineRows: ExpiringItem[] = machines.filter((m) => m.next_renewal && m.days_until_renewal !== undefined).map((m) => {
     const days = m.days_until_renewal!;
     const subtitle = [m.vendor, m.region].filter(Boolean).join(" · ");
     return {

@@ -29,7 +29,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { ChevronDown, Database, FolderPlus, Globe2, KeyRound, Link2, RefreshCw, Trash2 } from "lucide-vue-next";
 import { RouterLink } from "vue-router";
 
