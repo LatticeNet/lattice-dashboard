@@ -24,6 +24,7 @@ import {
 import { describeNodeStatus, nodeStatus } from "@/lib/nodeStatus";
 import { splitNamePrefix } from "@/lib/fleet";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMediaQuery } from "@/composables/useMediaQuery";
 import { useAuthStore } from "@/stores/auth";
 import { shortId } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -537,14 +538,23 @@ function healthOf(group: GroupView): Health {
   return { total: group.rollup.total, online: group.rollup.online, disabled: group.rollup.disabled ?? 0, down };
 }
 
+/**
+ * On a phone the table is two columns, the group and its menu, with member
+ * health under the name: a third column scrolled behind a pinned name left
+ * 54 px for the one health figure ("5 of 6 c").
+ */
+const wide = useMediaQuery("(min-width: 768px)");
 const columns = computed<DataTableColumn<GroupView>[]>(() => [
-  { key: "name", label: t("fleet.groups.table.group"), sortable: true, value: (g) => g.name },
-  { key: "health", label: t("fleet.groups.table.health"), sortable: true, value: (g) => (g.rollup.total ? g.rollup.online / g.rollup.total : 1) },
+  { key: "name", label: t("fleet.groups.table.group"), sortable: true, value: (g) => g.name, wrap: !wide.value },
+  ...(wide.value
+    ? [{ key: "health", label: t("fleet.groups.table.health"), sortable: true, value: (g: GroupView) => (g.rollup.total ? g.rollup.online / g.rollup.total : 1) }]
+    : []),
   // A column blank on every row says nothing; it shows once some group has a leader.
-  ...(sortedGroups.value.some((g) => g.leader_id)
+  ...(wide.value && sortedGroups.value.some((g) => g.leader_id)
     ? [{ key: "leader", label: t("fleet.groups.fieldLeader"), value: (g: GroupView) => (g.leader_id ? nodeLabel(g.leader_id) : "") }]
     : []),
-  { key: "actions", label: "", class: "w-12", pin: "end" },
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
 ]);
 
 function menuFor(group: GroupView): RowMenuItem[] {
@@ -641,7 +651,10 @@ const deleteImpact = computed(() => {
     <EmptyState v-if="!canRead" :icon="FolderTree" :title="$t('fleet.groups.title')" :description="$t('fleet.groups.needRead')" />
 
     <template v-else>
+      <!-- Two columns on a phone fit the screen, so the table drops its 640 px
+           scroll floor there instead of scrolling a pinned name. -->
       <DataTable
+        class="max-md:[&_table]:min-w-0"
         :columns="columns"
         :rows="sortedGroups"
         :row-key="(group) => group.id"
@@ -667,11 +680,18 @@ const deleteImpact = computed(() => {
           </EmptyState>
         </template>
         <template #cell-name="{ row }">
-          <span class="flex min-w-0 items-center gap-2">
+          <!-- On a phone the cell is sized to the screen less the menu, so a
+               long description truncates instead of widening the table. -->
+          <span class="flex min-w-0 items-center gap-2 max-md:w-[calc(100vw-6.5rem)]">
             <span :class="cn('size-2.5 shrink-0 rounded-full', groupColor(row.color).dot)" aria-hidden="true" />
             <span class="min-w-0">
               <span class="block truncate font-medium">{{ row.name }}</span>
               <span v-if="row.description" class="block truncate text-xs text-muted-foreground" :title="row.description">{{ row.description }}</span>
+              <span v-if="!wide" class="mt-0.5 flex flex-wrap items-baseline gap-x-2 text-xs" data-testid="group-health-inline">
+                <span class="tabular">{{ $t('fleet.groups.health.online', { online: healthOf(row).online, total: healthOf(row).total }) }}</span>
+                <span v-if="healthOf(row).disabled" class="text-muted-foreground">{{ $t('fleet.groups.health.disabled', { n: healthOf(row).disabled }) }}</span>
+                <span v-if="healthOf(row).down.length" class="text-destructive">{{ $t('fleet.groups.health.down', { names: healthOf(row).down.slice(0, 3).join(', ') + (healthOf(row).down.length > 3 ? ` +${healthOf(row).down.length - 3}` : '') }) }}</span>
+              </span>
             </span>
           </span>
         </template>

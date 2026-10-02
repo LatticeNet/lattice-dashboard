@@ -58,6 +58,7 @@ import {
   rollForwardPast,
 } from "./inventoryEditorModel";
 import { DEFAULT_REMIND_DAYS, hasRenewalDate, nextReminder, ruleRoutesRenewals } from "./reminderModel";
+import { nameParts } from "./nodesTableModel";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
@@ -1243,7 +1244,8 @@ const columns = computed<DataTableColumn<MachineView>[]>(() => [
   { key: "price", label: t("fleet.inventory.table.price"), sortable: true, value: (m) => machinePrice(m) },
   { key: "monthly", label: t("fleet.inventory.table.monthly"), align: "right", sortable: true, value: (m) => monthlyEquivCents(m) },
   { key: "renewal", label: t("fleet.inventory.table.renewal"), sortable: true, value: renewalSortValue },
-  { key: "actions", label: "", class: "w-12", pin: "end" },
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
 ]);
 
 function menuFor(machine: MachineView): RowMenuItem[] {
@@ -1454,7 +1456,9 @@ async function sendReminders(): Promise<void> {
       <template #cell-name="{ row }">
         <span class="flex min-w-0 items-center gap-2">
           <StatusDot :status="row.online ? 'online' : 'offline'" />
-          <span class="truncate font-medium" :title="row.node_name || row.node_id">{{ displayName(row) }}</span>
+          <span class="flex min-w-0 font-medium" :title="row.node_name || row.node_id">
+            <span class="truncate">{{ nameParts(displayName(row))[0] }}</span><span class="shrink-0">{{ nameParts(displayName(row))[1] }}</span>
+          </span>
           <span v-if="!row.id" class="shrink-0 text-xs text-muted-foreground">{{ $t('fleet.inventory.billing.unprofiled') }}</span>
         </span>
       </template>

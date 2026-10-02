@@ -634,6 +634,11 @@ export default {
         confirmDisableTitle: "停用 {count} 个节点",
         confirmDisableDescription:
           "要在所选的 {selected} 个节点中停用 {count} 个吗?它们会停止接收任务,直到再次启用。已经停用的节点不会被改动。",
+        impactToken: "这 {count} 个节点的 agent 令牌都会被拒绝，它们都不再上报。",
+        impactDark: "概览、节点列表和地图会把它们显示为已停用，没有当前指标。",
+        impactWork: "在重新启用之前，任务、终端和监控都无法到达它们。",
+        select: "选择",
+        doneSelecting: "完成",
       },
       confirm: {
         rotateImpact: "{name} 上的 agent 在换上新 token 之前会停止上报。",

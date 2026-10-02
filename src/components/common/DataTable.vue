@@ -329,7 +329,12 @@ const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--background))]";
 
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
   if (pinned(index)) {
-    return cn("pin-start [--pin-max:38vw]", !column.wrap && "max-md:truncate", props.selectable && "[--pin-left:2.5rem]");
+    // The pinned selection checkbox (2.5rem) counts inside the 38vw cap
+    // (design 23, 3.7): checkbox plus a 192 px name covered 62% of a phone.
+    const cap = props.selectable
+      ? "[--pin-left:2.5rem] [--pin-max:calc(38vw_-_2.5rem)] [--pin-min:calc(38vw_-_2.5rem)]"
+      : "[--pin-max:38vw]";
+    return cn("pin-start", cap, !column.wrap && "max-md:truncate");
   }
   if (pinnedEnd(column)) return cn("pin-end", props.rowTo && "[--pin-right:2rem]");
   return undefined;

@@ -389,3 +389,18 @@ export function canonicalLayoutQuery(query: QueryRecord): { layout: NodesLayout;
   next[NODES_LAYOUT_PARAM] = layout;
   return { layout, query: next };
 }
+
+/**
+ * A long name split so a narrow cell cuts it in the middle: the head
+ * truncates and the tail stays. Cut at the end, Aaitr-Frontier-NAT and
+ * Aaitr-Frontier-VDS both read "Aaitr-Frontier…" at 375. The tail is the
+ * last part after a hyphen, underscore or space when that part is 2 to 8
+ * characters, otherwise the last 4; a short name is not split.
+ */
+export function nameParts(name: string): [head: string, tail: string] {
+  if (name.length <= 12) return [name, ""];
+  const cut = Math.max(name.lastIndexOf("-"), name.lastIndexOf("_"), name.lastIndexOf(" "));
+  const part = cut >= 0 ? name.length - cut - 1 : 0;
+  const tailLength = part >= 2 && part <= 8 ? part + 1 : 4;
+  return [name.slice(0, name.length - tailLength), name.slice(name.length - tailLength)];
+}

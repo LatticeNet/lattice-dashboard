@@ -645,6 +645,11 @@ export default {
         confirmDisableTitle: "Disable {count} nodes",
         confirmDisableDescription:
           "Disable {count} of the {selected} selected nodes? They stop accepting work until you enable them again. Nodes already disabled are left alone.",
+        impactToken: "The agent token of each of the {count} nodes is refused, so none of them reports.",
+        impactDark: "Home, Nodes and the Map show them as disabled, with no current metrics.",
+        impactWork: "Tasks, terminals and monitors cannot reach them until you enable them again.",
+        select: "Select",
+        doneSelecting: "Done",
       },
       confirm: {
         rotateImpact: "The agent on {name} stops reporting until it runs with the new token.",

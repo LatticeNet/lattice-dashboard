@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { Node } from "../../../lib/api/types.ts";
 import {
+  nameParts,
   DEFAULT_HIDDEN_COLUMNS,
   NODE_COLUMNS,
   agentVersions,
@@ -136,4 +137,12 @@ test("an old ?view=card|list link moves to ?layout=, and ?layout= wins", () => {
   assert.equal(canonicalLayoutQuery({ layout: "card" }), null);
   // ?view= that is not a layout is a layer name; it is not Nodes' to move.
   assert.equal(canonicalLayoutQuery({ view: "history" }), null);
+});
+
+test("a long name keeps its last part, so siblings stay apart when cut", () => {
+  assert.deepEqual(nameParts("Aaitr-Frontier-NAT"), ["Aaitr-Frontier", "-NAT"]);
+  assert.deepEqual(nameParts("Aaitr-Frontier-VDS"), ["Aaitr-Frontier", "-VDS"]);
+  assert.deepEqual(nameParts("cloudcone-la"), ["cloudcone-la", ""]);
+  assert.deepEqual(nameParts("[OpenJobs-Data]-gpu-box"), ["[OpenJobs-Data]-gpu", "-box"]);
+  assert.deepEqual(nameParts("averyverylongnamewithoutbreaks"), ["averyverylongnamewithoutbr", "eaks"]);
 });

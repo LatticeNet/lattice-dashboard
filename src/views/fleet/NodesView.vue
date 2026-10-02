@@ -24,6 +24,7 @@ import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { useMediaQuery } from "@/composables/useMediaQuery";
 import { createConfirmReturn } from "./confirmFocus";
 import { useAuthStore } from "@/stores/auth";
 import { countryName, splitNamePrefix } from "@/lib/fleet";
@@ -57,6 +58,7 @@ import {
   compareNodeIdentity,
   isNodesLayout,
   lastSeenMillis,
+  nameParts,
   nodeGroupByCodec,
   nodeGroupKey,
   nodeGroupOrder,
@@ -279,10 +281,12 @@ const columns = computed<DataTableColumn<Node>[]>(() => [
       sortable: true,
       align: ALIGN_RIGHT.has(column.id) ? "right" : undefined,
       value: SORT_VALUE[column.id],
-      class: column.id === "name" ? "min-w-48" : undefined,
+      // From 768 px only: on a phone the pinned column's cap (38vw with the checkbox) governs.
+      class: column.id === "name" ? "md:min-w-48" : undefined,
     }),
   ),
-  { key: "actions", label: "", class: "w-12", pin: "end" },
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
 ]);
 
 /* -------------------------------- grouping -------------------------------- */
@@ -532,6 +536,41 @@ const selectedHidden = computed(() => {
   return [...selectedIds.value].filter((id) => !visible.has(id)).length;
 });
 const bulkDisableCount = computed(() => planBulkDisable(nodes.value, selectedIds.value, true).targets.length);
+/** Enable is offered only when a selected node is disabled; otherwise it would do nothing. */
+const bulkEnableCount = computed(() => planBulkDisable(nodes.value, selectedIds.value, false).targets.length);
+/**
+ * Disabling refuses each agent's token, so the node stops reporting. Past a
+ * handful of nodes, or every online node, the confirm asks for the count
+ * typed, like any action that takes part of the fleet dark.
+ */
+const BULK_TYPED_FROM = 5;
+const bulkDisableTyped = computed(() => {
+  const count = bulkDisableCount.value;
+  const online = nodes.value.filter((node) => isReporting(node)).length;
+  return count >= BULK_TYPED_FROM || (online > 0 && count >= online) ? String(count) : undefined;
+});
+const bulkDisableImpact = computed(() => [
+  t("fleet.nodes.bulk.impactToken", { count: bulkDisableCount.value }),
+  t("fleet.nodes.bulk.impactDark"),
+  t("fleet.nodes.bulk.impactWork"),
+]);
+
+/**
+ * On a touch screen the checkboxes wait for Select: pinned beside the name
+ * they took 40 px of the 38vw a phone keeps for it, on every row, for an
+ * action taken now and then. A selection already made keeps them showing.
+ */
+const coarse = useMediaQuery("(pointer: coarse)");
+const selecting = ref(false);
+const showSelection = computed(() => canAdminNodes.value && (!coarse.value || selecting.value || selectedIds.value.size > 0));
+function toggleSelecting(): void {
+  if (showSelection.value) {
+    selecting.value = false;
+    selectedIds.value = new Set();
+  } else {
+    selecting.value = true;
+  }
+}
 
 function requestBulk(disabled: boolean): void {
   if (!canAdminNodes.value || bulkRunning.value) return;
@@ -727,6 +766,17 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
               </div>
             </div>
           </FilterPanel>
+          <Button
+            v-if="coarse && canAdminNodes && layout === 'list'"
+            variant="outline"
+            size="sm"
+            type="button"
+            :aria-pressed="showSelection"
+            data-testid="nodes-select-mode"
+            @click="toggleSelecting"
+          >
+            {{ showSelection ? $t('fleet.nodes.bulk.doneSelecting') : $t('fleet.nodes.bulk.select') }}
+          </Button>
           <TableColumnManager
             v-if="layout === 'list'"
             :columns="optionalColumns"
@@ -799,7 +849,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         :loading="nodesQuery.loading.value"
         :error="nodesQuery.error.value ?? null"
         :has-data="nodesQuery.data.value !== undefined"
-        :selectable="canAdminNodes"
+        :selectable="showSelection"
         :expression-filter="false"
         :show-summary="false"
         :group-key="groupKeyFn"
@@ -848,7 +898,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             {{ $t('fleet.nodes.bulk.running', { done: bulkProgress.done, total: bulkProgress.total }) }}
           </span>
           <div class="ms-auto flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="outline" type="button" :disabled="bulkRunning" @click="requestBulk(false)">
+            <Button v-if="bulkEnableCount > 0" size="sm" variant="outline" type="button" :disabled="bulkRunning" @click="requestBulk(false)">
               <Power aria-hidden="true" />
               {{ $t('common.actions.enable') }}
             </Button>
@@ -862,7 +912,9 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
         <template #cell-name="{ row }">
           <span class="flex min-w-0 items-center gap-2">
             <StatusDot :status="describeNodeStatus(row).health" />
-            <span class="truncate font-medium" :title="row.name || row.id">{{ displayName(row) }}</span>
+            <span class="flex min-w-0 font-medium" :title="row.name || row.id">
+              <span class="truncate">{{ nameParts(displayName(row))[0] }}</span><span class="shrink-0">{{ nameParts(displayName(row))[1] }}</span>
+            </span>
             <span
               v-if="statusWord(row)"
               :class="cn('shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(row).tone])"
@@ -978,6 +1030,8 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
       v-model:open="bulkDisableOpen"
       :title="$t('fleet.nodes.bulk.confirmDisableTitle', { count: bulkDisableCount })"
       :description="$t('fleet.nodes.bulk.confirmDisableDescription', { count: bulkDisableCount, selected: selectedIds.size })"
+      :impact="bulkDisableImpact"
+      :typed-confirm="bulkDisableTyped"
       :confirm-label="$t('common.actions.disable')"
       :cancel-label="$t('common.actions.cancel')"
       variant="default"

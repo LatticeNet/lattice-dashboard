@@ -607,7 +607,8 @@ const columns = computed<DataTableColumn<MonitorView>[]>(() => [
   { key: "target", label: t("fleet.monitoring.table.target"), searchable: true },
   { key: "assignment", label: t("fleet.monitoring.table.checks"), value: (m) => assignmentLabel(m) },
   { key: "interval", label: t("fleet.monitoring.table.every"), sortable: true, value: (m) => m.interval_sec },
-  { key: "actions", label: "", class: "w-12", pin: "end" },
+  // 44 px on a phone: the menu trigger, no padding around it (a 68 px column left 43 px for the rest).
+  { key: "actions", label: "", class: "w-12 max-md:w-11 max-md:px-0", pin: "end" },
 ]);
 
 /** A confirm opened from a row menu hands focus back to that menu. */
