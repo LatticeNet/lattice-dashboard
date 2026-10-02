@@ -265,6 +265,15 @@ export default {
       disableLastDescription:
         "“{name}”是最后一个启用的提供方。保存后登录页将不再提供单点登录,只剩密码与 Passkey 两种方式,没有本地密码的人会被锁在外面。",
       deleteTitle: "删除身份提供方？",
+      deleteDescriptionShort: "从登录页移除“{name}”。此操作无法撤销。",
+      deleteImpact: {
+        title: "谁会失去登录途径",
+        keep: "通过它登录过的运维人员会保留账号、权限、密码和 Passkey。",
+        locked: "{user} 没有密码，会失去单点登录；除非它有 Passkey，否则将无法登录。",
+        maybeLocked: "{user} 没有密码：如果它通过 {name} 登录，除非有 Passkey 或另一个提供方关联了它，否则将无法登录。",
+        usersUnread: "未读到账号列表，不知道哪些人没有其他登录方式。",
+        usersNoAccess: "读取哪些账号没有密码需要用户管理权限，所以不知道谁会被挡在门外。",
+      },
       deleteDescription:
         "移除“{name}”。原先通过它登录的运维人员会失去这条登录途径，账号、权限、密码和 Passkey 都保留；没有其他登录方式的人会被挡在门外。此操作无法撤销。",
       toast: {

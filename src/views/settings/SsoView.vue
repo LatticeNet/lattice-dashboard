@@ -219,6 +219,36 @@ function confirmDisableLast() {
 const deleteTarget = ref<OIDCProviderView | undefined>();
 const deleting = ref(false);
 
+/*
+ * Who a provider delete can lock out (design 23, section 3.8). An account
+ * with no password signs in only through SSO or a passkey. The user list
+ * does not say which provider an account came through, so with another
+ * enabled provider left the lines say "if"; with none left every such
+ * account loses SSO. Read once, never polled, and only with user:admin.
+ */
+const canReadUsers = computed(() => auth.can("user:admin"));
+const usersQuery = useAsyncData((signal) => api.users.list({ signal }).then((r) => unwrap(r, "users")), {
+  immediate: canReadUsers.value,
+});
+const ssoOnlyUsers = computed(() =>
+  (usersQuery.data.value ?? []).filter((user) => !user.has_password).map((user) => user.username).sort((a, b) => a.localeCompare(b)),
+);
+const deleteImpact = computed<{ lines: string[]; typed: boolean }>(() => {
+  const target = deleteTarget.value;
+  if (!target) return { lines: [], typed: false };
+  const name = target.display_name || target.issuer;
+  const lines = [t("settings.sso.deleteImpact.keep")];
+  if (usersQuery.data.value === undefined) {
+    lines.push(canReadUsers.value ? t("settings.sso.deleteImpact.usersUnread") : t("settings.sso.deleteImpact.usersNoAccess"));
+    return { lines, typed: true };
+  }
+  const othersLeft = providers.value.some((provider) => provider.id !== target.id && provider.enabled);
+  for (const user of ssoOnlyUsers.value) {
+    lines.push(othersLeft ? t("settings.sso.deleteImpact.maybeLocked", { user, name }) : t("settings.sso.deleteImpact.locked", { user }));
+  }
+  return { lines, typed: ssoOnlyUsers.value.length > 0 };
+});
+
 async function confirmDelete() {
   if (!deleteTarget.value) return;
   deleting.value = true;
@@ -589,7 +619,10 @@ function menuFor(provider: (typeof providers.value)[number]): RowMenuItem[] {
     <ConfirmDialog
       :open="!!deleteTarget"
       :title="$t('settings.sso.deleteTitle')"
-      :description="$t('settings.sso.deleteDescription', { name: deleteTarget?.display_name || deleteTarget?.issuer })"
+      :description="$t('settings.sso.deleteDescriptionShort', { name: deleteTarget?.display_name || deleteTarget?.issuer })"
+      :impact="deleteImpact.lines"
+      :impact-title="$t('settings.sso.deleteImpact.title')"
+      :typed-confirm="deleteImpact.typed ? deleteTarget?.display_name || deleteTarget?.issuer : undefined"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"

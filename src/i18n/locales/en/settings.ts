@@ -272,6 +272,15 @@ export default {
       disableLastDescription:
         '"{name}" is the last enabled provider. Saving removes single sign-on from the login screen, leaving password and passkey as the only way in. Anyone without a local password will be locked out.',
       deleteTitle: "Delete identity provider?",
+      deleteDescriptionShort: 'Remove "{name}" from the login screen. This cannot be undone.',
+      deleteImpact: {
+        title: "Who loses a way in",
+        keep: "Operators who signed in through it keep their accounts, scopes, passwords and passkeys.",
+        locked: "{user} has no password and loses single sign-on; it is locked out unless it holds a passkey.",
+        maybeLocked: "{user} has no password: if it signs in through {name}, it is locked out unless it holds a passkey or another provider links it.",
+        usersUnread: "The accounts were not read, so who has no other way in is not known.",
+        usersNoAccess: "Which accounts have no password needs user admin access to read, so who is locked out is not known.",
+      },
       deleteDescription:
         'Remove "{name}". Operators who signed in through it lose that route and keep their accounts, scopes, passwords, and passkeys. Anyone with no other way in is locked out. This cannot be undone.',
       toast: {
