@@ -27,8 +27,9 @@ const count = computed(() => recentErrors.value.length);
         :aria-label="$t('shell.errors.open', { n: count }, count)"
       >
         <CircleAlert class="size-4" aria-hidden="true" />
+        <!-- The fill's own foreground: white on the dark scheme's lighter red read 2.89:1, its dark ink reads well over 4.5. -->
         <span
-          class="absolute top-1 right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-mono text-[10px] leading-none font-medium text-white tabular"
+          class="absolute top-1 right-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-mono text-[10px] leading-none font-medium text-destructive-foreground tabular"
           aria-hidden="true"
         >{{ count }}</span>
       </Button>
