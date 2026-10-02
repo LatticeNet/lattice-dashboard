@@ -449,12 +449,32 @@ function changeLabel(approval: ApprovalView): string {
 
 /** The card a decision was made on, by position, so focus can land on the one in its place. */
 let decidedIndex = -1;
-/** The control that opened a confirm; gone when the decision removed its card. */
+/** The Stuck row that takes a dismissed row's place: the next row, or the one before it when it was last. */
+let decidedRowNeighbour: string | null = null;
+/** The control that opened a confirm; gone when the decision removed its card or row. */
 let confirmOpener: HTMLElement | null = null;
 
-function rememberOpener(groupKey?: string): void {
-  confirmOpener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  if (groupKey !== undefined) decidedIndex = eventGroups.value.findIndex((group) => group.key === groupKey);
+/** The Stuck table's rows as shown, without the unexplained list nested under it. */
+function stuckRowElements(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('[data-testid="approvals-stuck"] tbody tr[data-row-key]')].filter(
+    (row) => !row.closest('[data-testid="approvals-unexplained"]'),
+  );
+}
+
+/**
+ * Called as a confirm opens. A decision made away from the cards (the sheet,
+ * a Stuck row, a stale section) clears the card position, so focus never
+ * lands by an earlier card decision's index. A decision from a Stuck row's
+ * menu remembers the row's menu button (the menu item is gone once the menu
+ * closes) and the row that takes its place.
+ */
+function rememberOpener(groupKey?: string, rowKey?: string): void {
+  const rows = rowKey ? stuckRowElements() : [];
+  const at = rows.findIndex((row) => row.dataset.rowKey === rowKey);
+  const rowMenu = at >= 0 ? rows[at]?.querySelector<HTMLElement>('[data-testid="row-menu"]') : null;
+  confirmOpener = rowMenu ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  decidedIndex = groupKey === undefined ? -1 : eventGroups.value.findIndex((group) => group.key === groupKey);
+  decidedRowNeighbour = at >= 0 ? ((rows[at + 1] ?? rows[at - 1])?.dataset.rowKey ?? null) : null;
 }
 
 function sheetTitle(): HTMLElement | null {
@@ -467,11 +487,14 @@ function activeLayerTab(): HTMLElement | null {
 
 /**
  * Where focus goes once the control that made a decision is gone: the open
- * sheet's title, else the card now in the decided card's place (or the last
- * card), else the current layer's tab. Never the document.
+ * sheet's title, else the Stuck row now in the dismissed row's place, else
+ * the card now in the decided card's place (or the last card), else the
+ * current layer's tab. Never the document.
  */
 function afterDecisionTarget(): HTMLElement | null {
   if (sheet.openId.value && sheetTitle()) return sheetTitle();
+  const neighbour = decidedRowNeighbour ? stuckRowElements().find((row) => row.dataset.rowKey === decidedRowNeighbour) : undefined;
+  if (neighbour) return neighbour;
   if (layer.value === "needs") {
     const cards = [...document.querySelectorAll<HTMLElement>("[data-event-card] [data-card-primary]")];
     if (cards.length) return cards[Math.min(Math.max(decidedIndex, 0), cards.length - 1)] ?? null;
@@ -598,8 +621,8 @@ async function dismiss(approval: ApprovalView): Promise<void> {
   }
 }
 
-function askDismissWaiting(approval: ApprovalView): void {
-  rememberOpener();
+function askDismissWaiting(approval: ApprovalView, fromRow = false): void {
+  rememberOpener(undefined, fromRow ? approval.id : undefined);
   confirm.value = {
     title: t("operations.approvals.waiting.dismissTitle"),
     description: t("operations.approvals.waiting.dismissConfirm", { plugin: approval.plugin, action: approval.action, node: nodeName(approval.waiting?.node_id || approval.node_id) }),
@@ -1039,7 +1062,7 @@ function stuckMenu(row: ApprovalView): RowMenuItem[] {
       hidden: !row.waiting?.dismissible || !canApply.value,
       disabled: !canDismissWaiting(row),
       reason: canDismissWaiting(row) ? undefined : t("operations.approvals.applyRequired"),
-      run: () => askDismissWaiting(row),
+      run: () => askDismissWaiting(row, true),
     },
   ];
 }
