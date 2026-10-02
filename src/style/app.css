@@ -717,7 +717,9 @@
    `--pin-left` and `--pin-right` offset a pinned cell past a pinned gutter
    (DataTable's selection checkbox, its row chevron). A row that is hovered,
    selected or open sets `--row-bg` to an opaque tint, and the pinned cells
-   paint it, so the row reads as one band instead of stopping at the pin. */
+   paint it, so the row reads as one band instead of stopping at the pin.
+   Otherwise they paint `--table-ground`, the surface the table sits on: a
+   Card sets it to `--card`, and the page background is the fallback. */
 @utility pin-start {
   position: sticky;
   left: var(--pin-left, 0);
@@ -726,7 +728,7 @@
   /* The cap is a hard edge: whatever does not fit wraps or is clipped here,
      never drawn under the next column. */
   overflow: hidden;
-  background-color: var(--row-bg, var(--background));
+  background-color: var(--row-bg, var(--table-ground, var(--background)));
 
   @media (width < 48rem) {
     box-shadow: inset -1px 0 0 var(--border);
@@ -741,7 +743,7 @@
   position: sticky;
   right: var(--pin-right, 0);
   z-index: 10;
-  background-color: var(--row-bg, var(--background));
+  background-color: var(--row-bg, var(--table-ground, var(--background)));
 
   @media (width < 48rem) {
     box-shadow: inset 1px 0 0 var(--border);

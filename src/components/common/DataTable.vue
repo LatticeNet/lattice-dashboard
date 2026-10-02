@@ -322,10 +322,12 @@ function pinnedEnd(column: DataTableColumn<T>): boolean {
  * slid the selection checkbox under the pinned first cell, and a pinned
  * actions column slid over the row chevron. Pinned cells paint the row's
  * `--row-bg`, so hover, the open row and a selected row tint all the way
- * across instead of stopping at the pin.
+ * across instead of stopping at the pin. Unhovered, they paint the ground the
+ * table sits on, `--table-ground`: a Card sets it to `--card`, so a pinned
+ * column inside a card is not a page-coloured band.
  */
 const pinsEnd = computed(() => props.narrowLayout === "scroll" && props.columns.some((column) => column.pin === "end"));
-const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--background))]";
+const PINNED_GUTTER = "sticky z-10 bg-[var(--row-bg,var(--table-ground,var(--background)))]";
 
 function cellPinClass(column: DataTableColumn<T>, index: number): string | undefined {
   if (pinned(index)) {
@@ -865,7 +867,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         ]"
       >
         <table class="w-full min-w-[640px] text-sm">
-          <thead class="sticky top-0 z-10 bg-background">
+          <thead class="sticky top-0 z-10 bg-[var(--table-ground,var(--background))]">
             <tr class="border-b border-border text-xs text-muted-foreground">
               <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2', selectGutterClass)">
                 <Checkbox
@@ -944,9 +946,9 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             </tr>
             <template v-else>
             <tr
-              class="group border-b border-border last:border-0 bg-(--row-bg) [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--background))] hover:[--row-bg:var(--row-hover)] data-[active]:[--row-bg:var(--muted)]"
+              class="group border-b border-border last:border-0 bg-(--row-bg) [--row-hover:color-mix(in_oklab,var(--muted)_40%,var(--table-ground,var(--background)))] hover:[--row-bg:var(--row-hover)] data-[active]:[--row-bg:var(--muted)]"
               :class="{
-                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--background))]': selectable && isRowSelected(entry.row),
+                '[--row-bg:color-mix(in_oklab,var(--muted)_30%,var(--table-ground,var(--background)))]': selectable && isRowSelected(entry.row),
                 'cursor-pointer focus-row': rowActivatable,
               }"
               :data-row-key="rowKey(entry.row)"
