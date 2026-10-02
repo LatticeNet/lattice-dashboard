@@ -41,6 +41,7 @@ import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   buildConfig as buildConfigFor,
+  channelDeleteImpact as channelDeleteImpactFor,
   channelSaveGate,
   configComplete as configCompleteFor,
   fromSelectValue,
@@ -482,34 +483,27 @@ async function sendTest(): Promise<void> {
 const deleteTarget = ref<NotifyChannelView | undefined>();
 const deleting = ref(false);
 
-/**
- * What a channel delete stops (design 23, section 3.8). Once one enabled rule
- * exists, only rules deliver, so an enabled rule whose every other channel is
- * gone or disabled stops reaching anyone: those are named first, with their
- * events, and the operator types the channel's name. Rules that keep another
- * channel are named with it. With no enabled rule, every enabled channel
- * gets everything, so the channel simply stops receiving.
- */
+/** What a channel delete stops, as lines (notificationsModel.channelDeleteImpact). */
 const channelDeleteImpact = computed<{ lines: string[]; typed: boolean }>(() => {
   const target = deleteTarget.value;
   if (!target) return { lines: [], typed: false };
   const name = target.name || target.id;
-  if (!rulesRead.value) return { lines: [t("platform.notifications.deleteImpact.rulesUnread")], typed: true };
-  const enabledRules = rules.value.filter((rule) => rule.enabled);
-  if (!enabledRules.length) {
-    return { lines: target.enabled ? [t("platform.notifications.deleteImpact.noRules", { name })] : [], typed: false };
-  }
-  const silenced: string[] = [];
-  const kept: string[] = [];
-  for (const rule of [...enabledRules].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))) {
-    if (!(rule.channel_ids ?? []).includes(target.id)) continue;
-    const others = (rule.channel_ids ?? []).filter((id) => id !== target.id && channels.value.some((channel) => channel.id === id && channel.enabled));
-    const events = (rule.event_types ?? ["*"]).join(", ");
-    if (others.length) kept.push(t("platform.notifications.deleteImpact.kept", { rule: rule.name || rule.id, others: others.map(channelName).join(", ") }));
-    else silenced.push(t("platform.notifications.deleteImpact.silenced", { rule: rule.name || rule.id, events }));
-  }
-  if (!silenced.length && !kept.length) return { lines: [t("platform.notifications.deleteImpact.unrouted", { name })], typed: false };
-  return { lines: [...silenced, ...kept], typed: silenced.length > 0 };
+  const impact = channelDeleteImpactFor(target, rulesRead.value ? rules.value : undefined, channels.value);
+  const lines = impact.lines.map((line) => {
+    switch (line.kind) {
+      case "silenced":
+        return t("platform.notifications.deleteImpact.silenced", { rule: line.rule, events: line.events });
+      case "kept":
+        return t("platform.notifications.deleteImpact.kept", { rule: line.rule, others: line.others.join(", ") });
+      case "noRules":
+        return t("platform.notifications.deleteImpact.noRules", { name });
+      case "unrouted":
+        return t("platform.notifications.deleteImpact.unrouted", { name });
+      case "rulesUnread":
+        return t("platform.notifications.deleteImpact.rulesUnread");
+    }
+  });
+  return { lines, typed: impact.typed };
 });
 
 async function confirmDelete(): Promise<void> {

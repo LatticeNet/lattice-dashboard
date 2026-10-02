@@ -34,6 +34,7 @@ import {
 } from "@/lib/api";
 import { sha256Hex } from "@/lib/crypto";
 import { isDemoObject } from "@/lib/demo";
+import { geoDeleteImpact, hasRealTime } from "./geoRoutingModel";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useAuthStore } from "@/stores/auth";
 import { formatAge, shortId } from "@/lib/format";
@@ -79,15 +80,6 @@ import {
 } from "@/components/ui/dialog";
 
 type Strategy = "geoip" | "all-healthy";
-
-/**
- * Go's `omitempty` does not drop a zero time.Time, so a routing that was never
- * applied arrives as "0001-01-01T00:00:00Z" and formats into a real-looking
- * year-1 date instead of falling through to "never".
- */
-function hasRealTime(value?: string): boolean {
-  return !!value && !value.startsWith("0001");
-}
 
 const { t, locale } = useI18n();
 const auth = useAuthStore();
@@ -452,31 +444,30 @@ function menuFor(route: GeoRouting): RowMenuItem[] {
   ];
 }
 
-/**
- * Two destructive classes (design 23, section 3.8). A routing that was never
- * applied lives only on this server: deleting it is irreversible inside
- * Lattice. One that was applied left its zone in the CoreDNS on its DNS
- * nodes, and the server's delete removes only the record, so those nodes
- * keep answering the hostname: that is the class that leaves config on a
- * node, which names each node, says what keeps answering, and asks for the
- * typed name.
- */
-const deleteApplied = computed(() => !!deleteTarget.value && routeState(deleteTarget.value) !== "demo" && hasRealTime(deleteTarget.value.last_applied_at));
-const deleteImpact = computed(() => {
-  const route = deleteTarget.value;
-  if (!route) return [];
-  if (!deleteApplied.value) {
-    return [t("networking.geoPage.delete.impactRecord", { hostname: route.hostname }), t("networking.geoPage.delete.impactNodes")];
-  }
-  const ms = Date.parse(route.last_applied_at ?? "");
-  const applied = Number.isFinite(ms) ? formatAge(now.value.getTime() - ms, locale.value) : "";
-  const dnsNodes = route.dns_node_ids ?? [];
-  const lines = dnsNodes.length
-    ? dnsNodes.map((id) => t("networking.geoPage.delete.impactAnswering", { node: nodeName(id), hostname: route.hostname, age: applied }))
-    : [t("networking.geoPage.delete.impactAnsweringUnknown", { hostname: route.hostname, age: applied })];
-  lines.push(t("networking.geoPage.delete.impactNoRemoval"));
-  return lines;
-});
+/** Which destructive class this delete is, and its lines (geoRoutingModel.geoDeleteImpact). */
+const deleteClass = computed(() => (deleteTarget.value ? geoDeleteImpact(deleteTarget.value) : undefined));
+const deleteApplied = computed(() => !!deleteClass.value?.applied);
+const deleteImpact = computed(() =>
+  (deleteClass.value?.lines ?? []).map((line) => {
+    switch (line.kind) {
+      case "record":
+        return t("networking.geoPage.delete.impactRecord", { hostname: line.hostname });
+      case "nothingSent":
+        return t("networking.geoPage.delete.impactNodes");
+      case "answering":
+        return t("networking.geoPage.delete.impactAnswering", { node: nodeName(line.nodeId), hostname: line.hostname, age: appliedAge(line.appliedAt) });
+      case "answeringUnknown":
+        return t("networking.geoPage.delete.impactAnsweringUnknown", { hostname: line.hostname, age: appliedAge(line.appliedAt) });
+      case "noRemoval":
+        return t("networking.geoPage.delete.impactNoRemoval");
+    }
+  }),
+);
+
+function appliedAge(at: string): string {
+  const ms = Date.parse(at);
+  return Number.isFinite(ms) ? formatAge(now.value.getTime() - ms, locale.value) : "";
+}
 </script>
 
 <template>
@@ -792,7 +783,7 @@ const deleteImpact = computed(() => {
       :description="deleteApplied ? $t('networking.geoPage.delete.descriptionApplied') : undefined"
       :impact="deleteImpact"
       :impact-title="deleteApplied ? $t('networking.geoPage.delete.impactTitleApplied') : $t('networking.geoPage.delete.impactTitle')"
-      :typed-confirm="deleteApplied ? deleteTarget?.name || deleteTarget?.id : undefined"
+      :typed-confirm="deleteClass?.typed ? deleteTarget?.name || deleteTarget?.id : undefined"
       :confirm-label="deleteApplied ? $t('networking.geoPage.delete.confirmApplied') : $t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"

@@ -51,7 +51,10 @@ import { provideNodeDirectory } from "@/composables/useNodeDirectory";
 import { proofReason } from "@/components/common/proofModel";
 import {
   agentStanding,
+  bulkButtonState,
   bulkPlan,
+  fleetCells,
+  tableErrorSource,
   normalizeAgentVersion,
   versionDistribution,
   type AgentStanding,
@@ -764,14 +767,9 @@ const bulk = computed(() => bulkPlan(fleetRows.value, latest.value));
  * its three inputs is unread the button carries no count: a zero there would
  * be a claim about the fleet nobody read.
  */
-const bulkInputsRead = computed(() => nodesRead.value && policiesRead.value && !!latest.value);
-const bulkReason = computed<string | undefined>(() => {
-  if (!nodesRead.value) return t("platform.agentUpdatesPage.bulk.noNodes");
-  if (!latest.value) return t("platform.agentUpdatesPage.bulk.noLatest");
-  if (!policiesRead.value) return t("platform.agentUpdatesPage.bulk.noPolicies");
-  if (!bulk.value.plan.length) return t("platform.agentUpdatesPage.bulk.none");
-  return undefined;
-});
+const reads = computed(() => ({ nodesRead: nodesRead.value, policiesRead: policiesRead.value, latest: latest.value }));
+const bulkButton = computed(() => bulkButtonState(reads.value, bulk.value.plan.length));
+const bulkReason = computed(() => (bulkButton.value.block ? t(`platform.agentUpdatesPage.bulk.${bulkButton.value.block}`) : undefined));
 
 /**
  * The table's error banner says "showing the last data", so it speaks only
@@ -779,11 +777,19 @@ const bulkReason = computed<string | undefined>(() => {
  * read" in its cells and in the proof line instead.
  */
 const tableError = computed<Error | null>(() => {
-  if (!nodesRead.value && !policiesRead.value) return nodesQuery.error.value ?? policiesQuery.error.value ?? null;
-  if (nodesRead.value && nodesQuery.error.value) return nodesQuery.error.value;
-  if (policiesRead.value && policiesQuery.error.value) return policiesQuery.error.value;
-  return null;
+  const source = tableErrorSource({
+    nodesRead: nodesRead.value,
+    nodesFailed: !!nodesQuery.error.value,
+    policiesRead: policiesRead.value,
+    policiesFailed: !!policiesQuery.error.value,
+  });
+  return source === "nodes" ? (nodesQuery.error.value ?? null) : source === "policies" ? (policiesQuery.error.value ?? null) : null;
 });
+
+/** What each cell of a row may say, given which reads landed (agentUpdatesModel.fleetCells). */
+function cellsOf(row: FleetRow) {
+  return fleetCells(row, reads.value);
+}
 const bulkOpen = ref(false);
 const bulkRunning = ref(false);
 
@@ -867,13 +873,13 @@ const deleteImpact = computed(() => {
         <Button
           v-if="canPlan"
           size="sm"
-          :disabled="!bulkInputsRead || !bulk.plan.length"
+          :disabled="bulkButton.disabled"
           :title="bulkReason"
           data-testid="plan-behind"
           @click="bulkOpen = true"
         >
           <Play aria-hidden="true" class="size-4" />
-          {{ bulkInputsRead ? $t('platform.agentUpdatesPage.bulk.button', { n: bulk.plan.length }) : $t('platform.agentUpdatesPage.bulk.buttonUncounted') }}
+          {{ bulkButton.counted ? $t('platform.agentUpdatesPage.bulk.button', { n: bulk.plan.length }) : $t('platform.agentUpdatesPage.bulk.buttonUncounted') }}
         </Button>
       </template>
     </PageHeader>
@@ -930,25 +936,25 @@ const deleteImpact = computed(() => {
           <NodeLabel v-else :id="row.nodeId" class="text-xs" />
         </template>
         <template #cell-version="{ row }">
-          <span v-if="!nodesRead" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
-          <span v-else :class="cn('whitespace-nowrap font-mono text-xs', STANDING_TONE[row.standing])">{{ row.version ? normalizeAgentVersion(row.version) : $t('platform.agentUpdatesPage.noVersion') }}</span>
+          <span v-if="cellsOf(row).runs === 'notRead'" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
+          <span v-else :class="cn('whitespace-nowrap font-mono text-xs', STANDING_TONE[row.standing])">{{ cellsOf(row).runs === 'version' ? normalizeAgentVersion(row.version) : $t('platform.agentUpdatesPage.noVersion') }}</span>
           <span v-if="row.standing === 'behind'" class="block text-xs text-warning-text">{{ $t('platform.agentUpdatesPage.standing.behind') }}</span>
         </template>
         <template #cell-target="{ row }">
           <span v-if="row.policy" class="whitespace-nowrap font-mono text-xs">{{ targetLabel(row.policy) }}</span>
-          <span v-else-if="!policiesRead" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
+          <span v-else-if="cellsOf(row).target === 'notRead'" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
           <span v-else class="text-xs text-warning-text">{{ $t('platform.agentUpdatesPage.noPolicy') }}</span>
         </template>
         <template #cell-policy="{ row }">
           <span v-if="row.policy" class="whitespace-nowrap text-xs text-muted-foreground">{{ policyText(row.policy) }}</span>
-          <span v-else-if="!policiesRead" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
+          <span v-else-if="cellsOf(row).policy === 'notRead'" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('platform.agentUpdatesPage.notRead') }}</span>
           <span v-else class="text-xs text-muted-foreground">-</span>
           <span v-if="row.policy?.last_error" class="block text-xs text-destructive">{{ $t('platform.agentUpdatesPage.policyFailed') }}</span>
           <span v-if="staleApprovalCount(row.nodeId)" class="block text-xs text-warning-text">{{ $t('platform.agentUpdates.staleApprovalBadge', { count: staleApprovalCount(row.nodeId) }) }}</span>
         </template>
         <template #cell-last_planned="{ row }">
           <span class="whitespace-nowrap text-xs text-muted-foreground" :title="row.policy?.last_planned_at ? formatDateTime(row.policy.last_planned_at) : undefined">
-            {{ row.policy?.last_planned_at ? formatRelativeTime(row.policy.last_planned_at) : policiesRead ? $t('common.misc.never') : $t('platform.agentUpdatesPage.notRead') }}
+            {{ cellsOf(row).lastPlanned === 'time' ? formatRelativeTime(row.policy!.last_planned_at!) : cellsOf(row).lastPlanned === 'never' ? $t('common.misc.never') : $t('platform.agentUpdatesPage.notRead') }}
           </span>
         </template>
         <template #cell-actions="{ row }">

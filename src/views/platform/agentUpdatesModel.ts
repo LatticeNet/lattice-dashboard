@@ -99,3 +99,77 @@ export function bulkPlan<P>(rows: ReadonlyArray<BulkPlanInput<P>>, latest: strin
   }
   return out;
 }
+
+// ── reads that failed say so ─────────────────────────────────────────────────
+
+/** Which of the page's reads has landed at least once. */
+export interface FleetReads {
+  nodesRead: boolean;
+  policiesRead: boolean;
+  /** The latest stable release, when the release read landed. */
+  latest?: string;
+}
+
+/** Why "Plan behind nodes" cannot plan, in the order the page names it. */
+export type BulkBlock = "noNodes" | "noLatest" | "noPolicies" | "none";
+
+export interface BulkButtonState {
+  /** The button prints its count only when every input was read. */
+  counted: boolean;
+  disabled: boolean;
+  block?: BulkBlock;
+}
+
+/**
+ * The head button. Behind needs the node list and the latest release, and a
+ * plan needs a policy; while any of the three is unread a count would be a
+ * claim about the fleet nobody read, so the button carries none and names the
+ * read that failed.
+ */
+export function bulkButtonState(reads: FleetReads, planCount: number): BulkButtonState {
+  const counted = reads.nodesRead && reads.policiesRead && !!reads.latest;
+  let block: BulkBlock | undefined;
+  if (!reads.nodesRead) block = "noNodes";
+  else if (!reads.latest) block = "noLatest";
+  else if (!reads.policiesRead) block = "noPolicies";
+  else if (!planCount) block = "none";
+  return { counted, disabled: !counted || !planCount, block };
+}
+
+export interface FleetCells {
+  runs: "version" | "notReported" | "notRead";
+  target: "policy" | "noPolicy" | "notRead";
+  policy: "policy" | "none" | "notRead";
+  lastPlanned: "time" | "never" | "notRead";
+}
+
+/** What each cell of a node's row may say, given which reads landed. */
+export function fleetCells(
+  row: { version?: string; policy?: { last_planned_at?: string | null } },
+  reads: Pick<FleetReads, "nodesRead" | "policiesRead">,
+): FleetCells {
+  const runs = !reads.nodesRead ? "notRead" : row.version ? "version" : "notReported";
+  if (row.policy) {
+    return { runs, target: "policy", policy: "policy", lastPlanned: row.policy.last_planned_at ? "time" : "never" };
+  }
+  if (!reads.policiesRead) return { runs, target: "notRead", policy: "notRead", lastPlanned: "notRead" };
+  return { runs, target: "noPolicy", policy: "none", lastPlanned: "never" };
+}
+
+/**
+ * Which read the table's "could not refresh, showing the last data" banner
+ * speaks for. It speaks only for a read that once succeeded; a read that
+ * never landed shows as "not read" in its cells and the proof line instead,
+ * and with neither read landed the table shows the failure itself.
+ */
+export function tableErrorSource(state: {
+  nodesRead: boolean;
+  nodesFailed: boolean;
+  policiesRead: boolean;
+  policiesFailed: boolean;
+}): "nodes" | "policies" | null {
+  if (!state.nodesRead && !state.policiesRead) return state.nodesFailed ? "nodes" : state.policiesFailed ? "policies" : null;
+  if (state.nodesRead && state.nodesFailed) return "nodes";
+  if (state.policiesRead && state.policiesFailed) return "policies";
+  return null;
+}
