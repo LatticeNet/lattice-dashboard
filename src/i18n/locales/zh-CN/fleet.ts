@@ -1174,8 +1174,6 @@ export default {
         monitors: "{n} 个监控 | {n} 个监控",
         enabled: "{n} 个已启用",
         failing: "{n} 个失败",
-        statusNotRead: "状态未读取：{reason}",
-        statusCapped: "另有 {n} 个监控的状态未读取",
       },
       status: {
         up: "正常",

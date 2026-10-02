@@ -35,8 +35,7 @@ import { proofReason } from "@/components/common/proofModel";
 import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
-import { failingMonitors } from "@/views/fleet/monitorHealthModel";
-import { useMonitorHealth } from "@/views/fleet/useMonitorHealth";
+import { failingMonitors, monitorHealth } from "@/views/fleet/monitorHealthModel";
 import {
   CHANGES_QUERY,
   CHANGES_ROWS,
@@ -107,13 +106,14 @@ const flips = gated<{ events: AuditEvent[]; partial: boolean }>(
   60_000,
 );
 
-// Failing monitors: the list, then each enabled monitor's newest results.
+// Failing monitors: the list carries each node's newest result per monitor.
 const monitorList = gated<MonitorView[]>(can.monitors, (signal) => api.monitors.list({ signal }).then((r) => unwrap(r, "monitors")), 30_000);
-const monitorHealth = useMonitorHealth(monitorList.data, { enabled: () => can.monitors });
-/** The failing monitors, once both reads landed; undefined while either is missing. */
+/** The failing monitors, once the list landed; undefined while it is missing. */
 const failingMonitorRows = computed(() => {
-  if (monitorList.data.value === undefined || monitorHealth.query.data.value === undefined) return undefined;
-  return failingMonitors(monitorList.data.value, monitorHealth.health).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
+  const list = monitorList.data.value;
+  if (list === undefined) return undefined;
+  const at = monitorList.lastUpdated.value ?? Date.now();
+  return failingMonitors(list, (monitor) => monitorHealth(monitor, monitor.latest, at)).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
 });
 
 function stateOf(allowed: boolean, query: { data: { value: unknown }; error: { value: unknown } }): ReadState {
@@ -159,17 +159,6 @@ const unreadItems = computed<AttentionItem[]>(() => {
       },
     ];
   });
-  // The list landed but every results read failed: failing monitors are not known.
-  const results = monitorHealth.query;
-  if (can.monitors && monitorList.data.value !== undefined && results.data.value === undefined && results.error.value) {
-    items.push({
-      key: "unread:monitorResults",
-      tone: "info" as const,
-      claim: t("overview.unread.monitors"),
-      proof: proofReason(results.error.value) || undefined,
-      action: { label: t("common.actions.retry"), run: () => void results.refresh() },
-    });
-  }
   return items;
 });
 
@@ -186,7 +175,6 @@ function refreshAll(): void {
   ] as const) {
     if (allowed) void query.refresh();
   }
-  if (can.monitors) void monitorHealth.query.refresh();
 }
 const refreshing = computed(() => fleet.refreshing.value || fleet.loading.value);
 

@@ -49,6 +49,7 @@ import {
   auditEvents,
   expiringItems,
   iso,
+  monitorLatest,
   monitorResults,
   sshGuardFor,
   taskCounts,
@@ -353,7 +354,8 @@ export const api = {
       }),
   },
   monitors: {
-    list: () => answer("monitors", () => ({ monitors: monitors.map((m) => ({ ...m })) })),
+    // Each node's newest result rides on the list, as the server sends it.
+    list: () => answer("monitors", () => ({ monitors: monitors.map((m) => ({ ...m, latest: monitorLatest(m.id) })) })),
     // `?resultsMs=<ms>` slows the results read, so a sheet swapped to another monitor can be seen mid-read.
     results: (id: string) => answer("monitors", () => ({ results: monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
     create: (input: MonitorCreateInput) => {

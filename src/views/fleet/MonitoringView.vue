@@ -45,7 +45,6 @@ import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { createConfirmReturn } from "./confirmFocus";
 import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
-import { useMonitorHealth } from "./useMonitorHealth";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
@@ -209,19 +208,17 @@ const selectedMonitor = computed(() =>
 const selectedResults = computed(() => resultsQuery.data.value ?? []);
 
 /**
- * Each listed monitor's state from its newest results (monitorHealthModel).
- * The open monitor uses the sheet's own read, which polls faster, so the row
- * and the sheet's badge agree.
+ * Each listed monitor's state from its nodes' newest results
+ * (monitorHealthModel), which the list carries as `latest`; "stale" is judged
+ * against the list read's own time. The open monitor uses the sheet's own
+ * read, which polls faster, so the row and the sheet's badge agree.
  */
-const healthRead = useMonitorHealth(monitorsQuery.data, { enabled: () => canReadMonitors.value });
 function healthOf(monitor: MonitorView): MonitorHealth {
   if (monitor.id === selectedMonitorId.value && resultsQuery.data.value !== undefined) {
     return monitorHealth(monitor, resultsQuery.data.value, resultsQuery.lastUpdated.value ?? Date.now());
   }
-  return healthRead.health(monitor);
+  return monitorHealth(monitor, monitor.latest, monitorsQuery.lastUpdated.value ?? Date.now());
 }
-/** The status read has not answered once yet. */
-const healthReading = computed(() => healthRead.query.data.value === undefined && !healthRead.query.error.value);
 
 /** Failing first, then stale and silent ones, then the rest by name. Search is the table's own. */
 const sortedMonitors = computed(() =>
@@ -519,11 +516,6 @@ const proofSegments = computed<ProofSegment[]>(() => {
   const out: ProofSegment[] = [{ key: "monitors", text: t("fleet.monitoring.proof.monitors", { n: monitors.value.length }, monitors.value.length) }];
   if (monitors.value.length) out.push({ key: "enabled", text: t("fleet.monitoring.proof.enabled", { n: enabledCount.value }) });
   if (failing.value.length) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failing.value.length }) });
-  if (healthRead.query.error.value && healthRead.query.data.value === undefined) {
-    out.push({ key: "status", tone: "warning", text: t("fleet.monitoring.proof.statusNotRead", { reason: healthRead.query.error.value.message }) });
-  } else if (healthRead.capped.value) {
-    out.push({ key: "status", tone: "muted", text: t("fleet.monitoring.proof.statusCapped", { n: healthRead.capped.value }) });
-  }
   return out;
 });
 
@@ -571,10 +563,7 @@ function statusView(monitor: MonitorView): { text: string; detail?: string; tone
     case "disabled":
       return { text: t("common.status.disabled"), textClass: "text-muted-foreground" };
     case "unread":
-      return {
-        text: healthReading.value ? t("overview.read.reading") : t("overview.read.failed"),
-        textClass: "text-muted-foreground",
-      };
+      return { text: t("overview.read.failed"), textClass: "text-muted-foreground" };
     case "none":
       return { text: t("fleet.monitoring.status.none"), textClass: "text-muted-foreground" };
     case "failing":

@@ -1044,6 +1044,12 @@ export interface MonitorView {
   enabled: boolean;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Each assigned node's newest result that this session may see, sorted by
+   * node id; empty when the monitor has none. The server sends it with every
+   * list, so a monitor's state needs no read of its history.
+   */
+  latest?: MonitorLatest[];
 }
 
 export interface MonitorResult {
@@ -1056,6 +1062,24 @@ export interface MonitorResult {
   error?: string;
   /** `tls` only: the leaf certificate expiry the probe read, set whenever the handshake completed. */
   cert_not_after?: string;
+  /** When the server received it. Well after `at`, the result waited in an agent's buffer. */
+  received_at?: string;
+}
+
+/** One node's newest result for a monitor, and the run it ends. */
+export interface MonitorLatest {
+  /** Empty on a `tls` monitor: the server dials those itself. */
+  node_id: string;
+  at: string;
+  success: boolean;
+  latency_ms?: number;
+  error?: string;
+  cert_not_after?: string;
+  received_at?: string;
+  /** Failures in a row ending with this result; 0 after a success. */
+  fail_streak: number;
+  /** When the current run of passes or failures began. */
+  since: string;
 }
 
 export interface MonitorCreateInput {

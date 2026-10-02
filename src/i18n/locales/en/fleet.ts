@@ -1190,8 +1190,6 @@ export default {
         monitors: "{n} monitor | {n} monitors",
         enabled: "{n} enabled",
         failing: "{n} failing",
-        statusNotRead: "status not read: {reason}",
-        statusCapped: "status not read for {n} more",
       },
       status: {
         up: "up",
