@@ -4,7 +4,7 @@ import { Toaster as Sonner, type ToasterProps } from "vue-sonner";
 import "vue-sonner/style.css";
 import { useThemeStore } from "@/stores/theme";
 import { useIsMobile } from "@/composables/useMediaQuery";
-import { TOAST_AVOID_SELECTOR, TOAST_SHEET_SELECTOR, toastPlacement, type ToastPlacement } from "@/lib/toastClearance";
+import { TOAST_AVOID_SELECTOR, TOAST_HEADER_SELECTOR, TOAST_SHEET_SELECTOR, toastPlacement, type ToastPlacement } from "@/lib/toastClearance";
 
 const props = defineProps<ToasterProps>();
 
@@ -17,11 +17,11 @@ const activeTheme = computed<ToasterProps["theme"]>(() => (theme.isDark ? "dark"
  * toastClearance.ts). Below 768 px an object sheet takes the whole screen
  * with its title and close button at the top, so toasts rise from the bottom
  * and lift above any open footer (Approve, Reject, Delete and Rerun live
- * there, and toasts take pointer events). From 768 px up they sit top right,
- * except while a sheet is open beside the collection: then they move left of
- * it, or, without room for a toast there, rise above its footer at the
- * bottom right. One measurement per frame at most, on DOM changes, resizes
- * and the end of a sheet's slide.
+ * there, and toasts take pointer events). From 768 px up they sit top right
+ * below the header, except while a sheet is open beside the collection: then
+ * they move left of it, or, without room for a toast there, rise above its
+ * footer at the bottom right. One measurement per frame at most, on DOM
+ * changes, resizes and the end of a sheet's slide.
  */
 const mobile = useIsMobile();
 const placement = ref<ToastPlacement | null>(null);
@@ -40,6 +40,7 @@ function measure(): void {
     mobile: mobile.value,
     sheets: boxes(TOAST_SHEET_SELECTOR),
     footers: boxes(TOAST_AVOID_SELECTOR),
+    headerBottom: boxes(TOAST_HEADER_SELECTOR)[0]?.bottom ?? 0,
   });
 }
 
@@ -79,7 +80,7 @@ const position = computed<ToasterProps["position"]>(
 function placedOffset(fallback: ToasterProps["offset"]): ToasterProps["offset"] {
   const at = placement.value;
   if (!at || props.position) return fallback;
-  if (at.position === "top-right") return at.right === undefined ? fallback : { right: at.right };
+  if (at.position === "top-right") return at.right === undefined && at.top === undefined ? fallback : { top: at.top, right: at.right };
   return at.bottom === null ? fallback : { bottom: at.bottom };
 }
 

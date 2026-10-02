@@ -136,9 +136,12 @@ useObjectTitle(() => (props.open && showBody.value ? props.title : undefined));
           >
             {{ title }}
           </DialogTitle>
+          <!-- Wraps at spaces and separators first, so an id moves to the next
+               line whole ("approval_k2lineuserrm001", not "appro / val_...");
+               only a token wider than the line breaks inside itself. -->
           <DialogDescription
             v-if="subtitle"
-            :class="cn('text-xs break-all text-muted-foreground', monoSubtitle && 'font-mono')"
+            :class="cn('text-xs wrap-anywhere text-muted-foreground', monoSubtitle && 'font-mono')"
           >
             {{ subtitle }}
           </DialogDescription>

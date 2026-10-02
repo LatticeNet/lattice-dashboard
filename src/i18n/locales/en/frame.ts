@@ -420,6 +420,8 @@ export default {
       onlineOf: "of {total}",
       approvals: "Approvals waiting",
       failed24h: "Tasks failed in 24h",
+      /** The count is per task, a task and its reruns once, by the latest attempt; the list it opens has a row per attempt. */
+      failed24hHint: "by latest attempt",
       due7: "Due in 7 days",
       overdue: "{n} overdue",
       lastGood: "last good {age} ago",

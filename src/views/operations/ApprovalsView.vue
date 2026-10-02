@@ -107,6 +107,7 @@ import {
   AUTO_LAYER,
   HISTORY_RANGES,
   HISTORY_STATUSES,
+  approvesWithoutQueue,
   defaultApprovalLayer,
   historyRequest,
   legacyApprovalQuery,
@@ -486,11 +487,16 @@ function changeRaw(approval: ApprovalView): string {
   return approvalRawLabel(approval);
 }
 
-/** The sheet's secondary decision: approve now, queue the apply later. */
-function approveLaterMenu(approval: ApprovalView): RowMenuItem[] {
+/**
+ * The sheet's secondary decision: approve and queue nothing. Nothing can
+ * queue the apply afterwards (approve is a no-op once the plan is decided),
+ * so the label names that, and the footer offers it only for kinds the
+ * server accepts it for (approvalsPageModel.approvesWithoutQueue).
+ */
+function approveWithoutQueueMenu(approval: ApprovalView): RowMenuItem[] {
   return [
     {
-      key: "approve-later",
+      key: "approve-without-queue",
       label: t("operations.approvals.approveOnly"),
       icon: CheckCircle2,
       disabled: !canDecide(approval) || pending.value === approval.id,
@@ -660,6 +666,12 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
     const stale = isApprovalStaleError(error);
     decisionError.value = { id: approval.id, message: stale ? t("operations.approvals.toastStale") : message };
     toast.error(stale ? t("operations.approvals.toastStale") : message);
+    // The pressed button was disabled while the request ran, which dropped
+    // focus to the document. It goes back into the sheet, on the title as
+    // after a success: the toast announces the error and the sheet repeats it
+    // above the footer. Not the inline error itself: at phone width that sits
+    // under the error toast, which would hide the focused element for 15 s.
+    if (sheet.openId.value === approval.id) focusSheetTitle();
   } finally {
     pending.value = null;
     await refreshAfterDecision();
@@ -1650,15 +1662,16 @@ function refreshAll(): void {
         @open-approval="(id) => sheet.open(id)"
       />
       <!-- Approve and queue is the decision; approving without queueing leaves
-           the plan unapplied (and a102 refuses it for line-user plans), so it
-           waits in the menu beside it instead of sitting first with equal weight. -->
+           the plan unapplied for good, so it waits in the menu beside it
+           instead of sitting first with equal weight, and is not offered for
+           line-user and managed-line plans, which the server refuses it for. -->
       <template v-if="openRecord && openRecord.status === 'pending' && !isStale(openRecord)" #actions>
         <Button type="button" size="sm" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="approve(openRecord, true)">
           <RefreshCw v-if="pending === openRecord.id" class="size-4 animate-spin" aria-hidden="true" />
           <Play v-else class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.approveAndQueue') }}
         </Button>
-        <RowMenu align="start" :name="changeLabel(openRecord)" :items="approveLaterMenu(openRecord)" />
+        <RowMenu v-if="approvesWithoutQueue(openRecord)" align="start" :name="changeLabel(openRecord)" :items="approveWithoutQueueMenu(openRecord)" />
         <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.reject') }}

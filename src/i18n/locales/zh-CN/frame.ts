@@ -56,7 +56,7 @@ export default {
       failedDescription: "还没拿到任何数据，读取就失败了。",
     },
     rowMenu: {
-      label: "{name} 的操作",
+      label: "「{name}」的操作",
     },
     confirm: {
       impactTitle: "将停止工作的内容",
@@ -413,6 +413,7 @@ export default {
       onlineOf: "共 {total} 个",
       approvals: "待审批",
       failed24h: "24 小时内失败任务",
+      failed24hHint: "以最近一次尝试为准",
       due7: "7 天内到期",
       overdue: "{n} 项已过期",
       lastGood: "最后一次成功读取在 {age} 前",

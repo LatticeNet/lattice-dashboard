@@ -350,7 +350,7 @@ const metrics = computed<Metric[]>(() => [
     stateOf(can.tasks, taskCounts),
     () => {
       const failed = taskCounts.data.value?.failed_24h ?? 0;
-      return { value: failed, tone: failed > 0 ? "destructive" : "default" };
+      return { value: failed, hint: t("overview.metric.failed24hHint"), tone: failed > 0 ? "destructive" : "default" };
     },
     taskCounts,
   ),

@@ -10,6 +10,7 @@
  */
 import type { ExpiringItem, ExpiringResponse, ExpiringTotal } from "@/lib/api/types";
 import { canonicalCurrency } from "@/lib/currency";
+import { formatMoney } from "@/lib/format";
 
 /** The kinds the console knows how to name and filter, in the order the chips show them. */
 export const EXPIRING_KINDS = ["machine_renewal", "vpn_user", "share", "tls_certificate"] as const;
@@ -121,15 +122,9 @@ export function sumTotals(items: readonly Pick<ExpiringItem, "cost_cents" | "cur
   return [...by.values()].sort((a, b) => a.currency.localeCompare(b.currency));
 }
 
-const AMOUNT = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-/** `USD 1,234.50`: the code first, as the reminders and the proof line write it. */
-export function formatAmount(cents: number, currency: string): string {
-  return `${canonicalCurrency(currency) || currency} ${AMOUNT.format(cents / 100)}`;
-}
-
+/** `CNY 223.00 · USD 80.92`, each total in the console's one money format (lib/format.formatMoney). */
 export function formatTotals(totals: readonly ExpiringTotal[]): string {
-  return totals.map((total) => formatAmount(total.cost_cents, total.currency)).join(" · ");
+  return totals.map((total) => formatMoney(total.cost_cents, total.currency)).join(" · ");
 }
 
 // ── surface state ───────────────────────────────────────────────────────────

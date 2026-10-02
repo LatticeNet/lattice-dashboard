@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TOAST_GAP_PX, TOAST_SHEET_GAP_PX, TOAST_VIEWPORT_OFFSET_PX, TOAST_WIDTH_PX, toastLift, toastPlacement } from "../toastClearance.ts";
+import { TOAST_GAP_PX, TOAST_HEADER_GAP_PX, TOAST_SHEET_GAP_PX, TOAST_VIEWPORT_OFFSET_PX, TOAST_WIDTH_PX, toastLift, toastPlacement } from "../toastClearance.ts";
 
 test("with nothing open the toaster keeps its own offset", () => {
   assert.equal(toastLift(812, []), null);
@@ -33,6 +33,34 @@ test("an empty box (a footer that is not laid out) is ignored", () => {
 
 test("from 768 px up with no sheet open, toasts stay top right", () => {
   assert.deepEqual(toastPlacement({ viewportWidth: 1440, viewportHeight: 900, mobile: false, sheets: [], footers: [] }), { position: "top-right" });
+});
+
+test("from 768 px up with no sheet open, a toast starts below the header, not over its controls", () => {
+  const base = { viewportWidth: 1440, viewportHeight: 900, mobile: false, sheets: [], footers: [] };
+  // The 56 px header: Search, recent errors, theme, appearance and account sit in it.
+  const placement = toastPlacement({ ...base, headerBottom: 56 });
+  assert.deepEqual(placement, { position: "top-right", top: 56 + TOAST_HEADER_GAP_PX });
+  assert.ok((placement as { top: number }).top > 56);
+  // A trust banner above the header pushes it down; the toast follows.
+  assert.deepEqual(toastPlacement({ ...base, headerBottom: 100.4 }), { position: "top-right", top: 101 + TOAST_HEADER_GAP_PX });
+  // At 768 too, the narrowest width that places toasts at the top.
+  assert.deepEqual(toastPlacement({ ...base, viewportWidth: 768, headerBottom: 56 }), { position: "top-right", top: 56 + TOAST_HEADER_GAP_PX });
+});
+
+test("a sheet open beside the collection keeps toasts at the top left of it, whatever the header", () => {
+  const placement = toastPlacement({
+    viewportWidth: 1440,
+    viewportHeight: 900,
+    mobile: false,
+    sheets: [{ left: 864, right: 1440 }],
+    footers: [{ top: 840, bottom: 900 }],
+    headerBottom: 56,
+  });
+  assert.deepEqual(placement, { position: "top-right", right: 1440 - 864 + TOAST_SHEET_GAP_PX });
+});
+
+test("below 768 px the header does not move toasts: they rise from the bottom", () => {
+  assert.deepEqual(toastPlacement({ viewportWidth: 375, viewportHeight: 812, mobile: true, sheets: [], footers: [], headerBottom: 56 }), { position: "bottom-center", bottom: null });
 });
 
 test("at 1440 a sheet beside the collection moves toasts to its left, still at the top", () => {

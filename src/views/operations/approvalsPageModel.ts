@@ -182,3 +182,51 @@ export function nextToReview(order: readonly ReviewItem[], decided: { id: string
   const next = rest.slice(start).find((item) => item.decidable) ?? rest.slice(0, start).find((item) => item.decidable);
   return next ? { id: next.id, waiting } : null;
 }
+
+/* ------------------------------------------------------------------ */
+/* Approving without queueing                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * lattice-server refuses to approve two groups of approvals without queueing
+ * their apply task (internal/server/server.go, approveApprovalCore): nothing
+ * queues one later and approve is a no-op once an approval is no longer
+ * pending, so such an approval could never be applied. The server answers
+ * 400 for the manual endpoint, and the same checks leave an auto-approve
+ * rule with queue off pending. Both are copied here by hand and compared
+ * exactly, as the server compares them: a kind the server starts refusing
+ * and this file does not name shows the menu item again, and choosing it
+ * fails with that 400. Change both together.
+ */
+
+/** Plugins refused by name (singBoxLineUserPlugin, singBoxManagedLinePlugin). */
+export const QUEUE_REQUIRED_PLUGINS = ["singbox-lineuser", "singbox-managedline"] as const;
+
+/** The line chain binding, refused when isLineChainApproval (server_linechain.go) holds. */
+export const LINE_CHAIN_BINDING = {
+  plugin: "singbox-linechain",
+  service: "network/lines",
+  methods: ["chain_set_apply", "chain_remove_apply"],
+  actionPrefix: "apply-line-chain:",
+} as const;
+
+type QueueGateFields = Pick<ApprovalView, "plugin" | "action" | "service" | "method">;
+
+function isLineChainApproval(approval: QueueGateFields): boolean {
+  return (
+    approval.plugin === LINE_CHAIN_BINDING.plugin &&
+    approval.service === LINE_CHAIN_BINDING.service &&
+    (LINE_CHAIN_BINDING.methods as readonly (string | undefined)[]).includes(approval.method) &&
+    approval.action.startsWith(LINE_CHAIN_BINDING.actionPrefix)
+  );
+}
+
+/**
+ * Whether the sheet offers "Approve without queueing" beside "Approve and
+ * queue". Every other kind may be approved and left unqueued; its waiting
+ * reason then says nothing will run on its own.
+ */
+export function approvesWithoutQueue(approval: QueueGateFields): boolean {
+  if ((QUEUE_REQUIRED_PLUGINS as readonly string[]).includes(approval.plugin)) return false;
+  return !isLineChainApproval(approval);
+}

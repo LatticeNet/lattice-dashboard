@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { NO_VALUE, formatAge, formatDateTime, formatMoney, isZeroTime } from "../format.ts";
+import { NO_VALUE, formatAge, formatDateTime, formatMoney, isZeroTime, setFormatLocale } from "../format.ts";
 import { canonicalCurrency, currencyInputCode, currencyRewrittenOnSave } from "../currency.ts";
 
 const GO_ZERO = "0001-01-01T00:00:00Z";
@@ -54,6 +54,23 @@ test("CHY is the yuan and reads, formats and saves as CNY", () => {
   assert.equal(canonicalCurrency(undefined), "");
   assert.equal(formatMoney(342683, "CHY"), formatMoney(342683, "CNY"));
   assert.equal(formatMoney(1000, ""), formatMoney(1000, "USD"));
+});
+
+test("money reads one way everywhere: the code, then the amount with two decimals, in either language", () => {
+  // Inventory printed "CN¥3,426.83" (zh "¥3,426.83") beside Upcoming's "CNY 3,267.90".
+  assert.equal(formatMoney(342683, "CNY"), "CNY 3,426.83");
+  assert.equal(formatMoney(342683, "chy"), "CNY 3,426.83");
+  assert.equal(formatMoney(8092, "USD"), "USD 80.92");
+  assert.equal(formatMoney(0, "EUR"), "EUR 0.00");
+  // A code Intl does not know keeps the same order.
+  assert.equal(formatMoney(1250, "USDT"), "USDT 12.50");
+  setFormatLocale("zh-CN");
+  try {
+    assert.equal(formatMoney(342683, "CNY"), "CNY 3,426.83");
+  } finally {
+    setFormatLocale(undefined);
+  }
+  assert.equal(formatMoney(undefined, "CNY"), NO_VALUE);
 });
 
 test("a stored code is read as stored; only the editor keeps letters and cuts to five", () => {

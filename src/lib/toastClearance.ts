@@ -60,7 +60,18 @@ export function toastLift(viewportHeight: number, footers: readonly FooterBox[])
  * top; when the room left of the sheet is narrower than a toast (about 768
  * to 1000 px wide), they drop to the bottom right and rise above the sheet's
  * footer instead, so neither the header nor Approve and Reject is covered.
+ *
+ * With no sheet open the top right is the console header's: Search, recent
+ * errors, theme, appearance and account. vue-sonner's 24 px offset put a
+ * toast over all five, and an error toast stays 15 s, so the toast starts
+ * below the header's bottom edge instead (56 px, more under a trust banner).
  */
+
+/** The console header, whose bottom edge a top toast starts below. */
+export const TOAST_HEADER_SELECTOR = "[data-app-header]";
+
+/** Space left between the header's bottom edge and a toast under it. */
+export const TOAST_HEADER_GAP_PX = 16;
 
 /** Open sheets the toasts must keep clear of. */
 export const TOAST_SHEET_SELECTOR = '[data-slot="sheet-content"][data-state="open"]';
@@ -80,7 +91,7 @@ export interface SheetBox {
 }
 
 export type ToastPlacement =
-  | { position: "top-right"; right?: number }
+  | { position: "top-right"; right?: number; top?: number }
   | { position: "bottom-right"; bottom: number | null }
   | { position: "bottom-center"; bottom: number | null };
 
@@ -91,6 +102,8 @@ export interface ToastPlacementInput {
   mobile: boolean;
   sheets: readonly SheetBox[];
   footers: readonly FooterBox[];
+  /** The console header's bottom edge in px; 0 or absent when there is no header (sign-in). */
+  headerBottom?: number;
 }
 
 export function toastPlacement(input: ToastPlacementInput): ToastPlacement {
@@ -101,7 +114,10 @@ export function toastPlacement(input: ToastPlacementInput): ToastPlacement {
     if (sheet.right <= sheet.left || sheet.right < input.viewportWidth - 1 || sheet.left <= 0) continue;
     left = Math.min(left, sheet.left);
   }
-  if (!Number.isFinite(left)) return { position: "top-right" };
+  if (!Number.isFinite(left)) {
+    const header = input.headerBottom ?? 0;
+    return header > 0 ? { position: "top-right", top: Math.max(TOAST_VIEWPORT_OFFSET_PX, Math.ceil(header + TOAST_HEADER_GAP_PX)) } : { position: "top-right" };
+  }
   if (left - TOAST_SHEET_GAP_PX >= TOAST_WIDTH_PX + TOAST_VIEWPORT_OFFSET_PX) {
     return { position: "top-right", right: Math.ceil(input.viewportWidth - left + TOAST_SHEET_GAP_PX) };
   }

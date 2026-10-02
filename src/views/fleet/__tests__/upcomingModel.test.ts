@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { ExpiringItem } from "@/lib/api/types";
+import { formatMoney } from "@/lib/format";
 import {
   dueSoonCounts,
   filterByKinds,
   hiddenKindsOf,
-  formatAmount,
   formatTotals,
   groupByWeek,
   kindCounts,
@@ -90,14 +90,14 @@ test("totals are per currency, skip unpriced rows, and never add currencies toge
     { currency: "USD", cost_cents: 8092, count: 5 },
   ]);
   assert.equal(formatTotals(sumTotals(rows)), "CNY 223.00 · USD 80.92");
-  assert.equal(formatAmount(123456, "USD"), "USD 1,234.56");
+  assert.equal(formatMoney(123456, "USD"), "USD 1,234.56");
   assert.deepEqual(sumTotals([]), []);
 });
 
 test("CHY and CNY are one currency in the totals", () => {
   const rows = [item("chy", "2026-10-06", { cost_cents: 3500, currency: "CHY" }), item("cny", "2026-10-07", { cost_cents: 1500, currency: "CNY" })];
   assert.deepEqual(sumTotals(rows), [{ currency: "CNY", cost_cents: 5000, count: 2 }]);
-  assert.equal(formatAmount(3500, "CHY"), "CNY 35.00");
+  assert.equal(formatMoney(3500, "CHY"), "CNY 35.00");
 });
 
 test("each week carries the totals of its own rows", () => {

@@ -611,6 +611,8 @@ export interface ApprovalView {
    * hash without the body.
    */
   plan_sha256?: string;
+  /** The operation binding's service ("network/lines"), on the kinds that bind one. */
+  service?: string;
   /**
    * The operation binding's method ("apply_add", "chain_remove_apply"), on
    * the kinds that bind one. It is what tells a line user add from a remove;
