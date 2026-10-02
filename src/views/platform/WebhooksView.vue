@@ -39,6 +39,7 @@ import {
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useProof } from "@/composables/useProof";
+import { proofReason } from "@/components/common/proofModel";
 import { useRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
@@ -154,7 +155,10 @@ function routed(event: string): boolean {
   return enabledRules.value.some((r) => !r.event_types?.length || r.event_types.includes("*") || r.event_types.includes(event));
 }
 
-const proof = useProof([webhooksQuery, channelsQuery, rulesQuery]);
+// The webhooks are the page's subject; channels and rules answer only "would
+// anything receive this", so a failed read of either is its own segment and
+// never wipes the webhook counts.
+const proof = useProof(webhooksQuery);
 const proofSegments = computed<ProofSegment[]>(() => {
   const n = webhooks.value.length;
   const parts: ProofSegment[] = [{ key: "webhooks", text: t("platform.webhooksPage.proof.webhooks", { n }, n) }];
@@ -164,6 +168,11 @@ const proofSegments = computed<ProofSegment[]>(() => {
   }
   if (channelsQuery.data.value !== undefined) {
     parts.push({ key: "channels", text: t("platform.webhooksPage.proof.channels", { n: enabledChannels.value.length }, enabledChannels.value.length) });
+  } else if (channelsQuery.error.value) {
+    parts.push({ key: "channels", tone: "warning", text: t("platform.webhooksPage.proof.channelsUnread", { reason: proofReason(channelsQuery.error.value) }) });
+  }
+  if (rulesQuery.data.value === undefined && rulesQuery.error.value) {
+    parts.push({ key: "rules", tone: "warning", text: t("platform.webhooksPage.proof.rulesUnread", { reason: proofReason(rulesQuery.error.value) }) });
   }
   return parts;
 });
@@ -183,9 +192,19 @@ const attention = computed<AttentionItem[]>(() => {
       tone: "warning" as const,
       claim: t("platform.webhooksPage.noRuleClaim", { name: hook.name }),
       proof: t("platform.webhooks.noRuleDetail", { event: hook.event_type }),
-      action: notifications,
+      // Notifications opens its rule form with this event type filled in.
+      action: canManage.value
+        ? { label: t("platform.webhooksPage.addRule"), to: { path: "/platform/notifications", query: { newRule: hook.event_type } } }
+        : notifications,
     }));
 });
+
+/** An enabled webhook no rule routes answers 202 and reaches nobody; its row says so, when both reads landed. */
+function reachesNobody(hook: NotifyWebhookView): boolean {
+  if (!hook.enabled || channelsQuery.data.value === undefined) return false;
+  if (!enabledChannels.value.length) return true;
+  return rulesQuery.data.value !== undefined && !routed(hook.event_type);
+}
 
 const columns = computed<DataTableColumn<NotifyWebhookView>[]>(() => [
   { key: "name", label: t("platform.webhooks.colName"), sortable: true, searchable: true },
@@ -520,7 +539,8 @@ async function runTest(): Promise<void> {
         <code class="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{{ row.event_type }}</code>
       </template>
       <template #cell-enabled="{ row }">
-        <span class="whitespace-nowrap text-xs text-muted-foreground">
+        <span v-if="reachesNobody(row)" class="whitespace-nowrap text-xs font-medium text-warning-text">{{ $t("platform.webhooksPage.reachesNobody") }}</span>
+        <span v-else class="whitespace-nowrap text-xs text-muted-foreground">
           {{ row.enabled ? $t("platform.webhooks.enabled") : $t("platform.webhooks.disabled") }}
         </span>
       </template>

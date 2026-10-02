@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
+import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { toast } from "vue-sonner";
 import {
   Bell,
@@ -623,6 +624,26 @@ async function submitRule(): Promise<void> {
     ruleSaving.value = false;
   }
 }
+
+/*
+ * Webhooks links here with ?newRule=<event type> for a webhook no rule
+ * routes: the rule form opens with that event filled in, once the channels
+ * are read (it preselects the first one), and the key leaves the address so
+ * a reload does not reopen it.
+ */
+const owned = useOwnedRoute();
+watch(
+  [() => owned.query().newRule, () => channelsQuery.data.value],
+  ([event, list]) => {
+    if (typeof event !== "string" || !event || list === undefined || !canManage.value || !owned.owns()) return;
+    const query = { ...owned.query() };
+    delete query.newRule;
+    owned.replace(query);
+    openRuleCreate();
+    ruleEvents.value = event;
+  },
+  { immediate: true },
+);
 
 async function confirmDeleteRule(): Promise<void> {
   if (!deleteRuleTarget.value) return;

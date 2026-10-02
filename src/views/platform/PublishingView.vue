@@ -252,7 +252,9 @@ function shareOf(record: PublishingRecord): string {
 /* Head: proof line and attention                                      */
 /* ------------------------------------------------------------------ */
 
-const proof = useProof([recordsQuery, sharesQuery]);
+// The routes are the page's subject. A failed share or token read is named in
+// its own segment, so it never wipes the counts the routes read holds.
+const proof = useProof(recordsQuery);
 
 const anonymous = computed(() => records.value.filter((record) => accessMode(record) === "anonymous" && recordState(record) === "serving"));
 
@@ -266,6 +268,9 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (anonymous.value.length) {
     parts.push({ key: "anonymous", text: t("platform.publishingPage.proof.anonymous", { n: anonymous.value.length }), tone: "warning", to: { query: { view: "routes", origin: "static" } } });
   }
+  if (canSeeShares.value && !shares.value && sharesQuery.error.value) {
+    parts.push({ key: "shares", text: t("platform.publishingPage.proof.sharesUnread", { reason: proofReason(sharesQuery.error.value) }), tone: "warning" });
+  }
   if (shares.value) {
     parts.push({ key: "shares", text: t("platform.publishingPage.proof.shares", { n: shares.value.length }, shares.value.length) });
     const lapsing = shareStates.value.filter((entry) => entry.state === "expiring" || entry.state === "expired").length;
@@ -273,6 +278,8 @@ const proofSegments = computed<ProofSegment[]>(() => {
   }
   if (tokensQuery.data.value !== undefined) {
     parts.push({ key: "tokens", text: t("platform.publishingPage.proof.tokens", { n: liveTokens.value.length }, liveTokens.value.length), to: { query: { view: "tokens" } } });
+  } else if (tokensQuery.error.value) {
+    parts.push({ key: "tokens", text: t("platform.publishingPage.proof.tokensUnread", { reason: proofReason(tokensQuery.error.value) }), tone: "warning" });
   }
   return parts;
 });
