@@ -205,6 +205,10 @@ export const api = {
       const approval = approvals.find((row) => row.id === approvalId);
       if (!approval) return Promise.reject(new ApiError(404, "not_found", "approval not found"));
       if (!planSha256) return Promise.reject(new ApiError(400, "bad_request", "plan_sha256 is required"));
+      // The server's refusal (server.go): these kinds must queue their apply.
+      if (!queueApply && (approval.plugin === "singbox-lineuser" || approval.plugin === "singbox-managedline")) {
+        return Promise.reject(new ApiError(400, "bad_request", `${approval.plugin} approvals must queue their apply task: approve with queue_apply, since an approval approved without one can never be applied`));
+      }
       if (flags.has("approve-fail")) {
         return delay(undefined).then(() => {
           throw new ApiError(409, "conflict", "deciding a line-user plan needs identity read on every node it touches; this token is confined to 3 of 14 nodes", "req_harness_0f3a91");

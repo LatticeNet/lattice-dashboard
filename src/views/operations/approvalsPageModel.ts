@@ -182,3 +182,27 @@ export function nextToReview(order: readonly ReviewItem[], decided: { id: string
   const next = rest.slice(start).find((item) => item.decidable) ?? rest.slice(0, start).find((item) => item.decidable);
   return next ? { id: next.id, waiting } : null;
 }
+
+/* ------------------------------------------------------------------ */
+/* Approving without queueing                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Plugins whose approvals the server refuses to approve without queueing
+ * their apply task (lattice-server internal/server/server.go, the approve
+ * decision): nothing queues one later and approve is a no-op once an
+ * approval is no longer pending, so such an approval could never be applied.
+ * The server answers 400 for the manual endpoint, and the same check leaves
+ * an auto-approve rule with queue off pending. Compared exactly, as the
+ * server compares them.
+ */
+export const QUEUE_REQUIRED_PLUGINS = ["singbox-lineuser", "singbox-managedline"] as const;
+
+/**
+ * Whether the sheet offers "Approve without queueing" beside "Approve and
+ * queue". Every other kind may be approved and left unqueued; its waiting
+ * reason then says nothing will run on its own.
+ */
+export function approvesWithoutQueue(approval: Pick<ApprovalView, "plugin">): boolean {
+  return !(QUEUE_REQUIRED_PLUGINS as readonly string[]).includes(approval.plugin);
+}

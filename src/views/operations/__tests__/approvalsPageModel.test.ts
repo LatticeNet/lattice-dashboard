@@ -5,6 +5,8 @@ import { parseTokens } from "../../../lib/queryTokens.ts";
 import type { ApprovalView } from "../../../lib/api/types.ts";
 import {
   APPROVAL_HISTORY_GRAMMAR,
+  QUEUE_REQUIRED_PLUGINS,
+  approvesWithoutQueue,
   defaultApprovalLayer,
   historyRequest,
   legacyApprovalQuery,
@@ -133,4 +135,17 @@ test("nothing is offered when no decidable plan is left", () => {
   assert.equal(nextToReview([{ id: "a", decidable: true }], { id: "a", index: 0 }), null);
   assert.equal(nextToReview([{ id: "a", decidable: true }, { id: "b", decidable: false }], { id: "a", index: 0 }), null);
   assert.equal(nextToReview([], { id: "a", index: -1 }), null);
+});
+
+test("approve without queueing is offered for every kind but the two the server refuses it for", () => {
+  // lattice-server refuses approve without queue_apply for exactly these
+  // plugins (400: such an approval could never be applied).
+  assert.deepEqual([...QUEUE_REQUIRED_PLUGINS], ["singbox-lineuser", "singbox-managedline"]);
+  assert.equal(approvesWithoutQueue(row({ plugin: "singbox-lineuser", action: "apply-line-user:9f2c" })), false);
+  assert.equal(approvesWithoutQueue(row({ plugin: "singbox-managedline", action: "apply-managed-line:4d1a" })), false);
+  for (const plugin of ["singbox-linechain", "singbox-linemeta", "agentupdate", "proxycore", "nftpolicy", "nft", "sshguard", "wireguard", "cftunnel", "selfdns", "example.plugin"]) {
+    assert.equal(approvesWithoutQueue(row({ plugin })), true, plugin);
+  }
+  // Compared exactly, as the server compares them.
+  assert.equal(approvesWithoutQueue(row({ plugin: "singbox-lineuser-v2" })), true);
 });

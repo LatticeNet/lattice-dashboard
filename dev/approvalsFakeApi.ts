@@ -84,6 +84,10 @@ export const api = {
       // The server checks the digest against the stored plan; the fake checks
       // that one was sent, which is the console's half of the contract.
       if (!plan_sha256) return Promise.reject(new Error("plan_sha256 is required"));
+      // The server's refusal (server.go): these kinds must queue their apply.
+      if (!queue_apply && (approval.plugin === "singbox-lineuser" || approval.plugin === "singbox-managedline")) {
+        return Promise.reject(new Error(`${approval.plugin} approvals must queue their apply task: approve with queue_apply, since an approval approved without one can never be applied`));
+      }
       approval.status = "approved";
       approval.approved_by = "cdcd";
       approval.updated_at = new Date().toISOString();
