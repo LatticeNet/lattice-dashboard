@@ -66,11 +66,15 @@ const sections = computed(() => rowMenuSections(props.items));
  * only that return left reka's own "interacted outside" flag set by the
  * hand-made trigger focus, so the menu's next Escape dropped focus to the page.
  */
-const trigger = ref<{ $el?: HTMLElement } | null>(null);
+const trigger = ref<{ $el?: Node } | null>(null);
 let leaveFocus = false;
 
+// A component's $el is its first node, which is a text or comment node when
+// the component renders a fragment, so walk to the first element.
 function triggerEl(): HTMLElement | undefined {
-  return trigger.value?.$el;
+  let node: Node | null | undefined = trigger.value?.$el;
+  while (node && !(node instanceof HTMLElement)) node = node.nextSibling;
+  return node ?? undefined;
 }
 
 function onOpenChange(open: boolean): void {

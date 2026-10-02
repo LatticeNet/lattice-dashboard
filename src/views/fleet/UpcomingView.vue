@@ -58,7 +58,7 @@ function setKinds(next: KnownKind[]): void {
 
 const chipClass = (active: boolean) =>
   cn(
-    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary",
+    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:min-h-11",
     active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
   );
 </script>

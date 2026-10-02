@@ -1486,8 +1486,11 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                      password open warns, not reported is muted. The last arm's
                      disposition never sets this badge: a key-only node whose
                      arm reverted or was refused is secure and reads so. -->
+                <!-- At phone width the cell is 96 px and the longest word
+                     ("password login off") needs about 140, so the badge wraps
+                     there instead of running under the next column. -->
                 <Badge
-                  class="whitespace-nowrap"
+                  class="whitespace-nowrap max-sm:max-w-full max-sm:justify-start max-sm:rounded-md max-sm:text-left max-sm:whitespace-normal"
                   :class="POSTURE_CLASS[postureTone(postureOf(state.nodeId).posture)]"
                   :variant="POSTURE_VARIANT[postureTone(postureOf(state.nodeId).posture)]"
                   :title="postureOf(state.nodeId).reason ?? $t(`networking.sshGuard.posture.${POSTURE_KEY[postureOf(state.nodeId).posture]}Title`)"
