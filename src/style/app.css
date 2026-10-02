@@ -179,7 +179,13 @@
   --muted-foreground: oklch(0.524 0.022 281);
   --accent: oklch(0.95 0.014 279);
   --accent-foreground: oklch(0.30 0.05 279);
-  --destructive: oklch(0.583 0.231 27.5);
+  /* The red is both a fill and, unlike the amber and green, the console's ink
+     for a failure written as text (172 text-destructive uses). At L 0.583 it
+     read 4.76:1 on the card but 4.48 on a table group band (muted/40) and
+     4.29 on --muted, so DDNS's "1 failing" fell under 4.5. At 0.55: card
+     5.35, page 5.21, group band 5.04, muted 4.83, and the foreground on the
+     fill 5.1 (was 4.53). */
+  --destructive: oklch(0.55 0.231 27.5);
   --destructive-foreground: oklch(0.985 0.01 20);
 
   --success: oklch(0.62 0.16 150);
