@@ -327,6 +327,11 @@ export const api = {
     },
     revealLink: () => delay({ url: "https://console.example.net/servers/123" }),
   },
+  // Any code passes, so the step-up in front of a stored machine link can be
+  // driven end to end; the grant lasts five minutes like a short real one.
+  security: {
+    stepUp: () => delay({ ok: true, grant: "harness_step_up_grant", expires_at: new Date(Date.now() + 5 * 60_000).toISOString() }),
+  },
   machineVendors: {
     list: () => delay({ vendors: [{ id: "vnd_dmit", name: "DMIT", url: "https://www.dmit.io" }] }),
     upsert: (input: { name: string }) => delay({ vendor: { id: `vnd_${input.name}`, ...input } }),

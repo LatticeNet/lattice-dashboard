@@ -13,8 +13,6 @@ import {
   Cpu,
   ExternalLink,
   HardDrive,
-  KeyRound,
-  Link as LinkIcon,
   MemoryStick,
   Pencil,
   Plus,
@@ -33,7 +31,7 @@ import {
   type NotifyRuleView,
 } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { useStepUp } from "@/composables/useStepUp";
+import { useMachineLinkReveal, type MachineLinkKind } from "@/composables/useMachineLinkReveal";
 import { useAuthStore } from "@/stores/auth";
 import {
   formatBytes,
@@ -67,6 +65,7 @@ import AttentionList, { type AttentionItem } from "@/components/common/Attention
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RecordRenewalDialog from "@/components/fleet/RecordRenewalDialog.vue";
+import MachineLinkStepUpDialog from "@/components/fleet/MachineLinkStepUpDialog.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
@@ -83,7 +82,6 @@ import {
   DialogDescription,
   DialogFooter,
   DialogHeader,
-  DialogScrollContent,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -176,7 +174,6 @@ const pending = ref(false);
 const deletePending = ref(false);
 const deleteOpen = ref(false);
 const renewPending = ref(false);
-const linkRevealPending = ref("");
 
 // ── Form model (populated when the edit dialog opens) ─────────────────────────
 const profileId = ref("");
@@ -235,15 +232,16 @@ function openRenewal(machine: MachineView): void {
   renewDialogId.value = machine.id;
   renewDialogOpen.value = true;
 }
-const inventoryStepUp = useStepUp({
-  required: t("fleet.inventory.stepUp.required"),
-  failed: t("fleet.inventory.stepUp.failed"),
-  passkeyFailed: t("fleet.inventory.stepUp.passkeyFailed"),
-});
-const stepUpOpen = inventoryStepUp.open;
-const stepUpCode = inventoryStepUp.code;
-const stepUpError = inventoryStepUp.error;
-const stepUpPending = inventoryStepUp.pending;
+
+/*
+ * Stored console and detail links open behind a step-up grant. The sheet,
+ * the row menu and the renewal dialog share one grant, so opening the
+ * console from any of them prompts once for the grant's lifetime.
+ */
+const machineLinks = useMachineLinkReveal();
+const linkStepUp = machineLinks.stepUp;
+const linkRevealPending = machineLinks.pending;
+const linkPendingKey = machineLinks.pendingKey;
 
 const editMachine = computed(() =>
   machines.value.find((machine) => machineKey(machine) === editKey.value),
@@ -927,25 +925,9 @@ function groupSpendLabel(spend: CurrencySpend[]): string {
     .join(" · ");
 }
 
-function linkPendingKey(machine: MachineView, kind: "console" | "detail"): string {
-  return `${machine.id || machine.node_id}:${kind}`;
-}
-
-async function revealMachineLink(machine: MachineView, kind: "console" | "detail") {
-  if (!machine.id || !canAdminInventory.value) return;
-  const key = linkPendingKey(machine, kind);
-  if (linkRevealPending.value) return;
-  linkRevealPending.value = key;
-  try {
-    const grant = await inventoryStepUp.request();
-    const revealed = await api.machines.revealLink(machine.id, kind, grant);
-    window.open(revealed.url, "_blank", "noopener,noreferrer");
-    toast.success(t("fleet.inventory.toast.linkOpened"));
-  } catch (error) {
-    toast.error(error instanceof Error ? error.message : t("fleet.inventory.toast.linkRevealFailed"));
-  } finally {
-    linkRevealPending.value = "";
-  }
+async function revealMachineLink(machine: MachineView, kind: MachineLinkKind) {
+  if (!canAdminInventory.value) return;
+  await machineLinks.reveal(machine, kind);
 }
 
 // ── Edit dialog form lifecycle ────────────────────────────────────────────────
@@ -1673,7 +1655,14 @@ async function sendReminders(): Promise<void> {
       </template>
     </ObjectSheet>
 
-    <RecordRenewalDialog v-model:open="renewDialogOpen" :machine="renewDialogMachine" @recorded="refreshAll" />
+    <RecordRenewalDialog
+      v-model:open="renewDialogOpen"
+      :machine="renewDialogMachine"
+      :console-link="!!renewDialogMachine?.has_console_url && canAdminInventory"
+      :console-pending="!!linkRevealPending"
+      @open-console="renewDialogMachine && revealMachineLink(renewDialogMachine, 'console')"
+      @recorded="refreshAll"
+    />
 
     <!-- Edit / create dialog.
          A fixed header and footer around a scrolling form, so the machine's
@@ -2174,43 +2163,8 @@ async function sendReminders(): Promise<void> {
       @confirm="discardChanges"
     />
 
-    <Dialog v-model:open="stepUpOpen">
-      <DialogScrollContent class="sm:max-w-md" @escape-key-down.prevent="inventoryStepUp.cancel">
-        <DialogHeader>
-          <DialogTitle>{{ $t('fleet.inventory.stepUp.title') }}</DialogTitle>
-          <DialogDescription>{{ $t('fleet.inventory.stepUp.description') }}</DialogDescription>
-        </DialogHeader>
-        <form class="space-y-4" @submit.prevent="inventoryStepUp.submitTotp">
-          <div class="grid gap-2">
-            <Label for="inventory-step-up-code">{{ $t('fleet.inventory.stepUp.code') }}</Label>
-            <Input
-              id="inventory-step-up-code"
-              v-model="stepUpCode"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-              maxlength="8"
-              placeholder="123456"
-            />
-            <p v-if="stepUpError" class="text-xs text-destructive">{{ stepUpError }}</p>
-          </div>
-          <div class="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="outline" @click="inventoryStepUp.cancel">
-              {{ $t('common.actions.cancel') }}
-            </Button>
-            <Button type="button" variant="outline" :disabled="!!stepUpPending || !inventoryStepUp.supportsPasskey" @click="inventoryStepUp.submitPasskey">
-              <RefreshCw v-if="stepUpPending === 'passkey'" class="size-4 animate-spin" aria-hidden="true" />
-              <KeyRound v-else class="size-4" aria-hidden="true" />
-              {{ $t('fleet.inventory.stepUp.passkey') }}
-            </Button>
-            <Button type="submit" :disabled="!!stepUpPending || !stepUpCode.trim()">
-              <RefreshCw v-if="stepUpPending === 'totp'" class="size-4 animate-spin" aria-hidden="true" />
-              <LinkIcon v-else class="size-4" aria-hidden="true" />
-              {{ $t('fleet.inventory.stepUp.submit') }}
-            </Button>
-          </div>
-        </form>
-      </DialogScrollContent>
-    </Dialog>
+    <!-- After the editor and the renewal dialog, so it stacks above either one it opens from. -->
+    <MachineLinkStepUpDialog :step-up="linkStepUp" />
 
     <!-- Preview reminders: what a send would push, then the send behind a typed count (design 23, 3.8).
          After the editor in the template, so it stacks above the editor it opens from. -->

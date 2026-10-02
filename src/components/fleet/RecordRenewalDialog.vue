@@ -12,11 +12,16 @@
  *
  * Upcoming reads the machine on demand, so the dialog has a reading and a
  * failed state; Inventory passes the machine it already holds.
+ *
+ * The job starts at the provider, so the dialog names the provider and, for
+ * a machine with a stored console link, offers the same Console button as
+ * the machine's sheet. The link is sealed behind a step-up grant that the
+ * host page holds (useMachineLinkReveal), so the dialog only asks for it.
  */
 import { computed, ref, useId, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { CalendarClock, RefreshCw } from "lucide-vue-next";
+import { CalendarClock, ExternalLink, RefreshCw } from "lucide-vue-next";
 
 import { api, type MachineView } from "@/lib/api";
 import { toast } from "@/lib/toast";
@@ -43,11 +48,15 @@ const props = withDefaults(
     error?: string | null;
     /** Offer a link to the machine's sheet, from pages other than Inventory. */
     machineLink?: boolean;
+    /** Offer the provider's console: the machine stores a console link the viewer may open. */
+    consoleLink?: boolean;
+    /** The host is revealing a link (a step-up prompt may be open). */
+    consolePending?: boolean;
   }>(),
-  { machine: null, loading: false, error: null, machineLink: false },
+  { machine: null, loading: false, error: null, machineLink: false, consoleLink: false, consolePending: false },
 );
 
-const emit = defineEmits<{ "update:open": [open: boolean]; recorded: [machine: MachineView] }>();
+const emit = defineEmits<{ "update:open": [open: boolean]; recorded: [machine: MachineView]; openConsole: [] }>();
 
 const { t } = useI18n();
 const dateId = useId();
@@ -123,6 +132,13 @@ watch(
     if (open && typeof document !== "undefined") opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   },
 );
+/** The date is what the dialog is for, so it takes focus over the Console button above it. */
+function onOpenAutoFocus(event: Event): void {
+  const input = typeof document !== "undefined" ? document.getElementById(dateId) : null;
+  if (!input) return;
+  event.preventDefault();
+  input.focus();
+}
 function onCloseAutoFocus(event: Event): void {
   if (!opener?.isConnected) return;
   event.preventDefault();
@@ -137,7 +153,7 @@ function setOpen(open: boolean): void {
 
 <template>
   <Dialog :open="open" @update:open="setOpen">
-    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" data-testid="record-renewal" @close-auto-focus="onCloseAutoFocus">
+    <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" data-testid="record-renewal" @open-auto-focus="onOpenAutoFocus" @close-auto-focus="onCloseAutoFocus">
       <DialogHeader class="pe-6">
         <DialogTitle>{{ name ? $t('fleet.renewal.title', { name }) : $t('fleet.renewal.action') }}</DialogTitle>
         <DialogDescription>{{ $t('fleet.renewal.description') }}</DialogDescription>
@@ -160,6 +176,25 @@ function setOpen(open: boolean): void {
           </dd>
           <dt class="text-muted-foreground">{{ $t('fleet.renewal.cycle') }}</dt>
           <dd>{{ cycleLabel }}</dd>
+          <template v-if="machine.vendor || consoleLink">
+            <dt class="text-muted-foreground" :class="consoleLink && 'self-center'">{{ $t('fleet.renewal.provider') }}</dt>
+            <dd class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <span v-if="machine.vendor" class="break-words">{{ machine.vendor }}</span>
+              <Button
+                v-if="consoleLink"
+                type="button"
+                variant="outline"
+                size="sm"
+                :disabled="consolePending"
+                data-testid="record-renewal-console"
+                @click="emit('openConsole')"
+              >
+                <RefreshCw v-if="consolePending" class="size-3.5 animate-spin" aria-hidden="true" />
+                <ExternalLink v-else class="size-3.5" aria-hidden="true" />
+                {{ $t('fleet.inventory.list.openConsole') }}
+              </Button>
+            </dd>
+          </template>
         </dl>
         <p v-if="machine.auto_roll" class="text-xs text-muted-foreground">{{ $t('fleet.renewal.autoRoll') }}</p>
 

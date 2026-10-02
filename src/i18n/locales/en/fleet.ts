@@ -1093,6 +1093,7 @@ export default {
       currentDue: "Due now",
       noDate: "no date",
       cycle: "Billing cycle",
+      provider: "Provider",
       autoRoll: "This machine renews automatically and Lattice moves its date forward when it passes. Record a renewal only to set a different date.",
       nextRenewal: "Next renewal",
       moves: "The next renewal moves from {from} to {to}, {days}.",

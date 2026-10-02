@@ -1077,6 +1077,7 @@ export default {
       currentDue: "当前到期",
       noDate: "无日期",
       cycle: "计费周期",
+      provider: "服务商",
       autoRoll: "这台机器自动续费，到期后 Lattice 会自动顺延日期。只有需要改成别的日期时才在这里记录。",
       nextRenewal: "下次续费",
       moves: "下次续费从 {from} 改为 {to}（{days}）。",

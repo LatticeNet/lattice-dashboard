@@ -7,6 +7,7 @@ import { RotateCw } from "lucide-vue-next";
 import { api, unwrap, type ExpiringItem, type MachineView } from "@/lib/api";
 import { useAuthStore } from "@/stores/auth";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMachineLinkReveal } from "@/composables/useMachineLinkReveal";
 import { cn } from "@/lib/utils";
 import {
   EXPIRING_KINDS,
@@ -25,6 +26,7 @@ import PageHeader from "@/components/common/PageHeader.vue";
 import UpcomingBody from "@/components/fleet/UpcomingBody.vue";
 import UpcomingProof from "@/components/fleet/UpcomingProof.vue";
 import RecordRenewalDialog from "@/components/fleet/RecordRenewalDialog.vue";
+import MachineLinkStepUpDialog from "@/components/fleet/MachineLinkStepUpDialog.vue";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -97,6 +99,11 @@ async function openRenewal(item: ExpiringItem): Promise<void> {
   }
 }
 
+// Paying the provider comes first, so the dialog offers the machine's stored
+// console link; it opens behind the same step-up as on Inventory.
+const { stepUp: linkStepUp, pending: linkPending, reveal: revealLink } = useMachineLinkReveal();
+const canOpenConsole = computed(() => !!renewMachine.value?.has_console_url && auth.can("inventory:admin"));
+
 const chipClass = (active: boolean) =>
   cn(
     "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:h-11",
@@ -168,7 +175,11 @@ const chipClass = (active: boolean) =>
       :loading="renewLoading"
       :error="renewError"
       machine-link
+      :console-link="canOpenConsole"
+      :console-pending="!!linkPending"
+      @open-console="renewMachine && revealLink(renewMachine, 'console')"
       @recorded="query.refresh"
     />
+    <MachineLinkStepUpDialog :step-up="linkStepUp" />
   </div>
 </template>
