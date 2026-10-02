@@ -131,3 +131,27 @@ test("a read is ready while it holds data, and otherwise says why there is no nu
   assert.equal(readState({ error: { status: 403 } }), "forbidden");
   assert.equal(readState({ data: { pending: 0 }, error: { status: 404 } }), "unsupported");
 });
+
+test("an offline node carries its last report and agent, and failing monitors get one row", () => {
+  const items = homeAttention({
+    now: NOW,
+    nodes: [
+      { id: "n4", name: "DMIT-4", status: "offline", status_since: hoursAgo(144), last_seen: hoursAgo(144), agent_version: "0.3.8", status_reason: "No report since ..." },
+      { id: "gpu", name: "gpu-box", status: "never_reported", status_since: hoursAgo(11), last_seen: "0001-01-01T00:00:00Z" },
+    ],
+    failingMonitors: [
+      { id: "mon_hk", name: "HK relay port" },
+      { id: "mon_api", name: "api health" },
+    ],
+  });
+  const offline = items.find((item) => item.kind === "node" && item.nodeId === "n4");
+  assert.ok(offline && offline.kind === "node");
+  assert.equal(offline.lastSeenMs, 144 * 3_600_000);
+  assert.equal(offline.agentVersion, "0.3.8");
+  const never = items.find((item) => item.kind === "node" && item.nodeId === "gpu");
+  assert.ok(never && never.kind === "node");
+  assert.equal(never.lastSeenMs, undefined, "a zero last_seen is no report, not one 2000 years ago");
+  const monitors = items.find((item) => item.kind === "monitors");
+  assert.ok(monitors && monitors.kind === "monitors");
+  assert.deepEqual([monitors.count, monitors.firstId, monitors.tone], [2, "mon_hk", "danger"]);
+});

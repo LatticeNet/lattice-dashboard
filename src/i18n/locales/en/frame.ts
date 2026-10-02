@@ -358,6 +358,7 @@ export default {
       counts: "Task counts were not read, so stalled tasks are not listed",
       ddns: "DDNS profiles were not read, so failing ones are not listed",
       expiring: "Renewals and expiries were not read, so nothing due is listed",
+      monitors: "Monitor results were not read, so failing monitors are not listed",
     },
     // Where a number would be, when its read gave none.
     read: {
@@ -380,6 +381,11 @@ export default {
       flapping: "{name} went offline {n} times in 24h",
       flappingAtLeast: "{name} went offline at least {n} times in 24h",
       flappingProof: "last drop {age} ago",
+      proofOffline: "last report {age} ago · agent {version}",
+      proofOfflineNoAgent: "last report {age} ago",
+      proofNever: "enrolled {age} ago, no report since",
+      monitors: "{n} monitor failing | {n} monitors failing",
+      monitorsAction: "Monitoring",
       stalled: "{n} task stalled | {n} tasks stalled",
       ddns: "{n} DDNS profile failing | {n} DDNS profiles failing",
       overdue: "{n} item overdue | {n} items overdue",
@@ -397,6 +403,7 @@ export default {
       failed24h: "Tasks failed in 24h",
       due7: "Due in 7 days",
       overdue: "{n} overdue",
+      lastGood: "last good {age} ago",
     },
     due: {
       title: "Due in 7 days",

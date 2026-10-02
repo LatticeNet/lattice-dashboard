@@ -352,6 +352,7 @@ export default {
       counts: "未读取到任务计数，卡住的任务没有列出",
       ddns: "未读取到 DDNS 配置，更新失败的没有列出",
       expiring: "未读取到续费与到期信息，到期项没有列出",
+      monitors: "未读取到监控结果，失败的监控没有列出",
     },
     read: {
       reading: "读取中",
@@ -373,6 +374,11 @@ export default {
       flapping: "{name} 24 小时内掉线 {n} 次",
       flappingAtLeast: "{name} 24 小时内至少掉线 {n} 次",
       flappingProof: "最近一次掉线在 {age} 前",
+      proofOffline: "最后上报在 {age} 前 · agent {version}",
+      proofOfflineNoAgent: "最后上报在 {age} 前",
+      proofNever: "{age} 前接入，此后没有上报",
+      monitors: "{n} 个监控检测失败 | {n} 个监控检测失败",
+      monitorsAction: "监控",
       stalled: "{n} 个任务卡住 | {n} 个任务卡住",
       ddns: "{n} 个 DDNS 配置更新失败 | {n} 个 DDNS 配置更新失败",
       overdue: "{n} 项已过期 | {n} 项已过期",
@@ -390,6 +396,7 @@ export default {
       failed24h: "24 小时内失败任务",
       due7: "7 天内到期",
       overdue: "{n} 项已过期",
+      lastGood: "最后一次成功读取在 {age} 前",
     },
     due: {
       title: "7 天内到期",

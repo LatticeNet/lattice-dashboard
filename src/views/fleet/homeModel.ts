@@ -24,6 +24,10 @@ export const FLAP_WINDOW_MS = 24 * 3_600_000;
 export const FLAP_READ_LIMIT = 500;
 /** Rows home's "due in 7 days" shows before deferring to Upcoming. */
 export const DUE_ROWS = 5;
+/** Rows of recent changes home reads and shows; the Audit page has the rest. */
+export const CHANGES_ROWS = 4;
+/** Attention rows home shows before "Show all N", so the page fits one desktop screen. */
+export const HOME_ATTENTION_MAX = 3;
 export const DUE_WITHIN_DAYS = 7;
 
 /** The audit query that counts flips: one action, one window. */
@@ -83,16 +87,31 @@ export function flappingNodes(events: readonly Pick<AuditEvent, "node_id" | "act
 }
 
 export type HomeAttention =
-  | { kind: "node"; key: string; tone: "danger" | "warning"; nodeId: string; name: string; status: "offline" | "never_reported" | "degraded"; sinceMs?: number; reason: string }
+  | {
+      kind: "node";
+      key: string;
+      tone: "danger" | "warning";
+      nodeId: string;
+      name: string;
+      status: "offline" | "never_reported" | "degraded";
+      sinceMs?: number;
+      /** How long ago the last report came; undefined when none ever did. */
+      lastSeenMs?: number;
+      agentVersion?: string;
+      /** The server's sentence. Shown only for degraded, where it names the broken part. */
+      reason: string;
+    }
   | { kind: "flapping"; key: string; tone: "warning"; nodeId: string; name: string; count: number; lastAt: number; atLeast: boolean }
   | { kind: "stalled"; key: string; tone: "danger"; count: number }
   | { kind: "ddns"; key: string; tone: "warning"; count: number; names: string[]; error: string }
   | { kind: "overdue"; key: string; tone: "danger"; count: number; titles: string[] }
-  | { kind: "due"; key: string; tone: "warning"; count: number; titles: string[] };
+  | { kind: "due"; key: string; tone: "warning"; count: number; titles: string[] }
+  | { kind: "monitors"; key: string; tone: "danger"; count: number; names: string[]; firstId: string };
 
 export interface HomeNode extends NodeStatusInput {
   id: string;
   name?: string;
+  agent_version?: string;
 }
 
 export interface HomeAttentionInput {
@@ -105,6 +124,8 @@ export interface HomeAttentionInput {
   ddns?: readonly Pick<DDNSView, "name" | "last_error">[];
   /** Items from the expiring read; the model keeps those within 7 days. */
   expiring?: readonly Pick<ExpiringItem, "title" | "days" | "state">[];
+  /** Monitors whose newest results include a failure, worst first. */
+  failingMonitors?: readonly { id: string; name: string }[];
 }
 
 /**
@@ -122,6 +143,9 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
     if (status !== "offline" && status !== "never_reported" && status !== "degraded") continue;
     const since = nodeStatusSince(node);
     const sinceAt = since ? Date.parse(since) : NaN;
+    const seenAt = node.last_seen ? Date.parse(node.last_seen) : NaN;
+    // A zero time (0001-01-01) is the server's "never"; it parses to a negative instant.
+    const seen = !Number.isNaN(seenAt) && seenAt > 0;
     out.push({
       kind: "node",
       key: `node:${node.id}`,
@@ -130,6 +154,8 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
       name: node.name || node.id,
       status,
       sinceMs: Number.isNaN(sinceAt) ? undefined : Math.max(0, input.now - sinceAt),
+      lastSeenMs: seen ? Math.max(0, input.now - seenAt) : undefined,
+      agentVersion: node.agent_version?.trim() || undefined,
       reason: node.status_reason?.trim() ?? "",
     });
   }
@@ -150,6 +176,10 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
   }
   const stalled = input.counts?.stalled ?? 0;
   if (stalled > 0) out.push({ kind: "stalled", key: "tasks:stalled", tone: "danger", count: stalled });
+  const monitors = input.failingMonitors ?? [];
+  if (monitors.length > 0) {
+    out.push({ kind: "monitors", key: "monitors:failing", tone: "danger", count: monitors.length, names: monitors.map((m) => m.name), firstId: monitors[0]!.id });
+  }
   const failing = (input.ddns ?? []).filter((profile) => profile.last_error?.trim());
   if (failing.length > 0) {
     out.push({ kind: "ddns", key: "ddns:failing", tone: "warning", count: failing.length, names: failing.map((profile) => profile.name), error: failing[0]!.last_error!.trim() });
