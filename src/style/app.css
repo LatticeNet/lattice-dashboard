@@ -496,6 +496,21 @@
     .touch-target {
       position: relative;
     }
+
+    /* A text button at the default, small or large size is 32 to 40 px
+       tall, under the 44 px a finger needs (the wave 1 touch decision). In
+       the base layer, so a control that sets its own min-height keeps it. */
+    [data-button-size="default"],
+    [data-button-size="sm"],
+    [data-button-size="lg"] {
+      min-height: 44px;
+    }
+
+    /* Text fields and select triggers are 36 px for the same finger. */
+    [data-slot="input"]:not([type="checkbox"], [type="radio"]),
+    [data-slot="select-trigger"] {
+      min-height: 44px;
+    }
   }
 }
 
