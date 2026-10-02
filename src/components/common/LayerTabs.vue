@@ -77,13 +77,15 @@ watch(model, () => nextTick(revealActive));
  * segmented track and the raised current segment. The theme's own inks
  * fell under 4.5:1 on at least one of them (light muted 4.3 on the track;
  * dark warning 4.2, destructive 3.2 and muted 3.3 on the lighter raised
- * segment), so each tone carries its own ink, measured on its tint over all
- * three: light 5.2 / 5.3 / 5.3, dark 5.3 / 5.5 / 5.1 at the worst ground.
+ * segment), so each tone takes its own ink from the theme (--count-ink,
+ * --count-ink-warning, --count-ink-destructive in app.css), measured on its
+ * tint over all three: light 5.2 / 5.3 / 5.3, dark 5.3 / 5.5 / 5.1 at the
+ * worst ground.
  */
 const COUNT_TONE = {
-  default: "bg-foreground/[0.07] text-[oklch(0.48_0.022_281)] dark:text-[oklch(0.84_0.012_240)]",
-  warning: "bg-warning/15 text-[oklch(0.48_0.12_73)] dark:text-[oklch(0.88_0.13_85)]",
-  destructive: "bg-destructive/12 text-[oklch(0.48_0.2_27.5)] dark:text-[oklch(0.84_0.12_22)]",
+  default: "bg-foreground/[0.07] text-count-ink",
+  warning: "bg-warning/15 text-count-ink-warning",
+  destructive: "bg-destructive/12 text-count-ink-destructive",
 } as const;
 </script>
 
