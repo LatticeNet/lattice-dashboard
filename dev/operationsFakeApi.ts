@@ -22,7 +22,8 @@
  * `&no-audit-exclude` ignores exclude_action and exclude_decision on the
  * audit query (a server from before a101). `&results-page=<n>` caps a page
  * of task results at n rows, so a page of fan-outs runs past the pages the
- * Tasks poll reads.
+ * Tasks poll reads. `&no-timeout` drops timeout_sec from every task, the
+ * shape of a view whose timeout was not read.
  *
  * The fake honours the queries the server honours, and refuses what it
  * refuses: task statuses outside the eight, more than 100 task ids.
@@ -43,6 +44,7 @@ const READ_ONLY = flags.get("scope") === "read";
 
 const approvals: ApprovalView[] = buildApprovals(FIXTURE === "failing" ? "prod" : FIXTURE);
 const { tasks, results } = buildTasks(FIXTURE === "failing" ? "prod" : FIXTURE, approvals);
+if (flags.has("no-timeout")) for (const task of tasks) delete task.timeout_sec;
 const listing = fakeApprovalsApi(approvals);
 
 /**

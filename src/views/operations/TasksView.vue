@@ -85,6 +85,7 @@ import {
   readResultPages,
   resultsRequest,
   runSummary,
+  scriptClauses,
   taskCancellable,
   taskListRequest,
   taskLive,
@@ -518,12 +519,13 @@ const rerunPreview = computed<string[]>(() => {
       ? t("operations.tasks.rerunConfirm.targetsOne", { name: names[0] })
       : t("operations.tasks.rerunConfirm.targetsMany", { n: targets.length, names: previewNames(names) }),
   ];
-  const script = { interpreter: task.interpreter, size: formatBytes(task.script_size_bytes), timeout: task.timeout_sec ?? 0 };
-  lines.push(
-    task.script_sha256
-      ? t("operations.tasks.rerunConfirm.script", { ...script, digest: shortId(task.script_sha256, 12) })
-      : t("operations.tasks.rerunConfirm.scriptNoDigest", script),
-  );
+  const facts = scriptClauses(task).map((clause) => {
+    if (clause.kind === "interpreter") return clause.text;
+    if (clause.kind === "size") return formatBytes(clause.bytes);
+    if (clause.kind === "digest") return t("operations.tasks.rerunConfirm.digest", { digest: shortId(clause.digest, 12) });
+    return t("operations.tasks.sheet.timeout", { n: clause.seconds });
+  });
+  lines.push(t("operations.tasks.rerunConfirm.script", { facts: facts.join(t("operations.tasks.rerunConfirm.factSeparator")) }));
   if (task.approval_id) lines.push(t("operations.tasks.rerunConfirm.capability"));
   const known = targets.map((id) => nodes.value.find((node) => node.id === id)).filter((node): node is Node => !!node);
   const offline = known.filter((node) => !isReporting(node)).map((node) => node.name || node.id);

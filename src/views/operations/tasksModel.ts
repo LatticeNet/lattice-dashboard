@@ -265,6 +265,41 @@ export function failureReason(result: Pick<TaskResult, "exit_code" | "error" | "
   return detail ? `${exit}: ${detail}` : exit;
 }
 
+/**
+ * The timeout a run was queued with, or undefined when it was not read. The
+ * server always sends timeout_sec and replaces 0 with its default when it
+ * queues a task, so a missing or non-positive figure is not a timeout any
+ * agent applies: the console leaves the clause out instead of printing
+ * "timeout 0s".
+ */
+export function readTimeout(task: Pick<TaskView, "timeout_sec">): number | undefined {
+  const seconds = task.timeout_sec;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+/** One clause of what a run's script is. */
+export type ScriptClause =
+  | { kind: "interpreter"; text: string }
+  | { kind: "size"; bytes: number }
+  | { kind: "digest"; digest: string }
+  | { kind: "timeout"; seconds: number };
+
+/**
+ * What a rerun repeats, in the order the confirm dialog says it: interpreter,
+ * size, digest, timeout. A clause whose value was not read is left out, never
+ * written as zero or a placeholder.
+ */
+export function scriptClauses(task: Pick<TaskView, "interpreter" | "script_size_bytes" | "script_sha256" | "timeout_sec">): ScriptClause[] {
+  const out: ScriptClause[] = [];
+  if (task.interpreter) out.push({ kind: "interpreter", text: task.interpreter });
+  const size = task.script_size_bytes;
+  if (typeof size === "number" && Number.isFinite(size) && size >= 0) out.push({ kind: "size", bytes: size });
+  if (task.script_sha256) out.push({ kind: "digest", digest: task.script_sha256 });
+  const timeout = readTimeout(task);
+  if (timeout !== undefined) out.push({ kind: "timeout", seconds: timeout });
+  return out;
+}
+
 /** A run that can still change on its own: waiting, running or stalled. */
 export function taskLive(status: TaskView["status"]): boolean {
   return status === "queued" || status === "pending" || status === "leased" || status === "stalled";

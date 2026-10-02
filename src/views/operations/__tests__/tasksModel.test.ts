@@ -10,8 +10,10 @@ import {
   legacyOpenQuery,
   normalizeTaskPage,
   readResultPages,
+  readTimeout,
   resultsRequest,
   runSummary,
+  scriptClauses,
   taskCancellable,
   taskListRequest,
   taskLive,
@@ -181,4 +183,20 @@ test("a run is live while it waits, runs or stalls", () => {
     (["pending", "queued", "leased", "stalled", "finished", "failed", "cancelled", "expired"] as const).filter(taskLive),
     ["pending", "queued", "leased", "stalled"],
   );
+});
+
+test("a timeout that was not read is left out of what a rerun repeats, never written as zero", () => {
+  const read = task({ script_sha256: "a1b2c3d4e5f6a7b8", script_size_bytes: 1843, timeout_sec: 300 });
+  assert.deepEqual(scriptClauses(read), [
+    { kind: "interpreter", text: "sh" },
+    { kind: "size", bytes: 1843 },
+    { kind: "digest", digest: "a1b2c3d4e5f6a7b8" },
+    { kind: "timeout", seconds: 300 },
+  ]);
+  for (const timeout_sec of [undefined, 0, -1, Number.NaN]) {
+    const clauses = scriptClauses(task({ script_size_bytes: 1843, timeout_sec }));
+    assert.equal(readTimeout({ timeout_sec }), undefined);
+    assert.deepEqual(clauses.map((c) => c.kind), ["interpreter", "size"]);
+  }
+  assert.deepEqual(scriptClauses(task({})).map((c) => c.kind), ["interpreter"]);
 });

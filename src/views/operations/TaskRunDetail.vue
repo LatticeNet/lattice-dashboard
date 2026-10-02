@@ -34,7 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogDescription, DialogFooter, DialogHeader, DialogScrollContent, DialogTitle } from "@/components/ui/dialog";
 
-import { failureReason, latestByNode, resultFailed, RESULT_PAGE_LIMIT, taskLive } from "./tasksModel";
+import { failureReason, latestByNode, readTimeout, resultFailed, RESULT_PAGE_LIMIT, taskLive } from "./tasksModel";
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline" | "warning";
 type NodeRunStatus = "queued" | "leased" | "finished" | "failed" | "cancelled" | "expired" | "stalled";
@@ -374,7 +374,7 @@ function originText(): string {
       <div class="sm:col-span-2">
         <dt class="text-xs text-muted-foreground">{{ $t('operations.tasks.sheet.script') }}</dt>
         <dd class="flex min-w-0 flex-wrap items-center gap-2">
-          <span class="text-xs">{{ task.interpreter }} · {{ formatBytes(task.script_size_bytes) }} · {{ $t('operations.tasks.sheet.timeout', { n: task.timeout_sec ?? 0 }) }}</span>
+          <span class="text-xs">{{ task.interpreter }} · {{ formatBytes(task.script_size_bytes) }}<template v-if="readTimeout(task) !== undefined"> · {{ $t('operations.tasks.sheet.timeout', { n: readTimeout(task) }) }}</template></span>
           <code v-if="task.script_sha256" class="min-w-0 truncate font-mono text-xs text-muted-foreground" :title="task.script_sha256">sha256 {{ shortId(task.script_sha256, 12) }}</code>
           <Button variant="outline" size="sm" type="button" :disabled="revealing" @click="revealScript">
             <RefreshCw v-if="revealing" class="size-4 animate-spin" aria-hidden="true" />
