@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { NO_VALUE, formatAge, formatDateTime, formatMoney, isZeroTime } from "../format.ts";
-import { canonicalCurrency } from "../currency.ts";
+import { canonicalCurrency, currencyInputCode, currencyRewrittenOnSave } from "../currency.ts";
 
 const GO_ZERO = "0001-01-01T00:00:00Z";
 
@@ -54,4 +54,22 @@ test("CHY is the yuan and reads, formats and saves as CNY", () => {
   assert.equal(canonicalCurrency(undefined), "");
   assert.equal(formatMoney(342683, "CHY"), formatMoney(342683, "CNY"));
   assert.equal(formatMoney(1000, ""), formatMoney(1000, "USD"));
+});
+
+test("a stored code is read as stored; only the editor keeps letters and cuts to five", () => {
+  // Display and totals: case, spaces and the alias, nothing else, so a
+  // six-letter ticker is not cut into a different code.
+  assert.equal(canonicalCurrency("usdtxx"), "USDTXX");
+  assert.equal(canonicalCurrency("US-D"), "US-D");
+  // The editor writes the field: letters only, at most five, alias folded.
+  assert.equal(currencyInputCode(" us-d "), "USD");
+  assert.equal(currencyInputCode("chy"), "CNY");
+  assert.equal(currencyInputCode("USDTXX"), "USDTX");
+  assert.equal(currencyInputCode(undefined), "");
+  // Saving rewrites only what the editor would change, not case or spaces.
+  assert.equal(currencyRewrittenOnSave("CHY"), true);
+  assert.equal(currencyRewrittenOnSave(" chy "), true);
+  assert.equal(currencyRewrittenOnSave("cny"), false);
+  assert.equal(currencyRewrittenOnSave("USDT"), false);
+  assert.equal(currencyRewrittenOnSave(""), false);
 });

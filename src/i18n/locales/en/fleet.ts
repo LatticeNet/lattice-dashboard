@@ -961,6 +961,7 @@ export default {
         region: "Region",
         regionPlaceholder: "JP-Tokyo",
         currency: "Currency",
+        currencyRewrite: "Stored as {stored}, which is not a currency code. Saving this profile writes {code}.",
         price: "Price",
         purchasedAt: "Purchase date",
         nextRenewal: "Next renewal",
