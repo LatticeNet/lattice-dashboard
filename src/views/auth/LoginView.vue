@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from "vue";
+import { ref, computed, onMounted, nextTick, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import {
   User,
   Lock,
@@ -19,10 +20,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { documentTitle } from "@/layout/headerModel";
 
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
+const { t } = useI18n();
+
+watchEffect(() => {
+  document.title = documentTitle({ page: t("auth.signIn") });
+});
 
 type Step = "password" | "totp";
 const step = ref<Step>("password");

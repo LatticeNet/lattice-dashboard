@@ -118,6 +118,7 @@ import {
   DialogScrollContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useObjectTitle } from "@/layout/useObjectTitle";
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -332,6 +333,9 @@ const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
 const node = computed<Node | undefined>(() =>
   (nodesQuery.data.value ?? []).find((n) => n.id === nodeId.value),
 );
+
+/** The node names the tab: "dmit-la-1 · Node · Lattice". */
+useObjectTitle(() => node.value?.name || node.value?.id);
 
 /* ----------------------------------------------------------------- */
 /* Layers (design 23, 4.2): Overview leads with state, Activity is    */

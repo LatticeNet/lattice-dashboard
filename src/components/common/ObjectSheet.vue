@@ -31,6 +31,7 @@ import { Dialog, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/composables/useMediaQuery";
+import { useObjectTitle } from "@/layout/useObjectTitle";
 import { cn } from "@/lib/utils";
 
 const props = withDefaults(
@@ -102,6 +103,9 @@ function onCloseAutoFocus(event: Event): void {
 }
 
 const showBody = computed(() => props.state === "ready" || props.state === "stale");
+
+/** The open object names the tab (AppHeader composes the document title). */
+useObjectTitle(() => (props.open && showBody.value ? props.title : undefined));
 </script>
 
 <template>

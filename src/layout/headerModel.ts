@@ -119,3 +119,43 @@ export function currentPlatformIsApple(): boolean {
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
   return isApplePlatform(nav.userAgentData?.platform || nav.platform, nav.userAgent);
 }
+
+/* ------------------------------------------------------------------ */
+/* The document title                                                  */
+/* ------------------------------------------------------------------ */
+
+export const PRODUCT_TITLE = "Lattice";
+
+/**
+ * The tab title: the open object, the page, then the product, so three tabs
+ * on Approvals, a node and Terminal read differently and the object comes
+ * first where a narrow tab cuts the rest off. An object named like its page
+ * is said once.
+ */
+export function documentTitle(parts: { page?: string | null; object?: string | null }): string {
+  const page = parts.page?.trim() ?? "";
+  const object = parts.object?.trim() ?? "";
+  return [object && object !== page ? object : "", page, PRODUCT_TITLE].filter(Boolean).join(" · ");
+}
+
+/**
+ * The object titles shown at once, newest last: one per open sheet or object
+ * page. The tab names the newest; closing it falls back to the one before.
+ */
+export class ObjectTitleStack {
+  private entries: { id: symbol; title: string }[] = [];
+
+  set(id: symbol, title: string | null | undefined): void {
+    const text = title?.trim() ?? "";
+    this.entries = this.entries.filter((entry) => entry.id !== id);
+    if (text) this.entries.push({ id, title: text });
+  }
+
+  clear(id: symbol): void {
+    this.entries = this.entries.filter((entry) => entry.id !== id);
+  }
+
+  get current(): string {
+    return this.entries[this.entries.length - 1]?.title ?? "";
+  }
+}

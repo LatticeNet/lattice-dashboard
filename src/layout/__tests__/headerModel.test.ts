@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { breadcrumbTrail, commandShortcutKey, isApplePlatform, opensCommandPalette, resolvePluginBreadcrumb } from "../headerModel.ts";
+import { ObjectTitleStack, breadcrumbTrail, commandShortcutKey, documentTitle, isApplePlatform, opensCommandPalette, resolvePluginBreadcrumb } from "../headerModel.ts";
 
 test("plugin breadcrumbs use the plugin display name as the section label", () => {
   assert.deepEqual(
@@ -106,4 +106,34 @@ test("the palette chord opens outside fields, only the keyboard's own chord open
   assert.equal(opensCommandPalette(k({ ctrl: true, shift: true }), { apple: false, target: "other" }), false);
   assert.equal(opensCommandPalette(k({ ctrl: true, alt: true }), { apple: false, target: "other" }), false);
   assert.equal(opensCommandPalette(k({ ctrl: true }, "j"), { apple: false, target: "other" }), false);
+});
+
+test("each tab names its object and page before the product, and an object named like its page once", () => {
+  assert.equal(documentTitle({ page: "Approvals" }), "Approvals · Lattice");
+  assert.equal(documentTitle({ page: "Nodes", object: "dmit-la-1" }), "dmit-la-1 · Nodes · Lattice");
+  assert.equal(documentTitle({ page: "Node", object: "  dmit-la-1 " }), "dmit-la-1 · Node · Lattice");
+  assert.equal(documentTitle({ page: "Users", object: "Users" }), "Users · Lattice");
+  assert.equal(documentTitle({ page: "", object: "" }), "Lattice");
+  assert.equal(documentTitle({}), "Lattice");
+  // The static title had an em dash; none of these may.
+  assert.doesNotMatch(documentTitle({ page: "Terminal", object: "hkg" }), /[\u2013\u2014]/);
+});
+
+test("the tab follows the newest open object and falls back when it closes", () => {
+  const stack = new ObjectTitleStack();
+  const page = Symbol("page");
+  const sheet = Symbol("sheet");
+  assert.equal(stack.current, "");
+  stack.set(page, "dmit-la-1");
+  assert.equal(stack.current, "dmit-la-1");
+  stack.set(sheet, "agent update to 0.4.1");
+  assert.equal(stack.current, "agent update to 0.4.1");
+  // A sheet that is closing or still loading names nothing.
+  stack.set(sheet, undefined);
+  assert.equal(stack.current, "dmit-la-1");
+  stack.set(sheet, "approval_2");
+  stack.clear(sheet);
+  assert.equal(stack.current, "dmit-la-1");
+  stack.clear(page);
+  assert.equal(stack.current, "");
 });

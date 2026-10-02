@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch, watchEffect } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useEventListener } from "@vueuse/core";
@@ -16,12 +16,14 @@ import {
   breadcrumbTrail,
   commandShortcutKey,
   currentPlatformIsApple,
+  documentTitle,
   opensCommandPalette,
   resolvePluginBreadcrumb,
   type Crumb,
   type ShortcutTarget,
 } from "@/layout/headerModel";
 import { useAuthStore } from "@/stores/auth";
+import { objectTitle } from "@/layout/useObjectTitle";
 import { NAV } from "@/router/nav";
 import { usePluginContributions } from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
@@ -118,6 +120,16 @@ const trail = computed<Crumb[]>(() => {
   if (pluginCtx.value) return [];
   const name = route.name ? String(route.name) : "overview";
   return breadcrumbTrail(name, NAV, (item) => !item.scopes?.length || auth.canAny([...item.scopes]));
+});
+
+/**
+ * Each tab names its page, and the object when one is open (a node page, an
+ * object sheet): "dmit-la-1 · Nodes · Lattice". The header owns this because
+ * it already resolves the page title, plugin views included.
+ */
+watchEffect(() => {
+  if (typeof document === "undefined") return;
+  document.title = documentTitle({ page: title.value, object: objectTitle.value });
 });
 
 function crumbLabel(crumb: Crumb): string {
