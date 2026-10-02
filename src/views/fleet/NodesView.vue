@@ -24,6 +24,7 @@ import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { createConfirmReturn } from "./confirmFocus";
 import { useAuthStore } from "@/stores/auth";
 import { countryName, splitNamePrefix } from "@/lib/fleet";
 import { formatBytes, formatRelativeTime } from "@/lib/format";
@@ -396,6 +397,8 @@ function lastSeenText(node: Node): string {
 /* --------------------------------- actions -------------------------------- */
 
 const pendingNode = ref<string | undefined>();
+/** A confirm opened from a row menu hands focus back to that menu. */
+const confirmReturn = createConfirmReturn();
 const rotateTarget = ref<Node | undefined>();
 const disableTarget = ref<Node | undefined>();
 const rotated = ref<{ node: string; token: string } | undefined>();
@@ -442,12 +445,24 @@ function menuFor(node: Node): RowMenuItem[] {
       icon: KeyRound,
       hidden: !canAdminNodes.value,
       disabled: pendingNode.value === node.id,
-      run: () => (rotateTarget.value = node),
+      run: () => {
+        confirmReturn.remember(node.id);
+        rotateTarget.value = node;
+      },
     },
     // Reversible (design 23, 3.8): an ordinary item, never the red one.
     node.disabled
       ? { key: "enable", label: t("common.actions.enable"), icon: Power, hidden: !canAdminNodes.value, run: () => void applyDisabled(node, false) }
-      : { key: "disable", label: t("common.actions.disable"), icon: Ban, hidden: !canAdminNodes.value, run: () => (disableTarget.value = node) },
+      : {
+          key: "disable",
+          label: t("common.actions.disable"),
+          icon: Ban,
+          hidden: !canAdminNodes.value,
+          run: () => {
+            confirmReturn.remember(node.id);
+            disableTarget.value = node;
+          },
+        },
   ];
 }
 
@@ -521,6 +536,7 @@ const bulkDisableCount = computed(() => planBulkDisable(nodes.value, selectedIds
 function requestBulk(disabled: boolean): void {
   if (!canAdminNodes.value || bulkRunning.value) return;
   if (disabled && bulkDisableCount.value > 0) {
+    confirmReturn.remember();
     bulkDisableOpen.value = true;
     return;
   }
@@ -965,6 +981,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
       :confirm-label="$t('common.actions.disable')"
       :cancel-label="$t('common.actions.cancel')"
       variant="default"
+      :return-focus="confirmReturn.target"
       @confirm="runBulk(true)"
     />
 
@@ -976,6 +993,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
       :confirm-label="$t('fleet.nodes.list.rotateToken')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="!!rotateTarget && pendingNode === rotateTarget.id"
+      :return-focus="confirmReturn.target"
       @confirm="confirmRotate"
     />
 
@@ -987,6 +1005,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
       :cancel-label="$t('common.actions.cancel')"
       variant="default"
       :pending="!!disableTarget && pendingNode === disableTarget.id"
+      :return-focus="confirmReturn.target"
       @confirm="confirmDisable"
     />
 
