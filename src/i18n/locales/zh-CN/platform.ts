@@ -914,7 +914,10 @@ export default {
       deliveries: "最近的调用",
       noDeliveries: "还没有人调用过这个 Webhook。",
       testBadge: "测试",
-      deliveryMeta: "{channels} 个渠道投递成功 {delivered} 个，{fields} 个字段，来自 {ip}",
+      deliveryMeta: "{reach}，{fields}，来自 {ip}",
+      deliveryReach: "{channels} 个渠道投递成功 {delivered} 个",
+      deliveryReachNone: "没有送达任何渠道",
+      deliveryFields: "{n} 个字段",
       outcome: {
         accepted: "已接受",
         no_route: "无人接收",

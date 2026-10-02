@@ -643,9 +643,10 @@ async function runTest(): Promise<void> {
               <p class="text-xs text-muted-foreground tabular">
                 {{
                   $t("platform.webhooks.deliveryMeta", {
-                    delivered: d.delivered,
-                    channels: d.channels,
-                    fields: d.fields,
+                    reach: d.channels
+                      ? $t("platform.webhooks.deliveryReach", { delivered: d.delivered, channels: d.channels }, d.channels)
+                      : $t("platform.webhooks.deliveryReachNone"),
+                    fields: $t("platform.webhooks.deliveryFields", { n: d.fields }, d.fields),
                     ip: d.source_ip || "-",
                   })
                 }}

@@ -1325,7 +1325,9 @@ export default {
       externalCol: "External",
       selfTitle: "Same group",
       noneTitle: "No group policy",
-      cellTitle: "{action} {proto} · {count} rule(s)",
+      cellTitle: "{action} {proto} · {count} rule | {action} {proto} · {count} rules",
+      externalRules: "{n} rule | {n} rules",
+      externalHint: "Rules from this group to addresses outside every group",
       emptyGroupsTitle: "Group your fleet first",
       emptyGroupsDescription:
         "The matrix needs at least one group. Create groups to author who-can-reach-whom policy.",

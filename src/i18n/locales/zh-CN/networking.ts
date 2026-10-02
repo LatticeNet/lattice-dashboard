@@ -1273,6 +1273,8 @@ export default {
       selfTitle: "同一分组",
       noneTitle: "无分组策略",
       cellTitle: "{action} {proto} · {count} 条规则",
+      externalRules: "{n} 条规则",
+      externalHint: "从这个分组发往所有分组之外地址的规则",
       emptyGroupsTitle: "请先对机群分组",
       emptyGroupsDescription: "矩阵至少需要一个分组。创建分组以编写谁能访问谁的策略。",
       goToGroups: "前往分组",

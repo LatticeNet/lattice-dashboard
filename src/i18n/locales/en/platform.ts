@@ -1000,7 +1000,10 @@ export default {
       deliveries: "Recent attempts",
       noDeliveries: "Nothing has called this webhook yet.",
       testBadge: "Test",
-      deliveryMeta: "{delivered} of {channels} channels, {fields} fields, from {ip}",
+      deliveryMeta: "{reach}, {fields}, from {ip}",
+      deliveryReach: "delivered to {delivered} of {channels} channel | delivered to {delivered} of {channels} channels",
+      deliveryReachNone: "reached no channel",
+      deliveryFields: "{n} field | {n} fields",
       outcome: {
         accepted: "Accepted",
         no_route: "Reached nobody",
