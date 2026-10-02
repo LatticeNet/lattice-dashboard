@@ -133,19 +133,6 @@ const RULE_PRESETS: RulePreset[] = [
   },
 ];
 
-function kindBadgeVariant(kind: string): "info" | "secondary" | "default" | "warning" {
-  switch (kind) {
-    case "telegram":
-      return "info";
-    case "discord":
-      return "default";
-    case "bark":
-      return "warning";
-    default:
-      return "secondary";
-  }
-}
-
 const { t } = useI18n();
 const auth = useAuthStore();
 // The notify split (2026-09): notify:admin governs channels, rules and
@@ -158,6 +145,16 @@ const channelsQuery = useAsyncData((signal) => api.notify.channels({ signal }), 
 const channels = computed(() => channelsQuery.data.value ?? []);
 const rulesQuery = useAsyncData((signal) => api.notify.rules({ signal }), { pollInterval: 12000 });
 const rules = computed(() => rulesQuery.data.value?.rules ?? []);
+/** Whether each read has landed once; a count from a read that never did is not shown. */
+const channelsRead = computed(() => channelsQuery.data.value !== undefined);
+const rulesRead = computed(() => rulesQuery.data.value !== undefined);
+
+/** Why the rule presets cannot open, or nothing when they can. */
+const presetBlock = computed<string | undefined>(() => {
+  if (!channelsRead.value) return t("platform.notifications.presetsChannelsUnread");
+  if (sortedChannels.value.length === 0) return t("platform.notifications.presetsNeedChannel");
+  return undefined;
+});
 
 /*
  * The proof line (design 23, section 3.1): channels and rules as last read.
@@ -243,6 +240,9 @@ function renewalLine(rule: NotifyRuleView): { text: string; warn: boolean } {
     when: reminderWhen(reminder.inDays, reminder.at),
     name: reminderMachineName(machine),
     offset: reminder.offset,
+    // vue-i18n picks a plural form from a numeric `count`, which here counts
+    // machines, so the days are pluralised as their own phrase.
+    days: t("platform.notifications.renewals.days", { n: reminder.offset }, reminder.offset),
     renewal: reminder.renewal,
     count: c.sameDay,
   };
@@ -322,7 +322,7 @@ const channelColumns = computed<DataTableColumn<NotifyChannelView>[]>(() => [
   { key: "config_keys", label: t("platform.notifications.colConfiguredKeys") },
   { key: "enabled", label: t("platform.notifications.colStatus"), sortable: true },
   { key: "updated_at", label: t("platform.notifications.colUpdated"), sortable: true, class: "text-xs text-muted-foreground" },
-  { key: "actions", label: t("platform.notifications.colActions"), align: "right" },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
 
 const ruleColumns = computed<DataTableColumn<NotifyRuleView>[]>(() => [
@@ -331,7 +331,7 @@ const ruleColumns = computed<DataTableColumn<NotifyRuleView>[]>(() => [
   { key: "channel_ids", label: t("platform.notifications.colChannels") },
   { key: "templates", label: t("platform.notifications.colTemplates") },
   { key: "enabled", label: t("platform.notifications.colStatus"), sortable: true },
-  { key: "actions", label: t("platform.notifications.colActions"), align: "right" },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
 
 // ── Create / edit dialog ─────────────────────────────────────────────────────
@@ -481,6 +481,36 @@ async function sendTest(): Promise<void> {
 const deleteTarget = ref<NotifyChannelView | undefined>();
 const deleting = ref(false);
 
+/**
+ * What a channel delete stops (design 23, section 3.8). Once one enabled rule
+ * exists, only rules deliver, so an enabled rule whose every other channel is
+ * gone or disabled stops reaching anyone: those are named first, with their
+ * events, and the operator types the channel's name. Rules that keep another
+ * channel are named with it. With no enabled rule, every enabled channel
+ * gets everything, so the channel simply stops receiving.
+ */
+const channelDeleteImpact = computed<{ lines: string[]; typed: boolean }>(() => {
+  const target = deleteTarget.value;
+  if (!target) return { lines: [], typed: false };
+  const name = target.name || target.id;
+  if (!rulesRead.value) return { lines: [t("platform.notifications.deleteImpact.rulesUnread")], typed: true };
+  const enabledRules = rules.value.filter((rule) => rule.enabled);
+  if (!enabledRules.length) {
+    return { lines: target.enabled ? [t("platform.notifications.deleteImpact.noRules", { name })] : [], typed: false };
+  }
+  const silenced: string[] = [];
+  const kept: string[] = [];
+  for (const rule of [...enabledRules].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))) {
+    if (!(rule.channel_ids ?? []).includes(target.id)) continue;
+    const others = (rule.channel_ids ?? []).filter((id) => id !== target.id && channels.value.some((channel) => channel.id === id && channel.enabled));
+    const events = (rule.event_types ?? ["*"]).join(", ");
+    if (others.length) kept.push(t("platform.notifications.deleteImpact.kept", { rule: rule.name || rule.id, others: others.map(channelName).join(", ") }));
+    else silenced.push(t("platform.notifications.deleteImpact.silenced", { rule: rule.name || rule.id, events }));
+  }
+  if (!silenced.length && !kept.length) return { lines: [t("platform.notifications.deleteImpact.unrouted", { name })], typed: false };
+  return { lines: [...silenced, ...kept], typed: silenced.length > 0 };
+});
+
 async function confirmDelete(): Promise<void> {
   if (!deleteTarget.value) return;
   deleting.value = true;
@@ -554,6 +584,11 @@ function parseRuleEvents(input: string): string[] {
 
 function channelName(id: string): string {
   return sortedChannels.value.find((channel) => channel.id === id)?.name || id;
+}
+
+/** A rule can still name a channel that was deleted; the server skips it. */
+function channelKnown(id: string): boolean {
+  return channels.value.some((channel) => channel.id === id);
 }
 
 function toggleRuleChannel(id: string, checked: boolean): void {
@@ -640,35 +675,10 @@ async function confirmDeleteRule(): Promise<void> {
           {{ $t('platform.notifications.channelsTitle') }}
         </CardTitle>
         <CardDescription>
-          {{ $t('platform.notifications.channelsCount', { count: channels.length }) }}
+          {{ channelsRead ? $t('platform.notifications.channelsCount', { count: channels.length }, channels.length) : $t('platform.notifications.channelsUnread') }}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div v-if="canManage" class="mb-4 rounded-md border border-border p-3">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p class="text-sm font-medium">{{ $t('platform.notifications.presetsTitle') }}</p>
-              <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.presetsDescription') }}</p>
-              <p v-if="sortedChannels.length === 0" class="text-xs text-muted-foreground">
-                {{ $t('platform.notifications.presetsNeedChannel') }}
-              </p>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <Button
-                v-for="preset in RULE_PRESETS"
-                :key="preset.key"
-                variant="outline"
-                size="sm"
-                :disabled="sortedChannels.length === 0"
-                :title="sortedChannels.length === 0 ? $t('platform.notifications.presetsNeedChannel') : undefined"
-                @click="openRulePreset(preset)"
-              >
-                <Plus class="size-4" aria-hidden="true" />
-                {{ $t(`platform.notifications.presets.${preset.key}`) }}
-              </Button>
-            </div>
-          </div>
-        </div>
         <DataTable
           state-key="channels"
           :columns="channelColumns"
@@ -677,7 +687,8 @@ async function confirmDeleteRule(): Promise<void> {
           :loading="channelsQuery.loading.value"
           :error="channelsQuery.error.value"
           :has-data="channelsQuery.data.value !== undefined"
-          :page-size="50"
+          :page-size="0"
+          :show-summary="false"
           :searchable="sortedChannels.length > 6"
           :expression-filter="false"
           :search-placeholder="$t('platform.shared.searchNames')"
@@ -691,7 +702,7 @@ async function confirmDeleteRule(): Promise<void> {
             <div class="font-medium">{{ row.name || row.id }}</div>
           </template>
           <template #cell-kind="{ row }">
-            <Badge :variant="kindBadgeVariant(row.kind)">{{ row.kind }}</Badge>
+            <Badge variant="outline" class="font-mono text-[11px]">{{ row.kind }}</Badge>
           </template>
           <template #cell-config_keys="{ row }">
             <div class="flex flex-wrap gap-1">
@@ -732,6 +743,29 @@ async function confirmDeleteRule(): Promise<void> {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div v-if="canManage" class="mb-4 rounded-md border border-border p-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p class="text-sm font-medium">{{ $t('platform.notifications.presetsTitle') }}</p>
+              <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.presetsDescription') }}</p>
+              <p v-if="presetBlock" class="text-xs text-muted-foreground" data-testid="presets-blocked">{{ presetBlock }}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <Button
+                v-for="preset in RULE_PRESETS"
+                :key="preset.key"
+                variant="outline"
+                size="sm"
+                :disabled="!!presetBlock"
+                :title="presetBlock"
+                @click="openRulePreset(preset)"
+              >
+                <Plus class="size-4" aria-hidden="true" />
+                {{ $t(`platform.notifications.presets.${preset.key}`) }}
+              </Button>
+            </div>
+          </div>
+        </div>
         <DataTable
           state-key="rules"
           :columns="ruleColumns"
@@ -741,7 +775,8 @@ async function confirmDeleteRule(): Promise<void> {
           :error="rulesQuery.error.value"
           :has-data="rulesQuery.data.value !== undefined"
           :row-expanded="ruleHasDetail"
-          :page-size="50"
+          :page-size="0"
+          :show-summary="false"
           :searchable="sortedRules.length > 6"
           :expression-filter="false"
           :search-placeholder="$t('platform.shared.searchNames')"
@@ -789,7 +824,10 @@ async function confirmDeleteRule(): Promise<void> {
           </template>
           <template #cell-channel_ids="{ row }">
             <div class="flex flex-wrap gap-1">
-              <Badge v-for="id in (row.channel_ids ?? [])" :key="id" variant="secondary">{{ channelName(id) }}</Badge>
+              <span v-if="!channelsRead" class="text-xs text-muted-foreground">{{ $t('platform.notifications.ruleChannelsUnread', { n: (row.channel_ids ?? []).length }, (row.channel_ids ?? []).length) }}</span>
+              <template v-else>
+                <Badge v-for="id in (row.channel_ids ?? [])" :key="id" :variant="channelKnown(id) ? 'secondary' : 'outline'">{{ channelKnown(id) ? channelName(id) : $t('platform.notifications.channelGone', { id }) }}</Badge>
+              </template>
             </div>
           </template>
           <template #cell-templates="{ row }">
@@ -1040,6 +1078,8 @@ async function confirmDeleteRule(): Promise<void> {
       :open="!!deleteTarget"
       :title="$t('platform.notifications.deleteChannelTitle')"
       :description="$t('platform.notifications.deleteChannelConfirm', { name: deleteTarget?.name || deleteTarget?.id })"
+      :impact="channelDeleteImpact.lines"
+      :typed-confirm="channelDeleteImpact.typed ? deleteTarget?.name || deleteTarget?.id : undefined"
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"

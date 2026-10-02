@@ -37,10 +37,10 @@ export default {
       turnOff: "关闭",
       saved: "已更新 {capability}",
       confirm: {
-        enableTitle: "打开这个开关?",
+        enableTitle: "打开这个开关？",
         enableBody:
           "{capability} 会立即拒绝 {refuse} 台机器,放行 {allow} 台。正在针对被拒绝节点运行的操作会失败,直到把它们准入为止。",
-        disableTitle: "关闭这个开关?",
+        disableTitle: "关闭这个开关？",
         disableBody: "{capability} 将重新可以作用于所有节点,包括你排除掉的那些。这次改动会记入审计日志。",
       },
     },
@@ -261,10 +261,10 @@ export default {
         enabled: "启用(在登录页提供该提供方)",
         disableLastWarning: "这是唯一启用的提供方。关闭后,登录页将对所有人隐藏 SSO 入口。",
       },
-      disableLastTitle: "停用唯一的 SSO 提供方?",
+      disableLastTitle: "停用唯一的 SSO 提供方？",
       disableLastDescription:
         "“{name}”是最后一个启用的提供方。保存后登录页将不再提供单点登录,只剩密码与 Passkey 两种方式,没有本地密码的人会被锁在外面。",
-      deleteTitle: "删除身份提供方?",
+      deleteTitle: "删除身份提供方？",
       deleteDescription:
         "移除“{name}”。原先通过它登录的运维人员会失去这条登录途径，账号、权限、密码和 Passkey 都保留；没有其他登录方式的人会被挡在门外。此操作无法撤销。",
       toast: {
@@ -321,7 +321,7 @@ export default {
         passwordHintEdit:
           "留空则保持现有密码。无论你是否改动密码，保存都会把该用户从控制台登出；他们的访问令牌仍然有效。",
       },
-      deleteTitle: "删除用户?",
+      deleteTitle: "删除用户？",
       deleteDescription: "删除账号“{name}”。此操作无法撤销。",
       deleteSelf: "这是你当前登录的账号",
       deleteLastAdmin: "最后一个完全管理员不能删除",
@@ -388,13 +388,13 @@ export default {
         name: "名称",
         scopes: "权限范围",
       },
-      revokeTitle: "吊销令牌?",
+      revokeTitle: "吊销令牌？",
       revokeDescription: "吊销“{name}”。吊销是单向的，吊销后无法恢复。",
       revokeImpact: "之后任何用这个令牌调用 API 的请求都会收到 401",
-      deleteTitle: "删除已吊销令牌?",
+      deleteTitle: "删除已吊销令牌？",
       deleteDescription:
         "从令牌列表中删除“{name}”。只能删除已经吊销的令牌；审计历史仍会保留。",
-      discardTitle: "放弃此令牌?",
+      discardTitle: "放弃此令牌？",
       discardDescription:
         "你已选择权限范围并填写了信息，但尚未创建。现在关闭将丢弃这些内容。",
       discardConfirm: "放弃",
