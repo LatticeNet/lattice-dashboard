@@ -736,7 +736,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         <div v-if="searchShown && (showSearch || showExpression)" class="grid grid-cols-1 min-w-0 flex-1 gap-2 md:grid-cols-2">
           <div v-if="showSearch" class="relative min-w-0 sm:min-w-[220px]">
             <Search
-              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
             <Input
@@ -748,7 +748,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             <button
               v-if="searchInput"
               type="button"
-              class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               :aria-label="label.clearSearch.value"
               @click="searchInput = ''"
             >
@@ -757,7 +757,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
           </div>
           <div v-if="showExpression" class="relative min-w-0 sm:min-w-[240px]">
             <Funnel
-              class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground"
+              class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
             <Input
@@ -771,7 +771,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             <button
               v-if="expressionInput"
               type="button"
-              class="absolute right-2 top-2.5 text-muted-foreground transition-colors hover:text-foreground"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               :aria-label="label.clearSearch.value"
               @click="expressionInput = ''"
             >

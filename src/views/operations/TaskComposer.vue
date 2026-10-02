@@ -397,7 +397,7 @@ async function createTask() {
 
           <div :class="cn('grid grid-cols-1 gap-2', noRegions ? 'md:grid-cols-[1fr_0.8fr]' : 'md:grid-cols-[1fr_0.8fr_0.8fr]')">
             <div class="relative">
-              <Search class="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden="true" />
+              <Search class="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
               <Input v-model="targetSearch" class="pl-8" :placeholder="$t('operations.tasks.targetSearch')" />
             </div>
             <Select v-model="targetTag">

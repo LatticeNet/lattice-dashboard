@@ -523,7 +523,13 @@
       min-height: 44px;
     }
 
-    /* Text fields and select triggers are 36 px for the same finger. */
+    /* Text fields and select triggers are 36 px for the same finger.
+       A caller's compact height (h-6, h-7, h-8) still becomes 44 px on a
+       coarse pointer, on purpose: every page was rendered at 375 with a
+       touch pointer and none of those controls clipped, overflowed its
+       parent or pushed the page sideways; rows only grew. An icon or a
+       clear button placed inside a field centres with top-1/2 and a
+       translate, never a fixed top offset, which sits 4 px high here. */
     [data-slot="input"]:not([type="checkbox"], [type="radio"]),
     [data-slot="select-trigger"] {
       min-height: 44px;
