@@ -144,7 +144,7 @@ test("lease age spells its units in the caller's language", () => {
 test("every task state has exactly one colour, and both pages read it from here", () => {
   // The two surfaces that used to disagree: the Tasks table and the node
   // page's queue. Reading the same table is the whole point of it existing.
-  assert.deepEqual(taskStateStyle("stalled"), { variant: "warning", textClass: "text-warning" });
+  assert.deepEqual(taskStateStyle("stalled"), { variant: "warning", textClass: "text-warning-text" });
   assert.deepEqual(taskStateStyle("leased"), { variant: "secondary", textClass: "text-muted-foreground" });
   assert.deepEqual(taskStateStyle("queued"), { variant: "outline", textClass: "text-muted-foreground" });
   assert.deepEqual(taskStateStyle("failed"), { variant: "destructive", textClass: "text-destructive" });

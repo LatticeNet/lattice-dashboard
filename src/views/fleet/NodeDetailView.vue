@@ -2189,7 +2189,7 @@ async function saveDebug(): Promise<void> {
               <p class="mt-2 font-medium text-muted-foreground">{{ $t('fleet.nodes.detail.launch.taskSandbox') }}</p>
               <p class="mt-1 text-foreground">{{ taskSandboxSummary(node.agent_runtime) }}</p>
               <p class="mt-1 text-muted-foreground">{{ taskSandboxFeatures(node.agent_runtime) }}</p>
-              <p v-if="node.agent_runtime?.task_sandbox_warning" class="mt-1 text-warning">
+              <p v-if="node.agent_runtime?.task_sandbox_warning" class="mt-1 text-warning-text">
                 {{ node.agent_runtime.task_sandbox_warning }}
               </p>
             </div>
@@ -2202,7 +2202,7 @@ async function saveDebug(): Promise<void> {
               <p class="mt-1 text-foreground">{{ launchSnapshotSummary(draftLaunchSnapshot) }}</p>
             </div>
           </div>
-          <p class="text-xs" :class="launchDirty ? 'text-warning-foreground' : 'text-muted-foreground'">
+          <p class="text-xs" :class="launchDirty ? 'text-warning-text' : 'text-muted-foreground'">
             {{ launchDirty ? $t('fleet.nodes.detail.launch.draftChanges', { changes: launchDiffSummary }) : $t('fleet.nodes.detail.launch.noDraftChanges') }}
           </p>
 
@@ -2380,7 +2380,7 @@ async function saveDebug(): Promise<void> {
             <p v-if="activeAgentUpdateError" class="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-xs text-destructive">
               {{ activeAgentUpdateError }}
             </p>
-            <p v-else-if="agentAppliedVersionMismatch" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning-foreground">
+            <p v-else-if="agentAppliedVersionMismatch" class="rounded-md border border-warning/40 bg-warning/5 p-2 text-xs text-warning-text">
               {{ $t('fleet.nodes.detail.agentVersionMismatch', { current: node.agent_version, applied: updatePolicy.last_applied_version }) }}
             </p>
           </template>

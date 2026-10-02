@@ -194,7 +194,7 @@ export interface TaskStateStyle {
 const TASK_STATE_STYLE: Record<TaskRunState, TaskStateStyle> = {
   finished: { variant: "default", textClass: "text-muted-foreground" },
   failed: { variant: "destructive", textClass: "text-destructive" },
-  stalled: { variant: "warning", textClass: "text-warning" },
+  stalled: { variant: "warning", textClass: "text-warning-text" },
   leased: { variant: "secondary", textClass: "text-muted-foreground" },
   cancelled: { variant: "secondary", textClass: "text-muted-foreground" },
   expired: { variant: "secondary", textClass: "text-muted-foreground" },
