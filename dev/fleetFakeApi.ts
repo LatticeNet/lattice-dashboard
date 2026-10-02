@@ -249,7 +249,14 @@ export const api = {
   groups: {
     list: () => answer("groups", () => ({ groups: GROUPS.map((g) => ({ ...g })), ungrouped: ungrouped() })),
     preview: (selector: { members?: string[] }) => delay({ node_ids: selector.members ?? [], count: selector.members?.length ?? 0 }),
-    upsert: (input: { id?: string; name: string }) => delay({ ...(GROUPS.find((g) => g.id === input.id) ?? GROUPS[0]!), ...input }),
+    // A new group gets an id the way the server gives one; an edit keeps its own.
+    upsert: (input: { id?: string; name: string }) => {
+      const held = GROUPS.find((g) => g.id === input.id);
+      if (held) return delay({ ...held, ...input, id: held.id });
+      const created = { ...GROUPS[0]!, members: [], ...input, id: `grp_${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`, system: false };
+      GROUPS.push(created);
+      return delay(created);
+    },
     delete: (id: string) => {
       const index = GROUPS.findIndex((g) => g.id === id);
       if (index >= 0) GROUPS.splice(index, 1);

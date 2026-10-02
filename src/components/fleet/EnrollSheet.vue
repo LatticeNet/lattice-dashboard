@@ -14,6 +14,7 @@ import { groupColor } from "@/lib/groupColors";
 import { cn } from "@/lib/utils";
 
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -119,6 +120,37 @@ async function submit(): Promise<void> {
   }
 }
 
+/**
+ * Something typed or chosen that closing would throw away. Escape, the close
+ * button and Close ask first when it is set, like the Machines editor. Once
+ * the token is created the form is empty again and nothing is owed.
+ */
+const dirty = computed(
+  () =>
+    [name, nodeId, role, tags, comment, sourceAllowlist].some((field) => field.value.trim() !== "") ||
+    groupIds.value.length > 0 ||
+    allowExec.value ||
+    allowRootExec.value ||
+    noExec.value ||
+    allowTerminal.value ||
+    sshAlerts.value ||
+    terminalTransport.value !== "stream",
+);
+const discardOpen = ref(false);
+function requestClose(): void {
+  if (pending.value) return;
+  if (dirty.value) {
+    discardOpen.value = true;
+    return;
+  }
+  emit("close");
+}
+function discard(): void {
+  discardOpen.value = false;
+  reset();
+  emit("close");
+}
+
 const command = computed(() => {
   if (!result.value) return "";
   return result.value.commands?.[platform.value] || result.value.command || result.value.token;
@@ -129,7 +161,7 @@ const CHOICE =
 </script>
 
 <template>
-  <ObjectSheet :open="open" :title="$t('fleet.nodes.enroll.title')" @close="emit('close')">
+  <ObjectSheet :open="open" :title="$t('fleet.nodes.enroll.title')" @close="requestClose">
     <div class="space-y-5">
       <p class="text-sm text-muted-foreground">{{ $t('fleet.nodes.enroll.description') }}</p>
 
@@ -275,7 +307,7 @@ const CHOICE =
     </div>
 
     <template #actions>
-      <Button variant="outline" size="sm" type="button" @click="emit('close')">{{ $t('common.actions.close') }}</Button>
+      <Button variant="outline" size="sm" type="button" @click="requestClose">{{ $t('common.actions.close') }}</Button>
       <Button type="submit" form="enroll-form" size="sm" :disabled="pending || !name.trim()">
         <RefreshCw v-if="pending" class="animate-spin" aria-hidden="true" />
         <Plus v-else aria-hidden="true" />
@@ -283,4 +315,13 @@ const CHOICE =
       </Button>
     </template>
   </ObjectSheet>
+
+  <ConfirmDialog
+    v-model:open="discardOpen"
+    :title="$t('fleet.nodes.enroll.discard.title')"
+    :description="$t('fleet.nodes.enroll.discard.description')"
+    :confirm-label="$t('fleet.nodes.enroll.discard.confirm')"
+    :cancel-label="$t('fleet.nodes.enroll.discard.keep')"
+    @confirm="discard"
+  />
 </template>

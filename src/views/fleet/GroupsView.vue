@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink } from "vue-router";
+import { RouterLink, onBeforeRouteLeave, onBeforeRouteUpdate, useRouter, type RouteLocationNormalized } from "vue-router";
 import { toast } from "vue-sonner";
 import {
   Crown,
@@ -38,6 +38,8 @@ import { useProof } from "@/composables/useProof";
 import { proofReason } from "@/components/common/proofModel";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
+import { readOpenId } from "@/composables/routeOpenModel";
+import { createConfirmReturn } from "./confirmFocus";
 import type { QueryRecord } from "@/components/common/tableUrlState";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -192,6 +194,17 @@ const draftDirty = computed(() => editing.value !== null && formSnapshot() !== f
 
 const discardOpen = ref(false);
 let afterDiscard: (() => void) | undefined;
+/**
+ * Keep editing returns focus to what asked (a row menu's trigger, a field in
+ * the sheet). Discard lands on the sheet's title when a group is still open,
+ * since what asked may now be a different group's row.
+ */
+const discardReturn = createConfirmReturn();
+let discarded = false;
+function discardFocus(): HTMLElement | null {
+  if (discarded) return document.querySelector<HTMLElement>('[data-testid="object-sheet"] [data-slot="dialog-title"]');
+  return discardReturn.target();
+}
 
 /** Run `action` now, or once the operator agrees to drop the draft. */
 function unlessDraft(action: () => void): void {
@@ -200,12 +213,15 @@ function unlessDraft(action: () => void): void {
     return;
   }
   afterDiscard = action;
+  discarded = false;
+  discardReturn.remember();
   discardOpen.value = true;
 }
 
 function discardDraft(): void {
   const action = afterDiscard;
   afterDiscard = undefined;
+  discarded = true;
   discardOpen.value = false;
   editingExisting.value = false;
   formBaseline.value = formSnapshot();
@@ -215,6 +231,39 @@ function discardDraft(): void {
 watch(discardOpen, (open) => {
   if (!open) afterDiscard = undefined;
 });
+
+/**
+ * Escape, the close button and Cancel ask before they drop an edited draft,
+ * the way the Machines editor does. They ask before writing the address: the
+ * page reads a requested ?open= at once, so asking in a route guard would
+ * come after the editor had already left edit mode.
+ */
+function requestCloseSheet(): void {
+  unlessDraft(() => {
+    editingExisting.value = false;
+    sheet.close();
+  });
+}
+
+/**
+ * Browser back and forward, and a link to another page, change the route
+ * without the page writing it, so a guard asks for those. A route change
+ * that keeps the same group open (a filter typed beside the sheet) passes.
+ * Once the operator discards, the draft is clean and the same navigation
+ * goes through.
+ */
+const router = useRouter();
+function guardDraft(to: RouteLocationNormalized, from: RouteLocationNormalized): boolean {
+  if (!draftDirty.value) return true;
+  const leaving = to.path !== from.path;
+  if (!leaving && readOpenId(to.query) === readOpenId(from.query)) return true;
+  unlessDraft(() => {
+    void (leaving ? router.push(to.fullPath) : router.replace(to.fullPath)).catch(() => {});
+  });
+  return false;
+}
+onBeforeRouteUpdate(guardDraft);
+onBeforeRouteLeave(guardDraft);
 
 /** A row click swaps the open group; the group already open stays as it is. */
 function openGroup(group: GroupView, el?: HTMLElement): void {
@@ -390,6 +439,8 @@ async function save() {
     toast.success(wasNew ? t("fleet.groups.toast.created") : t("fleet.groups.toast.saved"));
     await refreshAll();
     editingExisting.value = false;
+    // Saved: the draft is no longer one to guard on the way to its own row.
+    formBaseline.value = formSnapshot();
     if (wasNew) sheet.open(saved.id);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("fleet.groups.toast.saveFailed"));
@@ -400,10 +451,13 @@ async function save() {
 
 const deleteOpen = ref(false);
 const deleting = ref(false);
+/** A confirm opened from a row menu hands focus back to that menu. */
+const confirmReturn = createConfirmReturn();
 /** The group the confirm names; its own ref, so the editor's draft is never touched. */
 const deleteTarget = ref<GroupView | undefined>();
 
 function requestDelete(group: GroupView): void {
+  confirmReturn.remember(group.id);
   deleteTarget.value = group;
   deleteOpen.value = true;
 }
@@ -655,7 +709,7 @@ const deleteImpact = computed(() => {
       :return-focus="sheet.returnFocus"
       :gone-title="$t('fleet.groups.sheet.goneTitle')"
       :gone-description="$t('fleet.groups.sheet.goneDescription')"
-      @close="sheet.close"
+      @close="requestCloseSheet"
       @retry="refreshAll"
     >
       <!-- Read: health, members, how membership is decided. -->
@@ -849,7 +903,10 @@ const deleteImpact = computed(() => {
             <Trash2 class="size-4" aria-hidden="true" />
             {{ $t('common.actions.delete') }}
           </Button>
-          <Button variant="outline" size="sm" type="button" @click="creating ? sheet.close() : (editingExisting = false)">
+          <p v-if="!trimmedName && !saving" class="me-auto text-xs text-muted-foreground" data-testid="group-missing">
+            {{ $t('fleet.groups.missingName') }}
+          </p>
+          <Button variant="outline" size="sm" type="button" @click="creating ? requestCloseSheet() : unlessDraft(() => (editingExisting = false))">
             {{ $t('common.actions.cancel') }}
           </Button>
           <Button size="sm" type="button" :disabled="!canSubmit || saving" @click="save">
@@ -872,6 +929,7 @@ const deleteImpact = computed(() => {
       :confirm-label="$t('common.actions.delete')"
       :cancel-label="$t('common.actions.cancel')"
       :pending="deleting"
+      :return-focus="confirmReturn.target"
       @confirm="confirmDelete"
     />
 
@@ -884,6 +942,7 @@ const deleteImpact = computed(() => {
       :description="editing === 'new' ? $t('fleet.groups.discard.descriptionNew') : $t('fleet.groups.discard.description', { name: selectedGroup?.name ?? '' })"
       :confirm-label="$t('fleet.groups.discard.confirm')"
       :cancel-label="$t('fleet.groups.discard.keep')"
+      :return-focus="discardFocus"
       @confirm="discardDraft"
     />
   </div>
