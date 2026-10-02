@@ -619,7 +619,7 @@ onMounted(() => {
           class="relative min-w-0 flex-1 sm:max-w-md"
         >
           <ComboboxAnchor
-            class="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40"
+            class="flex h-9 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/40 pointer-coarse:h-11"
           >
             <Search class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <ComboboxInput
@@ -630,7 +630,7 @@ onMounted(() => {
               :aria-label="$t('operations.terminal.toolbar.nodeLabel')"
               class="h-full min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
             />
-            <ComboboxTrigger class="shrink-0 text-muted-foreground" :aria-label="$t('operations.terminal.toolbar.nodeOpen')">
+            <ComboboxTrigger class="shrink-0 text-muted-foreground pointer-coarse:-my-px pointer-coarse:-mr-3 pointer-coarse:inline-flex pointer-coarse:size-11 pointer-coarse:items-center pointer-coarse:justify-center" :aria-label="$t('operations.terminal.toolbar.nodeOpen')">
               <ChevronsUpDown class="size-4" aria-hidden="true" />
             </ComboboxTrigger>
           </ComboboxAnchor>
@@ -638,7 +638,7 @@ onMounted(() => {
             <ComboboxContent
               position="popper"
               :side-offset="4"
-              class="z-50 max-h-80 min-w-(--reka-combobox-trigger-width) overflow-y-auto overscroll-contain rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+              class="z-50 max-h-80 max-w-[calc(100vw-2rem)] min-w-(--reka-combobox-trigger-width) overflow-y-auto overscroll-contain rounded-md border border-border bg-popover text-popover-foreground shadow-md"
             >
               <ComboboxViewport class="p-1">
                 <p v-if="!canListNodes" class="px-2 py-4 text-center text-sm text-muted-foreground">
@@ -655,7 +655,7 @@ onMounted(() => {
                   :key="node.id"
                   :value="node.id"
                   :text-value="node.name || node.id"
-                  class="flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm outline-none transition-colors data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary"
+                  class="flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm outline-none transition-colors pointer-coarse:h-11 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[state=checked]:text-primary"
                 >
                   <StatusDot :status="describeNodeStatus(node).health" :pulse="false" />
                   <span class="truncate">{{ node.name || node.id }}</span>
@@ -698,7 +698,7 @@ onMounted(() => {
 
       <!-- Limits and transport: the caps the server enforces, as static facts. -->
       <details class="group shrink-0 px-4 text-xs text-muted-foreground sm:px-0">
-        <summary class="inline-flex min-h-6 cursor-pointer list-none select-none items-center gap-1 font-mono transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+        <summary class="inline-flex min-h-6 cursor-pointer pointer-coarse:min-h-11 list-none select-none items-center gap-1 font-mono transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
           <ChevronRight class="size-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
           {{ $t('operations.terminal.limits.summary') }}
         </summary>
@@ -755,7 +755,7 @@ onMounted(() => {
             :aria-selected="tab.id === activeTabId"
             :tabindex="tab.id === activeTabId ? 0 : -1"
             :title="tabTitle(tab)"
-            class="flex h-8 max-w-64 items-center gap-2 pl-3 pr-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            class="flex h-8 max-w-64 items-center gap-2 pl-3 pr-1 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-11"
             @click="selectTab(tab.id)"
             @keydown="onTabKeydown($event, index)"
           >
@@ -766,7 +766,7 @@ onMounted(() => {
           </button>
           <button
             type="button"
-            class="mr-1 inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60"
+            class="mr-1 inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:mr-0 pointer-coarse:size-11"
             :tabindex="tab.id === activeTabId ? 0 : -1"
             :aria-label="tab.live ? $t('operations.terminal.tabs.closeTab', { node: tab.nodeName }) : $t('operations.terminal.tabs.dismissTab', { node: tab.nodeName })"
             :title="tab.live ? $t('operations.terminal.tabs.closeTab', { node: tab.nodeName }) : $t('operations.terminal.tabs.dismissTab', { node: tab.nodeName })"
