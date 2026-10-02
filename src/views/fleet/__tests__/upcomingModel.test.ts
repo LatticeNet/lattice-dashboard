@@ -167,6 +167,29 @@ test("a row opens the server's path on this origin, or the page that owns its ki
   assert.equal(rowHref({ kind: "provider_subscription" }), undefined);
 });
 
+test("a VPN identity's row opens that identity in vpn-core's Users page", () => {
+  // The server's href today is the bare Users page.
+  assert.equal(
+    rowHref({ kind: "vpn_user", id: "vpnu_7k2", href: "/plugins/latticenet.vpn-core/users" }),
+    "/plugins/latticenet.vpn-core/users?open=vpnu_7k2",
+  );
+  // No href at all, an id that needs escaping.
+  assert.equal(rowHref({ kind: "vpn_user", id: "a b&c" }), "/plugins/latticenet.vpn-core/users?open=a+b%26c");
+  // An href with its own query keeps it.
+  assert.equal(
+    rowHref({ kind: "vpn_user", id: "vpnu_7k2", href: "/plugins/latticenet.vpn-core/users?show=expiring" }),
+    "/plugins/latticenet.vpn-core/users?show=expiring&open=vpnu_7k2",
+  );
+  // A server that already names the identity is left alone, as is a different page.
+  assert.equal(
+    rowHref({ kind: "vpn_user", id: "vpnu_7k2", href: "/plugins/latticenet.vpn-core/users?open=vpnu_other" }),
+    "/plugins/latticenet.vpn-core/users?open=vpnu_other",
+  );
+  assert.equal(rowHref({ kind: "vpn_user", id: "vpnu_7k2", href: "/plugins/latticenet.vpn-core/lines" }), "/plugins/latticenet.vpn-core/lines");
+  // An off-site href is never followed.
+  assert.equal(rowHref({ kind: "vpn_user", id: "vpnu_7k2", href: "//evil.example/users" }), "/plugins/latticenet.vpn-core/users?open=vpnu_7k2");
+});
+
 test("hidden kinds are named in chip order, and an old server's row count is ignored", () => {
   assert.deepEqual(hiddenKindsOf({ hidden_kinds: ["share", "vpn_user", "share"] }), ["vpn_user", "share"]);
   assert.deepEqual(hiddenKindsOf({ hidden_kinds: ["provider_subscription", "tls_certificate"] }), ["tls_certificate", "provider_subscription"]);
