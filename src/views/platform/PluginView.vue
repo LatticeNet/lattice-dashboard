@@ -3,7 +3,8 @@ import { computed, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { Lock, PackageOpen, Play, Puzzle, RefreshCw } from "lucide-vue-next";
+// A contributed action is a plugin call, not a plan, so it carries no play icon (design 23, 4.4 keeps that for "create a plan").
+import { Lock, PackageOpen, Puzzle, RefreshCw } from "lucide-vue-next";
 import {
   api,
   type PluginViewAction,
@@ -402,7 +403,6 @@ function confirmAction() {
             @click="onActionClick(i, a)"
           >
             <RefreshCw v-if="runningIndex === i" class="size-4 animate-spin" aria-hidden="true" />
-            <Play v-else class="size-4" aria-hidden="true" />
             {{ a.label }}
           </Button>
         </template>
@@ -447,7 +447,7 @@ function confirmAction() {
 
     <!-- table (PRIMARY): the proof path, fed by POST /api/plugins/call. -->
     <Card v-else-if="kind === 'table'">
-      <CardContent class="pt-6">
+      <CardContent>
         <DataTable
           state-key="records"
           v-if="hasSource"
@@ -457,6 +457,7 @@ function confirmAction() {
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
           :page-size="50"
+          :show-summary="false"
           :searchable="hasSearchableColumn"
           :expression-filter="false"
           :search-placeholder="$t('common.actions.search')"
@@ -513,7 +514,7 @@ function confirmAction() {
 
     <!-- kv / detail: object → description list. -->
     <Card v-else-if="kind === 'kv' || kind === 'detail'">
-      <CardContent class="pt-6">
+      <CardContent>
         <DataState
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
@@ -540,7 +541,7 @@ function confirmAction() {
 
     <!-- markdown: plain text, no new heavy dep, strict CSP holds. -->
     <Card v-else-if="kind === 'markdown'">
-      <CardContent class="pt-6">
+      <CardContent>
         <DataState
           :loading="sourceQuery.loading.value"
           :error="sourceQuery.error.value"
@@ -571,7 +572,6 @@ function confirmAction() {
             @click="onActionClick(i, a)"
           >
             <RefreshCw v-if="runningIndex === i" class="size-4 animate-spin" aria-hidden="true" />
-            <Play v-else class="size-4" aria-hidden="true" />
             {{ a.label }}
           </Button>
         </div>
@@ -633,7 +633,6 @@ function confirmAction() {
             <Button type="button" variant="outline" @click="formOpen = false">{{ $t('common.actions.cancel') }}</Button>
             <Button type="submit" :disabled="runningIndex !== null">
               <RefreshCw v-if="runningIndex !== null" class="size-4 animate-spin" aria-hidden="true" />
-              <Play v-else class="size-4" aria-hidden="true" />
               {{ $t('pluginViews.submit') }}
             </Button>
           </DialogFooter>
