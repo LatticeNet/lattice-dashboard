@@ -47,6 +47,7 @@ import SidebarItem from "./SidebarItem.vue";
 import SidebarRailSection from "./SidebarRailSection.vue";
 import { sectionSignal, formatBadge } from "../navSignals";
 import { buildControlPlaneIdentity, controlPlaneInitials } from "../controlPlaneModel";
+import { commandShortcutKey, currentPlatformIsApple } from "../headerModel";
 import { api } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useNavSignals } from "../useNavSignals";
@@ -77,6 +78,8 @@ const isDesktop = useMediaQuery("(min-width: 768px)");
  * that needs them.
  */
 const { signals } = useNavSignals();
+/** The search field's hint names this keyboard's chord: Command K on macOS, Ctrl K elsewhere. */
+const shortcutKey = commandShortcutKey(currentPlatformIsApple());
 
 /**
  * Which control plane this is. An operator keeps a laptop copy and the real one
@@ -539,7 +542,7 @@ function onNavKeydown(event: KeyboardEvent) {
           <kbd
             class="pointer-events-none ml-auto inline-flex h-5 select-none items-center rounded border border-sidebar-border bg-sidebar px-1.5 font-mono text-[10px] font-medium text-sidebar-foreground/60"
           >
-            {{ $t('shell.command.shortcut') }}
+            {{ $t(shortcutKey) }}
           </kbd>
         </template>
       </button>

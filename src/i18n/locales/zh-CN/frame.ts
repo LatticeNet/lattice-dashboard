@@ -305,7 +305,8 @@ export default {
     command: {
       open: "打开命令面板",
       search: "搜索…",
-      shortcut: "⌘K",
+      shortcutMac: "⌘K",
+      shortcutOther: "Ctrl K",
       title: "命令面板",
       description: "搜索并跳转到任意页面。",
       placeholder: "输入以搜索页面…",

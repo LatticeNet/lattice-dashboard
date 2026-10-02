@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { useMagicKeys, useActiveElement } from "@vueuse/core";
+import { useEventListener } from "@vueuse/core";
 import {
   PopoverRoot,
   PopoverTrigger,
@@ -12,7 +12,15 @@ import {
 import { Menu, Palette, LogOut, User, KeyRound, Search } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { breadcrumbTrail, resolvePluginBreadcrumb, type Crumb } from "@/layout/headerModel";
+import {
+  breadcrumbTrail,
+  commandShortcutKey,
+  currentPlatformIsApple,
+  opensCommandPalette,
+  resolvePluginBreadcrumb,
+  type Crumb,
+  type ShortcutTarget,
+} from "@/layout/headerModel";
 import { useAuthStore } from "@/stores/auth";
 import { NAV } from "@/router/nav";
 import { usePluginContributions } from "@/composables/usePluginContributions";
@@ -122,33 +130,24 @@ const accountLabel = computed(
   () => auth.principal?.username || auth.principal?.actor_id || t("shell.header.account"),
 );
 
-// Cmd/Ctrl+K opens the command palette. `passive: false` lets us swallow the
-// browser default; we ignore the shortcut while the user is typing in a field.
-const activeElement = useActiveElement();
-const keys = useMagicKeys({
-  passive: false,
-  onEventFired(e) {
-    if (e.key === "k" && (e.metaKey || e.ctrlKey) && e.type === "keydown") {
-      e.preventDefault();
-    }
-  },
-});
-const cmdK = keys["Cmd+K"];
-const ctrlK = keys["Ctrl+K"];
+// Cmd/Ctrl+K opens the command palette (headerModel.opensCommandPalette
+// decides which chord counts where). The hint names this keyboard's chord.
+const apple = currentPlatformIsApple();
+const shortcutKey = commandShortcutKey(apple);
 
-function isEditable(el: Element | null | undefined): boolean {
-  if (!el) return false;
+function shortcutTarget(el: Element | null): ShortcutTarget {
+  if (!el) return "other";
+  // xterm's hidden input: Ctrl+K there is the shell's.
+  if (el.classList.contains("xterm-helper-textarea") || el.closest(".xterm")) return "terminal";
   const tag = el.tagName;
-  return (
-    tag === "INPUT" ||
-    tag === "TEXTAREA" ||
-    tag === "SELECT" ||
-    (el as HTMLElement).isContentEditable
-  );
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable) return "editable";
+  return "other";
 }
 
-watch([cmdK, ctrlK], ([a, b]) => {
-  if ((a || b) && !isEditable(activeElement.value)) emit("open-command");
+useEventListener(window, "keydown", (e: KeyboardEvent) => {
+  if (e.repeat || !opensCommandPalette(e, { apple, target: shortcutTarget(document.activeElement) })) return;
+  e.preventDefault();
+  emit("open-command");
 });
 
 async function logout() {
@@ -220,7 +219,7 @@ function openSecurity() {
         <kbd
           class="pointer-events-none ml-1 inline-flex h-5 select-none items-center gap-0.5 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground"
         >
-          {{ $t('shell.command.shortcut') }}
+          {{ $t(shortcutKey) }}
         </kbd>
       </Button>
       <Button

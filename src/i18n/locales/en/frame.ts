@@ -310,7 +310,8 @@ export default {
     command: {
       open: "Open command palette",
       search: "Search…",
-      shortcut: "⌘K",
+      shortcutMac: "⌘K",
+      shortcutOther: "Ctrl K",
       title: "Command palette",
       description: "Search and jump to any page.",
       placeholder: "Type to search pages…",

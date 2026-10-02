@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { breadcrumbTrail, resolvePluginBreadcrumb } from "../headerModel.ts";
+import { breadcrumbTrail, commandShortcutKey, isApplePlatform, opensCommandPalette, resolvePluginBreadcrumb } from "../headerModel.ts";
 
 test("plugin breadcrumbs use the plugin display name as the section label", () => {
   assert.deepEqual(
@@ -62,4 +62,48 @@ test("home has no section crumb, and a route no section owns is the page alone",
   assert.deepEqual(breadcrumbTrail("overview", SECTIONS, () => true), [{ kind: "page", name: "overview" }]);
   assert.deepEqual(breadcrumbTrail("login", SECTIONS, () => true), [{ kind: "page", name: "login" }]);
   assert.deepEqual(breadcrumbTrail("groups", SECTIONS, () => false)[0], { kind: "section", id: "fleet", to: undefined });
+});
+
+test("the palette hint is Command K on Apple keyboards and Ctrl K everywhere else", () => {
+  assert.equal(isApplePlatform("macOS"), true);
+  assert.equal(isApplePlatform("MacIntel"), true);
+  assert.equal(isApplePlatform("iPad"), true);
+  assert.equal(isApplePlatform("Linux x86_64"), false);
+  assert.equal(isApplePlatform("Win32"), false);
+  assert.equal(isApplePlatform("Windows"), false);
+  // No platform string at all: the user agent decides.
+  assert.equal(isApplePlatform("", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"), true);
+  assert.equal(isApplePlatform(undefined, "Mozilla/5.0 (X11; Linux x86_64)"), false);
+  assert.equal(commandShortcutKey(true), "shell.command.shortcutMac");
+  assert.equal(commandShortcutKey(false), "shell.command.shortcutOther");
+});
+
+test("the palette chord opens outside fields, only the keyboard's own chord opens inside one, and never in Terminal", () => {
+  const k = (mods: { meta?: boolean; ctrl?: boolean; alt?: boolean; shift?: boolean }, key = "k") => ({
+    key,
+    metaKey: !!mods.meta,
+    ctrlKey: !!mods.ctrl,
+    altKey: !!mods.alt,
+    shiftKey: !!mods.shift,
+  });
+  // Outside a field either chord opens it, on any keyboard.
+  for (const apple of [true, false]) {
+    assert.equal(opensCommandPalette(k({ meta: true }), { apple, target: "other" }), true);
+    assert.equal(opensCommandPalette(k({ ctrl: true }), { apple, target: "other" }), true);
+    assert.equal(opensCommandPalette(k({ ctrl: true }, "K"), { apple, target: "other" }), true);
+  }
+  // In a field off macOS, Ctrl+K opens it (it used to be swallowed and do nothing).
+  assert.equal(opensCommandPalette(k({ ctrl: true }), { apple: false, target: "editable" }), true);
+  assert.equal(opensCommandPalette(k({ meta: true }), { apple: false, target: "editable" }), false);
+  // In a field on macOS, Command+K opens it and Ctrl+K stays the line-kill key.
+  assert.equal(opensCommandPalette(k({ meta: true }), { apple: true, target: "editable" }), true);
+  assert.equal(opensCommandPalette(k({ ctrl: true }), { apple: true, target: "editable" }), false);
+  // Terminal keeps Ctrl+K and Command+K for the shell.
+  assert.equal(opensCommandPalette(k({ ctrl: true }), { apple: false, target: "terminal" }), false);
+  assert.equal(opensCommandPalette(k({ meta: true }), { apple: true, target: "terminal" }), false);
+  // Other chords and bare keys do nothing.
+  assert.equal(opensCommandPalette(k({}), { apple: false, target: "other" }), false);
+  assert.equal(opensCommandPalette(k({ ctrl: true, shift: true }), { apple: false, target: "other" }), false);
+  assert.equal(opensCommandPalette(k({ ctrl: true, alt: true }), { apple: false, target: "other" }), false);
+  assert.equal(opensCommandPalette(k({ ctrl: true }, "j"), { apple: false, target: "other" }), false);
 });
