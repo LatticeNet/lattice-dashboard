@@ -15,6 +15,14 @@
  * plugin files "<plugin id>/<service>/<method>", which no table can know, so
  * it gets a readable fallback built from its own words.
  *
+ * A runtime plugin cannot borrow a core title by taking a core id ("nft",
+ * "sshguard") as its manifest id. At e596325 the server sets the approval's
+ * plugin to the loaded manifest id and its action to the service plus method
+ * (server_plugin_operation.go), the service must sit under the plugin's own
+ * id (contributions.go, serviceOwnedByPlugin), and neither ids, service
+ * suffixes nor method names may contain ":". So that action always carries a
+ * "/" in its prefix, and no core prefix below has one.
+ *
  * Framework-free: a view resolves the returned key through i18n.
  */
 

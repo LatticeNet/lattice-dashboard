@@ -79,6 +79,16 @@ test("a kind nobody listed reads in its own words and keeps the plugin", () => {
   assert.deepEqual(approvalFallbackWords({ plugin: "", action: "" }), { action: "?", plugin: "?" });
 });
 
+test("a runtime plugin that takes a core id never borrows a core title", () => {
+  // The server files a runtime operation as "<manifest id>/<suffix>/<method>",
+  // so even a plugin installed as "nft" or "sshguard" files a prefix with a "/".
+  assert.equal(approvalKind({ plugin: "nft", action: "nft/apply-ruleset/plan" }), null);
+  assert.equal(approvalKind({ plugin: "nft", action: "nft/netguard/apply-ruleset" }), null);
+  assert.equal(approvalKind({ plugin: "sshguard", action: "sshguard/guard/sshguard-arm" }), null);
+  assert.equal(approvalKind({ plugin: "wireguard", action: "wireguard/apply-config/plan" }), null);
+  assert.equal(approvalTitleMessage({ plugin: "nft", action: "nft/apply-ruleset/plan" }).key, "operations.approvals.kinds.generic");
+});
+
 test("the raw label is the server's identifier without its digest", () => {
   assert.equal(approvalRawLabel({ plugin: "sshguard", action: "sshguard-arm:v1" }), "sshguard · sshguard-arm");
   assert.equal(approvalRawLabel({ plugin: "singbox-lineuser", action: `apply-line-user:${"b".repeat(64)}` }), "singbox-lineuser · apply-line-user");
