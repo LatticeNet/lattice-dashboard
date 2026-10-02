@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import {
   Activity,
   Globe,

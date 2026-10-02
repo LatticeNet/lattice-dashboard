@@ -4,6 +4,8 @@ import {
   type RouteRecordRaw,
 } from "vue-router";
 import { useAuthStore } from "@/stores/auth";
+import { setUnauthorizedListener } from "@/lib/api";
+import { installSessionExpiry } from "./expiredSession";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
@@ -188,6 +190,9 @@ router.afterEach(() => {
   chunkReloadAttempted = false;
 });
 
+// An expired session goes to sign-in with the way back (router/expiredSession).
+installSessionExpiry(router, useAuthStore, setUnauthorizedListener);
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
   if (!auth.ready) await auth.bootstrap();
@@ -197,12 +202,9 @@ router.beforeEach(async (to) => {
   if (!to.meta.public && auth.principal?.mfa_required && to.name !== "settings-security") {
     return { name: "settings-security", query: { mfa: "required" } };
   }
-  if (!to.meta.public && auth.isAuthenticated) {
-    const required = Array.isArray(to.meta.scopes) ? (to.meta.scopes as string[]) : [];
-    if (required.length > 0 && !auth.canAny(required)) {
-      return { name: "overview" };
-    }
-  }
+  // A route outside the principal's scopes is not redirected: the shell
+  // renders RouteDenied at the same address, naming the page and the scope
+  // (router/accessModel). The server refuses the calls either way.
   if (to.name === "login" && auth.isAuthenticated) {
     if (auth.principal?.mfa_required) {
       return { name: "settings-security", query: { mfa: "required" } };

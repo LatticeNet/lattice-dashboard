@@ -278,6 +278,7 @@ export default {
       },
       sheet: {
         title: "计划",
+        reviewNext: "查看下一个（还有 {n} 个待决定）",
         writer: "计划人",
         decided: "决定",
         approvedBy: "由 {actor} 批准",

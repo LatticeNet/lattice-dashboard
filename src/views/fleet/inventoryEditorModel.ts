@@ -99,3 +99,44 @@ export function rollForwardPast(day: string, cycle: string, cycleDays: number, t
   }
   return undefined;
 }
+
+/* ------------------------------------------------------------------ */
+/* Record renewal                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The date "Record renewal" offers: one billing cycle after the date the
+ * machine is due now. Recording a renewal means the operator paid for the
+ * next cycle, so the new due date is the old one plus a cycle; before this
+ * a machine without auto-roll recorded the date it already had, and nothing
+ * changed. Undefined when there is no due date or no usable cycle, and the
+ * operator types the date.
+ */
+export function renewalDefault(current: string, cycle: string, cycleDays: number): string | undefined {
+  return parseDay(current) ? advanceRenewal(current, cycle, cycleDays) : undefined;
+}
+
+export type RenewalChoice = "ok" | "invalid" | "unchanged";
+
+/** A calendar day as YYYY-MM-DD that exists (parseDay alone lets 2026-13-40 overflow). */
+function isDay(value: string): boolean {
+  const date = parseDay(value);
+  return !!date && formatDay(date) === value.trim();
+}
+
+/** Whether a chosen date can be recorded: a real day, different from the one stored. */
+export function renewalChoice(current: string, chosen: string): RenewalChoice {
+  if (!isDay(chosen)) return "invalid";
+  return chosen.trim() === current.trim() ? "unchanged" : "ok";
+}
+
+/**
+ * What the editor's own "Record renewal" sends for a machine without
+ * auto-roll: the date typed in the form when the operator changed it,
+ * otherwise one cycle after the saved date, never the saved date itself.
+ */
+export function manualRenewalTarget(saved: string, typed: string, cycle: string, cycleDays: number): string | undefined {
+  const edited = typed.trim();
+  if (edited && edited !== saved.trim()) return isDay(edited) ? edited : undefined;
+  return renewalDefault(saved, cycle, cycleDays);
+}

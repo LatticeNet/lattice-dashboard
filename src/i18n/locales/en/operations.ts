@@ -279,6 +279,7 @@ export default {
       },
       sheet: {
         title: "Plan",
+        reviewNext: "Review next ({n} left to decide)",
         writer: "Planned by",
         decided: "Decision",
         approvedBy: "approved by {actor}",

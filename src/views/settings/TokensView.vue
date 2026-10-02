@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from "vue";
 import { onBeforeRouteLeave } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import {
   KeyRound,
   Plus,

@@ -30,7 +30,7 @@ export default {
       observed: "{age}前观测",
       lastGood: "最后一次成功在 {age}前",
       refreshFailed: "刷新失败：{reason}",
-      noAnswer: "此后没有应答",
+      noAnswer: "之后没有新的应答",
       notRead: "未读取：{reason}",
       notReadBare: "未读取",
     },
@@ -277,6 +277,24 @@ export default {
   },
 
   shell: {
+    // 打开账号权限之外的页面时（router/accessModel）。
+    denied: {
+      title: "你无法打开「{page}」",
+      needsOne: "此页面需要 {scope} 权限，你的账号没有。",
+      needsAny: "此页面需要以下任一权限，你的账号都没有：",
+      ask: "管理员可以在「访问权限」页面为你的账号授予权限。",
+      overview: "前往概览",
+      permissions: "查看我的权限",
+    },
+    // 页头的最近错误列表（lib/toast、RecentErrors.vue）。
+    errors: {
+      open: "{n} 条最近的错误 | {n} 条最近的错误",
+      title: "最近的错误",
+      clear: "清空",
+      copy: "复制这条错误",
+      repeated: "出现 {n} 次",
+      note: "本标签页打开以来显示过的错误，不会保存。",
+    },
     sidebar: {
       toggle: "切换侧边栏",
       primaryNav: "主导航",
@@ -305,7 +323,8 @@ export default {
     command: {
       open: "打开命令面板",
       search: "搜索…",
-      shortcut: "⌘K",
+      shortcutMac: "⌘K",
+      shortcutOther: "Ctrl K",
       title: "命令面板",
       description: "搜索并跳转到任意页面。",
       placeholder: "输入以搜索页面…",
@@ -336,6 +355,8 @@ export default {
     ssoContinue: "使用 {provider} 继续",
     ssoOr: "或",
     invalidCredentials: "用户名或密码错误。",
+    expired: "登录已过期。重新登录后回到「{page}」。",
+    expiredBare: "登录已过期，请重新登录。",
   },
 
   overview: {

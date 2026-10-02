@@ -20,7 +20,7 @@
 import { computed, onBeforeUnmount, reactive, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { AlertTriangle, ChevronDown, ChevronRight, KeyRound, Lock, RefreshCw, RotateCw, Timer, X } from "lucide-vue-next";
 
 import {

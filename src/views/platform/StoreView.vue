@@ -18,7 +18,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Database, Eye, FolderOpen, Lock, Pencil, Plus, RefreshCw, Save } from "lucide-vue-next";
 import {
   api,

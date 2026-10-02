@@ -89,11 +89,14 @@ test("a guard redirect hands the pending state to the navigation it starts", () 
   const asked = { path: "/b" };
   const redirected = { path: "/login" };
   start(asked);
+  assert.equal(tracker.target(), asked);
   // No afterEach for a redirected navigation; the redirect runs its own guards.
   start(redirected);
   assert.equal(tracker.isPending(), true);
+  assert.equal(tracker.target(), redirected, "the target is the newest navigation");
   end(redirected);
   assert.equal(tracker.isPending(), false);
+  assert.equal(tracker.target(), null);
 });
 
 test("a navigation that throws ends through onError, and only its own error counts", () => {

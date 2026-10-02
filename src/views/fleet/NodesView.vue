@@ -15,7 +15,7 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Ban, KeyRound, LayoutGrid, List, Plus, Power, RotateCw, Search, Server, SquareTerminal, X } from "lucide-vue-next";
 
 import { api, unwrap, type GroupView, type Node } from "@/lib/api";

@@ -10,7 +10,7 @@
  */
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { Ban, KeyRound, Plus, SquareTerminal, Trash2 } from "lucide-vue-next";
 
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";

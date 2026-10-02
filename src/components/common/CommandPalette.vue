@@ -19,7 +19,7 @@ import {
   VisuallyHidden,
 } from "reka-ui";
 import { Search, Zap } from "lucide-vue-next";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
 import { NAV, type NavItem } from "@/router/nav";

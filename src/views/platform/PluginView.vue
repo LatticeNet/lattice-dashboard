@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 // A contributed action is a plugin call, not a plan, so it carries no play icon (design 23, 4.4 keeps that for "create a plan").
 import { Lock, PackageOpen, Puzzle, RefreshCw } from "lucide-vue-next";
 import {

@@ -15,7 +15,7 @@
  */
 import { computed, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { useNow } from "@vueuse/core";
 import { CloudUpload, Pencil, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 

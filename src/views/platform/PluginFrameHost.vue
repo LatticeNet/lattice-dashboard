@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
+import { toast } from "@/lib/toast";
 import { AlertTriangle, PlugZap, RefreshCw } from "lucide-vue-next";
 
 import { api, type PluginInterfaceContract, type PluginUIRuntime } from "@/lib/api";

@@ -35,6 +35,14 @@ export function flipQuery(now: number): { action: string; at_from: string; limit
   return { action: "node.offline", at_from: new Date(now - FLAP_WINDOW_MS).toISOString(), limit: FLAP_READ_LIMIT };
 }
 
+/**
+ * Where the "Tasks failed in 24h" tile goes: the failed runs in the window
+ * the tile counts. Tasks reads its window from `range`; `since` is only a
+ * custom range's RFC 3339 bound, so a `since: "24h"` here was dropped and
+ * the tile opened every failure ever (243 rows for a count of 5).
+ */
+export const FAILED_TASKS_QUERY = { status: "failed", range: "24h" } as const;
+
 /** Recent activity shows changes: node flips and observe events stay out (design 23, 4.1). */
 export const CHANGES_QUERY = { exclude_action: "node.online,node.offline", exclude_decision: "observe" } as const;
 

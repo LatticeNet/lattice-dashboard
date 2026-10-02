@@ -2,26 +2,36 @@
 import { type Component } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { BellOff, CalendarClock, Link2, LockKeyhole, RefreshCw, Server, UserRound } from "lucide-vue-next";
+import { BellOff, CalendarCheck2, CalendarClock, Link2, LockKeyhole, RefreshCw, Server, UserRound } from "lucide-vue-next";
 import type { ExpiringItem } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { formatAmount, formatTotals, isOverdue, quotaPercent, rowHref, type WeekGroup } from "@/views/fleet/upcomingModel";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * The rows of the expiring list, grouped by week. Home's Upcoming panel and
  * the full Upcoming page render the same component, so a row reads the same
  * in both places: what it is, when, how far away, and what it costs.
  *
- * One row, one affordance: the whole row opens the object. At 375px a row
- * becomes two lines (title and cost, then subtitle and date) instead of
- * scrolling sideways.
+ * The whole row opens the object. At 375px a row becomes two lines (title
+ * and cost, then subtitle and date) instead of scrolling sideways.
+ *
+ * Given `renewable`, rows it accepts also carry a "Record renewal" button
+ * beside the row (Upcoming, for machines): the job the list exists for, in
+ * one step instead of sheet, editor, scroll. Every row then keeps the same
+ * trailing column so dates and costs stay aligned.
  */
 const props = defineProps<{
   groups: WeekGroup[];
   /** The server's today (UTC midnight, ms): picks MM-DD against a full date. */
   today: number;
+  /** Rows that offer "Record renewal"; none when absent (Home). */
+  renewable?: (item: ExpiringItem) => boolean;
 }>();
+
+const emit = defineEmits<{ renew: [item: ExpiringItem] }>();
 
 const { t } = useI18n();
 
@@ -122,12 +132,12 @@ const ROW =
         </span>
       </div>
       <ul class="divide-y divide-border">
-        <li v-for="item in group.items" :key="`${item.kind}:${item.id}`">
+        <li v-for="item in group.items" :key="`${item.kind}:${item.id}`" :class="renewable ? 'flex items-stretch' : undefined">
           <component
             :is="rowHref(item) ? RouterLink : 'div'"
             v-bind="rowHref(item) ? { to: rowHref(item) } : {}"
             :aria-label="rowName(item)"
-            :class="cn(ROW, rowHref(item) && 'transition-colors outline-none hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset')"
+            :class="cn(ROW, renewable && 'min-w-0 flex-1 pe-2 sm:pe-3', rowHref(item) && 'transition-colors outline-none hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset')"
           >
             <component
               :is="kindIcon(item.kind)"
@@ -160,6 +170,24 @@ const ROW =
               {{ cost(item) }}
             </span>
           </component>
+          <div v-if="renewable" class="flex w-11 shrink-0 items-center justify-center pe-1 sm:w-12 sm:pe-2">
+            <Tooltip v-if="renewable(item)" :delay-duration="300">
+              <TooltipTrigger as-child>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  class="text-muted-foreground hover:text-foreground"
+                  data-testid="upcoming-record-renewal"
+                  :aria-label="t('fleet.renewal.actionFor', { name: item.title })"
+                  @click="emit('renew', item)"
+                >
+                  <CalendarCheck2 aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">{{ t('fleet.renewal.action') }}</TooltipContent>
+            </Tooltip>
+          </div>
         </li>
       </ul>
     </section>
