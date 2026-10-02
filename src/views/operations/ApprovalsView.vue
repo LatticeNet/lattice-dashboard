@@ -450,6 +450,19 @@ function changeRaw(approval: ApprovalView): string {
   return approvalRawLabel(approval);
 }
 
+/** The sheet's secondary decision: approve now, queue the apply later. */
+function approveLaterMenu(approval: ApprovalView): RowMenuItem[] {
+  return [
+    {
+      key: "approve-later",
+      label: t("operations.approvals.approveOnly"),
+      icon: CheckCircle2,
+      disabled: !canDecide(approval) || pending.value === approval.id,
+      run: () => void approve(approval, false),
+    },
+  ];
+}
+
 /* ------------------------------------------------------------------ */
 /* Focus after a decision                                              */
 /* ------------------------------------------------------------------ */
@@ -517,6 +530,30 @@ function focusSheetTitle(): void {
   void nextTick(() => sheetTitle()?.focus());
 }
 
+/**
+ * The plan this tab just decided. Its footer leaves on the next read, and
+ * focus goes back to the title as the footer goes: at phone width the sheet
+ * is modal, and a decision taken from the footer's menu was made while the
+ * menu held the sheet's focus scope paused, so the scope still remembered the
+ * menu's trigger and sent focus to the sheet itself when the trigger left.
+ * The title already holds focus by then, and focusing a focused element
+ * fires nothing the scope can record, so it is blurred and focused again in
+ * the same flush as the removal, ahead of the scope's mutation check.
+ */
+let decidedOpenId: string | null = null;
+watch(
+  () => openRecord.value?.status,
+  (status, before) => {
+    if (!decidedOpenId || openRecord.value?.id !== decidedOpenId || before !== "pending" || status === "pending") return;
+    decidedOpenId = null;
+    const title = sheetTitle();
+    if (!title) return;
+    if (document.activeElement === title) title.blur();
+    title.focus();
+  },
+  { flush: "post" },
+);
+
 /* ------------------------------------------------------------------ */
 /* Decisions                                                           */
 /* ------------------------------------------------------------------ */
@@ -541,6 +578,7 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
   decisionError.value = null;
   try {
     await api.approvals.approve(approval.id, queueApply, await decisionDigest(approval));
+    decidedOpenId = approval.id;
     toast.success(queueApply ? t("operations.approvals.toastQueued") : t("operations.approvals.toastRecorded"));
     // The sheet stays open on the decided plan and its footer is gone.
     if (sheet.openId.value === approval.id) focusSheetTitle();
@@ -1536,16 +1574,16 @@ function refreshAll(): void {
         @replan="replan(openRecord)"
         @open-approval="(id) => sheet.open(id)"
       />
+      <!-- Approve and queue is the decision; approving without queueing leaves
+           the plan unapplied (and a102 refuses it for line-user plans), so it
+           waits in the menu beside it instead of sitting first with equal weight. -->
       <template v-if="openRecord && openRecord.status === 'pending' && !isStale(openRecord)" #actions>
-        <Button type="button" variant="outline" size="sm" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="approve(openRecord, false)">
-          <CheckCircle2 class="size-4" aria-hidden="true" />
-          {{ $t('operations.approvals.approveOnly') }}
-        </Button>
         <Button type="button" size="sm" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="approve(openRecord, true)">
           <RefreshCw v-if="pending === openRecord.id" class="size-4 animate-spin" aria-hidden="true" />
           <Play v-else class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.approveAndQueue') }}
         </Button>
+        <RowMenu align="start" :name="changeLabel(openRecord)" :items="approveLaterMenu(openRecord)" />
         <Button type="button" variant="ghost" size="sm" class="ms-auto text-destructive" :disabled="!canDecide(openRecord) || pending === openRecord.id" @click="askReject(openRecord)">
           <Ban class="size-4" aria-hidden="true" />
           {{ $t('operations.approvals.reject') }}

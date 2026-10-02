@@ -144,7 +144,9 @@ function statusLabel(status: string): string {
 <template>
   <div class="space-y-6" data-testid="approval-review">
     <p v-if="planSummary" class="break-words text-sm text-foreground" data-testid="approval-summary">{{ planSummary }}</p>
-    <dl class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
+    <!-- Two columns at every width: one field per row at 375 stacked six
+         rows and pushed the plan, the thing being decided, below the fold. -->
+    <dl class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm [&>div]:min-w-0 [&_dd]:break-words">
       <div>
         <dt class="text-xs text-muted-foreground">{{ $t('operations.approvals.columns.status') }}</dt>
         <dd class="flex flex-wrap items-center gap-1">

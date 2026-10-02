@@ -34,7 +34,7 @@ export default {
       diffNoPrior: "No prior applied plan for this target: showing the full new config as added.",
       diffNoChange: "No change vs the last applied plan.",
       diffTruncated: "Plan too large to diff: showing new content.",
-      approveOnly: "Approve only",
+      approveOnly: "Approve, apply later",
       approveAndQueue: "Approve and queue",
       reject: "Reject",
       rejectTitle: "Reject {change} on {node}?",

@@ -33,7 +33,7 @@ export default {
       diffNoPrior: "该目标暂无已应用的历史计划：整份新配置按新增显示。",
       diffNoChange: "与上次已应用的计划相比无变化。",
       diffTruncated: "计划过大无法逐行比对：显示新内容。",
-      approveOnly: "仅批准",
+      approveOnly: "批准，稍后应用",
       approveAndQueue: "批准并排队",
       reject: "驳回",
       rejectTitle: "驳回 {node} 上的 {change}？",
