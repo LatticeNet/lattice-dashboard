@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { TOAST_GAP_PX, TOAST_HEADER_GAP_PX, TOAST_SHEET_GAP_PX, TOAST_VIEWPORT_OFFSET_PX, TOAST_WIDTH_PX, toastLift, toastPlacement } from "../toastClearance.ts";
+import {
+  TOAST_GAP_PX,
+  TOAST_HEADER_GAP_PX,
+  TOAST_SHEET_GAP_PX,
+  TOAST_VIEWPORT_OFFSET_PX,
+  TOAST_WIDTH_PX,
+  toastLift,
+  toastPlacement,
+  topToastHost,
+  withToastHost,
+  withoutToastHost,
+} from "../toastClearance.ts";
 
 test("with nothing open the toaster keeps its own offset", () => {
   assert.equal(toastLift(812, []), null);
@@ -102,4 +113,26 @@ test("below 768 px toasts keep rising from the bottom centre above any footer", 
     { position: "bottom-center", bottom: 812 - 744 + TOAST_GAP_PX },
   );
   assert.deepEqual(toastPlacement({ viewportWidth: 375, viewportHeight: 812, mobile: true, sheets: [], footers: [] }), { position: "bottom-center", bottom: null });
+});
+
+test("with no modal sheet open the toaster stays in its own place", () => {
+  assert.equal(topToastHost([]), null);
+});
+
+test("the modal sheet opened last holds the toaster, and closing it hands the toaster down", () => {
+  let stack: string[] = [];
+  stack = withToastHost(stack, "approval-sheet");
+  stack = withToastHost(stack, "task-sheet");
+  assert.equal(topToastHost(stack), "task-sheet");
+  stack = withoutToastHost(stack, "task-sheet");
+  assert.equal(topToastHost(stack), "approval-sheet");
+  stack = withoutToastHost(stack, "approval-sheet");
+  assert.equal(topToastHost(stack), null);
+});
+
+test("registering a host twice keeps one entry and moves it to the top", () => {
+  let stack = withToastHost(withToastHost([], "a"), "b");
+  stack = withToastHost(stack, "a");
+  assert.deepEqual(stack, ["b", "a"]);
+  assert.deepEqual(withoutToastHost(stack, "missing"), ["b", "a"]);
 });
