@@ -3,8 +3,22 @@ import test from "node:test";
 
 import { EXPIRED_REASON, createSessionWatch, expiredSignInLocation, isSessionSignal } from "../sessionExpiry.ts";
 
-test("a 401 from a read or a write is a session signal; from the session, sign-in and second-factor paths it is not", () => {
-  for (const path of ["/api/nodes", "/api/approvals?status=pending", "/api/tasks/counts", "/api/machines/renew", "/api/plugins/latticenet.vpn-core/call"]) {
+test("a 401 from a read or a write is a session signal; from the session check and the sign-in paths it is not", () => {
+  for (const path of [
+    "/api/nodes",
+    "/api/approvals?status=pending",
+    "/api/tasks/counts",
+    "/api/machines/renew",
+    "/api/plugins/latticenet.vpn-core/call",
+    // An admin read under /api/auth/ is an ordinary session-gated call.
+    "/api/auth/oidc/providers",
+    // A wrong code answers 401 here too; the /api/me read tells the two apart.
+    "/api/auth/password",
+    "/api/2fa/totp/activate",
+    "/api/security/step-up",
+    "/api/security/step-up/webauthn/finish",
+    "/api/security/webauthn/register/finish",
+  ]) {
     assert.equal(isSessionSignal(path), true, path);
   }
   for (const path of [
@@ -13,11 +27,8 @@ test("a 401 from a read or a write is a session signal; from the session, sign-i
     "/api/login",
     "/api/login/totp",
     "/api/logout",
-    "/api/auth/password",
+    "/api/auth/webauthn/login/begin",
     "/api/auth/webauthn/login/finish",
-    "/api/auth/oidc",
-    "/api/2fa/totp/activate",
-    "/api/security/step-up",
     "/theme-init.js",
   ]) {
     assert.equal(isSessionSignal(path), false, path);
@@ -64,8 +75,16 @@ test("many 401s at once share one session check and expire the session once", as
 test("a 401 that was a wrong code, not a lost session, leaves the operator where they are", async () => {
   const { watch, calls, release } = watchWith({ gone: false });
   release();
+  await watch.report("/api/security/step-up");
   await watch.report("/api/machines/reveal-link");
-  assert.deepEqual(calls, { checks: 1, expired: 0 });
+  assert.deepEqual(calls, { checks: 2, expired: 0 });
+});
+
+test("a session that ran out during a step-up is noticed from the step-up's own 401", async () => {
+  const { watch, calls, release } = watchWith({ gone: true });
+  release();
+  await watch.report("/api/security/step-up/webauthn/finish");
+  assert.deepEqual(calls, { checks: 1, expired: 1 });
 });
 
 test("a session check that cannot answer decides nothing, and the next 401 asks again", async () => {
@@ -84,7 +103,7 @@ test("a 401 while signed out or signing out, or from an exempt path, checks noth
 
   const exempt = watchWith();
   exempt.release();
-  await exempt.watch.report("/api/security/step-up");
+  await exempt.watch.report("/api/login/totp");
   await exempt.watch.report("/api/me");
   assert.deepEqual(exempt.calls, { checks: 0, expired: 0 });
 });

@@ -19,18 +19,22 @@
  */
 
 /**
- * Paths whose 401 says something other than "the session is gone": the
- * session check itself (it would confirm itself forever), signing in and
- * out, and the second-factor and password endpoints that refuse a wrong
- * code with 401.
+ * Paths whose 401 never starts a check: the session check itself (it would
+ * confirm itself forever) and signing in and out, where there is no session
+ * to lose yet or any more.
+ *
+ * Endpoints that refuse a wrong code with 401 inside a session (password
+ * change, 2FA, step-up and its passkey ceremony, passkey registration) are
+ * not listed: the /api/me read tells a wrong code from a lost session for one
+ * extra read, and a list of them would silently go stale as endpoints are
+ * added. It also catches the session that ran out while a step-up dialog was
+ * open, which a listed path would report as a wrong code.
  */
 const NOT_A_SESSION_CHECK: readonly RegExp[] = [
   /^\/api\/me(?:[?#]|$)/,
   /^\/api\/login(?:[/?#]|$)/,
   /^\/api\/logout(?:[?#]|$)/,
-  /^\/api\/auth\//,
-  /^\/api\/2fa\//,
-  /^\/api\/security\/step-up(?:[?#]|$)/,
+  /^\/api\/auth\/webauthn\/login\//,
 ];
 
 /** Whether a 401 from this path should make the console check the session. */
