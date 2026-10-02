@@ -10,14 +10,16 @@ interface Props extends PrimitiveProps {
   class?: HTMLAttributes["class"];
 }
 
+// data-button-size lets the coarse-pointer rule in app.css find a text button
+// by its size (44 px on touch) from the base layer, under every utility. Not
+// data-slot: a menu or dialog trigger wrapping the button with as-child writes
+// its own data-slot over it. This note lives here, not in the template: a
+// comment at the template root makes the component a fragment in dev builds,
+// so a parent's ref $el is a text node and .focus() on it throws.
 const props = withDefaults(defineProps<Props>(), { as: "button" });
 </script>
 
 <template>
-  <!-- data-button-size lets the coarse-pointer rule in app.css find a text
-       button by its size (44 px on touch) from the base layer, under every
-       utility. Not data-slot: a menu or dialog trigger wrapping the button
-       with as-child writes its own data-slot over it. -->
   <Primitive
     :as="as"
     :as-child="asChild"

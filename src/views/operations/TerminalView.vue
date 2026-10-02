@@ -715,8 +715,8 @@ onMounted(() => {
           </div>
           <div class="grid gap-1">
             <label class="font-medium" for="terminal-transport">{{ $t('operations.terminal.transport') }}</label>
-            <Select id="terminal-transport" v-model="transportMode">
-              <SelectTrigger class="w-full sm:w-48">
+            <Select v-model="transportMode">
+              <SelectTrigger id="terminal-transport" class="w-full sm:w-48">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

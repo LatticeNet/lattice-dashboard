@@ -628,7 +628,7 @@ const coverageLoading = computed(
         <div>
           <dt class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.connections') }}</dt>
           <dd class="font-mono text-2xl font-semibold tabular">
-            <RouterLink :to="exploreTo({})" class="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+            <RouterLink :to="exploreTo({})" class="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center">
               {{ connectionsFigure }}
             </RouterLink>
           </dd>
@@ -638,7 +638,7 @@ const coverageLoading = computed(
           <dd class="font-mono text-2xl font-semibold tabular">
             <RouterLink
               :to="exploreTo({ closeReasons: summary.failures.map((entry) => entry.value) })"
-              class="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              class="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
             >
               {{ summary.failureTotal }}
             </RouterLink>
@@ -660,7 +660,7 @@ const coverageLoading = computed(
             <li v-for="entry in summary.failures" :key="entry.value">
               <RouterLink
                 :to="exploreTo({ closeReasons: [entry.value] })"
-                class="grid grid-cols-[9rem_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-sm px-1 py-1 text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
+                class="grid grid-cols-[9rem_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-sm px-1 py-1 text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
               >
                 <span class="truncate">{{ $t(`platform.trace.closeReason.${entry.value}`) }}</span>
                 <svg
@@ -684,7 +684,7 @@ const coverageLoading = computed(
             <li v-for="entry in summary.destinations" :key="entry.value">
               <RouterLink
                 :to="exploreTo({ dst: entry.value })"
-                class="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-sm px-1 py-1 text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring"
+                class="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_3.5rem] items-center gap-3 rounded-sm px-1 py-1 text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11"
               >
                 <span class="truncate font-mono text-xs" :title="entry.value">{{ entry.value }}</span>
                 <svg

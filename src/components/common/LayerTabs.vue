@@ -110,6 +110,8 @@ const COUNT_TONE = {
             cn(
               /* Segmented, below 620 px: equal shares of the track, the current one raised. */
               'relative inline-flex h-8 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium text-muted-foreground outline-none transition-colors pointer-coarse:min-h-11',
+              /* Four layers need about 370 px at full padding against 343 at 375; tighter segments fit them. */
+              'max-[400px]:gap-1 max-[400px]:px-1.5',
               'hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
               'data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-xs',
               /* In dark mode --background is darker than the track, so the raised layer takes a lighter fill. */

@@ -1325,7 +1325,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :class="cn(
           'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           postureFilter === key
-            ? 'border-primary bg-primary/10 text-primary'
+            ? 'border-primary bg-primary/10 text-foreground'
             : key === 'password_open' || key === 'partial'
               ? 'border-warning/60 text-warning-text hover:bg-warning/10'
               : 'border-border text-muted-foreground hover:bg-muted/40',
@@ -1353,7 +1353,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
         :class="cn(
           'board-chip inline-flex h-7 pointer-coarse:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           coverageFilter === key
-            ? 'border-primary bg-primary/10 text-primary'
+            ? 'border-primary bg-primary/10 text-foreground'
             : 'border-border text-muted-foreground hover:bg-muted/40',
         )"
         @click="coverageFilter = key"
@@ -1421,6 +1421,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               <th scope="col" class="sticky left-0 z-10 bg-background px-2 py-2 text-left font-medium max-sm:w-[8.5rem]">
                 <span class="flex items-center gap-2">
                   <Checkbox
+                    class="touch-target"
                     :model-value="allVisibleSelected"
                     :aria-label="$t('networking.sshGuard.table.selectAllInFilter')"
                     @update:model-value="(v) => toggleSelectAllVisible(v === true)"
@@ -1464,6 +1465,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               >
                 <div class="flex items-center gap-2">
                   <Checkbox
+                    class="touch-target"
                     :model-value="selectedNodes.has(state.nodeId)"
                     :aria-label="$t('networking.sshGuard.scope.selectRow', { node: state.name || state.nodeId })"
                     @click="(e: MouseEvent) => toggleRow(state.nodeId, e)"
@@ -1486,14 +1488,17 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                      password open warns, not reported is muted. The last arm's
                      disposition never sets this badge: a key-only node whose
                      arm reverted or was refused is secure and reads so. -->
+                <!-- At phone width the cell is 96 px and the longest word
+                     ("password login off") needs about 140, so the badge wraps
+                     there instead of running under the next column. -->
                 <Badge
-                  class="whitespace-nowrap"
+                  class="whitespace-nowrap max-sm:max-w-full max-sm:justify-start max-sm:rounded-md max-sm:text-left max-sm:whitespace-normal"
                   :class="POSTURE_CLASS[postureTone(postureOf(state.nodeId).posture)]"
                   :variant="POSTURE_VARIANT[postureTone(postureOf(state.nodeId).posture)]"
                   :title="postureOf(state.nodeId).reason ?? $t(`networking.sshGuard.posture.${POSTURE_KEY[postureOf(state.nodeId).posture]}Title`)"
                   :data-posture="postureOf(state.nodeId).posture"
                 >
-                  <Lock v-if="postureOf(state.nodeId).posture === 'secured'" aria-hidden="true" />
+                  <Lock v-if="postureOf(state.nodeId).posture === 'secured'" class="shrink-0" aria-hidden="true" />
                   {{ $t(postureLabelKey(state.nodeId)) }}
                 </Badge>
                 <!-- HISTORY: what became of the last arm plan, as one muted
@@ -1636,7 +1641,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
               <td class="px-2 py-1 align-top text-xs whitespace-nowrap">
                 <button
                   type="button"
-                  class="reason-toggle text-left underline-offset-4 hover:underline"
+                  class="reason-toggle touch-target text-left underline-offset-4 hover:underline"
                   :class="knockCell(state).tone"
                   :title="knockCell(state).title"
                   @click="openKnock(state.nodeId)"

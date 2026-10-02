@@ -70,6 +70,8 @@ const router = createRouter({
     { path: "/netplat-about.html", name: "settings-about", component: AboutView },
     { path: "/netplat-capabilities.html", name: "settings-capabilities", component: CapabilitiesView },
     { path: "/inventory", name: "inventory", component: placeholder("Inventory") },
+    { path: "/nodes", name: "nodes", component: placeholder("Nodes") },
+    { path: "/settings/security", name: "settings-security", component: placeholder("Security") },
     { path: "/nodes/:id", name: "node-detail", component: placeholder("Node") },
     { path: "/approvals", name: "approvals", component: placeholder("Approvals") },
     { path: "/groups", name: "groups", component: placeholder("Groups") },

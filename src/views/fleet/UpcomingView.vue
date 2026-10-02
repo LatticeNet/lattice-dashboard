@@ -58,8 +58,8 @@ function setKinds(next: KnownKind[]): void {
 
 const chipClass = (active: boolean) =>
   cn(
-    "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-primary",
-    active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+    "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:h-11",
+    active ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:bg-muted/40",
   );
 </script>
 
@@ -78,10 +78,13 @@ const chipClass = (active: boolean) =>
       </template>
     </PageHeader>
 
-    <!-- Kind chips: a segmented row that scrolls sideways at 375 rather than wrapping into a wall. -->
-    <div v-if="!unsupported" class="-mx-4 relative overflow-x-auto px-4 sm:mx-0 sm:px-0">
+    <!-- Kind chips: a multi-select filter, drawn as bordered chips like SSH
+         Guard's so it never reads as a layer row. At 375 the row scrolls
+         sideways rather than wrapping into a wall, and the scroll padding
+         brings a chip reached by keyboard fully into view. -->
+    <div v-if="!unsupported" class="-mx-4 relative scroll-px-4 overflow-x-auto px-4 py-1 sm:mx-0 sm:scroll-px-0 sm:px-0">
       <div
-        class="inline-flex gap-1 rounded-lg border border-border bg-muted/30 p-1"
+        class="inline-flex gap-1.5"
         role="group"
         :aria-label="$t('fleet.upcoming.filter.label')"
       >

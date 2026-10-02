@@ -869,6 +869,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             <tr class="border-b border-border text-xs text-muted-foreground">
               <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2', selectGutterClass)">
                 <Checkbox
+                  class="touch-target"
                   :model-value="headerCheckboxState"
                   :aria-label="label.selectAll.value"
                   @update:model-value="toggleAll"
@@ -957,6 +958,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
             >
               <td v-if="selectable" :class="cn('w-10 px-3 py-3 align-middle', selectGutterClass)">
                 <Checkbox
+                  class="touch-target"
                   :model-value="isRowSelected(entry.row)"
                   :aria-label="label.selectRow.value"
                   @update:model-value="(value) => toggleRow(entry.row, value)"
@@ -1017,6 +1019,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         >
           <div v-if="selectable" class="mb-2 flex items-center gap-2">
             <Checkbox
+              class="touch-target"
               :model-value="isRowSelected(row)"
               :aria-label="label.selectRow.value"
               @update:model-value="(value) => toggleRow(row, value)"

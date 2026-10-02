@@ -730,7 +730,7 @@ const deleteImpact = computed(() => {
     <div v-if="nodeFilter && monitors.length" class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
       <button
         type="button"
-        class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-primary hover:bg-primary/20 pointer-coarse:min-h-11"
+        class="inline-flex max-w-full items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-2 py-0.5 font-medium text-foreground hover:bg-primary/20 pointer-coarse:min-h-11"
         :aria-label="$t('fleet.monitoring.nodeFilter.remove', { node: nodeName(nodeFilter) })"
         @click="nodeFilter = ''"
       >
