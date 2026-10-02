@@ -94,6 +94,12 @@ test("totals are per currency, skip unpriced rows, and never add currencies toge
   assert.deepEqual(sumTotals([]), []);
 });
 
+test("CHY and CNY are one currency in the totals", () => {
+  const rows = [item("chy", "2026-10-06", { cost_cents: 3500, currency: "CHY" }), item("cny", "2026-10-07", { cost_cents: 1500, currency: "CNY" })];
+  assert.deepEqual(sumTotals(rows), [{ currency: "CNY", cost_cents: 5000, count: 2 }]);
+  assert.equal(formatAmount(3500, "CHY"), "CNY 35.00");
+});
+
 test("each week carries the totals of its own rows", () => {
   const dmit = groupByWeek(PROD, TODAY).find((g) => g.weekStart === "2026-10-19");
   assert.deepEqual(dmit?.totals, [{ currency: "USD", cost_cents: 5192, count: 4 }]);

@@ -1,5 +1,7 @@
 /** Presentation helpers: bytes, rates, durations, relative time, money. */
 
+import { canonicalCurrency } from "@/lib/currency";
+
 /**
  * What a formatter prints when there is no value to print.
  *
@@ -115,6 +117,7 @@ export function formatDateTime(input?: string | number | Date): string {
 
 export function formatMoney(cents?: number, currency = "USD"): string {
   if (cents === undefined) return NO_VALUE;
+  currency = canonicalCurrency(currency) || "USD";
   try {
     return new Intl.NumberFormat(activeLocale, { style: "currency", currency }).format(cents / 100);
   } catch {

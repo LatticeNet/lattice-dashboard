@@ -40,6 +40,7 @@ import {
   formatMoney,
   formatRelativeTime,
 } from "@/lib/format";
+import { canonicalCurrency } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_INVENTORY_GROUP,
@@ -103,7 +104,8 @@ type GroupBy = InventoryGroupBy;
 // Approx. days per month, used to normalise custom-day billing cycles to a
 // monthly-equivalent figure (365.25 / 12).
 const DAYS_PER_MONTH = 30.4375;
-const COMMON_CURRENCIES = ["USD", "CNY", "CHY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
+// No CHY: it is not a currency code, and lib/currency.ts reads it as CNY.
+const COMMON_CURRENCIES = ["USD", "CNY", "HKD", "JPY", "EUR", "GBP", "SGD", "USDT", "USDC"];
 const NO_RENEWAL_CYCLE = "__none";
 // Monthly divisor per named cycle; custom_days is handled separately.
 const CYCLE_DIVISOR: Record<string, number> = {
@@ -369,7 +371,7 @@ function aggregateSpend(list: MachineView[]): CurrencySpend[] {
   const acc = new Map<string, CurrencySpend>();
   for (const machine of list) {
     if (billingCategory(machine) !== "recurring") continue;
-    const cur = machine.currency || "USD";
+    const cur = normalizeCurrency(machine.currency) || "USD";
     const monthly = monthlyEquivCents(machine);
     const entry = acc.get(cur) ?? { currency: cur, monthly: 0, annual: 0, count: 0 };
     entry.monthly += monthly;
@@ -529,8 +531,9 @@ function normalizeVendorKey(value?: string): string {
   return s(value).toLowerCase();
 }
 
+/** One code per currency (lib/currency.ts): a CHY profile opens, totals and saves as CNY. */
 function normalizeCurrency(value: unknown): string {
-  return s(value).toUpperCase().replace(/[^A-Z]/g, "").slice(0, 5);
+  return canonicalCurrency(s(value));
 }
 
 function nodeInventoryFor(nodeID?: string) {
