@@ -28,7 +28,7 @@ import { useMediaQuery } from "@/composables/useMediaQuery";
 import { createConfirmReturn } from "./confirmFocus";
 import { useAuthStore } from "@/stores/auth";
 import { countryName, splitNamePrefix } from "@/lib/fleet";
-import { formatBytes, formatRelativeTime } from "@/lib/format";
+import { NO_VALUE, formatBytes, formatRelativeTime } from "@/lib/format";
 import { agentConfigBadges, nodeHasAgentCapability, nodeHasArchOsToken } from "@/lib/nodeFilterExpressions";
 import {
   NODE_STATUSES,
@@ -426,6 +426,21 @@ const rotatedOpen = computed({
   },
 });
 
+/**
+ * A number from a node that is not reporting is a memory, not a reading: the
+ * no-value mark in the cell, the last value and its age in the title. DMIT-4,
+ * offline six days, read "10%" in full weight beside a live fleet.
+ */
+function metricCell(node: Node, value: number | undefined): { text: string; title?: string; stale: boolean } {
+  if (value === undefined) return { text: "", stale: false };
+  if (isReporting(node)) return { text: `${value}%`, stale: false };
+  return {
+    text: NO_VALUE,
+    title: t("fleet.nodes.metric.lastKnown", { value: `${value}%`, time: formatRelativeTime(node.metrics?.collected_at ?? node.last_seen) }),
+    stale: true,
+  };
+}
+
 function openTerminal(node: Node): void {
   if (!canOpenTerminal.value || !isReporting(node)) return;
   window.open(`/terminal?node_id=${encodeURIComponent(node.id)}&connect=1`, "_blank", "noopener");
@@ -440,7 +455,7 @@ function menuFor(node: Node): RowMenuItem[] {
       icon: SquareTerminal,
       hidden: !canOpenTerminal.value,
       disabled: !reporting,
-      reason: reporting ? undefined : t("fleet.nodes.sheet.terminalNotReporting"),
+      reason: reporting ? undefined : nodeStatus(node) === "disabled" ? t("fleet.nodes.sheet.terminalDisabled") : t("fleet.nodes.sheet.terminalNotReporting"),
       run: () => openTerminal(node),
     },
     {
@@ -680,7 +695,7 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
             </SelectContent>
           </Select>
           <Select v-model="groupBy">
-            <SelectTrigger class="w-[calc(50%-0.25rem)] sm:w-44" :aria-label="$t('fleet.nodes.groupBy.label')">
+            <SelectTrigger class="w-[calc(50%-0.25rem)] sm:w-auto sm:min-w-44" :aria-label="$t('fleet.nodes.groupBy.label')">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -937,17 +952,22 @@ const emptyFleet = computed(() => nodesQuery.data.value !== undefined && nodes.v
           >{{ lastSeenText(row) }}</span>
         </template>
         <template #cell-cpu="{ row }">
-          <span class="font-mono text-xs tabular">{{ shownPercent(row.metrics?.cpu_percent) === undefined ? '' : `${shownPercent(row.metrics?.cpu_percent)}%` }}</span>
+          <span
+            :class="cn('font-mono text-xs tabular', metricCell(row, shownPercent(row.metrics?.cpu_percent)).stale && 'text-muted-foreground')"
+            :title="metricCell(row, shownPercent(row.metrics?.cpu_percent)).title"
+          >{{ metricCell(row, shownPercent(row.metrics?.cpu_percent)).text }}</span>
         </template>
         <template #cell-memory="{ row }">
-          <span class="font-mono text-xs tabular" :title="row.metrics ? `${formatBytes(row.metrics.memory_used)} / ${formatBytes(row.metrics.memory_total)}` : undefined">
-            {{ ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total) === undefined ? '' : `${ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)}%` }}
-          </span>
+          <span
+            :class="cn('font-mono text-xs tabular', metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).stale && 'text-muted-foreground')"
+            :title="metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).title ?? (row.metrics ? `${formatBytes(row.metrics.memory_used)} / ${formatBytes(row.metrics.memory_total)}` : undefined)"
+          >{{ metricCell(row, ratioPercent(row.metrics?.memory_used, row.metrics?.memory_total)).text }}</span>
         </template>
         <template #cell-disk="{ row }">
-          <span class="font-mono text-xs tabular" :title="row.metrics ? `${formatBytes(row.metrics.disk_used)} / ${formatBytes(row.metrics.disk_total)}` : undefined">
-            {{ ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total) === undefined ? '' : `${ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)}%` }}
-          </span>
+          <span
+            :class="cn('font-mono text-xs tabular', metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).stale && 'text-muted-foreground')"
+            :title="metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).title ?? (row.metrics ? `${formatBytes(row.metrics.disk_used)} / ${formatBytes(row.metrics.disk_total)}` : undefined)"
+          >{{ metricCell(row, ratioPercent(row.metrics?.disk_used, row.metrics?.disk_total)).text }}</span>
         </template>
         <template #cell-tags="{ row }">
           <span class="block max-w-64 truncate text-xs text-muted-foreground" :title="(row.tags ?? []).join(', ')">{{ (row.tags ?? []).join(', ') }}</span>

@@ -95,7 +95,18 @@ const status = computed(() => (node.value ? nodeStatus(node.value) : "online"));
 const statusInfo = computed(() => describeNodeStatus(status.value));
 const since = computed(() => (node.value ? nodeStatusSince(node.value) : undefined));
 const sinceText = computed(() => (since.value ? formatAge(Date.now() - Date.parse(since.value), locale.value) : ""));
-const reason = computed(() => (node.value ? nodeStatusReason(node.value) : ""));
+/**
+ * Why the word says what it says. The server's sentence is English and, for
+ * an online node, freezes the age of the last report ("the last report
+ * arrived 3s ago" beside a live "last report 5 seconds ago"), so a known
+ * status reads its translated explanation; a degraded node keeps the
+ * server's sentence, because it names the part that broke.
+ */
+const reason = computed(() => {
+  if (!node.value) return "";
+  if (status.value === "degraded") return nodeStatusReason(node.value) || t(statusInfo.value.hintKey);
+  return t(statusInfo.value.hintKey);
+});
 const lastSeen = computed(() => (node.value?.last_seen && !isZeroTime(node.value.last_seen) ? node.value.last_seen : undefined));
 
 const queue = computed(() => (node.value && tasks.data.value ? buildNodeQueue(tasks.data.value, node.value.id) : undefined));
@@ -123,6 +134,7 @@ const linesTo = computed(() => ({ path: `/plugins/${VPN_CORE}/lines`, query: { v
 const canTerminal = computed(() => auth.can("terminal:open") && !!node.value && isReporting(node.value));
 const terminalReason = computed(() => {
   if (!auth.can("terminal:open")) return t("fleet.nodes.sheet.terminalNoScope");
+  if (node.value && nodeStatus(node.value) === "disabled") return t("fleet.nodes.sheet.terminalDisabled");
   if (node.value && !isReporting(node.value)) return t("fleet.nodes.sheet.terminalNotReporting");
   return "";
 });
@@ -181,7 +193,7 @@ const STATUS_TONE: Record<string, string> = {
             </ul>
             <RouterLink
               :to="{ name: 'tasks', query: { node_id: node.id } }"
-              class="mt-1 inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+              class="mt-1 inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
             >
               {{ $t('fleet.nodes.sheet.allTasks') }}
             </RouterLink>
@@ -200,7 +212,7 @@ const STATUS_TONE: Record<string, string> = {
             <p v-if="posture.reason" class="text-xs text-muted-foreground">{{ posture.reason }}</p>
             <RouterLink
               :to="{ name: 'network-ssh-guard', query: { node_id: node.id } }"
-              class="mt-1 inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground"
+              class="mt-1 inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
             >
               {{ $t('fleet.nodes.sheet.openGuard') }}
             </RouterLink>
@@ -215,7 +227,7 @@ const STATUS_TONE: Record<string, string> = {
         <template v-if="hasLines">
           <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.sheet.lines') }}</dt>
           <dd class="min-w-0">
-            <RouterLink :to="linesTo" class="text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground">
+            <RouterLink :to="linesTo" class="text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center">
               {{ $t('fleet.nodes.sheet.openLines') }}
             </RouterLink>
           </dd>

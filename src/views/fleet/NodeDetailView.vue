@@ -68,7 +68,7 @@ import { useProof } from "@/composables/useProof";
 import { useMetricBuffer } from "@/composables/useMetricBuffer";
 import { useAuthStore } from "@/stores/auth";
 import { hasNeverReported, statusMeta } from "@/lib/status";
-import { describeNodeStatus, isReporting, metricFreshness, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
+import { describeNodeStatus, isReporting, metricFreshness, nodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
 import { groupColor } from "@/lib/groupColors";
 import {
   formatBytes,
@@ -529,7 +529,16 @@ const statusBadge = computed(() => ({
  * used to print the same badge with nothing to tell them apart.
  */
 const statusSince = computed(() => (node.value ? nodeStatusSince(node.value) : undefined));
-const statusReason = computed(() => (node.value ? nodeStatusReason(node.value) : ""));
+/**
+ * The server's sentence only where it names evidence the client cannot word
+ * (degraded: which part broke). Other statuses read their translated
+ * explanation; the server's English sentence repeated the age beside it and
+ * froze it.
+ */
+const statusReason = computed(() => {
+  if (!node.value) return "";
+  return nodeStatus(node.value) === "degraded" ? nodeStatusReason(node.value) : "";
+});
 
 /**
  * Whether the resource card is reporting a measurement or a memory.
@@ -1476,16 +1485,24 @@ async function saveDebug(): Promise<void> {
         {{ statusBadge.label }}
       </span>
       <Button
-        v-if="canOpenTerminal"
+        v-if="canOpenTerminal && isReporting(node)"
         size="sm"
-        class="ms-auto shrink-0"
-        :disabled="!isReporting(node)"
+        class="ms-auto shrink-0 pointer-coarse:min-w-11"
         :aria-label="$t('fleet.nodes.list.openTerminal')"
         @click="openTerminal"
       >
         <SquareTerminal class="size-4" aria-hidden="true" />
         <span class="hidden sm:inline">{{ $t('fleet.nodes.list.openTerminal') }}</span>
       </Button>
+      <!-- No session without the agent: say why instead of a dimmed teal button. -->
+      <span
+        v-else-if="canOpenTerminal"
+        class="ms-auto inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+        data-testid="node-terminal-off"
+      >
+        <SquareTerminal class="size-4 opacity-60" aria-hidden="true" />
+        {{ node.disabled || nodeStatus(node) === 'disabled' ? $t('fleet.nodes.detail.terminalOffDisabled') : $t('fleet.nodes.detail.terminalOffNotReporting') }}
+      </span>
     </div>
 
     <div class="space-y-5 p-4 sm:p-6">
@@ -1534,7 +1551,7 @@ async function saveDebug(): Promise<void> {
               )"
               @click="goToGroup(g.id)"
             >
-              <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+              <span :class="cn('size-2 shrink-0 rounded-[2px]', groupColor(g.color).dot)" aria-hidden="true" />
               {{ g.name }}
               <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
             </button>
@@ -1677,7 +1694,8 @@ async function saveDebug(): Promise<void> {
                       vector-effect="non-scaling-stroke"
                     />
                   </svg>
-                  <p v-else class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sparklinePending') }}</p>
+                  <!-- A node that is not reporting will not poll: no promise of a trend. -->
+                  <p v-else-if="metricsAreLive" class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sparklinePending') }}</p>
                 </div>
 
                 <!-- Secondary stats grid. -->
@@ -1700,14 +1718,15 @@ async function saveDebug(): Promise<void> {
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.sampleTime') }}</p>
                     <p class="mt-1 font-mono text-sm tabular">{{ formatRelativeTime(node.metrics?.collected_at) }}</p>
                   </div>
-                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                  <!-- A rate is a reading of now; a node that is not reporting has none. -->
+                  <div v-if="metricsAreLive" class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.download') }}</p>
                     <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
                       <ArrowDown class="size-3.5 text-success" aria-hidden="true" />
                       {{ formatBytesPerSec(node.metrics?.net_rx_speed) }}
                     </p>
                   </div>
-                  <div class="rounded-md border border-border bg-muted/20 p-3">
+                  <div v-if="metricsAreLive" class="rounded-md border border-border bg-muted/20 p-3">
                     <p class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.upload') }}</p>
                     <p class="mt-1 inline-flex items-center gap-1.5 font-mono text-sm tabular">
                       <ArrowUp class="size-3.5 text-primary" aria-hidden="true" />
@@ -1788,35 +1807,35 @@ async function saveDebug(): Promise<void> {
                 <dl v-if="node.host_facts" class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factHostname') }}</dt>
-                    <dd class="mt-0.5 truncate font-mono text-sm" :title="node.host_facts.hostname || $t('common.misc.none')">{{ node.host_facts.hostname || $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 truncate font-mono text-sm" :title="node.host_facts.hostname || $t('fleet.nodes.detail.notReported')">{{ node.host_facts.hostname || $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factOs') }}</dt>
-                    <dd class="mt-0.5 text-sm">{{ node.host_facts.os || $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.os || $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factPlatform') }}</dt>
                     <dd class="mt-0.5 text-sm">
-                      {{ [node.host_facts.platform, node.host_facts.platform_version].filter(Boolean).join(' ') || $t('common.misc.none') }}
+                      {{ [node.host_facts.platform, node.host_facts.platform_version].filter(Boolean).join(' ') || $t('fleet.nodes.detail.notReported') }}
                     </dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factKernel') }}</dt>
-                    <dd class="mt-0.5 truncate font-mono text-sm" :title="hostKernel(node.host_facts) || $t('common.misc.none')">{{ hostKernel(node.host_facts) || $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 truncate font-mono text-sm" :title="hostKernel(node.host_facts) || $t('fleet.nodes.detail.notReported')">{{ hostKernel(node.host_facts) || $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factArch') }}</dt>
-                    <dd class="mt-0.5 text-sm">{{ node.host_facts.arch || $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.arch || $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpu') }}</dt>
                     <dd class="mt-0.5 text-sm">
-                      {{ node.host_facts.cpu_cores ? $t('fleet.nodes.detail.coresValue', { value: node.host_facts.cpu_cores }) : $t('common.misc.none') }}
+                      {{ node.host_facts.cpu_cores ? $t('fleet.nodes.detail.coresValue', { value: node.host_facts.cpu_cores }) : $t('fleet.nodes.detail.notReported') }}
                     </dd>
                   </div>
                   <div class="sm:col-span-2">
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factCpuModel') }}</dt>
-                    <dd class="mt-0.5 truncate text-sm" :title="node.host_facts.cpu_model || $t('common.misc.none')">{{ node.host_facts.cpu_model || $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 truncate text-sm" :title="node.host_facts.cpu_model || $t('fleet.nodes.detail.notReported')">{{ node.host_facts.cpu_model || $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factMemory') }}</dt>
@@ -1828,11 +1847,11 @@ async function saveDebug(): Promise<void> {
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factVirtualization') }}</dt>
-                    <dd class="mt-0.5 text-sm">{{ node.host_facts.virtualization || $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.virtualization || $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                   <div>
                     <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.detail.factBootTime') }}</dt>
-                    <dd class="mt-0.5 text-sm">{{ node.host_facts.boot_time ? formatDateTime(node.host_facts.boot_time) : $t('common.misc.none') }}</dd>
+                    <dd class="mt-0.5 text-sm">{{ node.host_facts.boot_time ? formatDateTime(node.host_facts.boot_time) : $t('fleet.nodes.detail.notReported') }}</dd>
                   </div>
                 </dl>
                 <p v-else class="text-sm text-muted-foreground">{{ $t('fleet.nodes.detail.noHostFacts') }}</p>
@@ -1897,7 +1916,7 @@ async function saveDebug(): Promise<void> {
                     )"
                     @click="goToGroup(g.id)"
                   >
-                    <span :class="cn('size-2 shrink-0 rounded-full', groupColor(g.color).dot)" aria-hidden="true" />
+                    <span :class="cn('size-2 shrink-0 rounded-[2px]', groupColor(g.color).dot)" aria-hidden="true" />
                     {{ g.name }}
                     <Crown v-if="g.leader" class="size-3 shrink-0" aria-hidden="true" />
                   </button>

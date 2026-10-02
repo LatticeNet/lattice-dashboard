@@ -683,7 +683,10 @@ const deleteImpact = computed(() => {
           <!-- On a phone the cell is sized to the screen less the menu, so a
                long description truncates instead of widening the table. -->
           <span class="flex min-w-0 items-center gap-2 max-md:w-[calc(100vw-6.5rem)]">
-            <span :class="cn('size-2.5 shrink-0 rounded-full', groupColor(row.color).dot)" aria-hidden="true" />
+            <!-- The group's colour as a square swatch: a round dot in this slot
+                 means online or offline on every other fleet table, and an
+                 amber group read as a warning. -->
+            <span :class="cn('size-2.5 shrink-0 rounded-[2px]', groupColor(row.color).dot)" aria-hidden="true" />
             <span class="min-w-0">
               <span class="block truncate font-medium">{{ row.name }}</span>
               <span v-if="row.description" class="block truncate text-xs text-muted-foreground" :title="row.description">{{ row.description }}</span>
@@ -776,7 +779,8 @@ const deleteImpact = computed(() => {
 
       <!-- Edit and create. -->
       <fieldset v-else-if="editing" :disabled="!canAdmin" class="space-y-6 text-sm">
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <!-- Top-aligned: the slug's hint made its cell taller and pushed Name's input 18 px off. -->
+        <div class="grid grid-cols-1 items-start gap-3 sm:grid-cols-2">
           <div class="grid gap-1.5">
             <Label for="grp-name">{{ $t('fleet.groups.fieldName') }}</Label>
             <Input id="grp-name" v-model="form.name" :placeholder="$t('fleet.groups.namePlaceholder')" />
@@ -791,14 +795,14 @@ const deleteImpact = computed(() => {
             <Select v-model="form.color">
               <SelectTrigger class="w-full">
                 <span class="flex items-center gap-2">
-                  <span :class="cn('size-3 rounded-full', groupColor(form.color).dot)" aria-hidden="true" />
+                  <span :class="cn('size-3 rounded-[2px]', groupColor(form.color).dot)" aria-hidden="true" />
                   <SelectValue />
                 </span>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem v-for="token in GROUP_COLOR_TOKENS" :key="token" :value="token">
                   <span class="flex items-center gap-2">
-                    <span :class="cn('size-3 rounded-full', groupColor(token).dot)" aria-hidden="true" />
+                    <span :class="cn('size-3 rounded-[2px]', groupColor(token).dot)" aria-hidden="true" />
                     {{ token }}
                   </span>
                 </SelectItem>

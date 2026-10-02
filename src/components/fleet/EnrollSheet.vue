@@ -237,7 +237,7 @@ const CHOICE =
             :aria-pressed="groupIds.includes(group.id)"
             @click="toggleGroup(group.id)"
           >
-            <span :class="cn('size-2 shrink-0 rounded-full', groupColor(group.color).dot)" aria-hidden="true" />
+            <span :class="cn('size-2 shrink-0 rounded-[2px]', groupColor(group.color).dot)" aria-hidden="true" />
             {{ group.name }}
           </button>
         </div>

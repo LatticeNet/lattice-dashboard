@@ -378,6 +378,13 @@ function nodeName(id: string): string {
   return nodes.value.find((node) => node.id === id)?.name || shortId(id, 14);
 }
 
+/** A cadence in the largest whole unit: "every 1h", not "every 3600s". */
+function cadence(seconds: number): string {
+  if (seconds >= 3600 && seconds % 3600 === 0) return t("fleet.monitoring.definitions.unit.h", { n: seconds / 3600 });
+  if (seconds >= 60 && seconds % 60 === 0) return t("fleet.monitoring.definitions.unit.m", { n: seconds / 60 });
+  return t("fleet.monitoring.definitions.unit.s", { n: seconds });
+}
+
 function assignmentLabel(monitor: MonitorView): string {
   if (isServerEvaluated(monitor.type)) return t("fleet.monitoring.assignment.controlPlane");
   if (monitor.assign_all) return t("fleet.monitoring.assignment.allNodes");
@@ -773,7 +780,7 @@ const deleteImpact = computed(() => {
         <span class="text-xs text-muted-foreground">{{ assignmentLabel(row) }}</span>
       </template>
       <template #cell-interval="{ row }">
-        <span class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.interval', { interval: row.interval_sec, timeout: row.timeout_sec }) }}</span>
+        <span class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.monitoring.definitions.interval', { interval: cadence(row.interval_sec), timeout: cadence(row.timeout_sec) }) }}</span>
       </template>
       <template #cell-actions="{ row }">
         <RowMenu :name="row.name || row.id" :items="menuFor(row)" />

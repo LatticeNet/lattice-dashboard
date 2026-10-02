@@ -1337,7 +1337,7 @@ function firingLine(entry: { machine: MachineView; next: { offset: number; renew
     ? t("fleet.inventory.preview.overdueLine", { date: entry.next.renewal })
     : entry.next.offset === 0
       ? t("fleet.inventory.preview.todayLine", { date: entry.next.renewal })
-      : t("fleet.inventory.preview.beforeLine", { n: entry.next.offset, date: entry.next.renewal });
+      : t("fleet.inventory.preview.beforeLine", { n: entry.next.offset, date: entry.next.renewal }, entry.next.offset);
   const cost = machinePrice(entry.machine) > 0 ? ` · ${formatMoney(machinePrice(entry.machine), entry.machine.currency || "USD")}` : "";
   return `${displayName(entry.machine)}: ${when}${cost}`;
 }
@@ -1364,7 +1364,7 @@ async function sendReminders(): Promise<void> {
         <ProofLine v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
       <template #actions>
-        <Button v-if="canAdminInventory" variant="outline" size="sm" type="button" @click="openPreview()">
+        <Button v-if="canAdminInventory" variant="outline" size="sm" type="button" :disabled="machinesQuery.data.value !== undefined && machines.length === 0" @click="openPreview()">
           <Bell class="size-4" aria-hidden="true" />
           {{ $t('fleet.inventory.preview.open') }}
         </Button>
@@ -1442,6 +1442,17 @@ async function sendReminders(): Promise<void> {
           :title="$t('fleet.inventory.list.noMatchTitle')"
           :description="$t('fleet.inventory.list.noMatchDescription')"
         />
+        <!-- No nodes at all is not a scope problem: say where machines come from. -->
+        <EmptyState
+          v-else-if="nodesQuery.data.value !== undefined && nodes.length === 0"
+          :icon="Boxes"
+          :title="$t('fleet.inventory.list.noNodesTitle')"
+          :description="$t('fleet.inventory.list.noNodesDescription')"
+        >
+          <Button variant="outline" size="sm" as-child>
+            <RouterLink :to="{ name: 'nodes' }">{{ $t('fleet.inventory.list.goToNodes') }}</RouterLink>
+          </Button>
+        </EmptyState>
         <EmptyState v-else :icon="Boxes" :title="$t('fleet.inventory.list.emptyTitle')" :description="$t('fleet.inventory.list.emptyDescription')" />
       </template>
 
@@ -1475,7 +1486,9 @@ async function sendReminders(): Promise<void> {
         </span>
       </template>
       <template #cell-monthly="{ row }">
-        <span class="whitespace-nowrap font-mono text-xs tabular">{{ formatMonthlyEquiv(row) }}</span>
+        <!-- A free machine says so; a blank cell read as a value not entered. -->
+        <span v-if="billingCategory(row) === 'free' && !formatMonthlyEquiv(row)" class="whitespace-nowrap text-xs text-muted-foreground">{{ $t('fleet.inventory.billing.free') }}</span>
+        <span v-else class="whitespace-nowrap font-mono text-xs tabular">{{ formatMonthlyEquiv(row) }}</span>
       </template>
       <template #cell-renewal="{ row }">
         <span class="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
@@ -2171,7 +2184,7 @@ async function sendReminders(): Promise<void> {
         <p v-if="!canManageNotifications">{{ $t('fleet.inventory.preview.routesUnknown') }}</p>
         <p v-else-if="renewalRoutes.length">{{ $t('fleet.inventory.preview.routes', { routes: renewalRoutes.join('; ') }) }}</p>
         <p v-else class="text-warning-text">{{ $t('fleet.inventory.preview.noRoute') }}</p>
-        <p v-if="nextFiring">{{ $t('fleet.inventory.preview.next', { name: displayName(nextFiring.machine), date: nextFiring.next.at, n: nextFiring.next.inDays }) }}</p>
+        <p v-if="nextFiring">{{ $t('fleet.inventory.preview.next', { name: displayName(nextFiring.machine), date: nextFiring.next.at, n: nextFiring.next.inDays }, nextFiring.next.inDays) }}</p>
         <p v-if="firingToday.length">{{ $t('fleet.inventory.preview.dedupe') }}</p>
       </div>
     </ConfirmDialog>

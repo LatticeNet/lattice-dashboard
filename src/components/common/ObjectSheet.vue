@@ -121,7 +121,9 @@ const showBody = computed(() => props.state === "ready" || props.state === "stal
           <DialogTitle
             :class="
               cn(
-                'truncate rounded-xs text-base font-semibold tracking-[-0.01em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                // w-fit: the focus ring hugs the title instead of drawing a
+                // full-width box that read as a text field after a reload.
+                'w-fit max-w-full truncate rounded-xs text-base font-semibold tracking-[-0.01em] outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
                 monoTitle && 'font-mono',
               )
             "
