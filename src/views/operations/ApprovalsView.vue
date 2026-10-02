@@ -666,6 +666,12 @@ async function approve(approval: ApprovalView, queueApply: boolean): Promise<voi
     const stale = isApprovalStaleError(error);
     decisionError.value = { id: approval.id, message: stale ? t("operations.approvals.toastStale") : message };
     toast.error(stale ? t("operations.approvals.toastStale") : message);
+    // The pressed button was disabled while the request ran, which dropped
+    // focus to the document. It goes back into the sheet, on the title as
+    // after a success: the toast announces the error and the sheet repeats it
+    // above the footer. Not the inline error itself: at phone width that sits
+    // under the error toast, which would hide the focused element for 15 s.
+    if (sheet.openId.value === approval.id) focusSheetTitle();
   } finally {
     pending.value = null;
     await refreshAfterDecision();
