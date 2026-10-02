@@ -568,10 +568,26 @@ async function confirmRevokeToken(): Promise<void> {
 const bucketColumns = computed<DataTableColumn<KindBucket>[]>(() => [
   { key: "name", label: t("platform.storage.colBucket"), sortable: true, searchable: true },
   { key: "kind", label: t("platform.publishingPage.colKind"), sortable: true, value: (bucket) => t(`platform.publishing.origin.${bucket.kind}`) },
-  { key: "description", label: t("platform.storage.colDescription"), searchable: true, value: (bucket) => bucket.description ?? "" },
+  // A column every row leaves blank is noise; it shows once one bucket has a description.
+  ...(buckets.value.some((bucket) => bucket.description)
+    ? [{ key: "description", label: t("platform.storage.colDescription"), searchable: true, value: (bucket: KindBucket) => bucket.description ?? "" }]
+    : []),
   { key: "routes", label: t("platform.publishingPage.colRoutes"), align: "right", sortable: true, value: (bucket) => routesForBucket(bucket).length },
   { key: "updated", label: t("platform.storage.colUpdated"), sortable: true, value: (bucket) => bucket.updated_at },
+  { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
+
+/* A bucket's page is Store; its menu goes there, as a route row's does, instead of a chevron row. */
+function bucketMenu(bucket: KindBucket): RowMenuItem[] {
+  return [
+    {
+      key: "store",
+      label: t("platform.publishingPage.openBucket", { bucket: bucket.name }),
+      icon: Database,
+      to: { path: "/platform/store", query: { kind: bucket.kind, bucket: bucket.name } },
+    },
+  ];
+}
 
 function routesForBucket(bucket: KindBucket): PublishingRecord[] {
   return records.value.filter((record) => record.origin === bucket.kind && record.bucket === bucket.name);
@@ -800,7 +816,7 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
       </template>
     </DataTable>
 
-    <!-- Buckets: what holds the bytes; a row opens the bucket in Store. -->
+    <!-- Buckets: what holds the bytes; a row's menu opens the bucket in Store. -->
     <DataTable
       v-else
       state-key="buckets"
@@ -810,7 +826,6 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
       :loading="bucketsQuery.loading.value"
       :error="bucketsQuery.error.value"
       :has-data="bucketsQuery.data.value !== undefined"
-      :row-to="(bucket) => ({ path: '/platform/store', query: { kind: bucket.kind, bucket: bucket.name } })"
       :searchable="buckets.length > 6"
       :expression-filter="false"
       :show-summary="false"
@@ -830,6 +845,9 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
       </template>
       <template #cell-updated="{ row }">
         <span class="whitespace-nowrap text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
+      </template>
+      <template #cell-actions="{ row }">
+        <RowMenu :name="row.name" :items="bucketMenu(row)" />
       </template>
     </DataTable>
 

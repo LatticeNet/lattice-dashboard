@@ -124,6 +124,8 @@ export default {
       proofBuckets: "{n} bucket | {n} buckets",
       proofEntries: "{n} key in {bucket} | {n} keys in {bucket}",
       proofObjects: "{n} object in {bucket} | {n} objects in {bucket}",
+      proofReserved: "{bucket} is reserved: the server does not serve its contents",
+      proofEntriesUnread: "{bucket} not read: {reason}",
       kindLabel: "Store kind",
       kindKv: "KV",
       kindStatic: "Static",

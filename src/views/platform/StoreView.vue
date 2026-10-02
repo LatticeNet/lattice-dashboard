@@ -19,7 +19,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { toast } from "vue-sonner";
-import { Database, FolderOpen, Lock, Pencil, Plus, RefreshCw, Save } from "lucide-vue-next";
+import { Database, Eye, FolderOpen, Lock, Pencil, Plus, RefreshCw, Save } from "lucide-vue-next";
 import {
   api,
   type KVEntry,
@@ -44,6 +44,8 @@ import {
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
+import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
+import { proofReason } from "@/components/common/proofModel";
 import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import { useProof } from "@/composables/useProof";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
@@ -209,14 +211,19 @@ const activeWritable = computed(() => canWrite.value && bucketWritable(activeFac
 const activeContentAvailable = computed(() => bucketContentAvailable(activeFacts.value));
 
 // ── Entries in the active bucket ─────────────────────────────────────────────
-// The fetcher records what it actually loaded. Switching kind keeps the last
-// good rows in the composable, and rendering KV entries through the static
-// columns would show an empty table over real data, so the table only trusts
-// rows whose kind and bucket still match what the page is asking for.
-const loadedKind = ref<StorageKind | undefined>(undefined);
-const loadedBucket = ref("");
-
-const entriesQuery = useAsyncData<KVEntry[] | StaticObject[]>(
+// Each read carries the kind and bucket it loaded. Switching kind keeps the
+// last good rows in the composable, and rendering KV entries through the
+// static columns would show an empty table over real data (or throw sorting
+// them by path), so the table only trusts rows whose kind and bucket still
+// match what the page is asking for. The labels travel with the rows: set
+// apart from them, a render could land between the label and the rows and
+// sort the old kind's rows as the new kind's.
+interface EntriesRead {
+  kind: StorageKind;
+  bucket: string;
+  rows: KVEntry[] | StaticObject[];
+}
+const entriesQuery = useAsyncData<EntriesRead>(
   async (signal) => {
     const forKind = kind.value;
     const forBucket = activeBucket.value;
@@ -224,15 +231,13 @@ const entriesQuery = useAsyncData<KVEntry[] | StaticObject[]>(
       forKind === "static"
         ? await api.static.list(forBucket, { signal })
         : await api.kv.list(forBucket, { signal });
-    loadedKind.value = forKind;
-    loadedBucket.value = forBucket;
-    return rows;
+    return { kind: forKind, bucket: forBucket, rows };
   },
   { pollInterval: 0, immediate: false },
 );
 
 const rowsFresh = computed(
-  () => loadedKind.value === kind.value && loadedBucket.value === activeBucket.value,
+  () => entriesQuery.data.value?.kind === kind.value && entriesQuery.data.value?.bucket === activeBucket.value,
 );
 
 /**
@@ -240,14 +245,22 @@ const rowsFresh = computed(
  * polling, so the line states what was read without an age promise: the
  * buckets of this kind, and the entries of the bucket on screen.
  */
-const proof = useProof([inventoryQuery, entriesQuery]);
+// The bucket list is the page's own read. The entries of the bucket on screen
+// are a segment: a reserved bucket is never fetched, which is the server's
+// rule rather than a failure, so it reads as a quiet fact with no retry, and
+// a failed entries read is named without wiping the bucket count.
+const proof = useProof(inventoryQuery);
 const proofSegments = computed<ProofSegment[]>(() => {
   const parts: ProofSegment[] = [];
   if (inventoryQuery.data.value !== undefined) {
     parts.push({ key: "buckets", text: t("platform.store.proofBuckets", { n: inventory.value.length }, inventory.value.length) });
   }
-  if (rowsFresh.value && entriesQuery.data.value !== undefined) {
-    const n = entriesQuery.data.value.length;
+  if (activeReserved.value) {
+    parts.push({ key: "entries", text: t("platform.store.proofReserved", { bucket: activeBucket.value }) });
+  } else if (entriesQuery.error.value && !entriesQuery.refreshing.value) {
+    parts.push({ key: "entries", tone: "warning", text: t("platform.store.proofEntriesUnread", { bucket: activeBucket.value, reason: proofReason(entriesQuery.error.value) }) });
+  } else if (rowsFresh.value && entriesQuery.data.value !== undefined) {
+    const n = entriesQuery.data.value.rows.length;
     parts.push({
       key: "entries",
       text: t(isStatic.value ? "platform.store.proofObjects" : "platform.store.proofEntries", { n, bucket: activeBucket.value }, n),
@@ -260,7 +273,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
 const kindTabs = computed<LayerTab<StorageKind>[]>(() =>
   STORAGE_KINDS.map((value) => ({ value, label: value === "static" ? t("platform.store.kindStatic") : t("platform.store.kindKv") })),
 );
-const rows = computed(() => (rowsFresh.value ? (entriesQuery.data.value ?? []) : []));
+const rows = computed(() => (rowsFresh.value ? (entriesQuery.data.value?.rows ?? []) : []));
 
 const kvRows = computed<KVEntry[]>(() =>
   isStatic.value
@@ -289,12 +302,13 @@ watch(
 );
 
 watch(
-  [kind, activeBucket, canRead, activeReserved],
+  [kind, activeBucket, canRead, activeReserved, () => inventoryQuery.loading.value],
   () => {
     // A reserved bucket is listed by name and never fetched. The server would
     // refuse it anyway; asking would only turn a deliberate refusal into an
-    // error panel that reads like a fault.
-    if (!canRead.value || activeReserved.value) return;
+    // error panel that reads like a fault. Whether a bucket is reserved comes
+    // from the inventory, so a deep link waits for that read first.
+    if (!canRead.value || activeReserved.value || inventoryQuery.loading.value) return;
     entriesQuery.refresh();
   },
   { immediate: true },
@@ -312,7 +326,7 @@ const kvColumns = computed<DataTableColumn<KVEntry>[]>(() => {
   // an enabled pencil beside that sentence is what made the note read as
   // decoration.
   if (activeWritable.value) {
-    cols.push({ key: "actions", label: t("platform.kv.colActions"), align: "right" });
+    cols.push({ key: "actions", label: "", class: "w-12", pin: "end" });
   }
   return cols;
 });
@@ -328,10 +342,21 @@ const staticColumns = computed<DataTableColumn<StaticObject>[]>(() => {
   // bucket has neither action available: its listing carries no bytes to
   // preview and the server refuses a write. The card above says why once.
   if (activeContentAvailable.value) {
-    cols.push({ key: "actions", label: t("platform.static.colActions"), align: "right" });
+    cols.push({ key: "actions", label: "", class: "w-12", pin: "end" });
   }
   return cols;
 });
+
+/* One menu per row (design 23, section 3.6), in place of inline buttons and a pencil. */
+function staticMenu(row: StaticObject): RowMenuItem[] {
+  return [
+    { key: "preview", label: t("platform.static.preview"), icon: Eye, run: () => (previewTarget.value = row) },
+    { key: "edit", label: t("common.actions.edit"), icon: Pencil, hidden: !activeWritable.value, run: () => openEditStatic(row) },
+  ];
+}
+function kvMenu(row: KVEntry): RowMenuItem[] {
+  return [{ key: "edit", label: t("common.actions.edit"), icon: Pencil, run: () => openEditKV(row) }];
+}
 
 // ── Row expand (long KV values) ──────────────────────────────────────────────
 const expanded = ref<Set<string>>(new Set());
@@ -618,14 +643,7 @@ async function submitPut() {
               <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
             </template>
             <template #cell-actions="{ row }">
-              <div class="flex items-center justify-end gap-1">
-                <Button variant="ghost" size="sm" @click="previewTarget = row">
-                  {{ $t('platform.static.preview') }}
-                </Button>
-                <Button v-if="activeWritable" variant="outline" size="sm" @click="openEditStatic(row)">
-                  {{ $t('common.actions.edit') }}
-                </Button>
-              </div>
+              <RowMenu :name="row.path" :items="staticMenu(row)" />
             </template>
           </DataTable>
 
@@ -676,16 +694,7 @@ async function submitPut() {
               <span class="text-xs text-muted-foreground">{{ formatDateTime(row.updated_at) }}</span>
             </template>
             <template #cell-actions="{ row }">
-              <div class="flex items-center justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  :aria-label="$t('common.actions.edit')"
-                  @click="openEditKV(row)"
-                >
-                  <Pencil class="size-4" />
-                </Button>
-              </div>
+              <RowMenu :name="row.key" :items="kvMenu(row)" />
             </template>
           </DataTable>
         </CardContent>

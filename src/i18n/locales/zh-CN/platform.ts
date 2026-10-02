@@ -119,6 +119,8 @@ export default {
       proofBuckets: "{n} 个存储桶",
       proofEntries: "{bucket} 中有 {n} 个键",
       proofObjects: "{bucket} 中有 {n} 个对象",
+      proofReserved: "{bucket} 是保留桶：服务端不提供它的内容",
+      proofEntriesUnread: "未读到 {bucket}：{reason}",
       kindLabel: "存储类型",
       kindKv: "KV",
       kindStatic: "静态资源",
