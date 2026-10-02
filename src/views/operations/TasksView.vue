@@ -846,10 +846,12 @@ const metrics = computed<Metric[]>(() => {
       key: "failed",
       label: t("operations.tasks.metrics.failed24h"),
       value: num(c.failed_24h),
+      // A task and its reruns count once, by the latest attempt; the list below has a row per attempt.
+      hint: t("operations.tasks.metrics.byLatestAttempt"),
       tone: c.failed_24h > 0 ? "destructive" : "default",
       to: { query: { status: "failed", range: "24h" } },
     },
-    { key: "finished", label: t("operations.tasks.metrics.finished24h"), value: num(c.finished_24h) },
+    { key: "finished", label: t("operations.tasks.metrics.finished24h"), value: num(c.finished_24h), hint: t("operations.tasks.metrics.byLatestAttempt") },
   ];
 });
 

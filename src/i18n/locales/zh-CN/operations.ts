@@ -464,11 +464,13 @@ export default {
         queued: "排队中",
         failed24h: "24 小时内失败",
         finished24h: "24 小时内完成",
+        /** 24 小时计数旁的说明(这里和首页)：一个任务连同它的重跑只算一次，以最近一次尝试为准。 */
+        byLatestAttempt: "按任务的最近一次尝试计",
       },
       proof: {
-        tasks: "共 {n} 个任务",
-        match: "{range}内匹配 {n} 个",
-        attempts: "每次重跑单独一行",
+        tasks: "共 {n} 行",
+        match: "{range}内匹配 {n} 行",
+        attempts: "每次尝试单独一行，各有各的结果",
         clientFiltered: "在浏览器里筛选：服务器不支持任务筛选",
         resultsNotRead: "结果没读到：{reason}",
         resultsTruncated: "结果读到 {n} 行就停止了，没读到的行会注明",

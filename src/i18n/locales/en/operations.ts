@@ -469,11 +469,13 @@ export default {
         queued: "Queued",
         failed24h: "Failed in 24h",
         finished24h: "Finished in 24h",
+        /** Beside the 24h counts (here and on Home): a task and its reruns count once, by the latest attempt. */
+        byLatestAttempt: "tasks, by latest attempt",
       },
       proof: {
-        tasks: "{n} tasks",
-        match: "{n} match in {range}",
-        attempts: "each rerun is its own row",
+        tasks: "{n} rows",
+        match: "{n} rows match in {range}",
+        attempts: "each attempt is its own row, with its own result",
         clientFiltered: "filtered in this browser: the server does not filter tasks",
         resultsNotRead: "results not read: {reason}",
         resultsTruncated: "results read stopped at {n} rows; rows it did not reach say so",
