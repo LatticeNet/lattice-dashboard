@@ -4,9 +4,9 @@ import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { BellOff, CalendarCheck2, CalendarClock, Link2, LockKeyhole, RefreshCw, Server, UserRound } from "lucide-vue-next";
 import type { ExpiringItem } from "@/lib/api";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { formatAmount, formatTotals, isOverdue, quotaPercent, rowHref, type WeekGroup } from "@/views/fleet/upcomingModel";
+import { formatTotals, isOverdue, quotaPercent, rowHref, type WeekGroup } from "@/views/fleet/upcomingModel";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -99,7 +99,7 @@ function subtitle(item: ExpiringItem): string {
 }
 
 function cost(item: ExpiringItem): string {
-  return item.cost_cents > 0 && item.currency ? formatAmount(item.cost_cents, item.currency) : "";
+  return item.cost_cents > 0 && item.currency ? formatMoney(item.cost_cents, item.currency) : "";
 }
 
 /** The row's full sentence for a screen reader, since the columns are read as one link. */

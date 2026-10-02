@@ -115,14 +115,20 @@ export function formatDateTime(input?: string | number | Date): string {
   });
 }
 
+const MONEY = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * "CNY 3,426.83": the code, then the amount with two decimals, in every
+ * language. It is how the server writes a price in renewal reminders
+ * (server_inventory.go) and the one way the console prints money, Inventory
+ * and Upcoming alike. Intl's currency style printed the same yuan as
+ * "CN¥3,426.83" in English and "¥3,426.83" in Chinese beside Upcoming's
+ * "CNY 3,267.90", and put the amount first for a code it does not know
+ * ("USDT").
+ */
 export function formatMoney(cents?: number, currency = "USD"): string {
   if (cents === undefined) return NO_VALUE;
-  currency = canonicalCurrency(currency) || "USD";
-  try {
-    return new Intl.NumberFormat(activeLocale, { style: "currency", currency }).format(cents / 100);
-  } catch {
-    return `${(cents / 100).toFixed(2)} ${currency}`;
-  }
+  return `${canonicalCurrency(currency) || "USD"} ${MONEY.format(cents / 100)}`;
 }
 
 const AGE_UNITS = { s: "s", m: "m", h: "h", d: "d" };
