@@ -278,6 +278,8 @@ export const api = {
         command: string;
         commands?: Record<string, string>;
         agent_launch?: AgentLaunchConfig;
+        /** The pinned agent release the Linux command installs; absent on older servers. */
+        agent_version?: string;
       }>("/api/nodes/reconfigure-command", input),
     rotateToken: (node_id: string) =>
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),

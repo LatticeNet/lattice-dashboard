@@ -405,6 +405,8 @@ export default {
           generate: "Generate reconfigure command",
           copy: "Copy reconfigure command",
           nodeIdMismatch: "Command node id mismatch: page is {expected}, command contains {actual}. Do not run this command.",
+          installs: "This command installs lattice-agent {target}, the release this server pins, then restarts the agent with these launch settings.",
+          installMoves: "This command installs lattice-agent {target}, the release this server pins. The node reports {current}, so running it moves the node to {target}.",
           toastGenerated: "Reconfigure command generated",
           toastFailed: "Failed to generate reconfigure command",
         },
