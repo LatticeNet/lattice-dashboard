@@ -144,7 +144,10 @@ function expireEndedUndo(id: string): void {
     endedTimers.set(id, setTimeout(() => expireEndedUndo(id), 500));
     return;
   }
+  // Focus on the line's Edit would fall to the page with the line.
+  const hadFocus = Boolean(document.activeElement?.closest(`[data-window-line="${CSS.escape(id)}"]`));
   closeEndedUndo(id);
+  if (hadFocus) void focusAfter(newWindowButton);
 }
 
 function openEndedUndo(window: MaintenanceWindow, heldIds: string[]): void {

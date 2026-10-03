@@ -58,6 +58,7 @@ const lines = computed(() => [
     <p
       v-for="line in lines"
       :key="line.window.id"
+      :data-window-line="line.window.id"
       class="flex flex-col gap-2 border-b border-border px-3.5 py-2 text-sm last:border-b-0 sm:flex-row sm:items-center sm:gap-3"
     >
       <span class="flex min-w-0 flex-1 items-start gap-2.5">
