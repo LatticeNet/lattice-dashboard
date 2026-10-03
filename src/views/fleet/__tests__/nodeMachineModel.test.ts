@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { MachineView } from "@/lib/api/types";
-import { likelyUnpaid, nodeMachine, renewalState } from "../nodeMachineModel.ts";
+import { MACHINES_FRESH_MS, consoleAction, likelyUnpaid, machinesNeedRead, nodeMachine, renewalState } from "../nodeMachineModel.ts";
 
 const machine = (over: Partial<MachineView>): MachineView => ({
   id: "mch_1",
@@ -45,4 +45,21 @@ test("a passed renewal explains a quiet node only when it went quiet on or after
   assert.equal(likelyUnpaid(passed, true, "2026-09-27T03:10:00Z"), false, "still reporting");
   const later = renewalState(machine({}));
   assert.equal(likelyUnpaid(later, false, "2026-09-27T03:10:00Z"), false, "renewal still ahead");
+});
+
+test("the sheet reads the machine list again when it is old or has no row for the node it opens", () => {
+  const rows = [machine({})];
+  assert.equal(machinesNeedRead(undefined, "node_1", 0, 1_000), true, "never read");
+  assert.equal(machinesNeedRead(rows, "node_1", 1_000, 1_000 + MACHINES_FRESH_MS - 1), false, "a fresh list with the row serves it");
+  assert.equal(machinesNeedRead(rows, "node_1", 1_000, 1_000 + MACHINES_FRESH_MS + 1), true, "past a minute");
+  // A node enrolled after the read is missing from it; reading again tells that from a lack of access.
+  assert.equal(machinesNeedRead(rows, "node_new", 1_000, 1_001), true);
+  assert.equal(machinesNeedRead([], "node_1", 1_000, 1_001), true);
+});
+
+test("the provider console is revealed only with inventory:admin; without it the row says a link is stored", () => {
+  assert.equal(consoleAction({ has_console_url: true }, true), "reveal");
+  assert.equal(consoleAction({ has_console_url: true }, false), "stored");
+  assert.equal(consoleAction({ has_console_url: false }, true), "none");
+  assert.equal(consoleAction({}, true), "none");
 });

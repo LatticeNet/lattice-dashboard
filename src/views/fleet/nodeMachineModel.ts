@@ -25,7 +25,11 @@ export type RenewalState =
   | { kind: "upcoming"; date: string; days: number; soon: boolean };
 
 export type NodeMachine =
-  /** The list has no row for the node: this principal lacks inventory:read for it. */
+  /**
+   * The list has no row for the node. GET /api/machines answers one row per
+   * node the principal holds inventory:read for, so after a read that came
+   * after the node enrolled (machinesNeedRead) this is a lack of access.
+   */
   | { kind: "unreadable" }
   /** A row without a profile: the node is not in Inventory yet. */
   | { kind: "unprofiled"; machine: MachineView }
@@ -43,6 +47,32 @@ export function renewalState(machine: MachineView): RenewalState {
   if (days < 0) return { kind: "passed", date, days: -days };
   if (days === 0) return { kind: "today", date };
   return { kind: "upcoming", date, days, soon: days <= RENEWAL_SOON_DAYS };
+}
+
+/** Renewal dates move by days, so one read serves every node opened within this. */
+export const MACHINES_FRESH_MS = 60_000;
+
+/**
+ * Whether the sheet reads the machine list again on opening `nodeId`: it was
+ * never read, the read is over a minute old, or it has no row for the node.
+ * A missing row means no access only when the read came after the node
+ * enrolled, so the sheet reads again before it says so.
+ */
+export function machinesNeedRead(machines: readonly MachineView[] | undefined, nodeId: string, readAt: number, now: number): boolean {
+  if (!machines || now - readAt > MACHINES_FRESH_MS) return true;
+  return !machines.some((entry) => entry.node_id === nodeId);
+}
+
+/**
+ * What the Machine row offers for the provider console. The link is sealed
+ * on the server and revealed per step-up grant to inventory:admin, as on
+ * Inventory; a principal without it learns only that one is stored.
+ */
+export type ConsoleAction = "reveal" | "stored" | "none";
+
+export function consoleAction(machine: Pick<MachineView, "has_console_url">, canReveal: boolean): ConsoleAction {
+  if (!machine.has_console_url) return "none";
+  return canReveal ? "reveal" : "stored";
 }
 
 export function nodeMachine(machines: readonly MachineView[], nodeId: string): NodeMachine {

@@ -20,8 +20,10 @@
  * The machine row comes from the list Inventory reads (one row per node the
  * principal holds inventory:read for), read when the sheet first opens and
  * again after a minute, so stepping through nodes does not re-read it per
- * node. The provider console link is sealed on the server and revealed per
- * step-up grant, as on Inventory (useMachineLinkReveal).
+ * node; a node the list has no row for reads it again before the row says
+ * "no access", since the node may have enrolled after the read. The
+ * provider console link is sealed on the server and revealed per step-up
+ * grant, as on Inventory (useMachineLinkReveal).
  */
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -36,7 +38,7 @@ import { formatAge, formatDateTime, formatRelativeTime, isZeroTime } from "@/lib
 import { describeNodeStatus, isReporting, nodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
 import { useAuthStore } from "@/stores/auth";
 import { buildNodeQueue } from "@/views/fleet/nodeTaskQueueModel";
-import { likelyUnpaid, nodeMachine, type RenewalState } from "@/views/fleet/nodeMachineModel";
+import { consoleAction, likelyUnpaid, machinesNeedRead, nodeMachine, type RenewalState } from "@/views/fleet/nodeMachineModel";
 import { proofReason } from "@/components/common/proofModel";
 
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
@@ -93,8 +95,6 @@ const guard = useAsyncData<SSHGuardNodeStatus | undefined>(
   { immediate: false },
 );
 
-/** Renewal dates move by days, so one read serves every node opened within this. */
-const MACHINES_FRESH_MS = 60_000;
 let machinesReadAt = 0;
 const machines = useAsyncData<MachineView[]>(
   (signal) =>
@@ -113,7 +113,7 @@ watch(
     guard.data.value = undefined;
     if (canTasks) void tasks.refresh();
     if (canGuard) void guard.refresh();
-    if (canInventory && Date.now() - machinesReadAt > MACHINES_FRESH_MS) void machines.refresh();
+    if (canInventory && machinesNeedRead(machines.data.value, id, machinesReadAt, Date.now())) void machines.refresh();
   },
   { immediate: true },
 );
@@ -228,7 +228,7 @@ const STATUS_TONE: Record<string, string> = {
           </span>
         </p>
         <p v-if="reason" class="text-muted-foreground">{{ reason }}</p>
-        <p v-if="unpaid && renewal?.kind === 'passed'" class="text-destructive" data-testid="node-sheet-unpaid">
+        <p v-if="unpaid && renewal?.kind === 'passed'" class="text-warning-text" data-testid="node-sheet-unpaid">
           {{ $t('fleet.nodes.sheet.likelyUnpaid', { date: renewal.date }) }}
         </p>
       </section>
@@ -294,7 +294,7 @@ const STATUS_TONE: Record<string, string> = {
         <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.sheet.machine') }}</dt>
         <dd class="min-w-0" data-testid="node-sheet-machine">
           <template v-if="!canInventory"><span class="text-muted-foreground">{{ $t('fleet.nodes.sheet.noAccess') }}</span></template>
-          <template v-else-if="machine?.kind === 'unreadable'"><span class="text-muted-foreground">{{ $t('fleet.nodes.sheet.noAccess') }}</span></template>
+          <template v-else-if="machine?.kind === 'unreadable' && !machines.refreshing.value"><span class="text-muted-foreground">{{ $t('fleet.nodes.sheet.noAccess') }}</span></template>
           <template v-else-if="machine?.kind === 'unprofiled'">
             <p class="text-muted-foreground">{{ $t('fleet.nodes.sheet.machineUnprofiled') }}</p>
             <RouterLink
@@ -310,7 +310,7 @@ const STATUS_TONE: Record<string, string> = {
             <p v-if="machine.machine.auto_roll" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.autoRoll') }}</p>
             <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
               <Button
-                v-if="machine.machine.has_console_url && canRevealLinks"
+                v-if="consoleAction(machine.machine, canRevealLinks) === 'reveal'"
                 type="button"
                 variant="outline"
                 size="sm"
@@ -322,7 +322,7 @@ const STATUS_TONE: Record<string, string> = {
                 <ExternalLink v-else class="size-3.5" aria-hidden="true" />
                 {{ $t('fleet.nodes.sheet.providerConsole') }}
               </Button>
-              <span v-else-if="machine.machine.has_console_url" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.list.consoleLinkStored') }}</span>
+              <span v-else-if="consoleAction(machine.machine, canRevealLinks) === 'stored'" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.list.consoleLinkStored') }}</span>
               <RouterLink
                 :to="{ name: 'inventory', query: { node: node.id } }"
                 class="text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"

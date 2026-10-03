@@ -160,7 +160,7 @@ export default {
         machineUnprofiled: "not in Inventory yet",
         openInventory: "Open in Inventory",
         providerConsole: "Provider console",
-        likelyUnpaid: "Its renewal on {date} passed before it went quiet, so an unpaid bill is the likely cause: check the provider console.",
+        likelyUnpaid: "Its renewal on {date} passed before it went quiet, so an unpaid bill may be the cause: check the provider console.",
         notReported: "not reported",
         goneTitle: "This node is not in the fleet",
         goneDescription: "It was deleted, or the link names a node this session cannot read.",

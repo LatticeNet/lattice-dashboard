@@ -156,7 +156,7 @@ export default {
         machineUnprofiled: "尚未登记到资产",
         openInventory: "在资产中打开",
         providerConsole: "服务商控制台",
-        likelyUnpaid: "它的续费日 {date} 已过，之后才停止上报，很可能是未续费：请查看服务商控制台。",
+        likelyUnpaid: "它的续费日 {date} 已过，之后才停止上报，可能是未续费：请查看服务商控制台。",
         notReported: "未上报",
         goneTitle: "机群中没有这个节点",
         goneDescription: "它已被删除，或者链接指向的节点当前会话无权查看。",
