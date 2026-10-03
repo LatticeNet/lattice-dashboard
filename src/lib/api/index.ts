@@ -45,6 +45,11 @@ import type {
   MachineVendorView,
   MachineView,
   MonitorCreateInput,
+  LatencyProbeConfig,
+  LatencyProbePlan,
+  LatencyRollups,
+  LatencySeries,
+  LatencyWindow,
   MonitorResult,
   MonitorView,
   NetPolicyGraph,
@@ -514,6 +519,14 @@ export const api = {
         { monitor_id },
         opts,
       ),
+    latency: {
+      plan: (opts?: RequestOptions) => http.get<LatencyProbePlan>("/api/monitors/latency", undefined, opts),
+      /** Answers the new plan; 409 when someone saved since `config.version` was read. */
+      save: (config: LatencyProbeConfig) => http.put<LatencyProbePlan>("/api/monitors/latency", config),
+      rollups: (opts?: RequestOptions) => http.get<LatencyRollups>("/api/monitors/latency/rollups", undefined, opts),
+      series: (source: string, target: string, window: LatencyWindow, opts?: RequestOptions) =>
+        http.get<LatencySeries>("/api/monitors/latency/series", { source, target, window }, opts),
+    },
   },
 
   machines: {

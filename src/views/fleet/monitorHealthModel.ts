@@ -106,3 +106,13 @@ export function failingMonitors<M extends HealthMonitor>(
   }
   return out.sort((a, b) => b.failing - a.failing);
 }
+
+/**
+ * The monitors an operator made. A generated monitor (`managed_by`, today one
+ * per latency probe target) belongs to the page that generates it: the
+ * Latency layer shows it as a matrix cell, and it never pages one pair at a
+ * time, so neither the monitor list nor Home counts it as a failing monitor.
+ */
+export function operatorMonitors<M extends { managed_by?: string }>(monitors: readonly M[]): M[] {
+  return monitors.filter((monitor) => !monitor.managed_by);
+}

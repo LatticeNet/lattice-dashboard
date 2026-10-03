@@ -1050,6 +1050,122 @@ export interface MonitorView {
    * list, so a monitor's state needs no read of its history.
    */
   latest?: MonitorLatest[];
+  /**
+   * Set on a monitor the control plane generates ("latency": one per latency
+   * probe target). It is changed through its configuration, never deleted on
+   * its own; absent on a monitor an operator made.
+   */
+  managed_by?: string;
+}
+
+/* ---- Latency probes (lattice-sdk model/latency.go) ---- */
+
+export type LatencyWindow = "1h" | "24h" | "7d";
+
+export interface LatencyPair {
+  source: string;
+  target: string;
+}
+
+/** The operator's latency probe configuration. A save sends it whole with the version it was read at. */
+export interface LatencyProbeConfig {
+  /** Off pauses every generated probe and keeps the history. */
+  enabled: boolean;
+  interval_sec: number;
+  timeout_sec: number;
+  /** Nodes that run the probes. */
+  sources: string[];
+  /** Probe every node whose country is set and is not CN. */
+  auto_targets: boolean;
+  include_targets?: string[];
+  exclude_targets?: string[];
+  disabled_pairs?: LatencyPair[];
+  version: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export type LatencyRegion = "outside_mainland" | "mainland" | "unknown";
+export type LatencyTargetState = "probed" | "not_probeable" | "paused" | "none";
+
+export interface LatencyProbeNode {
+  node_id: string;
+  name: string;
+  country?: string;
+  region: LatencyRegion | string;
+  source: boolean;
+  target: LatencyTargetState | string;
+  /** auto, included, excluded, mainland, region_unknown, auto_off, node_disabled, config_off, pairs_off, no_source. */
+  target_reason?: string;
+  /** host:port the sources dial. */
+  endpoint?: string;
+  protocol?: string;
+  line_name?: string;
+  /** last_known, no_public_address, udp_only, no_tcp_line, no_inventory. */
+  endpoint_note?: string;
+  monitor_id?: string;
+}
+
+export interface LatencyProbePairState {
+  source: string;
+  target: string;
+  /** The operator's switch for the pair. */
+  enabled: boolean;
+  /** Whether the source runs the probe now. */
+  active: boolean;
+  monitor_id?: string;
+}
+
+export interface LatencyProbePlan {
+  config: LatencyProbeConfig;
+  /** False while no operator has saved and the defaults hold. */
+  stored: boolean;
+  default_source_name: string;
+  nodes: LatencyProbeNode[];
+  pairs: LatencyProbePairState[];
+  /** Configured source ids that cannot probe: unknown_node or node_disabled. */
+  source_notes?: Record<string, string>;
+}
+
+/** One pair over one window or one bucket. Unknown stays absent, never zero. */
+export interface LatencyStats {
+  samples: number;
+  failures: number;
+  /** Probes the interval would have produced; expected minus samples is unknown. */
+  expected: number;
+  p50_ms?: number;
+  p95_ms?: number;
+  /** Failure share of the probes heard, 0 to 1. */
+  loss?: number;
+}
+
+export interface LatencyPairRollup {
+  source: string;
+  target: string;
+  monitor_id: string;
+  windows: Partial<Record<LatencyWindow, LatencyStats>>;
+  latest?: MonitorResult;
+}
+
+export interface LatencyRollups {
+  generated_at: string;
+  interval_sec: number;
+  pairs: LatencyPairRollup[];
+}
+
+export interface LatencyBucket extends LatencyStats {
+  at: string;
+}
+
+export interface LatencySeries {
+  source: string;
+  target: string;
+  monitor_id: string;
+  window: LatencyWindow;
+  bucket_sec: number;
+  from: string;
+  to: string;
+  buckets: LatencyBucket[];
 }
 
 export interface MonitorResult {

@@ -44,7 +44,10 @@ import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { createConfirmReturn } from "./confirmFocus";
-import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
+import { failingMonitors, healthRank, monitorHealth, operatorMonitors, type MonitorHealth } from "./monitorHealthModel";
+import LatencyLayer from "./LatencyLayer.vue";
+import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
+import { bindLayer } from "@/composables/useLayer";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
@@ -98,6 +101,15 @@ const nodesQuery = useAsyncData(
 // Upcoming list's TLS rows) lands on /monitoring?open=<id> instead.
 const owned = useOwnedRoute();
 const sheet = bindRouteOpen(owned);
+
+/*
+ * Two layers (design 23, section 3.4): Monitors, the probes an operator
+ * made, and Latency, the source by target matrix the latency probe
+ * configuration generates. The generated monitors live only in Latency.
+ */
+type Layer = "monitors" | "latency";
+const layers = computed<Layer[]>(() => (canReadMonitors.value ? ["monitors", "latency"] : ["monitors"]));
+const layer = bindLayer<Layer>(owned, () => layers.value, () => "monitors");
 watch(
   () => route.params.id,
   (id) => {
@@ -200,7 +212,17 @@ const resultsQuery = useAsyncData(
   { pollInterval: 8000, immediate: canReadMonitors.value },
 );
 
-const monitors = computed(() => monitorsQuery.data.value ?? []);
+const monitors = computed(() => operatorMonitors(monitorsQuery.data.value ?? []));
+/** Generated monitors the list leaves to the Latency layer. */
+const generatedCount = computed(() => (monitorsQuery.data.value ?? []).length - monitors.value.length);
+const layerTabs = computed<LayerTab<Layer>[]>(() => [
+  {
+    value: "monitors",
+    label: t("fleet.monitoring.layers.monitors"),
+    count: monitorsQuery.data.value !== undefined ? monitors.value.length : undefined,
+  },
+  { value: "latency", label: t("fleet.monitoring.layers.latency") },
+]);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const selectedMonitor = computed(() =>
   monitors.value.find((monitor) => monitor.id === selectedMonitorId.value),
@@ -670,9 +692,9 @@ const deleteImpact = computed(() => {
     <PageHeader :title="$t('fleet.monitoring.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
-        <ProofLine v-if="canReadMonitors" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+        <ProofLine v-if="canReadMonitors && layer === 'monitors'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
-      <template v-if="canReadMonitors" #actions>
+      <template v-if="canReadMonitors && layer === 'monitors'" #actions>
         <Button v-if="canAdminMonitors && monitors.length" size="sm" type="button" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.create.title') }}
@@ -684,7 +706,21 @@ const deleteImpact = computed(() => {
       </template>
     </PageHeader>
 
+    <LayerTabs v-if="layers.length > 1" v-model="layer" :tabs="layerTabs" :label="$t('fleet.monitoring.layers.label')" />
+
+    <LatencyLayer v-if="layer === 'latency'" :owned="owned" />
+
+    <template v-else>
     <AttentionList v-if="canReadMonitors" :items="attention" />
+
+    <p v-if="canReadMonitors && generatedCount > 0" class="text-xs text-muted-foreground" data-testid="monitors-generated-note">
+      {{ $t('fleet.monitoring.latency.generatedNote', { n: generatedCount }, generatedCount) }}
+      <button
+        type="button"
+        class="ms-1 font-medium text-foreground underline decoration-dotted underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+        @click="layer = 'latency'"
+      >{{ $t('fleet.monitoring.latency.generatedOpen') }}</button>
+    </p>
 
     <EmptyState
       v-if="!canReadMonitors"
@@ -784,6 +820,7 @@ const deleteImpact = computed(() => {
         </EmptyState>
       </template>
     </DataTable>
+    </template>
 
     <!-- One monitor: its latest state, trend and results. -->
     <ObjectSheet
