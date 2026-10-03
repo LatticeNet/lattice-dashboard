@@ -28,6 +28,9 @@
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
+ * `?drop=<scopes>` removes those scopes from the principal while every read
+ * still answers (`?drop=inventory:admin` draws a reader who may learn that a
+ * console link is stored but may not reveal it).
  * `?machinesLate=<node ids>` leaves those nodes out of the first machines
  * read (they enrolled after it); `?machinesHidden=<node ids>` leaves them out
  * of every read (no inventory:read on those nodes).
@@ -87,6 +90,7 @@ const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "
 const idList = (name: string) => new Set((PARAMS.get(name) ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
 const MACHINES_LATE = idList("machinesLate");
 const MACHINES_HIDDEN = idList("machinesHidden");
+const DROPPED_SCOPES = idList("drop");
 
 const EXPIRE_MS = Number(PARAMS.get("expire") ?? "");
 let sessionEndsAt = EXPIRE_MS > 0 ? Date.now() + EXPIRE_MS : Number.POSITIVE_INFINITY;
@@ -142,7 +146,7 @@ const principal: Principal = {
     "notify:admin",
     "proxy:read",
     "log:read",
-  ].filter((scope) => ![...DENY].some((name) => DENIED_SCOPES[name] === scope)),
+  ].filter((scope) => !DROPPED_SCOPES.has(scope) && ![...DENY].some((name) => DENIED_SCOPES[name] === scope)),
   server_allowlist: [],
   csrf_token: "harness",
   totp_enabled: true,
