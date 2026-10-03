@@ -100,6 +100,7 @@ export default {
     stepUp: {
       code: "2FA passcode",
       passkey: "Use passkey",
+      rejected: "That passcode was not accepted. Enter the code your authenticator shows now.",
     },
     actions: {
       refresh: "Refresh",

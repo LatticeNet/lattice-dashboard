@@ -98,6 +98,7 @@ export default {
     stepUp: {
       code: "两步验证码",
       passkey: "使用通行密钥",
+      rejected: "验证码不对或已过期，请输入身份验证器上当前显示的验证码。",
     },
     actions: {
       refresh: "刷新",
