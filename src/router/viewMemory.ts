@@ -12,10 +12,16 @@
  *
  * Kept per tab in sessionStorage: closing the tab forgets, so tomorrow's
  * console never opens on a filter set yesterday and forgotten, and a new tab
- * starts from the default views. Every read and write is guarded; without
- * storage the console works as before. Only query keys are kept, never
- * anything the server sent, and keys that name an object or a one-shot
- * action (an open sheet, a create form, a sign-in code) are left out.
+ * starts from the default views. The views belong to the principal that left
+ * them: stores/auth names the owner whenever the principal changes, signing
+ * out, an expired session and another operator signing in on the same tab
+ * all drop them, and a stored map with another owner reads as nothing (a
+ * reload after someone else signed in elsewhere included). A search typed on
+ * a plugin page can hold an email or a VPN identity name, so it must never
+ * greet the next operator. Every read and write is guarded; without storage
+ * the console works as before. Only query keys are kept, never anything the
+ * server sent, and keys that name an object or a one-shot action (an open
+ * sheet, a create form, a sign-in code) are left out.
  *
  * Not restored: an address typed, pasted or reloaded (the first navigation
  * of a load is the operator's exact URL), a navigation that carries any
@@ -79,48 +85,77 @@ export function isRememberedPath(path: string, consolePaths: ReadonlySet<string>
 export interface ViewStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem(key: string): void;
 }
 
-type Stored = Record<string, { q: ViewQuery; at: number }>;
+type Pages = Record<string, { q: ViewQuery; at: number }>;
 
-function readAll(storage: ViewStorage | null): Stored {
-  if (!storage) return {};
+/** The stored map, or null when there is none or it cannot be read. */
+function readStored(storage: ViewStorage | null): { owner: unknown; pages: unknown } | null {
+  if (!storage) return null;
   try {
-    const parsed: unknown = JSON.parse(storage.getItem(VIEW_MEMORY_KEY) ?? "{}");
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Stored = {};
-    for (const [path, value] of Object.entries(parsed as Record<string, unknown>)) {
-      const entry = value as { q?: unknown; at?: unknown } | null;
-      if (!entry || typeof entry.q !== "object" || entry.q === null || typeof entry.at !== "number") continue;
-      const q = viewQuery(entry.q as LocationQuery);
-      if (Object.keys(q).length) out[path] = { q, at: entry.at };
-    }
-    return out;
+    const parsed: unknown = JSON.parse(storage.getItem(VIEW_MEMORY_KEY) ?? "null");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const { owner, pages } = parsed as { owner?: unknown; pages?: unknown };
+    return { owner, pages };
   } catch {
-    return {};
+    return null;
   }
 }
 
-function writeAll(storage: ViewStorage | null, all: Stored) {
-  if (!storage) return;
+/** `owner`'s remembered pages; nothing for no owner, another owner, or unreadable storage. */
+function readAll(storage: ViewStorage | null, owner: string | undefined): Pages {
+  if (!owner) return {};
+  const stored = readStored(storage);
+  if (!stored || stored.owner !== owner) return {};
+  const { pages } = stored;
+  if (!pages || typeof pages !== "object" || Array.isArray(pages)) return {};
+  const out: Pages = {};
+  for (const [path, value] of Object.entries(pages as Record<string, unknown>)) {
+    const entry = value as { q?: unknown; at?: unknown } | null;
+    if (!entry || typeof entry.q !== "object" || entry.q === null || typeof entry.at !== "number") continue;
+    const q = viewQuery(entry.q as LocationQuery);
+    if (Object.keys(q).length) out[path] = { q, at: entry.at };
+  }
+  return out;
+}
+
+function writeAll(storage: ViewStorage | null, owner: string | undefined, pages: Pages) {
+  if (!storage || !owner) return;
   try {
-    storage.setItem(VIEW_MEMORY_KEY, JSON.stringify(all));
+    storage.setItem(VIEW_MEMORY_KEY, JSON.stringify({ owner, pages }));
   } catch {
     /* Quota or disabled storage: the console just forgets, as it did before. */
   }
 }
 
-/** The remembered view of a page, or null. */
-export function recallView(storage: ViewStorage | null, path: string): ViewQuery | null {
-  return readAll(storage)[path]?.q ?? null;
+function clearAll(storage: ViewStorage | null) {
+  if (!storage) return;
+  try {
+    storage.removeItem(VIEW_MEMORY_KEY);
+  } catch {
+    /* Disabled storage holds nothing to clear. */
+  }
+}
+
+/** `owner`'s remembered view of a page, or null. */
+export function recallView(storage: ViewStorage | null, owner: string | undefined, path: string): ViewQuery | null {
+  return readAll(storage, owner)[path]?.q ?? null;
 }
 
 /**
  * Keep `query`'s view as the page's last; an empty view forgets the page.
  * At most VIEW_MEMORY_MAX pages are kept, the least recently left dropped.
  */
-export function rememberView(storage: ViewStorage | null, path: string, query: LocationQuery | LocationQueryRaw, now = Date.now()) {
-  const all = readAll(storage);
+export function rememberView(
+  storage: ViewStorage | null,
+  owner: string | undefined,
+  path: string,
+  query: LocationQuery | LocationQueryRaw,
+  now = Date.now(),
+) {
+  if (!owner) return;
+  const all = readAll(storage, owner);
   const view = viewQuery(query);
   const had = all[path];
   if (!Object.keys(view).length) {
@@ -135,14 +170,14 @@ export function rememberView(storage: ViewStorage | null, path: string, query: L
       for (const stale of paths.slice(0, paths.length - VIEW_MEMORY_MAX)) delete all[stale];
     }
   }
-  writeAll(storage, all);
+  writeAll(storage, owner, all);
 }
 
-export function forgetView(storage: ViewStorage | null, path: string) {
-  const all = readAll(storage);
+export function forgetView(storage: ViewStorage | null, owner: string | undefined, path: string) {
+  const all = readAll(storage, owner);
   if (!all[path]) return;
   delete all[path];
-  writeAll(storage, all);
+  writeAll(storage, owner, all);
 }
 
 /**
@@ -174,16 +209,32 @@ function sessionStore(): ViewStorage | null {
   }
 }
 
+/** The principal whose views are read and written; none while signed out. */
+let viewOwner: string | undefined;
+
+/**
+ * Tie the remembered views to the signed-in principal: stores/auth calls this
+ * whenever the principal changes (its actor id, or undefined when it is
+ * dropped). A different principal or none clears what the last one left; a
+ * refresh of the same principal keeps it.
+ */
+export function setViewMemoryOwner(owner: string | undefined, storage: ViewStorage | null = sessionStore()) {
+  if (owner !== viewOwner) restoredView.value = null;
+  viewOwner = owner;
+  const stored = readStored(storage);
+  if (stored && (!owner || stored.owner !== owner)) clearAll(storage);
+}
+
 export function installViewMemory(router: Router, consolePaths: ReadonlySet<string>, storage: () => ViewStorage | null = sessionStore) {
   router.beforeEach((to, from) => {
-    const view = viewToRestore(to, from, recallView(storage(), to.path), consolePaths);
+    const view = viewToRestore(to, from, recallView(storage(), viewOwner, to.path), consolePaths);
     if (!view) return;
     restoredView.value = { path: to.path, query: view };
     return { path: to.path, query: view, hash: to.hash };
   });
   router.afterEach((to, _from, failure) => {
     if (failure || !isRememberedPath(to.path, consolePaths)) return;
-    rememberView(storage(), to.path, to.query);
+    rememberView(storage(), viewOwner, to.path, to.query);
   });
 }
 
@@ -191,7 +242,7 @@ export function installViewMemory(router: Router, consolePaths: ReadonlySet<stri
 export function resetRestoredView(router: Router, storage: () => ViewStorage | null = sessionStore) {
   const restored = restoredView.value;
   if (!restored) return;
-  forgetView(storage(), restored.path);
+  forgetView(storage(), viewOwner, restored.path);
   restoredView.value = null;
   if (router.currentRoute.value.path === restored.path) void router.replace({ path: restored.path });
 }
