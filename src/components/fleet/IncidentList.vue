@@ -94,7 +94,17 @@ watch(
 
 const { t, locale } = useI18n();
 
-const ICON: Record<IncidentTone, unknown> = { danger: OctagonAlert, warning: AlertTriangle, info: Info, muted: AlertTriangle };
+/**
+ * The glyph says how bad (octagon critical, triangle warning) and the
+ * colour says whether anyone needs to act (incidentTone): an acknowledged,
+ * snoozed or window-held critical keeps its octagon and goes grey. Pending
+ * is not an incident yet, and resolved is history.
+ */
+function iconFor(incident: Incident): unknown {
+  if (incident.state === "resolved") return CircleCheck;
+  if (incident.state === "pending") return Info;
+  return incidentSeverity(incident) === "critical" ? OctagonAlert : AlertTriangle;
+}
 const ICON_TONE: Record<IncidentTone, string> = {
   danger: "text-destructive",
   warning: "text-warning-text",
@@ -201,7 +211,7 @@ const rows = computed(() =>
     return {
       incident,
       tone,
-      icon: incident.state === "resolved" ? CircleCheck : ICON[tone],
+      icon: iconFor(incident),
       claim: claim(incident),
       severity: t(`fleet.keepalive.severity.${incidentSeverity(incident)}`),
       age: ageLine(incident),
