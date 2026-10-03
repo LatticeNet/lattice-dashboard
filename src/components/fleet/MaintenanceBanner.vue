@@ -61,7 +61,16 @@ const lines = computed(() =>
         <span class="min-w-0 break-words">{{ line.text }}</span>
       </span>
       <span v-if="canEdit" class="flex shrink-0 gap-1.5 ps-6.5 sm:ps-0">
-        <Button variant="outline" size="sm" type="button" class="pointer-coarse:h-11" :disabled="busy === line.window.id" @click="emit('end', line.window)">
+        <!-- aria-disabled while it runs, not disabled: a disabled button drops focus to the page. -->
+        <Button
+          variant="outline"
+          size="sm"
+          type="button"
+          class="pointer-coarse:h-11 aria-disabled:opacity-50"
+          :aria-disabled="busy === line.window.id || undefined"
+          :data-window-end="line.window.id"
+          @click="busy === line.window.id || emit('end', line.window)"
+        >
           {{ $t('fleet.keepalive.maintenance.endNow') }}
         </Button>
         <Button variant="ghost" size="sm" type="button" class="pointer-coarse:h-11" @click="emit('edit', line.window)">

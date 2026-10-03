@@ -14,13 +14,13 @@
  * The incident list belongs to MonitoringView (its count rides on the layer
  * tab); this component reads the windows and groups itself.
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, Wrench } from "lucide-vue-next";
 
-import { api, type GroupView, type IncidentListResponse, type MaintenanceWindow, type Node } from "@/lib/api";
+import { api, type GroupView, type Incident, type IncidentListResponse, type MaintenanceWindow, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { useIncidentActions } from "@/composables/useIncidentActions";
+import { ACK_UNDO_MS, useIncidentActions } from "@/composables/useIncidentActions";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import type { OwnedRoute } from "@/composables/useOwnedRoute";
 import { useAuthStore } from "@/stores/auth";
@@ -36,6 +36,8 @@ import {
   parseIncidentFilter,
   visibleIncidents,
   windowCoverage,
+  windowHeldIncidents,
+  windowInput,
   windowPhase,
   type IncidentFilter,
 } from "@/views/fleet/incidentsModel";
@@ -102,9 +104,15 @@ function kindLabel(value: string): string {
 
 /* --------------------------- maintenance windows --------------------------- */
 
+const root = ref<HTMLElement | null>(null);
 const sheetOpen = ref(false);
 const editing = ref<MaintenanceWindow | undefined>();
 const ending = ref<string | null>(null);
+/** The window End now asks about: it holds messages that ending it sends. */
+const endAsk = ref<{ window: MaintenanceWindow; held: Incident[] } | undefined>();
+/** The window End now last asked about, and whether it ended: its dialog returns focus by these. */
+let askedId: string | null = null;
+let endedId: string | null = null;
 const deleting = ref<MaintenanceWindow | undefined>();
 const deletePending = ref(false);
 
@@ -124,18 +132,85 @@ function onSaved(): void {
   emit("refresh");
 }
 
+function newWindowButton(): HTMLElement | null {
+  return root.value?.querySelector<HTMLElement>("[data-maintenance-new]") ?? null;
+}
+
+function endButton(id: string): HTMLElement | null {
+  return root.value?.querySelector<HTMLElement>(`[data-window-end="${CSS.escape(id)}"]`) ?? null;
+}
+
+/** Cancel returns to End now; a window that ended hands focus to New maintenance window. */
+function endDialogFocus(): HTMLElement | null {
+  return (askedId && askedId !== endedId ? endButton(askedId) : null) ?? newWindowButton();
+}
+
+/** Focus a control once the lists have re-rendered; the one pressed is usually gone. */
+async function focusAfter(target: () => HTMLElement | null | undefined): Promise<void> {
+  await nextTick();
+  (target() ?? newWindowButton())?.focus();
+}
+
+/**
+ * End now. A window holding first messages for open incidents says which
+ * will notify on the next check and asks first, as Delete does; one holding
+ * nothing ends at once. Either way the toast offers Undo, which puts the
+ * old end time back.
+ */
+function requestEnd(window: MaintenanceWindow): void {
+  if (ending.value) return;
+  const held = windowHeldIncidents(incidents.value, window.id);
+  askedId = window.id;
+  endedId = null;
+  if (held.length) endAsk.value = { window, held };
+  else void endWindow(window);
+}
+
+function heldNames(held: readonly Incident[]): string {
+  const names = held.map((incident) =>
+    t("fleet.keepalive.maintenance.heldItem", {
+      kind: kindLabel(incident.kind),
+      node: incident.node_name || (incident.node_id ? nodeNames.value.get(incident.node_id) : undefined) || incident.subject || incident.node_id || "",
+    }),
+  );
+  const shown = names.slice(0, 3).join(", ");
+  return names.length > 3 ? t("fleet.keepalive.maintenance.andMore", { names: shown, n: names.length - 3 }) : shown;
+}
+
 async function endWindow(window: MaintenanceWindow): Promise<void> {
+  if (ending.value) return;
   ending.value = window.id;
   try {
     await api.maintenance.upsert(endWindowInput(window, Date.now()));
-    toast.success(t("fleet.keepalive.maintenance.toast.ended", { name: window.name }));
-    void windowsQuery.refresh();
-    emit("refresh");
   } catch (error) {
     toast.error(error instanceof Error && error.message ? error.message : t("fleet.keepalive.maintenance.toast.saveFailed"));
+    return;
   } finally {
     ending.value = null;
   }
+  endedId = window.id;
+  endAsk.value = undefined;
+  toast.success(t("fleet.keepalive.maintenance.toast.ended", { name: window.name }), {
+    duration: ACK_UNDO_MS,
+    action: { label: t("fleet.keepalive.toast.undo"), onClick: () => void restoreWindow(window) },
+  });
+  emit("refresh");
+  await windowsQuery.refresh();
+  // Its banner line and End now are gone; the next thing to do is plan another window.
+  await focusAfter(newWindowButton);
+}
+
+async function restoreWindow(window: MaintenanceWindow): Promise<void> {
+  try {
+    await api.maintenance.upsert(windowInput(window));
+  } catch (error) {
+    toast.error(error instanceof Error && error.message ? `${t("fleet.keepalive.maintenance.toast.restoreFailed")}: ${error.message}` : t("fleet.keepalive.maintenance.toast.restoreFailed"));
+    return;
+  }
+  toast.success(t("fleet.keepalive.maintenance.toast.restored", { name: window.name, time: clock(window.ends_at) }));
+  emit("refresh");
+  await windowsQuery.refresh();
+  await focusAfter(() => endButton(window.id));
 }
 
 async function confirmDelete(): Promise<void> {
@@ -168,7 +243,7 @@ function coverageText(window: MaintenanceWindow): string {
 </script>
 
 <template>
-  <div class="space-y-4" data-testid="keepalive-layer">
+  <div ref="root" class="space-y-4" data-testid="keepalive-layer">
     <MaintenanceBanner
       :windows="activeWindows"
       :now="now"
@@ -176,7 +251,7 @@ function coverageText(window: MaintenanceWindow): string {
       :group-names="groupNames"
       :can-edit="canAdmin"
       :busy="ending"
-      @end="endWindow"
+      @end="requestEnd"
       @edit="(w) => editWindow((windowsQuery.data.value ?? []).find((x) => x.id === w.id) ?? w)"
     />
 
@@ -203,7 +278,7 @@ function coverageText(window: MaintenanceWindow): string {
         </SelectContent>
       </Select>
       <Input v-model="search" type="search" class="h-8 w-full min-w-0 sm:w-56 pointer-coarse:h-11" :placeholder="$t('fleet.keepalive.filter.search')" :aria-label="$t('fleet.keepalive.filter.search')" />
-      <Button v-if="canAdmin" variant="outline" size="sm" type="button" class="ms-auto pointer-coarse:h-11" @click="newWindow">
+      <Button v-if="canAdmin" variant="outline" size="sm" type="button" class="ms-auto pointer-coarse:h-11" data-maintenance-new @click="newWindow">
         <Plus aria-hidden="true" />
         {{ $t('fleet.keepalive.maintenance.new') }}
       </Button>
@@ -272,6 +347,17 @@ function coverageText(window: MaintenanceWindow): string {
       :allow-groups="!confined"
       @close="sheetOpen = false"
       @saved="onSaved"
+    />
+    <ConfirmDialog
+      :open="!!endAsk"
+      :title="$t('fleet.keepalive.maintenance.endTitle', { name: endAsk?.window.name ?? '' })"
+      :description="endAsk ? $t('fleet.keepalive.maintenance.endHeld', { n: endAsk.held.length, names: heldNames(endAsk.held) }, endAsk.held.length) : ''"
+      :confirm-label="$t('fleet.keepalive.maintenance.endNow')"
+      variant="default"
+      :pending="!!ending"
+      :return-focus="endDialogFocus"
+      @update:open="(v) => { if (!v) endAsk = undefined; }"
+      @confirm="endAsk && endWindow(endAsk.window)"
     />
     <ConfirmDialog
       :open="!!deleting"

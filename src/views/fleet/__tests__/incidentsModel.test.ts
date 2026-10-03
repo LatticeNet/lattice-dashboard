@@ -22,6 +22,8 @@ import {
   windowCoverage,
   windowDraftErrors,
   windowDraftInput,
+  windowHeldIncidents,
+  windowInput,
   windowPhase,
 } from "../incidentsModel.ts";
 
@@ -94,6 +96,12 @@ test("the phone line says what was sent, what is owed and why a message is held"
   assert.deepEqual(phoneState(incident({ owed_open: true, snoozed_until: ahead(20) }), NOW), { key: "held", reason: "snoozed", until: NOW + 20 * 60_000 });
   assert.deepEqual(phoneState(incident({ owed_open: true, flapping: true, suppressed: "flapping (3 reopenings)" }), NOW), { key: "held", reason: "flapping" });
   assert.deepEqual(phoneState(incident({ owed_open: true }), NOW), { key: "owed" });
+  // Held before, nothing holding it now: the window ended (or another hold lifted) and the next check sends it.
+  const windowHold = `held by maintenance window "kernel upgrade" until ${ahead(10)}`;
+  assert.deepEqual(phoneState(incident({ owed_open: true, suppressed: windowHold, suppressed_at: ago(7) }), NOW), { key: "released", by: "window" });
+  assert.deepEqual(phoneState(incident({ owed_open: true, suppressed: `snoozed until ${ago(1)}`, suppressed_at: ago(7) }), NOW), { key: "released", by: "hold" });
+  // While the window still covers the node, it is held by that window.
+  assert.deepEqual(phoneState(incident({ owed_open: true, suppressed: windowHold, suppressed_at: ago(7), maintenance: "kernel upgrade" }), NOW), { key: "held", reason: "maintenance", window: "kernel upgrade" });
   assert.deepEqual(phoneState(incident({ notified: "open", open_notified_at: ago(12) }), NOW), {
     key: "paged",
     at: NOW - 12 * 60_000,
@@ -154,13 +162,29 @@ test("windows: phase, the listed order and what each covers by name", () => {
       { ...WINDOW, id: "later", starts_at: ahead(60), ends_at: ahead(120) },
       { ...WINDOW, id: "ended", starts_at: ago(90), ends_at: ago(1) },
       { ...WINDOW, id: "soon", starts_at: ahead(10), ends_at: ahead(20) },
+      { ...WINDOW, id: "yesterday", starts_at: ago(31 * 60), ends_at: ago(30 * 60) },
+      { ...WINDOW, id: "ended-earlier", starts_at: ago(90), ends_at: ago(20) },
       WINDOW,
     ],
     NOW,
   );
-  assert.deepEqual(listed.map((w) => w.id), ["mw_1", "soon", "later"]);
+  // Windows that ended today stay listed (latest first) so they can be extended; older ones drop.
+  assert.deepEqual(listed.map((w) => w.id), ["mw_1", "soon", "later", "ended", "ended-earlier"]);
   const coverage = windowCoverage(WINDOW, new Map([["n1", "DMIT-4"]]), new Map([["grp_edge", "edge"]]));
   assert.deepEqual(coverage, { nodes: ["DMIT-4", "gone"], groups: ["edge"] });
+});
+
+test("ending a window names what it releases, and Undo sends the window back as it was", () => {
+  const held = [
+    incident({ id: "held", maintenance_id: "mw_1", owed_open: true }),
+    incident({ id: "paged", maintenance_id: "mw_1", notified: "open" }),
+    incident({ id: "acked", maintenance_id: "mw_1", state: "acknowledged", owed_open: true }),
+    incident({ id: "other", maintenance_id: "mw_2", owed_open: true }),
+  ];
+  assert.deepEqual(windowHeldIncidents(held, "mw_1").map((i) => i.id), ["held"]);
+  const ended = endWindowInput(WINDOW, NOW);
+  assert.equal(ended.ends_at, new Date(NOW).toISOString());
+  assert.deepEqual(windowInput(WINDOW), { ...ended, ends_at: WINDOW.ends_at });
 });
 
 test("the window editor follows the server's rules and leaves starts_at out of a window that starts now", () => {

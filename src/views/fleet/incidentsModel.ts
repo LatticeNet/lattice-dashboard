@@ -175,13 +175,18 @@ export function incidentTone(incident: Incident, now: number): IncidentTone {
  */
 export type PhoneState =
   | { key: "pending"; opensAt?: number }
-  | { key: "held"; reason: "maintenance" | "snoozed" | "flapping" | "other"; window?: string; until?: number }
+  | { key: "held"; reason: "maintenance" | "snoozed" | "flapping"; window?: string; until?: number }
+  /** A message was held and nothing holds it any more: the next check sends it. */
+  | { key: "released"; by: "window" | "hold" }
   | { key: "owed" }
   | { key: "paged"; at: number; escalatedAt?: number; unacknowledged: boolean; noEscalate: boolean }
   | { key: "recoveryOwed" }
   | { key: "recoveryHeld" }
   | { key: "recovered"; at: number }
   | { key: "silent" };
+
+/** How lattice-server's incidentOpenHold begins the reason it records for a window's hold. */
+const WINDOW_HOLD_REASON = "held by maintenance window";
 
 function earliest(values: Record<string, string> | undefined): number | undefined {
   let out: number | undefined;
@@ -209,7 +214,10 @@ export function phoneState(incident: Incident, now: number): PhoneState {
       return { key: "held", reason: "snoozed", until: Number.isNaN(until) ? undefined : until };
     }
     if (incident.flapping && incident.suppressed) return { key: "held", reason: "flapping" };
-    if (incident.suppressed && incident.suppressed_at) return { key: "held", reason: "other" };
+    // The server holds an open message only for a window, a snooze or
+    // flapping (incidentOpenHold). Held before and none of them now means
+    // the hold lifted, most often a window that ended: the next check sends it.
+    if (incident.suppressed && incident.suppressed_at) return { key: "released", by: incident.suppressed.startsWith(WINDOW_HOLD_REASON) ? "window" : "hold" };
     return { key: "owed" };
   }
   if (incident.notified === "open") {
@@ -278,16 +286,39 @@ export function windowPhase(window: Pick<MaintenanceWindow, "starts_at" | "ends_
   return "active";
 }
 
-/** Windows worth listing: active first (ending soonest), then upcoming (starting soonest); ended ones are history. */
+const PHASE_RANK: Record<WindowPhase, number> = { active: 0, upcoming: 1, ended: 2 };
+
+/** A window that ended on the browser's current calendar day. */
+function endedToday(window: Pick<MaintenanceWindow, "ends_at">, now: number): boolean {
+  const end = time(window.ends_at);
+  return !Number.isNaN(end) && end <= now && new Date(end).toDateString() === new Date(now).toDateString();
+}
+
+/**
+ * Windows worth listing: active first (ending soonest), then upcoming
+ * (starting soonest), then those that ended today (latest first), so a
+ * window ended early can still be found and extended. Older ones are history.
+ */
 export function listedWindows(windows: readonly MaintenanceWindow[], now: number): MaintenanceWindow[] {
   return windows
-    .filter((window) => windowPhase(window, now) !== "ended")
+    .filter((window) => windowPhase(window, now) !== "ended" || endedToday(window, now))
     .sort((a, b) => {
-      const pa = windowPhase(a, now) === "active" ? 0 : 1;
-      const pb = windowPhase(b, now) === "active" ? 0 : 1;
+      const pa = PHASE_RANK[windowPhase(a, now)];
+      const pb = PHASE_RANK[windowPhase(b, now)];
       if (pa !== pb) return pa - pb;
-      return pa === 0 ? time(a.ends_at) - time(b.ends_at) : time(a.starts_at) - time(b.starts_at);
+      if (pa === 0) return time(a.ends_at) - time(b.ends_at);
+      if (pa === 1) return time(a.starts_at) - time(b.starts_at);
+      return time(b.ends_at) - time(a.ends_at);
     });
+}
+
+/**
+ * The open incidents whose first message a window is holding: ending the
+ * window sends each of them on the next check. An incident someone
+ * acknowledged owes nothing.
+ */
+export function windowHeldIncidents(incidents: readonly Incident[], windowId: string): Incident[] {
+  return incidents.filter((incident) => incident.maintenance_id === windowId && incident.state === "open" && !!incident.owed_open);
 }
 
 /** What a window covers, by name: nodes, then groups. A name the console cannot resolve shows its id. */
@@ -385,8 +416,8 @@ export function windowDraftInput(draft: WindowDraft): MaintenanceWindowInput {
   return input;
 }
 
-/** Ending a running window now: the same window with ends_at set to now. */
-export function endWindowInput(window: MaintenanceWindow, now: number): MaintenanceWindowInput {
+/** A window as an upsert of itself; Undo after End now sends this to put the end time back. */
+export function windowInput(window: MaintenanceWindow): MaintenanceWindowInput {
   return {
     id: window.id,
     name: window.name,
@@ -394,6 +425,11 @@ export function endWindowInput(window: MaintenanceWindow, now: number): Maintena
     node_ids: window.node_ids ?? [],
     group_ids: window.group_ids ?? [],
     starts_at: window.starts_at,
-    ends_at: new Date(Math.max(now, time(window.starts_at) + 1000)).toISOString(),
+    ends_at: window.ends_at,
   };
+}
+
+/** Ending a running window now: the same window with ends_at set to now. */
+export function endWindowInput(window: MaintenanceWindow, now: number): MaintenanceWindowInput {
+  return { ...windowInput(window), ends_at: new Date(Math.max(now, time(window.starts_at) + 1000)).toISOString() };
 }

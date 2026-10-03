@@ -149,8 +149,9 @@ function phoneLine(incident: Incident): string {
     case "held":
       if (state.reason === "maintenance") return t("fleet.keepalive.phone.heldMaintenance", { name: state.window });
       if (state.reason === "snoozed") return t("fleet.keepalive.phone.heldSnoozed", { time: clock(state.until) });
-      if (state.reason === "flapping") return t("fleet.keepalive.phone.heldFlapping");
-      return t("fleet.keepalive.phone.heldOther");
+      return t("fleet.keepalive.phone.heldFlapping");
+    case "released":
+      return t(state.by === "window" ? "fleet.keepalive.phone.windowEnded" : "fleet.keepalive.phone.holdLifted");
     case "owed":
       return t("fleet.keepalive.phone.owed");
     case "paged": {
