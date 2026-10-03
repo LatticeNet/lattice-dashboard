@@ -13,6 +13,7 @@ import { INCIDENT_FILTERS, INCIDENT_KINDS, SNOOZE_MINUTES, type WindowDraftError
 import { LOOP_STEP_ORDER } from "../loopHealthModel.ts";
 import { BARK_LEVELS, type RuleIncidentError } from "../../platform/notificationsModel.ts";
 import { SENT_OUTCOMES, type SentNoteKey, type SentState } from "../../platform/notifySentModel.ts";
+import { CRITICAL_ALERT_EVENTS, eventKey } from "../../../lib/incidentSeverity.ts";
 
 const en = { ...enFleet, ...enPlatform } as Record<string, unknown>;
 const zh = { ...zhFleet, ...zhPlatform } as Record<string, unknown>;
@@ -36,6 +37,9 @@ const keys = [
   ...WINDOW_ERRORS.map((error) => `fleet.keepalive.maintenance.error.${error}`),
   ...LOOP_STEP_ORDER.map((step) => `fleet.loop.step.${step}`),
   ...BARK_LEVELS.map((level) => `platform.notifications.incidents.levels.${level}`),
+  ...BARK_LEVELS.map((level) => `platform.notifications.incidents.levelNames.${level}`),
+  ...[...INCIDENT_KINDS, ...CRITICAL_ALERT_EVENTS].map((event) => `platform.notifications.incidents.kinds.${eventKey(event)}`),
+  ...["critical", "warning"].map((severity) => `fleet.keepalive.severity.${severity}`),
   ...RULE_ERRORS.map((error) => `platform.notifications.incidents.errors.${error}`),
   ...SENT_STATES.map((state) => `platform.notifications.sent.state.${state}`),
   ...SENT_OUTCOMES.map((outcome) => `platform.notifications.sent.outcomeFilter.${outcome}`),

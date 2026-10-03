@@ -12,13 +12,14 @@
  * Kept free of Vue so `node --test` covers it directly.
  */
 import type { Incident, MaintenanceWindow, MaintenanceWindowInput } from "@/lib/api/types";
+import { INCIDENT_KINDS, isIncidentKind, type IncidentKind } from "@/lib/incidentSeverity";
 
-/** The incident kinds the server opens today; another kind is shown by its raw name. */
-export const INCIDENT_KINDS = ["node.offline", "service.down", "monitor.down", "agent.stalled"] as const;
-export type IncidentKind = (typeof INCIDENT_KINDS)[number];
+/** The incident kinds the server opens today (lib/incidentSeverity); another kind is shown by its raw name. */
+export { INCIDENT_KINDS };
+export type { IncidentKind };
 
 export function knownKind(kind: string): IncidentKind | undefined {
-  return (INCIDENT_KINDS as readonly string[]).includes(kind) ? (kind as IncidentKind) : undefined;
+  return isIncidentKind(kind) ? kind : undefined;
 }
 
 /** The list filters, in the order the filter control shows them. "active" is the default. */

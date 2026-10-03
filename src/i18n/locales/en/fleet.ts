@@ -1659,7 +1659,7 @@ export default {
         heldOther: "Notification held",
         owed: "Notification queued",
         paged: "Paged {time}",
-        escalated: "re-sent as critical {time}",
+        escalated: "reminder re-sent {time}",
         unacknowledged: "not acknowledged",
         recoveryOwed: "Recovery queued",
         recoveryHeld: "Recovery held until it stops flapping",

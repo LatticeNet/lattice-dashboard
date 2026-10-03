@@ -21,6 +21,7 @@ import { AlertTriangle, BellOff, Check, Clock, Info, OctagonAlert, CircleCheck }
 import type { Incident } from "@/lib/api";
 import { formatAge } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { incidentSeverity } from "@/lib/incidentSeverity";
 import {
   SNOOZE_MINUTES,
   incidentActions,
@@ -171,7 +172,7 @@ const rows = computed(() =>
       tone,
       icon: incident.state === "resolved" ? CircleCheck : ICON[tone],
       claim: claim(incident),
-      severity: incident.severity === "critical" ? t("fleet.keepalive.severity.critical") : t("fleet.keepalive.severity.warning"),
+      severity: t(`fleet.keepalive.severity.${incidentSeverity(incident)}`),
       age: ageLine(incident),
       phone: phoneLine(incident),
       badges,

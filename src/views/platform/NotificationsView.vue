@@ -42,6 +42,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { CRITICAL_ALERT_EVENTS, CRITICAL_NON_INCIDENT_EVENTS, ESCALATING_KINDS, eventKey, ruleIncidentReach, ruleRoutes } from "@/lib/incidentSeverity";
 import {
   buildConfig as buildConfigFor,
   channelDeleteImpact as channelDeleteImpactFor,
@@ -183,7 +184,37 @@ const RULE_PRESETS: RulePreset[] = [
   },
 ];
 
-const { t } = useI18n();
+const { t, te, locale } = useI18n();
+
+/** An event inside a sentence ("a node that stopped reporting"); an event without copy keeps its id. */
+function eventPhrase(eventType: string): string {
+  const key = `platform.notifications.incidents.kinds.${eventKey(eventType)}`;
+  return te(key) ? t(key) : eventType;
+}
+
+/** A list inside a sentence, joined the way the locale joins one. */
+function phraseList(items: readonly string[]): string {
+  // Intl.ListFormat is ES2021, past this project's lib setting; every supported browser has it.
+  const ListFormat = (Intl as unknown as { ListFormat?: new (locale: string, options: { type: string }) => { format(list: readonly string[]): string } }).ListFormat;
+  try {
+    if (ListFormat) return new ListFormat(locale.value, { type: "conjunction" }).format(items);
+  } catch {
+    /* an unknown locale falls back below */
+  }
+  return items.join(", ");
+}
+
+/** A Bark interruption level inside a sentence. */
+function barkLevelName(level: string): string {
+  const key = `platform.notifications.incidents.levelNames.${level}`;
+  return te(key) ? t(key) : level;
+}
+
+/** A Bark interruption level as a select offers it. */
+function barkLevelLabel(level: string): string {
+  const key = `platform.notifications.incidents.levels.${level}`;
+  return te(key) ? t(key) : level;
+}
 const auth = useAuthStore();
 // The notify split (2026-09): notify:admin governs channels, rules and
 // webhooks; notify:send is dispatch only and gates just the test-send below.
@@ -379,9 +410,11 @@ function ruleIncidentLine(rule: NotifyRuleView): string | undefined {
   const summary = ruleIncidentSummary(rule);
   const parts: string[] = [];
   if (summary.quiet) parts.push(t("platform.notifications.incidents.quietLine", summary.quiet));
-  if (summary.escalation === "off") parts.push(t("platform.notifications.incidents.escalationOffLine"));
-  else if (typeof summary.escalation === "object") {
-    parts.push(t("platform.notifications.incidents.escalationLine", { n: summary.escalation.minutes, level: summary.escalation.level }));
+  // A rule that routes no critical incident re-sends nothing, whatever its escalation says.
+  const escalates = ruleIncidentReach(rule.event_types ?? []).critical.length > 0;
+  if (escalates && summary.escalation === "off") parts.push(t("platform.notifications.incidents.escalationOffLine"));
+  else if (escalates && typeof summary.escalation === "object") {
+    parts.push(t("platform.notifications.incidents.escalationLine", { n: summary.escalation.minutes, level: barkLevelName(summary.escalation.level) }));
   }
   return parts.length ? parts.join(" · ") : undefined;
 }
@@ -734,7 +767,9 @@ const formFallback = ref("");
 const formHadFallback = ref(false);
 const formFallbackChoices = computed(() => channelFallbackChoices(sortedChannels.value, editingId.value));
 /** The events a channel fallback carries, as the server names them. */
-const criticalEvents = computed(() => channels.value.find((c) => c.critical_event_types?.length)?.critical_event_types ?? ["node.offline", "service.down", "ssh.compromise_suspected"]);
+/** What a channel's fallback carries: the server's own list, else the console's severity table (the two agree). */
+const criticalEvents = computed(() => channels.value.find((c) => c.critical_event_types?.length)?.critical_event_types ?? CRITICAL_ALERT_EVENTS);
+const criticalEventsText = computed(() => phraseList(criticalEvents.value.map(eventPhrase)));
 
 const activeFields = computed<FieldDef[]>(() => KIND_FIELDS[formKind.value]);
 
@@ -939,7 +974,23 @@ function knownTimeZone(zone: string): boolean {
     return false;
   }
 }
-const ruleIncidentErrorList = computed(() => ruleIncidentErrors(ruleIncident.value, knownTimeZone));
+/** What this rule's events mean for incidents (lib/incidentSeverity): which it re-sends and which quiet hours hold. */
+const ruleReach = computed(() => ruleIncidentReach(parseRuleEvents(ruleEvents.value)));
+/** Escalation only ever re-sends a critical incident; a rule that routes none has nothing to re-send. */
+const ruleCanEscalate = computed(() => ruleReach.value.critical.length > 0);
+/** Critical events this rule routes, which quiet hours never hold. */
+const ruleQuietAtOnce = computed(() => [
+  ...ruleReach.value.critical,
+  ...CRITICAL_NON_INCIDENT_EVENTS.filter((event) => ruleRoutes(parseRuleEvents(ruleEvents.value), event)),
+]);
+const ruleQuietOnlyWarnings = computed(() => ruleIncident.value.quiet && ruleQuietAtOnce.value.length === 0 && ruleReach.value.warning.length > 0);
+/** The draft as it is saved: escalation fields the rule cannot use keep what the rule held. */
+const ruleIncidentEffective = computed<RuleIncidentDraft>(() =>
+  ruleCanEscalate.value
+    ? ruleIncident.value
+    : { ...ruleIncident.value, escalate: ruleIncidentOriginal.value.escalate, afterMinutes: ruleIncidentOriginal.value.afterMinutes, barkLevel: ruleIncidentOriginal.value.barkLevel },
+);
+const ruleIncidentErrorList = computed(() => ruleIncidentErrors(ruleIncidentEffective.value, knownTimeZone));
 const timeZoneChoices = (() => {
   try {
     return (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone") ?? [];
@@ -1043,7 +1094,7 @@ async function submitRule(): Promise<void> {
       body_template: ruleBodyTemplate.value.trim() || undefined,
       enabled: ruleEnabled.value,
       fallback_channel_id: fallbackForSave(ruleFallback.value, ruleChannelIds.value, ruleHadFallback.value),
-      ...ruleIncidentRequest(ruleIncident.value, ruleIncidentOriginal.value),
+      ...ruleIncidentRequest(ruleIncidentEffective.value, ruleIncidentOriginal.value),
     };
     await api.notify.upsertRule(req);
     toast.success(ruleEditingId.value ? t("platform.notifications.ruleUpdated") : t("platform.notifications.ruleCreated"));
@@ -1663,7 +1714,7 @@ async function confirmDeleteRule(): Promise<void> {
                 <SelectContent>
                   <SelectItem :value="SELECT_DEFAULT">{{ $t(field.placeholder) }}</SelectItem>
                   <SelectItem v-for="option in field.options" :key="option" :value="option">
-                    {{ option }}
+                    {{ field.key === 'level' ? barkLevelLabel(option) : option }}
                   </SelectItem>
                 </SelectContent>
               </Select>
@@ -1719,7 +1770,7 @@ async function confirmDeleteRule(): Promise<void> {
                 </SelectItem>
               </SelectContent>
             </Select>
-            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.channelFallback.hint', { events: criticalEvents.join(', ') }) }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.channelFallback.hint', { events: criticalEventsText }) }}</p>
           </div>
 
           <div class="space-y-3 rounded-md border border-dashed border-border p-3">
@@ -1849,11 +1900,19 @@ async function confirmDeleteRule(): Promise<void> {
           <!-- What happens to an incident this rule routes: re-sent when nobody acknowledges it, held at night. -->
           <fieldset class="space-y-3 rounded-md border border-border p-3" data-testid="rule-incident-fields">
             <legend class="px-1 text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.incidents.legend') }}</legend>
-            <label class="flex cursor-pointer items-start gap-2 text-sm pointer-coarse:min-h-11 pointer-coarse:items-center">
-              <Checkbox v-model="ruleIncident.escalate" class="mt-0.5 pointer-coarse:mt-0" />
+            <label
+              :class="cn('flex items-start gap-2 text-sm pointer-coarse:min-h-11 pointer-coarse:items-center', ruleCanEscalate ? 'cursor-pointer' : 'cursor-not-allowed text-muted-foreground')"
+            >
+              <Checkbox
+                v-model="ruleIncident.escalate"
+                class="mt-0.5 pointer-coarse:mt-0"
+                :disabled="!ruleCanEscalate"
+                aria-describedby="rule-escalate-reach"
+                data-testid="rule-escalate"
+              />
               <span>{{ $t('platform.notifications.incidents.escalate') }}</span>
             </label>
-            <div v-if="ruleIncident.escalate" class="grid grid-cols-1 gap-3 ps-6 sm:grid-cols-2">
+            <div v-if="ruleCanEscalate && ruleIncident.escalate" class="grid grid-cols-1 gap-3 ps-6 sm:grid-cols-2">
               <div class="grid gap-1.5">
                 <Label for="rule-escalate-after" class="text-xs">{{ $t('platform.notifications.incidents.after') }}</Label>
                 <Input
@@ -1875,12 +1934,19 @@ async function confirmDeleteRule(): Promise<void> {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem v-for="level in BARK_LEVELS" :key="level" :value="level">{{ $t(`platform.notifications.incidents.levels.${level}`) }}</SelectItem>
+                    <SelectItem v-for="level in BARK_LEVELS" :key="level" :value="level">{{ barkLevelLabel(level) }}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.incidents.escalateHint') }}</p>
+            <div id="rule-escalate-reach" class="space-y-1 text-xs text-muted-foreground" data-testid="rule-escalate-reach">
+              <template v-if="ruleCanEscalate">
+                <p>{{ $t('platform.notifications.incidents.escalateHint') }}</p>
+                <p>{{ $t('platform.notifications.incidents.escalateReach', { list: phraseList(ruleReach.critical.map(eventPhrase)) }) }}</p>
+                <p v-if="ruleReach.warning.length">{{ $t('platform.notifications.incidents.escalateWarnings', { list: phraseList(ruleReach.warning.map(eventPhrase)) }) }}</p>
+              </template>
+              <p v-else>{{ $t('platform.notifications.incidents.escalateNone', { list: phraseList(ESCALATING_KINDS.map(eventPhrase)) }) }}</p>
+            </div>
             <p v-if="ruleIncidentErrorList.includes('after')" class="text-xs text-destructive">
               {{ $t('platform.notifications.incidents.errors.after', { min: ESCALATE_MIN_MINUTES, max: ESCALATE_MAX_MINUTES }) }}
             </p>
@@ -1914,7 +1980,14 @@ async function confirmDeleteRule(): Promise<void> {
                 </datalist>
               </div>
             </div>
-            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.incidents.quietHint') }}</p>
+            <div class="space-y-1 text-xs text-muted-foreground" data-testid="rule-quiet-reach">
+              <p>{{ $t('platform.notifications.incidents.quietHint') }}</p>
+              <p v-if="ruleQuietAtOnce.length">{{ $t('platform.notifications.incidents.quietAtOnce', { list: phraseList(ruleQuietAtOnce.map(eventPhrase)) }) }}</p>
+            </div>
+            <p v-if="ruleQuietOnlyWarnings" class="flex items-start gap-1.5 text-xs text-warning-text" role="status" data-testid="rule-quiet-only-warnings">
+              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>{{ $t('platform.notifications.incidents.quietOnlyWarnings', { list: phraseList(ruleReach.warning.map(eventPhrase)), end: ruleIncident.quietEnd }) }}</span>
+            </p>
             <p v-for="error in ruleIncidentErrorList.filter((e) => e !== 'after')" :key="error" class="text-xs text-destructive">
               {{ $t(`platform.notifications.incidents.errors.${error}`) }}
             </p>

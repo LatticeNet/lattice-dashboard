@@ -1638,7 +1638,7 @@ export default {
         heldOther: "通知已暂扣",
         owed: "通知排队中",
         paged: "{time} 已通知",
-        escalated: "{time} 以严重级别重发",
+        escalated: "{time} 已重发提醒",
         unacknowledged: "尚未确认",
         recoveryOwed: "恢复通知排队中",
         recoveryHeld: "停止抖动前暂扣恢复通知",

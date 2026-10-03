@@ -55,7 +55,13 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ refresh: []; filed: [] }>();
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+
+/** A Bark interruption level as the rule editor's select offers it; a level without copy keeps its name. */
+function levelLabel(level: string): string {
+  const key = `platform.notifications.incidents.levels.${level}`;
+  return te(key) ? t(key) : level;
+}
 
 const nodes = computed(() => props.status?.nodes ?? []);
 /** Nodes worth a block: a witness applied, waiting, failed, or still reporting. */
@@ -334,7 +340,7 @@ defineExpose({ openForm });
               <SelectValue class="min-w-0 overflow-hidden" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="level in status?.defaults.bark_levels ?? []" :key="level" :value="level">{{ level }}</SelectItem>
+              <SelectItem v-for="level in status?.defaults.bark_levels ?? []" :key="level" :value="level">{{ levelLabel(level) }}</SelectItem>
             </SelectContent>
           </Select>
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.levelHint') }}</p>
