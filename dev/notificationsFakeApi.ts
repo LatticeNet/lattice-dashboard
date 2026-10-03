@@ -196,6 +196,25 @@ export const api = {
       };
     },
     deliveries: () => delay({ deliveries: [], stored: 0, durable: true, max: 1000, floor: 50 }),
+    // The control-plane witness card: no witness and no capable node here;
+    // the netplat harness carries the full witness fixture.
+    witness: () =>
+      delay({
+        health_url: "https://lattice.example.org/readyz",
+        nodes: [],
+        capable_nodes: [],
+        defaults: {
+          reference_urls: ["https://www.cloudflare.com/cdn-cgi/trace"],
+          interval_seconds: 30,
+          hold_seconds: 180,
+          recover_seconds: 60,
+          bark_level: "critical",
+          bark_levels: ["active", "timeSensitive", "passive", "critical"],
+          key_file: "/etc/lattice-witness/bark-device-key",
+          config_file: "/etc/lattice-witness/witness.json",
+          unit: "lattice-witness.service",
+        },
+      }),
     upsertRule: async (input: NotifyRuleUpsertRequest) => {
       await delay(undefined);
       const existing = rules.find((r) => r.id === input.id);

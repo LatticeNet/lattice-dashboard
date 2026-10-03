@@ -72,6 +72,13 @@ import {
   sentTone,
   type SentOutcomeFilter,
 } from "./notifySentModel";
+import {
+  channelFallbackChoices,
+  channelFallbackForSave,
+  witnessAttention,
+  type WitnessAttention,
+} from "./witnessModel";
+import NotificationsWitnessCard from "./NotificationsWitnessCard.vue";
 import { useLayer } from "@/composables/useLayer";
 import { writeLayer } from "@/composables/layerModel";
 import type { QueryRecord } from "@/components/common/tableUrlState";
@@ -188,6 +195,11 @@ const channelsQuery = useAsyncData((signal) => api.notify.channels({ signal }), 
 const channels = computed(() => channelsQuery.data.value ?? []);
 const rulesQuery = useAsyncData((signal) => api.notify.rules({ signal }), { pollInterval: 12000 });
 const rules = computed(() => rulesQuery.data.value?.rules ?? []);
+// The control-plane witness: notify:admin reads it, as it does the channel list.
+const witnessQuery = useAsyncData(
+  (signal) => (canManage.value ? api.notify.witness({ signal }) : Promise.resolve(undefined)),
+  { pollInterval: 15_000 },
+);
 /** Whether each read has landed once; a count from a read that never did is not shown. */
 const channelsRead = computed(() => channelsQuery.data.value !== undefined);
 const rulesRead = computed(() => rulesQuery.data.value !== undefined);
@@ -401,15 +413,77 @@ function healthText(line: HealthLine): string {
   }
 }
 
+/** The line under a channel that hands its critical messages to another one. */
+function channelFallbackLine(channel: NotifyChannelView): string | undefined {
+  const id = channel.fallback_channel_id;
+  if (!id) return undefined;
+  return channelKnown(id)
+    ? t("platform.notifications.channelFallback.badge", { name: channelName(id) })
+    : t("platform.notifications.channelFallback.gone", { id });
+}
+
+/** How often a channel has handed a critical message on, and to whom. */
+function channelHandedLine(channel: NotifyChannelView): string | undefined {
+  const h = channel.health;
+  if (!h?.fallbacks || !h.last_fallback_at) return undefined;
+  const id = h.last_fallback_channel_id ?? "";
+  return t(
+    "platform.notifications.channelFallback.handed",
+    { n: h.fallbacks, name: channelKnown(id) ? channelName(id) : id, when: formatRelativeTime(h.last_fallback_at) },
+    h.fallbacks,
+  );
+}
+
 /** A channel whose last sends failed carries the cause under its row, at the table's width. */
 function channelHasHealthDetail(channel: NotifyChannelView): boolean {
   const state = channelHealthLine(channel.health).state;
   return state === "failing" || state === "degraded";
 }
 
+/** One attention row per witness problem, worst first (witnessModel.witnessAttention). */
+function witnessAttentionItem(item: WitnessAttention): AttentionItem {
+  const node = item.node.node_name;
+  const line = item.line;
+  const since = line.since ? formatDateTime(line.since) : "";
+  const report = item.node.report;
+  const key = `witness:${item.kind}:${item.node.node_id}`;
+  const base = { key, tone: item.tone, claim: t(`platform.notifications.witness.attention.${item.kind}`, { node }) };
+  switch (item.kind) {
+    case "down":
+      return { ...base, proof: t("platform.notifications.witness.attention.downProof", { since }) };
+    case "failing":
+      return { ...base, proof: t("platform.notifications.witness.attention.failingProof", { since, n: line.failures ?? 0, detail: line.detail ?? "" }, line.failures ?? 0) };
+    case "networkDown":
+      return { ...base, proof: t("platform.notifications.witness.attention.networkDownProof", { since }) };
+    case "notReporting":
+      return { ...base, proof: t("platform.notifications.witness.attention.notReportingProof", { when: item.node.reported_at ? formatDateTime(item.node.reported_at) : "" }) };
+    case "stopped":
+      return { ...base, proof: t("platform.notifications.witness.attention.stoppedProof", { when: line.at ? formatDateTime(line.at) : "" }) };
+    case "pushFailed":
+      return {
+        ...base,
+        proof: t("platform.notifications.witness.attention.pushFailedProof", {
+          when: report?.last_push_at ? formatDateTime(report.last_push_at) : "",
+          error: report?.last_push_error || t("platform.notifications.witness.push.refusedNoReason"),
+        }),
+      };
+    case "planFailed":
+      return {
+        ...base,
+        proof: item.node.last_failed?.reason,
+        action: item.node.last_failed
+          ? { label: t("platform.notifications.witness.attention.open"), to: { name: "approvals", query: { open: item.node.last_failed.approval_id } } }
+          : undefined,
+      };
+    default:
+      return base;
+  }
+}
+
 /** A failing channel is a claim with a fix beside it: test it after correcting the key. */
-const attentionItems = computed<AttentionItem[]>(() =>
-  failingChannels(channels.value).map((channel) => {
+const attentionItems = computed<AttentionItem[]>(() => [
+  ...witnessAttention(witnessQuery.data.value?.nodes ?? []).filter((item) => item.tone === "danger").map(witnessAttentionItem),
+  ...failingChannels(channels.value).map((channel) => {
     const line = channelHealthLine(channel.health);
     return {
       key: `failing:${channel.id}`,
@@ -425,7 +499,8 @@ const attentionItems = computed<AttentionItem[]>(() =>
         : undefined,
     };
   }),
-);
+  ...witnessAttention(witnessQuery.data.value?.nodes ?? []).filter((item) => item.tone !== "danger").map(witnessAttentionItem),
+]);
 
 const testingChannelId = ref<string | undefined>();
 
@@ -626,6 +701,12 @@ const formBody = ref("");
 // so this is the only trace the form has of a stored level, group or url.
 const storedKeys = ref<string[]>([]);
 const clearAcknowledged = ref(false);
+/** The channel's critical fallback, and whether it had one, so clearing it sends "". */
+const formFallback = ref("");
+const formHadFallback = ref(false);
+const formFallbackChoices = computed(() => channelFallbackChoices(sortedChannels.value, editingId.value));
+/** The events a channel fallback carries, as the server names them. */
+const criticalEvents = computed(() => channels.value.find((c) => c.critical_event_types?.length)?.critical_event_types ?? ["node.offline", "service.down", "ssh.compromise_suspected"]);
 
 const activeFields = computed<FieldDef[]>(() => KIND_FIELDS[formKind.value]);
 
@@ -646,6 +727,8 @@ function openCreate(): void {
   formBody.value = "";
   storedKeys.value = [];
   clearAcknowledged.value = false;
+  formFallback.value = "";
+  formHadFallback.value = false;
   resetConfigForKind();
   formOpen.value = true;
 }
@@ -663,6 +746,8 @@ function openEdit(channel: NotifyChannelView): void {
   formBody.value = "";
   storedKeys.value = [...(channel.config_keys ?? [])];
   clearAcknowledged.value = false;
+  formFallback.value = channel.fallback_channel_id ?? "";
+  formHadFallback.value = !!channel.fallback_channel_id;
   resetConfigForKind();
   formOpen.value = true;
 }
@@ -714,6 +799,7 @@ async function submitForm(): Promise<void> {
       kind: formKind.value,
       config: buildConfig(),
       enabled: formEnabled.value,
+      fallback_channel_id: channelFallbackForSave(formFallback.value, editingId.value, formHadFallback.value),
     };
     await api.notify.upsertChannel(req);
     toast.success(editingId.value ? t("platform.notifications.channelUpdated") : t("platform.notifications.channelCreated"));
@@ -978,6 +1064,17 @@ async function confirmDeleteRule(): Promise<void> {
     <template v-if="layer === 'routing'">
     <AttentionList :items="attentionItems" :title="$t('platform.notifications.attention.title')" />
 
+    <NotificationsWitnessCard
+      v-if="canManage"
+      :status="witnessQuery.data.value"
+      :loading="witnessQuery.loading.value"
+      :error="witnessQuery.error.value"
+      :channels="sortedChannels"
+      :can-manage="canManage"
+      @refresh="witnessQuery.refresh()"
+      @filed="witnessQuery.refresh()"
+    />
+
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
@@ -1011,6 +1108,10 @@ async function confirmDeleteRule(): Promise<void> {
         >
           <template #cell-name="{ row }">
             <div class="font-medium max-md:truncate">{{ row.name || row.id }}</div>
+            <div v-if="channelFallbackLine(row)" class="mt-1 flex items-start gap-1 text-xs text-muted-foreground" data-testid="channel-fallback">
+              <CornerDownRight class="mt-px size-3.5 shrink-0" aria-hidden="true" />
+              <span class="min-w-0 break-words">{{ channelFallbackLine(row) }}</span>
+            </div>
           </template>
           <template #cell-kind="{ row }">
             <Badge variant="outline" class="font-mono text-[11px]">{{ row.kind }}</Badge>
@@ -1028,6 +1129,7 @@ async function confirmDeleteRule(): Promise<void> {
                 <TriangleAlert v-if="channelHealthLine(row.health).tone === 'warning'" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
                 <span>{{ healthText(channelHealthLine(row.health)) }}</span>
               </p>
+              <p v-if="channelHandedLine(row)" class="mt-1 text-xs text-muted-foreground" data-testid="channel-handed">{{ channelHandedLine(row) }}</p>
             </div>
           </template>
           <template #row-detail="{ row }">
@@ -1329,7 +1431,7 @@ async function confirmDeleteRule(): Promise<void> {
               </p>
               <p v-if="sentNote(row)">{{ sentNoteText(row) }}</p>
               <p v-if="sentOccurrences(row)" data-testid="sent-occurrences">{{ sentOccurrencesText(row) }}</p>
-              <p v-if="row.role === 'fallback' && row.fallback_for">{{ $t('platform.notifications.sent.fallbackFor', { names: row.fallback_for }) }}</p>
+              <p v-if="row.role === 'fallback' && row.fallback_for">{{ $t(row.fallback_of ? 'platform.notifications.sent.fallbackOf' : 'platform.notifications.sent.fallbackFor', { names: row.fallback_for }) }}</p>
             </div>
           </template>
         </DataTable>
@@ -1364,7 +1466,7 @@ async function confirmDeleteRule(): Promise<void> {
           </p>
           <p v-if="sentNote(openDelivery)" class="text-muted-foreground">{{ sentNoteText(openDelivery) }}</p>
           <p v-if="sentOccurrences(openDelivery)" class="text-muted-foreground">{{ sentOccurrencesText(openDelivery) }}</p>
-          <p v-if="openDelivery.role === 'fallback' && openDelivery.fallback_for" class="text-muted-foreground">{{ $t('platform.notifications.sent.fallbackFor', { names: openDelivery.fallback_for }) }}</p>
+          <p v-if="openDelivery.role === 'fallback' && openDelivery.fallback_for" class="text-muted-foreground">{{ $t(openDelivery.fallback_of ? 'platform.notifications.sent.fallbackOf' : 'platform.notifications.sent.fallbackFor', { names: openDelivery.fallback_for }) }}</p>
           <p v-if="sentState(openDelivery) === 'retrying' && openDelivery.next_attempt_at" class="text-muted-foreground">
             {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(openDelivery.next_attempt_at) }) }}
           </p>
@@ -1412,6 +1514,17 @@ async function confirmDeleteRule(): Promise<void> {
             <dd class="break-all font-mono">{{ openDelivery.event_id }}</dd>
             <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.deliveryId') }}</dt>
             <dd class="break-all font-mono">{{ openDelivery.id }}</dd>
+            <template v-if="openDelivery.fallback_of">
+              <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.standsFor') }}</dt>
+              <dd>
+                <button
+                  type="button"
+                  class="rounded-sm text-left font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:py-1"
+                  data-testid="sent-stands-for"
+                  @click="sheet.open(openDelivery.fallback_of)"
+                >{{ $t('platform.notifications.sent.sheet.failedDelivery') }}</button>
+              </dd>
+            </template>
           </dl>
         </section>
       </div>
@@ -1511,6 +1624,28 @@ async function confirmDeleteRule(): Promise<void> {
             <Checkbox v-model="formEnabled" />
             <span>{{ $t('platform.notifications.enabledLabel') }}</span>
           </label>
+
+          <div v-if="formFallbackChoices.length > 0 || formFallback" class="grid min-w-0 gap-2">
+            <Label for="ch-fallback">{{ $t('platform.notifications.channelFallback.label') }}</Label>
+            <Select
+              :model-value="formFallback || SELECT_DEFAULT"
+              @update:model-value="(value) => (formFallback = fromSelectValue(String(value ?? '')))"
+            >
+              <SelectTrigger id="ch-fallback" class="min-w-0 sm:w-80" data-testid="channel-fallback-select">
+                <SelectValue class="min-w-0 overflow-hidden" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="SELECT_DEFAULT">{{ $t('platform.notifications.channelFallback.none') }}</SelectItem>
+                <SelectItem v-for="channel in formFallbackChoices" :key="channel.id" :value="channel.id">
+                  {{ channel.name || channel.id }} · {{ channel.kind }}
+                </SelectItem>
+                <SelectItem v-if="formFallback && !channelKnown(formFallback)" :value="formFallback">
+                  {{ $t('platform.notifications.channelGone', { id: formFallback }) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.channelFallback.hint', { events: criticalEvents.join(', ') }) }}</p>
+          </div>
 
           <div class="space-y-3 rounded-md border border-dashed border-border p-3">
             <p class="text-xs font-medium uppercase text-muted-foreground">{{ $t('platform.notifications.sendTest') }}</p>
