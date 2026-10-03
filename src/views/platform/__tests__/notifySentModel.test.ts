@@ -117,3 +117,20 @@ test("an incident's held message reads as held, and its reason is worded from th
   assert.deepEqual(sentNote(row({ outcome: "sent", held_until: "2026-10-03T07:00:00Z" })), { key: "quietHours", params: { until: "2026-10-03T07:00:00Z" } });
   assert.deepEqual(sentNote(row({ outcome: "sent", bark_level: "critical" })), { key: "escalation", params: { level: "critical" } });
 });
+
+test("a held message withdrawn when quiet hours ended reads as held and says why it never went out", () => {
+  const withdrawnOpen = row({
+    outcome: "suppressed",
+    held_until: "2026-10-03T07:00:00Z",
+    reason: "withdrawn when quiet hours ended: the incident was resolved, acknowledged or snoozed meanwhile",
+  });
+  const withdrawnRecovery = row({
+    outcome: "suppressed",
+    held_until: "2026-10-03T07:00:00Z",
+    reason: "withdrawn when quiet hours ended: the open message it answers was withdrawn too",
+  });
+  assert.equal(sentState(withdrawnOpen, Date.parse("2026-10-03T08:00:00Z")), "held");
+  // The withdrawal wins over the quiet hours note the row's held_until would give.
+  assert.deepEqual(sentNote(withdrawnOpen), { key: "withdrawnOpen" });
+  assert.deepEqual(sentNote(withdrawnRecovery), { key: "withdrawnRecovery" });
+});

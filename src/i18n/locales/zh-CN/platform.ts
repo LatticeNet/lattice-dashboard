@@ -1288,6 +1288,8 @@ export default {
           heldSnoozed: "事件已暂缓到 {until}，所以暂扣。",
           heldFlapping: "事件反复开启（{n} 次），所以暂扣：每小时最多一条。",
           quietHours: "规则的免打扰时段把它暂扣到 {until}。",
+          withdrawnOpen: "未发送：它被免打扰时段暂扣，时段结束时事件已经恢复、被确认或已暂缓。",
+          withdrawnRecovery: "未发送：它对应的故障消息在免打扰时段结束时已撤回，这个渠道从未收到这次故障。",
           escalation: "事件一直没人确认，以 Bark 级别 {level} 重发。",
         },
         receipts: "尝试记录",

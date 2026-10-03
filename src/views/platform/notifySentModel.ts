@@ -83,6 +83,8 @@ export type SentNoteKey =
   | "heldSnoozed"
   | "heldFlapping"
   | "quietHours"
+  | "withdrawnOpen"
+  | "withdrawnRecovery"
   | "escalation"
   | "noRule"
   | "noChannel"
@@ -110,6 +112,10 @@ const KNOWN_REASONS: Record<string, SentNoteKey> = {
   "interrupted by restart, not retried": "interrupted",
   "channel deleted before delivery": "channelDeleted",
   "channel disabled before delivery": "channelDisabled",
+  // A message quiet hours held and the server withdrew when they ended
+  // (lattice-server notify_outbox.go heldIncidentWithdrawal).
+  "withdrawn when quiet hours ended: the incident was resolved, acknowledged or snoozed meanwhile": "withdrawnOpen",
+  "withdrawn when quiet hours ended: the open message it answers was withdrawn too": "withdrawnRecovery",
 };
 
 const FAILURE_SENTENCE = /^(upstream status \d+|timed out|network error|channel config refused|send failed)( after \d+ attempts)?(, retrying)?$/;

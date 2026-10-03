@@ -25,7 +25,7 @@ const WINDOW_ERRORS: WindowDraftError[] = ["name", "nameLong", "reasonLong", "ta
 const WINDOW_PHASES: WindowPhase[] = ["upcoming", "active", "ended"];
 const RULE_ERRORS: RuleIncidentError[] = ["after", "barkLevel", "quietTimes", "quietSame", "quietZone"];
 const SENT_STATES: SentState[] = ["sent", "failed", "retrying", "queued", "not_routed", "held"];
-const SENT_NOTES: SentNoteKey[] = ["heldMaintenance", "heldSnoozed", "heldFlapping", "quietHours", "escalation", "noRule", "noChannel", "noOtherChannel", "redriven", "interrupted", "channelDeleted", "channelDisabled"];
+const SENT_NOTES: SentNoteKey[] = ["heldMaintenance", "heldSnoozed", "heldFlapping", "quietHours", "withdrawnOpen", "withdrawnRecovery", "escalation", "noRule", "noChannel", "noOtherChannel", "redriven", "interrupted", "channelDeleted", "channelDisabled"];
 
 const keys = [
   ...INCIDENT_KINDS.map((kind) => `fleet.keepalive.kind.${kind.replace(".", "_")}`),

@@ -2253,6 +2253,8 @@ export interface NotifyDelivery {
   bark_level?: string;
   /** The rule's quiet hours hold it until then. */
   held_until?: string;
+  /** The incidents an incident message reports. */
+  incident_ids?: string[];
 }
 
 export interface NotifyDeliveriesQuery {
