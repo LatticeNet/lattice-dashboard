@@ -11,7 +11,8 @@
  * `createTtlCache` backs the palette's on-open fetch: opening ⌘K must feel
  * instant, so a fresh result is served for 30s; a failed fetch is never
  * cached, so the next open retries instead of hiding the action on a
- * transient blip.
+ * transient blip. `invalidate` also disowns a fetch still in flight, so a
+ * list read for one principal never lands after the next one signs in.
  */
 
 /** Writer identity the server stamps on plans it proposed itself. */
@@ -31,33 +32,88 @@ export interface TtlCache<T> {
   /** Serve the cached value while fresh; otherwise fetch (sharing one
    *  in-flight promise across concurrent callers). */
   load: (fetcher: () => Promise<T>) => Promise<T>;
-  /** Drop the cached value. Call after a mutation that changes the answer. */
+  /** Drop the cached value and disown any fetch in flight. Call after a
+   *  mutation that changes the answer, or when the principal changes. */
   invalidate: () => void;
+}
+
+/**
+ * What a load rejects with when `invalidate` ran while it was in flight: its
+ * answer belongs to a principal or a state that is gone, so the caller keeps
+ * what it has (which the invalidating code already reset) instead of writing
+ * the stale answer back.
+ */
+export class StaleLoadError extends Error {
+  constructor() {
+    super("load superseded by invalidate");
+    this.name = "StaleLoadError";
+  }
 }
 
 export function createTtlCache<T>(ttlMs: number, now: () => number = () => Date.now()): TtlCache<T> {
   let cached: { at: number; value: T } | undefined;
   let inflight: Promise<T> | undefined;
+  // Bumped by invalidate. A fetch started under an older generation neither
+  // caches its answer nor resolves with it, and a load after invalidate
+  // starts its own fetch instead of joining the disowned one: the principal
+  // watcher invalidates, and a new principal opening the palette within the
+  // old read's flight would otherwise be handed the old principal's list.
+  let generation = 0;
   return {
     load(fetcher) {
       if (cached !== undefined && now() - cached.at < ttlMs) {
         return Promise.resolve(cached.value);
       }
-      inflight ??= fetcher()
-        .then((value) => {
-          // Only successes are cached. A rejection propagates and the next
-          // load retries instead of serving a remembered failure.
-          cached = { at: now(), value };
-          return value;
-        })
+      if (inflight) return inflight;
+      const mine = generation;
+      const pending: Promise<T> = fetcher()
+        .then(
+          (value) => {
+            if (mine !== generation) throw new StaleLoadError();
+            // Only successes are cached. A rejection propagates and the next
+            // load retries instead of serving a remembered failure.
+            cached = { at: now(), value };
+            return value;
+          },
+          (error: unknown) => {
+            throw mine !== generation ? new StaleLoadError() : error;
+          },
+        )
         .finally(() => {
-          inflight = undefined;
+          if (inflight === pending) inflight = undefined;
         });
-      return inflight;
+      inflight = pending;
+      return pending;
     },
     invalidate() {
+      generation += 1;
       cached = undefined;
+      inflight = undefined;
     },
+  };
+}
+
+/**
+ * Which object lists the palette may read, by the same gates its pages use.
+ * `pages` is the set of nav names the sidebar offers this principal (already
+ * filtered by each page's scope). Nodes and approvals ride their pages;
+ * identities need vpn-core's Users page; shares need Publishing and the
+ * scope Publishing asks for its list (proxy:admin), because Publishing is
+ * offered to principals that may not read shares.
+ */
+export interface PaletteListAccess {
+  nodes: boolean;
+  approvals: boolean;
+  identities: boolean;
+  shares: boolean;
+}
+
+export function paletteListAccess(pages: { has: (name: string) => boolean }, can: (scope: string) => boolean): PaletteListAccess {
+  return {
+    nodes: pages.has("nodes"),
+    approvals: pages.has("approvals"),
+    identities: pages.has(VPN_USERS_PAGE),
+    shares: pages.has("platform-publishing") && can("proxy:admin"),
   };
 }
 
@@ -237,6 +293,8 @@ export function paletteTermsKey(item: { name: string; plugin?: { id: string }; r
 /** vpn-core's plugin id and the core-backed service its Users page reads identities from. */
 export const VPN_CORE_PLUGIN_ID = "latticenet.vpn-core";
 export const VPN_USERS_SERVICE = "latticenet.vpn-core/users";
+/** vpn-core's Users page, by nav name: the page an identity opens in. */
+export const VPN_USERS_PAGE = `plugin:${VPN_CORE_PLUGIN_ID}:users`;
 
 export interface PaletteIdentity {
   id: string;

@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   SYSTEM_WRITER,
+  StaleLoadError,
+  VPN_USERS_PAGE,
   createTtlCache,
   filterPendingSystemApprovals,
+  paletteListAccess,
 } from "../commandPaletteModel.ts";
 
 test("only pending items written by the server itself qualify", () => {
@@ -90,6 +93,60 @@ test("a failed fetch is not cached. The next load retries", async () => {
 
   assert.equal(retried, "recovered");
   assert.equal(calls, 2);
+});
+
+/** A fetch the test resolves by hand, standing in for a read still on the wire. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("a read still in flight when the cache is invalidated never lands, and the next load reads again", async () => {
+  const cache = createTtlCache<string>(30_000, () => 0);
+  const oldRead = deferred<string>();
+  const before = cache.load(() => oldRead.promise);
+  // The principal changes while the old principal's read is on the wire.
+  cache.invalidate();
+  let newReads = 0;
+  const after = cache.load(async () => {
+    newReads += 1;
+    return "new principal's list";
+  });
+  oldRead.resolve("old principal's list");
+
+  await assert.rejects(before, StaleLoadError, "the old read rejects instead of resolving into state");
+  assert.equal(await after, "new principal's list", "a load after invalidate does not join the disowned read");
+  assert.equal(newReads, 1);
+  assert.equal(await cache.load(async () => "unused"), "new principal's list", "and only the new answer is cached");
+});
+
+test("a failed read that invalidate overtook rejects as stale, so the caller keeps what the invalidating code set", async () => {
+  const cache = createTtlCache<string>(30_000, () => 0);
+  const read = deferred<string>();
+  const load = cache.load(() => read.promise);
+  cache.invalidate();
+  read.reject(new Error("offline"));
+  await assert.rejects(load, StaleLoadError);
+});
+
+test("the palette reads each list only behind the gate of the page that opens it", () => {
+  const pages = (...names: string[]) => new Set(names);
+  const scopes = (...granted: string[]) => (scope: string) => granted.includes(scope);
+
+  assert.deepEqual(paletteListAccess(pages(), scopes("proxy:admin")), { nodes: false, approvals: false, identities: false, shares: false });
+  assert.deepEqual(paletteListAccess(pages("nodes", "approvals"), scopes()), { nodes: true, approvals: true, identities: false, shares: false });
+  // Identities need vpn-core's Users page in the sidebar, which carries that page's own scope.
+  assert.equal(paletteListAccess(pages(VPN_USERS_PAGE), scopes()).identities, true);
+  assert.equal(paletteListAccess(pages("plugin:latticenet.vpn-core:lines"), scopes()).identities, false);
+  // Publishing is offered without proxy:admin, so the share list needs both.
+  assert.equal(paletteListAccess(pages("platform-publishing"), scopes()).shares, false);
+  assert.equal(paletteListAccess(pages(), scopes("proxy:admin")).shares, false);
+  assert.equal(paletteListAccess(pages("platform-publishing"), scopes("proxy:admin")).shares, true);
 });
 
 /* ------------------------------------------------------------------ */

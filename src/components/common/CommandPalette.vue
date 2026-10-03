@@ -31,7 +31,9 @@ import { approvalDigest } from "@/views/operations/approvalsListModel";
 import { useConsoleNavigation } from "@/layout/useConsoleNavigation";
 import { shortcutsHelpOpen } from "@/layout/useKeyboardShortcuts";
 import {
+  StaleLoadError,
   VPN_CORE_PLUGIN_ID,
+  VPN_USERS_PAGE,
   VPN_USERS_SERVICE,
   createTtlCache,
   filterPendingSystemApprovals,
@@ -39,6 +41,7 @@ import {
   paletteIdentities,
   paletteIdJump,
   paletteJumpLocation,
+  paletteListAccess,
   paletteShares,
   paletteTermsKey,
   pushRecentObject,
@@ -50,6 +53,7 @@ import {
   type PaletteIdentity,
   type PaletteShare,
   type RecentObject,
+  type TtlCache,
 } from "./commandPaletteModel";
 
 /**
@@ -94,6 +98,13 @@ const RECENTS_KEY = "lattice.ui.commandRecents";
 const RECENT_OBJECTS_KEY = "lattice.ui.commandRecentObjects";
 const RECENTS_MAX = 5;
 const CACHE_MS = 30_000;
+/**
+ * The identity list rides vpn-core's users/list on the plugin call path, and
+ * the server writes one plugin.call audit row per call. Identities change
+ * rarely, so the palette rereads them at most every five minutes rather than
+ * on every open past thirty seconds; a user added since is on the Users page.
+ */
+const IDENTITY_CACHE_MS = 5 * 60_000;
 const LIMITS: Partial<Record<PaletteGroup, number>> = { action: 5, approval: 6, node: 8, identity: 8, share: 6, page: 12 };
 
 const search = ref("");
@@ -134,6 +145,22 @@ const itemsByName = computed(() => {
   for (const group of pageGroups.value) for (const item of group.items) map.set(item.name, item);
   return map;
 });
+
+/** Which object lists this principal may read, by the gates of the pages that open them. */
+const access = computed(() => paletteListAccess(itemsByName.value, (scope) => auth.can(scope)));
+
+/**
+ * Load through `cache` for the principal signed in when the load started.
+ * The cache disowns a fetch that `invalidate` overtook; this also catches a
+ * principal change in the few microtasks between the cache resolving and
+ * the caller writing the answer into state.
+ */
+async function loadForPrincipal<T>(cache: TtlCache<T>, fetcher: () => Promise<T>): Promise<T> {
+  const actor = auth.principal?.actor_id;
+  const value = await cache.load(fetcher);
+  if (auth.principal?.actor_id !== actor) throw new StaleLoadError();
+  return value;
+}
 
 function navLabel(item: NavItem): string {
   return item.plugin ? item.title : t(`nav.items.${item.name}`);
@@ -201,15 +228,16 @@ const nodesCache = createTtlCache<Node[]>(CACHE_MS);
 const nodes = ref<Node[]>([]);
 
 async function refreshNodes(): Promise<void> {
-  if (!itemsByName.value.has("nodes")) {
+  if (!access.value.nodes) {
     nodes.value = [];
     return;
   }
   try {
-    nodes.value = await nodesCache.load(() => api.nodes.list().then((r) => unwrap(r, "nodes")));
+    nodes.value = await loadForPrincipal(nodesCache, () => api.nodes.list().then((r) => unwrap(r, "nodes")));
   } catch {
     // Keep the last list: a node that existed thirty seconds ago is still
-    // the right place to jump to, and its page says if it is gone.
+    // the right place to jump to, and its page says if it is gone. A stale
+    // load lands here too, after the principal watcher emptied the list.
   }
 }
 
@@ -256,19 +284,22 @@ const pendingSystemApprovals = ref<ApprovalView[]>([]);
 const systemActionRunning = ref(false);
 
 async function refreshApprovals(): Promise<void> {
-  if (!itemsByName.value.has("approvals")) {
+  if (!access.value.approvals) {
     pendingApprovals.value = [];
     pendingSystemApprovals.value = [];
     return;
   }
   try {
-    const approvals = await approvalsCache.load(() => api.approvals.list({ status: "pending" }).then((r) => unwrap(r, "approvals")));
+    const approvals = await loadForPrincipal(approvalsCache, () => api.approvals.list({ status: "pending" }).then((r) => unwrap(r, "approvals")));
     pendingApprovals.value = approvals.filter((item) => item.status === "pending");
     // Stale plans would fail server-side, so the batch counts only the items
     // the Approvals event cards would also act on.
     pendingSystemApprovals.value = filterPendingSystemApprovals(approvals).filter(isActionablePendingApproval);
-  } catch {
-    pendingSystemApprovals.value = [];
+  } catch (error) {
+    // A stale load was overtaken by whoever invalidated (the principal
+    // watcher, or the batch action that set the remainder itself), and that
+    // code already wrote the right state.
+    if (!(error instanceof StaleLoadError)) pendingSystemApprovals.value = [];
   }
 }
 
@@ -302,17 +333,18 @@ const approvalEntries = computed<Entry[]>(() =>
 // principal may open, and an identity opens in that page's panel (`open` is
 // vpn-core's page-state key for the open object).
 
-const VPN_USERS_PAGE = `plugin:${VPN_CORE_PLUGIN_ID}:users`;
-const identitiesCache = createTtlCache<PaletteIdentity[]>(CACHE_MS);
+const identitiesCache = createTtlCache<PaletteIdentity[]>(IDENTITY_CACHE_MS);
 const identities = ref<PaletteIdentity[]>([]);
 
 async function refreshIdentities(): Promise<void> {
-  if (!itemsByName.value.has(VPN_USERS_PAGE)) {
+  if (!access.value.identities) {
     identities.value = [];
     return;
   }
   try {
-    identities.value = await identitiesCache.load(() => api.plugins.call(VPN_CORE_PLUGIN_ID, VPN_USERS_SERVICE, "list").then(paletteIdentities));
+    identities.value = await loadForPrincipal(identitiesCache, () =>
+      api.plugins.call(VPN_CORE_PLUGIN_ID, VPN_USERS_SERVICE, "list").then(paletteIdentities),
+    );
   } catch {
     // Keep the last list, as for nodes: the Users page says if one is gone.
   }
@@ -343,22 +375,21 @@ const identityEntries = computed<Entry[]>(() => {
 
 const sharesCache = createTtlCache<PaletteShare[]>(CACHE_MS);
 const shares = ref<PaletteShare[]>([]);
-const canShares = computed(() => itemsByName.value.has("platform-publishing") && auth.can("proxy:admin"));
 
 async function refreshShares(): Promise<void> {
-  if (!canShares.value) {
+  if (!access.value.shares) {
     shares.value = [];
     return;
   }
   try {
-    shares.value = await sharesCache.load(() => api.subscriptionShares.list().then(paletteShares));
+    shares.value = await loadForPrincipal(sharesCache, () => api.subscriptionShares.list().then(paletteShares));
   } catch {
     // Keep the last list; Publishing says if a share is gone.
   }
 }
 
 const shareEntries = computed<Entry[]>(() => {
-  if (!canShares.value) return [];
+  if (!access.value.shares) return [];
   const now = Date.now();
   return shares.value.map((share) => {
     const state = objectState(share, now);
@@ -452,7 +483,7 @@ const actionEntries = computed<Entry[]>(() => {
   }
   // vpn-core's page state has no "new identity" key yet, so the action lands
   // on Users, where New identity is one click; the plugin half is queued.
-  const vpnUsers = itemsByName.value.get("plugin:latticenet.vpn-core:users");
+  const vpnUsers = itemsByName.value.get(VPN_USERS_PAGE);
   if (vpnUsers?.plugin) {
     out.push({
       key: "action:add-vpn-user",
@@ -463,7 +494,7 @@ const actionEntries = computed<Entry[]>(() => {
       payload: { type: "nav", item: vpnUsers, icon: UserPlus },
     });
   }
-  if (itemsByName.value.has("platform-publishing") && auth.can("proxy:admin")) {
+  if (access.value.shares) {
     out.push({
       key: "action:share-subscription",
       group: "action",
