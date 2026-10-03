@@ -24,6 +24,9 @@
  * `?expire=<ms>` ends the session that long after the page loads: every read
  * and /api/me then answer 401, reported the way the real client reports them,
  * and signing in again starts a session that does not expire.
+ * `?incidents=some` gives the Keepalive layer, Home and the node pages their
+ * incidents, maintenance windows and loop health (dev/keepaliveFixture.ts);
+ * acknowledging, snoozing and editing windows change the in-memory state.
  * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
@@ -36,7 +39,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, MachineProfileInput, MachineView, MonitorCreateInput, MonitorView, Principal } from "@/lib/api/index";
+import type { AuditEvent, MachineProfileInput, MachineView, MaintenanceWindowInput, MonitorCreateInput, MonitorView, Principal } from "@/lib/api/index";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
 import { sumTotals } from "@/views/fleet/upcomingModel";
@@ -61,6 +64,7 @@ import {
   tasksFor,
   ungrouped,
 } from "./fleetFixture";
+import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
 
 export * from "@/lib/api/index";
 
@@ -148,7 +152,10 @@ const principal: Principal = {
   totp_enabled: true,
 };
 
-let nodes = NODES.map((node) => ({ ...node }));
+let nodes = NODES.map((node, index) => {
+  const shaped = { ...node, ...keepaliveNodeState(node) };
+  return { ...shaped, loop_health: loopHealthFor(shaped, index) };
+});
 let machines = MACHINES.map((machine) => ({ ...machine }));
 let monitors = MONITORS.map((monitor) => ({ ...monitor }));
 
@@ -377,6 +384,44 @@ export const api = {
           { id: "nrl_all", name: "Everything (paused)", event_types: ["*"], channel_ids: ["nch_bark_urgent"], enabled: false, created_at: iso(-90 * DAY), updated_at: iso(-30 * DAY) },
         ],
       }),
+  },
+  incidents: {
+    list: () => answer("incidents", () => incidentList()),
+    ack: (id: string) => {
+      const incident = findIncident(id);
+      if (!incident) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "incident not found"); });
+      if (incident.state !== "open") return delay(undefined).then(() => { throw new ApiError(409, "conflict", `incident is ${incident.state}, not open`); });
+      return delay(updateIncident(id, { state: "acknowledged", acked_by: principal.username, acked_at: new Date().toISOString() }));
+    },
+    snooze: (id: string, minutes: number) => {
+      const incident = findIncident(id);
+      if (!incident) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "incident not found"); });
+      const until = minutes > 0 ? new Date(Date.now() + minutes * 60_000).toISOString() : undefined;
+      return delay(updateIncident(id, { snoozed_until: until, snoozed_by: until ? principal.username : undefined }));
+    },
+  },
+  maintenance: {
+    list: () => answer("maintenance", () => ({ windows: windows.map((w) => ({ ...w })), now: new Date().toISOString() })),
+    upsert: (input: MaintenanceWindowInput) => {
+      const now = new Date().toISOString();
+      const held = windows.find((w) => w.id === input.id);
+      const next = {
+        ...(held ?? { id: `mw_${Date.now().toString(36)}`, created_by: principal.username, created_at: now }),
+        name: input.name,
+        reason: input.reason,
+        node_ids: input.node_ids ?? [],
+        group_ids: input.group_ids ?? [],
+        starts_at: input.starts_at ?? held?.starts_at ?? now,
+        ends_at: input.ends_at,
+        updated_at: now,
+      };
+      setWindows(held ? windows.map((w) => (w.id === next.id ? next : w)) : [...windows, next]);
+      return delay({ ...next });
+    },
+    delete: (id: string) => {
+      setWindows(windows.filter((w) => w.id !== id));
+      return delay({ ok: true });
+    },
   },
   monitors: {
     // Each node's newest result rides on the list, as the server sends it.

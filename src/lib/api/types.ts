@@ -279,8 +279,146 @@ export interface Node {
   agent_debug?: AgentDebugPolicy;
   agent_launch?: AgentLaunchConfig | null;
   agent_runtime?: AgentRuntimeConfig | null;
+  /** The agent's account of its work loop (node-agent 0.3.10 and later); absent before. */
+  loop_health?: AgentLoopHealth | null;
   ip_config?: NodeIPConfig | null;
   group_ids?: string[];
+}
+
+/** One work loop step's outcome, by the agent's clock. */
+export interface AgentLoopStep {
+  last_ok_at?: string;
+  last_error_at?: string;
+  last_error?: string;
+  consecutive_errors?: number;
+}
+
+/** A problem the server derived from loop health. */
+export interface AgentLoopProblem {
+  kind: "stalled" | "linechain_blocked" | "step_stale" | "results_dropped" | string;
+  step?: string;
+  /** This server's clock. */
+  since: string;
+  /** An English sentence; the console words the kind itself. */
+  reason: string;
+  /** It degrades the node's status. */
+  degrades?: boolean;
+  /** It opens agent.stalled. */
+  pages?: boolean;
+}
+
+/**
+ * Loop health as the agent sent it on its last beat. Every instant except
+ * received_at and the problems' since is the agent's clock: the age of an
+ * instant t is (collected_at - t) + (now - received_at), so a skewed node
+ * still reads correctly.
+ */
+export interface AgentLoopHealth {
+  started_at: string;
+  cycle_started_at?: string;
+  cycle_completed_at?: string;
+  cycle_duration_ms?: number;
+  step?: string;
+  step_since?: string;
+  linechain_blocked?: string;
+  linechain_blocked_since?: string;
+  steps?: Record<string, AgentLoopStep>;
+  task_busy_since?: string;
+  monitor_results_queued?: number;
+  monitor_results_dropped?: number;
+  watchdog?: boolean;
+  collected_at: string;
+  received_at: string;
+  problems?: AgentLoopProblem[];
+}
+
+export type IncidentState = "pending" | "open" | "acknowledged" | "resolved";
+export type IncidentSeverity = "info" | "warning" | "critical";
+
+/** One problem on one subject (lattice-server incidents.go). */
+export interface Incident {
+  /** "pending:<key>" for a derived pending incident. */
+  id: string;
+  key: string;
+  /** The open event type: node.offline, service.down, monitor.down, agent.stalled. */
+  kind: string;
+  recovery_kind?: string;
+  severity: IncidentSeverity | string;
+  state: IncidentState | string;
+  node_id?: string;
+  node_name?: string;
+  monitor_id?: string;
+  subject?: string;
+  title?: string;
+  detail?: string;
+  since?: string;
+  first_opened_at?: string;
+  opened_at?: string;
+  resolved_at?: string;
+  updated_at?: string;
+  acked_by?: string;
+  acked_at?: string;
+  snoozed_by?: string;
+  snoozed_until?: string;
+  snoozed?: boolean;
+  /** What the phone was last told: "open", "resolved", or nothing yet. */
+  notified?: "open" | "resolved" | "";
+  notified_at?: string;
+  open_notified_at?: string;
+  owed_open?: boolean;
+  owed_recovery?: boolean;
+  /** The last reason a message about it was held. */
+  suppressed?: string;
+  suppressed_at?: string;
+  flaps?: number;
+  flapping?: boolean;
+  /** Rule id ("" for the no-rules broadcast) to when it was escalated. */
+  escalated?: Record<string, string>;
+  no_escalate?: boolean;
+  /** The active maintenance window covering its node. */
+  maintenance?: string;
+  maintenance_id?: string;
+  /** When a pending incident opens if its condition holds. */
+  opens_at?: string;
+}
+
+export interface IncidentListResponse {
+  incidents: Incident[];
+  /** Active maintenance windows the caller may see. */
+  windows: MaintenanceWindow[];
+  /** Incidents survive a restart (the server runs the bolt hot store). */
+  durable: boolean;
+  now: string;
+}
+
+export interface IncidentListQuery {
+  state?: string;
+  node_id?: string;
+  limit?: number;
+}
+
+export interface MaintenanceWindow {
+  id: string;
+  name: string;
+  reason?: string;
+  node_ids?: string[];
+  group_ids?: string[];
+  starts_at: string;
+  ends_at: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaintenanceWindowInput {
+  id?: string;
+  name: string;
+  reason?: string;
+  node_ids?: string[];
+  group_ids?: string[];
+  /** Absent starts now (a new window) or keeps the start (an edit). */
+  starts_at?: string;
+  ends_at: string;
 }
 
 // NodeDeletePlanView mirrors the server's nodeDeleteSummary wire DTO returned by
@@ -2077,7 +2215,7 @@ export interface NotifyAttempt {
   duration_ms: number;
 }
 
-export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route";
+export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route" | "suppressed";
 export type NotifyDeliveryRole = "primary" | "fallback" | "test";
 export type NotifyDeliverySource = "server" | "plugin" | "webhook" | "operator";
 
@@ -2111,6 +2249,12 @@ export interface NotifyDelivery {
   /** A not-routed row folds later repeats of the same event within the hour: how many, and the latest. */
   repeats?: number;
   last_seen_at?: string;
+  /** An incident escalation re-sent at this Bark level. */
+  bark_level?: string;
+  /** The rule's quiet hours hold it until then. */
+  held_until?: string;
+  /** The incidents an incident message reports. */
+  incident_ids?: string[];
 }
 
 export interface NotifyDeliveriesQuery {
@@ -2164,6 +2308,19 @@ export interface NotifyRuleView {
   updated_at: string;
   /** Receives the rule's message when every channel above failed it for good. */
   fallback_channel_id?: string;
+  /** Effective escalation of unacknowledged critical incidents (defaults included). */
+  escalation_off?: boolean;
+  escalate_after_minutes?: number;
+  escalation_bark_level?: string;
+  /** Null when the rule has no quiet hours (the default). */
+  quiet_hours?: NotifyQuietHours | null;
+}
+
+/** A daily window in a time zone, "HH:MM"; an end not after the start runs past midnight. */
+export interface NotifyQuietHours {
+  start: string;
+  end: string;
+  time_zone: string;
 }
 
 /**
@@ -2242,6 +2399,11 @@ export interface NotifyRuleUpsertRequest {
   enabled?: boolean;
   /** Absent keeps the rule's fallback, "" clears it, an id sets it. */
   fallback_channel_id?: string;
+  escalation_off?: boolean;
+  escalate_after_minutes?: number;
+  escalation_bark_level?: string;
+  /** Absent keeps the rule's quiet hours, null turns them off. */
+  quiet_hours?: NotifyQuietHours | null;
 }
 
 export interface AgentUpdatePolicy {

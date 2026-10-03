@@ -4,9 +4,15 @@
  * rule 1): what needs the operator first, then four numbers that move, then
  * what runs out this week and the one picture.
  *
+ *   Maintenance kernel upgrade on vultr-sg until 15:00: notifications are held
+ *   Incidents  sing-box is down on DMIT-4 14m [Acknowledge] [Snooze] [Open]
  *   Attention  DMIT-4 offline 6d [Open] · 1 task stalled [Tasks] · 2 DDNS failing [DDNS]
  *   32/34 online | 0 approvals waiting | 5 tasks failed in 24h | 0 due in 7 days
  *   Due in 7 days (5 rows) | Fleet at a glance (map) | Recent changes (4 rows)
+ *
+ * Active keepalive incidents come first, with Acknowledge and Snooze on each
+ * row (at most three, then "All incidents"); a node with one drops its own
+ * attention row, since the incident row already says it and has the actions.
  *
  * It fits one desktop screen (design 22, rule 1): at most three attention
  * rows before "Show all N", and from 1280 px the three sections share one
@@ -18,14 +24,14 @@
  * (homeModel). Trust posture moved to Settings > Capability Gates: it is
  * configuration, not something that moves.
  */
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { useNow } from "@vueuse/core";
 import { CalendarClock, Map as MapIcon, RotateCw } from "lucide-vue-next";
 
 import { api, unwrap } from "@/lib/api";
-import type { ApprovalCounts, AuditEvent, DDNSView, ExpiringResponse, MonitorView, Node, TaskCounts } from "@/lib/api";
+import type { ApprovalCounts, AuditEvent, DDNSView, ExpiringResponse, GroupView, IncidentListResponse, MonitorView, Node, TaskCounts } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useProof } from "@/composables/useProof";
 import { useAuthStore } from "@/stores/auth";
@@ -36,6 +42,7 @@ import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
 import { failingMonitors, monitorHealth } from "@/views/fleet/monitorHealthModel";
+import { homeIncidents } from "@/views/fleet/incidentsModel";
 import {
   CHANGES_QUERY,
   CHANGES_ROWS,
@@ -61,6 +68,8 @@ import MetricStrip, { type Metric } from "@/components/common/MetricStrip.vue";
 import NodeLabel from "@/components/common/NodeLabel.vue";
 import GettingStarted from "@/components/common/GettingStarted.vue";
 import FleetMap from "@/components/fleet/FleetMap.vue";
+import IncidentsPanel from "@/components/fleet/IncidentsPanel.vue";
+import MaintenanceBanner from "@/components/fleet/MaintenanceBanner.vue";
 import UpcomingList from "@/components/fleet/UpcomingList.vue";
 import { Button } from "@/components/ui/button";
 
@@ -76,6 +85,7 @@ const can = {
   ddns: auth.can("ddns:admin"),
   upcoming: auth.canAny(UPCOMING_SCOPES),
   monitors: auth.can("monitor:read"),
+  monitorAdmin: auth.can("monitor:admin"),
 };
 
 /** A read the operator has no scope for is never sent; its number says "no access". */
@@ -116,6 +126,24 @@ const failingMonitorRows = computed(() => {
   return failingMonitors(list, (monitor) => monitorHealth(monitor, monitor.latest, at)).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
 });
 
+// Keepalive incidents and the maintenance windows holding their messages.
+const incidents = gated<IncidentListResponse>(can.monitors, (signal) => api.incidents.list(undefined, { signal }), 10_000);
+const incidentList = computed(() => incidents.data.value?.incidents ?? []);
+const incidentNodes = computed(() => homeIncidents(incidentList.value, now.value.getTime()).nodeKinds);
+const nodeNames = computed(() => new Map((fleet.data.value ?? []).map((node) => [node.id, node.name || node.id])));
+const monitorNames = computed(() => new Map((monitorList.data.value ?? []).map((monitor) => [monitor.id, monitor.name || monitor.id])));
+// Group names for a maintenance window that covers groups; read once, and
+// only when such a window is active.
+const groupsRead = useAsyncData<GroupView[]>((signal) => api.groups.list({ signal }).then((r) => r.groups ?? []), { immediate: false, pollInterval: 0 });
+watch(
+  () => (incidents.data.value?.windows ?? []).some((window) => (window.group_ids ?? []).length > 0),
+  (needed) => {
+    if (needed && auth.can("group:read") && groupsRead.data.value === undefined && !groupsRead.loading.value) void groupsRead.refresh();
+  },
+  { immediate: true },
+);
+const groupNames = computed(() => new Map((groupsRead.data.value ?? []).map((group) => [group.id, group.name])));
+
 function stateOf(allowed: boolean, query: { data: { value: unknown }; error: { value: unknown } }): ReadState {
   return allowed ? readState({ data: query.data.value, error: query.error.value }) : "forbidden";
 }
@@ -145,6 +173,7 @@ const unreadItems = computed<AttentionItem[]>(() => {
     ["ddns", can.ddns, ddns],
     ["expiring", can.upcoming, expiring],
     ["monitors", can.monitors, monitorList],
+    ["incidents", can.monitors, incidents],
   ] as const;
   const items: AttentionItem[] = sources.flatMap(([key, allowed, query]) => {
     const state = stateOf(allowed, query);
@@ -172,6 +201,7 @@ function refreshAll(): void {
     [can.audit, changes],
     [can.audit, flips],
     [can.monitors, monitorList],
+    [can.monitors, incidents],
   ] as const) {
     if (allowed) void query.refresh();
   }
@@ -190,6 +220,7 @@ const attentionModel = computed<HomeAttention[]>(() =>
     ddns: ddns.data.value,
     expiring: expiring.data.value?.items,
     failingMonitors: failingMonitorRows.value,
+    incidentNodes: incidentNodes.value,
   }),
 );
 
@@ -390,6 +421,15 @@ function changeLabel(action: string): string | null {
     <GettingStarted v-if="isEmptyFleet" :node-count="0" :two-factor-enabled="auth.principal?.totp_enabled" />
 
     <template v-else>
+      <MaintenanceBanner :windows="incidents.data.value?.windows ?? []" :now="now.getTime()" :node-names="nodeNames" :group-names="groupNames" />
+      <IncidentsPanel
+        :incidents="incidentList"
+        :now="now.getTime()"
+        :can-admin="can.monitorAdmin"
+        :node-names="nodeNames"
+        :monitor-names="monitorNames"
+        @refresh="incidents.refresh()"
+      />
       <AttentionList :items="attention" :max="HOME_ATTENTION_MAX" />
 
       <MetricStrip :metrics="metrics" :columns="4" />
