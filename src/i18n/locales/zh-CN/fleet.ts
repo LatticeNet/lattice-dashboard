@@ -1731,6 +1731,13 @@ export default {
         andMore: "{names} 等 {n} 个",
         deleteTitle: "删除维护窗口 {name}？",
         deleteDescription: "它暂不发送的通知会在下次检查时发出，只针对仍未恢复的事件。",
+        discard: {
+          title: "放弃这些改动？",
+          description: "窗口保持上次保存的样子。",
+          descriptionNew: "新窗口还没有保存。",
+          confirm: "放弃",
+          keep: "继续编辑",
+        },
         error: {
           name: "给窗口起个名字。",
           nameLong: "名称太长。",

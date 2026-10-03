@@ -1752,6 +1752,13 @@ export default {
         andMore: "{names} and {n} more",
         deleteTitle: "Delete maintenance window {name}?",
         deleteDescription: "Notifications it holds go out on the next check for incidents that are still open.",
+        discard: {
+          title: "Discard these changes?",
+          description: "The window keeps what was last saved.",
+          descriptionNew: "The new window is not saved yet.",
+          confirm: "Discard",
+          keep: "Keep editing",
+        },
         error: {
           name: "Give the window a name.",
           nameLong: "The name is too long.",

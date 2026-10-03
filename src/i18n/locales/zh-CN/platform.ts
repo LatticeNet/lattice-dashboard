@@ -1201,6 +1201,13 @@ export default {
       ruleDeleted: "规则已删除",
       ruleDeleteFailed: "删除规则失败",
       deleteRuleTitle: "删除规则？",
+      ruleDiscard: {
+        title: "放弃这些改动？",
+        description: "规则保持上次保存的样子。",
+        descriptionNew: "新规则还没有保存。",
+        confirm: "放弃",
+        keep: "继续编辑",
+      },
       deleteRuleConfirm: "移除「{name}」。此操作不可撤销。",
       layers: {
         label: "通知视图",

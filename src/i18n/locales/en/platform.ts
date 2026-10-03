@@ -1304,6 +1304,13 @@ export default {
       ruleDeleted: "Rule deleted",
       ruleDeleteFailed: "Failed to delete rule",
       deleteRuleTitle: "Delete rule?",
+      ruleDiscard: {
+        title: "Discard these changes?",
+        description: "The rule keeps what was last saved.",
+        descriptionNew: "The new rule is not saved yet.",
+        confirm: "Discard",
+        keep: "Keep editing",
+      },
       deleteRuleConfirm: 'Remove "{name}". This cannot be undone.',
       layers: {
         label: "Notification views",

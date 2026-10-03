@@ -1003,6 +1003,32 @@ function resetRuleIncident(rule?: NotifyRuleView): void {
   ruleIncidentOriginal.value = ruleIncidentDraft(rule, browserZone);
 }
 const ruleFallbackChoices = computed(() => fallbackChoices(sortedChannels.value, ruleChannelIds.value));
+
+/** Everything the rule editor holds, so closing it with edits asks first, as the latency settings do. */
+function ruleSnapshot(): string {
+  return JSON.stringify([ruleName.value, ruleEvents.value, ruleChannelIds.value, ruleTitleTemplate.value, ruleBodyTemplate.value, ruleEnabled.value, ruleFallback.value, ruleIncident.value]);
+}
+const ruleOpened = ref("");
+const ruleDiscardOpen = ref(false);
+
+/** Escape, a click outside, the close button and Cancel: edits ask before they are thrown away. */
+function onRuleOpenChange(next: boolean): void {
+  if (next) {
+    ruleOpen.value = true;
+    return;
+  }
+  if (ruleSaving.value) return;
+  if (ruleSnapshot() !== ruleOpened.value) {
+    ruleDiscardOpen.value = true;
+    return;
+  }
+  ruleOpen.value = false;
+}
+
+function discardRule(): void {
+  ruleDiscardOpen.value = false;
+  ruleOpen.value = false;
+}
 const deletingRule = ref(false);
 
 function openRuleCreate(): void {
@@ -1017,6 +1043,7 @@ function openRuleCreate(): void {
   ruleFallback.value = "";
   ruleHadFallback.value = false;
   resetRuleIncident();
+  ruleOpened.value = ruleSnapshot();
   ruleOpen.value = true;
 }
 
@@ -1032,6 +1059,7 @@ function openRulePreset(preset: RulePreset): void {
   ruleFallback.value = "";
   ruleHadFallback.value = false;
   resetRuleIncident();
+  ruleOpened.value = ruleSnapshot();
   ruleOpen.value = true;
 }
 
@@ -1047,6 +1075,7 @@ function openRuleEdit(rule: NotifyRuleView): void {
   ruleFallback.value = rule.fallback_channel_id ?? "";
   ruleHadFallback.value = !!rule.fallback_channel_id;
   resetRuleIncident(rule);
+  ruleOpened.value = ruleSnapshot();
   ruleOpen.value = true;
 }
 
@@ -1129,6 +1158,8 @@ watch(
     }
     openRuleCreate();
     ruleEvents.value = event;
+    // The link filled the events in; only the operator's own edits ask before closing.
+    ruleOpened.value = ruleSnapshot();
   },
   { immediate: true },
 );
@@ -1818,7 +1849,7 @@ async function confirmDeleteRule(): Promise<void> {
     </Dialog>
 
     <!-- Rule dialog -->
-    <Dialog v-model:open="ruleOpen">
+    <Dialog :open="ruleOpen" @update:open="onRuleOpenChange">
       <DialogScrollContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{{ ruleEditingId ? $t('platform.notifications.editRuleTitle') : $t('platform.notifications.newRuleTitle') }}</DialogTitle>
@@ -2023,6 +2054,15 @@ async function confirmDeleteRule(): Promise<void> {
         </form>
       </DialogScrollContent>
     </Dialog>
+
+    <ConfirmDialog
+      v-model:open="ruleDiscardOpen"
+      :title="$t('platform.notifications.ruleDiscard.title')"
+      :description="ruleEditingId ? $t('platform.notifications.ruleDiscard.description') : $t('platform.notifications.ruleDiscard.descriptionNew')"
+      :confirm-label="$t('platform.notifications.ruleDiscard.confirm')"
+      :cancel-label="$t('platform.notifications.ruleDiscard.keep')"
+      @confirm="discardRule"
+    />
 
     <!-- Delete confirmation -->
     <ConfirmDialog

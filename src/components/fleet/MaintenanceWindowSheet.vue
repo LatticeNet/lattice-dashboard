@@ -27,6 +27,7 @@ import {
   windowDraftInput,
   type WindowDraft,
 } from "@/views/fleet/incidentsModel";
+import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -50,6 +51,8 @@ const emit = defineEmits<{ close: []; saved: [window: MaintenanceWindow] }>();
 const { t } = useI18n();
 
 const draft = ref<WindowDraft>(newWindowDraft(Date.now()));
+/** The draft as it opened, so closing with edits asks first, as the latency settings do. */
+const opened = ref("");
 const touched = ref(false);
 const saving = ref(false);
 const nodeFilter = ref("");
@@ -59,6 +62,7 @@ watch(
   (open) => {
     if (!open) return;
     draft.value = props.window ? draftFromWindow(props.window) : newWindowDraft(Date.now(), props.nodeId);
+    opened.value = JSON.stringify(draft.value);
     touched.value = false;
     nodeFilter.value = "";
   },
@@ -88,6 +92,24 @@ function endIn(hours: number): void {
   draft.value = { ...draft.value, endsAt: toLocalInput(start + hours * 3_600_000) };
 }
 
+const dirty = computed(() => JSON.stringify(draft.value) !== opened.value);
+const discardOpen = ref(false);
+
+/** Escape, the close button and Cancel: edits ask before they are thrown away. */
+function requestClose(): void {
+  if (saving.value) return;
+  if (dirty.value) {
+    discardOpen.value = true;
+    return;
+  }
+  emit("close");
+}
+
+function discard(): void {
+  discardOpen.value = false;
+  emit("close");
+}
+
 async function save(): Promise<void> {
   touched.value = true;
   if (errors.value.length > 0 || saving.value) return;
@@ -108,7 +130,7 @@ async function save(): Promise<void> {
   <ObjectSheet
     :open="open"
     :title="window ? $t('fleet.keepalive.maintenance.editTitle') : $t('fleet.keepalive.maintenance.newTitle')"
-    @close="emit('close')"
+    @close="requestClose"
   >
     <form class="space-y-5" novalidate @submit.prevent="save">
       <p class="text-sm text-muted-foreground">{{ $t('fleet.keepalive.maintenance.explain') }}</p>
@@ -192,10 +214,18 @@ async function save(): Promise<void> {
       </fieldset>
     </form>
     <template #actions>
-      <Button variant="ghost" type="button" @click="emit('close')">{{ $t('common.actions.cancel') }}</Button>
+      <Button variant="ghost" type="button" @click="requestClose">{{ $t('common.actions.cancel') }}</Button>
       <Button type="button" :disabled="saving" @click="save">
         {{ window ? $t('common.actions.saveChanges') : draft.start === 'now' ? $t('fleet.keepalive.maintenance.start') : $t('fleet.keepalive.maintenance.create') }}
       </Button>
     </template>
   </ObjectSheet>
+  <ConfirmDialog
+    v-model:open="discardOpen"
+    :title="$t('fleet.keepalive.maintenance.discard.title')"
+    :description="window ? $t('fleet.keepalive.maintenance.discard.description') : $t('fleet.keepalive.maintenance.discard.descriptionNew')"
+    :confirm-label="$t('fleet.keepalive.maintenance.discard.confirm')"
+    :cancel-label="$t('fleet.keepalive.maintenance.discard.keep')"
+    @confirm="discard"
+  />
 </template>
