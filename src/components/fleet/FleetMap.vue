@@ -71,6 +71,12 @@ const { width: frameWidth } = useElementSize(frame);
 const unitsPerPx = computed(() => (frameWidth.value > 0 ? MAP_WIDTH / frameWidth.value : 1));
 
 const viewport = ref({ scale: 1, x: 0, y: 0 });
+/**
+ * The zoom alone. Clusters live in map units, so a pan (a new viewport
+ * object per frame) leaves them as they were; a computed on this value
+ * re-runs only when the zoom changes.
+ */
+const zoomLevel = computed(() => viewport.value.scale);
 
 const located = computed(() =>
   props.nodes.filter((node) => typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number"),
@@ -126,7 +132,7 @@ function clusteringAt(scale: number) {
  * circle, and a click on the "12" opened the neighbour instead.
  */
 const clusters = computed<MapCluster[]>(() => {
-  const { radius, reach } = clusteringAt(viewport.value.scale);
+  const { radius, reach } = clusteringAt(zoomLevel.value);
   return clusterPoints(points.value, radius, reach).sort((a, b) => a.ids.length - b.ids.length || a.key.localeCompare(b.key));
 });
 

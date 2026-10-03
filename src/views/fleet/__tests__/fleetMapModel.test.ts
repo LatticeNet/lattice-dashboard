@@ -165,3 +165,23 @@ test("a badge counts only where it is drawn: up and right of its mark", () => {
   // The same distance up and right lands under the badge.
   assert.equal(clusterPoints([...big, { id: "ne", x: 114, y: 86, status: "online" }], 1, withBadge).length, 1);
 });
+
+test("500 nodes separate in one pass: each reach is computed once per cluster and once per merge", () => {
+  // 500 nodes 3 units apart in a row: the merge radius keeps them apart and every reach overlaps its neighbour's, so
+  // the separation pass merges them pair by pair. Rescanning every pair after each merge took 1.7 s and 40 million
+  // reach calls here, and the map ran it on every pinch frame.
+  const row: MapPoint[] = Array.from({ length: 500 }, (_, i) => ({ id: `n${String(i).padStart(3, "0")}`, x: i * 3, y: 250, status: i % 9 ? "online" : "offline" }));
+  let calls = 0;
+  const reach = (count: number, down: number) => {
+    calls += 1;
+    return [{ dx: 0, dy: 0, r: 2.5 + Math.sqrt(count) * 0.5 }, ...(down && count > 1 ? [{ dx: 3, dy: -3, r: 2 }] : [])];
+  };
+  const started = performance.now();
+  const clusters = clusterPoints(row, 1, reach);
+  const elapsed = performance.now() - started;
+  const merges = row.length - clusters.length;
+  assert.equal(clusters.reduce((sum, c) => sum + c.ids.length, 0), 500);
+  assert.equal(calls, row.length + merges, "one reach per starting cluster and one per merge");
+  // About 20 ms on a laptop; the budget only catches a return to the cubic pass.
+  assert.ok(elapsed < 250, `${elapsed.toFixed(0)} ms`);
+});
