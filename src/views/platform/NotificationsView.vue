@@ -1303,7 +1303,7 @@ async function confirmDeleteRule(): Promise<void> {
                 <button
                   v-if="canManage"
                   type="button"
-                  class="touch-target rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:py-1"
+                  class="rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:flex pointer-coarse:min-h-11 pointer-coarse:w-fit pointer-coarse:items-center"
                   @click="openChannelSent(row.id)"
                 >{{ $t('platform.notifications.attention.showSent') }}</button>
               </span>
