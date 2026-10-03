@@ -91,6 +91,7 @@ import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
+import NodeLatencyCard from "./NodeLatencyCard.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -1872,6 +1873,9 @@ async function saveDebug(): Promise<void> {
 
           <!-- What runs on it. -->
           <div class="min-w-0 space-y-6">
+            <!-- How the latency probes reach it, and how it reaches its targets. -->
+            <NodeLatencyCard :node-id="node.id" />
+
             <!-- DDNS bindings -->
             <Card>
               <CardHeader>

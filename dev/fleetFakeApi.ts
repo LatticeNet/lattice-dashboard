@@ -22,6 +22,9 @@
  * `?expire=<ms>` ends the session that long after the page loads: every read
  * and /api/me then answer 401, reported the way the real client reports them,
  * and signing in again starts a session that does not expire.
+ * `?latency=one|three|defaults|nosource|off` shapes the Latency layer and the
+ * node page's latency card (dev/latencyFixture.ts); `?fail=latency` fails its
+ * reads, and saving the probe settings recomputes the plan by the server's rule.
  * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
@@ -31,7 +34,7 @@
  * from `api` and fails loudly.
  */
 import { ApiError, reportUnauthorized } from "@/lib/api/client";
-import type { AuditEvent, MachineProfileInput, MachineView, MonitorCreateInput, MonitorView, Principal } from "@/lib/api/index";
+import type { AuditEvent, LatencyProbeConfig, LatencyWindow, MachineProfileInput, MachineView, MonitorCreateInput, MonitorView, Principal } from "@/lib/api/index";
 import { formatDay } from "@/views/fleet/inventoryEditorModel";
 import { nextReminder } from "@/views/fleet/reminderModel";
 import { sumTotals } from "@/views/fleet/upcomingModel";
@@ -56,6 +59,7 @@ import {
   tasksFor,
   ungrouped,
 } from "./fleetFixture";
+import { SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, rollupsFor, seriesFor } from "./latencyFixture";
 
 export * from "@/lib/api/index";
 
@@ -138,7 +142,8 @@ const principal: Principal = {
   totp_enabled: true,
 };
 
-let nodes = NODES.map((node) => ({ ...node }));
+let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : [])].map((node) => ({ ...node }));
+let latency = initialConfig();
 let machines = MACHINES.map((machine) => ({ ...machine }));
 let monitors = MONITORS.map((monitor) => ({ ...monitor }));
 
@@ -365,7 +370,14 @@ export const api = {
   },
   monitors: {
     // Each node's newest result rides on the list, as the server sends it.
-    list: () => answer("monitors", () => ({ monitors: monitors.map((m) => ({ ...m, latest: monitorLatest(m.id) })) })),
+    // On latency renders the list also carries the generated latency monitors, as the server sends them.
+    list: () =>
+      answer("monitors", () => ({
+        monitors: [
+          ...monitors.map((m) => ({ ...m, latest: monitorLatest(m.id) })),
+          ...(PARAMS.has("latency") ? generatedLatencyMonitors(planFor(latency.config, latency.stored)) : []),
+        ],
+      })),
     // `?resultsMs=<ms>` slows the results read, so a sheet swapped to another monitor can be seen mid-read.
     results: (id: string) => answer("monitors", () => ({ results: monitorResults(id) }), Number(PARAMS.get("resultsMs")) || LATENCY_MS),
     create: (input: MonitorCreateInput) => {
@@ -376,6 +388,22 @@ export const api = {
     delete: (id: string) => {
       monitors = monitors.filter((m) => m.id !== id);
       return delay({ ok: true });
+    },
+    latency: {
+      plan: () => answer("latency", () => planFor(latency.config, latency.stored)),
+      rollups: () => answer("latency", () => rollupsFor(planFor(latency.config, latency.stored))),
+      series: (source: string, target: string, window: LatencyWindow) =>
+        answer("latency", () => seriesFor(planFor(latency.config, latency.stored), source, target, window)),
+      // A save names the version it was read at, as the server requires.
+      save: (config: LatencyProbeConfig) => {
+        if (config.version !== latency.config.version) {
+          return delay(undefined).then(() => {
+            throw new ApiError(409, "request_failed", "latency probe configuration changed since it was read");
+          });
+        }
+        latency = { config: { ...config, version: latency.config.version + 1, updated_by: "cdcd", updated_at: new Date().toISOString() }, stored: true };
+        return delay(planFor(latency.config, true));
+      },
     },
   },
   capabilities: {

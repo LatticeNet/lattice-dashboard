@@ -35,7 +35,7 @@ import { proofReason } from "@/components/common/proofModel";
 import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
-import { failingMonitors, monitorHealth } from "@/views/fleet/monitorHealthModel";
+import { failingMonitors, monitorHealth, operatorMonitors } from "@/views/fleet/monitorHealthModel";
 import {
   CHANGES_QUERY,
   CHANGES_ROWS,
@@ -113,7 +113,7 @@ const failingMonitorRows = computed(() => {
   const list = monitorList.data.value;
   if (list === undefined) return undefined;
   const at = monitorList.lastUpdated.value ?? Date.now();
-  return failingMonitors(list, (monitor) => monitorHealth(monitor, monitor.latest, at)).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
+  return failingMonitors(operatorMonitors(list), (monitor) => monitorHealth(monitor, monitor.latest, at)).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
 });
 
 function stateOf(allowed: boolean, query: { data: { value: unknown }; error: { value: unknown } }): ReadState {

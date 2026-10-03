@@ -235,3 +235,25 @@ test("the editor's target preview follows the server's rule", () => {
   assert.deepEqual(draftTargetReason({ ...draft, autoTargets: false }, node("jp"), false), { target: false, reason: "auto_off" });
   assert.deepEqual(draftTargetReason(draft, node("jp"), true), { target: false, reason: "node_disabled" });
 });
+
+test("every code the plan and the page interpolate into a key has copy in both locales", async () => {
+  const en = (await import("../../../i18n/locales/en/fleet.ts")).default as Record<string, any>;
+  const zh = (await import("../../../i18n/locales/zh-CN/fleet.ts")).default as Record<string, any>;
+  const groups: Record<string, string[]> = {
+    window: ["1h", "24h", "7d"],
+    reason: ["auto", "included", "excluded", "mainland", "region_unknown", "auto_off", "node_disabled", "config_off", "pairs_off", "no_source"],
+    endpointNote: ["last_known", "no_public_address", "udp_only", "no_tcp_line", "no_inventory"],
+    paused: ["pair_off", "config_off", "source", "target"],
+    sourceNote: ["unknown_node", "node_disabled"],
+  };
+  const configGroups: Record<string, string[]> = { mode: ["auto", "always", "never"], problem: ["interval", "timeout", "timeoutVsInterval"] };
+  for (const [locale, messages] of [["en", en], ["zh-CN", zh]] as const) {
+    const latency = messages.fleet.monitoring.latency;
+    for (const [group, codes] of Object.entries(groups)) {
+      for (const code of codes) assert.equal(typeof latency[group]?.[code], "string", `${locale}: fleet.monitoring.latency.${group}.${code}`);
+    }
+    for (const [group, codes] of Object.entries(configGroups)) {
+      for (const code of codes) assert.equal(typeof latency.config[group]?.[code], "string", `${locale}: fleet.monitoring.latency.config.${group}.${code}`);
+    }
+  }
+});
