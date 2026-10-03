@@ -51,6 +51,7 @@ import AttentionList, { type AttentionItem } from "@/components/common/Attention
 import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import { bindLayer } from "@/composables/useLayer";
+import { writeLayer } from "@/composables/layerModel";
 import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import KeepaliveLayer from "@/components/fleet/KeepaliveLayer.vue";
 import { filterCounts, isSnoozed } from "./incidentsModel";
@@ -100,7 +101,7 @@ const nodesQuery = useAsyncData(
   },
 );
 
-// Keepalive incidents (the Keepalive layer, and the count on its tab).
+// Keepalive incidents (the Incidents layer, and the count on its tab).
 const incidentsQuery = useAsyncData<IncidentListResponse>(
   (signal) => api.incidents.list(undefined, { signal }),
   // A session without monitor:read never sends it, first read or poll.
@@ -113,7 +114,7 @@ const now = useNow({ interval: 1000 });
 const owned = useOwnedRoute();
 
 /**
- * Three layers (design 23, section 3.4): Keepalive (the incidents the server
+ * Three layers (design 23, section 3.4): Incidents (the incidents the server
  * holds, first, since it answers "what is broken now"), Monitors (the probes
  * an operator made and their results) and Latency (the source by target
  * matrix the latency probe configuration generates; the generated monitors
@@ -122,18 +123,26 @@ const owned = useOwnedRoute();
  * written before the layers still shows what it pointed at. Latency is never
  * the fallback, so every link into it names it (?view=latency).
  */
-type MonitoringLayer = "keepalive" | "monitors" | "latency";
-const layer = bindLayer<MonitoringLayer>(
-  owned,
-  () => ["keepalive", "monitors", "latency"],
-  () => {
-    const query = owned.query();
-    return query.open || query.node || route.params.id ? "monitors" : "keepalive";
+type MonitoringLayer = "incidents" | "monitors" | "latency";
+const layerFallback = (): MonitoringLayer => {
+  const query = owned.query();
+  return query.open || query.node || route.params.id ? "monitors" : "incidents";
+};
+const layer = bindLayer<MonitoringLayer>(owned, () => ["incidents", "monitors", "latency"], layerFallback);
+// The Incidents layer was called Keepalive, and links written then say
+// ?view=keepalive (or ?tab=keepalive); they open Incidents and the address
+// is rewritten to the current spelling.
+watch(
+  () => owned.query(),
+  (query) => {
+    if (!owned.owns() || (query.view !== "keepalive" && query.tab !== "keepalive")) return;
+    owned.replace(writeLayer({ ...query, view: undefined }, "incidents", layerFallback()));
   },
+  { immediate: true },
 );
 // Such a link lands on Monitors because of ?open= or ?node=, so the address
 // names the layer too: closing the sheet or clearing the node chip removes
-// the parameter, and the page must not switch to Keepalive under the operator.
+// the parameter, and the page must not switch to Incidents under the operator.
 watch(
   () => owned.query(),
   (query) => {
@@ -568,11 +577,11 @@ async function deleteMonitor() {
 
 const monitorsProof = useProof(monitorsQuery);
 const incidentsProof = useProof(incidentsQuery);
-const proof = computed(() => (layer.value === "keepalive" ? incidentsProof.value : monitorsProof.value));
+const proof = computed(() => (layer.value === "incidents" ? incidentsProof.value : monitorsProof.value));
 const failing = computed(() => failingMonitors(monitors.value, healthOf));
 const staleMonitors = computed(() => monitors.value.filter((monitor) => healthOf(monitor).kind === "stale"));
 const proofSegments = computed<ProofSegment[]>(() => {
-  if (layer.value === "keepalive") {
+  if (layer.value === "incidents") {
     const c = incidentCounts.value;
     const out: ProofSegment[] = [{ key: "open", text: t("fleet.keepalive.proof.open", { n: c.open }, c.open), tone: c.open > 0 ? (criticalOpen.value ? "destructive" : "warning") : undefined }];
     if (c.acknowledged) out.push({ key: "acked", text: t("fleet.keepalive.proof.acknowledged", { n: c.acknowledged }) });
@@ -665,8 +674,8 @@ const listedMonitors = computed(() => {
 
 const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
   {
-    value: "keepalive",
-    label: t("fleet.monitoring.layers.keepalive"),
+    value: "incidents",
+    label: t("fleet.monitoring.layers.incidents"),
     // Like Monitors' failing count, absent at zero.
     count: incidentCounts.value.open || undefined,
     tone: incidentCounts.value.open > 0 ? (criticalOpen.value ? "destructive" : "warning") : "default",
@@ -779,7 +788,7 @@ const deleteImpact = computed(() => {
     <LayerTabs v-if="canReadMonitors" v-model="layer" :tabs="layerTabs" :label="$t('fleet.monitoring.layers.label')" />
 
     <KeepaliveLayer
-      v-if="canReadMonitors && layer === 'keepalive'"
+      v-if="canReadMonitors && layer === 'incidents'"
       :owned="owned"
       :response="incidentsQuery.data.value"
       :error="incidentsQuery.error.value"

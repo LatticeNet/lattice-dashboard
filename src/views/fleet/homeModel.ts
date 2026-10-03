@@ -108,6 +108,12 @@ export type HomeAttention =
       agentVersion?: string;
       /** The server's sentence. Shown only for degraded, where it names the broken part. */
       reason: string;
+      /**
+       * The incident this row stands for is still pending (inside its hold):
+       * the row is a warning, and opensInMs is how long until it opens if it
+       * lasts (undefined: on the next check).
+       */
+      pending?: { opensInMs?: number };
     }
   | { kind: "flapping"; key: string; tone: "warning"; nodeId: string; name: string; count: number; lastAt: number; atLeast: boolean }
   | { kind: "stalled"; key: string; tone: "danger"; count: number }
@@ -142,6 +148,8 @@ export interface HomeAttentionInput {
    * incident is of another kind (a failing monitor) keeps its row.
    */
   incidentNodes?: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Pending incidents per node: kind to when it opens (incidentsModel.homeIncidents). */
+  pendingNodes?: ReadonlyMap<string, ReadonlyMap<string, number | undefined>>;
 }
 
 const NODE_ROW_INCIDENTS: Record<string, readonly string[]> = {
@@ -150,6 +158,22 @@ const NODE_ROW_INCIDENTS: Record<string, readonly string[]> = {
   degraded: ["service.down", "agent.stalled"],
   flapping: ["node.offline"],
 };
+
+/** The pending incident a node row stands for, if its condition is still inside its hold. */
+function pendingFor(pending: HomeAttentionInput["pendingNodes"], nodeId: string, row: string, now: number): { opensInMs?: number } | undefined {
+  const kinds = pending?.get(nodeId);
+  if (!kinds) return undefined;
+  let found = false;
+  let opens: number | undefined;
+  for (const kind of NODE_ROW_INCIDENTS[row] ?? []) {
+    if (!kinds.has(kind)) continue;
+    found = true;
+    const at = kinds.get(kind);
+    if (at !== undefined && (opens === undefined || at < opens)) opens = at;
+  }
+  if (!found) return undefined;
+  return { opensInMs: opens === undefined ? undefined : Math.max(0, opens - now) };
+}
 
 function shownAsIncident(incidents: ReadonlyMap<string, ReadonlySet<string>> | undefined, nodeId: string, row: string): boolean {
   const kinds = incidents?.get(nodeId);
@@ -175,10 +199,11 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
     const seenAt = node.last_seen ? Date.parse(node.last_seen) : NaN;
     // A zero time (0001-01-01) is the server's "never"; it parses to a negative instant.
     const seen = !Number.isNaN(seenAt) && seenAt > 0;
+    const pending = pendingFor(input.pendingNodes, node.id, status, input.now);
     out.push({
       kind: "node",
       key: `node:${node.id}`,
-      tone: status === "offline" ? "danger" : "warning",
+      tone: status === "offline" && !pending ? "danger" : "warning",
       nodeId: node.id,
       name: node.name || node.id,
       status,
@@ -186,6 +211,7 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
       lastSeenMs: seen ? Math.max(0, input.now - seenAt) : undefined,
       agentVersion: node.agent_version?.trim() || undefined,
       reason: node.status_reason?.trim() ?? "",
+      ...(pending ? { pending } : {}),
     });
   }
   for (const flap of input.flaps ?? []) {

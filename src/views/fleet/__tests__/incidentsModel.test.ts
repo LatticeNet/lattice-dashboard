@@ -58,9 +58,9 @@ test("the list is worst first: unhandled open critical oldest first, then warnin
   assert.deepEqual([warn, lapsed].sort((a, b) => compareIncidents(a, b, NOW)).map((i) => i.id), ["lapsed", "warn"]);
 });
 
-test("filters split open from snoozed, and active covers open, acknowledged and pending", () => {
+test("filters split open from snoozed, and active is open and acknowledged; pending is not an incident yet", () => {
   const counts = filterCounts(INCIDENTS, NOW);
-  assert.equal(counts.active, 6);
+  assert.equal(counts.active, 5);
   assert.equal(counts.open, 3);
   assert.equal(counts.snoozed, 1);
   assert.equal(counts.acknowledged, 1);
@@ -138,6 +138,10 @@ test("home shows the active incidents worst first and names the kinds it shows p
   assert.deepEqual(home.shown.map((i) => i.id), ["crit-old", "crit-new", "warn"]);
   assert.equal(home.more, 2);
   assert.equal(home.total, 5);
+  // Home and the Incidents layer count the same set.
+  assert.equal(home.total, filterCounts(INCIDENTS, NOW).active);
+  // The pending one is listed for its node, with when it opens.
+  assert.deepEqual([...home.pendingNodes.entries()].map(([id, kinds]) => [id, [...kinds.entries()]]), [["n6", [["node.offline", NOW + 4 * 60_000]]]]);
   // Only the three shown: the acknowledged and snoozed ones past the cap keep their nodes' rows.
   assert.deepEqual([...home.nodeKinds.entries()].map(([id, kinds]) => [id, [...kinds]]).sort(), [["n1", ["service.down"]], ["n2", ["node.offline"]], ["n3", ["service.down"]]]);
 });

@@ -1359,7 +1359,7 @@ export default {
       noAccessDescription: "This session cannot read monitors or their results.",
       layers: {
         label: "Monitoring layers",
-        keepalive: "Keepalive",
+        incidents: "Incidents",
         monitors: "Monitors",
         latency: "Latency",
       },
@@ -1413,7 +1413,7 @@ export default {
       },
       title: "Monitoring",
       description:
-        "TCP and HTTP probes distributed through enrolled agents, plus TLS certificate watches this server runs itself",
+        "What is broken now, the TCP, HTTP and TLS probes behind it, and latency between your nodes",
       stats: {
         monitors: "Monitors",
         enabled: "Enabled",
@@ -1615,6 +1615,8 @@ export default {
       reading: "Reading incidents...",
       readFailed: "Incidents were not read: {reason}",
       notDurable: "This server keeps incidents in memory only: a restart forgets them and their acknowledgements.",
+      pendingNote: "{n} pending: it becomes an incident if the problem lasts. | {n} pending: each becomes an incident if its problem lasts.",
+      showPending: "Show pending",
       proof: {
         open: "{n} open | {n} open",
         acknowledged: "{n} acknowledged",

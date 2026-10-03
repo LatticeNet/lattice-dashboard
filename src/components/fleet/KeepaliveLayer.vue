@@ -308,6 +308,11 @@ function coverageText(window: MaintenanceWindow): string {
           <p class="text-sm">{{ filter === 'active' && !kind && !search ? $t('fleet.keepalive.empty.active') : $t('fleet.keepalive.empty.filtered') }}</p>
           <p v-if="filter === 'active'" class="text-xs text-muted-foreground">{{ $t('fleet.keepalive.empty.explain') }}</p>
         </div>
+        <!-- Pending conditions are not incidents yet, so Active leaves them out; say how many and offer them. -->
+        <p v-if="response && filter === 'active' && counts.pending > 0" class="flex flex-wrap items-center gap-x-2 border-t border-border px-4 py-1.5 text-xs text-muted-foreground" data-testid="incidents-pending-note">
+          <span>{{ $t('fleet.keepalive.pendingNote', { n: counts.pending }, counts.pending) }}</span>
+          <Button variant="link" size="sm" type="button" class="h-auto px-0 py-1 text-xs pointer-coarse:min-h-11" @click="filter = 'pending'">{{ $t('fleet.keepalive.showPending') }}</Button>
+        </p>
         <p v-if="response && !response.durable" class="border-t border-border px-4 py-2 text-xs text-muted-foreground">{{ $t('fleet.keepalive.notDurable') }}</p>
       </template>
     </section>

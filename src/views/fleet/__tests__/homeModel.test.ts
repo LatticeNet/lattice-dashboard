@@ -111,6 +111,33 @@ test("a node row is left to a shown incident only when that incident says the sa
   assert.deepEqual(items.map((i) => i.key), ["node:gpu", "node:hel"]);
 });
 
+test("a node whose incident is still pending is a warning that says when it opens, not a problem", () => {
+  const items = homeAttention({
+    now: NOW,
+    nodes: [
+      { id: "mac", name: "mac-air", status: "offline", status_since: new Date(NOW - 52_000).toISOString() },
+      { id: "gpu", name: "gpu", status: "offline", status_since: hoursAgo(1) },
+      { id: "hel", name: "hetzner-hel", status: "offline", status_since: new Date(NOW - 30_000).toISOString() },
+    ],
+    pendingNodes: new Map([
+      ["mac", new Map([["node.offline", NOW + 60_000]])],
+      // Its open time depends on the next check.
+      ["hel", new Map([["node.offline", undefined]])],
+      // A pending failing monitor says nothing about the node being offline.
+      ["gpu", new Map([["monitor.down", NOW + 60_000]])],
+    ]),
+  });
+  const mac = items.find((i) => i.key === "node:mac");
+  assert.ok(mac && mac.kind === "node");
+  assert.equal(mac.tone, "warning");
+  assert.deepEqual(mac.pending, { opensInMs: 60_000 });
+  const hel = items.find((i) => i.key === "node:hel");
+  assert.ok(hel && hel.kind === "node" && hel.tone === "warning");
+  assert.deepEqual(hel.pending, { opensInMs: undefined });
+  const gpu = items.find((i) => i.key === "node:gpu");
+  assert.ok(gpu && gpu.kind === "node" && gpu.tone === "danger" && gpu.pending === undefined);
+});
+
 test("stalled tasks, failing DDNS and renewals are one row each; auto-renewals are not attention", () => {
   const items = homeAttention({
     now: NOW,

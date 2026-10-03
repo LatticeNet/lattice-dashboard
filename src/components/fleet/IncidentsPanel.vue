@@ -40,7 +40,7 @@ const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCID
         {{ $t('overview.incidents.title', { n: view.total }, view.total) }}
       </h2>
       <RouterLink
-        :to="{ name: 'monitoring', query: { view: 'keepalive' } }"
+        :to="{ name: 'monitoring', query: { view: 'incidents' } }"
         class="ms-auto rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-end"
       >
         {{ view.more > 0 ? $t('overview.incidents.allMore', { n: view.more }) : $t('overview.incidents.all') }}

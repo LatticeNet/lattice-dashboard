@@ -1343,7 +1343,7 @@ export default {
       noAccessDescription: "当前会话无法读取监控及其结果。",
       layers: {
         label: "监控分层",
-        keepalive: "保活",
+        incidents: "事件",
         monitors: "监控项",
         latency: "延迟",
       },
@@ -1396,7 +1396,7 @@ export default {
         results: "结果",
       },
       title: "监控",
-      description: "通过已接入的 agent 分发 TCP 与 HTTP 探测,以及由本服务器自己执行的 TLS 证书监控",
+      description: "现在哪里出了问题、背后的 TCP、HTTP 与 TLS 探测，以及节点之间的延迟",
       stats: {
         monitors: "监控项",
         enabled: "已启用",
@@ -1595,6 +1595,8 @@ export default {
       reading: "读取事件中...",
       readFailed: "未读取到事件：{reason}",
       notDurable: "当前服务端只在内存里保存事件：重启后事件和确认记录都会丢失。",
+      pendingNote: "{n} 个待定：问题持续就会转为事件。 | {n} 个待定：问题持续就会转为事件。",
+      showPending: "查看待定",
       proof: {
         open: "{n} 个未处理 | {n} 个未处理",
         acknowledged: "{n} 个已确认",

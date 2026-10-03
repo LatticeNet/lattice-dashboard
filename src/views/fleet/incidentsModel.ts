@@ -22,7 +22,12 @@ export function knownKind(kind: string): IncidentKind | undefined {
   return isIncidentKind(kind) ? kind : undefined;
 }
 
-/** The list filters, in the order the filter control shows them. "active" is the default. */
+/**
+ * The list filters, in the order the filter control shows them. "active" is
+ * the default: open and acknowledged incidents. Pending is not an incident
+ * yet (nothing was recorded or sent), so it has its own filter and counts
+ * as active nowhere, here or on Home.
+ */
 export const INCIDENT_FILTERS = ["active", "open", "acknowledged", "snoozed", "pending", "resolved", "all"] as const;
 export type IncidentFilter = (typeof INCIDENT_FILTERS)[number];
 
@@ -57,7 +62,7 @@ export function isSnoozed(incident: Pick<Incident, "state" | "snoozed" | "snooze
 export function matchesFilter(incident: Incident, filter: IncidentFilter, now: number): boolean {
   switch (filter) {
     case "active":
-      return isActive(incident) || incident.state === "pending";
+      return isActive(incident);
     case "open":
       return incident.state === "open" && !isSnoozed(incident, now);
     case "acknowledged":
@@ -251,14 +256,16 @@ export function incidentActions(incident: Incident, now: number, canAdmin: boole
  * Home's incidents: the active ones, worst first, at most `max`, how many
  * more, and for each node with a shown incident the kinds shown, so Home can
  * drop the attention row that only one of those rows repeats (homeModel). An
- * incident Home only counts, beyond `max`, keeps its node's row.
+ * incident Home only counts, beyond `max`, keeps its node's row. Pending
+ * ones are listed per node, so Home words that node's row the way the
+ * Incidents layer does (a warning that opens if it lasts), not as a problem.
  */
 export function homeIncidents(
   incidents: readonly Incident[],
   now: number,
   max = HOME_INCIDENTS_MAX,
   held?: readonly string[] | null,
-): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>> } {
+): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>>; pendingNodes: Map<string, Map<string, number | undefined>> } {
   const active = holdOrder(
     incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now)),
     held,
@@ -271,7 +278,16 @@ export function homeIncidents(
     kinds.add(incident.kind);
     nodeKinds.set(incident.node_id, kinds);
   }
-  return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds };
+  // Conditions still inside their hold, per node and kind, with when each opens: Home words such a node's row as pending.
+  const pendingNodes = new Map<string, Map<string, number | undefined>>();
+  for (const incident of incidents) {
+    if (incident.state !== "pending" || !incident.node_id) continue;
+    const kinds = pendingNodes.get(incident.node_id) ?? new Map<string, number | undefined>();
+    const opens = time(incident.opens_at);
+    kinds.set(incident.kind, Number.isNaN(opens) ? undefined : opens);
+    pendingNodes.set(incident.node_id, kinds);
+  }
+  return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds, pendingNodes };
 }
 
 /* ---------------------------- maintenance windows --------------------------- */
