@@ -23,6 +23,7 @@
  */
 import type { AgentLoopHealth, AgentLoopStep, Incident, MaintenanceWindow, Node } from "@/lib/api/index";
 
+import { eventSeverity } from "@/lib/incidentSeverity";
 import { DAY, GROUPS, HOUR, MINUTE, NODES, PARAMS, iso } from "./fleetFixture";
 
 export const INCIDENT_SHAPE = (PARAMS.get("incidents") ?? "none") as "none" | "some";
@@ -208,7 +209,11 @@ function key(kind: string, nodeId: string, monitorId = ""): string {
   return [kind, nodeId, monitorId].filter(Boolean).join("\u0000");
 }
 
-function base(kind: string, severity: "critical" | "warning", node: Node, extra: Partial<Incident>): Incident {
+// Every incident's severity comes from the console's severity table
+// (lib/incidentSeverity, which mirrors lattice-server incidents.go), so the
+// harness renders node.offline as the critical it is in production.
+function base(kind: string, node: Node, extra: Partial<Incident>): Incident {
+  const severity = eventSeverity(kind);
   return {
     id: `inc_${kind.replace(".", "_")}_${node.id}`,
     key: key(kind, node.id, extra.monitor_id),
@@ -236,7 +241,7 @@ function build(): Incident[] {
   const mac = nodeNamed("[cd]-mac-air");
   const malibu = nodeNamed("[cd]-DMIT-pro-malibu");
   return [
-    base("service.down", "critical", dmit1, {
+    base("service.down", dmit1, {
       title: `sing-box inactive on ${dmit1.name}`,
       since: iso(-16 * MINUTE),
       opened_at: iso(-14 * MINUTE),
@@ -244,7 +249,7 @@ function build(): Incident[] {
       notified_at: iso(-14 * MINUTE),
       open_notified_at: iso(-14 * MINUTE),
     }),
-    base("service.down", "critical", bwg, {
+    base("service.down", bwg, {
       title: `sing-box inactive on ${bwg.name}`,
       since: iso(-43 * MINUTE),
       opened_at: iso(-41 * MINUTE),
@@ -253,7 +258,7 @@ function build(): Incident[] {
       open_notified_at: iso(-41 * MINUTE),
       escalated: { nrl_alerts: iso(-11 * MINUTE) },
     }),
-    base("node.offline", "warning", dmit4, {
+    base("node.offline", dmit4, {
       title: `Lattice node offline: ${dmit4.name}`,
       since: iso(-(6 * DAY + 3 * HOUR)),
       opened_at: iso(-(6 * DAY + 3 * HOUR) + 3 * MINUTE),
@@ -262,7 +267,7 @@ function build(): Incident[] {
       open_notified_at: iso(-(6 * DAY + 3 * HOUR) + 3 * MINUTE),
       no_escalate: true,
     }),
-    base("agent.stalled", "warning", qqpw, {
+    base("agent.stalled", qqpw, {
       title: `Lattice agent stalled on ${qqpw.name}`,
       state: "acknowledged",
       since: iso(-26 * MINUTE),
@@ -273,7 +278,7 @@ function build(): Incident[] {
       acked_by: "cdcd",
       acked_at: iso(-18 * MINUTE),
     }),
-    base("monitor.down", "warning", fsn, {
+    base("monitor.down", fsn, {
       id: `inc_monitor_down_${fsn.id}_mon_hk_tcp`,
       monitor_id: "mon_hk_tcp",
       subject: `HK relay port on ${fsn.name}`,
@@ -286,7 +291,7 @@ function build(): Incident[] {
       snoozed_by: "cdcd",
       snoozed_until: iso(2 * HOUR + 40 * MINUTE),
     }),
-    base("service.down", "critical", hel, {
+    base("service.down", hel, {
       title: `sing-box inactive on ${hel.name}`,
       since: iso(-9 * MINUTE),
       opened_at: iso(-7 * MINUTE),
@@ -294,7 +299,7 @@ function build(): Incident[] {
       suppressed: `held by maintenance window "Kernel upgrade" until ${iso(50 * MINUTE)}`,
       suppressed_at: iso(-7 * MINUTE),
     }),
-    base("node.offline", "warning", mac, {
+    base("node.offline", mac, {
       state: "resolved",
       title: `Lattice node offline: ${mac.name}`,
       since: iso(-3 * HOUR),
@@ -305,7 +310,7 @@ function build(): Incident[] {
       open_notified_at: iso(-3 * HOUR + 2 * MINUTE),
       flaps: 4,
     }),
-    base("monitor.down", "warning", malibu, {
+    base("monitor.down", malibu, {
       id: `inc_monitor_down_${malibu.id}_mon_console`,
       monitor_id: "mon_console",
       subject: `Lattice console on ${malibu.name}`,
@@ -332,7 +337,7 @@ function pending(now: number): Incident[] {
       id: `pending:${k}`,
       key: k,
       kind: "node.offline",
-      severity: "warning",
+      severity: eventSeverity("node.offline"),
       state: "pending",
       node_id: node.id,
       node_name: node.name,

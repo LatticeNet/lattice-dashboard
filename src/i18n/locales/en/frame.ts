@@ -45,6 +45,7 @@ export default {
         warning: "Warning",
         info: "Note",
       },
+      toneLead: "{tone}: ",
     },
     sheet: {
       openPage: "Open page",
@@ -100,6 +101,7 @@ export default {
     stepUp: {
       code: "2FA passcode",
       passkey: "Use passkey",
+      rejected: "That passcode was not accepted. Enter the code your authenticator shows now.",
     },
     actions: {
       refresh: "Refresh",
@@ -463,7 +465,7 @@ export default {
     incidents: {
       title: "Incidents ({n} active) | Incidents ({n} active)",
       all: "All incidents",
-      allMore: "{n} more in Keepalive",
+      allMore: "{n} more incident | {n} more incidents",
     },
     // Where a number would be, when its read gave none.
     read: {
@@ -491,6 +493,7 @@ export default {
       proofNever: "enrolled {age} ago, no report since",
       monitors: "{n} monitor failing | {n} monitors failing",
       monitorsAction: "Monitoring",
+      monitorsHandled: "acknowledged, snoozed, held or pending in Incidents",
       stalled: "{n} task stalled | {n} tasks stalled",
       ddns: "{n} DDNS profile failing | {n} DDNS profiles failing",
       overdue: "{n} item overdue | {n} items overdue",

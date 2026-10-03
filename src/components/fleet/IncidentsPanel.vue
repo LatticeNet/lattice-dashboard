@@ -29,21 +29,21 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ refresh: [] }>();
 
-const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCIDENTS_MAX));
 const actions = useIncidentActions(() => emit("refresh"));
+const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCIDENTS_MAX, actions.held.value));
 </script>
 
 <template>
-  <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents">
+  <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents" v-on="actions.listEvents">
     <header class="flex items-center gap-2 border-b border-border px-3.5 py-2">
       <h2 id="home-incidents" class="text-xs font-medium text-muted-foreground">
         {{ $t('overview.incidents.title', { n: view.total }, view.total) }}
       </h2>
       <RouterLink
-        :to="{ name: 'monitoring', query: { view: 'keepalive' } }"
+        :to="{ name: 'monitoring', query: { view: 'incidents' } }"
         class="ms-auto rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-end"
       >
-        {{ view.more > 0 ? $t('overview.incidents.allMore', { n: view.more }) : $t('overview.incidents.all') }}
+        {{ view.more > 0 ? $t('overview.incidents.allMore', { n: view.more }, view.more) : $t('overview.incidents.all') }}
       </RouterLink>
     </header>
     <IncidentList
@@ -53,8 +53,13 @@ const actions = useIncidentActions(() => emit("refresh"));
       :busy="actions.busy.value"
       :node-names="nodeNames"
       :monitor-names="monitorNames"
+      :focus-request="actions.focusRequest.value"
+      :undoable="actions.undoable.value"
+      :undone="actions.undone.value"
       @ack="actions.ack"
+      @undo="actions.undoAck"
       @snooze="actions.snooze"
+      @focused="actions.focusDone"
     />
   </section>
 </template>

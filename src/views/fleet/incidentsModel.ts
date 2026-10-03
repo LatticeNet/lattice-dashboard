@@ -12,16 +12,22 @@
  * Kept free of Vue so `node --test` covers it directly.
  */
 import type { Incident, MaintenanceWindow, MaintenanceWindowInput } from "@/lib/api/types";
+import { INCIDENT_KINDS, isIncidentKind, type IncidentKind } from "@/lib/incidentSeverity";
 
-/** The incident kinds the server opens today; another kind is shown by its raw name. */
-export const INCIDENT_KINDS = ["node.offline", "service.down", "monitor.down", "agent.stalled"] as const;
-export type IncidentKind = (typeof INCIDENT_KINDS)[number];
+/** The incident kinds the server opens today (lib/incidentSeverity); another kind is shown by its raw name. */
+export { INCIDENT_KINDS };
+export type { IncidentKind };
 
 export function knownKind(kind: string): IncidentKind | undefined {
-  return (INCIDENT_KINDS as readonly string[]).includes(kind) ? (kind as IncidentKind) : undefined;
+  return isIncidentKind(kind) ? kind : undefined;
 }
 
-/** The list filters, in the order the filter control shows them. "active" is the default. */
+/**
+ * The list filters, in the order the filter control shows them. "active" is
+ * the default: open and acknowledged incidents. Pending is not an incident
+ * yet (nothing was recorded or sent), so it has its own filter and counts
+ * as active nowhere, here or on Home.
+ */
 export const INCIDENT_FILTERS = ["active", "open", "acknowledged", "snoozed", "pending", "resolved", "all"] as const;
 export type IncidentFilter = (typeof INCIDENT_FILTERS)[number];
 
@@ -56,7 +62,7 @@ export function isSnoozed(incident: Pick<Incident, "state" | "snoozed" | "snooze
 export function matchesFilter(incident: Incident, filter: IncidentFilter, now: number): boolean {
   switch (filter) {
     case "active":
-      return isActive(incident) || incident.state === "pending";
+      return isActive(incident);
     case "open":
       return incident.state === "open" && !isSnoozed(incident, now);
     case "acknowledged":
@@ -116,11 +122,36 @@ export interface IncidentQuery {
   search: string;
 }
 
-/** The rows a list shows for its filters, worst first. */
-export function visibleIncidents(incidents: readonly Incident[], query: IncidentQuery, now: number): Incident[] {
+/**
+ * Rows in a held order: the ids in `held` keep their places, and a row the
+ * held order does not know (it appeared meanwhile) follows them in its
+ * sorted place. Used while an acknowledgement settles, so the row below an
+ * acknowledged one does not move under the pointer (useIncidentActions).
+ */
+export function holdOrder<T extends { id: string }>(sorted: readonly T[], held: readonly string[] | null | undefined): T[] {
+  if (!held?.length) return [...sorted];
+  const at = new Map(held.map((id, index) => [id, index]));
+  const known = sorted.filter((row) => at.has(row.id)).sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  return [...known, ...sorted.filter((row) => !at.has(row.id))];
+}
+
+/**
+ * The rows a list shows for its filters, worst first (or in a held order).
+ * A `pinned` row stays even when it no longer matches the state filter: the
+ * operator just acted on it (Acknowledge under Open, Snooze under Open), and
+ * dropping it would slide the next row's Acknowledge under the pointer and
+ * take keyboard focus with it (useIncidentActions holds the pin briefly).
+ */
+export function visibleIncidents(
+  incidents: readonly Incident[],
+  query: IncidentQuery,
+  now: number,
+  held?: readonly string[] | null,
+  pinned?: ReadonlySet<string> | null,
+): Incident[] {
   const needle = query.search.trim().toLowerCase();
-  return incidents
-    .filter((incident) => matchesFilter(incident, query.filter, now))
+  const sorted = incidents
+    .filter((incident) => pinned?.has(incident.id) || matchesFilter(incident, query.filter, now))
     .filter((incident) => !query.kind || incident.kind === query.kind)
     .filter((incident) => {
       if (!needle) return true;
@@ -129,6 +160,7 @@ export function visibleIncidents(incidents: readonly Incident[], query: Incident
         .some((value) => value!.toLowerCase().includes(needle));
     })
     .sort((a, b) => compareIncidents(a, b, now));
+  return holdOrder(sorted, held);
 }
 
 /** The kinds present, for the kind filter; known kinds first in their fixed order. */
@@ -160,13 +192,18 @@ export function incidentTone(incident: Incident, now: number): IncidentTone {
  */
 export type PhoneState =
   | { key: "pending"; opensAt?: number }
-  | { key: "held"; reason: "maintenance" | "snoozed" | "flapping" | "other"; window?: string; until?: number }
+  | { key: "held"; reason: "maintenance" | "snoozed" | "flapping"; window?: string; until?: number }
+  /** A message was held and nothing holds it any more: the next check sends it. */
+  | { key: "released"; by: "window" | "hold" }
   | { key: "owed" }
   | { key: "paged"; at: number; escalatedAt?: number; unacknowledged: boolean; noEscalate: boolean }
   | { key: "recoveryOwed" }
   | { key: "recoveryHeld" }
   | { key: "recovered"; at: number }
   | { key: "silent" };
+
+/** How lattice-server's incidentOpenHold begins the reason it records for a window's hold. */
+const WINDOW_HOLD_REASON = "held by maintenance window";
 
 function earliest(values: Record<string, string> | undefined): number | undefined {
   let out: number | undefined;
@@ -194,7 +231,10 @@ export function phoneState(incident: Incident, now: number): PhoneState {
       return { key: "held", reason: "snoozed", until: Number.isNaN(until) ? undefined : until };
     }
     if (incident.flapping && incident.suppressed) return { key: "held", reason: "flapping" };
-    if (incident.suppressed && incident.suppressed_at) return { key: "held", reason: "other" };
+    // The server holds an open message only for a window, a snooze or
+    // flapping (incidentOpenHold). Held before and none of them now means
+    // the hold lifted, most often a window that ended: the next check sends it.
+    if (incident.suppressed && incident.suppressed_at) return { key: "released", by: incident.suppressed.startsWith(WINDOW_HOLD_REASON) ? "window" : "hold" };
     return { key: "owed" };
   }
   if (incident.notified === "open") {
@@ -228,14 +268,20 @@ export function incidentActions(incident: Incident, now: number, canAdmin: boole
  * Home's incidents: the active ones, worst first, at most `max`, how many
  * more, and for each node with a shown incident the kinds shown, so Home can
  * drop the attention row that only one of those rows repeats (homeModel). An
- * incident Home only counts, beyond `max`, keeps its node's row.
+ * incident Home only counts, beyond `max`, keeps its node's row. Pending
+ * ones are listed per node, so Home words that node's row the way the
+ * Incidents layer does (a warning that opens if it lasts), not as a problem.
  */
 export function homeIncidents(
   incidents: readonly Incident[],
   now: number,
   max = HOME_INCIDENTS_MAX,
-): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>> } {
-  const active = incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now));
+  held?: readonly string[] | null,
+): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>>; pendingNodes: Map<string, Map<string, number | undefined>> } {
+  const active = holdOrder(
+    incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now)),
+    held,
+  );
   const shown = active.slice(0, max);
   const nodeKinds = new Map<string, Set<string>>();
   for (const incident of shown) {
@@ -244,7 +290,37 @@ export function homeIncidents(
     kinds.add(incident.kind);
     nodeKinds.set(incident.node_id, kinds);
   }
-  return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds };
+  // Conditions still inside their hold, per node and kind, with when each opens: Home words such a node's row as pending.
+  const pendingNodes = new Map<string, Map<string, number | undefined>>();
+  for (const incident of incidents) {
+    if (incident.state !== "pending" || !incident.node_id) continue;
+    const kinds = pendingNodes.get(incident.node_id) ?? new Map<string, number | undefined>();
+    const opens = time(incident.opens_at);
+    kinds.set(incident.kind, Number.isNaN(opens) ? undefined : opens);
+    pendingNodes.set(incident.node_id, kinds);
+  }
+  return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds, pendingNodes };
+}
+
+/**
+ * Monitors whose failure nobody needs to act on now: every active or
+ * pending monitor.down incident of theirs is pending, acknowledged, snoozed
+ * or held by a window (the same set incidentTone quiets). Home words their
+ * failing row as a warning, as the Incidents layer does, instead of a red
+ * problem. A monitor with no such incident is not quiet.
+ */
+export function quietMonitorIds(incidents: readonly Incident[], now: number): Set<string> {
+  const loud = new Set<string>();
+  const quiet = new Set<string>();
+  for (const incident of incidents) {
+    if (incident.kind !== "monitor.down" || !incident.monitor_id) continue;
+    if (incident.state === "resolved") continue;
+    const tone = incidentTone(incident, now);
+    if (tone === "muted" || tone === "info") quiet.add(incident.monitor_id);
+    else loud.add(incident.monitor_id);
+  }
+  for (const id of loud) quiet.delete(id);
+  return quiet;
 }
 
 /* ---------------------------- maintenance windows --------------------------- */
@@ -259,16 +335,63 @@ export function windowPhase(window: Pick<MaintenanceWindow, "starts_at" | "ends_
   return "active";
 }
 
-/** Windows worth listing: active first (ending soonest), then upcoming (starting soonest); ended ones are history. */
+const PHASE_RANK: Record<WindowPhase, number> = { active: 0, upcoming: 1, ended: 2 };
+
+/** A window that ended on the browser's current calendar day. */
+function endedToday(window: Pick<MaintenanceWindow, "ends_at">, now: number): boolean {
+  const end = time(window.ends_at);
+  return !Number.isNaN(end) && end <= now && new Date(end).toDateString() === new Date(now).toDateString();
+}
+
+/**
+ * Windows worth listing: active first (ending soonest), then upcoming
+ * (starting soonest), then those that ended today (latest first), so a
+ * window ended early can still be found and extended. Older ones are history.
+ */
 export function listedWindows(windows: readonly MaintenanceWindow[], now: number): MaintenanceWindow[] {
   return windows
-    .filter((window) => windowPhase(window, now) !== "ended")
+    .filter((window) => windowPhase(window, now) !== "ended" || endedToday(window, now))
     .sort((a, b) => {
-      const pa = windowPhase(a, now) === "active" ? 0 : 1;
-      const pb = windowPhase(b, now) === "active" ? 0 : 1;
+      const pa = PHASE_RANK[windowPhase(a, now)];
+      const pb = PHASE_RANK[windowPhase(b, now)];
       if (pa !== pb) return pa - pb;
-      return pa === 0 ? time(a.ends_at) - time(b.ends_at) : time(a.starts_at) - time(b.starts_at);
+      if (pa === 0) return time(a.ends_at) - time(b.ends_at);
+      if (pa === 1) return time(a.starts_at) - time(b.starts_at);
+      return time(b.ends_at) - time(a.ends_at);
     });
+}
+
+/** Whether a window covers a node: by id, or through a group's resolved members. */
+function windowCovers(window: Pick<MaintenanceWindow, "node_ids" | "group_ids">, nodeId: string, groupMembers: ReadonlyMap<string, readonly string[]>): boolean {
+  if ((window.node_ids ?? []).includes(nodeId)) return true;
+  return (window.group_ids ?? []).some((group) => groupMembers.get(group)?.includes(nodeId));
+}
+
+/**
+ * The open incidents whose first message ending this window sends on the
+ * next check. An incident someone acknowledged owes nothing, and one that
+ * something else still holds stays held when this window ends: a snooze,
+ * flapping, or another active window over its node (the server names only
+ * one window per incident). A window that covers groups is resolved through
+ * `groupMembers`; without them (no group:read) it is not counted as cover.
+ */
+export function windowHeldIncidents(
+  incidents: readonly Incident[],
+  window: Pick<MaintenanceWindow, "id">,
+  now: number,
+  windows: readonly MaintenanceWindow[] = [],
+  groupMembers: ReadonlyMap<string, readonly string[]> = new Map(),
+): Incident[] {
+  const others = windows.filter((other) => other.id !== window.id && windowPhase(other, now) === "active");
+  return incidents.filter(
+    (incident) =>
+      incident.maintenance_id === window.id &&
+      incident.state === "open" &&
+      !!incident.owed_open &&
+      !isSnoozed(incident, now) &&
+      !incident.flapping &&
+      !(incident.node_id && others.some((other) => windowCovers(other, incident.node_id!, groupMembers))),
+  );
 }
 
 /** What a window covers, by name: nodes, then groups. A name the console cannot resolve shows its id. */
@@ -366,8 +489,18 @@ export function windowDraftInput(draft: WindowDraft): MaintenanceWindowInput {
   return input;
 }
 
-/** Ending a running window now: the same window with ends_at set to now. */
-export function endWindowInput(window: MaintenanceWindow, now: number): MaintenanceWindowInput {
+/**
+ * Of the incidents a window released, those whose first message has gone
+ * out since (the server's 20 s sweep can run before Undo): restoring the
+ * window cannot take those back, and the restore says so.
+ */
+export function releasedAndPaged(incidents: readonly Incident[], releasedIds: readonly string[]): Incident[] {
+  const released = new Set(releasedIds);
+  return incidents.filter((incident) => released.has(incident.id) && incident.notified === "open" && !incident.owed_open);
+}
+
+/** A window as an upsert of itself; Undo after End now sends this to put the end time back. */
+export function windowInput(window: MaintenanceWindow): MaintenanceWindowInput {
   return {
     id: window.id,
     name: window.name,
@@ -375,6 +508,11 @@ export function endWindowInput(window: MaintenanceWindow, now: number): Maintena
     node_ids: window.node_ids ?? [],
     group_ids: window.group_ids ?? [],
     starts_at: window.starts_at,
-    ends_at: new Date(Math.max(now, time(window.starts_at) + 1000)).toISOString(),
+    ends_at: window.ends_at,
   };
+}
+
+/** Ending a running window now: the same window with ends_at set to now. */
+export function endWindowInput(window: MaintenanceWindow, now: number): MaintenanceWindowInput {
+  return { ...windowInput(window), ends_at: new Date(Math.max(now, time(window.starts_at) + 1000)).toISOString() };
 }

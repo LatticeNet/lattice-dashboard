@@ -400,6 +400,12 @@ export const api = {
       if (incident.state !== "open") return delay(undefined).then(() => { throw new ApiError(409, "conflict", `incident is ${incident.state}, not open`); });
       return delay(updateIncident(id, { state: "acknowledged", acked_by: principal.username, acked_at: new Date().toISOString() }));
     },
+    unack: (id: string) => {
+      const incident = findIncident(id);
+      if (!incident) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "incident not found"); });
+      if (incident.state !== "open" && incident.state !== "acknowledged") return delay(undefined).then(() => { throw new ApiError(409, "conflict", "only an open incident can be un-acknowledged"); });
+      return delay(updateIncident(id, { state: "open", acked_by: undefined, acked_at: undefined }));
+    },
     snooze: (id: string, minutes: number) => {
       const incident = findIncident(id);
       if (!incident) return delay(undefined).then(() => { throw new ApiError(404, "not_found", "incident not found"); });

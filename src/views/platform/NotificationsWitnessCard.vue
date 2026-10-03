@@ -7,7 +7,7 @@
  * action files a plan; nothing changes on a node until the approval is
  * decided, which is the product's rule for every privileged change.
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { OctagonAlert, Pencil, Plus, Radar, RefreshCw, Trash2, TriangleAlert } from "lucide-vue-next";
@@ -55,7 +55,13 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ refresh: []; filed: [] }>();
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+
+/** A Bark interruption level as the rule editor's select offers it; a level without copy keeps its name. */
+function levelLabel(level: string): string {
+  const key = `platform.notifications.incidents.levels.${level}`;
+  return te(key) ? t(key) : level;
+}
 
 const nodes = computed(() => props.status?.nodes ?? []);
 /** Nodes worth a block: a witness applied, waiting, failed, or still reporting. */
@@ -140,6 +146,15 @@ function openForm(node?: WitnessNodeView): void {
   formOpen.value = true;
 }
 
+/**
+ * A field's error, tied to the field: once a submit was refused, a field
+ * with a problem is aria-invalid and described by its error line, so a
+ * screen reader that lands on it (focusFirstProblem) hears what is wrong.
+ */
+function invalid(field: string, ...kinds: WitnessFormProblem[]): Record<string, string> {
+  return touched.value && kinds.some((kind) => problems.value.includes(kind)) ? { "aria-invalid": "true", "aria-describedby": `${field}-error` } : {};
+}
+
 function problemText(p: WitnessFormProblem): string {
   return t(`platform.notifications.witness.form.problems.${p}`);
 }
@@ -148,9 +163,41 @@ function nodeName(id: string): string {
   return nodeChoices.value.find((n) => n.node_id === id)?.node_name ?? id;
 }
 
+/** The field each problem is about, in the form's order (witnessFormProblems lists them in that order). */
+const PROBLEM_FIELD: Record<WitnessFormProblem, string> = {
+  node: "witness-node",
+  channel: "witness-channel",
+  barkUrl: "witness-bark-url",
+  barkUrlLoopback: "witness-bark-url",
+  references: "witness-refs",
+  interval: "witness-interval",
+  hold: "witness-hold",
+  recover: "witness-recover",
+};
+
+/**
+ * A refused submit sends focus to the first field that needs fixing. It fell
+ * to the page before: Submit turns disabled under focus once the problems show.
+ */
+async function focusFirstProblem(): Promise<void> {
+  // The timing section opens itself for its own problems on this render.
+  await nextTick();
+  for (const problem of problems.value) {
+    const field = document.getElementById(PROBLEM_FIELD[problem]);
+    if (field) {
+      field.focus();
+      return;
+    }
+  }
+}
+
 async function submit(): Promise<void> {
   touched.value = true;
-  if (blocked.value || filing.value) return;
+  if (filing.value) return;
+  if (blocked.value) {
+    await focusFirstProblem();
+    return;
+  }
   filing.value = true;
   try {
     await api.notify.planWitness(witnessPlanRequest(form.value));
@@ -289,7 +336,7 @@ defineExpose({ openForm });
         <div class="grid min-w-0 gap-2">
           <Label for="witness-node">{{ $t('platform.notifications.witness.form.node') }}</Label>
           <Select v-if="nodeChoices.length > 0" v-model="form.nodeId" :disabled="!!changing">
-            <SelectTrigger id="witness-node" class="min-w-0 pointer-coarse:h-11" data-testid="witness-node-select">
+            <SelectTrigger id="witness-node" class="min-w-0 pointer-coarse:h-11" data-testid="witness-node-select" v-bind="invalid('witness-node', 'node')">
               <SelectValue class="min-w-0 overflow-hidden" :placeholder="$t('platform.notifications.witness.form.node')" />
             </SelectTrigger>
             <SelectContent>
@@ -300,13 +347,13 @@ defineExpose({ openForm });
           </Select>
           <p v-else class="text-sm text-warning-text" data-testid="witness-no-capable">{{ $t('platform.notifications.witness.form.noCapable') }}</p>
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.nodeHint') }}</p>
-          <p v-if="touched && problems.includes('node')" class="text-xs text-destructive">{{ problemText('node') }}</p>
+          <p v-if="touched && problems.includes('node')" id="witness-node-error" class="text-xs text-destructive">{{ problemText('node') }}</p>
         </div>
 
         <div class="grid min-w-0 gap-2">
           <Label for="witness-channel">{{ $t('platform.notifications.witness.form.channel') }}</Label>
           <Select v-if="bark.length > 0" v-model="form.channelId">
-            <SelectTrigger id="witness-channel" class="min-w-0 pointer-coarse:h-11" data-testid="witness-channel-select">
+            <SelectTrigger id="witness-channel" class="min-w-0 pointer-coarse:h-11" data-testid="witness-channel-select" v-bind="invalid('witness-channel', 'channel')">
               <SelectValue class="min-w-0 overflow-hidden" :placeholder="$t('platform.notifications.witness.form.channel')" />
             </SelectTrigger>
             <SelectContent>
@@ -315,14 +362,14 @@ defineExpose({ openForm });
           </Select>
           <p v-else class="text-sm text-warning-text">{{ $t('platform.notifications.witness.form.noBark') }}</p>
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.channelHint') }}</p>
-          <p v-if="touched && problems.includes('channel')" class="text-xs text-destructive">{{ problemText('channel') }}</p>
+          <p v-if="touched && problems.includes('channel')" id="witness-channel-error" class="text-xs text-destructive">{{ problemText('channel') }}</p>
         </div>
 
         <div class="grid min-w-0 gap-2">
           <Label for="witness-bark-url">{{ $t('platform.notifications.witness.form.barkUrl') }}</Label>
-          <Input id="witness-bark-url" v-model="form.barkUrl" class="font-mono pointer-coarse:h-11 sm:w-80" placeholder="http://127.0.0.1:8080" autocomplete="off" inputmode="url" data-testid="witness-bark-url" />
+          <Input id="witness-bark-url" v-model="form.barkUrl" class="font-mono pointer-coarse:h-11 sm:w-80" placeholder="http://127.0.0.1:8080" autocomplete="off" inputmode="url" data-testid="witness-bark-url" v-bind="invalid('witness-bark-url', 'barkUrl', 'barkUrlLoopback')" />
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.barkUrlHint') }}</p>
-          <p v-if="touched && (problems.includes('barkUrl') || problems.includes('barkUrlLoopback'))" class="text-xs text-destructive">
+          <p v-if="touched && (problems.includes('barkUrl') || problems.includes('barkUrlLoopback'))" id="witness-bark-url-error" class="text-xs text-destructive">
             {{ problemText(problems.includes('barkUrl') ? 'barkUrl' : 'barkUrlLoopback') }}
           </p>
         </div>
@@ -334,7 +381,7 @@ defineExpose({ openForm });
               <SelectValue class="min-w-0 overflow-hidden" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="level in status?.defaults.bark_levels ?? []" :key="level" :value="level">{{ level }}</SelectItem>
+              <SelectItem v-for="level in status?.defaults.bark_levels ?? []" :key="level" :value="level">{{ levelLabel(level) }}</SelectItem>
             </SelectContent>
           </Select>
           <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.levelHint') }}</p>
@@ -350,18 +397,19 @@ defineExpose({ openForm });
               <textarea
                 id="witness-refs"
                 v-model="form.references"
+                v-bind="invalid('witness-refs', 'references')"
                 rows="3"
                 class="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 spellcheck="false"
               />
               <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.witness.form.referencesHint') }}</p>
-              <p v-if="touched && problems.includes('references')" class="text-xs text-destructive">{{ problemText('references') }}</p>
+              <p v-if="touched && problems.includes('references')" id="witness-refs-error" class="text-xs text-destructive">{{ problemText('references') }}</p>
             </div>
             <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div v-for="key in (['interval', 'hold', 'recover'] as const)" :key="key" class="grid min-w-0 gap-2">
                 <Label :for="`witness-${key}`">{{ $t(`platform.notifications.witness.form.${key}`) }}</Label>
-                <Input :id="`witness-${key}`" v-model="form[key]" class="tabular pointer-coarse:h-11" inputmode="numeric" autocomplete="off" />
-                <p v-if="touched && problems.includes(key)" class="text-xs text-destructive">{{ problemText(key) }}</p>
+                <Input :id="`witness-${key}`" v-model="form[key]" class="tabular pointer-coarse:h-11" inputmode="numeric" autocomplete="off" v-bind="invalid(`witness-${key}`, key)" />
+                <p v-if="touched && problems.includes(key)" :id="`witness-${key}-error`" class="text-xs text-destructive">{{ problemText(key) }}</p>
               </div>
             </div>
           </div>

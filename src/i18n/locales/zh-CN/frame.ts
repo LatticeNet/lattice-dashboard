@@ -43,6 +43,7 @@ export default {
         warning: "警告",
         info: "提示",
       },
+      toneLead: "{tone}：",
     },
     sheet: {
       openPage: "打开页面",
@@ -98,6 +99,7 @@ export default {
     stepUp: {
       code: "两步验证码",
       passkey: "使用通行密钥",
+      rejected: "验证码不对或已过期，请输入身份验证器上当前显示的验证码。",
     },
     actions: {
       refresh: "刷新",
@@ -455,7 +457,7 @@ export default {
     incidents: {
       title: "事件（{n} 个进行中） | 事件（{n} 个进行中）",
       all: "全部事件",
-      allMore: "保活中还有 {n} 个",
+      allMore: "还有 {n} 个事件 | 还有 {n} 个事件",
     },
     read: {
       reading: "读取中",
@@ -482,6 +484,7 @@ export default {
       proofNever: "{age} 前接入，此后没有上报",
       monitors: "{n} 个监控检测失败 | {n} 个监控检测失败",
       monitorsAction: "监控",
+      monitorsHandled: "已在事件中确认、暂缓、暂不发送或待定",
       stalled: "{n} 个任务卡住 | {n} 个任务卡住",
       ddns: "{n} 个 DDNS 配置更新失败 | {n} 个 DDNS 配置更新失败",
       overdue: "{n} 项已过期 | {n} 项已过期",

@@ -241,7 +241,7 @@ function openTo(row: Row) {
         <span>{{ $t('platform.publishingPage.identityLinks.statusFailed', { reason: failedReason }) }}</span>
         <button
           type="button"
-          class="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          class="rounded-sm text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:px-1"
           :disabled="loading"
           @click="props.retry()"
         >{{ $t('common.actions.retry') }}</button>

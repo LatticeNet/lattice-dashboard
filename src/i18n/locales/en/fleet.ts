@@ -1272,6 +1272,7 @@ export default {
           under: "up to {ms} ms",
           over: "over {ms} ms",
           unknown: "nothing heard",
+          failing: "every probe failed",
           partial: "\"heard\" marks a window with under {pct}% of its probes",
           label: "How to read the matrix",
           method: "Each cell is the TCP handshake time from the source to the target's public line port. Unknown is never drawn as a colour.",
@@ -1313,7 +1314,7 @@ export default {
           interval: "Every (seconds)",
           timeout: "Timeout (seconds)",
           problem: {
-            interval: "Every must be {min} to {max} seconds.",
+            interval: "The interval must be {min} to {max} seconds.",
             timeout: "Timeout must be 1 to {timeout} seconds.",
             timeoutVsInterval: "Timeout must be shorter than the interval.",
           },
@@ -1326,6 +1327,7 @@ export default {
           isSource: "source",
           isTarget: "target",
           notTarget: "not a target",
+          targetLine: "{state}: {reason}",
           modeLabel: "Whether to probe {name}",
           mode: {
             auto: "Auto",
@@ -1358,7 +1360,7 @@ export default {
       noAccessDescription: "This session cannot read monitors or their results.",
       layers: {
         label: "Monitoring layers",
-        keepalive: "Keepalive",
+        incidents: "Incidents",
         monitors: "Monitors",
         latency: "Latency",
       },
@@ -1412,7 +1414,7 @@ export default {
       },
       title: "Monitoring",
       description:
-        "TCP and HTTP probes distributed through enrolled agents, plus TLS certificate watches this server runs itself",
+        "What is broken now, the TCP, HTTP and TLS probes behind it, and latency between your nodes",
       stats: {
         monitors: "Monitors",
         enabled: "Enabled",
@@ -1582,6 +1584,7 @@ export default {
       col: {
         step: "Step",
         lastOk: "Last OK",
+        lastOkLead: "Last OK: ",
         errors: "Errors",
         lastError: "Last error",
       },
@@ -1613,6 +1616,8 @@ export default {
       reading: "Reading incidents...",
       readFailed: "Incidents were not read: {reason}",
       notDurable: "This server keeps incidents in memory only: a restart forgets them and their acknowledgements.",
+      pendingNote: "{n} pending: it becomes an incident if the problem lasts. | {n} pending: each becomes an incident if its problem lasts.",
+      showPending: "Show pending",
       proof: {
         open: "{n} open | {n} open",
         acknowledged: "{n} acknowledged",
@@ -1649,6 +1654,7 @@ export default {
         critical: "Critical",
         warning: "Warning",
       },
+      severityLead: "{severity}: ",
       // What the operator's phone was told about the incident, the row's second line.
       phone: {
         pendingAt: "Opens in {age} if it lasts",
@@ -1656,10 +1662,11 @@ export default {
         heldMaintenance: 'Held by maintenance window "{name}"',
         heldSnoozed: "Snoozed: notifies at {time} if still open",
         heldFlapping: "Flapping: held until it settles",
-        heldOther: "Notification held",
+        windowEnded: "Window ended: notifies on the next check",
+        holdLifted: "Hold lifted: notifies on the next check",
         owed: "Notification queued",
         paged: "Paged {time}",
-        escalated: "re-sent as critical {time}",
+        escalated: "reminder re-sent {time}",
         unacknowledged: "not acknowledged",
         recoveryOwed: "Recovery queued",
         recoveryHeld: "Recovery held until it stops flapping",
@@ -1680,6 +1687,8 @@ export default {
       actions: {
         ack: "Acknowledge",
         ackLabel: "Acknowledge: {name}",
+        acked: "Acknowledged",
+        undoLabel: "Undo the acknowledgement: {name}",
         snooze: "Snooze",
         snoozeLabel: "Snooze: {name}",
         open: "Open",
@@ -1692,10 +1701,14 @@ export default {
         end: "End snooze",
       },
       toast: {
-        acked: "Incident acknowledged. It will not be re-sent.",
+        acked: "Acknowledged: {name}. No reminder will be re-sent.",
+        undo: "Undo",
+        unacked: "Acknowledgement undone: {name}. The incident is open again.",
+        unackClosed: "{name} closed meanwhile, so its acknowledgement stays.",
+        unackFailed: "Undo failed",
         ackFailed: "Acknowledge failed",
-        snoozed: "Incident snoozed for {label}",
-        unsnoozed: "Snooze ended",
+        snoozed: "Snoozed for {label}: {name}",
+        unsnoozed: "Snooze ended: {name}",
         snoozeFailed: "Snooze failed",
       },
       empty: {
@@ -1728,6 +1741,9 @@ export default {
         start: "Start window",
         create: "Create window",
         endNow: "End now",
+        endTitle: 'End maintenance window "{name}" now?',
+        endHeld: "{n} open incident it holds will notify on the next check: {names}. | {n} open incidents it holds will notify on the next check: {names}.",
+        heldItem: "{kind} on {node}",
         listTitle: "Maintenance windows",
         row: "{covers} · {from} to {to}",
         phase: {
@@ -1736,10 +1752,19 @@ export default {
           ended: "Ended",
         },
         banner: 'Maintenance "{name}" on {covers} until {time}: notifications are held',
+        bannerEnded: 'Maintenance "{name}" on {covers} ended: what it held goes out on the next check',
+        undoEnd: "Undo ending {name}",
         bannerLabel: "Active maintenance windows",
         andMore: "{names} and {n} more",
         deleteTitle: "Delete maintenance window {name}?",
         deleteDescription: "Notifications it holds go out on the next check for incidents that are still open.",
+        discard: {
+          title: "Discard these changes?",
+          description: "The window keeps what was last saved.",
+          descriptionNew: "The new window is not saved yet.",
+          confirm: "Discard",
+          keep: "Keep editing",
+        },
         error: {
           name: "Give the window a name.",
           nameLong: "The name is too long.",
@@ -1755,6 +1780,9 @@ export default {
           created: "Maintenance window created",
           updated: "Maintenance window saved",
           ended: "Maintenance window {name} ended",
+          restored: "Maintenance window {name} runs until {time} again",
+          restoredPaged: "Maintenance window {name} runs until {time} again, but {names} already notified before Undo. | Maintenance window {name} runs until {time} again, but {names} already notified before Undo.",
+          restoreFailed: "Maintenance window not restored",
           deleted: "Maintenance window {name} deleted",
           saveFailed: "Maintenance window not saved",
           deleteFailed: "Maintenance window not deleted",

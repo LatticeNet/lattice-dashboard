@@ -17,11 +17,15 @@ import {
   newWindowDraft,
   parseIncidentFilter,
   phoneState,
+  quietMonitorIds,
+  releasedAndPaged,
   toLocalInput,
   visibleIncidents,
   windowCoverage,
   windowDraftErrors,
   windowDraftInput,
+  windowHeldIncidents,
+  windowInput,
   windowPhase,
 } from "../incidentsModel.ts";
 
@@ -56,9 +60,9 @@ test("the list is worst first: unhandled open critical oldest first, then warnin
   assert.deepEqual([warn, lapsed].sort((a, b) => compareIncidents(a, b, NOW)).map((i) => i.id), ["lapsed", "warn"]);
 });
 
-test("filters split open from snoozed, and active covers open, acknowledged and pending", () => {
+test("filters split open from snoozed, and active is open and acknowledged; pending is not an incident yet", () => {
   const counts = filterCounts(INCIDENTS, NOW);
-  assert.equal(counts.active, 6);
+  assert.equal(counts.active, 5);
   assert.equal(counts.open, 3);
   assert.equal(counts.snoozed, 1);
   assert.equal(counts.acknowledged, 1);
@@ -76,6 +80,12 @@ test("search matches subject, node and kind, and the kind filter narrows", () =>
   assert.deepEqual(rows.map((i) => i.id), ["crit-new", "done-new"]);
   const monitors = visibleIncidents(INCIDENTS, { filter: "all", kind: "monitor.down", search: "" }, NOW);
   assert.deepEqual(monitors.map((i) => i.id), ["done-new"]);
+  // A pinned row stays under a state filter it no longer matches.
+  const acked = { ...INCIDENTS[1]!, state: "acknowledged" as const };
+  const open = visibleIncidents([acked, INCIDENTS[2]!], { filter: "open", kind: "", search: "" }, NOW);
+  assert.deepEqual(open.map((i) => i.id), ["crit-old"]);
+  const pinned = visibleIncidents([acked, INCIDENTS[2]!], { filter: "open", kind: "", search: "" }, NOW, ["crit-new", "crit-old"], new Set(["crit-new"]));
+  assert.deepEqual(pinned.map((i) => i.id), ["crit-new", "crit-old"]);
   assert.deepEqual(kindsPresent([...INCIDENTS, incident({ kind: "line.down" })]), ["node.offline", "service.down", "monitor.down", "line.down"]);
 });
 
@@ -94,6 +104,12 @@ test("the phone line says what was sent, what is owed and why a message is held"
   assert.deepEqual(phoneState(incident({ owed_open: true, snoozed_until: ahead(20) }), NOW), { key: "held", reason: "snoozed", until: NOW + 20 * 60_000 });
   assert.deepEqual(phoneState(incident({ owed_open: true, flapping: true, suppressed: "flapping (3 reopenings)" }), NOW), { key: "held", reason: "flapping" });
   assert.deepEqual(phoneState(incident({ owed_open: true }), NOW), { key: "owed" });
+  // Held before, nothing holding it now: the window ended (or another hold lifted) and the next check sends it.
+  const windowHold = `held by maintenance window "kernel upgrade" until ${ahead(10)}`;
+  assert.deepEqual(phoneState(incident({ owed_open: true, suppressed: windowHold, suppressed_at: ago(7) }), NOW), { key: "released", by: "window" });
+  assert.deepEqual(phoneState(incident({ owed_open: true, suppressed: `snoozed until ${ago(1)}`, suppressed_at: ago(7) }), NOW), { key: "released", by: "hold" });
+  // While the window still covers the node, it is held by that window.
+  assert.deepEqual(phoneState(incident({ owed_open: true, suppressed: windowHold, suppressed_at: ago(7), maintenance: "kernel upgrade" }), NOW), { key: "held", reason: "maintenance", window: "kernel upgrade" });
   assert.deepEqual(phoneState(incident({ notified: "open", open_notified_at: ago(12) }), NOW), {
     key: "paged",
     at: NOW - 12 * 60_000,
@@ -119,6 +135,22 @@ test("actions follow the state and the operator's scope", () => {
   assert.deepEqual(incidentActions(INCIDENTS[6]!, NOW, true), { ack: false, snooze: false, unsnooze: false });
 });
 
+test("a monitor is quiet only when every live incident of it is pending or being handled", () => {
+  const down = (id: string, monitor: string, over: Partial<Incident>) => incident({ id, kind: "monitor.down", severity: "warning", monitor_id: monitor, ...over });
+  const quiet = quietMonitorIds(
+    [
+      down("a1", "mon_snoozed", { snoozed_until: ahead(30) }),
+      down("b1", "mon_mixed", { state: "acknowledged" }),
+      down("b2", "mon_mixed", {}),
+      down("c1", "mon_pending", { state: "pending" }),
+      down("d1", "mon_held", { maintenance: "kernel upgrade" }),
+      down("e1", "mon_done", { state: "resolved" }),
+    ],
+    NOW,
+  );
+  assert.deepEqual([...quiet].sort(), ["mon_held", "mon_pending", "mon_snoozed"]);
+});
+
 test("age runs from the condition's start and stops at resolution; the server's zero time is never", () => {
   assert.equal(incidentAge(incident({ since: ago(30) }), NOW), 30 * 60_000);
   assert.equal(incidentAge(incident({ state: "resolved", since: ago(30), resolved_at: ago(10) }), NOW), 20 * 60_000);
@@ -130,6 +162,10 @@ test("home shows the active incidents worst first and names the kinds it shows p
   assert.deepEqual(home.shown.map((i) => i.id), ["crit-old", "crit-new", "warn"]);
   assert.equal(home.more, 2);
   assert.equal(home.total, 5);
+  // Home and the Incidents layer count the same set.
+  assert.equal(home.total, filterCounts(INCIDENTS, NOW).active);
+  // The pending one is listed for its node, with when it opens.
+  assert.deepEqual([...home.pendingNodes.entries()].map(([id, kinds]) => [id, [...kinds.entries()]]), [["n6", [["node.offline", NOW + 4 * 60_000]]]]);
   // Only the three shown: the acknowledged and snoozed ones past the cap keep their nodes' rows.
   assert.deepEqual([...home.nodeKinds.entries()].map(([id, kinds]) => [id, [...kinds]]).sort(), [["n1", ["service.down"]], ["n2", ["node.offline"]], ["n3", ["service.down"]]]);
 });
@@ -154,13 +190,47 @@ test("windows: phase, the listed order and what each covers by name", () => {
       { ...WINDOW, id: "later", starts_at: ahead(60), ends_at: ahead(120) },
       { ...WINDOW, id: "ended", starts_at: ago(90), ends_at: ago(1) },
       { ...WINDOW, id: "soon", starts_at: ahead(10), ends_at: ahead(20) },
+      { ...WINDOW, id: "yesterday", starts_at: ago(31 * 60), ends_at: ago(30 * 60) },
+      { ...WINDOW, id: "ended-earlier", starts_at: ago(90), ends_at: ago(20) },
       WINDOW,
     ],
     NOW,
   );
-  assert.deepEqual(listed.map((w) => w.id), ["mw_1", "soon", "later"]);
+  // Windows that ended today stay listed (latest first) so they can be extended; older ones drop.
+  assert.deepEqual(listed.map((w) => w.id), ["mw_1", "soon", "later", "ended", "ended-earlier"]);
   const coverage = windowCoverage(WINDOW, new Map([["n1", "DMIT-4"]]), new Map([["grp_edge", "edge"]]));
   assert.deepEqual(coverage, { nodes: ["DMIT-4", "gone"], groups: ["edge"] });
+});
+
+test("ending a window names what it releases, and Undo sends the window back as it was", () => {
+  const held = [
+    incident({ id: "held", maintenance_id: "mw_1", owed_open: true }),
+    incident({ id: "paged", maintenance_id: "mw_1", notified: "open" }),
+    incident({ id: "acked", maintenance_id: "mw_1", state: "acknowledged", owed_open: true }),
+    incident({ id: "other", maintenance_id: "mw_2", owed_open: true }),
+  ];
+  assert.deepEqual(windowHeldIncidents(held, WINDOW, NOW).map((i) => i.id), ["held"]);
+  // Something else still holds it: a snooze, flapping, or another active window over its node (by id or group).
+  const stillHeld = [
+    incident({ id: "snoozed", maintenance_id: "mw_1", owed_open: true, snoozed_until: ahead(30) }),
+    incident({ id: "flapping", maintenance_id: "mw_1", owed_open: true, flapping: true }),
+    incident({ id: "other-window", maintenance_id: "mw_1", owed_open: true, node_id: "n9" }),
+    incident({ id: "other-group", maintenance_id: "mw_1", owed_open: true, node_id: "n8" }),
+    incident({ id: "released", maintenance_id: "mw_1", owed_open: true, node_id: "n7" }),
+  ];
+  const disk = { ...WINDOW, id: "mw_disk", node_ids: ["n9"], group_ids: ["grp_eu"] };
+  const later = { ...WINDOW, id: "mw_later", node_ids: ["n7"], starts_at: ahead(60), ends_at: ahead(120) };
+  assert.deepEqual(windowHeldIncidents(stillHeld, WINDOW, NOW, [WINDOW, disk, later], new Map([["grp_eu", ["n8"]]])).map((i) => i.id), ["released"]);
+  // Undo cannot take back a message the sweep already sent: the restore names those.
+  const afterSweep = [
+    incident({ id: "paged", notified: "open", open_notified_at: ago(0) }),
+    incident({ id: "still-owed", owed_open: true }),
+    incident({ id: "never-held", notified: "open" }),
+  ];
+  assert.deepEqual(releasedAndPaged(afterSweep, ["paged", "still-owed"]).map((i) => i.id), ["paged"]);
+  const ended = endWindowInput(WINDOW, NOW);
+  assert.equal(ended.ends_at, new Date(NOW).toISOString());
+  assert.deepEqual(windowInput(WINDOW), { ...ended, ends_at: WINDOW.ends_at });
 });
 
 test("the window editor follows the server's rules and leaves starts_at out of a window that starts now", () => {

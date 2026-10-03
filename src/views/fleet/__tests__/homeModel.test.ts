@@ -111,6 +111,33 @@ test("a node row is left to a shown incident only when that incident says the sa
   assert.deepEqual(items.map((i) => i.key), ["node:gpu", "node:hel"]);
 });
 
+test("a node whose incident is still pending is a warning that says when it opens, not a problem", () => {
+  const items = homeAttention({
+    now: NOW,
+    nodes: [
+      { id: "mac", name: "mac-air", status: "offline", status_since: new Date(NOW - 52_000).toISOString() },
+      { id: "gpu", name: "gpu", status: "offline", status_since: hoursAgo(1) },
+      { id: "hel", name: "hetzner-hel", status: "offline", status_since: new Date(NOW - 30_000).toISOString() },
+    ],
+    pendingNodes: new Map([
+      ["mac", new Map([["node.offline", NOW + 60_000]])],
+      // Its open time depends on the next check.
+      ["hel", new Map([["node.offline", undefined]])],
+      // A pending failing monitor says nothing about the node being offline.
+      ["gpu", new Map([["monitor.down", NOW + 60_000]])],
+    ]),
+  });
+  const mac = items.find((i) => i.key === "node:mac");
+  assert.ok(mac && mac.kind === "node");
+  assert.equal(mac.tone, "warning");
+  assert.deepEqual(mac.pending, { opensInMs: 60_000 });
+  const hel = items.find((i) => i.key === "node:hel");
+  assert.ok(hel && hel.kind === "node" && hel.tone === "warning");
+  assert.deepEqual(hel.pending, { opensInMs: undefined });
+  const gpu = items.find((i) => i.key === "node:gpu");
+  assert.ok(gpu && gpu.kind === "node" && gpu.tone === "danger" && gpu.pending === undefined);
+});
+
 test("stalled tasks, failing DDNS and renewals are one row each; auto-renewals are not attention", () => {
   const items = homeAttention({
     now: NOW,
@@ -177,6 +204,12 @@ test("an offline node carries its last report and agent, and failing monitors ge
   const monitors = items.find((item) => item.kind === "monitors");
   assert.ok(monitors && monitors.kind === "monitors");
   assert.deepEqual([monitors.count, monitors.firstId, monitors.tone], [2, "mon_hk", "danger"]);
+  // Only when every failing monitor's incident is being handled (or pending) does the row become a warning.
+  const failing = [{ id: "mon_hk", name: "HK relay port" }, { id: "mon_api", name: "api health" }];
+  const some = homeAttention({ now: NOW, failingMonitors: failing, quietMonitors: new Set(["mon_hk"]) }).find((item) => item.kind === "monitors");
+  assert.ok(some && some.kind === "monitors" && some.tone === "danger" && !some.handled);
+  const all = homeAttention({ now: NOW, failingMonitors: failing, quietMonitors: new Set(["mon_hk", "mon_api"]) }).find((item) => item.kind === "monitors");
+  assert.ok(all && all.kind === "monitors" && all.tone === "warning" && all.handled);
 });
 
 test("the failed tile opens the failed runs of the last 24 hours, the window it counts", () => {

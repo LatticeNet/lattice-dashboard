@@ -42,7 +42,7 @@ import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "@/views/fleet/monitorHealthModel";
-import { homeIncidents } from "@/views/fleet/incidentsModel";
+import { homeIncidents, quietMonitorIds } from "@/views/fleet/incidentsModel";
 import {
   CHANGES_QUERY,
   CHANGES_ROWS,
@@ -129,7 +129,9 @@ const failingMonitorRows = computed(() => {
 // Keepalive incidents and the maintenance windows holding their messages.
 const incidents = gated<IncidentListResponse>(can.monitors, (signal) => api.incidents.list(undefined, { signal }), 10_000);
 const incidentList = computed(() => incidents.data.value?.incidents ?? []);
-const incidentNodes = computed(() => homeIncidents(incidentList.value, now.value.getTime()).nodeKinds);
+const homeIncidentView = computed(() => homeIncidents(incidentList.value, now.value.getTime()));
+const incidentNodes = computed(() => homeIncidentView.value.nodeKinds);
+const pendingNodes = computed(() => homeIncidentView.value.pendingNodes);
 const nodeNames = computed(() => new Map((fleet.data.value ?? []).map((node) => [node.id, node.name || node.id])));
 const monitorNames = computed(() => new Map((monitorList.data.value ?? []).map((monitor) => [monitor.id, monitor.name || monitor.id])));
 // Group names for a maintenance window that covers groups; read once, and
@@ -221,6 +223,8 @@ const attentionModel = computed<HomeAttention[]>(() =>
     expiring: expiring.data.value?.items,
     failingMonitors: failingMonitorRows.value,
     incidentNodes: incidentNodes.value,
+    pendingNodes: pendingNodes.value,
+    quietMonitors: quietMonitorIds(incidentList.value, now.value.getTime()),
   }),
 );
 
@@ -235,13 +239,23 @@ function age(ms: number | undefined): string {
  * reported nodes are worded here from the fields; a degraded node keeps the
  * server's sentence, because it names the part that broke.
  */
-function nodeProof(item: Extract<HomeAttention, { kind: "node" }>): string | undefined {
+function nodeFacts(item: Extract<HomeAttention, { kind: "node" }>): string | undefined {
   if (item.status === "degraded") return item.reason || undefined;
   if (item.status === "never_reported") return undefined;
   if (item.lastSeenMs === undefined) return undefined;
   return item.agentVersion
     ? t("overview.attention.proofOffline", { age: age(item.lastSeenMs), version: item.agentVersion })
     : t("overview.attention.proofOfflineNoAgent", { age: age(item.lastSeenMs) });
+}
+
+/** A node whose incident is still pending says when it opens, in the Incidents layer's words, before its facts. */
+function nodeProof(item: Extract<HomeAttention, { kind: "node" }>): string | undefined {
+  const pending = item.pending
+    ? item.pending.opensInMs !== undefined
+      ? t("fleet.keepalive.phone.pendingAt", { age: age(item.pending.opensInMs) })
+      : t("fleet.keepalive.phone.pendingNext")
+    : undefined;
+  return [pending, nodeFacts(item)].filter(Boolean).join(" · ") || undefined;
 }
 
 function nodeSheet(id: string) {
@@ -295,7 +309,7 @@ const attention = computed<AttentionItem[]>(() => [
           key: item.key,
           tone: item.tone,
           claim: t("overview.attention.monitors", { n: item.count }, item.count),
-          proof: names(item.names),
+          proof: item.handled ? `${names(item.names)} · ${t("overview.attention.monitorsHandled")}` : names(item.names),
           action: {
             label: t("overview.attention.monitorsAction"),
             to: item.count === 1 ? { name: "monitoring", query: { open: item.firstId } } : { name: "monitoring" },
