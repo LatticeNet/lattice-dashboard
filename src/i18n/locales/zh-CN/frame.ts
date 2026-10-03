@@ -446,6 +446,12 @@ export default {
       ddns: "未读取到 DDNS 配置，更新失败的没有列出",
       expiring: "未读取到续费与到期信息，到期项没有列出",
       monitors: "未读取到监控结果，失败的监控没有列出",
+      incidents: "未读取到事件，未处理的事件没有列出",
+    },
+    incidents: {
+      title: "事件（{n} 个进行中） | 事件（{n} 个进行中）",
+      all: "全部事件",
+      allMore: "保活中还有 {n} 个",
     },
     read: {
       reading: "读取中",

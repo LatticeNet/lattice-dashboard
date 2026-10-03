@@ -2,6 +2,11 @@ import { ApiError, http, type RequestOptions } from "./client";
 import { unwrapApproval, unwrapApprovalCounts } from "./approvalsEnvelope";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
 import type {
+  Incident,
+  IncidentListQuery,
+  IncidentListResponse,
+  MaintenanceWindow,
+  MaintenanceWindowInput,
   AgentArtifactListing,
   AgentArtifactRequest,
   AgentArtifactView,
@@ -514,6 +519,23 @@ export const api = {
         { monitor_id },
         opts,
       ),
+  },
+
+  // Keepalive incidents (lattice-server incidents.go): pending, open,
+  // acknowledged and recent resolved ones, plus the active maintenance windows.
+  incidents: {
+    list: (query?: IncidentListQuery, opts?: RequestOptions) =>
+      http.get<IncidentListResponse>("/api/incidents", query as Record<string, unknown> | undefined, opts),
+    ack: (id: string) => http.post<Incident>("/api/incidents/ack", { id }),
+    // minutes 0 ends a snooze.
+    snooze: (id: string, minutes: number) => http.post<Incident>("/api/incidents/snooze", { id, minutes }),
+  },
+
+  maintenance: {
+    list: (opts?: RequestOptions) =>
+      http.get<{ windows: MaintenanceWindow[]; now: string }>("/api/maintenance-windows", undefined, opts),
+    upsert: (input: MaintenanceWindowInput) => http.post<MaintenanceWindow>("/api/maintenance-windows", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/maintenance-windows/delete", { id }),
   },
 
   machines: {

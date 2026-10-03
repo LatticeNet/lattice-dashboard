@@ -134,6 +134,12 @@ export interface HomeAttentionInput {
   expiring?: readonly Pick<ExpiringItem, "title" | "days" | "state">[];
   /** Monitors whose newest results include a failure, worst first. */
   failingMonitors?: readonly { id: string; name: string }[];
+  /**
+   * Nodes with an active keepalive incident. Home lists the incident first,
+   * with its actions, so the node's own offline, degraded or flapping row
+   * would say the same thing twice.
+   */
+  incidentNodeIds?: ReadonlySet<string>;
 }
 
 /**
@@ -146,9 +152,11 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
   const out: HomeAttention[] = [];
   const nodes = [...(input.nodes ?? [])].sort((a, b) => compareByAttention(a, b) || (a.name ?? a.id).localeCompare(b.name ?? b.id));
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const incidentNodes = input.incidentNodeIds ?? new Set<string>();
   for (const node of nodes) {
     const status = nodeStatus(node);
     if (status !== "offline" && status !== "never_reported" && status !== "degraded") continue;
+    if (incidentNodes.has(node.id)) continue;
     const since = nodeStatusSince(node);
     const sinceAt = since ? Date.parse(since) : NaN;
     const seenAt = node.last_seen ? Date.parse(node.last_seen) : NaN;
@@ -171,6 +179,7 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
     const node = byId.get(flap.nodeId);
     // An offline node already has its row; a disabled one was switched off.
     if (node && ["offline", "disabled"].includes(nodeStatus(node))) continue;
+    if (incidentNodes.has(flap.nodeId)) continue;
     out.push({
       kind: "flapping",
       key: `flap:${flap.nodeId}`,

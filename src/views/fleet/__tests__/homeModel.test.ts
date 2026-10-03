@@ -89,6 +89,21 @@ test("a flapping node gets a row unless it is offline (its row says it) or disab
   assert.deepEqual(items.map((i) => i.key), ["node:dmit", "flap:mac"]);
 });
 
+test("a node with an active incident leaves its offline, degraded and flapping rows to the incident", () => {
+  const items = homeAttention({
+    now: NOW,
+    nodes: [
+      { id: "dmit", name: "DMIT-4", status: "offline", status_since: hoursAgo(2) },
+      { id: "malibu", name: "malibu", status: "degraded", status_reason: "sing-box restarting." },
+      { id: "mac", name: "mac-air", status: "online" },
+      { id: "gpu", name: "gpu", status: "offline", status_since: hoursAgo(1) },
+    ],
+    flaps: [{ nodeId: "mac", count: 14, lastAt: NOW }],
+    incidentNodeIds: new Set(["dmit", "malibu", "mac"]),
+  });
+  assert.deepEqual(items.map((i) => i.key), ["node:gpu"]);
+});
+
 test("stalled tasks, failing DDNS and renewals are one row each; auto-renewals are not attention", () => {
   const items = homeAttention({
     now: NOW,

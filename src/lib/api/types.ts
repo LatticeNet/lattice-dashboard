@@ -332,6 +332,95 @@ export interface AgentLoopHealth {
   problems?: AgentLoopProblem[];
 }
 
+export type IncidentState = "pending" | "open" | "acknowledged" | "resolved";
+export type IncidentSeverity = "info" | "warning" | "critical";
+
+/** One problem on one subject (lattice-server incidents.go). */
+export interface Incident {
+  /** "pending:<key>" for a derived pending incident. */
+  id: string;
+  key: string;
+  /** The open event type: node.offline, service.down, monitor.down, agent.stalled. */
+  kind: string;
+  recovery_kind?: string;
+  severity: IncidentSeverity | string;
+  state: IncidentState | string;
+  node_id?: string;
+  node_name?: string;
+  monitor_id?: string;
+  subject?: string;
+  title?: string;
+  detail?: string;
+  since?: string;
+  first_opened_at?: string;
+  opened_at?: string;
+  resolved_at?: string;
+  updated_at?: string;
+  acked_by?: string;
+  acked_at?: string;
+  snoozed_by?: string;
+  snoozed_until?: string;
+  snoozed?: boolean;
+  /** What the phone was last told: "open", "resolved", or nothing yet. */
+  notified?: "open" | "resolved" | "";
+  notified_at?: string;
+  open_notified_at?: string;
+  owed_open?: boolean;
+  owed_recovery?: boolean;
+  /** The last reason a message about it was held. */
+  suppressed?: string;
+  suppressed_at?: string;
+  flaps?: number;
+  flapping?: boolean;
+  /** Rule id ("" for the no-rules broadcast) to when it was escalated. */
+  escalated?: Record<string, string>;
+  no_escalate?: boolean;
+  /** The active maintenance window covering its node. */
+  maintenance?: string;
+  maintenance_id?: string;
+  /** When a pending incident opens if its condition holds. */
+  opens_at?: string;
+}
+
+export interface IncidentListResponse {
+  incidents: Incident[];
+  /** Active maintenance windows the caller may see. */
+  windows: MaintenanceWindow[];
+  /** Incidents survive a restart (the server runs the bolt hot store). */
+  durable: boolean;
+  now: string;
+}
+
+export interface IncidentListQuery {
+  state?: string;
+  node_id?: string;
+  limit?: number;
+}
+
+export interface MaintenanceWindow {
+  id: string;
+  name: string;
+  reason?: string;
+  node_ids?: string[];
+  group_ids?: string[];
+  starts_at: string;
+  ends_at: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaintenanceWindowInput {
+  id?: string;
+  name: string;
+  reason?: string;
+  node_ids?: string[];
+  group_ids?: string[];
+  /** Absent starts now (a new window) or keeps the start (an edit). */
+  starts_at?: string;
+  ends_at: string;
+}
+
 // NodeDeletePlanView mirrors the server's nodeDeleteSummary wire DTO returned by
 // both POST /api/nodes/delete/plan (mutated=false, a dry-run preview) and
 // POST /api/nodes/delete (mutated=true, the applied cascade). Every count is the

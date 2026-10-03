@@ -454,6 +454,12 @@ export default {
       ddns: "DDNS profiles were not read, so failing ones are not listed",
       expiring: "Renewals and expiries were not read, so nothing due is listed",
       monitors: "Monitor results were not read, so failing monitors are not listed",
+      incidents: "Incidents were not read, so open ones are not listed",
+    },
+    incidents: {
+      title: "Incidents ({n} active) | Incidents ({n} active)",
+      all: "All incidents",
+      allMore: "{n} more in Keepalive",
     },
     // Where a number would be, when its read gave none.
     read: {
