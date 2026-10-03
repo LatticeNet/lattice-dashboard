@@ -43,6 +43,7 @@ export default {
         warning: "警告",
         info: "提示",
       },
+      toneLead: "{tone}：",
     },
     sheet: {
       openPage: "打开页面",
@@ -456,7 +457,7 @@ export default {
     incidents: {
       title: "事件（{n} 个进行中） | 事件（{n} 个进行中）",
       all: "全部事件",
-      allMore: "保活中还有 {n} 个",
+      allMore: "还有 {n} 个事件 | 还有 {n} 个事件",
     },
     read: {
       reading: "读取中",

@@ -45,6 +45,7 @@ export default {
         warning: "Warning",
         info: "Note",
       },
+      toneLead: "{tone}: ",
     },
     sheet: {
       openPage: "Open page",
@@ -464,7 +465,7 @@ export default {
     incidents: {
       title: "Incidents ({n} active) | Incidents ({n} active)",
       all: "All incidents",
-      allMore: "{n} more in Keepalive",
+      allMore: "{n} more incident | {n} more incidents",
     },
     // Where a number would be, when its read gave none.
     read: {
