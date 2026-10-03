@@ -42,6 +42,8 @@ const SERVER_KINDS: Array<[plugin: string, action: string, method: string | unde
   ["wireguard", "apply-config", undefined, "wireguardConfig"],
   ["sshguard", "sshguard-arm:v1", undefined, "sshGuardArm"],
   ["sshguard", "sshguard-confirm:v1", undefined, "sshGuardConfirm"],
+  ["controlplane-witness", "witness-configure:v1", undefined, "witnessConfigure"],
+  ["controlplane-witness", "witness-remove:v1", undefined, "witnessRemove"],
 ];
 
 function lookup(messages: Record<string, unknown>, key: string): unknown {

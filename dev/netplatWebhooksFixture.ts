@@ -12,6 +12,9 @@
  * channel whose last send timed out, so every health state is on screen;
  * `?health=ok` makes every channel healthy; `?health=none` drops health, as
  * a server older than the outbox answers.
+ *
+ * Critical fallback: with `?channels=4` Bark urgent hands its critical alerts
+ * to the Telegram channel and has done so twice.
  */
 import type { NotifyChannelView, NotifyRuleView, NotifyWebhookDelivery, NotifyWebhookView } from "@/lib/api/index";
 
@@ -53,10 +56,23 @@ const extraChannels: NotifyChannelView[] = [
   { id: "ch_discord", name: "war-room-discord", kind: "discord", config_keys: ["webhook_url"], enabled: true, created_at: iso(-20 * DAY), updated_at: iso(-20 * DAY) },
 ];
 
+const CRITICAL = ["node.offline", "service.down", "ssh.compromise_suspected"];
+
+function withFallback(channel: NotifyChannelView): NotifyChannelView {
+  const h = health(channel.id);
+  if (flags.get("channels") !== "4" || channel.id !== "ch_bark_urgent") return { ...channel, health: h, critical_event_types: CRITICAL };
+  return {
+    ...channel,
+    critical_event_types: CRITICAL,
+    fallback_channel_id: "ch_tg_fallback",
+    health: h ? { ...h, fallbacks: 2, last_fallback_at: iso(-4 * MINUTE + 900), last_fallback_channel_id: "ch_tg_fallback" } : h,
+  };
+}
+
 export const NOTIFY_CHANNELS: NotifyChannelView[] =
   flags.get("channels") === "0"
     ? []
-    : [...baseChannels, ...(flags.get("channels") === "4" ? extraChannels : [])].map((channel) => ({ ...channel, health: health(channel.id) }));
+    : [...baseChannels, ...(flags.get("channels") === "4" ? extraChannels : [])].map(withFallback);
 
 // Every rule carries the server's effective incident options (escalation after
 // 30 minutes at critical, no quiet hours); `?rule=quiet` gives Node offline

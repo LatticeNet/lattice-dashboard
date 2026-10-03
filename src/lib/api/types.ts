@@ -2192,6 +2192,11 @@ export interface NotifyChannelHealth {
   last_status_code?: number;
   consecutive_failures: number;
   failing_since?: string;
+  /** When a critical message this channel failed was last handed to its fallback, and to which channel. */
+  last_fallback_at?: string;
+  last_fallback_channel_id?: string;
+  /** How many critical messages it has handed to its fallback. */
+  fallbacks?: number;
 }
 
 export interface NotifyChannelView {
@@ -2204,6 +2209,10 @@ export interface NotifyChannelView {
   updated_at: string;
   /** Absent from a server older than the outbox. */
   health?: NotifyChannelHealth;
+  /** Takes the critical messages this channel fails, at their first failed attempt. */
+  fallback_channel_id?: string;
+  /** The events a channel's fallback carries, as the server decides them; absent on older servers. */
+  critical_event_types?: string[];
 }
 
 /** The receipt of one send. */
@@ -2234,6 +2243,8 @@ export interface NotifyDelivery {
   role?: NotifyDeliveryRole | string;
   /** Names of the channels whose failure a fallback delivery stands in for. */
   fallback_for?: string;
+  /** The one delivery a channel's critical fallback stands in for; a rule's fallback leaves it empty. */
+  fallback_of?: string;
   outcome: NotifyDeliveryOutcome | string;
   /** A fixed server string; the console composes its own words where it can. */
   reason?: string;
@@ -2287,6 +2298,106 @@ export interface NotifyChannelUpsertRequest {
   kind: NotifyKind | string;
   config: Record<string, string>;
   enabled?: boolean;
+  /** Absent keeps the stored fallback, "" clears it. */
+  fallback_channel_id?: string;
+}
+
+// ── Control-plane witness ────────────────────────────────────────────────────
+
+export type WitnessPhase = "starting" | "watching" | "failing" | "down" | "network_down" | "unknown";
+
+/** The witness's own status file, relayed by the node's agent on its heartbeat. */
+export interface WitnessReport {
+  version: number;
+  config_sha256?: string;
+  started_at?: string;
+  phase: WitnessPhase | string;
+  health_url?: string;
+  reference_count?: number;
+  interval_seconds?: number;
+  hold_seconds?: number;
+  last_check_at?: string;
+  last_check_ok: boolean;
+  last_check_detail?: string;
+  last_ok_at?: string;
+  failing_since?: string;
+  consecutive_failures?: number;
+  network_down_since?: string;
+  alerted: boolean;
+  alerted_at?: string;
+  down_since?: string;
+  last_push_at?: string;
+  last_push_kind?: "down" | "recovery" | string;
+  last_push_ok: boolean;
+  last_push_error?: string;
+  pushes?: number;
+  /** The node's clock when its agent read the status file; same clock as the times above. */
+  relayed_at?: string;
+}
+
+/** A witness plan as the status reads it. */
+export interface WitnessApprovalView {
+  approval_id: string;
+  action: "configure" | "remove" | string;
+  status: string;
+  reason?: string;
+  config_sha256?: string;
+  channel_id?: string;
+  channel_name?: string;
+  key_sha256_prefix?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface WitnessNodeView {
+  node_id: string;
+  node_name: string;
+  capable: boolean;
+  configured?: WitnessApprovalView;
+  pending?: WitnessApprovalView;
+  last_failed?: WitnessApprovalView;
+  report?: WitnessReport;
+  reported_at?: string;
+  report_fresh: boolean;
+  /**
+   * The witness stopped updating its status (its last check is older than
+   * three intervals, by the node's own clock) while the agent still relays
+   * it: nothing is watching the control plane from this node.
+   */
+  check_stale: boolean;
+  config_matches: boolean;
+}
+
+export interface WitnessStatusResponse {
+  /** The address the witness watches: this server's public URL plus /readyz. */
+  health_url?: string;
+  /** Why there is no health URL (the server has no public URL). */
+  health_url_error?: string;
+  nodes: WitnessNodeView[];
+  capable_nodes: { node_id: string; node_name: string; online: boolean }[];
+  defaults: {
+    reference_urls: string[];
+    interval_seconds: number;
+    hold_seconds: number;
+    recover_seconds: number;
+    bark_level: string;
+    bark_levels: string[];
+    key_file: string;
+    config_file: string;
+    unit: string;
+  };
+}
+
+export interface WitnessPlanRequest {
+  node_id: string;
+  remove?: boolean;
+  channel_id?: string;
+  bark_url?: string;
+  reference_urls?: string[];
+  bark_level?: string;
+  interval_seconds?: number;
+  hold_seconds?: number;
+  recover_seconds?: number;
 }
 
 export interface NotifyTestRequest {
