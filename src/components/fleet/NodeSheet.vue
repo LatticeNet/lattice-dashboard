@@ -20,10 +20,19 @@
  * The machine row comes from the list Inventory reads (one row per node the
  * principal holds inventory:read for), read when the sheet first opens and
  * again after a minute, so stepping through nodes does not re-read it per
- * node; a node the list has no row for reads it again before the row says
- * "no access", since the node may have enrolled after the read. The
+ * node. A node the list has no row for is read again before the row says
+ * "no access" only when the page did not list it as the read started, since
+ * only such a node may have enrolled after the read (machinesNeedRead). The
  * provider console link is sealed on the server and revealed per step-up
  * grant, as on Inventory (useMachineLinkReveal).
+ *
+ * What the sheet read belongs to the principal signed in when it mounted,
+ * and so do the scope checks below, taken once. A principal is applied only
+ * by signing in, on /login, which renders outside AppLayout
+ * (router/index.ts), or by Security's re-read of the session after TOTP
+ * activation, on its own page; either way the page holding this sheet has
+ * unmounted first. Sign-out and an expired session leave the shell for
+ * /login too (router/expiredSession.ts).
  */
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -38,7 +47,7 @@ import { formatAge, formatDateTime, formatRelativeTime, isZeroTime } from "@/lib
 import { describeNodeStatus, isReporting, nodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
 import { useAuthStore } from "@/stores/auth";
 import { buildNodeQueue } from "@/views/fleet/nodeTaskQueueModel";
-import { consoleAction, likelyUnpaid, machinesNeedRead, nodeMachine, type RenewalState } from "@/views/fleet/nodeMachineModel";
+import { consoleAction, likelyUnpaid, machinesNeedRead, nodeMachine, type MachinesRead, type RenewalState } from "@/views/fleet/nodeMachineModel";
 import { proofReason } from "@/components/common/proofModel";
 
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
@@ -95,13 +104,15 @@ const guard = useAsyncData<SSHGuardNodeStatus | undefined>(
   { immediate: false },
 );
 
-let machinesReadAt = 0;
+let machinesRead: MachinesRead = { at: 0, listed: new Set() };
 const machines = useAsyncData<MachineView[]>(
-  (signal) =>
-    api.machines.list({ signal }).then((r) => {
-      machinesReadAt = Date.now();
+  (signal) => {
+    const listed = new Set((props.nodes ?? []).map((entry) => entry.id));
+    return api.machines.list({ signal }).then((r) => {
+      machinesRead = { at: Date.now(), listed };
       return unwrap(r, "machines");
-    }),
+    });
+  },
   { immediate: false },
 );
 
@@ -113,7 +124,7 @@ watch(
     guard.data.value = undefined;
     if (canTasks) void tasks.refresh();
     if (canGuard) void guard.refresh();
-    if (canInventory && machinesNeedRead(machines.data.value, id, machinesReadAt, Date.now())) void machines.refresh();
+    if (canInventory && machinesNeedRead(machines.data.value, id, machinesRead, Date.now())) void machines.refresh();
   },
   { immediate: true },
 );
