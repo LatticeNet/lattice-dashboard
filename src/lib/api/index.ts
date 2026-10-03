@@ -66,6 +66,8 @@ import type {
   NotifyChannelView,
   NotifyDeliveriesQuery,
   NotifyDeliveriesResponse,
+  WitnessPlanRequest,
+  WitnessStatusResponse,
   NotifyRuleUpsertRequest,
   NotifyRuleView,
   NotifyTestRequest,
@@ -836,6 +838,14 @@ export const api = {
     // The Sent log: the notification outbox, newest first.
     deliveries: (query: NotifyDeliveriesQuery, opts?: RequestOptions) =>
       http.get<NotifyDeliveriesResponse>("/api/notify/deliveries", query as Record<string, unknown>, opts),
+    // The control-plane witness: what each witness node last relayed, read
+    // against the plans that configured it.
+    witness: (opts?: RequestOptions) =>
+      http.get<WitnessStatusResponse>("/api/notify/witness", undefined, opts),
+    // Files a witness plan (configure or remove); nothing changes on the node
+    // until the approval is decided.
+    planWitness: (input: WitnessPlanRequest) =>
+      http.post<{ approval: ApprovalView }>("/api/notify/witness/plan", input),
     webhooks: (opts?: RequestOptions) =>
       http.get<{ webhooks: NotifyWebhookView[] }>("/api/notify/webhooks", undefined, opts),
     // Create returns the plaintext secret; edit returns the plain view. The
