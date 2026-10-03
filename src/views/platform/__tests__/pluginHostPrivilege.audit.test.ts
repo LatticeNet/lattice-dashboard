@@ -124,3 +124,52 @@ test("the host answers every clipboard request it can address", async () => {
   assert.equal(ack?.type, "lattice.host.clipboard");
   assert.equal(ack?.ok, false, "a host granting no clipboard must say so rather than stay silent");
 });
+
+// UISEC-3 (added with the step-up path for plugin calls). The host now runs a
+// second-factor prompt on a frame's behalf and adds the grant to one call.
+// What has to stay true: the prompt is the console's own, the grant never
+// reaches the frame, and a frame cannot make the host attach a grant to a
+// call the server did not ask one for.
+test("a step-up grant is the host's: its own dialog, never posted to the frame, only on the server's ask", async () => {
+  const host = source("../PluginFrameHost.vue");
+  // Ground the claim: the host wires the session's step-up to its own dialog.
+  assert.match(host, /stepUp: stepUpForFrame/, "the frame host no longer offers the session a step-up");
+  assert.match(host, /<PluginStepUpDialog /, "the step-up prompt is no longer the console's own dialog");
+  // The grant goes to the session only; nothing posts it.
+  assert.doesNotMatch(host, /postToFrame\([^)]*grant/i, "the host posts a step-up grant to the frame");
+
+  const { PluginBridgeSession } = await import("../pluginBridgeModel.ts");
+  const posted: Array<Record<string, unknown>> = [];
+  const sent: unknown[] = [];
+  const sourceWindow = {};
+  let asked = 0;
+  const session = new PluginBridgeSession({
+    pluginId: "test.plugin",
+    pluginVersion: "0.1.0",
+    pluginRoute: "items",
+    bridgeVersion: "1",
+    nonce: "n".repeat(16),
+    sourceWindow,
+    interfaces: [{ service: "test.plugin/items", methods: ["list"] }],
+    call: async (_service, _method, payload) => {
+      sent.push(payload);
+      return { ok: true };
+    },
+    post: (message) => posted.push(message as unknown as Record<string, unknown>),
+    locale: "en",
+    colorScheme: "light",
+    designTokens: {},
+    stepUp: async () => {
+      asked += 1;
+      return "grant-should-not-be-used";
+    },
+  });
+  // A call the server answers is never given a grant, whatever the frame put in it.
+  await session.handle({
+    source: sourceWindow,
+    data: { type: "lattice.plugin.call", nonce: "n".repeat(16), id: "c1", service: "test.plugin/items", method: "list", payload: { step_up_grant: "forged" } },
+  });
+  assert.equal(asked, 0, "the host prompted for a call the server did not refuse");
+  assert.deepEqual(sent, [{ step_up_grant: "forged" }], "the host added or replaced a grant on a call that needed none");
+  assert.equal(JSON.stringify(posted).includes("grant-should-not-be-used"), false);
+});

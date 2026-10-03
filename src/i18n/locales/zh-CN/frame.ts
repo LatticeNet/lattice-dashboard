@@ -95,6 +95,10 @@ export default {
       noMatchTitle: "没有匹配的行",
       noMatchDescription: "调整搜索或筛选条件以扩大结果范围。",
     },
+    stepUp: {
+      code: "两步验证码",
+      passkey: "使用通行密钥",
+    },
     actions: {
       refresh: "刷新",
       save: "保存",

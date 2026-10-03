@@ -97,6 +97,10 @@ export default {
       noMatchTitle: "No matching rows",
       noMatchDescription: "Change the search or the filter to widen the result.",
     },
+    stepUp: {
+      code: "2FA passcode",
+      passkey: "Use passkey",
+    },
     actions: {
       refresh: "Refresh",
       save: "Save",

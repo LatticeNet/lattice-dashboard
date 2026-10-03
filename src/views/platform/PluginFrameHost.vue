@@ -15,6 +15,7 @@ import {
   resolvePluginFrameURL,
   type BridgeHostMessage,
   type PluginPageState,
+  type PluginStepUpRequest,
 } from "./pluginBridgeModel";
 import {
   PluginFrameLifecycle,
@@ -26,6 +27,8 @@ import { PLUGIN_TOKEN_NAMES } from "./pluginTokenContract";
 import { claimViewportPane } from "@/layout/viewportPane";
 import { pendingNavigationOf } from "@/router/navigationState";
 import { copyForFrame as hostCopy } from "./pluginClipboard";
+import { useStepUp } from "@/composables/useStepUp";
+import PluginStepUpDialog, { type PluginStepUpAsk } from "./PluginStepUpDialog.vue";
 
 const props = defineProps<{
   pluginId: string;
@@ -268,7 +271,59 @@ async function copyForFrame(text: string): Promise<boolean> {
   return copied;
 }
 
+/**
+ * The console's step-up for a plugin call the server answered
+ * step_up_required (pluginBridgeModel.ts). One prompt at a time: a second
+ * call that needs one while the first is open is answered as cancelled, so
+ * a frame cannot stack prompts. The grant is handed to the session, which
+ * adds it to that one call; it is never posted to the frame.
+ */
+const frameStepUp = useStepUp({
+  required: t("pluginViews.stepUp.required"),
+  failed: t("pluginViews.stepUp.failed"),
+  passkeyFailed: t("pluginViews.stepUp.passkeyFailed"),
+});
+const stepUpAsk = ref<PluginStepUpAsk | null>(null);
+let settleConfirm: ((ok: boolean) => void) | undefined;
+
+function confirmFreshGrant(): Promise<boolean> {
+  return new Promise((resolve) => {
+    settleConfirm = resolve;
+  });
+}
+
+function answerConfirm(ok: boolean): void {
+  settleConfirm?.(ok);
+  settleConfirm = undefined;
+}
+
+async function stepUpForFrame(request: PluginStepUpRequest): Promise<string> {
+  if (stepUpAsk.value) throw new Error("another step-up is open");
+  const fresh = frameStepUp.peek();
+  stepUpAsk.value = { plugin: props.pluginName, service: request.service, method: request.method, confirm: !!fresh };
+  const onAbort = () => {
+    if (stepUpAsk.value?.confirm) answerConfirm(false);
+    else frameStepUp.cancel();
+  };
+  request.signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    if (fresh) {
+      if (!(await confirmFreshGrant())) throw new Error(t("pluginViews.stepUp.required"));
+      // The grant may have lapsed while the operator read the dialog.
+      const still = frameStepUp.peek();
+      if (still) return still;
+      stepUpAsk.value = { ...stepUpAsk.value, confirm: false };
+    }
+    return await frameStepUp.request();
+  } finally {
+    request.signal.removeEventListener("abort", onAbort);
+    stepUpAsk.value = null;
+  }
+}
+
 function teardownSession() {
+  if (stepUpAsk.value?.confirm) answerConfirm(false);
+  else if (stepUpAsk.value) frameStepUp.cancel();
   session?.dispose();
   session = undefined;
   sourceWindow = null;
@@ -299,6 +354,7 @@ function armSession() {
     post: postToFrame,
     ready: markReady,
     clipboard: copyForFrame,
+    stepUp: stepUpForFrame,
     pageState: () => route.query,
     state: writePageState,
   });
@@ -486,5 +542,7 @@ onBeforeUnmount(() => {
         </Button>
       </div>
     </div>
+
+    <PluginStepUpDialog :step-up="frameStepUp" :ask="stepUpAsk" @confirm="answerConfirm(true)" @cancel="answerConfirm(false)" />
   </div>
 </template>

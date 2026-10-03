@@ -1614,6 +1614,19 @@ export default {
         "The interface could not be loaded. Check that the plugin is still active and its assets are reachable.",
       copyRefused: "The browser refused the copy. The extension is showing you the value to copy by hand.",
     },
+    stepUp: {
+      title: "{plugin} asks to reveal a secret",
+      description:
+        "The server answers this call only after a second-factor check in this console. The plugin never sees your code, the passkey prompt or the grant; it gets the call's answer.",
+      submit: "Verify and reveal",
+      audit: "The reveal is recorded in the audit log under your name.",
+      confirmHint:
+        "You passed a step-up less than a minute ago. Confirm this reveal too, or cancel it. Nothing is revealed until you choose.",
+      confirm: "Reveal",
+      required: "Second-factor verification is required, so nothing was revealed.",
+      failed: "Passcode verification failed.",
+      passkeyFailed: "Passkey verification failed.",
+    },
     secretHidden: "Hidden, copy to reveal",
     copy: "Copy",
     formHint: "Run a plugin action. Each action collects its inputs before calling the gateway.",
