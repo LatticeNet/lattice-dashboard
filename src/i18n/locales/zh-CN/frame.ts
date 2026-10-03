@@ -322,6 +322,8 @@ export default {
       skipToContent: "跳到主内容",
       signedInAs: "当前登录为",
       breadcrumb: "面包屑导航",
+      resetView: "重置视图",
+      viewRestored: "此页打开的是你上次离开时的视图，重置视图会显示默认视图。",
     },
     command: {
       open: "打开命令面板",

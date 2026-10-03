@@ -327,6 +327,8 @@ export default {
       skipToContent: "Skip to content",
       signedInAs: "Signed in as",
       breadcrumb: "Breadcrumb",
+      resetView: "Reset view",
+      viewRestored: "This page opened on the view you left it in. Reset view shows its default view.",
     },
     command: {
       open: "Open command palette",
