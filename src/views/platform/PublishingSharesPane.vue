@@ -42,7 +42,7 @@
  * new plugin-backed share is unavailable with the reason. Proxy-user shares
  * are server-native and unaffected.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "@/lib/toast";
@@ -381,6 +381,9 @@ async function reveal(share: SubscriptionShareView): Promise<void> {
     dropReveal();
     revealed.value = { shareId: share.id, url: revealedUrl(origin.value, answer) };
     revealTimer = setTimeout(dropReveal, REVEAL_HOLD_MS);
+    // Reveal is replaced by the URL; the next thing to do with it is copy it.
+    await nextTick();
+    document.querySelector<HTMLElement>("[data-share-copy]")?.focus();
   } catch (error) {
     toast.error(describe(error, t("networking.shares.reveal.revealFailed")));
   } finally {
@@ -1073,7 +1076,7 @@ watch(() => route.query, () => void applyDeepLink());
           <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.url') }}</p>
           <div v-if="selectedUrl" class="mt-1 flex items-start gap-2" data-testid="share-url-revealed">
             <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">{{ maskedUrl(selectedUrl) }}</code>
-            <Button variant="ghost" size="sm" @click="copyRevealed(selectedUrl, $t('networking.shares.reveal.copied'))">
+            <Button variant="ghost" size="sm" data-share-copy @click="copyRevealed(selectedUrl, $t('networking.shares.reveal.copied'))">
               <Link2 class="size-4" aria-hidden="true" />
               {{ $t('networking.shares.reveal.copy') }}
             </Button>
@@ -1083,7 +1086,9 @@ watch(() => route.query, () => void applyDeepLink());
           </div>
           <div v-else class="mt-1 flex items-start gap-2">
             <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs text-muted-foreground" data-testid="share-url-masked">{{ origin }}{{ maskedSharePath(selected) }}</code>
-            <Button variant="outline" size="sm" :disabled="!!revealing" data-testid="share-reveal" @click="reveal(selected)">
+            <!-- aria-disabled while the URL is read, not disabled: focus returns here
+                 from the step-up prompt and a disabled button drops it to the page. -->
+            <Button variant="outline" size="sm" class="aria-disabled:opacity-50" :aria-disabled="!!revealing || undefined" data-testid="share-reveal" @click="reveal(selected)">
               <RefreshCw v-if="revealing === selected.id" class="size-4 animate-spin" aria-hidden="true" />
               <Eye v-else class="size-4" aria-hidden="true" />
               {{ $t('networking.shares.reveal.action') }}

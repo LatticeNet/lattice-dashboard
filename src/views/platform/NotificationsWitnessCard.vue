@@ -7,7 +7,7 @@
  * action files a plan; nothing changes on a node until the approval is
  * decided, which is the product's rule for every privileged change.
  */
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { OctagonAlert, Pencil, Plus, Radar, RefreshCw, Trash2, TriangleAlert } from "lucide-vue-next";
@@ -154,9 +154,41 @@ function nodeName(id: string): string {
   return nodeChoices.value.find((n) => n.node_id === id)?.node_name ?? id;
 }
 
+/** The field each problem is about, in the form's order (witnessFormProblems lists them in that order). */
+const PROBLEM_FIELD: Record<WitnessFormProblem, string> = {
+  node: "witness-node",
+  channel: "witness-channel",
+  barkUrl: "witness-bark-url",
+  barkUrlLoopback: "witness-bark-url",
+  references: "witness-refs",
+  interval: "witness-interval",
+  hold: "witness-hold",
+  recover: "witness-recover",
+};
+
+/**
+ * A refused submit sends focus to the first field that needs fixing. It fell
+ * to the page before: Submit turns disabled under focus once the problems show.
+ */
+async function focusFirstProblem(): Promise<void> {
+  // The timing section opens itself for its own problems on this render.
+  await nextTick();
+  for (const problem of problems.value) {
+    const field = document.getElementById(PROBLEM_FIELD[problem]);
+    if (field) {
+      field.focus();
+      return;
+    }
+  }
+}
+
 async function submit(): Promise<void> {
   touched.value = true;
-  if (blocked.value || filing.value) return;
+  if (filing.value) return;
+  if (blocked.value) {
+    await focusFirstProblem();
+    return;
+  }
   filing.value = true;
   try {
     await api.notify.planWitness(witnessPlanRequest(form.value));
