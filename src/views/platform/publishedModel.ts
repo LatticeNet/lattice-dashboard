@@ -7,7 +7,7 @@
  * each one serve? This module turns the server's records into that answer, and
  * keeps the derivation testable away from the view.
  */
-import type { ShareRenderBudget, ShareRevealResponse, SubscriptionShareView } from "@/lib/api";
+import type { IdentityLinkStatus, PublishingRecord, ShareRenderBudget, ShareRevealResponse, SubscriptionShareView } from "@/lib/api";
 
 export type PublishedState = "live" | "paused" | "expired" | "expiring" | "unresolved";
 
@@ -150,6 +150,97 @@ export function renderBudgetTone(budget: ShareRenderBudget | undefined): RenderB
   if (budget.exhausted) return "exhausted";
   if (budget.refused > 0 || budget.remaining <= Math.max(1, Math.floor(budget.burst / 4))) return "warning";
   return "quiet";
+}
+
+/* ------------------------------------------------------------------ */
+/* Identity links, projected beside the shares                         */
+/* ------------------------------------------------------------------ */
+
+export type IdentityLinkState = "active" | "never" | "placeholder" | "empty" | "paused" | "expired" | "none";
+
+/**
+ * One word for what an identity's link answers now, from the server's status
+ * (lattice-server identity_link.go). The route facts (paused, expired) come
+ * before the identity's own state; an active link that was never fetched
+ * since the server started is told apart, because a link nobody has added
+ * to a client is the common reason a user says it does not work.
+ */
+export function identityLinkState(status: Pick<IdentityLinkStatus, "issued" | "answer" | "answer_reason" | "last_fetch">): IdentityLinkState {
+  if (!status.issued || status.answer_reason === "not_issued") return "none";
+  if (status.answer_reason === "link_disabled") return "paused";
+  if (status.answer_reason === "link_expired") return "expired";
+  if (status.answer === "placeholder") return "placeholder";
+  if (status.answer === "decoy") return "empty";
+  return status.last_fetch ? "active" : "never";
+}
+
+const UA_FAMILIES: Record<string, string> = {
+  clashmeta: "mihomo",
+  clash: "Clash",
+  stash: "Stash",
+  singbox: "sing-box",
+  shadowrocket: "Shadowrocket",
+  surge: "Surge",
+  quantumultx: "Quantumult X",
+  egern: "Egern",
+  loon: "Loon",
+};
+
+/** The client family a fetch's User-Agent was classified into, or "" for an unknown one. */
+export function clientFamily(uaClass: string | undefined): string {
+  return UA_FAMILIES[uaClass ?? ""] ?? "";
+}
+
+export type PlaceholderReason = "disabled" | "suspended" | "expired" | "quota" | "noLines" | "other";
+
+/** Why an identity's link serves the placeholder, from the server's answer_reason. */
+export function placeholderReason(answerReason: string): PlaceholderReason {
+  switch (answerReason) {
+    case "disabled":
+      return "disabled";
+    case "operator":
+      return "suspended";
+    case "expiry":
+      return "expired";
+    case "quota":
+      return "quota";
+    case "no_lines":
+      return "noLines";
+    default:
+      return "other";
+  }
+}
+
+/**
+ * The slug an identity link is served under: the status's when it was read,
+ * else the last segment of the route the server projects for it
+ * (`sub/<slug>`), which every principal who can see the route can read.
+ */
+export function identityLinkSlug(
+  record: Pick<PublishingRecord, "path_prefix">,
+  status?: Pick<IdentityLinkStatus, "link">,
+): string {
+  if (status?.link?.slug) return status.link.slug;
+  const parts = (record.path_prefix ?? "").split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+export type FetchFreshness = "fresh" | "stale" | "never";
+
+/**
+ * Whether the link's last fetch is recent. Fresh means within twice the
+ * refresh the link advertises: a client past that has missed at least one
+ * refresh, so it is off, offline or failing. Never means not since the
+ * server last started, because the server keeps the last fetch in memory.
+ */
+export function fetchFreshness(
+  status: Pick<IdentityLinkStatus, "last_fetch" | "link">,
+  now: number = Date.now(),
+): FetchFreshness {
+  const at = status.last_fetch ? Date.parse(status.last_fetch.at) : Number.NaN;
+  if (!Number.isFinite(at)) return "never";
+  const interval = (status.link?.update_interval_hours || DEFAULT_UPDATE_INTERVAL_HOURS) * 3_600_000;
+  return now - at <= interval * 2 ? "fresh" : "stale";
 }
 
 /**

@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  clientFamily,
   clientUrl,
+  fetchFreshness,
+  identityLinkSlug,
+  identityLinkState,
   intervalFieldError,
   intervalFieldFor,
   intervalFieldValue,
   isServing,
   maskedSharePath,
   maskedUrl,
+  placeholderReason,
   publishedState,
   renderBudgetTone,
   revealedUrl,
@@ -134,4 +139,47 @@ test("a render budget reads full, quiet, low or exhausted", () => {
   assert.equal(renderBudgetTone({ remaining: 3, burst: 24, per_hour: 60, exhausted: false, refused: 0 }), "warning");
   assert.equal(renderBudgetTone({ remaining: 20, burst: 24, per_hour: 60, exhausted: false, refused: 2 }), "warning");
   assert.equal(renderBudgetTone({ remaining: 0, burst: 24, per_hour: 60, exhausted: true, refused: 9 }), "exhausted");
+});
+
+test("an identity link's state puts the route facts first and tells never-fetched apart", () => {
+  const base = { issued: true, answer: "nodes", answer_reason: "active" };
+  assert.equal(identityLinkState({ ...base, last_fetch: { at: "2026-08-18T11:00:00Z", ua_class: "clashmeta", answer: "nodes" } }), "active");
+  assert.equal(identityLinkState(base), "never");
+  assert.equal(identityLinkState({ ...base, answer: "placeholder", answer_reason: "quota" }), "placeholder");
+  assert.equal(identityLinkState({ ...base, answer: "decoy", answer_reason: "transient_empty" }), "empty");
+  assert.equal(identityLinkState({ ...base, answer: "decoy", answer_reason: "link_disabled" }), "paused");
+  assert.equal(identityLinkState({ ...base, answer: "decoy", answer_reason: "link_expired" }), "expired");
+  assert.equal(identityLinkState({ issued: false, answer: "decoy", answer_reason: "not_issued" }), "none");
+  assert.equal(clientFamily("clashmeta"), "mihomo");
+  assert.equal(clientFamily("other"), "");
+});
+
+test("a placeholder names why the identity is out of service", () => {
+  assert.equal(placeholderReason("operator"), "suspended");
+  assert.equal(placeholderReason("expiry"), "expired");
+  assert.equal(placeholderReason("quota"), "quota");
+  assert.equal(placeholderReason("disabled"), "disabled");
+  assert.equal(placeholderReason("no_lines"), "noLines");
+  assert.equal(placeholderReason("something_new"), "other");
+});
+
+test("an identity link's slug comes from its status, else from the route the server projects", () => {
+  assert.equal(identityLinkSlug({ path_prefix: "sub/u-k3v9q2m7xa" }), "u-k3v9q2m7xa");
+  assert.equal(identityLinkSlug({ path_prefix: "/sub/u-k3v9q2m7xa/" }), "u-k3v9q2m7xa");
+  assert.equal(
+    identityLinkSlug({ path_prefix: "sub/u-old" }, { link: { slug: "u-renamed", enabled: true, issued_at: "", update_interval_hours: 2 } }),
+    "u-renamed",
+  );
+  assert.equal(identityLinkSlug({}), "");
+});
+
+test("a last fetch is fresh within twice the advertised refresh, and never means not since the server started", () => {
+  const at = (hoursAgo: number) => new Date(NOW - hoursAgo * 3_600_000).toISOString();
+  const link = (hours: number) => ({ slug: "u-a", enabled: true, issued_at: "", update_interval_hours: hours });
+  assert.equal(fetchFreshness({ link: link(2) }, NOW), "never");
+  assert.equal(fetchFreshness({ link: link(2), last_fetch: { at: at(3.9), ua_class: "clashmeta", answer: "nodes" } }, NOW), "fresh");
+  assert.equal(fetchFreshness({ link: link(2), last_fetch: { at: at(4.1), ua_class: "clashmeta", answer: "nodes" } }, NOW), "stale");
+  assert.equal(fetchFreshness({ link: link(12), last_fetch: { at: at(20), ua_class: "stash", answer: "nodes" } }, NOW), "fresh");
+  // No link summary (a revoked link): the default refresh applies.
+  assert.equal(fetchFreshness({ last_fetch: { at: at(5), ua_class: "other", answer: "decoy" } }, NOW), "stale");
 });

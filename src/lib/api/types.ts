@@ -1918,6 +1918,8 @@ export interface PublishingRecord {
   /** Reserved routes cannot be moved or deleted: something outside this server depends on the URL. */
   reserved: boolean;
   share_id?: string;
+  /** Set instead of share_id on a read-only row projected from an identity's link; the identity is where it is edited. */
+  identity_id?: string;
   /** The scope that gates editing this route, so a control can be disabled rather than 403. */
   admin_scope: string;
 }
@@ -2543,6 +2545,47 @@ export interface SubscriptionShareUpdateRequest {
   enabled?: boolean;
   /** 0 returns to the default (2 hours); otherwise 1 to 168. */
   update_interval_hours?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Identity subscription links (lattice-server identity_link_api.go)   */
+/* ------------------------------------------------------------------ */
+
+/** The link as every identity view carries it: route facts, never the token. */
+export interface IdentityLinkSummary {
+  slug: string;
+  enabled: boolean;
+  issued_at: string;
+  rotated_at?: string;
+  expires_at?: string;
+  update_interval_hours: number;
+}
+
+export interface IdentityLinkLine {
+  line_hash_id: string;
+  node_id?: string;
+  node_name?: string;
+  line_name?: string;
+  protocol?: string;
+  reason?: string;
+  fix?: string;
+  detail?: string;
+}
+
+/** GET /api/vpn/users/<id>/link: what the link serves now, never the token. */
+export interface IdentityLinkStatus {
+  identity_id: string;
+  issued: boolean;
+  link?: IdentityLinkSummary;
+  answer: "nodes" | "placeholder" | "decoy" | string;
+  answer_reason: string;
+  placeholder?: string;
+  subscription_userinfo?: string;
+  included: IdentityLinkLine[];
+  excluded: IdentityLinkLine[];
+  formats: { native: string[]; converted: string[]; convert_available: boolean; fallback?: string };
+  /** The last fetch since the server started; memory only on the server. */
+  last_fetch?: { at: string; ua_class: string; answer: string };
 }
 
 /* ------------------------------------------------------------------ */

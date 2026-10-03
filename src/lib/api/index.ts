@@ -101,6 +101,7 @@ import type {
   StorageTokenCreateResponse,
   StorageTokenView,
   ShareRevealResponse,
+  IdentityLinkStatus,
   SubscriptionShareCreateRequest,
   SubscriptionShareUpdateRequest,
   SubscriptionShareView,
@@ -954,6 +955,13 @@ export const api = {
         `/api/subscription-shares/${encodeURIComponent(id)}/reveal`,
         { step_up_grant: stepUpGrant },
       ),
+  },
+
+  // An identity's subscription link. vpn-core's Users page owns editing it;
+  // Publishing reads its status for the read-only rows it projects.
+  vpnLinks: {
+    get: (identityId: string, opts?: RequestOptions) =>
+      http.get<IdentityLinkStatus>(`/api/vpn/users/${encodeURIComponent(identityId)}/link`, undefined, opts),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),

@@ -17,6 +17,7 @@ function source(relative: string): string {
 const SHARE_SURFACES = [
   "../PublishingSharesPane.vue",
   "../PublishingView.vue",
+  "../PublishingIdentityLinks.vue",
   "../publishedModel.ts",
   "../../../components/common/CommandPalette.vue",
   "../../../components/common/commandPaletteModel.ts",
