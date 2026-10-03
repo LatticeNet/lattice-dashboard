@@ -7,7 +7,7 @@
  */
 import { computed, shallowRef } from "vue";
 
-import { topToastHost, withToastHost, withoutToastHost } from "./toastClearance";
+import { topToastHost, withToastHost, withoutToastHost } from "@/lib/toastClearance";
 
 const hosts = shallowRef<HTMLElement[]>([]);
 
