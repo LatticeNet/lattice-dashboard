@@ -2187,6 +2187,8 @@ export interface WitnessReport {
   last_push_ok: boolean;
   last_push_error?: string;
   pushes?: number;
+  /** The node's clock when its agent read the status file; same clock as the times above. */
+  relayed_at?: string;
 }
 
 /** A witness plan as the status reads it. */
@@ -2213,6 +2215,12 @@ export interface WitnessNodeView {
   report?: WitnessReport;
   reported_at?: string;
   report_fresh: boolean;
+  /**
+   * The witness stopped updating its status (its last check is older than
+   * three intervals, by the node's own clock) while the agent still relays
+   * it: nothing is watching the control plane from this node.
+   */
+  check_stale: boolean;
   config_matches: boolean;
 }
 

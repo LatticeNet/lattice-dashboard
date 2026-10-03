@@ -25,6 +25,7 @@ export type WitnessLineKey =
   | "planned"
   | "neverReported"
   | "notReporting"
+  | "stopped"
   | "starting"
   | "watching"
   | "failing"
@@ -52,6 +53,9 @@ export function witnessLine(node: WitnessNodeView): WitnessLine {
   }
   if (!report) return { key: "neverReported", tone: "warning" };
   if (!node.report_fresh) return { key: "notReporting", tone: "warning", at: node.reported_at };
+  // The agent relays whatever status file it finds, so a fresh relay of a
+  // status the witness stopped updating is a dead witness, not a quiet one.
+  if (node.check_stale) return { key: "stopped", tone: "warning", at: report.last_check_at ?? report.started_at };
   return reportLine(report);
 }
 
@@ -113,7 +117,7 @@ export function witnessConfigState(node: WitnessNodeView): "matches" | "differs"
   return node.config_matches ? "matches" : "differs";
 }
 
-export type WitnessAttentionKind = "down" | "failing" | "networkDown" | "neverReported" | "notReporting" | "pushFailed" | "planFailed" | "differs";
+export type WitnessAttentionKind = "down" | "failing" | "networkDown" | "neverReported" | "notReporting" | "stopped" | "pushFailed" | "planFailed" | "differs";
 
 export interface WitnessAttention {
   kind: WitnessAttentionKind;
@@ -126,7 +130,8 @@ export interface WitnessAttention {
  * What about the witness needs the operator, worst first. A witness that sees
  * the control plane down while this console still loads means the public path
  * is broken (DNS, proxy, certificate) even though the agents reach the server
- * by theirs. One that stopped relaying is a safety net that may be gone.
+ * by theirs. One that stopped relaying, or whose status stopped changing, is
+ * a safety net that may be gone.
  */
 export function witnessAttention(nodes: readonly WitnessNodeView[]): WitnessAttention[] {
   const out: WitnessAttention[] = [];
@@ -147,6 +152,9 @@ export function witnessAttention(nodes: readonly WitnessNodeView[]): WitnessAtte
         break;
       case "notReporting":
         out.push({ kind: "notReporting", tone: "warning", node, line });
+        break;
+      case "stopped":
+        out.push({ kind: "stopped", tone: "warning", node, line });
         break;
     }
     const push = witnessPushLine(node.report);

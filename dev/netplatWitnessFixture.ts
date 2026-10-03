@@ -16,6 +16,7 @@
  *   down       the witness pushed the unreachable alert
  *   network    the node's own network is down
  *   stale      the agent stopped relaying the status 20 minutes ago
+ *   stopped    the agent still relays, but the witness stopped checking 14 minutes ago
  *   never      applied, but no status has ever arrived
  *   pushfail   watching, but its last push was not accepted
  *   differs    the node runs a config other than the last applied one
@@ -73,6 +74,7 @@ function node(over: Partial<WitnessNodeView> = {}): WitnessNodeView {
     report: report(),
     reported_at: iso(-10_000),
     report_fresh: true,
+    check_stale: false,
     config_matches: true,
     ...over,
   };
@@ -94,6 +96,8 @@ function nodesFor(): WitnessNodeView[] {
       return [node({ report: report({ phase: "network_down", last_check_ok: false, last_check_detail: "dns", network_down_since: iso(-3 * MINUTE) }) })];
     case "stale":
       return [node({ reported_at: iso(-20 * MINUTE), report_fresh: false, report: report({ last_check_at: iso(-20 * MINUTE) }) })];
+    case "stopped":
+      return [node({ check_stale: true, report: report({ last_check_at: iso(-14 * MINUTE), last_ok_at: iso(-14 * MINUTE), relayed_at: iso(-10_000) }) })];
     case "never":
       return [node({ report: undefined, reported_at: undefined, report_fresh: false, config_matches: false })];
     case "pushfail":
@@ -145,7 +149,7 @@ export function planWitness(input: WitnessPlanRequest): { approval: ApprovalView
   };
   const existing = state.nodes.find((n) => n.node_id === input.node_id);
   if (existing) existing.pending = view;
-  else state.nodes.push({ node_id: input.node_id, node_name: NODE_NAME, capable: true, pending: view, report_fresh: false, config_matches: false });
+  else state.nodes.push({ node_id: input.node_id, node_name: NODE_NAME, capable: true, pending: view, report_fresh: false, check_stale: false, config_matches: false });
   return {
     approval: {
       id,

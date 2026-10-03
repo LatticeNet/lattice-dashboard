@@ -51,6 +51,7 @@ function node(over: Partial<WitnessNodeView> = {}): WitnessNodeView {
     report: report(),
     reported_at: "2026-10-03T04:00:05Z",
     report_fresh: true,
+    check_stale: false,
     config_matches: true,
     ...over,
   };
@@ -74,6 +75,24 @@ test("witnessLine follows the plan, the relay and the phase", () => {
   // A witness still reporting with no applied plan on record (an old plan
   // pruned, a restored server) is shown by what it says, not as absent.
   assert.equal(witnessLine(node({ configured: undefined })).key, "watching");
+});
+
+// The agent relays the status file whether or not the witness is alive. A
+// fresh relay of a status the witness stopped updating is a dead witness:
+// whatever phase it last wrote ("watching", or "down" forever), it reads as
+// stopped and is raised.
+test("a fresh relay of an old status reads as a stopped witness", () => {
+  const old = report({ last_check_at: "2026-10-03T03:40:00Z", relayed_at: "2026-10-03T04:00:00Z" });
+  const stopped = witnessLine(node({ check_stale: true, report: old }));
+  assert.deepEqual(stopped, { key: "stopped", tone: "warning", at: "2026-10-03T03:40:00Z" });
+  const stuckDown = witnessLine(node({ check_stale: true, report: report({ ...old, phase: "down", alerted: true, alerted_at: "2026-10-03T03:30:00Z" }) }));
+  assert.equal(stuckDown.key, "stopped");
+  // Never checked at all: the start is the last sign of life.
+  assert.equal(witnessLine(node({ check_stale: true, report: report({ last_check_at: undefined, started_at: "2026-10-03T03:20:00Z" }) })).at, "2026-10-03T03:20:00Z");
+  // A relay that itself went quiet says so first; the witness may be fine.
+  assert.equal(witnessLine(node({ check_stale: true, report_fresh: false })).key, "notReporting");
+  const kinds = witnessAttention([node({ node_id: "a" }), node({ node_id: "b", check_stale: true, report: old })]).map((item) => `${item.node.node_id}:${item.kind}`);
+  assert.deepEqual(kinds, ["b:stopped"]);
 });
 
 test("witnessPushLine names the last push or none", () => {

@@ -457,6 +457,8 @@ function witnessAttentionItem(item: WitnessAttention): AttentionItem {
       return { ...base, proof: t("platform.notifications.witness.attention.networkDownProof", { since }) };
     case "notReporting":
       return { ...base, proof: t("platform.notifications.witness.attention.notReportingProof", { when: item.node.reported_at ? formatDateTime(item.node.reported_at) : "" }) };
+    case "stopped":
+      return { ...base, proof: t("platform.notifications.witness.attention.stoppedProof", { when: line.at ? formatDateTime(line.at) : "" }) };
     case "pushFailed":
       return {
         ...base,
