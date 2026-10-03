@@ -229,8 +229,12 @@ const problemText = computed(() => problems.value.map((p) => t(`fleet.monitoring
                   <span v-if="node.country" class="font-mono">{{ node.country }} · </span>
                   <span v-if="draft.sources.includes(node.node_id)" class="text-foreground">{{ $t('fleet.monitoring.latency.config.isSource') }} · </span>
                   <span :class="preview(node).target ? 'text-foreground' : ''">
-                    {{ preview(node).target ? $t('fleet.monitoring.latency.config.isTarget') : $t('fleet.monitoring.latency.config.notTarget') }}:
-                    {{ $t(`fleet.monitoring.latency.reason.${preview(node).reason}`) }}
+                    {{
+                      $t('fleet.monitoring.latency.config.targetLine', {
+                        state: preview(node).target ? $t('fleet.monitoring.latency.config.isTarget') : $t('fleet.monitoring.latency.config.notTarget'),
+                        reason: $t(`fleet.monitoring.latency.reason.${preview(node).reason}`),
+                      })
+                    }}
                   </span>
                 </span>
               </span>

@@ -164,7 +164,7 @@ const TONE: Record<LoopStepTone, string> = {
                 <span v-if="row.running" class="shrink-0 text-xs text-info-text">{{ $t('fleet.loop.running') }}</span>
               </span>
               <span class="font-mono text-xs text-muted-foreground tabular">
-                <span class="sr-only sm:hidden">{{ $t('fleet.loop.col.lastOk') }}: </span>
+                <span class="sr-only sm:hidden">{{ $t('fleet.loop.col.lastOkLead') }}</span>
                 {{ row.lastOkAgeMs !== undefined ? $t('fleet.loop.ago', { age: age(row.lastOkAgeMs) }) : $t('fleet.loop.never') }}
               </span>
               <span :class="cn('col-span-2 text-xs sm:col-span-1', TONE[row.tone])">

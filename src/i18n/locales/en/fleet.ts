@@ -1313,7 +1313,7 @@ export default {
           interval: "Every (seconds)",
           timeout: "Timeout (seconds)",
           problem: {
-            interval: "Every must be {min} to {max} seconds.",
+            interval: "The interval must be {min} to {max} seconds.",
             timeout: "Timeout must be 1 to {timeout} seconds.",
             timeoutVsInterval: "Timeout must be shorter than the interval.",
           },
@@ -1326,6 +1326,7 @@ export default {
           isSource: "source",
           isTarget: "target",
           notTarget: "not a target",
+          targetLine: "{state}: {reason}",
           modeLabel: "Whether to probe {name}",
           mode: {
             auto: "Auto",
@@ -1582,6 +1583,7 @@ export default {
       col: {
         step: "Step",
         lastOk: "Last OK",
+        lastOkLead: "Last OK: ",
         errors: "Errors",
         lastError: "Last error",
       },
