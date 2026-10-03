@@ -74,6 +74,122 @@ export function clusterTone(statuses: readonly NodeStatus[]): ClusterTone {
   return "success";
 }
 
+/** A circle a cluster paints or listens on, offset from the cluster's centre, in map units. */
+export interface ReachCircle {
+  dx: number;
+  dy: number;
+  r: number;
+}
+
+/**
+ * The circles a cluster occupies, given its member count and how many of
+ * them are down: its tap target or mark at the centre, and its
+ * not-reporting badge at the upper right.
+ */
+export type ClusterReach = (count: number, down: number) => readonly ReachCircle[];
+
+/** How far two clusters' circles overlap (negative when they are clear). */
+function reachOverlap(a: { x: number; y: number }, ac: readonly ReachCircle[], b: { x: number; y: number }, bc: readonly ReachCircle[]): number {
+  let worst = -Infinity;
+  for (const p of ac) {
+    for (const q of bc) {
+      worst = Math.max(worst, p.r + q.r - Math.hypot(a.x + p.dx - b.x - q.dx, a.y + p.dy - b.y - q.dy));
+    }
+  }
+  return worst;
+}
+
+type Building = { x: number; y: number; members: MapPoint[] };
+
+function recentre(cluster: Building): void {
+  cluster.x = cluster.members.reduce((sum, member) => sum + member.x, 0) / cluster.members.length;
+  cluster.y = cluster.members.reduce((sum, member) => sum + member.y, 0) / cluster.members.length;
+}
+
+/** Two clusters whose reaches overlap, as measured when both were at the versions recorded. */
+type OverlapPair = { overlap: number; i: number; j: number; vi: number; vj: number };
+
+/**
+ * Whether `a` merges before `b`: the deeper overlap first, and on a tie the
+ * pair a scan over all pairs (i, then j, both in creation order) meets first.
+ */
+function mergesBefore(a: OverlapPair, b: OverlapPair): boolean {
+  if (a.overlap !== b.overlap) return a.overlap > b.overlap;
+  return a.i !== b.i ? a.i < b.i : a.j < b.j;
+}
+
+function heapPush(heap: OverlapPair[], pair: OverlapPair): void {
+  heap.push(pair);
+  let at = heap.length - 1;
+  while (at > 0) {
+    const parent = (at - 1) >> 1;
+    if (!mergesBefore(heap[at]!, heap[parent]!)) break;
+    [heap[at], heap[parent]] = [heap[parent]!, heap[at]!];
+    at = parent;
+  }
+}
+
+function heapPop(heap: OverlapPair[]): OverlapPair | undefined {
+  const top = heap[0];
+  const last = heap.pop();
+  if (top === undefined || last === undefined || heap.length === 0) return top;
+  heap[0] = last;
+  for (let at = 0; ; ) {
+    const left = at * 2 + 1;
+    const right = left + 1;
+    let first = at;
+    if (left < heap.length && mergesBefore(heap[left]!, heap[first]!)) first = left;
+    if (right < heap.length && mergesBefore(heap[right]!, heap[first]!)) first = right;
+    if (first === at) break;
+    [heap[at], heap[first]] = [heap[first]!, heap[at]!];
+    at = first;
+  }
+  return top;
+}
+
+/**
+ * Merge clusters whose reaches overlap, the most overlapping pair first,
+ * until no two touch. Same result as rescanning every pair after each merge,
+ * which was O(c^3) with a fresh reach per pair per scan and ran on every
+ * pinch frame: here each cluster's reach is computed once and again only
+ * when a merge changes it, every pair is measured once, and a merge measures
+ * only the merged cluster against the rest. Pairs measured against a cluster
+ * that has since merged are skipped when they come up.
+ */
+function separate(clusters: Building[], reach: ClusterReach): Building[] {
+  const live = clusters.map((cluster) => ({
+    cluster,
+    circles: reach(cluster.members.length, cluster.members.filter((member) => DOWN.has(member.status)).length),
+    version: 0,
+    alive: true,
+  }));
+  const heap: OverlapPair[] = [];
+  // Always measured lower index first, as the full scan did, so a tie and its float result match it.
+  const measure = (i: number, j: number) => {
+    const a = live[i]!;
+    const b = live[j]!;
+    const overlap = reachOverlap(a.cluster, a.circles, b.cluster, b.circles);
+    if (overlap > 0) heapPush(heap, { overlap, i, j, vi: a.version, vj: b.version });
+  };
+  for (let i = 0; i < live.length; i += 1) for (let j = i + 1; j < live.length; j += 1) measure(i, j);
+  for (let pair = heapPop(heap); pair; pair = heapPop(heap)) {
+    const keep = live[pair.i]!;
+    const drop = live[pair.j]!;
+    if (!keep.alive || !drop.alive || keep.version !== pair.vi || drop.version !== pair.vj) continue;
+    keep.cluster.members.push(...drop.cluster.members);
+    recentre(keep.cluster);
+    drop.alive = false;
+    keep.version += 1;
+    keep.circles = reach(keep.cluster.members.length, keep.cluster.members.filter((member) => DOWN.has(member.status)).length);
+    for (let k = 0; k < live.length; k += 1) {
+      if (k === pair.i || !live[k]!.alive) continue;
+      if (k < pair.i) measure(k, pair.i);
+      else measure(pair.i, k);
+    }
+  }
+  return live.filter((entry) => entry.alive).map((entry) => entry.cluster);
+}
+
 /**
  * Greedy clustering in map units. Points are taken worst first (so a cluster
  * forms around a node that needs a hand rather than absorbing it at its
@@ -81,16 +197,22 @@ export function clusterTone(statuses: readonly NodeStatus[]): ClusterTone {
  * the centre then moves to the members' mean. Pass the radius in map units at
  * the current zoom (screen radius divided by the scale), so clusters split as
  * the operator zooms in.
+ *
+ * With `reach`, two clusters whose circles overlap are then merged, most
+ * overlapping pair first, until no two touch. The merge radius alone left
+ * London and a two-node cluster 18 px apart on a phone with 44 px targets
+ * that overlapped by 26 px, so a tap on one could open the other; and at
+ * 1440 a San Jose mark sat on the 12-node Los Angeles one.
  */
-export function clusterPoints(points: readonly MapPoint[], radius: number): MapCluster[] {
+export function clusterPoints(points: readonly MapPoint[], radius: number, reach?: ClusterReach): MapCluster[] {
   const ordered = [...points].sort(
     (a, b) => ATTENTION_ORDER[a.status] - ATTENTION_ORDER[b.status] || a.id.localeCompare(b.id),
   );
-  const clusters: { x: number; y: number; members: MapPoint[] }[] = [];
+  const greedy: Building[] = [];
   for (const point of ordered) {
-    let best: (typeof clusters)[number] | undefined;
+    let best: Building | undefined;
     let bestDistance = Infinity;
-    for (const cluster of clusters) {
+    for (const cluster of greedy) {
       const distance = Math.hypot(cluster.x - point.x, cluster.y - point.y);
       if (distance <= radius && distance < bestDistance) {
         best = cluster;
@@ -99,12 +221,12 @@ export function clusterPoints(points: readonly MapPoint[], radius: number): MapC
     }
     if (best) {
       best.members.push(point);
-      best.x = best.members.reduce((sum, member) => sum + member.x, 0) / best.members.length;
-      best.y = best.members.reduce((sum, member) => sum + member.y, 0) / best.members.length;
+      recentre(best);
     } else {
-      clusters.push({ x: point.x, y: point.y, members: [point] });
+      greedy.push({ x: point.x, y: point.y, members: [point] });
     }
   }
+  const clusters = reach ? separate(greedy, reach) : greedy;
   return clusters.map((cluster) => {
     const ids = cluster.members.map((member) => member.id).sort();
     const statuses = cluster.members.map((member) => member.status);
@@ -124,21 +246,31 @@ export function clusterRadius(count: number, base = 7): number {
   return Math.min(base * 2.6, base + Math.sqrt(Math.max(0, count - 1)) * 3);
 }
 
+/** How the map clusters at a zoom: the merge radius and the reach, both in map units at that zoom. */
+export type ClusteringAt = (scale: number) => { radius: number; reach?: ClusterReach };
+
 /**
- * The zoom that splits a cluster: enough to spread its members past the
- * clustering radius, capped at `max`. Returns undefined when the members sit
- * on one spot (13 nodes resolved to one city), where no zoom will split them
- * and the page should list them instead.
+ * The zoom that splits a cluster: its members are clustered the way the map
+ * would at each step of x1.25 from the current zoom, and the first zoom
+ * where they fall apart is taken with a little room (x1.2), capped at
+ * `max`. Returns undefined when no zoom up to `max` splits them (13 nodes
+ * resolved to one city), where the page should list them instead.
+ *
+ * It used to aim the farthest two members past the merge radius, which left
+ * a middle member chaining all three back into one mark: London, Falkenstein
+ * and Helsinki on a phone took a tap that zoomed and still showed one "3".
  */
-export function zoomToSplit(members: readonly Pick<MapPoint, "x" | "y">[], radius: number, current: number, max = 5): number | undefined {
+export function zoomToSplit(members: readonly MapPoint[], clusteringAt: ClusteringAt, current: number, max = 5): number | undefined {
   if (members.length < 2) return undefined;
-  let spread = 0;
-  for (const a of members) {
-    for (const b of members) spread = Math.max(spread, Math.hypot(a.x - b.x, a.y - b.y));
+  for (let scale = current * 1.25; ; scale *= 1.25) {
+    const at = Math.min(scale, max);
+    const { radius, reach } = clusteringAt(at);
+    if (clusterPoints(members, radius, reach).length > 1) {
+      const want = Math.min(max, at * 1.2);
+      return want > current + 0.01 ? want : undefined;
+    }
+    if (at >= max) return undefined;
   }
-  if (spread < 0.5) return undefined;
-  const want = Math.min(max, Math.max(current * 2, ((radius * current) / spread) * 1.2));
-  return want > current + 0.01 ? want : undefined;
 }
 
 /** Points closer than this (map units) are on one spot. */

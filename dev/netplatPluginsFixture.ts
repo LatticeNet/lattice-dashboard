@@ -21,6 +21,8 @@ interface Seed {
   version: string;
   capabilities: string[];
   pages: Array<[string, string]>;
+  /** The scope every page of the plugin's manifest nav asks for, so a confined principal sees what production shows it. */
+  pageScopes: string[];
   interfaces: string[];
   sha: string;
   activatedDaysAgo: number;
@@ -33,6 +35,7 @@ const SEEDS: Seed[] = [
     version: "0.1.0",
     capabilities: ["node:read", "network:plan", "network:apply", "task:run"],
     pages: [["firewall", "NetGuard"]],
+    pageScopes: ["netguard:read"],
     interfaces: ["latticenet.netguard/firewall"],
     sha: "3f9a1c0b7e2d4a5f8c6b9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c",
     activatedDaysAgo: 21,
@@ -43,6 +46,7 @@ const SEEDS: Seed[] = [
     version: "0.14.0-alpha.1",
     capabilities: ["rpc:call", "http:egress", "http:operator-target", "kv:read", "kv:write", "subscription:serve"],
     pages: [["sub-store", "Sub-Store"]],
+    pageScopes: ["substore:read"],
     interfaces: ["latticenet.sub-store/engine", "latticenet.sub-store/subscription", "latticenet.sub-store/shares"],
     sha: "a07c55e1d2b3c4f5061728394a5b6c7d8e9f00112233445566778899aabbccdd",
     activatedDaysAgo: 1,
@@ -58,6 +62,7 @@ const SEEDS: Seed[] = [
       ["profiles", "Node Profiles"],
       ["usage", "Usage"],
     ],
+    pageScopes: ["vpncore:read"],
     interfaces: ["latticenet.vpn-core/nodes", "latticenet.vpn-core/lines", "latticenet.vpn-core/users", "latticenet.vpn-core/usage"],
     sha: "5d2e8f7a6b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e",
     activatedDaysAgo: 3,
@@ -68,6 +73,7 @@ const SEEDS: Seed[] = [
     version: "0.1.0",
     capabilities: ["node:read", "network:plan", "network:apply", "task:run"],
     pages: [["networks", "WireGuard"]],
+    pageScopes: ["wireguard:read"],
     interfaces: ["latticenet.wireguard/networks"],
     sha: "c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6",
     activatedDaysAgo: 21,
@@ -139,7 +145,7 @@ export function pluginViews(): PluginView[] {
       active,
       ui: active
         ? {
-            nav: seed.pages.map(([route, title]) => ({ section: "extensions", title, route })),
+            nav: seed.pages.map(([route, title]) => ({ section: "extensions", title, route, scopes: seed.pageScopes })),
             views: seed.pages.map(([route, title]) => ({ route, title, kind: "sandbox" })),
           }
         : undefined,

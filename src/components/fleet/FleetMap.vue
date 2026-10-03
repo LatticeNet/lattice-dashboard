@@ -34,8 +34,10 @@ import {
   project,
   ringPath,
   zoomToSplit,
+  type ClusterReach,
   type ClusterTone,
   type MapCluster,
+  type ReachCircle,
 } from "@/views/fleet/fleetMapModel";
 
 export interface FleetMapNode extends NodeStatusInput {
@@ -69,6 +71,12 @@ const { width: frameWidth } = useElementSize(frame);
 const unitsPerPx = computed(() => (frameWidth.value > 0 ? MAP_WIDTH / frameWidth.value : 1));
 
 const viewport = ref({ scale: 1, x: 0, y: 0 });
+/**
+ * The zoom alone. Clusters live in map units, so a pan (a new viewport
+ * object per frame) leaves them as they were; a computed on this value
+ * re-runs only when the zoom changes.
+ */
+const zoomLevel = computed(() => viewport.value.scale);
 
 const located = computed(() =>
   props.nodes.filter((node) => typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number"),
@@ -81,22 +89,52 @@ const points = computed(() =>
   }),
 );
 
+/** A 44 px target where a finger is the pointer; just past the mark where a mouse is. */
+const coarse = useMediaQuery("(pointer: coarse)");
+function hitRadius(count: number): number {
+  return coarse.value ? 22 : clusterRadius(count, MARK_PX) + 4;
+}
+
+/** Screen px to map units at a zoom (the current one by default). */
+function toUnits(screenPx: number, scale = viewport.value.scale): number {
+  return (screenPx * unitsPerPx.value) / scale;
+}
+
+/** How far a cluster's centre target or mark reaches, in screen px (Home's picture has no target: the mark and half its stroke). */
+function ownPx(count: number): number {
+  return props.compact ? clusterRadius(count, MARK_PX) + 0.75 : hitRadius(count);
+}
+
+/**
+ * What a cluster occupies on screen, in map units: its target or mark, and
+ * the not-reporting badge drawn at its upper right. Clusters whose circles
+ * overlap merge, so no target sits on another and no badge on a neighbour.
+ */
+function reachAt(scale: number): ClusterReach {
+  return (count, down) => {
+    const circles: ReachCircle[] = [{ dx: 0, dy: 0, r: toUnits(ownPx(count), scale) }];
+    if (down > 0 && count > 1) {
+      const offset = toUnits(clusterRadius(count, MARK_PX) * 0.8, scale);
+      circles.push({ dx: offset, dy: -offset, r: toUnits(6.5, scale) });
+    }
+    return circles;
+  };
+}
+
+/** How the map clusters at a zoom; the zoom that splits a cluster is searched with the same rule. */
+function clusteringAt(scale: number) {
+  return { radius: toUnits(CLUSTER_PX, scale), reach: reachAt(scale) };
+}
+
 /**
  * Clusters in paint order: the biggest last, so it sits on top. A neighbour
  * painted later used to cover the centre of a 12-node cluster with its hit
  * circle, and a click on the "12" opened the neighbour instead.
  */
-const clusters = computed<MapCluster[]>(() =>
-  clusterPoints(points.value, (CLUSTER_PX * unitsPerPx.value) / viewport.value.scale).sort(
-    (a, b) => a.ids.length - b.ids.length || a.key.localeCompare(b.key),
-  ),
-);
-
-/** A 44 px target where a finger is the pointer; just past the mark where a mouse is. */
-const coarse = useMediaQuery("(pointer: coarse)");
-function hitRadius(cluster: MapCluster): number {
-  return coarse.value ? 22 : clusterRadius(cluster.ids.length, MARK_PX) + 4;
-}
+const clusters = computed<MapCluster[]>(() => {
+  const { radius, reach } = clusteringAt(zoomLevel.value);
+  return clusterPoints(points.value, radius, reach).sort((a, b) => a.ids.length - b.ids.length || a.key.localeCompare(b.key));
+});
 
 const byId = computed(() => new Map(props.nodes.map((node) => [node.id, node])));
 const landPaths = WORLD_RINGS.map((ring) => ringPath(ring)).filter(Boolean);
@@ -242,7 +280,7 @@ function onCluster(cluster: MapCluster, event: Event): void {
   if (props.compact || Date.now() < suppressClickUntil) return;
   if (cluster.ids.length > 1) {
     const members = points.value.filter((point) => cluster.ids.includes(point.id));
-    const zoom = zoomToSplit(members, (CLUSTER_PX * unitsPerPx.value) / viewport.value.scale, viewport.value.scale, MAX_ZOOM);
+    const zoom = zoomToSplit(members, clusteringAt, viewport.value.scale, MAX_ZOOM);
     if (!listInsteadOfZoom(members, zoom)) {
       focusOn(cluster.x, cluster.y, zoom!);
       return;
@@ -306,7 +344,7 @@ defineExpose({ reset: () => setViewport({ scale: 1, x: 0, y: 0 }) });
       >
         <title>{{ clusterLabel(cluster) }}</title>
         <!-- 44 px across on a phone, just past the mark with a mouse. -->
-        <circle v-if="!compact" :cx="screenX(cluster.x)" :cy="screenY(cluster.y)" :r="px(hitRadius(cluster))" fill="transparent" />
+        <circle v-if="!compact" :cx="screenX(cluster.x)" :cy="screenY(cluster.y)" :r="px(hitRadius(cluster.ids.length))" fill="transparent" />
         <circle
           v-if="isActive(cluster)"
           :cx="screenX(cluster.x)"

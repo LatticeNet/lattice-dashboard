@@ -288,7 +288,13 @@ export const MACHINES: MachineView[] = FLEET.flatMap((e, index): MachineView[] =
   const id = nodeId(index);
   const node = NODES[index]!;
   const dueShift = SHAPE === "dense" && e.name === "[cd]-xuezhang-jp-nat" ? -10 : SHAPE === "dense" && e.name === "[Metix]-Aaitr-jp-softbank-NAT" ? -9 : 0;
-  const due = e.due === undefined ? undefined : e.due + dueShift;
+  // Dense: DMIT-4, offline 6d, was due 7d ago and is billed by hand (an unpaid
+  // renewal the node sheet names), and the GPU box has no machine profile.
+  const unpaid = SHAPE === "dense" && e.name === "[Metix]-DMIT-4";
+  if (SHAPE === "dense" && e.name === "[OpenJobs-Data]-gpu-box") {
+    return [{ node_id: id, node_name: e.name, online: node.status === "online" || node.status === "degraded", host_facts: node.host_facts } as MachineView];
+  }
+  const due = unpaid ? -7 : e.due === undefined ? undefined : e.due + dueShift;
   const next = due === undefined ? undefined : dateIn(due);
   return [
     {
@@ -305,7 +311,7 @@ export const MACHINES: MachineView[] = FLEET.flatMap((e, index): MachineView[] =
       renewal_cycle: e.price?.[2] ?? "",
       next_renewal: next,
       days_until_renewal: due,
-      auto_roll: !!e.auto,
+      auto_roll: !!e.auto && !unpaid,
       remind_days_before: next ? [14, 7, 3, 1, 0] : [],
       reminders_enabled: !!next && !e.quiet,
       has_console_url: !!e.vendor && e.vendor !== "AWS",
