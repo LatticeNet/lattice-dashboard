@@ -272,6 +272,14 @@ function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
  * a per-row action button, claims a button contains a button. The row stays a
  * row; it is still reachable by Tab and still activates on Enter or Space, and
  * the cursor says so.
+ *
+ * Only keys pressed on the row itself count. A key on a control inside the
+ * row (its menu button, a link, a checkbox) belongs to that control: the row
+ * neither moves focus nor activates. Before row keys existed, Enter or Space
+ * on such a control bubbled here and the row cancelled it, which stopped a
+ * link or a plain button inside the row from activating at all (a menu
+ * trigger, which opens on its own keydown, still worked). No cell relies on
+ * the row activating from inside it.
  */
 function onRowKeydown(row: T, event: KeyboardEvent): void {
   if (event.target !== event.currentTarget) return;
