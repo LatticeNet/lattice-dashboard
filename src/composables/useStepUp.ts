@@ -96,6 +96,8 @@ export function useStepUp(copy: StepUpCopy) {
     error,
     pending,
     supportsPasskey,
+    /** The grant still inside its lifetime, or "", without prompting. */
+    peek: cachedGrant,
     request,
     submitTotp,
     submitPasskey,

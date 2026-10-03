@@ -97,6 +97,10 @@ export default {
       noMatchTitle: "No matching rows",
       noMatchDescription: "Change the search or the filter to widen the result.",
     },
+    stepUp: {
+      code: "2FA passcode",
+      passkey: "Use passkey",
+    },
     actions: {
       refresh: "Refresh",
       save: "Save",
@@ -363,7 +367,7 @@ export default {
       reviewNext: "Review the next approval",
       reviewNextDetail: "{n} waiting | {n} waiting",
       addVpnUser: "Add a VPN user",
-      addVpnUserDetail: "On vpn-core Users, where New identity starts it",
+      addVpnUserDetail: "Opens New identity on vpn-core Users",
       shareSubscription: "Share a subscription",
       shareSubscriptionDetail: "A new share in Publishing",
       recordRenewal: "Record a renewal",

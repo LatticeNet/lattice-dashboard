@@ -23,6 +23,12 @@
  * (`?origin=share&create=1&for=<id>`) land on the Routes layer
  * (canonicalPublishingQuery), and the share pane consumes the create keys.
  *
+ * Identity links (one per VPN identity, served on the same /sub/ mount) are
+ * routes too. The server projects each as a read-only plugin route carrying
+ * identity_id; the share lens lists them beside the shares
+ * (PublishingIdentityLinks), the whole-plane table names their owner, and a
+ * row opens the identity on vpn-core's Users page, where the link is edited.
+ *
  * Serving is the quiet state; Anonymous, the one mode anyone with the URL can
  * read, is the loud one. Deleting a binding and revoking a token break
  * something outside Lattice (design 23, 3.8): impact lines and a typed name.
@@ -30,7 +36,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
-import { ChevronDown, Database, FolderPlus, Globe2, KeyRound, Link2, RefreshCw, Trash2 } from "lucide-vue-next";
+import { ChevronDown, Database, FolderPlus, Globe2, KeyRound, Link2, RefreshCw, Trash2, UserRound } from "lucide-vue-next";
 import { RouterLink } from "vue-router";
 
 import {
@@ -72,7 +78,8 @@ import {
   sortRecords,
   unresolvedShareIds,
 } from "./publishingModel";
-import { publishedState } from "./publishedModel";
+import { clientFamily, identityLinkState, publishedState } from "./publishedModel";
+import { useIdentityLinks } from "./useIdentityLinks";
 
 import PageHeader from "@/components/common/PageHeader.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
@@ -85,6 +92,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import PlaneGuide from "@/components/platform/PlaneGuide.vue";
 import StorageCreateSheet, { type StorageCreateMode } from "@/components/platform/StorageCreateSheet.vue";
 import PublishingSharesPane from "./PublishingSharesPane.vue";
+import PublishingIdentityLinks from "./PublishingIdentityLinks.vue";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -209,8 +217,24 @@ const buckets = computed(() => bucketsQuery.data.value ?? []);
 
 const sharesPane = ref<InstanceType<typeof PublishingSharesPane> | null>(null);
 
+/** The routes the server projects from identities' links: read only here, edited on the identity. */
+const identityRecords = computed(() => records.value.filter((record) => record.origin === "plugin" && !!record.identity_id));
+const identityLinks = useIdentityLinks({
+  ids: () => identityRecords.value.map((record) => record.identity_id!),
+  active: () => layer.value === "routes",
+});
+/** The identity's page on vpn-core, where its link is edited, or undefined when this principal cannot open it. */
+function identityTo(identityId: string) {
+  const page = identityLinks.usersPage.value;
+  return page ? { path: page.to, query: { open: identityId } } : undefined;
+}
+function identityName(identityId: string): string {
+  return identityLinks.identities.value?.get(identityId)?.email ?? identityId;
+}
+
 async function refreshAll(): Promise<void> {
   await Promise.all([
+    layer.value === "routes" && identityRecords.value.length ? identityLinks.refresh() : Promise.resolve(),
     recordsQuery.refresh(),
     canSeeShares.value ? sharesQuery.refresh() : Promise.resolve(),
     canReadProxyUsers.value ? proxyUsersQuery.refresh() : Promise.resolve(),
@@ -245,7 +269,14 @@ function recordUrl(record: PublishingRecord): string {
 }
 
 function shareOf(record: PublishingRecord): string {
+  if (record.identity_id) return "";
   return record.share_id || originTarget(record);
+}
+
+/** What a route serves, in words: a bucket, a share by slug, or an identity's link by its owner. */
+function servesLabel(record: PublishingRecord): string {
+  if (record.identity_id) return t("platform.publishingPage.identityLinks.serves", { who: identityName(record.identity_id) });
+  return originTargetLabel(record, shareSlugById.value);
 }
 
 /* ------------------------------------------------------------------ */
@@ -393,13 +424,13 @@ const lensCounts = computed<Record<PublishingLens, number>>(() => ({
   all: records.value.length,
   kv: recordsForLens(records.value, "kv").length,
   static: recordsForLens(records.value, "static").length,
-  share: shares.value?.length ?? recordsForLens(records.value, "share").length,
+  share: (shares.value?.length ?? recordsForLens(records.value, "share").length - identityRecords.value.length) + identityRecords.value.length,
 }));
 
 const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
   { key: "route", label: t("platform.publishing.columnRoute"), searchable: true, value: (record) => recordUrl(record) },
   { key: "origin", label: t("platform.publishing.columnOrigin"), sortable: true, value: (record) => t(`platform.publishing.origin.${record.origin}`) },
-  { key: "target", label: t("platform.publishing.columnServes"), searchable: true, value: (record) => originTargetLabel(record, shareSlugById.value) },
+  { key: "target", label: t("platform.publishing.columnServes"), searchable: true, value: (record) => servesLabel(record) },
   {
     key: "access",
     label: t("platform.publishing.columnAccess"),
@@ -417,8 +448,9 @@ const columns = computed<DataTableColumn<PublishingRecord>[]>(() => [
  * returns focus to this row.
  */
 function openRecord(record: PublishingRecord, el: HTMLElement): void {
-  // Without proxy:admin the share cannot be opened, so the route opens its own sheet.
-  if (record.origin === "plugin" && canSeeShares.value) {
+  // Without proxy:admin the share cannot be opened, so the route opens its own
+  // sheet; so does an identity's link, which has no share behind it.
+  if (record.origin === "plugin" && !record.identity_id && canSeeShares.value) {
     openShare(shareOf(record), el);
     return;
   }
@@ -433,7 +465,7 @@ const openIsShare = computed(() => !!sheet.openId.value && !!sharesQuery.data.va
 const activeRouteId = computed(() => {
   const id = sheet.openId.value;
   if (!id || !openIsShare.value) return id;
-  return records.value.find((record) => record.origin === "plugin" && shareOf(record) === id)?.id ?? null;
+  return records.value.find((record) => record.origin === "plugin" && !record.identity_id && shareOf(record) === id)?.id ?? null;
 });
 
 function canDeleteBinding(record: PublishingRecord): boolean {
@@ -441,6 +473,10 @@ function canDeleteBinding(record: PublishingRecord): boolean {
 }
 
 function recordMenu(record: PublishingRecord): RowMenuItem[] {
+  if (record.identity_id) {
+    const to = identityTo(record.identity_id);
+    return [{ key: "identity", label: t("platform.publishingPage.identityLinks.open"), icon: UserRound, hidden: !to, to }];
+  }
   if (record.origin === "plugin") {
     return [{ key: "share", label: t("platform.publishingPage.openShare"), icon: Link2, hidden: !canSeeShares.value, run: () => openShare(shareOf(record)) }];
   }
@@ -466,6 +502,12 @@ const openRecordRow = computed(() =>
   layer.value === "routes" && lens.value !== "share" ? records.value.find((record) => record.id === sheet.openId.value) : undefined,
 );
 const routeSheetOpen = computed(() => layer.value === "routes" && lens.value !== "share" && !!sheet.openId.value && !openIsShare.value);
+/** The status of the identity link the route sheet shows, when it was read. */
+const openIdentityStatus = computed(() => {
+  const id = openRecordRow.value?.identity_id;
+  const read = id ? identityLinks.statuses.value.get(id) : undefined;
+  return read && "status" in read ? read.status : undefined;
+});
 const routeSheetState = computed(() => {
   if (openRecordRow.value) return recordsQuery.error.value ? ("stale" as const) : ("ready" as const);
   if (recordsQuery.data.value === undefined) return recordsQuery.error.value ? ("gone" as const) : ("loading" as const);
@@ -758,7 +800,7 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
             <span class="text-xs">{{ $t(`platform.publishing.origin.${row.origin}`) }}</span>
           </template>
           <template #cell-target="{ row }">
-            <span class="whitespace-nowrap font-mono text-xs" :title="originTarget(row)">{{ originTargetLabel(row, shareSlugById) }}</span>
+            <span class="whitespace-nowrap font-mono text-xs" :title="row.identity_id ?? originTarget(row)">{{ servesLabel(row) }}</span>
           </template>
           <template #cell-access="{ row }">
             <span :class="cn('whitespace-nowrap text-xs', accessClass(accessMode(row)))" :title="$t(`platform.publishing.accessHint.${accessMode(row)}`)">
@@ -872,6 +914,21 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
       :reload="reloadShares"
     />
 
+    <!-- Identity links beside the shares: read-only rows, edited on the identity. -->
+    <PublishingIdentityLinks
+      v-if="canSeeShares && layer === 'routes' && lens === 'share' && (identityRecords.length > 0 || !!identityLinks.usersPage.value)"
+      :records="identityRecords"
+      :records-loading="recordsQuery.loading.value"
+      :records-error="recordsQuery.error.value ?? null"
+      :has-data="recordsQuery.data.value !== undefined"
+      :statuses="identityLinks.statuses.value"
+      :identities="identityLinks.identities.value"
+      :loading="identityLinks.loading.value"
+      :can-read-status="identityLinks.canReadStatus.value"
+      :users-path="identityLinks.usersPage.value?.to"
+      :retry="refreshAll"
+    />
+
     <!-- One storage route: where it answers, what it serves, who may read it. -->
     <ObjectSheet
       :open="routeSheetOpen"
@@ -881,7 +938,7 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
       :mono-subtitle="false"
       :state="routeSheetState"
       :error="recordsQuery.error.value ? proofReason(recordsQuery.error.value) : null"
-      :read-only="!openRecordRow || !canDeleteBinding(openRecordRow)"
+      :read-only="!openRecordRow || (!openRecordRow.identity_id && !canDeleteBinding(openRecordRow))"
       :return-focus="sheet.returnFocus"
       :gone-title="$t('platform.publishingPage.routeGoneTitle')"
       :gone-description="$t('platform.publishingPage.routeGoneDescription')"
@@ -890,7 +947,11 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
       <div v-if="openRecordRow" class="space-y-4 text-sm">
         <p :class="accessClass(accessMode(openRecordRow))">
           {{ $t(`platform.publishing.access.${accessMode(openRecordRow)}`) }}:
-          <span class="font-normal text-muted-foreground">{{ $t(`platform.publishing.accessHint.${accessMode(openRecordRow)}`) }}</span>
+          <span class="font-normal text-muted-foreground">{{
+            openRecordRow.identity_id
+              ? $t('platform.publishingPage.identityLinks.accessHint')
+              : $t(`platform.publishing.accessHint.${accessMode(openRecordRow)}`)
+          }}</span>
         </p>
         <dl class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
           <div>
@@ -901,18 +962,44 @@ const canPublishAnything = computed(() => adminKinds.value.length > 0 || canSeeS
           </div>
           <div class="min-w-0">
             <dt class="text-xs text-muted-foreground">{{ $t('platform.publishing.columnServes') }}</dt>
-            <dd>
+            <dd v-if="openRecordRow.identity_id">
+              <RouterLink
+                v-if="identityTo(openRecordRow.identity_id)"
+                :to="identityTo(openRecordRow.identity_id)!"
+                class="text-xs text-primary underline-offset-4 hover:underline"
+                data-testid="route-sheet-identity"
+              >{{ servesLabel(openRecordRow) }}</RouterLink>
+              <span v-else class="text-xs">{{ servesLabel(openRecordRow) }}</span>
+            </dd>
+            <dd v-else>
               <RouterLink
                 :to="{ path: '/platform/store', query: { kind: openRecordRow.origin, bucket: openRecordRow.bucket } }"
                 class="font-mono text-xs text-primary underline-offset-4 hover:underline"
               >{{ openRecordRow.bucket }}</RouterLink>
             </dd>
           </div>
+          <template v-if="openIdentityStatus">
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('platform.publishingPage.identityLinks.columns.state') }}</dt>
+              <dd class="text-xs">{{ $t(`platform.publishingPage.identityLinks.state.${identityLinkState(openIdentityStatus)}`) }}</dd>
+            </div>
+            <div>
+              <dt class="text-xs text-muted-foreground">{{ $t('platform.publishingPage.identityLinks.columns.fetch') }}</dt>
+              <dd v-if="openIdentityStatus.last_fetch" class="text-xs" :title="formatDateTime(openIdentityStatus.last_fetch.at)">
+                {{ formatRelativeTime(openIdentityStatus.last_fetch.at) }}
+                <span class="text-muted-foreground">· {{ clientFamily(openIdentityStatus.last_fetch.ua_class) || $t('platform.publishingPage.identityLinks.fetch.unknownClient') }}</span>
+              </dd>
+              <dd v-else class="text-xs text-muted-foreground">{{ $t('platform.publishingPage.identityLinks.fetch.never') }}</dd>
+            </div>
+          </template>
+          <div v-if="openRecordRow.identity_id" class="sm:col-span-2">
+            <dd class="text-xs text-muted-foreground">{{ $t('platform.publishingPage.identityLinks.sheetHint') }}</dd>
+          </div>
           <div v-if="openRecordRow.expires_at">
             <dt class="text-xs text-muted-foreground">{{ $t('networking.shares.expires') }}</dt>
             <dd>{{ formatDateTime(openRecordRow.expires_at) }}</dd>
           </div>
-          <div v-if="openRecordRow.reserved">
+          <div v-if="openRecordRow.reserved && !openRecordRow.identity_id">
             <dt class="text-xs text-muted-foreground">{{ $t('platform.publishing.reserved') }}</dt>
             <dd class="text-xs text-muted-foreground">{{ $t('platform.publishing.reservedHint') }}</dd>
           </div>

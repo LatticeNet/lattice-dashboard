@@ -28,7 +28,17 @@ export type BridgeHostMessage =
       pageState: PluginPageState;
     }
   | { type: "lattice.host.result"; nonce: string; id: string; result: unknown }
-  | { type: "lattice.host.error"; nonce: string; id?: string; code: string; message: string }
+  | {
+      type: "lattice.host.error";
+      nonce: string;
+      id?: string;
+      code: string;
+      message: string;
+      /** The server's error code for a failed call, when it gave one (bridge v1, additive). */
+      apiCode?: string;
+      /** The server's HTTP status for a failed call (bridge v1, additive). */
+      httpStatus?: number;
+    }
   | { type: "lattice.host.theme"; nonce: string; colorScheme: string; designTokens: Record<string, string> }
   | { type: "lattice.host.clipboard"; nonce: string; id: string; ok: boolean; code?: string }
   | { type: "lattice.host.dispose"; nonce: string };
@@ -293,6 +303,57 @@ export function planPluginStateWrite(input: {
   return location ? { kind: "replace", location } : { kind: "skip" };
 }
 
+/**
+ * Plugin calls that need a second factor (bridge v1, additive).
+ *
+ * Revealing a secret (a subscription link, a credential) is gated by the
+ * server: the call answers 403 step_up_required until it carries a step-up
+ * grant from this operator's session (lattice-server secret_reveal.go). A
+ * plugin frame cannot get one: it runs connect-src 'none' and reaches only
+ * the methods its manifest declares, and asking the operator for a second
+ * factor inside a plugin's own page would teach them to type it wherever a
+ * plugin asks.
+ *
+ * So the host does it. When a call is answered step_up_required, the host
+ * asks for its own step-up (its dialog, its words, naming the plugin and the
+ * method), and on success repeats that one call once with `step_up_grant`
+ * added to the payload. The grant never crosses into the frame: the frame
+ * sees only the call's result, exactly as if it had needed nothing. While
+ * the prompt is open the call's timeout is paused, because it is waiting for
+ * a person; the repeat gets a fresh one. A cancelled prompt answers the call
+ * with `step_up_required`, and so does a repeat the server still refuses:
+ * there is no second round.
+ */
+export const STEP_UP_REQUIRED = "step_up_required";
+
+export interface PluginStepUpRequest {
+  service: string;
+  method: string;
+  /** Aborted when the plugin cancels the call or the frame goes away; the host closes its prompt. */
+  signal: AbortSignal;
+}
+
+function isStepUpRequired(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === STEP_UP_REQUIRED;
+}
+
+/** The server's code and status on a failed call, read from an API error without importing it. */
+function apiErrorDetail(error: unknown): { apiCode?: string; httpStatus?: number } {
+  if (typeof error !== "object" || error === null) return {};
+  const value = error as { code?: unknown; status?: unknown };
+  return {
+    ...(typeof value.code === "string" && value.code ? { apiCode: value.code } : {}),
+    ...(typeof value.status === "number" ? { httpStatus: value.status } : {}),
+  };
+}
+
+class StepUpCancelled extends Error {
+  constructor() {
+    super("Step-up was cancelled in the console, so nothing was revealed.");
+    this.name = "StepUpCancelled";
+  }
+}
+
 export interface BridgeMessageEvent {
   source: unknown;
   data: unknown;
@@ -333,6 +394,13 @@ interface PluginBridgeOptions {
    * every request is answered `clipboard_refused`.
    */
   clipboard?: (text: string) => Promise<boolean>;
+  /**
+   * Run the host's own step-up for a call the server answered
+   * step_up_required, resolving the grant or rejecting when the operator
+   * cancels. Absent means the host offers none, and such a call fails with
+   * the server's answer as before. See STEP_UP_REQUIRED.
+   */
+  stepUp?: (request: PluginStepUpRequest) => Promise<string>;
   maxPayloadBytes?: number;
   maxResultBytes?: number;
   maxClipboardBytes?: number;
@@ -563,25 +631,42 @@ export class PluginBridgeSession {
     const terminal = new Promise<never>((_resolve, reject) => {
       terminate = reject;
     });
+    const onTimeout = () => {
+      pending.timedOut = true;
+      if (this.pending.get(id) === pending) this.pending.delete(id);
+      controller.abort();
+      this.error(id, "timeout", "plugin request timed out");
+      pending.terminate(new Error("timed out"));
+    };
     const pending: PendingCall = {
       controller,
       terminate,
       cancelled: false,
       timedOut: false,
-      timer: setTimeout(() => {
-        pending.timedOut = true;
-        if (this.pending.get(id) === pending) this.pending.delete(id);
-        controller.abort();
-        this.error(id, "timeout", "plugin request timed out");
-        pending.terminate(new Error("timed out"));
-      }, this.options.timeoutMs),
+      timer: setTimeout(onTimeout, this.options.timeoutMs),
     };
     this.pending.set(id, pending);
+    const payload = message.payload ?? null;
+    const callWithStepUp = async (): Promise<unknown> => {
+      try {
+        return await this.options.call(service, method, payload, controller.signal);
+      } catch (error) {
+        if (!isStepUpRequired(error) || !this.options.stepUp || !isPlainObject(payload)) throw error;
+        // The prompt waits for a person, so the call's clock stops while it is open.
+        clearTimeout(pending.timer);
+        let grant: string;
+        try {
+          grant = await this.options.stepUp({ service, method, signal: controller.signal });
+        } catch {
+          throw new StepUpCancelled();
+        }
+        if (controller.signal.aborted || !grant) throw new StepUpCancelled();
+        pending.timer = setTimeout(onTimeout, this.options.timeoutMs);
+        return this.options.call(service, method, { ...payload, step_up_grant: grant }, controller.signal);
+      }
+    };
     try {
-      const result = await Promise.race([
-        this.options.call(service, method, message.payload ?? null, controller.signal),
-        terminal,
-      ]);
+      const result = await Promise.race([callWithStepUp(), terminal]);
       if (this.disposed || pending.cancelled || pending.timedOut) return;
       const resultSize = jsonSize(result ?? null);
       if (resultSize === undefined) {
@@ -594,7 +679,11 @@ export class PluginBridgeSession {
     } catch (error) {
       if (this.disposed) return;
       if (!pending.timedOut && !pending.cancelled && !isAbortError(error)) {
-        this.error(id, "call_failed", error instanceof Error ? error.message : "plugin request failed");
+        if (error instanceof StepUpCancelled) {
+          this.error(id, STEP_UP_REQUIRED, error.message, { apiCode: STEP_UP_REQUIRED, httpStatus: 403 });
+        } else {
+          this.error(id, "call_failed", error instanceof Error ? error.message : "plugin request failed", apiErrorDetail(error));
+        }
       }
     } finally {
       clearTimeout(pending.timer);
@@ -706,8 +795,8 @@ export class PluginBridgeSession {
     pending.terminate(new Error("cancelled"));
   }
 
-  private error(id: string, code: string, message: string): void {
-    this.options.post({ type: "lattice.host.error", nonce: this.options.nonce, ...(id ? { id } : {}), code, message });
+  private error(id: string, code: string, message: string, detail: { apiCode?: string; httpStatus?: number } = {}): void {
+    this.options.post({ type: "lattice.host.error", nonce: this.options.nonce, ...(id ? { id } : {}), code, message, ...detail });
   }
 }
 
