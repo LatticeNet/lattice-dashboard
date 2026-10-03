@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { clientUrl, isServing, publishedState, sharePath, sourceLabel } from "../publishedModel.ts";
+import {
+  clientUrl,
+  intervalFieldError,
+  intervalFieldFor,
+  intervalFieldValue,
+  isServing,
+  maskedSharePath,
+  maskedUrl,
+  publishedState,
+  renderBudgetTone,
+  revealedUrl,
+  sourceLabel,
+} from "../publishedModel.ts";
 
 const NOW = Date.parse("2026-08-18T12:00:00Z");
 
@@ -9,7 +21,6 @@ function share(overrides: Record<string, unknown> = {}) {
   return {
     id: "sh1",
     slug: "team",
-    token: "t".repeat(32),
     source: { kind: "plugin", plugin_id: "latticenet.sub-store", subscription_id: "home" },
     enabled: true,
     created_at: "2026-08-01T00:00:00Z",
@@ -83,11 +94,44 @@ test("the source says who produces the bytes, with the id kept", () => {
   );
 });
 
+test("a share shows its path without the token until it is revealed", () => {
+  assert.equal(maskedSharePath(share()), "/sub/team/…");
+  // Even a server from before the rule, which still sends a token, shows none.
+  assert.equal(maskedSharePath(share({ token: "t".repeat(32) })), "/sub/team/…");
+});
+
+test("a revealed link uses the server's URL, else the browser's origin, and cuts the token for display", () => {
+  const path = `/sub/team/${"t".repeat(32)}`;
+  assert.equal(revealedUrl("https://host", { path }), `https://host${path}`);
+  assert.equal(revealedUrl("https://host", { path, url: `https://edge.example${path}` }), `https://edge.example${path}`);
+  assert.equal(maskedUrl(`https://host${path}`), "https://host/sub/team/tttt…tttt");
+  assert.equal(maskedUrl("https://host/sub/team/short"), "https://host/sub/team/short");
+});
+
 test("the client URL names the client and survives odd targets", () => {
-  assert.equal(sharePath(share()), `/sub/team/${"t".repeat(32)}`);
-  assert.equal(
-    clientUrl("https://host", share(), "sing-box"),
-    `https://host/sub/team/${"t".repeat(32)}?target=sing-box`,
-  );
-  assert.match(clientUrl("https://host", share(), "Surge Mac"), /target=Surge%20Mac$/);
+  const url = `https://host/sub/team/${"t".repeat(32)}`;
+  assert.equal(clientUrl(url, "sing-box"), `${url}?target=sing-box`);
+  assert.match(clientUrl(url, "Surge Mac"), /target=Surge%20Mac$/);
+});
+
+test("the refresh interval field keeps the server's bounds and empty means the default", () => {
+  assert.equal(intervalFieldError(""), "");
+  assert.equal(intervalFieldError("6"), "");
+  assert.equal(intervalFieldError("168"), "");
+  assert.equal(intervalFieldError("0"), "range");
+  assert.equal(intervalFieldError("169"), "range");
+  assert.equal(intervalFieldError("1.5"), "range");
+  assert.equal(intervalFieldValue(""), 0);
+  assert.equal(intervalFieldValue(" 12 "), 12);
+  assert.equal(intervalFieldFor({ update_interval_hours: 2 }), "");
+  assert.equal(intervalFieldFor({ update_interval_hours: 12 }), "12");
+  assert.equal(intervalFieldFor({}), "");
+});
+
+test("a render budget reads full, quiet, low or exhausted", () => {
+  assert.equal(renderBudgetTone(undefined), "none");
+  assert.equal(renderBudgetTone({ remaining: 20, burst: 24, per_hour: 60, exhausted: false, refused: 0 }), "quiet");
+  assert.equal(renderBudgetTone({ remaining: 3, burst: 24, per_hour: 60, exhausted: false, refused: 0 }), "warning");
+  assert.equal(renderBudgetTone({ remaining: 20, burst: 24, per_hour: 60, exhausted: false, refused: 2 }), "warning");
+  assert.equal(renderBudgetTone({ remaining: 0, burst: 24, per_hour: 60, exhausted: true, refused: 9 }), "exhausted");
 });

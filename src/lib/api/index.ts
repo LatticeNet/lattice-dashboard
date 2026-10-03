@@ -100,6 +100,7 @@ import type {
   StorageKind,
   StorageTokenCreateResponse,
   StorageTokenView,
+  ShareRevealResponse,
   SubscriptionShareCreateRequest,
   SubscriptionShareUpdateRequest,
   SubscriptionShareView,
@@ -936,8 +937,8 @@ export const api = {
         body,
       ),
     // Rotation invalidates the old URL immediately and drops the cached output
-    // for that share, and returns the share carrying its new token. So the
-    // caller replaces the row it has rather than refetching the whole list.
+    // for that share. The answer is the share without its token, like every
+    // share view; the new URL comes from reveal, after step-up.
     rotate: (id: string) =>
       http.post<SubscriptionShareView>(
         `/api/subscription-shares/${encodeURIComponent(id)}/rotate`,
@@ -946,6 +947,13 @@ export const api = {
     refresh: (id: string) =>
       http.post<unknown>(`/api/subscription-shares/${encodeURIComponent(id)}/refresh`, {}),
     remove: (id: string) => http.del<void>(`/api/subscription-shares/${encodeURIComponent(id)}`),
+    // The token, through the one reveal gate: 403 step_up_required without a
+    // grant, then the share's path and URL with one. Each reveal is audited.
+    reveal: (id: string, stepUpGrant: string) =>
+      http.post<ShareRevealResponse>(
+        `/api/subscription-shares/${encodeURIComponent(id)}/reveal`,
+        { step_up_grant: stepUpGrant },
+      ),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),

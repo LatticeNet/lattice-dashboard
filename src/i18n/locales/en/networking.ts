@@ -1128,13 +1128,65 @@ export default {
         unresolved: "Unresolved",
       },
       url: "Subscription URL",
-      tokenNote: "The token is part of the URL. Anyone who has it can fetch this subscription.",
+      tokenNote:
+        "The token is part of the URL, and anyone who has the URL can fetch this subscription. Revealing it asks for a second factor and is recorded in the audit log.",
       notServing: "This URL is not being served right now, so clients using it get a 404.",
       unresolvedHint: "The proxy user this share points at does not exist, so the URL returns an empty 404.",
       clientLinks: "One URL per client",
       clientLinksHint:
         "Without a client named, the served configuration is chosen from the fetching client's User-Agent, a guess that fails for curl and anything unfamiliar.",
       copiedClient: "Copied the {target} URL.",
+      reveal: {
+        action: "Reveal link",
+        title: "Reveal the link for /{slug}",
+        description:
+          "The URL carries the share's token, so the server answers it only after a second-factor check. It stays in this sheet for five minutes.",
+        submit: "Verify and reveal",
+        audit: "The reveal is recorded in the audit log under your name.",
+        required: "Second-factor verification is required, so nothing was revealed.",
+        failed: "Passcode verification failed.",
+        passkeyFailed: "Passkey verification failed.",
+        revealFailed: "The link could not be revealed.",
+        copy: "Copy",
+        copied: "Copied the subscription URL.",
+        hide: "Hide the link",
+        heldNote:
+          "Shown here for five minutes, and hidden when this sheet closes or moves to another share. Anyone with this URL can fetch the subscription.",
+        clientLinksLocked: "Reveal the link first. Each button then copies a URL pinned to one client.",
+      },
+      interval: {
+        label: "Client refresh",
+        unit: "hours",
+        placeholder: "default",
+        hint: "Clients that honor Profile-Update-Interval fetch again after {hours} h. Leave it empty to go back to the default, {fallback} h.",
+        hintDefault: "Clients that honor Profile-Update-Interval fetch again after {fallback} h, the default.",
+        createHint: "How often a client that honors Profile-Update-Interval fetches again. Leave it empty for the default, {fallback} h.",
+        range: "Use a whole number of hours from 1 to {max}, or leave it empty for the default.",
+        saved: "{slug} now advertises the new refresh to its clients.",
+        saveFailed: "The refresh could not be saved.",
+      },
+      budget: {
+        label: "Render budget",
+        remaining: "{remaining} of {burst} renders left",
+        refill: "Refills {perHour} an hour",
+        refused: "No render refused since the server started | One render refused since the server started. | {n} renders refused since the server started.",
+        refusedLast: "{refused} The last one {when}.",
+        exhaustedShort: "Render budget spent",
+        exhaustedTitle: "Render budget spent: clients are getting the decoy",
+        exhaustedDetail:
+          "Every fetch that needs a new render answers the decoy, as an unknown URL would, until the budget refills at {perHour} renders an hour. A client keeps the list it already has.",
+      },
+      fleetFeed: {
+        short: "Hands out every user's credentials",
+        title: "This URL hands out every user's credentials",
+        detail:
+          "Its record reads vpn-core's export without an identity, so whoever holds this URL gets every identity's credentials. It was published with that flag on purpose. Per-identity links on vpn-core Users replace it.",
+        refused: "This record reads vpn-core's export without an identity.",
+        refusedTitle: "{record} would hand out every user's credentials",
+        refusedHint:
+          "It reads vpn-core's export without an identity, so a share of it gives every identity's credentials to whoever holds the URL. A per-identity link on vpn-core Users hands one person only their own.",
+        ack: "Publish it anyway. I understand this URL hands out every user's credentials.",
+      },
       created: "Created",
       rotatedAt: "Rotated",
       expires: "Expires",
@@ -1176,8 +1228,8 @@ export default {
       rotate: "Rotate token",
       rotateTitle: "Rotate this token?",
       rotateWarning:
-        "Rotating /{slug} replaces its token, so the current URL stops working the moment you confirm. Every client still holding it gets a 404 until you hand out the new URL.",
-      rotated: "Rotated {slug}. The previous URL now 404s like any unknown path.",
+        "Rotating /{slug} replaces its token, so the current URL stops working the moment you confirm. Every client still holding it gets a 404 until you reveal the new URL and hand it out.",
+      rotated: "Rotated {slug}. The previous URL now 404s like any unknown path. Reveal the new link to hand it out.",
       rotateFailed: "The token could not be rotated.",
       deleteTitle: "Delete this share?",
       deleteWarning:
