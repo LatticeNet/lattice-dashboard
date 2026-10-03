@@ -61,6 +61,7 @@ import {
   type TimelineEntry,
 } from "./nodeTimelineModel";
 import { buildNodeQueue, type NodeQueueEntry } from "./nodeTaskQueueModel";
+import { reconfigureInstall } from "./reconfigureInstallModel";
 import { leaseAttemptLabel, stalledText, taskStateStyle } from "@/lib/taskLease";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useLayer } from "@/composables/useLayer";
@@ -378,7 +379,9 @@ const launchTerminalTransport = ref<"poll" | "stream">("stream");
 const launchSSHAlerts = ref(false);
 const launchPlatform = ref<"linux" | "manual">("linux");
 const reconfigurePending = ref(false);
-const reconfigureResult = ref<{ command: string; commands?: Record<string, string>; agent_launch?: AgentLaunchConfig } | undefined>();
+const reconfigureResult = ref<
+  { command: string; commands?: Record<string, string>; agent_launch?: AgentLaunchConfig; agent_version?: string } | undefined
+>();
 
 function seedLaunchDraft(n?: Node) {
   const launch = n?.agent_launch;
@@ -482,6 +485,10 @@ const reconfigureCommand = computed(() => {
   if (!result) return "";
   return result.commands?.[launchPlatform.value] || result.command;
 });
+
+const reconfigureInstallNote = computed(() =>
+  reconfigureInstall(reconfigureResult.value?.agent_version, node.value?.agent_version, launchPlatform.value),
+);
 
 function extractEnvAssignment(command: string, key: string): string {
   const match = command.match(new RegExp(`${key}=('([^']*)'|"([^"]*)"|([^\\s;]+))`));
@@ -2310,6 +2317,20 @@ async function saveDebug(): Promise<void> {
                 {{ $t('fleet.nodes.enroll.platformManual') }}
               </button>
             </div>
+            <p
+              v-if="reconfigureInstallNote"
+              data-testid="reconfigure-install-note"
+              :class="cn(
+                'rounded-md border p-2 text-xs',
+                reconfigureInstallNote.moves ? 'border-warning/40 bg-warning/5 text-warning-text' : 'border-border bg-background/60 text-muted-foreground',
+              )"
+            >
+              {{
+                reconfigureInstallNote.moves
+                  ? $t('fleet.nodes.detail.launch.installMoves', { target: reconfigureInstallNote.target, current: reconfigureInstallNote.current })
+                  : $t('fleet.nodes.detail.launch.installs', { target: reconfigureInstallNote.target })
+              }}
+            </p>
             <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
               {{ reconfigureCommand }}
             </code>

@@ -230,7 +230,17 @@ export const api = {
       nodes = nodes.map((n) => (n.id === id ? { ...n, geo: undefined } : n));
       return delay({ ...nodes.find((n) => n.id === id)! });
     },
-    reconfigureCommand: (input: { node_id: string }) => delay({ node_id: input.node_id, server_url: "https://lattice.example.net", command: "lattice-agent reconfigure --harness" }),
+    // The shape the server renders: the installer and the binary from one
+    // pinned release, named again as agent_version.
+    reconfigureCommand: (input: { node_id: string }) => {
+      const pin = "v0.3.9";
+      const linux =
+        `curl -fsSL --proto '=https' --tlsv1.2 'https://raw.githubusercontent.com/LatticeNet/lattice-node-agent/${pin}/scripts/install.sh' -o lattice-agent-install.sh && chmod +x lattice-agent-install.sh && ` +
+        `set -a; for f in /opt/lattice/lattice-agent.env /opt/lattice/node-agent/agent.env /etc/lattice/agent.env; do [ -f "$f" ] && . "$f" && break; done; set +a; ` +
+        `env LATTICE_SERVER='https://lattice.example.net' LATTICE_NODE_ID='${input.node_id}' LATTICE_AGENT_VERSION='${pin}' LATTICE_AGENT_ALLOW_EXEC='1' ./lattice-agent-install.sh`;
+      const manual = `lattice-agent -server 'https://lattice.example.net' -node-id '${input.node_id}' -allow-exec`;
+      return delay({ node_id: input.node_id, server_url: "https://lattice.example.net", command: linux, commands: { linux, manual }, agent_version: pin });
+    },
     ipConfig: (input: { node_id: string }) => delay({ ...nodes.find((n) => n.id === input.node_id)! }),
     setDebug: (id: string, enabled: boolean, collect?: boolean) => {
       nodes = nodes.map((n) => (n.id === id ? { ...n, agent_debug: { enabled, collect: !!collect } } : n));
