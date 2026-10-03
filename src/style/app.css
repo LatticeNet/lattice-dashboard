@@ -583,6 +583,8 @@
      which the toast has room for. min-height wins over sonner's height. */
   [data-sonner-toast] [data-button] {
     min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
   }
 
   /* Invisible centered hit-area pad for icon-only buttons that keep their

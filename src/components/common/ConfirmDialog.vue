@@ -167,7 +167,8 @@ function onCloseAutoFocus(event: Event) {
     <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" v-bind="describedBy" @close-auto-focus="onCloseAutoFocus">
       <DialogHeader class="pe-6">
         <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription v-if="description && !impact?.length">
+        <!-- break-words: a long name kept whole (non-breaking hyphens) still wraps rather than widening the dialog. -->
+        <DialogDescription v-if="description && !impact?.length" class="break-words">
           {{ description }}
         </DialogDescription>
       </DialogHeader>

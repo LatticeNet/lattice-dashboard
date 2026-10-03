@@ -395,31 +395,48 @@ const LEGEND = computed(() => [
                 <caption class="sr-only">{{ $t('fleet.monitoring.latency.matrixCaption', { window: $t(`fleet.monitoring.latency.window.${windowParam}`), reading: readingParam }) }}</caption>
                 <thead>
                   <tr class="border-b border-border bg-muted/40 text-xs text-muted-foreground">
-                    <th scope="col" class="sticky start-0 z-10 w-72 min-w-40 bg-muted px-3 py-2 text-start font-medium max-sm:w-auto max-sm:min-w-28 max-sm:px-2">
+                    <!-- On a phone each target's name has its own line above its cells, so the target column goes. -->
+                    <th scope="col" class="sticky start-0 z-10 w-72 min-w-40 bg-muted px-3 py-2 text-start font-medium max-sm:hidden">
                       {{ $t('fleet.monitoring.latency.targetColumn') }}
                     </th>
                     <th
                       v-for="source in matrix.sources"
                       :key="source.nodeId"
                       scope="col"
-                      class="w-36 min-w-28 px-2 py-2 text-start font-medium max-sm:min-w-20"
+                      class="w-36 min-w-28 px-2 py-2 text-start align-bottom font-medium max-sm:w-auto max-sm:min-w-20"
                     >
                       <span class="block text-[10px] uppercase tracking-wide">{{ $t('fleet.monitoring.latency.fromLabel') }}</span>
-                      <span class="block truncate text-foreground max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:break-words" :title="source.name">{{ source.name }}</span>
+                      <!-- A phone has no tooltip, so the whole source name shows there, wrapped. -->
+                      <span class="block truncate text-foreground max-sm:whitespace-normal max-sm:break-words" :title="source.name">{{ source.name }}</span>
                       <span v-if="source.note" class="block text-[11px] font-normal text-warning-text">{{ sourceNoteText(source.note) }}</span>
                     </th>
                   </tr>
                 </thead>
-                <tbody>
-                  <tr v-for="row in matrix.rows" :key="row.node.node_id" class="border-b border-border last:border-b-0" :data-target="row.node.node_id">
-                    <th scope="row" class="sticky start-0 z-10 bg-card px-3 py-1.5 text-start align-middle font-normal max-sm:px-2">
-                      <!-- On a phone the name wraps to two lines instead of being cut, so the column can stay narrow enough for two sources beside it. -->
+                <!-- One body per target: on a phone its name and line take a full-width
+                     row above its cells (whole, not broken at a hyphen into a narrow
+                     column), and every source fits beside the others. -->
+                <tbody v-for="row in matrix.rows" :key="row.node.node_id" class="border-b border-border last:border-b-0" :data-target="row.node.node_id">
+                  <tr class="sm:hidden">
+                    <th :colspan="matrix.sources.length" scope="rowgroup" class="px-2 pt-1.5 text-start font-normal">
                       <RouterLink
                         :to="{ name: 'node-detail', params: { id: row.node.node_id } }"
-                        class="flex max-w-56 items-center font-medium hover:underline max-sm:max-w-28 pointer-coarse:min-h-11"
+                        class="inline-flex max-w-full items-center font-medium hover:underline pointer-coarse:min-h-11"
+                      ><span class="truncate">{{ row.node.name || row.node.node_id }}</span></RouterLink>
+                      <span class="block truncate text-xs text-muted-foreground">
+                        <span v-if="row.node.country" class="font-mono">{{ row.node.country }}</span>
+                        <template v-if="row.node.country && targetDetail(row.node.node_id)"> · </template>
+                        <span :class="row.node.target === 'not_probeable' ? '' : 'font-mono'">{{ targetDetail(row.node.node_id) }}</span>
+                      </span>
+                    </th>
+                  </tr>
+                  <tr>
+                    <th scope="row" class="sticky start-0 z-10 bg-card px-3 py-1.5 text-start align-middle font-normal max-sm:hidden">
+                      <RouterLink
+                        :to="{ name: 'node-detail', params: { id: row.node.node_id } }"
+                        class="flex max-w-56 items-center font-medium hover:underline pointer-coarse:min-h-11"
                         :title="row.node.name"
-                      ><span class="truncate max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:break-words">{{ row.node.name || row.node.node_id }}</span></RouterLink>
-                      <span class="block max-w-56 truncate text-xs text-muted-foreground max-sm:max-w-28" :title="targetDetail(row.node.node_id)">
+                      ><span class="truncate">{{ row.node.name || row.node.node_id }}</span></RouterLink>
+                      <span class="block max-w-56 truncate text-xs text-muted-foreground" :title="targetDetail(row.node.node_id)">
                         <span v-if="row.node.country" class="font-mono">{{ row.node.country }}</span>
                         <template v-if="row.node.country && targetDetail(row.node.node_id)"> · </template>
                         <span :class="row.node.target === 'not_probeable' ? '' : 'font-mono'">{{ targetDetail(row.node.node_id) }}</span>
@@ -475,7 +492,7 @@ const LEGEND = computed(() => [
                 {{ item.label }}
               </span>
               <span class="inline-flex items-center gap-1.5">
-                <span class="size-2.5 rounded-[2px] border border-destructive/50 bg-destructive/15" aria-hidden="true" />
+                <span :class="cn('size-2.5 rounded-[2px] border border-destructive/50', FAILING_TINT)" aria-hidden="true" />
                 {{ $t('fleet.monitoring.latency.legend.failing') }}
               </span>
               <span class="inline-flex items-center gap-1.5">

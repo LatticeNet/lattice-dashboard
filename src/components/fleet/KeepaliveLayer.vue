@@ -206,11 +206,16 @@ function requestEnd(window: MaintenanceWindow): void {
   else void endWindow(window, []);
 }
 
+/** Hyphens that do not break: "sing-box" and "[cd]-hetzner-hel" stay whole in a wrapped sentence. */
+function unbroken(text: string): string {
+  return text.replace(/-/g, "\u2011");
+}
+
 function heldNames(held: readonly Incident[]): string {
   const names = held.map((incident) =>
     t("fleet.keepalive.maintenance.heldItem", {
-      kind: kindLabel(incident.kind),
-      node: incident.node_name || (incident.node_id ? nodeNames.value.get(incident.node_id) : undefined) || incident.subject || incident.node_id || "",
+      kind: unbroken(kindLabel(incident.kind)),
+      node: unbroken(incident.node_name || (incident.node_id ? nodeNames.value.get(incident.node_id) : undefined) || incident.subject || incident.node_id || ""),
     }),
   );
   const shown = names.slice(0, 3).join(", ");
