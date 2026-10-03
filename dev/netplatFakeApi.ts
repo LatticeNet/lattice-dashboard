@@ -384,7 +384,15 @@ export const api = {
       // As the server: an absent fallback keeps the rule's, "" clears it, and one of the rule's own channels is refused.
       const fallback = input.fallback_channel_id === undefined ? existing?.fallback_channel_id : input.fallback_channel_id || undefined;
       if (fallback && input.channel_ids?.includes(fallback)) throw new ApiError(400, "bad_request", "the fallback channel must differ from the rule's own channels");
-      const next = { id: existing?.id ?? `rule_new_${seq++}`, name: input.name, event_types: input.event_types, channel_ids: input.channel_ids, title_template: input.title_template, body_template: input.body_template, enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0), fallback_channel_id: fallback };
+      // Escalation and quiet hours: absent keeps, quiet_hours null clears (applyNotifyRuleOptions).
+      const options = {
+        escalation_off: input.escalation_off ?? existing?.escalation_off ?? false,
+        escalate_after_minutes: input.escalate_after_minutes ?? existing?.escalate_after_minutes ?? 30,
+        escalation_bark_level: input.escalation_bark_level ?? existing?.escalation_bark_level ?? "critical",
+        quiet_hours: input.quiet_hours !== undefined ? input.quiet_hours : (existing?.quiet_hours ?? null),
+      };
+      (window as unknown as { __lastRuleRequest?: unknown }).__lastRuleRequest = input;
+      const next = { id: existing?.id ?? `rule_new_${seq++}`, name: input.name, event_types: input.event_types, channel_ids: input.channel_ids, title_template: input.title_template, body_template: input.body_template, enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0), fallback_channel_id: fallback, ...options };
       if (existing) Object.assign(existing, next);
       else NOTIFY_RULES.push(next);
       return { ...next };

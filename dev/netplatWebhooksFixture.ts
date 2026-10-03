@@ -58,8 +58,15 @@ export const NOTIFY_CHANNELS: NotifyChannelView[] =
     ? []
     : [...baseChannels, ...(flags.get("channels") === "4" ? extraChannels : [])].map((channel) => ({ ...channel, health: health(channel.id) }));
 
+// Every rule carries the server's effective incident options (escalation after
+// 30 minutes at critical, no quiet hours); `?rule=quiet` gives Node offline
+// quiet hours and a slower escalation at timeSensitive.
+const QUIET = flags.get("rule") === "quiet";
 export const NOTIFY_RULES: NotifyRuleView[] = [
-  { id: "rule_offline", name: "Node offline", event_types: ["node.offline"], channel_ids: ["ch_bark_urgent"], enabled: true, created_at: iso(-90 * DAY), updated_at: iso(-20 * DAY), fallback_channel_id: flags.get("channels") === "4" ? "ch_tg_fallback" : undefined },
+  {
+    id: "rule_offline", name: "Node offline", event_types: ["node.offline"], channel_ids: ["ch_bark_urgent"], enabled: true, created_at: iso(-90 * DAY), updated_at: iso(-20 * DAY), fallback_channel_id: flags.get("channels") === "4" ? "ch_tg_fallback" : undefined,
+    escalate_after_minutes: QUIET ? 45 : 30, escalation_bark_level: QUIET ? "timeSensitive" : "critical", quiet_hours: QUIET ? { start: "23:00", end: "07:00", time_zone: "Asia/Shanghai" } : null,
+  },
   { id: "rule_expiry", name: "Machine renewals", event_types: ["inventory.renewal"], channel_ids: ["ch_bark_info"], enabled: true, created_at: iso(-60 * DAY), updated_at: iso(-20 * DAY) },
   { id: "rule_quota", name: "VPN quota and expiry", event_types: ["proxy.quota", "proxy.expiry"], channel_ids: ["ch_bark_info"], enabled: true, created_at: iso(-60 * DAY), updated_at: iso(-20 * DAY) },
   { id: "rule_backup", name: "Backups", event_types: ["backup.finished"], channel_ids: ["ch_bark_info"], enabled: true, created_at: iso(-30 * DAY), updated_at: iso(-10 * DAY) },
