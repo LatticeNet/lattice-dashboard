@@ -1227,7 +1227,7 @@ export default {
       fieldUrl: "URL",
       deviceKeyPlaceholder: "device key",
       fieldLevel: "Interruption level",
-      levelDefault: "Server default (active)",
+      levelDefault: "Server default (Active)",
       levelHint:
         "How the phone interrupts: time sensitive shows through Focus, a critical alert also rings when the phone is muted, passive lands in the list without a sound, and blank sends active.",
       fieldGroup: "Group",
@@ -1361,7 +1361,7 @@ export default {
         level: "Bark level",
         // Bark's interruption levels as a select offers them.
         levels: {
-          active: "Active (the default)",
+          active: "Active",
           timeSensitive: "Time sensitive (shows through Focus)",
           passive: "Passive (silent, list only)",
           critical: "Critical alert (rings when muted)",

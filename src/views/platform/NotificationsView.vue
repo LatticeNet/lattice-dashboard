@@ -1945,10 +1945,13 @@ async function confirmDeleteRule(): Promise<void> {
             <label
               :class="cn('flex items-start gap-2 text-sm pointer-coarse:min-h-11 pointer-coarse:items-center', ruleCanEscalate ? 'cursor-pointer' : 'cursor-not-allowed text-muted-foreground')"
             >
+              <!-- A rule that routes no critical kind cannot escalate: the box shows
+                   unchecked and locked, whatever the rule stored. -->
               <Checkbox
-                v-model="ruleIncident.escalate"
+                :model-value="ruleCanEscalate && ruleIncident.escalate"
                 class="mt-0.5 pointer-coarse:mt-0"
                 :disabled="!ruleCanEscalate"
+                @update:model-value="(v) => (ruleIncident.escalate = v === true)"
                 aria-describedby="rule-escalate-reach"
                 data-testid="rule-escalate"
               />

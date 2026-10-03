@@ -1126,7 +1126,7 @@ export default {
       fieldUrl: "URL",
       deviceKeyPlaceholder: "设备密钥",
       fieldLevel: "打断级别",
-      levelDefault: "服务端默认(active)",
+      levelDefault: "服务端默认（普通）",
       levelHint: "决定手机如何提醒：时效性通知在专注模式下也会显示，重要警告在静音时也会响铃，静默只进入通知列表，留空按普通发送。",
       fieldGroup: "分组",
       groupHint: "同一分组的通知在通知中心折叠在一起,留空使用分组「lattice」。",
@@ -1256,7 +1256,7 @@ export default {
         after: "等待（分钟）",
         level: "Bark 级别",
         levels: {
-          active: "普通（默认）",
+          active: "普通",
           timeSensitive: "时效性通知（专注模式下也显示）",
           passive: "静默（只进通知列表）",
           critical: "重要警告（静音时也响铃）",
