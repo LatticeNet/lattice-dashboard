@@ -367,7 +367,7 @@ export default {
       reviewNext: "Review the next approval",
       reviewNextDetail: "{n} waiting | {n} waiting",
       addVpnUser: "Add a VPN user",
-      addVpnUserDetail: "On vpn-core Users, where New identity starts it",
+      addVpnUserDetail: "Opens New identity on vpn-core Users",
       shareSubscription: "Share a subscription",
       shareSubscriptionDetail: "A new share in Publishing",
       recordRenewal: "Record a renewal",

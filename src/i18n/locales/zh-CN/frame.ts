@@ -362,7 +362,7 @@ export default {
       reviewNext: "审阅下一个审批",
       reviewNextDetail: "{n} 个待处理",
       addVpnUser: "添加 VPN 用户",
-      addVpnUserDetail: "在 vpn-core 的 Users 页面，从新建身份开始",
+      addVpnUserDetail: "在 vpn-core 的 Users 页面打开新建身份",
       shareSubscription: "分享订阅",
       shareSubscriptionDetail: "在发布页新建分享",
       recordRenewal: "记录续费",
