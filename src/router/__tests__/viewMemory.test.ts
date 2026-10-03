@@ -44,11 +44,13 @@ test("the view keeps layer, filter, sort and search, and drops object and one-sh
   assert.deepEqual(viewQuery({ q: "x".repeat(600) }), {}, "an oversized value is left out, not cut");
 });
 
-test("console pages and plugin pages are remembered; Overview and detail pages are not", () => {
+test("console pages and plugin pages are remembered; Overview, the queues and detail pages are not", () => {
   assert.equal(isRememberedPath("/nodes", CONSOLE), true);
   assert.equal(isRememberedPath("/upcoming", CONSOLE), true);
   assert.equal(isRememberedPath("/plugins/latticenet.vpn-core/users", CONSOLE), true);
   assert.equal(isRememberedPath("/", CONSOLE), false);
+  assert.equal(isRememberedPath("/approvals", CONSOLE), false, "a decision queue opens on what awaits a decision");
+  assert.equal(isRememberedPath("/tasks", CONSOLE), false, "the run queue opens on its runs");
   assert.equal(isRememberedPath("/nodes/node_1", CONSOLE), false);
   assert.equal(isRememberedPath("/plugins", CONSOLE), false);
   assert.equal(isRememberedPath("/plugins/latticenet.vpn-core", CONSOLE), false);
@@ -138,6 +140,7 @@ test("only an in-app navigation from another page with no query of its own is re
   assert.equal(viewToRestore({ path: "/nodes", query: {} }, { path: "/nodes", matched: [{}] } as never, view, CONSOLE), null, "clearing a filter on the page");
   assert.equal(viewToRestore({ path: "/nodes", query: {} }, inApp, null, CONSOLE), null);
   assert.equal(viewToRestore({ path: "/", query: {} }, inApp, view, CONSOLE), null);
+  assert.equal(viewToRestore({ path: "/approvals", query: {} }, { path: "/nodes", matched: [{}] } as never, view, CONSOLE), null, "a queue");
 });
 
 /**
@@ -197,8 +200,17 @@ test("on a router, a bare link lands once on the view left, and the first naviga
   assert.equal(at(), "/nodes", "and the cleared view is what the page remembers");
 });
 
-test("on a router, Reset view forgets the restored view", async () => {
+test("on a router, the queues open bare, and Reset view forgets the restored view", async () => {
   const { router, storage, at } = shell();
+  await router.push("/approvals?view=history&status=rejected");
+  await router.push("/tasks?view=new");
+  await router.push("/nodes");
+  await router.push("/approvals");
+  assert.equal(at(), "/approvals");
+  await router.push("/tasks");
+  assert.equal(at(), "/tasks");
+  assert.equal(storage.data.get(VIEW_MEMORY_KEY), undefined, "a queue's view is never stored");
+
   await router.push("/upcoming?status=failed");
   await router.push("/nodes");
   await router.push("/upcoming");

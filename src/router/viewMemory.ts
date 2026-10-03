@@ -26,7 +26,13 @@
  * Not restored: an address typed, pasted or reloaded (the first navigation
  * of a load is the operator's exact URL), a navigation that carries any
  * query of its own (a Home tile's "failed in 24h" means that, not the last
- * view), and a navigation within the same page (clearing a filter clears it).
+ * view), a navigation within the same page (clearing a filter clears it),
+ * and the two queues, Approvals and Tasks. Their sidebar rows count what is
+ * waiting on the operator (decisions; failed and stalled runs), and a
+ * remembered History layer or status filter would hide exactly that behind
+ * the badge that sent them there. Nodes keeps its view: its proof line counts
+ * offline and never reported nodes across the whole fleet whatever the
+ * filter, one tap from the list.
  */
 import { shallowRef } from "vue";
 import type { LocationQuery, LocationQueryRaw, RouteLocationNormalized, Router } from "vue-router";
@@ -75,9 +81,12 @@ export function viewQueriesEqual(a: ViewQuery, b: ViewQuery): boolean {
   return keys.every((key) => JSON.stringify(a[key]) === JSON.stringify(b[key]));
 }
 
-/** Console destinations (the sidebar's paths, Overview aside) and plugin pages. */
+/** Pages that always open on what is waiting: their bare address is the queue. */
+export const QUEUE_PATHS: ReadonlySet<string> = new Set(["/approvals", "/tasks"]);
+
+/** Console destinations (the sidebar's paths, Overview and the queues aside) and plugin pages. */
 export function isRememberedPath(path: string, consolePaths: ReadonlySet<string>): boolean {
-  if (path === "/") return false;
+  if (path === "/" || QUEUE_PATHS.has(path)) return false;
   if (consolePaths.has(path)) return true;
   return /^\/plugins\/[^/]+\/.+/.test(path);
 }
