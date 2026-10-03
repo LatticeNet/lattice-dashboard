@@ -87,14 +87,13 @@ const groupsQuery = useAsyncData<GroupView[]>(
 const incidents = computed(() => props.response?.incidents ?? []);
 const counts = computed(() => filterCounts(incidents.value, props.now));
 const kinds = computed(() => kindsPresent(incidents.value));
-const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.value, kind: kind.value, search: search.value }, props.now));
+const actions = useIncidentActions(() => emit("refresh"));
+const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.value, kind: kind.value, search: search.value }, props.now, actions.held.value));
 
 const nodeNames = computed(() => new Map(props.nodes.map((n) => [n.id, n.name || n.id])));
 const groupNames = computed(() => new Map((groupsQuery.data.value ?? []).map((g) => [g.id, g.name])));
 const activeWindows = computed(() => props.response?.windows ?? (windowsQuery.data.value ?? []).filter((w) => windowPhase(w, props.now) === "active"));
 const listed = computed(() => listedWindows(windowsQuery.data.value ?? [], props.now));
-
-const actions = useIncidentActions(() => emit("refresh"));
 
 function kindLabel(value: string): string {
   const known = knownKind(value);
@@ -225,8 +224,10 @@ function coverageText(window: MaintenanceWindow): string {
           :busy="actions.busy.value"
           :node-names="nodeNames"
           :monitor-names="monitorNames"
+          :focus-request="actions.focusRequest.value"
           @ack="actions.ack"
           @snooze="actions.snooze"
+          @focused="actions.focusDone"
         />
         <div v-else class="space-y-1 px-4 py-6">
           <p class="text-sm">{{ filter === 'active' && !kind && !search ? $t('fleet.keepalive.empty.active') : $t('fleet.keepalive.empty.filtered') }}</p>

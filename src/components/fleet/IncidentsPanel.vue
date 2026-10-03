@@ -29,8 +29,8 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ refresh: [] }>();
 
-const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCIDENTS_MAX));
 const actions = useIncidentActions(() => emit("refresh"));
+const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCIDENTS_MAX, actions.held.value));
 </script>
 
 <template>
@@ -53,8 +53,10 @@ const actions = useIncidentActions(() => emit("refresh"));
       :busy="actions.busy.value"
       :node-names="nodeNames"
       :monitor-names="monitorNames"
+      :focus-request="actions.focusRequest.value"
       @ack="actions.ack"
       @snooze="actions.snooze"
+      @focused="actions.focusDone"
     />
   </section>
 </template>

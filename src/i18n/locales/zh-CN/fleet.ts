@@ -1671,7 +1671,11 @@ export default {
         end: "结束暂缓",
       },
       toast: {
-        acked: "事件已确认，不会再重发。",
+        acked: "事件已确认，不会再发提醒。",
+        undo: "撤销",
+        unacked: "已撤销确认，事件恢复为未处理。",
+        unackClosed: "事件已在此期间恢复，确认保留。",
+        unackFailed: "撤销失败",
         ackFailed: "确认失败",
         snoozed: "事件已暂缓 {label}",
         unsnoozed: "暂缓已结束",

@@ -13,12 +13,13 @@
  * at every width; below 640 px the actions move to their own line so each
  * keeps a 44 px target.
  */
-import { computed } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { AlertTriangle, BellOff, Check, Clock, Info, OctagonAlert, CircleCheck } from "lucide-vue-next";
 
 import type { Incident } from "@/lib/api";
+import type { IncidentFocusRequest } from "@/composables/useIncidentActions";
 import { formatAge } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { incidentSeverity } from "@/lib/incidentSeverity";
@@ -53,14 +54,43 @@ const props = withDefaults(
     nodeNames?: ReadonlyMap<string, string>;
     /** Monitor names by id, so a failing monitor's claim is worded here rather than in the server's English. */
     monitorNames?: ReadonlyMap<string, string>;
+    /** A row control to focus once the row has re-rendered (useIncidentActions). */
+    focusRequest?: IncidentFocusRequest | null;
   }>(),
-  { busy: () => new Set<string>(), nodeNames: () => new Map<string, string>(), monitorNames: () => new Map<string, string>() },
+  { busy: () => new Set<string>(), nodeNames: () => new Map<string, string>(), monitorNames: () => new Map<string, string>(), focusRequest: null },
 );
 
 const emit = defineEmits<{
-  ack: [incident: Incident];
+  /** `order` is the row ids as shown, which the caller holds while the acknowledgement settles. */
+  ack: [incident: Incident, order: string[]];
   snooze: [incident: Incident, minutes: number];
+  focused: [];
 }>();
+
+const list = ref<HTMLElement | null>(null);
+
+function onAck(incident: Incident): void {
+  // The button stays focusable while busy (aria-disabled, not disabled): a
+  // disabled button drops focus to the page.
+  if (props.busy.has(incident.id)) return;
+  emit("ack", incident, props.incidents.map((i) => i.id));
+}
+
+// Fulfil a focus request once its target exists: Snooze after an
+// acknowledgement (Acknowledge is gone), Acknowledge after a failure or Undo.
+watch(
+  () => [props.focusRequest, props.incidents] as const,
+  async ([request]) => {
+    if (!request) return;
+    await nextTick();
+    const target = list.value?.querySelector<HTMLElement>(`[data-incident-${request.target}="${CSS.escape(request.id)}"]`)
+      ?? list.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(request.id)}"] button`);
+    if (!target) return;
+    target.focus();
+    emit("focused");
+  },
+  { flush: "post" },
+);
 
 const { t, locale } = useI18n();
 
@@ -185,10 +215,11 @@ const rows = computed(() =>
 </script>
 
 <template>
-  <ul class="divide-y divide-border" data-testid="incident-list">
+  <ul ref="list" class="divide-y divide-border" data-testid="incident-list">
     <li
       v-for="row in rows"
       :key="row.incident.id"
+      :data-incident-row="row.incident.id"
       class="flex flex-col gap-2 px-3.5 py-2.5 sm:flex-row sm:items-start sm:gap-3"
       :data-tone="row.tone"
       :data-state="row.incident.state"
@@ -214,10 +245,11 @@ const rows = computed(() =>
           variant="outline"
           size="sm"
           type="button"
-          class="pointer-coarse:h-11"
-          :disabled="row.busy"
+          class="pointer-coarse:h-11 aria-disabled:opacity-50"
+          :aria-disabled="row.busy || undefined"
+          :data-incident-ack="row.incident.id"
           :aria-label="$t('fleet.keepalive.actions.ackLabel', { name: row.claim })"
-          @click="emit('ack', row.incident)"
+          @click="onAck(row.incident)"
         >
           <Check aria-hidden="true" />
           {{ $t('fleet.keepalive.actions.ack') }}
@@ -230,6 +262,7 @@ const rows = computed(() =>
               type="button"
               class="pointer-coarse:h-11"
               :disabled="row.busy"
+              :data-incident-snooze="row.incident.id"
               :aria-label="$t('fleet.keepalive.actions.snoozeLabel', { name: row.claim })"
             >
               <BellOff aria-hidden="true" />

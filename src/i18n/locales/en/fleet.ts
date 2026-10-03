@@ -1692,7 +1692,11 @@ export default {
         end: "End snooze",
       },
       toast: {
-        acked: "Incident acknowledged. It will not be re-sent.",
+        acked: "Incident acknowledged: no reminder will be re-sent.",
+        undo: "Undo",
+        unacked: "Acknowledgement undone: the incident is open again.",
+        unackClosed: "The incident closed meanwhile, so its acknowledgement stays.",
+        unackFailed: "Undo failed",
         ackFailed: "Acknowledge failed",
         snoozed: "Incident snoozed for {label}",
         unsnoozed: "Snooze ended",

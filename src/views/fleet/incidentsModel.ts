@@ -117,10 +117,23 @@ export interface IncidentQuery {
   search: string;
 }
 
-/** The rows a list shows for its filters, worst first. */
-export function visibleIncidents(incidents: readonly Incident[], query: IncidentQuery, now: number): Incident[] {
+/**
+ * Rows in a held order: the ids in `held` keep their places, and a row the
+ * held order does not know (it appeared meanwhile) follows them in its
+ * sorted place. Used while an acknowledgement settles, so the row below an
+ * acknowledged one does not move under the pointer (useIncidentActions).
+ */
+export function holdOrder<T extends { id: string }>(sorted: readonly T[], held: readonly string[] | null | undefined): T[] {
+  if (!held?.length) return [...sorted];
+  const at = new Map(held.map((id, index) => [id, index]));
+  const known = sorted.filter((row) => at.has(row.id)).sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  return [...known, ...sorted.filter((row) => !at.has(row.id))];
+}
+
+/** The rows a list shows for its filters, worst first (or in a held order). */
+export function visibleIncidents(incidents: readonly Incident[], query: IncidentQuery, now: number, held?: readonly string[] | null): Incident[] {
   const needle = query.search.trim().toLowerCase();
-  return incidents
+  const sorted = incidents
     .filter((incident) => matchesFilter(incident, query.filter, now))
     .filter((incident) => !query.kind || incident.kind === query.kind)
     .filter((incident) => {
@@ -130,6 +143,7 @@ export function visibleIncidents(incidents: readonly Incident[], query: Incident
         .some((value) => value!.toLowerCase().includes(needle));
     })
     .sort((a, b) => compareIncidents(a, b, now));
+  return holdOrder(sorted, held);
 }
 
 /** The kinds present, for the kind filter; known kinds first in their fixed order. */
@@ -235,8 +249,12 @@ export function homeIncidents(
   incidents: readonly Incident[],
   now: number,
   max = HOME_INCIDENTS_MAX,
+  held?: readonly string[] | null,
 ): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>> } {
-  const active = incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now));
+  const active = holdOrder(
+    incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now)),
+    held,
+  );
   const shown = active.slice(0, max);
   const nodeKinds = new Map<string, Set<string>>();
   for (const incident of shown) {

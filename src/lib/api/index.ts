@@ -544,6 +544,8 @@ export const api = {
     list: (query?: IncidentListQuery, opts?: RequestOptions) =>
       http.get<IncidentListResponse>("/api/incidents", query as Record<string, unknown> | undefined, opts),
     ack: (id: string) => http.post<Incident>("/api/incidents/ack", { id }),
+    // Undoes an acknowledgement while the incident is still open; 409 once it closed.
+    unack: (id: string) => http.post<Incident>("/api/incidents/unack", { id }),
     // minutes 0 ends a snooze.
     snooze: (id: string, minutes: number) => http.post<Incident>("/api/incidents/snooze", { id, minutes }),
   },
