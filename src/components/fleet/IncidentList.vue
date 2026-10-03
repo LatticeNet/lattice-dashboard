@@ -97,30 +97,42 @@ function onUndo(incident: Incident, name: string): void {
   emit("undo", incident, name);
 }
 
-// Keep focus in the list when an update takes it away. Two updates do:
-// releasing a held order moves the focused row's element, which blurs it,
-// and a row leaving the list (its hold ended under a filter it no longer
-// matches, or a read dropped it) takes its focus with it. The moved
-// element is focused again; a row that left hands focus to the row that
-// takes its place, or the one above at the end. The row itself takes
-// focus, not its Acknowledge: focus that moved on its own must not leave a
-// stray Enter acknowledging an incident nobody chose. Only focus this
-// update lost is restored, so a click elsewhere is never undone.
+function rowElement(id: string): HTMLElement | null {
+  return list.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(id)}"]`) ?? null;
+}
+
+// Keep focus in the list when an update takes it away. Three updates do:
+// releasing a held order moves the focused row's element, which blurs it;
+// a control leaving its row (Undo turning back into Acknowledge) takes its
+// focus with it; and a row leaving the list (its hold ended under a filter
+// it no longer matches, or a read dropped it) takes its focus with it. The
+// moved element is focused again; a row that lost a control keeps focus on
+// itself; a row that left hands focus to the row that took its place, found
+// by the order the rows had before the update (the update may also re-sort
+// them), or the one above at the end. The row itself takes focus, not its
+// Acknowledge: focus that moved on its own must not leave a stray Enter
+// acknowledging an incident nobody chose. Only focus this update lost is
+// restored, so a click elsewhere is never undone.
 watch(
   () => props.incidents,
   async () => {
     const active = typeof document === "undefined" ? null : document.activeElement;
     if (!(active instanceof HTMLElement) || !list.value?.contains(active)) return;
-    const row = active.closest<HTMLElement>("[data-incident-row]");
-    const index = row ? [...list.value.children].indexOf(row) : -1;
+    const before = [...list.value.querySelectorAll<HTMLElement>("[data-incident-row]")].map((el) => el.dataset.incidentRow ?? "");
+    const id = active.closest<HTMLElement>("[data-incident-row]")?.dataset.incidentRow ?? "";
     await nextTick();
     if (document.activeElement && document.activeElement !== document.body) return;
     if (active.isConnected) {
       active.focus();
       return;
     }
-    const rows = list.value?.querySelectorAll<HTMLElement>("[data-incident-row]") ?? [];
-    rows[Math.min(Math.max(index, 0), rows.length - 1)]?.focus();
+    const at = before.indexOf(id);
+    const nearest = at < 0 ? before : [id, ...before.slice(at + 1), ...before.slice(0, at).reverse()];
+    for (const candidate of nearest) {
+      const el = candidate ? rowElement(candidate) : null;
+      if (el) return el.focus();
+    }
+    list.value?.querySelector<HTMLElement>("[data-incident-row]")?.focus();
   },
   { flush: "pre" },
 );

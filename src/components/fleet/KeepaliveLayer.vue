@@ -96,6 +96,22 @@ const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.v
 // A changed filter or search is a new view: rows held for the old one go.
 watch([filter, kind, search], () => actions.release());
 
+// When the last row leaves the list (its hold ended under Open, or End
+// snooze under Snoozed), the list goes with the focus it had: the line that
+// says the list is empty takes it, so a screen reader hears why.
+const listSection = ref<HTMLElement | null>(null);
+watch(
+  () => rows.value.length === 0,
+  async (empty) => {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    if (!empty || !(active instanceof HTMLElement) || !listSection.value?.contains(active)) return;
+    await nextTick();
+    if (document.activeElement && document.activeElement !== document.body) return;
+    listSection.value?.querySelector<HTMLElement>("[data-incidents-empty]")?.focus();
+  },
+  { flush: "pre" },
+);
+
 const nodeNames = computed(() => new Map(props.nodes.map((n) => [n.id, n.name || n.id])));
 const groupNames = computed(() => new Map((groupsQuery.data.value ?? []).map((g) => [g.id, g.name])));
 const groupMembers = computed(() => new Map((groupsQuery.data.value ?? []).map((g) => [g.id, g.resolved_members ?? []])));
@@ -358,7 +374,7 @@ function coverageText(window: MaintenanceWindow): string {
       </Button>
     </div>
 
-    <section class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')" v-on="actions.listEvents">
+    <section ref="listSection" class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')" v-on="actions.listEvents">
       <div v-if="error && !response" class="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-muted-foreground">
         <span class="min-w-0 break-words">{{ $t('fleet.keepalive.readFailed', { reason: proofReason(error) }) }}</span>
         <Button variant="outline" size="sm" type="button" @click="emit('refresh')">{{ $t('common.actions.retry') }}</Button>
@@ -381,7 +397,7 @@ function coverageText(window: MaintenanceWindow): string {
           @snooze="actions.snooze"
           @focused="actions.focusDone"
         />
-        <div v-else class="space-y-1 px-4 py-6">
+        <div v-else tabindex="-1" class="space-y-1 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" data-incidents-empty>
           <p class="text-sm">{{ filter === 'active' && !kind && !search ? $t('fleet.keepalive.empty.active') : $t('fleet.keepalive.empty.filtered') }}</p>
           <p v-if="filter === 'active'" class="text-xs text-muted-foreground">{{ $t('fleet.keepalive.empty.explain') }}</p>
         </div>
