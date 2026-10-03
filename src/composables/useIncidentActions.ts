@@ -19,13 +19,20 @@ export function useIncidentActions(refresh: () => unknown) {
     try {
       await call();
       toast.success(done);
-      await refresh();
     } catch (error) {
       toast.error(error instanceof Error && error.message ? `${failed}: ${error.message}` : failed);
+      return;
     } finally {
       const next = new Set(busy.value);
       next.delete(incident.id);
       busy.value = next;
+    }
+    // The action landed; a list read that fails after it is the list's own
+    // failure (its proof line says so), not the action's.
+    try {
+      await refresh();
+    } catch {
+      /* the caller's read reports it */
     }
   }
 

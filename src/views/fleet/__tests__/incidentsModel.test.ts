@@ -125,12 +125,13 @@ test("age runs from the condition's start and stops at resolution; the server's 
   assert.equal(incidentAge(incident({ since: "0001-01-01T00:00:00Z" }), NOW), undefined);
 });
 
-test("home shows the active incidents worst first and names the nodes that have one", () => {
+test("home shows the active incidents worst first and names the kinds it shows per node", () => {
   const home = homeIncidents(INCIDENTS, NOW, 3);
   assert.deepEqual(home.shown.map((i) => i.id), ["crit-old", "crit-new", "warn"]);
   assert.equal(home.more, 2);
   assert.equal(home.total, 5);
-  assert.deepEqual([...home.nodeIds].sort(), ["n1", "n2", "n3", "n4", "n5"]);
+  // Only the three shown: the acknowledged and snoozed ones past the cap keep their nodes' rows.
+  assert.deepEqual([...home.nodeKinds.entries()].map(([id, kinds]) => [id, [...kinds]]).sort(), [["n1", ["service.down"]], ["n2", ["node.offline"]], ["n3", ["service.down"]]]);
 });
 
 const WINDOW: MaintenanceWindow = {

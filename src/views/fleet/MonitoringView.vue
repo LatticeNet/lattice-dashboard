@@ -52,7 +52,7 @@ import { bindQueryParam } from "@/composables/useQueryParam";
 import { bindLayer } from "@/composables/useLayer";
 import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import KeepaliveLayer from "@/components/fleet/KeepaliveLayer.vue";
-import { filterCounts } from "./incidentsModel";
+import { filterCounts, isSnoozed } from "./incidentsModel";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import TrendChart from "@/components/common/TrendChart.vue";
@@ -102,7 +102,8 @@ const nodesQuery = useAsyncData(
 // Keepalive incidents (the Keepalive layer, and the count on its tab).
 const incidentsQuery = useAsyncData<IncidentListResponse>(
   (signal) => api.incidents.list(undefined, { signal }),
-  { pollInterval: 10000, immediate: canReadMonitors.value },
+  // A session without monitor:read never sends it, first read or poll.
+  { pollInterval: canReadMonitors.value ? 10000 : 0, immediate: canReadMonitors.value },
 );
 const now = useNow({ interval: 1000 });
 
@@ -126,10 +127,23 @@ const layer = bindLayer<MonitoringLayer>(
     return query.open || query.node || route.params.id ? "monitors" : "keepalive";
   },
 );
+// Such a link lands on Monitors because of ?open= or ?node=, so the address
+// names the layer too: closing the sheet or clearing the node chip removes
+// the parameter, and the page must not switch to Keepalive under the operator.
+watch(
+  () => owned.query(),
+  (query) => {
+    if (!owned.owns() || query.view || query.tab) return;
+    if (query.open || query.node) owned.replace({ ...query, view: "monitors" });
+  },
+  { immediate: true },
+);
 const monitorNames = computed(() => new Map(monitors.value.map((m) => [m.id, m.name || m.id])));
 const incidentCounts = computed(() => filterCounts(incidentsQuery.data.value?.incidents ?? [], now.value.getTime()));
 const criticalOpen = computed(() =>
-  (incidentsQuery.data.value?.incidents ?? []).some((i) => i.state === "open" && i.severity === "critical" && !i.snoozed && !i.maintenance),
+  (incidentsQuery.data.value?.incidents ?? []).some(
+    (i) => i.state === "open" && i.severity === "critical" && !isSnoozed(i, now.value.getTime()) && !i.maintenance,
+  ),
 );
 const sheet = bindRouteOpen(owned);
 watch(

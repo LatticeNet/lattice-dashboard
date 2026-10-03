@@ -334,6 +334,10 @@ test("the fields follow the server's rules: 5 to 1440 minutes, a Bark level, two
   assert.deepEqual(ruleIncidentErrors({ ...base, afterMinutes: "1441" }, knownZone), ["after"]);
   assert.deepEqual(ruleIncidentErrors({ ...base, afterMinutes: "7.5" }, knownZone), ["after"]);
   assert.deepEqual(ruleIncidentErrors({ ...base, barkLevel: "loud" }, knownZone), ["barkLevel"]);
+  // With escalation off, its hidden fields neither block the save nor go out.
+  const off = { ...base, escalate: false, afterMinutes: "2" };
+  assert.deepEqual(ruleIncidentErrors(off, knownZone), []);
+  assert.deepEqual(ruleIncidentRequest(off, base), { escalation_off: true });
   // Quiet hours are checked only when on.
   assert.deepEqual(ruleIncidentErrors({ ...base, quietZone: "Mars/Olympus" }, knownZone), []);
   const quiet = { ...base, quiet: true };

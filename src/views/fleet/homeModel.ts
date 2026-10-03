@@ -135,11 +135,25 @@ export interface HomeAttentionInput {
   /** Monitors whose newest results include a failure, worst first. */
   failingMonitors?: readonly { id: string; name: string }[];
   /**
-   * Nodes with an active keepalive incident. Home lists the incident first,
-   * with its actions, so the node's own offline, degraded or flapping row
-   * would say the same thing twice.
+   * The incident kinds Home shows per node (incidentsModel.homeIncidents).
+   * Home lists those incidents first, with their actions, so the node row one
+   * of them repeats is dropped: offline and flapping rows for node.offline,
+   * a degraded row for service.down or agent.stalled. A node whose only
+   * incident is of another kind (a failing monitor) keeps its row.
    */
-  incidentNodeIds?: ReadonlySet<string>;
+  incidentNodes?: ReadonlyMap<string, ReadonlySet<string>>;
+}
+
+const NODE_ROW_INCIDENTS: Record<string, readonly string[]> = {
+  offline: ["node.offline"],
+  never_reported: ["node.offline"],
+  degraded: ["service.down", "agent.stalled"],
+  flapping: ["node.offline"],
+};
+
+function shownAsIncident(incidents: ReadonlyMap<string, ReadonlySet<string>> | undefined, nodeId: string, row: string): boolean {
+  const kinds = incidents?.get(nodeId);
+  return !!kinds && (NODE_ROW_INCIDENTS[row] ?? []).some((kind) => kinds.has(kind));
 }
 
 /**
@@ -152,11 +166,10 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
   const out: HomeAttention[] = [];
   const nodes = [...(input.nodes ?? [])].sort((a, b) => compareByAttention(a, b) || (a.name ?? a.id).localeCompare(b.name ?? b.id));
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const incidentNodes = input.incidentNodeIds ?? new Set<string>();
   for (const node of nodes) {
     const status = nodeStatus(node);
     if (status !== "offline" && status !== "never_reported" && status !== "degraded") continue;
-    if (incidentNodes.has(node.id)) continue;
+    if (shownAsIncident(input.incidentNodes, node.id, status)) continue;
     const since = nodeStatusSince(node);
     const sinceAt = since ? Date.parse(since) : NaN;
     const seenAt = node.last_seen ? Date.parse(node.last_seen) : NaN;
@@ -179,7 +192,7 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
     const node = byId.get(flap.nodeId);
     // An offline node already has its row; a disabled one was switched off.
     if (node && ["offline", "disabled"].includes(nodeStatus(node))) continue;
-    if (incidentNodes.has(flap.nodeId)) continue;
+    if (shownAsIncident(input.incidentNodes, flap.nodeId, "flapping")) continue;
     out.push({
       kind: "flapping",
       key: `flap:${flap.nodeId}`,

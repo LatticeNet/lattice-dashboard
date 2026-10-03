@@ -89,7 +89,7 @@ test("a flapping node gets a row unless it is offline (its row says it) or disab
   assert.deepEqual(items.map((i) => i.key), ["node:dmit", "flap:mac"]);
 });
 
-test("a node with an active incident leaves its offline, degraded and flapping rows to the incident", () => {
+test("a node row is left to a shown incident only when that incident says the same thing", () => {
   const items = homeAttention({
     now: NOW,
     nodes: [
@@ -97,11 +97,18 @@ test("a node with an active incident leaves its offline, degraded and flapping r
       { id: "malibu", name: "malibu", status: "degraded", status_reason: "sing-box restarting." },
       { id: "mac", name: "mac-air", status: "online" },
       { id: "gpu", name: "gpu", status: "offline", status_since: hoursAgo(1) },
+      { id: "hel", name: "hetzner-hel", status: "offline", status_since: hoursAgo(1) },
     ],
     flaps: [{ nodeId: "mac", count: 14, lastAt: NOW }],
-    incidentNodeIds: new Set(["dmit", "malibu", "mac"]),
+    incidentNodes: new Map([
+      ["dmit", new Set(["node.offline"])],
+      ["malibu", new Set(["service.down"])],
+      ["mac", new Set(["node.offline"])],
+      // A failing monitor on a node that then went offline: its offline row stays.
+      ["hel", new Set(["monitor.down"])],
+    ]),
   });
-  assert.deepEqual(items.map((i) => i.key), ["node:gpu"]);
+  assert.deepEqual(items.map((i) => i.key), ["node:gpu", "node:hel"]);
 });
 
 test("stalled tasks, failing DDNS and renewals are one row each; auto-renewals are not attention", () => {

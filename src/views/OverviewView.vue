@@ -129,7 +129,7 @@ const failingMonitorRows = computed(() => {
 // Keepalive incidents and the maintenance windows holding their messages.
 const incidents = gated<IncidentListResponse>(can.monitors, (signal) => api.incidents.list(undefined, { signal }), 10_000);
 const incidentList = computed(() => incidents.data.value?.incidents ?? []);
-const incidentNodeIds = computed(() => homeIncidents(incidentList.value, now.value.getTime()).nodeIds);
+const incidentNodes = computed(() => homeIncidents(incidentList.value, now.value.getTime()).nodeKinds);
 const nodeNames = computed(() => new Map((fleet.data.value ?? []).map((node) => [node.id, node.name || node.id])));
 const monitorNames = computed(() => new Map((monitorList.data.value ?? []).map((monitor) => [monitor.id, monitor.name || monitor.id])));
 // Group names for a maintenance window that covers groups; read once, and
@@ -220,7 +220,7 @@ const attentionModel = computed<HomeAttention[]>(() =>
     ddns: ddns.data.value,
     expiring: expiring.data.value?.items,
     failingMonitors: failingMonitorRows.value,
-    incidentNodeIds: incidentNodeIds.value,
+    incidentNodes: incidentNodes.value,
   }),
 );
 

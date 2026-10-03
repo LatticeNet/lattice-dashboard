@@ -384,9 +384,12 @@ const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 /** What keeps the fields from saving, by the server's rules (applyNotifyRuleOptions). */
 export function ruleIncidentErrors(draft: RuleIncidentDraft, knownZone: (zone: string) => boolean): RuleIncidentError[] {
   const errors: RuleIncidentError[] = [];
-  const after = Number(draft.afterMinutes);
-  if (!Number.isInteger(after) || after < ESCALATE_MIN_MINUTES || after > ESCALATE_MAX_MINUTES) errors.push("after");
-  if (!(BARK_LEVELS as readonly string[]).includes(draft.barkLevel)) errors.push("barkLevel");
+  // Hidden fields do not block a save: with escalation off they are not sent (ruleIncidentRequest).
+  if (draft.escalate) {
+    const after = Number(draft.afterMinutes);
+    if (!Number.isInteger(after) || after < ESCALATE_MIN_MINUTES || after > ESCALATE_MAX_MINUTES) errors.push("after");
+    if (!(BARK_LEVELS as readonly string[]).includes(draft.barkLevel)) errors.push("barkLevel");
+  }
   if (draft.quiet) {
     if (!CLOCK.test(draft.quietStart) || !CLOCK.test(draft.quietEnd)) errors.push("quietTimes");
     else if (draft.quietStart === draft.quietEnd) errors.push("quietSame");
@@ -406,8 +409,9 @@ export function ruleIncidentRequest(
 ): Pick<NotifyRuleUpsertRequest, "escalation_off" | "escalate_after_minutes" | "escalation_bark_level" | "quiet_hours"> {
   const out: Pick<NotifyRuleUpsertRequest, "escalation_off" | "escalate_after_minutes" | "escalation_bark_level" | "quiet_hours"> = {};
   if (draft.escalate !== original.escalate) out.escalation_off = !draft.escalate;
-  if (Number(draft.afterMinutes) !== Number(original.afterMinutes)) out.escalate_after_minutes = Number(draft.afterMinutes);
-  if (draft.barkLevel !== original.barkLevel) out.escalation_bark_level = draft.barkLevel;
+  // With escalation off its delay and level are hidden, so edits to them are not sent.
+  if (draft.escalate && Number(draft.afterMinutes) !== Number(original.afterMinutes)) out.escalate_after_minutes = Number(draft.afterMinutes);
+  if (draft.escalate && draft.barkLevel !== original.barkLevel) out.escalation_bark_level = draft.barkLevel;
   const zone = draft.quietZone.trim();
   const quietChanged =
     draft.quiet !== original.quiet ||

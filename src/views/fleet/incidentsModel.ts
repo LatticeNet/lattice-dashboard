@@ -226,12 +226,25 @@ export function incidentActions(incident: Incident, now: number, canAdmin: boole
 
 /**
  * Home's incidents: the active ones, worst first, at most `max`, how many
- * more, and the nodes that have one (their attention row is the incident's).
+ * more, and for each node with a shown incident the kinds shown, so Home can
+ * drop the attention row that only one of those rows repeats (homeModel). An
+ * incident Home only counts, beyond `max`, keeps its node's row.
  */
-export function homeIncidents(incidents: readonly Incident[], now: number, max = HOME_INCIDENTS_MAX): { shown: Incident[]; more: number; total: number; nodeIds: Set<string> } {
+export function homeIncidents(
+  incidents: readonly Incident[],
+  now: number,
+  max = HOME_INCIDENTS_MAX,
+): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>> } {
   const active = incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now));
-  const nodeIds = new Set(active.map((incident) => incident.node_id).filter((id): id is string => !!id));
-  return { shown: active.slice(0, max), more: Math.max(0, active.length - max), total: active.length, nodeIds };
+  const shown = active.slice(0, max);
+  const nodeKinds = new Map<string, Set<string>>();
+  for (const incident of shown) {
+    if (!incident.node_id) continue;
+    const kinds = nodeKinds.get(incident.node_id) ?? new Set<string>();
+    kinds.add(incident.kind);
+    nodeKinds.set(incident.node_id, kinds);
+  }
+  return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds };
 }
 
 /* ---------------------------- maintenance windows --------------------------- */
