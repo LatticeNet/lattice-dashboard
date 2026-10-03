@@ -62,7 +62,8 @@ export function createTtlCache<T>(ttlMs: number, now: () => number = () => Date.
 }
 
 /* ------------------------------------------------------------------ */
-/* Search: pages, plugin pages, nodes, approvals, actions               */
+/* Search: pages, plugin pages, nodes, approvals, identities, shares,  */
+/* actions                                                             */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -72,7 +73,7 @@ export function createTtlCache<T>(ttlMs: number, now: () => number = () => Date.
  * ("approve", "renew") is a request to do something; then the objects, then
  * the pages.
  */
-export const PALETTE_GROUPS = ["jump", "action", "approval", "node", "page"] as const;
+export const PALETTE_GROUPS = ["jump", "action", "approval", "node", "identity", "share", "page"] as const;
 export type PaletteGroup = (typeof PALETTE_GROUPS)[number];
 
 export interface PaletteEntry<P = unknown> {
@@ -99,7 +100,8 @@ function tokensOf(query: string): string[] {
 }
 
 function wordsOf(text: string): string[] {
-  return text.split(/[\s/·_\-.:()[\],]+/).filter(Boolean);
+  // "@" splits too, so "example" finds alice@example.com as a word, not only as a substring.
+  return text.split(/[\s/·_\-.:()[\],@]+/).filter(Boolean);
 }
 
 /**
@@ -226,4 +228,172 @@ export function paletteTermsKey(item: { name: string; plugin?: { id: string }; r
     return PLUGIN_TERMS[`${item.plugin.id}/${item.route ?? ""}`] ?? PLUGIN_TERMS[item.plugin.id] ?? null;
   }
   return NAV_TERMS[item.name] ?? null;
+}
+
+/* ------------------------------------------------------------------ */
+/* VPN identities and subscription shares, as the palette keeps them    */
+/* ------------------------------------------------------------------ */
+
+/** vpn-core's plugin id and the core-backed service its Users page reads identities from. */
+export const VPN_CORE_PLUGIN_ID = "latticenet.vpn-core";
+export const VPN_USERS_SERVICE = "latticenet.vpn-core/users";
+
+export interface PaletteIdentity {
+  id: string;
+  email: string;
+  name?: string;
+  enabled: boolean;
+  /** RFC 3339, absent when the identity never expires. */
+  expiresAt?: string;
+  group?: string;
+}
+
+export interface PaletteShare {
+  id: string;
+  /** The share's name: the path segment its link is served under. */
+  slug: string;
+  enabled: boolean;
+  expiresAt?: string;
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Go writes an unset time.Time as year 1 even with omitempty, so a time
+ * before 1971 means "not set".
+ */
+function setTime(value: unknown): string | undefined {
+  const raw = text(value);
+  if (!raw) return undefined;
+  const at = Date.parse(raw);
+  return Number.isFinite(at) && at > Date.UTC(1971, 0, 1) ? raw : undefined;
+}
+
+function rowsOf(answer: unknown, key: string): unknown[] {
+  if (Array.isArray(answer)) return answer;
+  const rows = answer && typeof answer === "object" ? (answer as Record<string, unknown>)[key] : undefined;
+  return Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * vpn-core's users/list answer reduced to what a palette row says: the
+ * address, the name, whether it is on, when it expires. The answer also
+ * carries credential descriptors, bindings, quota and usage; the server
+ * already reduces each credential to has_secret, and the palette has no use
+ * for the rest, so none of it reaches the cache or the rows.
+ */
+export function paletteIdentities(answer: unknown): PaletteIdentity[] {
+  const out: PaletteIdentity[] = [];
+  for (const row of rowsOf(answer, "users")) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const id = text(record.id);
+    const email = text(record.email);
+    if (!id || !email) continue;
+    const name = text(record.name);
+    const group = text(record.group);
+    out.push({
+      id,
+      email,
+      ...(name ? { name } : {}),
+      enabled: record.enabled !== false,
+      ...(setTime(record.expires_at) ? { expiresAt: setTime(record.expires_at) } : {}),
+      ...(group ? { group } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * The share list reduced to each share's name and state. The list carries
+ * every share's token, and the token is the subscription link itself; the
+ * palette drops it on receipt, so its cache, its rows and its recents never
+ * hold a link. Opening a share goes to Publishing's sheet, which reads the
+ * share itself.
+ */
+export function paletteShares(answer: unknown): PaletteShare[] {
+  const out: PaletteShare[] = [];
+  for (const row of rowsOf(answer, "shares")) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const id = text(record.id);
+    const slug = text(record.slug);
+    if (!id || !slug) continue;
+    const expiresAt = setTime(record.expires_at);
+    out.push({ id, slug, enabled: record.enabled !== false, ...(expiresAt ? { expiresAt } : {}) });
+  }
+  return out;
+}
+
+export type ObjectState = "on" | "off" | "expired";
+
+/** Turned off wins over expired: switching it back on is the first thing the operator would have to do. */
+export function objectState(item: { enabled: boolean; expiresAt?: string }, now: number): ObjectState {
+  if (!item.enabled) return "off";
+  if (item.expiresAt && Date.parse(item.expiresAt) <= now) return "expired";
+  return "on";
+}
+
+/* ------------------------------------------------------------------ */
+/* Recent objects                                                       */
+/* ------------------------------------------------------------------ */
+
+export const RECENT_OBJECT_KINDS = ["node", "approval", "identity", "share"] as const;
+export type RecentObjectKind = (typeof RECENT_OBJECT_KINDS)[number];
+
+export interface RecentObject {
+  kind: RecentObjectKind;
+  id: string;
+}
+
+export const RECENT_OBJECTS_MAX = 5;
+const RECENT_ID_MAX = 128;
+
+function isRecentObject(value: unknown): value is RecentObject {
+  if (!value || typeof value !== "object") return false;
+  const { kind, id } = value as Record<string, unknown>;
+  return (
+    typeof kind === "string" &&
+    (RECENT_OBJECT_KINDS as readonly string[]).includes(kind) &&
+    typeof id === "string" &&
+    id.length > 0 &&
+    id.length <= RECENT_ID_MAX
+  );
+}
+
+/**
+ * The objects this principal opened from the palette, newest first. Only
+ * the kind and the id are stored: the row's words come from the lists the
+ * palette reads on open, so an object the principal can no longer read, or
+ * one that is gone, is not shown, and no name or address sits in storage.
+ * A list stored by another principal (or by nobody) reads as empty.
+ */
+export function readRecentObjects(raw: string | null, owner: string | undefined): RecentObject[] {
+  if (!raw || !owner) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return [];
+    const stored = parsed as { owner?: unknown; items?: unknown };
+    if (stored.owner !== owner || !Array.isArray(stored.items)) return [];
+    const out: RecentObject[] = [];
+    for (const item of stored.items) {
+      if (!isRecentObject(item) || out.some((seen) => seen.kind === item.kind && seen.id === item.id)) continue;
+      out.push({ kind: item.kind, id: item.id });
+      if (out.length === RECENT_OBJECTS_MAX) break;
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** The list with `item` first and any older copy of it dropped, capped at RECENT_OBJECTS_MAX. */
+export function pushRecentObject(list: readonly RecentObject[], item: RecentObject): RecentObject[] {
+  return [item, ...list.filter((entry) => !(entry.kind === item.kind && entry.id === item.id))].slice(0, RECENT_OBJECTS_MAX);
+}
+
+export function serializeRecentObjects(owner: string, items: readonly RecentObject[]): string {
+  return JSON.stringify({ owner, items: items.slice(0, RECENT_OBJECTS_MAX).map(({ kind, id }) => ({ kind, id })) });
 }

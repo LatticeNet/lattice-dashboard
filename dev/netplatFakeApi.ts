@@ -15,7 +15,7 @@
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
  *                     dns, monitors, tunnels, geo, agents, release, artifacts,
  *                     webhooks, channels, rules, deliveries, sent, users, tokens, oidc,
- *                     version, capabilities, machines
+ *                     version, capabilities, machines, vpnusers, shares
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
@@ -49,6 +49,7 @@ import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from 
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { CAPABILITIES, MACHINES, PROVIDERS, TOKENS, USERS, buildInfo } from "./netplatSettingsFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
+import { SUBSCRIPTION_SHARES, VPN_USERS } from "./netplatPaletteFixture";
 
 export * from "@/lib/api/index";
 
@@ -57,7 +58,11 @@ const FAILING = new Set((flags.get("fail") ?? "").split(",").filter(Boolean));
 if (flags.get("release") === "fail") FAILING.add("release");
 const WRITE_MS = flags.has("slow") ? 1500 : 200;
 
+/** Reads by name, for a render to prove a read happened or did not (window.__harnessReads). */
+const READS: Record<string, number> = ((window as unknown as { __harnessReads?: Record<string, number> }).__harnessReads = {});
+
 function read<T>(name: string, value: () => T): Promise<T> {
+  READS[name] = (READS[name] ?? 0) + 1;
   if (FAILING.has(name)) {
     return new Promise((_, reject) =>
       setTimeout(() => reject(new ApiError(502, "bad_gateway", `502 Bad Gateway from lattice.roobli.org (${name})`)), 120),
@@ -414,6 +419,10 @@ export const api = {
   approvals: {
     list: () => read("approvals", () => ({ approvals: AGENT_APPROVALS.map((approval) => ({ ...approval })) })),
   },
+  /* The share list, read by the command palette (tokens included, as the server sends them). */
+  subscriptionShares: {
+    list: () => read("shares", () => SUBSCRIPTION_SHARES.map((share) => ({ ...share }))),
+  },
   plugins: {
     list: () => read("plugins", () => pluginViews()),
     contributions: () =>
@@ -421,7 +430,11 @@ export const api = {
         ...pluginViews().filter((plugin) => plugin.active),
         ...(flags.get("plugins") === "declarative" ? [DECLARATIVE_PLUGIN] : []),
       ]),
-    call: (_id: string, _service: string, method: string) => {
+    call: (_id: string, service: string, method: string) => {
+      // vpn-core's users/list, which the command palette reads for identities.
+      if (service === "latticenet.vpn-core/users" && method === "list") {
+        return read("vpnusers", () => ({ users: VPN_USERS.map((user) => ({ ...user })), count: VPN_USERS.length }));
+      }
       if (method === "list") return read("leases", () => leaseRows());
       return delay({ ok: true }, WRITE_MS);
     },
