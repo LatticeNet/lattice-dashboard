@@ -15,9 +15,15 @@ import { failureCause, type FailureCause } from "@/views/platform/notificationsM
 /** How many rows the log asks for; the outbox holds up to 1000. */
 export const SENT_LIMIT = 500;
 
-export type SentState = "sent" | "failed" | "retrying" | "queued" | "not_routed";
+export type SentState = "sent" | "failed" | "retrying" | "queued" | "not_routed" | "held";
 
-export function sentState(delivery: Pick<NotifyDelivery, "outcome" | "attempts">): SentState {
+/**
+ * Held is a message the server chose not to send yet or at all: an
+ * incident's message a maintenance window, a snooze or flap damping held
+ * (outcome suppressed), or one a rule's quiet hours hold until they end (a
+ * planned row whose held_until is still ahead).
+ */
+export function sentState(delivery: Pick<NotifyDelivery, "outcome" | "attempts" | "held_until">, now = Date.now()): SentState {
   switch (delivery.outcome) {
     case "sent":
       return "sent";
@@ -25,8 +31,14 @@ export function sentState(delivery: Pick<NotifyDelivery, "outcome" | "attempts">
       return "failed";
     case "no_route":
       return "not_routed";
-    default:
-      return (delivery.attempts?.length ?? 0) > 0 ? "retrying" : "queued";
+    case "suppressed":
+      return "held";
+    default: {
+      const attempted = (delivery.attempts?.length ?? 0) > 0;
+      const until = delivery.held_until ? Date.parse(delivery.held_until) : NaN;
+      if (!attempted && until > now) return "held";
+      return attempted ? "retrying" : "queued";
+    }
   }
 }
 
@@ -44,6 +56,7 @@ export function sentTone(state: SentState): SentTone {
     case "queued":
       return "warning";
     case "not_routed":
+    case "held":
       return "secondary";
     default:
       return "quiet";
@@ -66,6 +79,11 @@ export function sentCause(delivery: Pick<NotifyDelivery, "attempts">): FailureCa
 }
 
 export type SentNoteKey =
+  | "heldMaintenance"
+  | "heldSnoozed"
+  | "heldFlapping"
+  | "quietHours"
+  | "escalation"
   | "noRule"
   | "noChannel"
   | "noOtherChannel"
@@ -74,8 +92,12 @@ export type SentNoteKey =
   | "channelDeleted"
   | "channelDisabled";
 
-/** A note under the row: a key the console words, or the server's text when the key is unknown. */
-export type SentNote = { key: SentNoteKey } | { raw: string };
+/**
+ * A note under the row: a key the console words (with the values it names),
+ * or the server's text when the key is unknown. An instant in params is the
+ * server's RFC 3339 text; the view formats it.
+ */
+export type SentNote = { key: SentNoteKey; params?: Record<string, string | number> } | { raw: string };
 
 // The server's fixed reason strings (lattice-server notify_outbox.go). A
 // failure sentence ("upstream status 401 after 4 attempts") is not here: the
@@ -92,10 +114,27 @@ const KNOWN_REASONS: Record<string, SentNoteKey> = {
 
 const FAILURE_SENTENCE = /^(upstream status \d+|timed out|network error|channel config refused|send failed)( after \d+ attempts)?(, retrying)?$/;
 
-export function sentNote(delivery: Pick<NotifyDelivery, "reason" | "redriven">): SentNote | undefined {
+// Why an incident's message was held (lattice-server incidents.go
+// incidentOpenHold); each names a value the console words around.
+const HELD_MAINTENANCE = /^held by maintenance window "(.*)" until (\S+)$/;
+const HELD_SNOOZED = /^snoozed until (\S+)$/;
+const HELD_FLAPPING = /^flapping \((\d+) reopenings within [^)]*\), at most one message an hour$/;
+
+export function sentNote(
+  delivery: Pick<NotifyDelivery, "reason" | "redriven"> & Partial<Pick<NotifyDelivery, "held_until" | "bark_level">>,
+): SentNote | undefined {
   const reason = (delivery.reason ?? "").trim();
   const known = KNOWN_REASONS[reason];
   if (known) return { key: known };
+  const maintenance = HELD_MAINTENANCE.exec(reason);
+  if (maintenance) return { key: "heldMaintenance", params: { name: maintenance[1]!, until: maintenance[2]! } };
+  const snoozed = HELD_SNOOZED.exec(reason);
+  if (snoozed) return { key: "heldSnoozed", params: { until: snoozed[1]! } };
+  const flapping = HELD_FLAPPING.exec(reason);
+  if (flapping) return { key: "heldFlapping", params: { n: Number(flapping[1]) } };
+  // Quiet hours delay the first attempt; the note stays on the row once it went out.
+  if (delivery.held_until && Date.parse(delivery.held_until) > 0) return { key: "quietHours", params: { until: delivery.held_until } };
+  if (delivery.bark_level) return { key: "escalation", params: { level: delivery.bark_level } };
   if (delivery.redriven) return { key: "redriven" };
   if (!reason || FAILURE_SENTENCE.test(reason)) return undefined;
   return { raw: reason };
@@ -115,7 +154,7 @@ export function sentOccurrences(
 }
 
 /** Filters the log offers. "planned" covers both retrying and queued rows. */
-export const SENT_OUTCOMES = ["all", "failed", "planned", "no_route", "sent"] as const;
+export const SENT_OUTCOMES = ["all", "failed", "planned", "suppressed", "no_route", "sent"] as const;
 export type SentOutcomeFilter = (typeof SENT_OUTCOMES)[number];
 
 export function parseSentOutcome(raw: unknown): SentOutcomeFilter {

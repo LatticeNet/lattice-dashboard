@@ -100,3 +100,20 @@ test("a folded not-routed row counts every occurrence and names the latest", () 
   // An older server without last_seen_at still reads.
   assert.deepEqual(sentOccurrences(row({ outcome: "no_route", repeats: 1 })), { count: 2, last: "2026-10-02T09:00:00Z" });
 });
+
+test("an incident's held message reads as held, and its reason is worded from the values it names", () => {
+  const now = Date.parse("2026-10-03T12:00:00Z");
+  assert.equal(sentState(row({ outcome: "suppressed" }), now), "held");
+  assert.equal(sentTone("held"), "secondary");
+  // Quiet hours hold a planned row until they end; once it tried, it is retrying like any other.
+  assert.equal(sentState(row({ outcome: "planned", held_until: "2026-10-03T23:00:00Z" }), now), "held");
+  assert.equal(sentState(row({ outcome: "planned", held_until: "2026-10-03T11:00:00Z" }), now), "queued");
+  assert.deepEqual(sentNote(row({ outcome: "suppressed", reason: 'held by maintenance window "Kernel upgrade" until 2026-10-03T13:00:00Z' })), {
+    key: "heldMaintenance",
+    params: { name: "Kernel upgrade", until: "2026-10-03T13:00:00Z" },
+  });
+  assert.deepEqual(sentNote(row({ outcome: "suppressed", reason: "snoozed until 2026-10-03T14:30:00Z" })), { key: "heldSnoozed", params: { until: "2026-10-03T14:30:00Z" } });
+  assert.deepEqual(sentNote(row({ outcome: "suppressed", reason: "flapping (5 reopenings within 1h), at most one message an hour" })), { key: "heldFlapping", params: { n: 5 } });
+  assert.deepEqual(sentNote(row({ outcome: "sent", held_until: "2026-10-03T07:00:00Z" })), { key: "quietHours", params: { until: "2026-10-03T07:00:00Z" } });
+  assert.deepEqual(sentNote(row({ outcome: "sent", bark_level: "critical" })), { key: "escalation", params: { level: "critical" } });
+});

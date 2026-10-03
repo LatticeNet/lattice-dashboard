@@ -16,6 +16,10 @@ import {
   fromSelectValue,
   KIND_FIELDS,
   SELECT_DEFAULT,
+  ruleIncidentDraft,
+  ruleIncidentErrors,
+  ruleIncidentRequest,
+  ruleIncidentSummary,
   toSelectValue,
 } from "../notificationsModel.ts";
 
@@ -296,4 +300,54 @@ test("a rule can fall back to any channel but its own, and a save clears a fallb
   assert.equal(fallbackForSave("", ["a"], true), "");
   // A rule that never had a fallback sends nothing for it.
   assert.equal(fallbackForSave("", ["a"], false), undefined);
+});
+
+const zones = new Set(["Asia/Shanghai", "UTC", "America/Los_Angeles"]);
+const knownZone = (zone: string) => zones.has(zone);
+
+test("a new rule escalates after 30 minutes at critical and has no quiet hours", () => {
+  const draft = ruleIncidentDraft(undefined, "America/Los_Angeles");
+  assert.deepEqual(draft, { escalate: true, afterMinutes: "30", barkLevel: "critical", quiet: false, quietStart: "23:00", quietEnd: "07:00", quietZone: "America/Los_Angeles" });
+  assert.deepEqual(ruleIncidentErrors(draft, knownZone), []);
+  // Nothing changed, nothing sent: a rule saves on a server without the fields.
+  assert.deepEqual(ruleIncidentRequest(draft, draft), {});
+});
+
+test("a rule's stored options fill the draft, and only what changed is sent", () => {
+  const rule = { escalation_off: false, escalate_after_minutes: 45, escalation_bark_level: "timeSensitive", quiet_hours: { start: "22:30", end: "06:00", time_zone: "Asia/Shanghai" } };
+  const original = ruleIncidentDraft(rule, "UTC");
+  assert.equal(original.afterMinutes, "45");
+  assert.equal(original.quietZone, "Asia/Shanghai");
+  assert.deepEqual(ruleIncidentRequest({ ...original, afterMinutes: "60" }, original), { escalate_after_minutes: 60 });
+  assert.deepEqual(ruleIncidentRequest({ ...original, escalate: false }, original), { escalation_off: true });
+  assert.deepEqual(ruleIncidentRequest({ ...original, quiet: false }, original), { quiet_hours: null });
+  assert.deepEqual(ruleIncidentRequest({ ...original, quietEnd: "07:00" }, original), { quiet_hours: { start: "22:30", end: "07:00", time_zone: "Asia/Shanghai" } });
+  // Edits to hidden quiet hours fields while quiet hours stay off send nothing.
+  const off = ruleIncidentDraft(undefined, "UTC");
+  assert.deepEqual(ruleIncidentRequest({ ...off, quietStart: "21:00" }, off), {});
+  assert.deepEqual(ruleIncidentRequest({ ...off, quiet: true }, off), { quiet_hours: { start: "23:00", end: "07:00", time_zone: "UTC" } });
+});
+
+test("the fields follow the server's rules: 5 to 1440 minutes, a Bark level, two different times, a known zone", () => {
+  const base = ruleIncidentDraft(undefined, "UTC");
+  assert.deepEqual(ruleIncidentErrors({ ...base, afterMinutes: "4" }, knownZone), ["after"]);
+  assert.deepEqual(ruleIncidentErrors({ ...base, afterMinutes: "1441" }, knownZone), ["after"]);
+  assert.deepEqual(ruleIncidentErrors({ ...base, afterMinutes: "7.5" }, knownZone), ["after"]);
+  assert.deepEqual(ruleIncidentErrors({ ...base, barkLevel: "loud" }, knownZone), ["barkLevel"]);
+  // Quiet hours are checked only when on.
+  assert.deepEqual(ruleIncidentErrors({ ...base, quietZone: "Mars/Olympus" }, knownZone), []);
+  const quiet = { ...base, quiet: true };
+  assert.deepEqual(ruleIncidentErrors({ ...quiet, quietStart: "7:00" }, knownZone), ["quietTimes"]);
+  assert.deepEqual(ruleIncidentErrors({ ...quiet, quietEnd: "23:00" }, knownZone), ["quietSame"]);
+  assert.deepEqual(ruleIncidentErrors({ ...quiet, quietZone: "Mars/Olympus" }, knownZone), ["quietZone"]);
+  assert.deepEqual(ruleIncidentErrors({ ...quiet, quietZone: " " }, knownZone), ["quietZone"]);
+});
+
+test("a rule row names its quiet hours and an escalation that is not the default", () => {
+  assert.deepEqual(ruleIncidentSummary({ escalate_after_minutes: 30, escalation_bark_level: "critical", quiet_hours: null }), { quiet: undefined, escalation: "default" });
+  assert.deepEqual(ruleIncidentSummary({ escalation_off: true }), { quiet: undefined, escalation: "off" });
+  assert.deepEqual(ruleIncidentSummary({ escalate_after_minutes: 60, escalation_bark_level: "critical", quiet_hours: { start: "23:00", end: "07:00", time_zone: "Asia/Shanghai" } }), {
+    quiet: { start: "23:00", end: "07:00", zone: "Asia/Shanghai" },
+    escalation: { minutes: 60, level: "critical" },
+  });
 });

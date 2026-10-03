@@ -14,6 +14,10 @@
  *   ?sent=memory   the server runs without the bolt hot store (history is memory only)
  *   ?sent=many     620 rows, so the log shows the newest 500 of them
  *   ?sent=slow     the deliveries read answers after 4 s, to see the table loading
+ *   ?sent=incidents adds what keepalive incidents leave in the log: an open
+ *                  message a maintenance window held, one flap damping held,
+ *                  one quiet hours hold until morning, and an escalation
+ *                  re-sent at Bark level critical
  *   ?fail=sent     the deliveries read answers 502
  *   ?test=ok       a stored-channel test of Bark urgent succeeds (it fails by default)
  */
@@ -66,6 +70,16 @@ function fixtureRows(): NotifyDelivery[] {
     row({ event_type: "inventory.renewal", channel_id: "ch_bark_info", rule_id: "rule_expiry", rule_name: "Machine renewals", outcome: "sent", title: "Lattice renewal: [cd]-Akkocloud-UK-London-KVM renews in 3 days (2026-10-05)", body: "Renews 2026-10-05 at 9.99 USD per month.", attempts: [attempt(9 * 60 * MINUTE, true)] }, 9 * 60 * MINUTE),
     row({ event_type: "proxy.quota", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "failed", reason: "channel deleted before delivery", title: "Lattice proxy quota: alice at 92%" }, 26 * 60 * MINUTE),
   ];
+  if (flags.get("sent") === "incidents") {
+    const until = new Date(Date.now() + 40 * MINUTE).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const morning = new Date(Date.now() + 7 * 60 * MINUTE).toISOString().replace(/\.\d{3}Z$/, "Z");
+    rows.push(
+      row({ event_type: "service.down", source_id: "inc_svc_hel", outcome: "suppressed", reason: `held by maintenance window "Kernel upgrade" until ${until}`, title: "sing-box inactive on [cd]-hetzner-hel", body: "[cd]-hetzner-hel (node_hel): sing-box has been inactive since 2026-10-03T09:41:00Z." }, 7 * MINUTE),
+      row({ event_type: "node.offline", source_id: "inc_off_mac", outcome: "suppressed", reason: "flapping (5 reopenings within 30m), at most one message an hour", title: "Lattice node offline: [cd]-mac-air" }, 18 * MINUTE),
+      row({ event_type: "monitor.down", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "planned", held_until: morning, title: "Monitor down: HK relay port on [cd]-hetzner-fsn" }, 3 * MINUTE),
+      row({ event_type: "service.down", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "sent", bark_level: "critical", title: "sing-box inactive on [cd]-bandwagon-dc6", attempts: [attempt(11 * MINUTE, true)] }, 11 * MINUTE),
+    );
+  }
   if (flags.get("sent") === "many") {
     for (let i = 0; i < 608; i += 1) {
       rows.push(row({ event_type: i % 3 ? "ssh.login" : "monitor.recovered", channel_id: "ch_bark_info", outcome: "sent", title: `SSH login on node ${i}`, attempts: [attempt((30 + i) * 60 * MINUTE, true)] }, (30 + i) * 60 * MINUTE));

@@ -2215,7 +2215,7 @@ export interface NotifyAttempt {
   duration_ms: number;
 }
 
-export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route";
+export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route" | "suppressed";
 export type NotifyDeliveryRole = "primary" | "fallback" | "test";
 export type NotifyDeliverySource = "server" | "plugin" | "webhook" | "operator";
 
@@ -2249,6 +2249,10 @@ export interface NotifyDelivery {
   /** A not-routed row folds later repeats of the same event within the hour: how many, and the latest. */
   repeats?: number;
   last_seen_at?: string;
+  /** An incident escalation re-sent at this Bark level. */
+  bark_level?: string;
+  /** The rule's quiet hours hold it until then. */
+  held_until?: string;
 }
 
 export interface NotifyDeliveriesQuery {
@@ -2302,6 +2306,19 @@ export interface NotifyRuleView {
   updated_at: string;
   /** Receives the rule's message when every channel above failed it for good. */
   fallback_channel_id?: string;
+  /** Effective escalation of unacknowledged critical incidents (defaults included). */
+  escalation_off?: boolean;
+  escalate_after_minutes?: number;
+  escalation_bark_level?: string;
+  /** Null when the rule has no quiet hours (the default). */
+  quiet_hours?: NotifyQuietHours | null;
+}
+
+/** A daily window in a time zone, "HH:MM"; an end not after the start runs past midnight. */
+export interface NotifyQuietHours {
+  start: string;
+  end: string;
+  time_zone: string;
 }
 
 /**
@@ -2380,6 +2397,11 @@ export interface NotifyRuleUpsertRequest {
   enabled?: boolean;
   /** Absent keeps the rule's fallback, "" clears it, an id sets it. */
   fallback_channel_id?: string;
+  escalation_off?: boolean;
+  escalate_after_minutes?: number;
+  escalation_bark_level?: string;
+  /** Absent keeps the rule's quiet hours, null turns them off. */
+  quiet_hours?: NotifyQuietHours | null;
 }
 
 export interface AgentUpdatePolicy {

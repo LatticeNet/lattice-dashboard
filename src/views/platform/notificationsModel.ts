@@ -1,4 +1,4 @@
-import type { NotifyChannelHealth, NotifyKind } from "@/lib/api";
+import type { NotifyChannelHealth, NotifyKind, NotifyRuleUpsertRequest, NotifyRuleView } from "@/lib/api";
 
 /**
  * The channel form is a kind switch over a list of config fields. The lists
@@ -332,4 +332,98 @@ export function fallbackForSave(selected: string, primaryIds: readonly string[],
   const value = primaryIds.includes(selected) ? "" : selected;
   if (!value && !hadFallback) return undefined;
   return value;
+}
+
+/* ------------------------- incident escalation and quiet hours ------------------------- */
+
+/** lattice-server incidents.go: re-send an unacknowledged critical incident after 30 min at Bark level critical. */
+export const ESCALATE_DEFAULT_MINUTES = 30;
+export const ESCALATE_MIN_MINUTES = 5;
+export const ESCALATE_MAX_MINUTES = 1440;
+export const ESCALATION_DEFAULT_LEVEL = "critical";
+
+/** The rule form's escalation and quiet hours fields, as the inputs hold them. */
+export interface RuleIncidentDraft {
+  escalate: boolean;
+  /** The number input's text. */
+  afterMinutes: string;
+  barkLevel: string;
+  quiet: boolean;
+  /** "HH:MM", what a time input holds. */
+  quietStart: string;
+  quietEnd: string;
+  quietZone: string;
+}
+
+/**
+ * The draft for a rule, or for a new one: escalation on after 30 minutes at
+ * critical, quiet hours off (the operator's default), with 23:00 to 07:00 in
+ * the browser's zone ready if they are turned on. A rule from a server
+ * without these fields reads as the defaults.
+ */
+export function ruleIncidentDraft(
+  rule: Pick<NotifyRuleView, "escalation_off" | "escalate_after_minutes" | "escalation_bark_level" | "quiet_hours"> | undefined,
+  browserZone: string,
+): RuleIncidentDraft {
+  const quiet = rule?.quiet_hours ?? null;
+  return {
+    escalate: !rule?.escalation_off,
+    afterMinutes: String(rule?.escalate_after_minutes || ESCALATE_DEFAULT_MINUTES),
+    barkLevel: rule?.escalation_bark_level || ESCALATION_DEFAULT_LEVEL,
+    quiet: !!quiet,
+    quietStart: quiet?.start ?? "23:00",
+    quietEnd: quiet?.end ?? "07:00",
+    quietZone: quiet?.time_zone ?? (browserZone || "Asia/Shanghai"),
+  };
+}
+
+export type RuleIncidentError = "after" | "barkLevel" | "quietTimes" | "quietSame" | "quietZone";
+
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** What keeps the fields from saving, by the server's rules (applyNotifyRuleOptions). */
+export function ruleIncidentErrors(draft: RuleIncidentDraft, knownZone: (zone: string) => boolean): RuleIncidentError[] {
+  const errors: RuleIncidentError[] = [];
+  const after = Number(draft.afterMinutes);
+  if (!Number.isInteger(after) || after < ESCALATE_MIN_MINUTES || after > ESCALATE_MAX_MINUTES) errors.push("after");
+  if (!(BARK_LEVELS as readonly string[]).includes(draft.barkLevel)) errors.push("barkLevel");
+  if (draft.quiet) {
+    if (!CLOCK.test(draft.quietStart) || !CLOCK.test(draft.quietEnd)) errors.push("quietTimes");
+    else if (draft.quietStart === draft.quietEnd) errors.push("quietSame");
+    if (!draft.quietZone.trim() || !knownZone(draft.quietZone.trim())) errors.push("quietZone");
+  }
+  return errors;
+}
+
+/**
+ * The request fields for a save: only what changed from `original`, like the
+ * fallback, so a rule whose escalation and quiet hours were left alone saves
+ * on a server that does not know them. Turning quiet hours off sends null.
+ */
+export function ruleIncidentRequest(
+  draft: RuleIncidentDraft,
+  original: RuleIncidentDraft,
+): Pick<NotifyRuleUpsertRequest, "escalation_off" | "escalate_after_minutes" | "escalation_bark_level" | "quiet_hours"> {
+  const out: Pick<NotifyRuleUpsertRequest, "escalation_off" | "escalate_after_minutes" | "escalation_bark_level" | "quiet_hours"> = {};
+  if (draft.escalate !== original.escalate) out.escalation_off = !draft.escalate;
+  if (Number(draft.afterMinutes) !== Number(original.afterMinutes)) out.escalate_after_minutes = Number(draft.afterMinutes);
+  if (draft.barkLevel !== original.barkLevel) out.escalation_bark_level = draft.barkLevel;
+  const zone = draft.quietZone.trim();
+  const quietChanged =
+    draft.quiet !== original.quiet ||
+    (draft.quiet && (draft.quietStart !== original.quietStart || draft.quietEnd !== original.quietEnd || zone !== original.quietZone.trim()));
+  if (quietChanged) out.quiet_hours = draft.quiet ? { start: draft.quietStart, end: draft.quietEnd, time_zone: zone } : null;
+  return out;
+}
+
+/** One line for a rule row: its quiet hours, and escalation when it is not the default. Empty when both are default. */
+export function ruleIncidentSummary(
+  rule: Pick<NotifyRuleView, "escalation_off" | "escalate_after_minutes" | "escalation_bark_level" | "quiet_hours">,
+): { quiet?: { start: string; end: string; zone: string }; escalation: "off" | "default" | { minutes: number; level: string } } {
+  const quiet = rule.quiet_hours ? { start: rule.quiet_hours.start, end: rule.quiet_hours.end, zone: rule.quiet_hours.time_zone } : undefined;
+  if (rule.escalation_off) return { quiet, escalation: "off" };
+  const minutes = rule.escalate_after_minutes || ESCALATE_DEFAULT_MINUTES;
+  const level = rule.escalation_bark_level || ESCALATION_DEFAULT_LEVEL;
+  if (minutes === ESCALATE_DEFAULT_MINUTES && level === ESCALATION_DEFAULT_LEVEL) return { quiet, escalation: "default" };
+  return { quiet, escalation: { minutes, level } };
 }
