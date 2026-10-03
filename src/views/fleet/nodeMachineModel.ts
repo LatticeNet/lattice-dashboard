@@ -53,14 +53,28 @@ export function renewalState(machine: MachineView): RenewalState {
 export const MACHINES_FRESH_MS = 60_000;
 
 /**
- * Whether the sheet reads the machine list again on opening `nodeId`: it was
- * never read, the read is over a minute old, or it has no row for the node.
- * A missing row means no access only when the read came after the node
- * enrolled, so the sheet reads again before it says so.
+ * When the sheet last read the machine list, and the nodes the page listed
+ * as that read started. The page's list came from an earlier read, so every
+ * node in it existed before the machine read began.
  */
-export function machinesNeedRead(machines: readonly MachineView[] | undefined, nodeId: string, readAt: number, now: number): boolean {
-  if (!machines || now - readAt > MACHINES_FRESH_MS) return true;
-  return !machines.some((entry) => entry.node_id === nodeId);
+export interface MachinesRead {
+  at: number;
+  listed: ReadonlySet<string>;
+}
+
+/**
+ * Whether the sheet reads the machine list again on opening `nodeId`: it was
+ * never read, the read is over a minute old, or it has no row for a node the
+ * page did not list when the read started. GET /api/machines answers a row
+ * for every node the principal may read, so a missing row for a node that
+ * existed before the read is a lack of access, and reading again would only
+ * say so again (stepping through several such nodes reads nothing). Only a
+ * node that enrolled since may be missing for another reason.
+ */
+export function machinesNeedRead(machines: readonly MachineView[] | undefined, nodeId: string, read: MachinesRead, now: number): boolean {
+  if (!machines || now - read.at > MACHINES_FRESH_MS) return true;
+  if (machines.some((entry) => entry.node_id === nodeId)) return false;
+  return !read.listed.has(nodeId);
 }
 
 /**

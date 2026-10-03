@@ -28,9 +28,14 @@
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
- * `?machinesLate=<node ids>` leaves those nodes out of the first machines
- * read (they enrolled after it); `?machinesHidden=<node ids>` leaves them out
- * of every read (no inventory:read on those nodes).
+ * `?drop=<scopes>` removes those scopes from the principal while every read
+ * still answers (`?drop=inventory:admin` draws a reader who may learn that a
+ * console link is stored but may not reveal it).
+ * `?machinesLate=<node ids>` enrolls those nodes as the first machines read
+ * starts: neither that read nor a node list read before it has them, and
+ * every read after it does (the Nodes page's next poll lists them).
+ * `?machinesHidden=<node ids>` leaves them out of every machines read (no
+ * inventory:read on those nodes) while the node list still has them.
  *
  * Only the calls these pages make are implemented; anything else is missing
  * from `api` and fails loudly.
@@ -87,6 +92,9 @@ const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "
 const idList = (name: string) => new Set((PARAMS.get(name) ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
 const MACHINES_LATE = idList("machinesLate");
 const MACHINES_HIDDEN = idList("machinesHidden");
+/** Whether a node has enrolled yet, as the reads see it (`?machinesLate=`). */
+const enrolled = (node: { id: string }) => !MACHINES_LATE.has(node.id) || (reads.get("machines") ?? 0) >= 1;
+const DROPPED_SCOPES = idList("drop");
 
 const EXPIRE_MS = Number(PARAMS.get("expire") ?? "");
 let sessionEndsAt = EXPIRE_MS > 0 ? Date.now() + EXPIRE_MS : Number.POSITIVE_INFINITY;
@@ -142,7 +150,7 @@ const principal: Principal = {
     "notify:admin",
     "proxy:read",
     "log:read",
-  ].filter((scope) => ![...DENY].some((name) => DENIED_SCOPES[name] === scope)),
+  ].filter((scope) => !DROPPED_SCOPES.has(scope) && ![...DENY].some((name) => DENIED_SCOPES[name] === scope)),
   server_allowlist: [],
   csrf_token: "harness",
   totp_enabled: true,
@@ -213,8 +221,8 @@ export const api = {
     ssoProviders: () => delay([]),
   },
   nodes: {
-    list: () => answer("nodes", () => ({ nodes: nodes.map((n) => ({ ...n })) })),
-    geo: () => answer("geo", () => ({ nodes: nodes.map((n) => ({ ...n })) })),
+    list: () => answer("nodes", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
+    geo: () => answer("geo", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
     duplicates: () => delay({ groups: SHAPE === "dense" ? [{ reason: "host_fingerprint", confidence: "high", signal: "machine-id", node_ids: [nodes[1]!.id, nodes[33]!.id] }] : [] }),
     disable: (id: string, disabled: boolean) => {
       nodes = nodes.map((n) => (n.id === id ? { ...n, disabled: disabled || undefined, status: disabled ? "disabled" : "online" } : n));
