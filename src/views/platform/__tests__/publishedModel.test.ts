@@ -5,6 +5,7 @@ import {
   clientFamily,
   clientUrl,
   fetchFreshness,
+  fleetRefusalKind,
   identityLinkSlug,
   identityLinkState,
   intervalFieldError,
@@ -17,6 +18,7 @@ import {
   publishedState,
   renderBudgetTone,
   revealedUrl,
+  shareFleetWarning,
   sourceLabel,
 } from "../publishedModel.ts";
 
@@ -139,6 +141,22 @@ test("a render budget reads full, quiet, low or exhausted", () => {
   assert.equal(renderBudgetTone({ remaining: 3, burst: 24, per_hour: 60, exhausted: false, refused: 0 }), "warning");
   assert.equal(renderBudgetTone({ remaining: 20, burst: 24, per_hour: 60, exhausted: false, refused: 2 }), "warning");
   assert.equal(renderBudgetTone({ remaining: 0, burst: 24, per_hour: 60, exhausted: true, refused: 9 }), "exhausted");
+});
+
+test("a share's fleet warning puts the operator's flag first, then what the server finds now", () => {
+  assert.equal(shareFleetWarning({}), undefined);
+  assert.equal(shareFleetWarning({ publishes_fleet_credentials: true }), "flagged");
+  assert.equal(shareFleetWarning({ publishes_fleet_credentials: true, fleet_feed_now: "fleet" }), "flagged");
+  assert.equal(shareFleetWarning({ fleet_feed_now: "fleet" }), "detected");
+  assert.equal(shareFleetWarning({ fleet_feed_now: "unknown" }), "unchecked");
+});
+
+test("a fleet refusal is unchecked only when the server says it could not read the records", () => {
+  assert.equal(fleetRefusalKind({ error: { code: "fleet_feed_flag_required" }, fleet_feed: "fleet", via: "Everyone" }), "fleet");
+  assert.equal(fleetRefusalKind({ error: { code: "fleet_feed_flag_required" }, fleet_feed: "unknown" }), "unchecked");
+  // An older server sends no verdict; its only refusal was a fleet feed.
+  assert.equal(fleetRefusalKind({ error: { code: "fleet_feed_flag_required" } }), "fleet");
+  assert.equal(fleetRefusalKind(undefined), "fleet");
 });
 
 test("an identity link's state puts the route facts first and tells never-fetched apart", () => {

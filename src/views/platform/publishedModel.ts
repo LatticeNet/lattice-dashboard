@@ -7,7 +7,14 @@
  * each one serve? This module turns the server's records into that answer, and
  * keeps the derivation testable away from the view.
  */
-import type { IdentityLinkStatus, PublishingRecord, ShareRenderBudget, ShareRevealResponse, SubscriptionShareView } from "@/lib/api";
+import type {
+  FleetFeedRefusalBody,
+  IdentityLinkStatus,
+  PublishingRecord,
+  ShareRenderBudget,
+  ShareRevealResponse,
+  SubscriptionShareView,
+} from "@/lib/api";
 
 export type PublishedState = "live" | "paused" | "expired" | "expiring" | "unresolved";
 
@@ -150,6 +157,34 @@ export function renderBudgetTone(budget: ShareRenderBudget | undefined): RenderB
   if (budget.exhausted) return "exhausted";
   if (budget.refused > 0 || budget.remaining <= Math.max(1, Math.floor(budget.burst / 4))) return "warning";
   return "quiet";
+}
+
+/**
+ * What a share's fleet-feed warning says, if anything. "flagged": published
+ * with the flag on purpose. "detected": its record now reads vpn-core's
+ * identity-less export and nobody confirmed it (the record changed after the
+ * share was made). "unchecked": the server cannot read Sub-Store's record
+ * list, so it cannot tell.
+ */
+export type ShareFleetWarning = "flagged" | "detected" | "unchecked";
+
+export function shareFleetWarning(
+  share: Pick<SubscriptionShareView, "publishes_fleet_credentials" | "fleet_feed_now">,
+): ShareFleetWarning | undefined {
+  if (share.publishes_fleet_credentials) return "flagged";
+  if (share.fleet_feed_now === "fleet") return "detected";
+  if (share.fleet_feed_now === "unknown") return "unchecked";
+  return undefined;
+}
+
+/**
+ * Which case a fleet_feed_flag_required refusal is, from the body the server
+ * sends beside the error. A body without the field is an older server, whose
+ * only case was a fleet feed.
+ */
+export function fleetRefusalKind(body: unknown): "fleet" | "unchecked" {
+  const kind = body && typeof body === "object" ? (body as FleetFeedRefusalBody).fleet_feed : undefined;
+  return kind === "unknown" ? "unchecked" : "fleet";
 }
 
 /* ------------------------------------------------------------------ */

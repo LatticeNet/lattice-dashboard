@@ -2491,8 +2491,22 @@ export interface SubscriptionShareView {
   update_interval_hours?: number;
   /** Created with the explicit flag for a record that reads the identity-less vpn-core export: it hands out every user's credentials. */
   publishes_fleet_credentials?: boolean;
+  /**
+   * The fleet-feed guard re-run at this read, for an unflagged Sub-Store
+   * share: "fleet" when its record now reads the identity-less vpn-core
+   * export (edited after the share was made), "unknown" when the server
+   * cannot read the record list to check. Absent when clean or flagged.
+   */
+  fleet_feed_now?: "fleet" | "unknown";
   /** The link's plugin render budget, present once it has rendered since the server started. */
   render_budget?: ShareRenderBudget;
+}
+
+/** The body beside a 400 fleet_feed_flag_required: which case refused the share. */
+export interface FleetFeedRefusalBody {
+  fleet_feed?: "fleet" | "unknown";
+  /** The record that reads the export, for "fleet". */
+  via?: string;
 }
 
 /**

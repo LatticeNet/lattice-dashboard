@@ -1186,6 +1186,16 @@ export default {
         refusedHint:
           "It reads vpn-core's export without an identity, so a share of it gives every identity's credentials to whoever holds the URL. A per-identity link on vpn-core Users hands one person only their own.",
         ack: "Publish it anyway. I understand this URL hands out every user's credentials.",
+        detectedDetail:
+          "Its record reads vpn-core's export without an identity, so whoever holds this URL gets every identity's credentials. The record changed after this share was published, so nobody confirmed it. Per-identity links on vpn-core Users replace it.",
+        uncheckedShort: "Credentials not checked",
+        uncheckedTitle: "Lattice cannot check what this URL hands out",
+        uncheckedDetail:
+          "Sub-Store's record list is too large or damaged for the server to read, so it cannot tell whether this record reads vpn-core's export without an identity, which would hand out every user's credentials.",
+        refusedUncheckedTitle: "Lattice cannot check {record}",
+        refusedUncheckedHint:
+          "Sub-Store's record list is too large or damaged for the server to read, so it cannot tell whether this record reads vpn-core's export without an identity. If it does, the URL hands out every user's credentials.",
+        ackUnchecked: "Publish it anyway. I understand this URL may hand out every user's credentials.",
       },
       created: "Created",
       rotatedAt: "Rotated",

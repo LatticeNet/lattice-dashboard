@@ -103,6 +103,7 @@ import {
   MAX_UPDATE_INTERVAL_HOURS,
   SHARE_TARGETS,
   clientUrl,
+  fleetRefusalKind,
   intervalFieldError,
   intervalFieldFor,
   intervalFieldValue,
@@ -112,6 +113,7 @@ import {
   publishedState,
   renderBudgetTone,
   revealedUrl,
+  shareFleetWarning,
   sourceLabel,
   type PublishedState,
 } from "@/views/platform/publishedModel";
@@ -518,6 +520,13 @@ const draft = ref<{
  * box. Picking another record or source clears it.
  */
 const fleetFeedRefusal = ref("");
+/**
+ * Which case refused it, from the verdict the server sends beside the error:
+ * the record reads the fleet export ("fleet"), or the server could not read
+ * Sub-Store's record list to check ("unchecked"). The two need different
+ * words; the box and the flag are the same.
+ */
+const fleetFeedRefusalKind = ref<"fleet" | "unchecked">("fleet");
 watch(
   () => [draft.value.kind, draft.value.pluginId, draft.value.subscriptionId, draft.value.proxyUserId] as const,
   () => {
@@ -685,6 +694,7 @@ async function publish(): Promise<void> {
     if (error instanceof ApiError && error.code === "fleet_feed_flag_required") {
       // Answered in the form, beside the box that lifts it, not in a toast that fades.
       fleetFeedRefusal.value = error.serverMessage || t("networking.shares.fleetFeed.refused");
+      fleetFeedRefusalKind.value = fleetRefusalKind(error.body);
       draft.value.fleetCredentials = false;
     } else {
       toast.error(describe(error, t("networking.shares.publishFailed")));
@@ -986,9 +996,9 @@ watch(() => route.query, () => void applyDeepLink());
             <PlugZap class="size-3 shrink-0" aria-hidden="true" />
             {{ $t(`platform.publishing.renderer.${rendererState(row)}`) }}
           </span>
-          <span v-if="row.publishes_fleet_credentials" class="mt-0.5 flex items-center gap-1 text-xs text-warning-text">
+          <span v-if="shareFleetWarning(row)" class="mt-0.5 flex items-center gap-1 text-xs text-warning-text" data-testid="share-fleet-badge">
             <ShieldAlert class="size-3 shrink-0" aria-hidden="true" />
-            {{ $t('networking.shares.fleetFeed.short') }}
+            {{ $t(shareFleetWarning(row) === 'unchecked' ? 'networking.shares.fleetFeed.uncheckedShort' : 'networking.shares.fleetFeed.short') }}
           </span>
         </div>
       </template>
@@ -1038,12 +1048,25 @@ watch(() => route.query, () => void applyDeepLink());
         </div>
 
         <div
-          v-if="selected.publishes_fleet_credentials"
+          v-if="shareFleetWarning(selected)"
           class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
           data-testid="share-fleet-feed"
+          :data-fleet-warning="shareFleetWarning(selected)"
         >
-          <p class="font-medium">{{ $t('networking.shares.fleetFeed.title') }}</p>
-          <p class="mt-1 text-muted-foreground">{{ $t('networking.shares.fleetFeed.detail') }}</p>
+          <p class="font-medium">
+            {{ $t(shareFleetWarning(selected) === 'unchecked' ? 'networking.shares.fleetFeed.uncheckedTitle' : 'networking.shares.fleetFeed.title') }}
+          </p>
+          <p class="mt-1 text-muted-foreground">
+            {{
+              $t(
+                shareFleetWarning(selected) === 'unchecked'
+                  ? 'networking.shares.fleetFeed.uncheckedDetail'
+                  : shareFleetWarning(selected) === 'detected'
+                    ? 'networking.shares.fleetFeed.detectedDetail'
+                    : 'networking.shares.fleetFeed.detail',
+              )
+            }}
+          </p>
         </div>
 
         <div>
@@ -1366,11 +1389,17 @@ watch(() => route.query, () => void applyDeepLink());
           :title="fleetFeedRefusal"
           data-testid="share-fleet-refusal"
         >
-          <p class="font-medium">{{ $t('networking.shares.fleetFeed.refusedTitle', { record: draftRecordName }) }}</p>
-          <p class="text-muted-foreground">{{ $t('networking.shares.fleetFeed.refusedHint') }}</p>
+          <template v-if="fleetFeedRefusalKind === 'unchecked'">
+            <p class="font-medium">{{ $t('networking.shares.fleetFeed.refusedUncheckedTitle', { record: draftRecordName }) }}</p>
+            <p class="text-muted-foreground">{{ $t('networking.shares.fleetFeed.refusedUncheckedHint') }}</p>
+          </template>
+          <template v-else>
+            <p class="font-medium">{{ $t('networking.shares.fleetFeed.refusedTitle', { record: draftRecordName }) }}</p>
+            <p class="text-muted-foreground">{{ $t('networking.shares.fleetFeed.refusedHint') }}</p>
+          </template>
           <label class="flex items-start gap-2 text-foreground">
             <Checkbox v-model="draft.fleetCredentials" class="mt-0.5" data-testid="share-fleet-ack" />
-            <span>{{ $t('networking.shares.fleetFeed.ack') }}</span>
+            <span>{{ $t(fleetFeedRefusalKind === 'unchecked' ? 'networking.shares.fleetFeed.ackUnchecked' : 'networking.shares.fleetFeed.ack') }}</span>
           </label>
         </div>
       </form>
