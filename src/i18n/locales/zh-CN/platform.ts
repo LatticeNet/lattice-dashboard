@@ -1306,6 +1306,7 @@ export default {
       },
       witness: {
         title: "控制面见证者",
+        adminOnly: "它的状态只对具备 {scope} 的操作者显示，因为其中会列出从外部监测这个控制面的节点和 Bark 服务器。",
         description: "由一个节点从外部、按客户端访问的地址监测这个控制面；控制面不再应答时，通过该节点自己的 Bark 服务器推送。Lattice 无法报告自己的宕机，见证者可以。",
         watches: "监测 {url}",
         noPublicUrl: "这台服务器没有配置公网地址（LATTICE_PUBLIC_URL），见证者没有可监测的地址。",

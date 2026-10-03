@@ -13,6 +13,7 @@ import {
   TriangleAlert,
   Pencil,
   Plus,
+  Radar,
   RefreshCw,
   Send,
   Trash2,
@@ -1223,6 +1224,16 @@ async function confirmDeleteRule(): Promise<void> {
       @refresh="witnessQuery.refresh()"
       @filed="witnessQuery.refresh()"
     />
+    <!-- The server answers the witness to notify:admin only; a read-only operator learns it exists and why it is not shown. -->
+    <Card v-else data-testid="witness-card-locked">
+      <CardContent class="flex items-start gap-2.5 py-3 text-sm">
+        <Radar aria-hidden="true" class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <p class="min-w-0">
+          <span class="font-medium">{{ $t('platform.notifications.witness.title') }}</span>
+          <span class="block text-muted-foreground">{{ $t('platform.notifications.witness.adminOnly', { scope: 'notify:admin' }) }}</span>
+        </p>
+      </CardContent>
+    </Card>
 
     <Card>
       <CardHeader>

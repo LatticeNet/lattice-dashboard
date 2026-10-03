@@ -1413,6 +1413,7 @@ export default {
       },
       witness: {
         title: "Control-plane witness",
+        adminOnly: "Its state is shown to operators with {scope}, because it names the node and the Bark server that watch this control plane from outside.",
         description: "One node watches this control plane from outside, at the address clients use, and pushes through that node's own Bark server when it stops answering. Lattice cannot report its own outage; the witness can.",
         watches: "Watches {url}",
         noPublicUrl: "This server has no public URL (LATTICE_PUBLIC_URL), so a witness has no address to watch.",
