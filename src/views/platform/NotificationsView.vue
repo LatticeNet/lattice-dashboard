@@ -66,6 +66,7 @@ import {
   sentCause,
   sentEventChoices,
   sentNote,
+  sentOccurrences,
   sentQuery,
   sentState,
   sentTone,
@@ -573,10 +574,20 @@ function sentNoteText(d: NotifyDelivery): string {
   return "key" in note ? t(`platform.notifications.sent.note.${note.key}`) : note.raw;
 }
 
-/** Rows that carry a sentence under them: why it failed, a note, or what a fallback stood in for. */
+/** Rows that carry a sentence under them: why it failed, a note, how often an unrouted event repeated, or what a fallback stood in for. */
 function sentHasDetail(d: NotifyDelivery): boolean {
   const state = sentState(d);
-  return ((state === "failed" || state === "retrying") && !!sentCause(d)) || !!sentNote(d) || (d.role === "fallback" && !!d.fallback_for);
+  return (
+    ((state === "failed" || state === "retrying") && !!sentCause(d)) ||
+    !!sentNote(d) ||
+    !!sentOccurrences(d) ||
+    (d.role === "fallback" && !!d.fallback_for)
+  );
+}
+
+function sentOccurrencesText(d: NotifyDelivery): string {
+  const seen = sentOccurrences(d);
+  return seen ? t("platform.notifications.sent.occurrences", { n: seen.count, when: formatRelativeTime(seen.last) }) : "";
 }
 
 /* A row opens in the object sheet (design 23, section 3.5): the message, the receipts and where it came from. */
@@ -1317,6 +1328,7 @@ async function confirmDeleteRule(): Promise<void> {
                 {{ causeText(sentCause(row)) }}
               </p>
               <p v-if="sentNote(row)">{{ sentNoteText(row) }}</p>
+              <p v-if="sentOccurrences(row)" data-testid="sent-occurrences">{{ sentOccurrencesText(row) }}</p>
               <p v-if="row.role === 'fallback' && row.fallback_for">{{ $t('platform.notifications.sent.fallbackFor', { names: row.fallback_for }) }}</p>
             </div>
           </template>
@@ -1351,6 +1363,7 @@ async function confirmDeleteRule(): Promise<void> {
             {{ causeText(sentCause(openDelivery)) }}
           </p>
           <p v-if="sentNote(openDelivery)" class="text-muted-foreground">{{ sentNoteText(openDelivery) }}</p>
+          <p v-if="sentOccurrences(openDelivery)" class="text-muted-foreground">{{ sentOccurrencesText(openDelivery) }}</p>
           <p v-if="openDelivery.role === 'fallback' && openDelivery.fallback_for" class="text-muted-foreground">{{ $t('platform.notifications.sent.fallbackFor', { names: openDelivery.fallback_for }) }}</p>
           <p v-if="sentState(openDelivery) === 'retrying' && openDelivery.next_attempt_at" class="text-muted-foreground">
             {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(openDelivery.next_attempt_at) }) }}
@@ -1359,6 +1372,7 @@ async function confirmDeleteRule(): Promise<void> {
 
         <section class="space-y-1.5">
           <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.notifications.sent.sheet.message') }}</h3>
+          <p v-if="openDelivery.truncated" class="text-xs text-muted-foreground" data-testid="sent-truncated">{{ $t('platform.notifications.sent.sheet.truncated') }}</p>
           <div class="rounded-md border border-border px-3 py-2">
             <p class="font-medium break-words">{{ openDelivery.title || openDelivery.event_type }}</p>
             <p v-if="openDelivery.body" class="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">{{ openDelivery.body }}</p>
@@ -1384,9 +1398,13 @@ async function confirmDeleteRule(): Promise<void> {
             <dd class="break-words">{{ sentOrigin(openDelivery) }}</dd>
             <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.colChannel') }}</dt>
             <dd class="break-words">{{ sentChannelLabel(openDelivery) }}<span v-if="openDelivery.channel_kind" class="text-muted-foreground"> · {{ openDelivery.channel_kind }}</span></dd>
-            <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.created') }}</dt>
+            <dt class="text-muted-foreground">{{ $t(sentOccurrences(openDelivery) ? 'platform.notifications.sent.sheet.firstSeen' : 'platform.notifications.sent.sheet.created') }}</dt>
             <dd class="tabular">{{ formatDateTime(openDelivery.created_at) }}</dd>
-            <template v-if="openDelivery.settled_at">
+            <template v-if="sentOccurrences(openDelivery)">
+              <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.lastSeen') }}</dt>
+              <dd class="tabular">{{ formatDateTime(sentOccurrences(openDelivery)?.last ?? openDelivery.created_at) }}</dd>
+            </template>
+            <template v-if="openDelivery.settled_at && !sentOccurrences(openDelivery)">
               <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.settled') }}</dt>
               <dd class="tabular">{{ formatDateTime(openDelivery.settled_at) }}</dd>
             </template>

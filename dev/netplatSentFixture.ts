@@ -6,7 +6,9 @@
  * with HTTP 400, so node.offline pages fail and the rule's fallback (with
  * `?channels=4`) carries them, notify.channel_failing goes to Bark info, a
  * Bark 502 is being retried, an inbound webhook's event reaches no rule, a
- * plugin message goes everywhere, and a restart redrove one page.
+ * plugin message goes everywhere (one long enough that the server cut it), an
+ * unrouted ssh.login folded 37 repeats into one row, and a restart redrove
+ * one page.
  *
  *   ?sent=empty    the outbox holds nothing
  *   ?sent=memory   the server runs without the bolt hot store (history is memory only)
@@ -56,7 +58,9 @@ function fixtureRows(): NotifyDelivery[] {
     row({ event_type: "node.offline", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "failed", reason: "upstream status 400", title: "Lattice node offline: [cd]-mkcloud-hr-iplc", body: "[cd]-mkcloud-hr-iplc (node_hr): no heartbeat since 2026-10-02T08:20:00Z.", attempts: [attempt(13 * MINUTE, false, "upstream_4xx", 400)] }, 13 * MINUTE),
     row({ event_type: "notify.test", source: "operator", role: "test", channel_id: "ch_bark_urgent", outcome: "failed", reason: "upstream status 400", title: "Lattice test", body: "Test message for the bark channel \"Bark urgent\", sent from Notifications at 2026-10-02T08:52:00Z. If you can read this, the channel works.", attempts: [attempt(20 * MINUTE, false, "upstream_4xx", 400, 310)] }, 20 * MINUTE),
     row({ event_type: "backup.finished", source: "webhook", source_id: "wh_backup", outcome: "no_route", reason: "no enabled rule routes this event type", title: "Backup of nas-home finished" }, 26 * MINUTE),
+    row({ event_type: "ssh.login", outcome: "no_route", reason: "no enabled rule routes this event type", title: "SSH login on [Metix]-DMIT-1", body: "deploy from 203.0.113.61 (publickey)", repeats: 36, last_seen_at: iso(-2 * MINUTE) }, 47 * MINUTE),
     row({ event_type: "plugin.latticenet.sub-store.message", source: "plugin", source_id: "latticenet.sub-store", channel_id: "ch_bark_info", outcome: "sent", title: "Sub-Store sync failed for 2 of 14 subscriptions", body: "upstream answered 503 for airport-a and airport-b; the previous artifacts stay published.", attempts: [attempt(31 * MINUTE, true)] }, 31 * MINUTE),
+    row({ event_type: "plugin.latticenet.sub-store.message", source: "plugin", source_id: "latticenet.sub-store", channel_id: "ch_bark_info", outcome: "sent", truncated: true, title: "Sub-Store conversion report for 14 subscriptions", body: Array.from({ length: 60 }, (_, i) => `airport-${String(i + 1).padStart(2, "0")}: 42 nodes kept, 3 dropped by the region filter, 1 renamed`).join("\n").slice(0, 4084) + " [truncated]", attempts: [attempt(33 * MINUTE, true)] }, 33 * MINUTE),
     row({ event_type: "node.offline", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "sent", reason: "redriven after restart", redriven: true, title: "Lattice node offline: [cd]-xuezhang-jp-NAT", body: "[cd]-xuezhang-jp-NAT (node_xjp): no heartbeat since 2026-10-02T06:40:00Z.", attempts: [attempt(2 * 60 * MINUTE, true, undefined, undefined, 420)] }, 2 * 60 * MINUTE + 30_000),
     row({ event_type: "ssh.login", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "sent", title: "SSH login on [Metix]-DMIT-1", body: "root from 203.0.113.44 (publickey)", attempts: [attempt(3 * 60 * MINUTE, true)] }, 3 * 60 * MINUTE),
     row({ event_type: "inventory.renewal", channel_id: "ch_bark_info", rule_id: "rule_expiry", rule_name: "Machine renewals", outcome: "sent", title: "Lattice renewal: [cd]-Akkocloud-UK-London-KVM renews in 3 days (2026-10-05)", body: "Renews 2026-10-05 at 9.99 USD per month.", attempts: [attempt(9 * 60 * MINUTE, true)] }, 9 * 60 * MINUTE),
@@ -94,7 +98,7 @@ export function sentPage(query: NotifyDeliveriesQuery): NotifyDeliveriesResponse
  * A stored-channel test: Bark urgent refuses (HTTP 400) unless `?test=ok`,
  * every other channel delivers. The channel's health moves the way the
  * server's does: a pass clears a failing channel, a failure only updates the
- * last failure.
+ * last failure and never starts the failing window.
  */
 export function testStoredChannel(id: string): NotifyChannelTestResponse {
   const channel = NOTIFY_CHANNELS.find((c) => c.id === id);
@@ -118,7 +122,7 @@ export function testStoredChannel(id: string): NotifyChannelTestResponse {
   const prev = channel?.health ?? { state: "unknown", consecutive_failures: 0 };
   const health = ok
     ? { state: "ok", last_attempt_at: at, last_ok_at: at, consecutive_failures: 0 }
-    : { ...prev, state: prev.state === "failing" ? "failing" : "degraded", last_attempt_at: at, last_failure_at: at, last_failure_kind: "upstream_4xx", last_status_code: 400, failing_since: prev.failing_since ?? at };
+    : { ...prev, state: prev.state === "failing" ? "failing" : "degraded", last_attempt_at: at, last_failure_at: at, last_failure_kind: "upstream_4xx", last_status_code: 400 };
   if (channel) channel.health = health;
   return { ok, delivery, health };
 }

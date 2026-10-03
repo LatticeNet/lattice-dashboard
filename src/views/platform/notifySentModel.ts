@@ -101,6 +101,19 @@ export function sentNote(delivery: Pick<NotifyDelivery, "reason" | "redriven">):
   return { raw: reason };
 }
 
+/**
+ * A not-routed row stands for every repeat of its event within the hour
+ * (the server folds them so a chatty unrouted type keeps one row): how many
+ * times it happened and when last, or nothing for a row that happened once.
+ */
+export function sentOccurrences(
+  delivery: Pick<NotifyDelivery, "repeats" | "last_seen_at" | "created_at">,
+): { count: number; last: string } | undefined {
+  const repeats = delivery.repeats ?? 0;
+  if (repeats < 1) return undefined;
+  return { count: repeats + 1, last: delivery.last_seen_at || delivery.created_at };
+}
+
 /** Filters the log offers. "planned" covers both retrying and queued rows. */
 export const SENT_OUTCOMES = ["all", "failed", "planned", "no_route", "sent"] as const;
 export type SentOutcomeFilter = (typeof SENT_OUTCOMES)[number];

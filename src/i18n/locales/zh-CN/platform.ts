@@ -1237,6 +1237,7 @@ export default {
         noChannel: "无渠道",
         channelDeleted: "{name}（已删除）",
         fallbackFor: "因为 {names} 没有送达，这条消息改走了规则的备用渠道。",
+        occurrences: "共发生 {n} 次，最近一次 {when}。一小时内的重复都记在这一行。",
         via: {
           server: "来自服务端",
           plugin: "来自插件 {id}",
@@ -1264,6 +1265,9 @@ export default {
         sheet: {
           message: "消息",
           noBody: "没有正文：标题就是整条消息。",
+          truncated: "内容超过服务器上限（标题 512 字节、正文 4 KB）已截断，渠道收到的也是这段截断后的文本。",
+          firstSeen: "首次出现",
+          lastSeen: "最近一次",
           details: "详情",
           origin: "来源",
           created: "计划时间",

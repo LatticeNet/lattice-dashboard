@@ -2080,8 +2080,13 @@ export interface NotifyDelivery {
   redriven?: boolean;
   title?: string;
   body?: string;
+  /** The message was cut to the server's bound (512 byte title, 4 KB body); the channel received this text. */
+  truncated?: boolean;
   created_at: string;
   settled_at?: string;
+  /** A not-routed row folds later repeats of the same event within the hour: how many, and the latest. */
+  repeats?: number;
+  last_seen_at?: string;
 }
 
 export interface NotifyDeliveriesQuery {

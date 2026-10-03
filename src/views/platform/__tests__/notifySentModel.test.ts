@@ -10,6 +10,7 @@ import {
   sentCause,
   sentEventChoices,
   sentNote,
+  sentOccurrences,
   sentQuery,
   sentState,
   sentTone,
@@ -87,4 +88,15 @@ test("the event filter offers known types and any type the rows carry, without t
   );
   // A type from the address that no loaded row carries is still offered, so the select can show it.
   assert.deepEqual(sentEventChoices(["node.offline"], [], "backup.finished"), ["backup.finished", "node.offline"]);
+});
+
+test("a folded not-routed row counts every occurrence and names the latest", () => {
+  assert.equal(sentOccurrences(row({ outcome: "no_route" })), undefined);
+  assert.equal(sentOccurrences(row({ outcome: "no_route", repeats: 0 })), undefined);
+  assert.deepEqual(sentOccurrences(row({ outcome: "no_route", repeats: 36, last_seen_at: "2026-10-02T09:58:00Z" })), {
+    count: 37,
+    last: "2026-10-02T09:58:00Z",
+  });
+  // An older server without last_seen_at still reads.
+  assert.deepEqual(sentOccurrences(row({ outcome: "no_route", repeats: 1 })), { count: 2, last: "2026-10-02T09:00:00Z" });
 });

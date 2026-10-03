@@ -1337,6 +1337,7 @@ export default {
         noChannel: "no channel",
         channelDeleted: "{name}, since deleted",
         fallbackFor: "Sent through the rule's fallback because {names} did not deliver it.",
+        occurrences: "Happened {n} times, the last {when}. Repeats within an hour share this row.",
         via: {
           server: "From the server",
           plugin: "From plugin {id}",
@@ -1364,6 +1365,9 @@ export default {
         sheet: {
           message: "Message",
           noBody: "No body: the title was the whole message.",
+          truncated: "Shortened to fit the server's bound of 512 bytes for a title and 4 KB for a message. The channel received this shortened text.",
+          firstSeen: "First seen",
+          lastSeen: "Last seen",
           details: "Details",
           origin: "From",
           created: "Planned",
