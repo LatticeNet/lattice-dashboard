@@ -354,6 +354,56 @@ export default {
       whoReads: "Who can read what",
       showRoutes: "Show routes",
       openShare: "Open the share",
+      identityLinks: {
+        title: "Identity links",
+        description:
+          "One subscription link per VPN identity, served on the same /sub/ mount as the shares. Each is issued, paused, rotated and revealed on the identity in vpn-core Users; a row opens it there.",
+        descriptionNoPage:
+          "One subscription link per VPN identity, served on the same /sub/ mount as the shares. They are edited on the identity in vpn-core Users, which this session cannot open.",
+        statusDenied:
+          "Reading what each link serves and when a client last fetched it needs vpncore:admin and an unrestricted server allowlist, so these rows show only the route.",
+        statusFailed: "Link status could not be read ({reason}), so these rows show only the route.",
+        columns: { identity: "Identity", link: "Link", state: "Serves now", fetch: "Last fetch" },
+        state: {
+          active: "Serving",
+          never: "Serving, never fetched",
+          placeholder: "Placeholder",
+          empty: "Serving nothing",
+          paused: "Paused",
+          expired: "Link expired",
+          none: "Revoked",
+          unreadable: "Status unreadable",
+          routeServing: "Route serving",
+          routePaused: "Route paused",
+          routeExpired: "Route expired",
+        },
+        reason: {
+          disabled: "The identity is turned off",
+          suspended: "The identity is suspended",
+          expired: "The identity has expired",
+          quota: "The identity is over its quota",
+          noLines: "The identity is bound to no line",
+          other: "The identity is not in service",
+        },
+        detail: {
+          serves: "No line served | 1 line served | {n} lines served",
+          servesWithLeftOut: "{n} served, {left} left out",
+          allLeftOut: "Every bound line is left out ({n})",
+        },
+        fetch: {
+          never: "Not since the server started",
+          memoryOnly: "The server keeps the last fetch in memory only, so a restart clears it.",
+          unread: "Not read",
+          unknownClient: "an unrecognised client",
+        },
+        open: "Open the identity in vpn-core",
+        serves: "identity · {who}",
+        accessHint:
+          "The link's token is part of the URL, so rotating or revoking the link on the identity is what cuts a client off.",
+        sheetHint: "This route is an identity's subscription link. It is edited on the identity in vpn-core Users, not here.",
+        emptyTitle: "No identity links",
+        emptyDescription: "Issue a link on an identity in vpn-core Users and it appears here as a route on this server.",
+      },
       openBucket: "Open {bucket} in Store",
       colKind: "Kind",
       colRoutes: "Routes",
@@ -1613,6 +1663,19 @@ export default {
       unavailableDescription:
         "The interface could not be loaded. Check that the plugin is still active and its assets are reachable.",
       copyRefused: "The browser refused the copy. The extension is showing you the value to copy by hand.",
+    },
+    stepUp: {
+      title: "{plugin} asks to reveal a secret",
+      description:
+        "The server answers this call only after a second-factor check in this console. The plugin never sees your code, the passkey prompt or the grant; it gets the call's answer.",
+      submit: "Verify and reveal",
+      audit: "The reveal is recorded in the audit log under your name.",
+      confirmHint:
+        "You passed a step-up less than a minute ago. Confirm this reveal too, or cancel it. Nothing is revealed until you choose.",
+      confirm: "Reveal",
+      required: "Second-factor verification is required, so nothing was revealed.",
+      failed: "Passcode verification failed.",
+      passkeyFailed: "Passkey verification failed.",
     },
     secretHidden: "Hidden, copy to reveal",
     copy: "Copy",

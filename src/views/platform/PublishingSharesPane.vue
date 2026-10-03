@@ -29,27 +29,35 @@
  * signed manifest declares. Giving it the share API would hand token
  * management to plugin code (DESIGN-PROGRAM-2026-09 §9, Decision A).
  *
- * The token is shown in full, permanently, and the server returns it
- * deliberately: the URL is copied out of here repeatedly, and a credential that
- * is visible only once gets written down somewhere worse.
+ * The token is a credential for whatever the share publishes, so no share
+ * view carries it (operator rule, 2026-10-02: a credential reaches a person
+ * only in an interactive session after step-up). The table and the sheet show
+ * the path with the token left out; Reveal in the sheet asks for a second
+ * factor and the server's reveal door answers the URL, which is audited. The
+ * revealed URL lives in this pane only, for five minutes, and is dropped when
+ * the sheet moves to another share, closes, or the share is rotated.
  *
  * Plugin absent: a share whose renderer plugin is not installed says so on its
  * row and in its detail, and refresh is disabled with that reason. Creating a
  * new plugin-backed share is unavailable with the reason. Proxy-user shares
  * are server-native and unaffected.
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { toast } from "@/lib/toast";
 import {
   CalendarClock,
+  EyeOff,
+  Eye,
+  Gauge,
   KeyRound,
   Link2,
   MonitorSmartphone,
   Plus,
   PlugZap,
   RefreshCw,
+  ShieldAlert,
   Trash2,
 } from "lucide-vue-next";
 
@@ -65,6 +73,7 @@ import type {
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
+import { useStepUp } from "@/composables/useStepUp";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
@@ -90,11 +99,19 @@ import {
   type ExpiryForm,
 } from "@/views/platform/shareExpiryModel";
 import {
+  DEFAULT_UPDATE_INTERVAL_HOURS,
+  MAX_UPDATE_INTERVAL_HOURS,
   SHARE_TARGETS,
   clientUrl,
+  intervalFieldError,
+  intervalFieldFor,
+  intervalFieldValue,
   isServing,
+  maskedSharePath,
+  maskedUrl,
   publishedState,
-  sharePath,
+  renderBudgetTone,
+  revealedUrl,
   sourceLabel,
   type PublishedState,
 } from "@/views/platform/publishedModel";
@@ -103,12 +120,12 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu from "@/components/common/RowMenu.vue";
-import CopyButton from "@/components/common/CopyButton.vue";
+import StepUpDialog from "@/components/common/StepUpDialog.vue";
 import ShareExpiryFields from "@/components/networking/ShareExpiryFields.vue";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogClose,
@@ -299,10 +316,142 @@ function selectedRouteState(record: PublishingRecord): RouteState {
 }
 
 /** The origin the browser is on is the origin the share is served from, so the
- *  displayed URL is the real one rather than a guess at LATTICE_PUBLIC_URL. */
+ *  displayed URL is the real one rather than a guess at LATTICE_PUBLIC_URL.
+ *  The server's own URL wins when its reveal answer carries one. */
 const origin = computed(() => (typeof window === "undefined" ? "" : window.location.origin));
-function shareUrl(share: SubscriptionShareView): string {
-  return `${origin.value}${sharePath(share)}`;
+
+// ── reveal ────────────────────────────────────────────────────────────────
+//
+// The share views carry no token. Reveal runs this page's step-up (a grant
+// lasts a minute, so a second reveal inside it asks for nothing) and asks the
+// server's reveal door, which audits each answer. What comes back is held
+// here for REVEAL_HOLD_MS and never written to the address, the page state or
+// a log.
+
+const REVEAL_HOLD_MS = 5 * 60_000;
+const revealStepUp = useStepUp({
+  required: t("networking.shares.reveal.required"),
+  failed: t("networking.shares.reveal.failed"),
+  passkeyFailed: t("networking.shares.reveal.passkeyFailed"),
+});
+const revealed = ref<{ shareId: string; url: string } | null>(null);
+/**
+ * The share whose reveal is in flight, or "". Set once the grant is in hand,
+ * so the Reveal button stays enabled while the prompt is open and focus can
+ * return to it when the prompt closes.
+ */
+const revealing = ref("");
+/** A reveal is waiting on the step-up prompt. */
+let awaitingGrant = false;
+/** The browser refused to copy the revealed URL: show it whole, to copy by hand. */
+const handCopy = ref(false);
+let revealTimer: ReturnType<typeof setTimeout> | undefined;
+
+function dropReveal(): void {
+  clearTimeout(revealTimer);
+  revealTimer = undefined;
+  revealed.value = null;
+  handCopy.value = false;
+}
+
+/** The revealed URL of the share the sheet shows, or "". */
+const selectedUrl = computed(() =>
+  revealed.value && selected.value && revealed.value.shareId === selected.value.id ? revealed.value.url : "",
+);
+
+async function reveal(share: SubscriptionShareView): Promise<void> {
+  if (revealing.value || awaitingGrant) return;
+  let grant: string;
+  awaitingGrant = true;
+  try {
+    grant = await revealStepUp.request();
+  } catch {
+    // The operator closed the prompt: nothing was revealed, and nothing needs saying.
+    return;
+  } finally {
+    awaitingGrant = false;
+  }
+  revealing.value = share.id;
+  try {
+    const answer = await api.subscriptionShares.reveal(share.id, grant);
+    // The sheet may have moved to another share while the operator typed.
+    if (selectedId.value !== share.id) return;
+    dropReveal();
+    revealed.value = { shareId: share.id, url: revealedUrl(origin.value, answer) };
+    revealTimer = setTimeout(dropReveal, REVEAL_HOLD_MS);
+  } catch (error) {
+    toast.error(describe(error, t("networking.shares.reveal.revealFailed")));
+  } finally {
+    revealing.value = "";
+  }
+}
+
+// A revealed URL belongs to the share it was asked for, while the sheet shows it.
+watch(selectedId, (id) => {
+  if (revealed.value && revealed.value.shareId !== id) dropReveal();
+});
+onBeforeUnmount(dropReveal);
+
+async function copyRevealed(text: string, message: string): Promise<void> {
+  if (!(await copy(text, message))) handCopy.value = true;
+}
+
+// ── refresh interval and render budget ─────────────────────────────────────
+//
+// Clients that honor Profile-Update-Interval fetch again after the hours the
+// link advertises. The field is empty for the default, so opening and saving
+// it changes nothing; the draft follows the share only when the share's own
+// value changes, so a 30 s re-read does not wipe what the operator is typing.
+
+const intervalDraft = ref("");
+const intervalSaving = ref(false);
+watch(
+  () => [selected.value?.id, selected.value?.update_interval_hours] as const,
+  () => {
+    intervalDraft.value = selected.value ? intervalFieldFor(selected.value) : "";
+  },
+  { immediate: true },
+);
+const intervalError = computed(() => intervalFieldError(intervalDraft.value));
+const intervalDirty = computed(() => {
+  const share = selected.value;
+  if (!share || intervalError.value) return false;
+  const draft = intervalFieldValue(intervalDraft.value) || DEFAULT_UPDATE_INTERVAL_HOURS;
+  return draft !== (share.update_interval_hours || DEFAULT_UPDATE_INTERVAL_HOURS);
+});
+
+async function saveInterval(): Promise<void> {
+  const share = selected.value;
+  if (!share || !intervalDirty.value || intervalSaving.value) return;
+  intervalSaving.value = true;
+  try {
+    await api.subscriptionShares.update(share.id, { update_interval_hours: intervalFieldValue(intervalDraft.value) });
+    toast.success(t("networking.shares.interval.saved", { slug: share.slug }));
+    await props.reload();
+  } catch (error) {
+    toast.error(describe(error, t("networking.shares.interval.saveFailed")));
+  } finally {
+    intervalSaving.value = false;
+  }
+}
+
+function intervalHours(share: SubscriptionShareView): number {
+  return share.update_interval_hours || DEFAULT_UPDATE_INTERVAL_HOURS;
+}
+
+/** How many renders were refused since the server started, and when the last one was. */
+function budgetRefusedLine(share: SubscriptionShareView): string {
+  const budget = share.render_budget;
+  if (!budget) return "";
+  const refused = t("networking.shares.budget.refused", { n: budget.refused }, budget.refused);
+  return budget.last_refused_at
+    ? t("networking.shares.budget.refusedLast", { refused, when: formatRelativeTime(budget.last_refused_at) })
+    : refused;
+}
+
+/** The share's render budget is spent: new renders answer the decoy until it refills. */
+function budgetExhausted(share: SubscriptionShareView): boolean {
+  return renderBudgetTone(share.render_budget) === "exhausted";
 }
 
 function describe(error: unknown, fallback: string): string {
@@ -344,6 +493,9 @@ const draft = ref<{
   slug: string;
   defaultFormat: string;
   expiry: ExpiryForm;
+  interval: string;
+  /** Sent only after the server refused the record as a fleet feed and the operator ticked the box. */
+  fleetCredentials: boolean;
 }>({
   kind: "plugin",
   pluginId: "",
@@ -352,6 +504,33 @@ const draft = ref<{
   slug: "",
   defaultFormat: "",
   expiry: emptyExpiryForm(),
+  interval: "",
+  fleetCredentials: false,
+});
+
+/**
+ * The server's refusal of a record that reads vpn-core's identity-less
+ * export (400 fleet_feed_flag_required): such a share hands every identity's
+ * credentials to whoever holds the URL. The console cannot tell which records
+ * do that, so the form learns it from the refusal, names the record in its
+ * own words (the server's sentence, which ends in API field names, stays in
+ * the callout's title), and sends the flag only once the operator ticks the
+ * box. Picking another record or source clears it.
+ */
+const fleetFeedRefusal = ref("");
+watch(
+  () => [draft.value.kind, draft.value.pluginId, draft.value.subscriptionId, draft.value.proxyUserId] as const,
+  () => {
+    fleetFeedRefusal.value = "";
+    draft.value.fleetCredentials = false;
+  },
+);
+const draftIntervalError = computed(() => intervalFieldError(draft.value.interval));
+/** The record or proxy user the form is about to publish, by the name the picker shows. */
+const draftRecordName = computed(() => {
+  if (draft.value.kind !== "plugin") return draft.value.proxyUserId.trim();
+  const record = records.value.find((entry) => entry.id === draft.value.subscriptionId);
+  return record?.display_name || record?.name || draft.value.subscriptionId;
 });
 
 // The clock the expiry forms validate against, sampled when a dialog opens. A
@@ -435,6 +614,8 @@ const slugError = computed(() => {
 const canPublish = computed(() => {
   if (!draft.value.slug.trim() || slugError.value || publishing.value) return false;
   if (expiryFormError(draft.value.expiry, now.value)) return false;
+  if (draftIntervalError.value) return false;
+  if (fleetFeedRefusal.value && !draft.value.fleetCredentials) return false;
   if (draft.value.kind === "plugin") {
     const id = draft.value.subscriptionId;
     return pluginShareAvailable.value && !!draft.value.pluginId && records.value.some((record) => record.id === id);
@@ -459,7 +640,10 @@ async function openPublish(wanted = ""): Promise<void> {
     slug: "",
     defaultFormat: "",
     expiry: emptyExpiryForm(),
+    interval: "",
+    fleetCredentials: false,
   };
+  fleetFeedRefusal.value = "";
   // Matched by id or name once the plugin's records arrive; the slug follows the pick.
   wantedRecord.value = wanted && pluginShareAvailable.value ? wanted : "";
   missingRecord.value = "";
@@ -482,11 +666,14 @@ async function publish(): Promise<void> {
             subscription_id: draft.value.subscriptionId,
           }
         : { kind: "core.proxy_user", proxy_user_id: draft.value.proxyUserId.trim() };
+    const interval = intervalFieldValue(draft.value.interval);
     const body: SubscriptionShareCreateRequest = {
       slug: draft.value.slug.trim(),
       source,
       default_format: draft.value.defaultFormat || undefined,
       expires_at: expiryCreateValue(draft.value.expiry, now.value),
+      ...(interval ? { update_interval_hours: interval } : {}),
+      ...(fleetFeedRefusal.value && draft.value.fleetCredentials ? { publishes_fleet_credentials: true } : {}),
     };
     const created = await api.subscriptionShares.create(body);
     toast.success(t("networking.shares.published", { slug: created.slug }));
@@ -495,7 +682,13 @@ async function publish(): Promise<void> {
     await props.reload();
     select(created.id);
   } catch (error) {
-    toast.error(describe(error, t("networking.shares.publishFailed")));
+    if (error instanceof ApiError && error.code === "fleet_feed_flag_required") {
+      // Answered in the form, beside the box that lifts it, not in a toast that fades.
+      fleetFeedRefusal.value = error.serverMessage || t("networking.shares.fleetFeed.refused");
+      draft.value.fleetCredentials = false;
+    } else {
+      toast.error(describe(error, t("networking.shares.publishFailed")));
+    }
   } finally {
     publishing.value = false;
   }
@@ -580,6 +773,8 @@ async function rotate(): Promise<void> {
   busyId.value = share.id;
   try {
     const rotated = await api.subscriptionShares.rotate(share.id);
+    // The URL held from a reveal is the one that just stopped working.
+    if (revealed.value?.shareId === share.id) dropReveal();
     toast.success(t("networking.shares.rotated", { slug: rotated.slug }));
     rotateTarget.value = null;
     await props.reload();
@@ -626,12 +821,14 @@ async function refreshSource(share: SubscriptionShareView): Promise<void> {
   }
 }
 
-async function copy(text: string, message: string): Promise<void> {
+async function copy(text: string, message: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     toast.success(message);
+    return true;
   } catch {
     toast.error(t("networking.shares.clipboardUnavailable"));
+    return false;
   }
 }
 
@@ -760,7 +957,7 @@ watch(() => route.query, () => void applyDeepLink());
       <template #cell-slug="{ row }">
         <div class="min-w-0">
           <p class="truncate font-medium" :title="`/${row.slug}`">/{{ row.slug }}</p>
-          <p class="truncate font-mono text-xs text-muted-foreground" :title="sharePath(row)">{{ sharePath(row) }}</p>
+          <p class="truncate font-mono text-xs text-muted-foreground">{{ maskedSharePath(row) }}</p>
         </div>
       </template>
       <template #cell-state="{ row }">
@@ -769,6 +966,11 @@ watch(() => route.query, () => void applyDeepLink());
         </span>
         <span v-if="row.expires_at && shareState(row) !== 'expired'" class="block text-xs text-muted-foreground" :title="formatDateTime(row.expires_at)">
           {{ formatRelativeTime(row.expires_at) }}
+        </span>
+        <!-- Serving, but new renders answer the decoy: said on the row, not only in the sheet. -->
+        <span v-if="budgetExhausted(row)" class="mt-0.5 flex items-center gap-1 whitespace-nowrap text-xs text-destructive">
+          <Gauge class="size-3 shrink-0" aria-hidden="true" />
+          {{ $t('networking.shares.budget.exhaustedShort') }}
         </span>
       </template>
       <template #cell-source="{ row }">
@@ -783,6 +985,10 @@ watch(() => route.query, () => void applyDeepLink());
           >
             <PlugZap class="size-3 shrink-0" aria-hidden="true" />
             {{ $t(`platform.publishing.renderer.${rendererState(row)}`) }}
+          </span>
+          <span v-if="row.publishes_fleet_credentials" class="mt-0.5 flex items-center gap-1 text-xs text-warning-text">
+            <ShieldAlert class="size-3 shrink-0" aria-hidden="true" />
+            {{ $t('networking.shares.fleetFeed.short') }}
           </span>
         </div>
       </template>
@@ -818,13 +1024,61 @@ watch(() => route.query, () => void applyDeepLink());
         <p :class="STATE_TONE[shareState(selected)] === 'text-muted-foreground' ? 'text-foreground' : STATE_TONE[shareState(selected)]">
           {{ $t('networking.shares.state.' + shareState(selected)) }}
         </p>
+        <!-- Spent render budget: real clients are getting the decoy right now. -->
+        <div
+          v-if="selected.render_budget && budgetExhausted(selected)"
+          class="rounded-md border-l-2 border-destructive bg-muted/40 px-3 py-2 text-xs"
+          data-testid="share-budget-exhausted"
+        >
+          <p class="font-medium">{{ $t('networking.shares.budget.exhaustedTitle') }}</p>
+          <p class="mt-1 text-muted-foreground">
+            {{ $t('networking.shares.budget.exhaustedDetail', { perHour: selected.render_budget.per_hour }) }}
+          </p>
+          <p class="mt-1 text-muted-foreground">{{ budgetRefusedLine(selected) }}</p>
+        </div>
+
+        <div
+          v-if="selected.publishes_fleet_credentials"
+          class="rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
+          data-testid="share-fleet-feed"
+        >
+          <p class="font-medium">{{ $t('networking.shares.fleetFeed.title') }}</p>
+          <p class="mt-1 text-muted-foreground">{{ $t('networking.shares.fleetFeed.detail') }}</p>
+        </div>
+
         <div>
           <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.url') }}</p>
-          <div class="mt-1 flex items-start gap-2">
-            <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">{{ shareUrl(selected) }}</code>
-            <CopyButton :value="shareUrl(selected)" :label="$t('common.actions.copy')" />
+          <div v-if="selectedUrl" class="mt-1 flex items-start gap-2" data-testid="share-url-revealed">
+            <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs">{{ maskedUrl(selectedUrl) }}</code>
+            <Button variant="ghost" size="sm" @click="copyRevealed(selectedUrl, $t('networking.shares.reveal.copied'))">
+              <Link2 class="size-4" aria-hidden="true" />
+              {{ $t('networking.shares.reveal.copy') }}
+            </Button>
+            <Button variant="ghost" size="icon-sm" :aria-label="$t('networking.shares.reveal.hide')" :title="$t('networking.shares.reveal.hide')" @click="dropReveal">
+              <EyeOff class="size-4" aria-hidden="true" />
+            </Button>
           </div>
-          <p class="mt-1.5 text-xs text-muted-foreground">{{ $t('networking.shares.tokenNote') }}</p>
+          <div v-else class="mt-1 flex items-start gap-2">
+            <code class="min-w-0 flex-1 break-all rounded bg-muted px-2 py-1.5 font-mono text-xs text-muted-foreground" data-testid="share-url-masked">{{ origin }}{{ maskedSharePath(selected) }}</code>
+            <Button variant="outline" size="sm" :disabled="!!revealing" data-testid="share-reveal" @click="reveal(selected)">
+              <RefreshCw v-if="revealing === selected.id" class="size-4 animate-spin" aria-hidden="true" />
+              <Eye v-else class="size-4" aria-hidden="true" />
+              {{ $t('networking.shares.reveal.action') }}
+            </Button>
+          </div>
+          <!-- The browser refused the copy: the whole URL, selected, to copy by hand. -->
+          <Input
+            v-if="selectedUrl && handCopy"
+            class="mt-2 font-mono text-xs"
+            readonly
+            :model-value="selectedUrl"
+            :aria-label="$t('networking.shares.url')"
+            data-testid="share-url-hand-copy"
+            @focus="($event.target as HTMLInputElement).select()"
+          />
+          <p class="mt-1.5 text-xs text-muted-foreground">
+            {{ selectedUrl ? $t('networking.shares.reveal.heldNote') : $t('networking.shares.tokenNote') }}
+          </p>
         </div>
 
         <!-- A dangling proxy user is one specific reason for a 404, and it
@@ -864,7 +1118,9 @@ watch(() => route.query, () => void applyDeepLink());
 
         <div>
           <p class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.clientLinks') }}</p>
-          <p class="mt-1 text-xs text-muted-foreground">{{ $t('networking.shares.clientLinksHint') }}</p>
+          <p class="mt-1 text-xs text-muted-foreground">
+            {{ selectedUrl ? $t('networking.shares.clientLinksHint') : $t('networking.shares.reveal.clientLinksLocked') }}
+          </p>
           <div class="mt-2 grid grid-cols-2 gap-1.5">
             <Button
               v-for="target in SHARE_TARGETS"
@@ -872,14 +1128,46 @@ watch(() => route.query, () => void applyDeepLink());
               variant="outline"
               size="sm"
               class="justify-between"
-              :title="clientUrl(origin, selected, target.id)"
-              @click="copy(clientUrl(origin, selected, target.id), $t('networking.shares.copiedClient', { target: target.label }))"
+              :disabled="!selectedUrl"
+              @click="copyRevealed(clientUrl(selectedUrl, target.id), $t('networking.shares.copiedClient', { target: target.label }))"
             >
               <span class="truncate">{{ target.label }}</span>
               <MonitorSmartphone class="size-3.5 shrink-0 opacity-60" aria-hidden="true" />
             </Button>
           </div>
         </div>
+
+        <form class="grid gap-1.5 border-t border-border pt-3" data-testid="share-interval" @submit.prevent="saveInterval">
+          <Label for="share-interval" class="text-xs font-medium text-muted-foreground">{{ $t('networking.shares.interval.label') }}</Label>
+          <div class="flex items-center gap-2">
+            <Input
+              id="share-interval"
+              v-model="intervalDraft"
+              class="w-24"
+              inputmode="numeric"
+              autocomplete="off"
+              :placeholder="$t('networking.shares.interval.placeholder')"
+              :disabled="!canAdmin || intervalSaving"
+              :aria-invalid="!!intervalError || undefined"
+              aria-describedby="share-interval-hint"
+            />
+            <span class="text-xs text-muted-foreground">{{ $t('networking.shares.interval.unit') }}</span>
+            <Button v-if="canAdmin" type="submit" size="sm" variant="outline" class="ml-auto" :disabled="!intervalDirty || intervalSaving">
+              <RefreshCw v-if="intervalSaving" class="size-4 animate-spin" aria-hidden="true" />
+              {{ $t('common.actions.save') }}
+            </Button>
+          </div>
+          <p v-if="intervalError" id="share-interval-hint" class="text-xs text-destructive">
+            {{ $t('networking.shares.interval.range', { max: MAX_UPDATE_INTERVAL_HOURS }) }}
+          </p>
+          <p v-else id="share-interval-hint" class="text-xs text-muted-foreground">
+            {{
+              intervalHours(selected) === DEFAULT_UPDATE_INTERVAL_HOURS
+                ? $t('networking.shares.interval.hintDefault', { fallback: DEFAULT_UPDATE_INTERVAL_HOURS })
+                : $t('networking.shares.interval.hint', { hours: intervalHours(selected), fallback: DEFAULT_UPDATE_INTERVAL_HOURS })
+            }}
+          </p>
+        </form>
 
         <dl class="grid grid-cols-2 gap-2 border-t border-border pt-3 text-xs">
           <div>
@@ -903,6 +1191,20 @@ watch(() => route.query, () => void applyDeepLink());
               <span class="text-muted-foreground">· {{ formatRelativeTime(selected.expires_at) }}</span>
             </dd>
             <dd v-else class="text-muted-foreground">{{ $t('networking.shares.expiry.never') }}</dd>
+          </div>
+          <!-- Present once the link has rendered since the server started; absent means a full budget. -->
+          <div v-if="selected.render_budget">
+            <dt class="text-muted-foreground">{{ $t('networking.shares.budget.label') }}</dt>
+            <dd
+              :class="renderBudgetTone(selected.render_budget) === 'exhausted' ? 'text-destructive' : renderBudgetTone(selected.render_budget) === 'warning' ? 'text-warning-text' : ''"
+              data-testid="share-budget"
+            >
+              {{ $t('networking.shares.budget.remaining', { remaining: selected.render_budget.remaining, burst: selected.render_budget.burst }) }}
+              <span class="block text-muted-foreground">{{ $t('networking.shares.budget.refill', { perHour: selected.render_budget.per_hour }) }}</span>
+              <span v-if="selected.render_budget.refused && !budgetExhausted(selected)" class="block">
+                {{ $t('networking.shares.budget.refused', { n: selected.render_budget.refused }, selected.render_budget.refused) }}
+              </span>
+            </dd>
           </div>
         </dl>
       </div>
@@ -1033,7 +1335,44 @@ watch(() => route.query, () => void applyDeepLink());
           <p class="text-xs text-muted-foreground">{{ $t('networking.shares.formatHint') }}</p>
         </div>
 
+        <div class="grid gap-2">
+          <Label for="share-publish-interval">{{ $t('networking.shares.interval.label') }}</Label>
+          <div class="flex items-center gap-2">
+            <Input
+              id="share-publish-interval"
+              v-model="draft.interval"
+              class="w-24"
+              inputmode="numeric"
+              autocomplete="off"
+              :placeholder="$t('networking.shares.interval.placeholder')"
+              :aria-invalid="!!draftIntervalError || undefined"
+            />
+            <span class="text-xs text-muted-foreground">{{ $t('networking.shares.interval.unit') }}</span>
+          </div>
+          <p v-if="draftIntervalError" class="text-xs text-destructive">
+            {{ $t('networking.shares.interval.range', { max: MAX_UPDATE_INTERVAL_HOURS }) }}
+          </p>
+          <p v-else class="text-xs text-muted-foreground">
+            {{ $t('networking.shares.interval.createHint', { fallback: DEFAULT_UPDATE_INTERVAL_HOURS }) }}
+          </p>
+        </div>
+
         <ShareExpiryFields v-model="draft.expiry" id-prefix="publish" :now="now" />
+
+        <!-- The server refused the record as a fleet feed; the flag is the operator's to give. -->
+        <div
+          v-if="fleetFeedRefusal"
+          class="space-y-2 rounded-md border-l-2 border-warning bg-muted/40 px-3 py-2 text-xs"
+          :title="fleetFeedRefusal"
+          data-testid="share-fleet-refusal"
+        >
+          <p class="font-medium">{{ $t('networking.shares.fleetFeed.refusedTitle', { record: draftRecordName }) }}</p>
+          <p class="text-muted-foreground">{{ $t('networking.shares.fleetFeed.refusedHint') }}</p>
+          <label class="flex items-start gap-2 text-foreground">
+            <Checkbox v-model="draft.fleetCredentials" class="mt-0.5" data-testid="share-fleet-ack" />
+            <span>{{ $t('networking.shares.fleetFeed.ack') }}</span>
+          </label>
+        </div>
       </form>
       <template v-if="publishOpen" #actions>
         <Button type="submit" form="share-publish-form" size="sm" :disabled="!canPublish">
@@ -1101,5 +1440,15 @@ watch(() => route.query, () => void applyDeepLink());
         </p>
       </div>
     </ConfirmDialog>
+
+    <!-- After every dialog it can open over, so it stacks on top. -->
+    <StepUpDialog
+      :step-up="revealStepUp"
+      :title="$t('networking.shares.reveal.title', { slug: selected?.slug ?? '' })"
+      :description="$t('networking.shares.reveal.description')"
+      :submit-label="$t('networking.shares.reveal.submit')"
+      :audit="$t('networking.shares.reveal.audit')"
+      test-id="share-step-up"
+    />
   </section>
 </template>

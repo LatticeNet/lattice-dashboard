@@ -23,6 +23,8 @@
  */
 import { ApiError } from "@/lib/api/client";
 import type {
+  IdentityLinkLine,
+  IdentityLinkStatus,
   KVEntry,
   PluginView,
   Principal,
@@ -66,9 +68,24 @@ export * from "@/lib/api/index";
  *   ?records-fail     Sub-Store's record list answers 502.
  *   ?store-empty      Store has no bucket of either kind (first run).
  *
+ * Identity links and the reveal gate (wave 3, lattice-server#141):
+ *
+ *   ?links-denied     Every link status answers 403 (a restricted server allowlist;
+ *                     proxy:admin already satisfies vpncore:admin in the console).
+ *   ?links-slow       Each link status answers after 2.5 s (loading).
+ *   ?links-fail       Every link status answers 502.
+ *   ?links-none       No identity has a link (the share lens's empty section).
+ *   ?stepup-fail      The step-up refuses every passcode.
+ *
  * Shares: production's one share (cd-self, rendered by Sub-Store from the
- * merge-openjobs record), with its token invented. Proxy users and the
- * Sub-Store record list are the shapes the share form reads.
+ * merge-openjobs record) plus an invented family-tv share whose render budget
+ * is spent and which was published as a fleet feed. Share views carry no
+ * token; reveal answers it for the harness grant only, as the server answers
+ * it only with a fresh step-up grant. Proxy users and the Sub-Store record
+ * list are the shapes the share form reads; publishing cd-home is refused as
+ * a fleet feed until the flag is sent. Identity links: five invented
+ * identities, one per state the share lens says (active, never fetched,
+ * suspended, revoked since the routes were read, paused).
  */
 const flags = new URLSearchParams(location.search);
 const EMPTY_PLANE = flags.has("empty-plane");
@@ -85,6 +102,12 @@ const RECORDS_SLOW = flags.has("records-slow");
 const RECORDS_FAIL = flags.has("records-fail");
 const NO_AUDIT = flags.has("no-audit");
 const NO_SHARES = flags.has("no-shares");
+const LINKS_DENIED = flags.has("links-denied");
+const LINKS_SLOW = flags.has("links-slow");
+const LINKS_FAIL = flags.has("links-fail");
+const LINKS_NONE = flags.has("links-none");
+const STEPUP_FAIL = flags.has("stepup-fail");
+const HARNESS_GRANT = "harness_step_up_grant";
 
 /** Calls per read, on window.__platformCalls, so a drive can see what a layer reads. */
 function counted(name: string): void {
@@ -123,6 +146,8 @@ const principal: Principal = {
     ...(NO_SHARES ? [] : ["proxy:admin"]),
     "proxy:read",
     ...(NO_AUDIT ? [] : ["audit:read"]),
+    "vpncore:read",
+    "vpncore:admin",
   ],
   server_allowlist: [],
   csrf_token: "harness",
@@ -166,7 +191,126 @@ const records: PublishingRecord[] = [
     reserved: true,
     admin_scope: "plugin:latticenet.sub-store",
   },
+  {
+    id: "share_family_tv",
+    origin: "plugin",
+    bucket: "shr_family_tv",
+    share_id: "shr_family_tv",
+    hostname: "",
+    any_host: true,
+    path_prefix: "sub/family-tv",
+    enabled: true,
+    reserved: true,
+    admin_scope: "proxy:admin",
+  },
 ];
+
+/* ---------------------------- identity links --------------------------- */
+
+interface IdentityFixture {
+  id: string;
+  email: string;
+  name?: string;
+  slug: string;
+  enabled?: boolean;
+}
+
+// Invented identities. The slug shape is the server's default (u-<10 chars>).
+const identityFixtures: IdentityFixture[] = LINKS_NONE
+  ? []
+  : [
+      { id: "vu_lin_mei", email: "lin.mei@roobli.org", name: "Lin Mei", slug: "u-k3v9q2m7xa" },
+      { id: "vu_kenji", email: "kenji.tanaka@roobli.org", name: "Kenji", slug: "u-p8d2r5w1zt" },
+      { id: "vu_family_ipad", email: "family-ipad@roobli.org", slug: "u-h6c4n0b8ye" },
+      { id: "vu_old_laptop", email: "old-laptop@roobli.org", slug: "u-t1f7s3j9qe" },
+      { id: "vu_guest", email: "guest-oct@roobli.org", name: "October guest", slug: "u-m5x2a8v4rd", enabled: false },
+    ];
+
+for (const identity of identityFixtures) {
+  records.push({
+    id: `identity:${identity.id}`,
+    origin: "plugin",
+    bucket: identity.id,
+    identity_id: identity.id,
+    hostname: "",
+    any_host: true,
+    path_prefix: `sub/${identity.slug}`,
+    enabled: identity.enabled !== false,
+    reserved: true,
+    admin_scope: "proxy:admin",
+  });
+}
+
+function line(node: string, name: string, protocol: string, extra: Partial<IdentityLinkLine> = {}): IdentityLinkLine {
+  return { line_hash_id: `lh_${node}_${name}`.replace(/[^a-z0-9_]/g, "_"), node_id: `nd_${node}`, node_name: node, line_name: name, protocol, ...extra };
+}
+
+function linkSummary(id: string, extra: Partial<NonNullable<IdentityLinkStatus["link"]>> = {}): IdentityLinkStatus["link"] {
+  const identity = identityFixtures.find((entry) => entry.id === id);
+  if (!identity) return undefined;
+  return { slug: identity.slug, enabled: identity.enabled !== false, issued_at: iso(-12 * DAY), update_interval_hours: 2, ...extra };
+}
+
+const FORMATS = { native: ["URI", "V2Ray"], converted: ["ClashMeta", "Stash", "sing-box", "Surge"], convert_available: true };
+
+const linkStatuses: Record<string, IdentityLinkStatus> = {
+  vu_lin_mei: {
+    identity_id: "vu_lin_mei",
+    issued: true,
+    link: linkSummary("vu_lin_mei", { rotated_at: iso(-2 * DAY) }),
+    answer: "nodes",
+    answer_reason: "active",
+    subscription_userinfo: "upload=1288490188; download=40802189312; total=214748364800; expire=1767225600",
+    included: [line("legend-sg", "reality-443", "vless"), line("kenji-tokyo", "hysteria-8443", "hysteria2"), line("falcon-fra", "vless-2087", "vless")],
+    excluded: [line("cd-hs-sh", "trojan-8443", "trojan", { reason: "credential_not_applied", fix: "plan_update" })],
+    formats: FORMATS,
+    last_fetch: { at: iso(-14 * 60_000), ua_class: "clashmeta", answer: "nodes" },
+  },
+  vu_kenji: {
+    identity_id: "vu_kenji",
+    issued: true,
+    link: linkSummary("vu_kenji"),
+    answer: "nodes",
+    answer_reason: "active",
+    included: [line("kenji-tokyo", "hysteria-8443", "hysteria2"), line("legend-sg", "reality-443", "vless")],
+    excluded: [],
+    formats: FORMATS,
+  },
+  vu_family_ipad: {
+    identity_id: "vu_family_ipad",
+    issued: true,
+    link: linkSummary("vu_family_ipad", { update_interval_hours: 6 }),
+    answer: "placeholder",
+    answer_reason: "operator",
+    placeholder: "Suspended by the operator",
+    subscription_userinfo: "upload=0; download=107374182400; total=107374182400",
+    included: [],
+    excluded: [line("legend-sg", "reality-443", "vless", { reason: "binding_disabled", fix: "resume" })],
+    formats: FORMATS,
+    last_fetch: { at: iso(-2 * DAY - 3 * 3_600_000), ua_class: "shadowrocket", answer: "placeholder" },
+  },
+  // Revoked after the routes were read: the status already says not issued.
+  vu_old_laptop: {
+    identity_id: "vu_old_laptop",
+    issued: false,
+    answer: "decoy",
+    answer_reason: "not_issued",
+    included: [],
+    excluded: [],
+    formats: FORMATS,
+  },
+  vu_guest: {
+    identity_id: "vu_guest",
+    issued: true,
+    link: linkSummary("vu_guest", { enabled: false }),
+    answer: "decoy",
+    answer_reason: "link_disabled",
+    included: [],
+    excluded: [],
+    formats: FORMATS,
+    last_fetch: { at: iso(-9 * DAY), ua_class: "other", answer: "nodes" },
+  },
+};
 
 /* -------------------------------- shares ------------------------------- */
 
@@ -174,7 +318,6 @@ const shares: SubscriptionShareView[] = [
   {
     id: "shr_cd_self",
     slug: "cd-self",
-    token: "st_9f2c41d07a6e4b8c93d15e0f",
     source: { kind: "plugin", plugin_id: "latticenet.sub-store", subscription_id: "merge-openjobs" },
     default_format: "sing-box",
     enabled: true,
@@ -182,13 +325,44 @@ const shares: SubscriptionShareView[] = [
     updated_at: iso(-3 * DAY),
     rotated_at: iso(-3 * DAY),
     expires_at: SHARE_EXPIRED ? iso(-2 * DAY) : SHARE_EXPIRING ? iso(5 * DAY) : undefined,
+    update_interval_hours: 2,
+    render_budget: { remaining: 21, burst: 24, per_hour: 60, exhausted: false, refused: 0 },
+  },
+  {
+    id: "shr_family_tv",
+    slug: "family-tv",
+    source: { kind: "plugin", plugin_id: "latticenet.sub-store", subscription_id: "imported-col-cd-home" },
+    enabled: true,
+    created_at: iso(-40 * DAY),
+    updated_at: iso(-6 * DAY),
+    update_interval_hours: 12,
+    publishes_fleet_credentials: true,
+    render_budget: { remaining: 0, burst: 24, per_hour: 60, exhausted: true, refused: 37, last_refused_at: iso(-4 * 60_000) },
   },
 ];
+
+/** Tokens the reveal door answers; never in a share view. Invented. */
+const shareTokens: Record<string, string> = {
+  shr_cd_self: "st_9f2c41d07a6e4b8c93d15e0f",
+  shr_family_tv: "st_41aa07c2e95d4f1b8e60c3d7",
+};
 
 const proxyUsers: ProxyUserView[] = [
   { id: "pu_cdcd", name: "cdcd" } as ProxyUserView,
   { id: "pu_family", name: "family" } as ProxyUserView,
 ];
+
+const vpnCore: PluginView = {
+  id: "latticenet.vpn-core",
+  name: "VPN core",
+  type: "system",
+  version: "0.11.0-alpha.1",
+  publisher: "latticenet",
+  capabilities: ["rpc:call", "kv:read", "kv:write"],
+  status: "active",
+  active: true,
+  ui: { nav: [{ section: "vpn", title: "Users", route: "users", scopes: ["vpncore:read"] }], views: [] },
+} as PluginView;
 
 const subStore: PluginView = {
   id: "latticenet.sub-store",
@@ -526,35 +700,60 @@ export const api = {
       SHARES_FAIL
         ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (shares)")), 120))
         : delay(shares.map((share) => ({ ...share }))),
-    create: async (body: { slug: string; source: SubscriptionShareView["source"]; default_format?: string; expires_at?: string }) => {
+    create: async (body: {
+      slug: string;
+      source: SubscriptionShareView["source"];
+      default_format?: string;
+      expires_at?: string;
+      update_interval_hours?: number;
+      publishes_fleet_credentials?: boolean;
+    }) => {
       await delay(undefined);
+      // cd-home reads vpn-core's identity-less export, as the guard's case does.
+      if (body.source.kind === "plugin" && body.source.subscription_id === "imported-col-cd-home" && !body.publishes_fleet_credentials) {
+        throw new ApiError(
+          400,
+          "fleet_feed_flag_required",
+          'subscription cd-home publishes every user\'s credentials: it reads the vpn-core fleet export with no identity (through "vpn-core"). Give each person their identity\'s own link instead; to publish the fleet feed anyway, send publishes_fleet_credentials: true',
+        );
+      }
       const next: SubscriptionShareView = {
         id: `shr_${body.slug}`,
         slug: body.slug,
-        token: "st_new_harness_token",
         source: body.source,
         default_format: body.default_format,
         enabled: true,
         created_at: iso(0),
         updated_at: iso(0),
         expires_at: body.expires_at,
+        update_interval_hours: body.update_interval_hours || 2,
+        ...(body.publishes_fleet_credentials ? { publishes_fleet_credentials: true } : {}),
       };
       shares.push(next);
+      shareTokens[next.id] = `st_new_${Date.now().toString(36)}harness`;
       return { ...next };
     },
-    update: async (id: string, body: { expires_at?: string; clear_expiry?: boolean }) => {
+    update: async (id: string, body: { expires_at?: string; clear_expiry?: boolean; update_interval_hours?: number }) => {
       await delay(undefined);
       const share = shares.find((entry) => entry.id === id)!;
       if (body.clear_expiry) share.expires_at = undefined;
       else if (body.expires_at) share.expires_at = body.expires_at;
+      if (body.update_interval_hours !== undefined) share.update_interval_hours = body.update_interval_hours || 2;
       return { ...share };
     },
     rotate: async (id: string) => {
       await delay(undefined);
       const share = shares.find((entry) => entry.id === id)!;
-      share.token = `st_rotated_${Date.now().toString(36)}`;
+      shareTokens[id] = `st_rotated_${Date.now().toString(36)}harness`;
       share.rotated_at = iso(0);
       return { ...share };
+    },
+    reveal: async (id: string, grant: string) => {
+      await delay(undefined);
+      if (grant !== HARNESS_GRANT) throw new ApiError(403, "step_up_required", "second-factor step-up required");
+      const share = shares.find((entry) => entry.id === id)!;
+      const token = shareTokens[id]!;
+      return { kind: "share" as const, id, slug: share.slug, token, path: `/sub/${share.slug}/${token}` };
     },
     refresh: () => delay({ ok: true }),
     remove: async (id: string) => {
@@ -568,19 +767,52 @@ export const api = {
     users: () => (counted("proxyUsers"), delay({ users: proxyUsers.map((user) => ({ ...user })) })),
   },
 
+  vpnLinks: {
+    get: (id: string) => {
+      counted("linkStatus");
+      if (LINKS_FAIL) {
+        return new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from lattice.roobli.org (vpn link)")), 160));
+      }
+      if (LINKS_DENIED) {
+        return new Promise((_, reject) =>
+          setTimeout(() => reject(new ApiError(403, "capability_denied", "identity links need vpncore:admin with an unrestricted server allowlist")), 120),
+        );
+      }
+      const status = linkStatuses[id];
+      if (!status) return Promise.reject(new ApiError(404, "not_found", "unknown identity"));
+      return delay(structuredClone(status), LINKS_SLOW ? 2500 : LATENCY_MS);
+    },
+  },
+
   plugins: {
     list: () => {
       counted("plugins");
       // /api/plugins wants audit:read, as the server's route does.
-      return NO_AUDIT ? Promise.reject(new ApiError(403, "forbidden", "missing scope audit:read")) : delay([{ ...subStore }]);
+      return NO_AUDIT ? Promise.reject(new ApiError(403, "forbidden", "missing scope audit:read")) : delay([{ ...subStore }, { ...vpnCore }]);
     },
-    contributions: () => delay([{ ...subStore }]),
-    call: () =>
-      RECORDS_FAIL
+    contributions: () => delay([{ ...subStore }, { ...vpnCore }]),
+    call: (_pluginId: string, service: string) => {
+      if (service === "latticenet.vpn-core/users") {
+        counted("vpnUsers");
+        return delay({
+          users: identityFixtures.map((identity) => ({ id: identity.id, email: identity.email, name: identity.name, enabled: identity.enabled !== false })),
+        });
+      }
+      return RECORDS_FAIL
         ? new Promise((_, reject) => setTimeout(() => reject(new ApiError(502, "bad_gateway", "502 Bad Gateway from latticenet.sub-store (records)")), 120))
-        : delay({ subscriptions: subStoreRecords.map((record) => ({ ...record })) }, RECORDS_SLOW ? 1500 : LATENCY_MS),
+        : delay({ subscriptions: subStoreRecords.map((record) => ({ ...record })) }, RECORDS_SLOW ? 1500 : LATENCY_MS);
+    },
   },
 
   approvals: unimplemented,
-  security: unimplemented,
+  // Any passcode passes (unless ?stepup-fail), so the reveal can be driven end
+  // to end; the grant lasts a minute, as the server's does.
+  security: {
+    stepUp: (code: string) =>
+      delay(undefined, 400).then(() => {
+        if (STEPUP_FAIL || code === "000000") throw new ApiError(401, "invalid_code", "invalid or expired passcode");
+        return { ok: true, grant: HARNESS_GRANT, expires_at: new Date(Date.now() + 60_000).toISOString() };
+      }),
+    stepUpWebAuthnBegin: () => Promise.reject(new ApiError(400, "no_passkey", "no passkey is registered for this account")),
+  },
 };

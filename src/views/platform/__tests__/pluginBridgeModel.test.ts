@@ -641,3 +641,130 @@ test("a held state is dropped when the operator changed the query while it waite
     "key order does not matter",
   );
 });
+
+/* ── step-up for a plugin call (bridge v1, additive) ─────────────────── */
+
+class FakeApiError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function revealCall(id = "reveal-1", payload: unknown = { user_id: "vu_a" }) {
+  return { type: "lattice.plugin.call", nonce: "nonce-123", id, service: "test.plugin/items", method: "list", payload };
+}
+
+test("a call the server answers step_up_required runs the host's step-up and repeats once with the grant", async () => {
+  const seen: unknown[] = [];
+  const asked: Array<{ service: string; method: string }> = [];
+  const { session, source, posted } = makeSession({
+    call: async (_service, _method, payload) => {
+      seen.push(payload);
+      if (!(payload as { step_up_grant?: string }).step_up_grant) throw new FakeApiError(403, "step_up_required", "a fresh step-up is required");
+      return { token: "T0KEN" };
+    },
+    stepUp: async ({ service, method }) => {
+      asked.push({ service, method });
+      return "grant-abc";
+    },
+  });
+  await session.handle({ source, data: revealCall() });
+  assert.deepEqual(asked, [{ service: "test.plugin/items", method: "list" }]);
+  assert.deepEqual(seen, [{ user_id: "vu_a" }, { user_id: "vu_a", step_up_grant: "grant-abc" }]);
+  assert.deepEqual(posted.at(-1), { type: "lattice.host.result", nonce: "nonce-123", id: "reveal-1", result: { token: "T0KEN" } });
+  // The grant never crosses into the frame.
+  assert.equal(JSON.stringify(posted).includes("grant-abc"), false);
+});
+
+test("no step-up runs for any other refusal, and the server's code and status reach the plugin", async () => {
+  let asked = 0;
+  const { session, source, posted } = makeSession({
+    call: async () => { throw new FakeApiError(403, "capability_denied", "requires vpncore:admin"); },
+    stepUp: async () => { asked += 1; return "grant"; },
+  });
+  await session.handle({ source, data: revealCall() });
+  assert.equal(asked, 0);
+  assert.deepEqual(posted.at(-1), {
+    type: "lattice.host.error", nonce: "nonce-123", id: "reveal-1", code: "call_failed",
+    message: "requires vpncore:admin", apiCode: "capability_denied", httpStatus: 403,
+  });
+});
+
+test("a cancelled step-up answers step_up_required and sends nothing more", async () => {
+  let calls = 0;
+  const { session, source, posted } = makeSession({
+    call: async () => { calls += 1; throw new FakeApiError(403, "step_up_required", "a fresh step-up is required"); },
+    stepUp: async () => { throw new Error("cancelled"); },
+  });
+  await session.handle({ source, data: revealCall() });
+  assert.equal(calls, 1);
+  const last = posted.at(-1) as { type: string; code: string; apiCode?: string; message: string };
+  assert.equal(last.type, "lattice.host.error");
+  assert.equal(last.code, "step_up_required");
+  assert.equal(last.apiCode, "step_up_required");
+  assert.match(last.message, /cancelled/);
+});
+
+test("a repeat the server still refuses is not retried again", async () => {
+  let calls = 0;
+  let asked = 0;
+  const { session, source, posted } = makeSession({
+    call: async () => { calls += 1; throw new FakeApiError(403, "step_up_required", "grant expired"); },
+    stepUp: async () => { asked += 1; return "stale-grant"; },
+  });
+  await session.handle({ source, data: revealCall() });
+  assert.equal(calls, 2);
+  assert.equal(asked, 1);
+  assert.equal((posted.at(-1) as { apiCode?: string }).apiCode, "step_up_required");
+});
+
+test("without a host step-up, or for a payload that is not an object, the refusal passes through", async () => {
+  const refuse = async () => { throw new FakeApiError(403, "step_up_required", "a fresh step-up is required"); };
+  const none = makeSession({ call: refuse });
+  await none.session.handle({ source: none.source, data: revealCall() });
+  assert.equal((none.posted.at(-1) as { apiCode?: string }).apiCode, "step_up_required");
+
+  let asked = 0;
+  const scalar = makeSession({ call: refuse, stepUp: async () => { asked += 1; return "grant"; } });
+  await scalar.session.handle({ source: scalar.source, data: revealCall("reveal-2", "vu_a") });
+  assert.equal(asked, 0);
+});
+
+test("the call's timeout is paused while the step-up prompt waits for a person", async () => {
+  let release: (grant: string) => void = () => {};
+  const { session, source, posted } = makeSession({
+    timeoutMs: 20,
+    call: async (_service, _method, payload) => {
+      if (!(payload as { step_up_grant?: string }).step_up_grant) throw new FakeApiError(403, "step_up_required", "step-up");
+      return { ok: true };
+    },
+    stepUp: () => new Promise<string>((resolve) => { release = resolve; }),
+  });
+  const handled = session.handle({ source, data: revealCall() });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(posted.some((message) => message.type === "lattice.host.error"), false);
+  release("grant-late");
+  await handled;
+  assert.equal(posted.at(-1)?.type, "lattice.host.result");
+});
+
+test("cancelling the call aborts the host's prompt", async () => {
+  let signal: AbortSignal | undefined;
+  const { session, source, posted } = makeSession({
+    call: async () => { throw new FakeApiError(403, "step_up_required", "step-up"); },
+    stepUp: (request) => new Promise<string>((_resolve, reject) => {
+      signal = request.signal;
+      request.signal.addEventListener("abort", () => reject(new Error("closed")));
+    }),
+  });
+  const handled = session.handle({ source, data: revealCall() });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await session.handle({ source, data: { type: "lattice.plugin.cancel", nonce: "nonce-123", id: "reveal-1" } });
+  await handled;
+  assert.equal(signal?.aborted, true);
+  assert.equal((posted.at(-1) as { code?: string }).code, "cancelled");
+});

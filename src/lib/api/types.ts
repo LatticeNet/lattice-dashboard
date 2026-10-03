@@ -1918,6 +1918,8 @@ export interface PublishingRecord {
   /** Reserved routes cannot be moved or deleted: something outside this server depends on the URL. */
   reserved: boolean;
   share_id?: string;
+  /** Set instead of share_id on a read-only row projected from an identity's link; the identity is where it is edited. */
+  identity_id?: string;
   /** The scope that gates editing this route, so a control can be disabled rather than 403. */
   admin_scope: string;
 }
@@ -2439,7 +2441,6 @@ export interface ProxyUserView {
   enabled: boolean;
   has_uuid: boolean;
   has_password: boolean;
-  has_sub_token: boolean;
   inbound_ids?: string[];
   traffic_limit_bytes?: number;
   /**
@@ -2467,14 +2468,18 @@ export type ShareSource =
   | { kind: "plugin"; plugin_id: string; subscription_id: string };
 
 /**
- * The server returns the token on purpose. The share URL is copied out of the
- * dashboard repeatedly, so hiding it after creation would trade a real
- * workflow for protection the at-rest sealing already provides.
+ * A share as list, create, update and rotate answer it: route facts, never
+ * the token. The share URL is a credential for whatever the share publishes,
+ * and the operator's rule (2026-10-02) is that a credential reaches a person
+ * only after step-up: the token comes from POST .../<id>/reveal
+ * (ShareRevealResponse) with a step-up grant. A server from before that rule
+ * still sends `token`; nothing here reads it.
  */
 export interface SubscriptionShareView {
   id: string;
   slug: string;
-  token: string;
+  /** Empty or absent from wave 3 on; never read. */
+  token?: string;
   source: ShareSource;
   default_format?: string;
   enabled: boolean;
@@ -2482,6 +2487,38 @@ export interface SubscriptionShareView {
   updated_at: string;
   rotated_at?: string;
   expires_at?: string;
+  /** The refresh period the link advertises to clients (Profile-Update-Interval), in hours: its own or the default. */
+  update_interval_hours?: number;
+  /** Created with the explicit flag for a record that reads the identity-less vpn-core export: it hands out every user's credentials. */
+  publishes_fleet_credentials?: boolean;
+  /** The link's plugin render budget, present once it has rendered since the server started. */
+  render_budget?: ShareRenderBudget;
+}
+
+/**
+ * A share's plugin render budget. While it is exhausted, a fetch that needs a
+ * new render answers the decoy until the budget refills at `per_hour`.
+ */
+export interface ShareRenderBudget {
+  remaining: number;
+  burst: number;
+  per_hour: number;
+  exhausted: boolean;
+  /** Renders refused since the server started. */
+  refused: number;
+  last_refused_at?: string;
+}
+
+/** POST /api/subscription-shares/<id>/reveal and POST /api/vpn/users/<id>/link/reveal, after step-up. */
+export interface ShareRevealResponse {
+  kind: "share" | "identity";
+  id: string;
+  slug: string;
+  token: string;
+  /** /sub/<slug>/<token> */
+  path: string;
+  /** The full URL when the server knows its public address. */
+  url?: string;
 }
 
 export interface SubscriptionShareCreateRequest {
@@ -2489,6 +2526,10 @@ export interface SubscriptionShareCreateRequest {
   source: ShareSource;
   default_format?: string;
   expires_at?: string;
+  /** 0 or absent advertises the default (2 hours); otherwise 1 to 168. */
+  update_interval_hours?: number;
+  /** Required for a Sub-Store record that reads the identity-less vpn-core export (400 fleet_feed_flag_required otherwise). */
+  publishes_fleet_credentials?: boolean;
 }
 
 /**
@@ -2502,6 +2543,49 @@ export interface SubscriptionShareUpdateRequest {
   clear_expiry?: boolean;
   default_format?: string;
   enabled?: boolean;
+  /** 0 returns to the default (2 hours); otherwise 1 to 168. */
+  update_interval_hours?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Identity subscription links (lattice-server identity_link_api.go)   */
+/* ------------------------------------------------------------------ */
+
+/** The link as every identity view carries it: route facts, never the token. */
+export interface IdentityLinkSummary {
+  slug: string;
+  enabled: boolean;
+  issued_at: string;
+  rotated_at?: string;
+  expires_at?: string;
+  update_interval_hours: number;
+}
+
+export interface IdentityLinkLine {
+  line_hash_id: string;
+  node_id?: string;
+  node_name?: string;
+  line_name?: string;
+  protocol?: string;
+  reason?: string;
+  fix?: string;
+  detail?: string;
+}
+
+/** GET /api/vpn/users/<id>/link: what the link serves now, never the token. */
+export interface IdentityLinkStatus {
+  identity_id: string;
+  issued: boolean;
+  link?: IdentityLinkSummary;
+  answer: "nodes" | "placeholder" | "decoy" | string;
+  answer_reason: string;
+  placeholder?: string;
+  subscription_userinfo?: string;
+  included: IdentityLinkLine[];
+  excluded: IdentityLinkLine[];
+  formats: { native: string[]; converted: string[]; convert_available: boolean; fallback?: string };
+  /** The last fetch since the server started; memory only on the server. */
+  last_fetch?: { at: string; ua_class: string; answer: string };
 }
 
 /* ------------------------------------------------------------------ */

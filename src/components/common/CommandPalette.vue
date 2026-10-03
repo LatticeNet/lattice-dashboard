@@ -481,8 +481,9 @@ const actionEntries = computed<Entry[]>(() => {
       payload: { type: "go", to: { path: "/approvals", query: { open: next.id } }, icon: ListChecks },
     });
   }
-  // vpn-core's page state has no "new identity" key yet, so the action lands
-  // on Users, where New identity is one click; the plugin half is queued.
+  // vpn-core's page state key `create=1` opens New identity (vpn-core
+  // 0.11.0-alpha.1), so the action lands on the form. An older vpn-core
+  // ignores the key and the operator lands on Users, one click from it.
   const vpnUsers = itemsByName.value.get(VPN_USERS_PAGE);
   if (vpnUsers?.plugin) {
     out.push({
@@ -491,7 +492,7 @@ const actionEntries = computed<Entry[]>(() => {
       label: t("shell.command.addVpnUser"),
       detail: t("shell.command.addVpnUserDetail"),
       terms: termsOf("addVpnUser"),
-      payload: { type: "nav", item: vpnUsers, icon: UserPlus },
+      payload: { type: "go", to: { path: vpnUsers.path, query: { create: "1" } }, icon: UserPlus },
     });
   }
   if (access.value.shares) {
