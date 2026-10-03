@@ -17,6 +17,7 @@ import {
   newWindowDraft,
   parseIncidentFilter,
   phoneState,
+  quietMonitorIds,
   releasedAndPaged,
   toLocalInput,
   visibleIncidents,
@@ -132,6 +133,22 @@ test("actions follow the state and the operator's scope", () => {
   assert.deepEqual(incidentActions(incident({}), NOW, false), { ack: false, snooze: false, unsnooze: false });
   assert.deepEqual(incidentActions(INCIDENTS[5]!, NOW, true), { ack: false, snooze: false, unsnooze: false });
   assert.deepEqual(incidentActions(INCIDENTS[6]!, NOW, true), { ack: false, snooze: false, unsnooze: false });
+});
+
+test("a monitor is quiet only when every live incident of it is pending or being handled", () => {
+  const down = (id: string, monitor: string, over: Partial<Incident>) => incident({ id, kind: "monitor.down", severity: "warning", monitor_id: monitor, ...over });
+  const quiet = quietMonitorIds(
+    [
+      down("a1", "mon_snoozed", { snoozed_until: ahead(30) }),
+      down("b1", "mon_mixed", { state: "acknowledged" }),
+      down("b2", "mon_mixed", {}),
+      down("c1", "mon_pending", { state: "pending" }),
+      down("d1", "mon_held", { maintenance: "kernel upgrade" }),
+      down("e1", "mon_done", { state: "resolved" }),
+    ],
+    NOW,
+  );
+  assert.deepEqual([...quiet].sort(), ["mon_held", "mon_pending", "mon_snoozed"]);
 });
 
 test("age runs from the condition's start and stops at resolution; the server's zero time is never", () => {

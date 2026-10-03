@@ -120,7 +120,16 @@ export type HomeAttention =
   | { kind: "ddns"; key: string; tone: "warning"; count: number; names: string[]; error: string }
   | { kind: "overdue"; key: string; tone: "danger"; count: number; titles: string[] }
   | { kind: "due"; key: string; tone: "warning"; count: number; titles: string[] }
-  | { kind: "monitors"; key: string; tone: "danger"; count: number; names: string[]; firstId: string };
+  | {
+      kind: "monitors";
+      key: string;
+      /** A warning when every failing monitor's incident is pending or being handled (quietMonitors). */
+      tone: "danger" | "warning";
+      count: number;
+      names: string[];
+      firstId: string;
+      handled: boolean;
+    };
 
 export interface HomeNode extends NodeStatusInput {
   id: string;
@@ -148,6 +157,8 @@ export interface HomeAttentionInput {
    * incident is of another kind (a failing monitor) keeps its row.
    */
   incidentNodes?: ReadonlyMap<string, ReadonlySet<string>>;
+  /** Monitors whose incidents are pending, acknowledged, snoozed or window-held (incidentsModel.quietMonitorIds). */
+  quietMonitors?: ReadonlySet<string>;
   /** Pending incidents per node: kind to when it opens (incidentsModel.homeIncidents). */
   pendingNodes?: ReadonlyMap<string, ReadonlyMap<string, number | undefined>>;
 }
@@ -234,7 +245,8 @@ export function homeAttention(input: HomeAttentionInput): HomeAttention[] {
   if (stalled > 0) out.push({ kind: "stalled", key: "tasks:stalled", tone: "danger", count: stalled });
   const monitors = input.failingMonitors ?? [];
   if (monitors.length > 0) {
-    out.push({ kind: "monitors", key: "monitors:failing", tone: "danger", count: monitors.length, names: monitors.map((m) => m.name), firstId: monitors[0]!.id });
+    const handled = monitors.every((m) => input.quietMonitors?.has(m.id));
+    out.push({ kind: "monitors", key: "monitors:failing", tone: handled ? "warning" : "danger", count: monitors.length, names: monitors.map((m) => m.name), firstId: monitors[0]!.id, handled });
   }
   const failing = (input.ddns ?? []).filter((profile) => profile.last_error?.trim());
   if (failing.length > 0) {

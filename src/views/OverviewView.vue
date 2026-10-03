@@ -42,7 +42,7 @@ import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
 import { failingMonitors, monitorHealth, operatorMonitors } from "@/views/fleet/monitorHealthModel";
-import { homeIncidents } from "@/views/fleet/incidentsModel";
+import { homeIncidents, quietMonitorIds } from "@/views/fleet/incidentsModel";
 import {
   CHANGES_QUERY,
   CHANGES_ROWS,
@@ -224,6 +224,7 @@ const attentionModel = computed<HomeAttention[]>(() =>
     failingMonitors: failingMonitorRows.value,
     incidentNodes: incidentNodes.value,
     pendingNodes: pendingNodes.value,
+    quietMonitors: quietMonitorIds(incidentList.value, now.value.getTime()),
   }),
 );
 
@@ -308,7 +309,7 @@ const attention = computed<AttentionItem[]>(() => [
           key: item.key,
           tone: item.tone,
           claim: t("overview.attention.monitors", { n: item.count }, item.count),
-          proof: names(item.names),
+          proof: item.handled ? `${names(item.names)} · ${t("overview.attention.monitorsHandled")}` : names(item.names),
           action: {
             label: t("overview.attention.monitorsAction"),
             to: item.count === 1 ? { name: "monitoring", query: { open: item.firstId } } : { name: "monitoring" },

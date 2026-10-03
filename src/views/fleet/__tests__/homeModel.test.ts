@@ -204,6 +204,12 @@ test("an offline node carries its last report and agent, and failing monitors ge
   const monitors = items.find((item) => item.kind === "monitors");
   assert.ok(monitors && monitors.kind === "monitors");
   assert.deepEqual([monitors.count, monitors.firstId, monitors.tone], [2, "mon_hk", "danger"]);
+  // Only when every failing monitor's incident is being handled (or pending) does the row become a warning.
+  const failing = [{ id: "mon_hk", name: "HK relay port" }, { id: "mon_api", name: "api health" }];
+  const some = homeAttention({ now: NOW, failingMonitors: failing, quietMonitors: new Set(["mon_hk"]) }).find((item) => item.kind === "monitors");
+  assert.ok(some && some.kind === "monitors" && some.tone === "danger" && !some.handled);
+  const all = homeAttention({ now: NOW, failingMonitors: failing, quietMonitors: new Set(["mon_hk", "mon_api"]) }).find((item) => item.kind === "monitors");
+  assert.ok(all && all.kind === "monitors" && all.tone === "warning" && all.handled);
 });
 
 test("the failed tile opens the failed runs of the last 24 hours, the window it counts", () => {

@@ -493,6 +493,7 @@ export default {
       proofNever: "enrolled {age} ago, no report since",
       monitors: "{n} monitor failing | {n} monitors failing",
       monitorsAction: "Monitoring",
+      monitorsHandled: "acknowledged, snoozed, held or pending in Incidents",
       stalled: "{n} task stalled | {n} tasks stalled",
       ddns: "{n} DDNS profile failing | {n} DDNS profiles failing",
       overdue: "{n} item overdue | {n} items overdue",

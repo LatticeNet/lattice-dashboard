@@ -484,6 +484,7 @@ export default {
       proofNever: "{age} 前接入，此后没有上报",
       monitors: "{n} 个监控检测失败 | {n} 个监控检测失败",
       monitorsAction: "监控",
+      monitorsHandled: "已在事件中确认、暂缓、暂不发送或待定",
       stalled: "{n} 个任务卡住 | {n} 个任务卡住",
       ddns: "{n} 个 DDNS 配置更新失败 | {n} 个 DDNS 配置更新失败",
       overdue: "{n} 项已过期 | {n} 项已过期",

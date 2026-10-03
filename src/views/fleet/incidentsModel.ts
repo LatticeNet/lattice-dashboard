@@ -302,6 +302,27 @@ export function homeIncidents(
   return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds, pendingNodes };
 }
 
+/**
+ * Monitors whose failure nobody needs to act on now: every active or
+ * pending monitor.down incident of theirs is pending, acknowledged, snoozed
+ * or held by a window (the same set incidentTone quiets). Home words their
+ * failing row as a warning, as the Incidents layer does, instead of a red
+ * problem. A monitor with no such incident is not quiet.
+ */
+export function quietMonitorIds(incidents: readonly Incident[], now: number): Set<string> {
+  const loud = new Set<string>();
+  const quiet = new Set<string>();
+  for (const incident of incidents) {
+    if (incident.kind !== "monitor.down" || !incident.monitor_id) continue;
+    if (incident.state === "resolved") continue;
+    const tone = incidentTone(incident, now);
+    if (tone === "muted" || tone === "info") quiet.add(incident.monitor_id);
+    else loud.add(incident.monitor_id);
+  }
+  for (const id of loud) quiet.delete(id);
+  return quiet;
+}
+
 /* ---------------------------- maintenance windows --------------------------- */
 
 export type WindowPhase = "upcoming" | "active" | "ended";
