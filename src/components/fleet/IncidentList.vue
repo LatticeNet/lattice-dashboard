@@ -331,9 +331,16 @@ const rows = computed(() =>
       <div class="flex shrink-0 flex-wrap items-center gap-1.5 sm:ps-0">
         <!-- Just acknowledged: Undo takes Acknowledge's place, where focus and the
              pointer already are. A second press there undoes rather than
-             acknowledging another incident, which fails safe. -->
-        <span v-if="row.undo" class="inline-flex items-center gap-1.5" :data-incident-undo-group="row.incident.id">
-          <span class="inline-flex items-center gap-1 ps-1 text-xs text-muted-foreground">
+             acknowledging another incident, which fails safe. Below 640 px it
+             keeps Acknowledge's footprint exactly (an invisible copy of
+             Acknowledge sizes it), so Snooze and Open neither move nor wrap
+             under the finger; wider, "Acknowledged" shows beside it. -->
+        <span v-if="row.undo" class="inline-grid sm:inline-flex sm:items-center sm:gap-1.5" :data-incident-undo-group="row.incident.id">
+          <Button variant="outline" size="sm" type="button" tabindex="-1" aria-hidden="true" inert class="invisible [grid-area:1/1] pointer-coarse:h-11 sm:hidden">
+            <Check aria-hidden="true" />
+            {{ $t('fleet.keepalive.actions.ack') }}
+          </Button>
+          <span class="hidden items-center gap-1 ps-1 text-xs text-muted-foreground sm:inline-flex">
             <Check class="size-3.5" aria-hidden="true" />
             {{ $t('fleet.keepalive.actions.acked') }}
           </span>
@@ -341,7 +348,7 @@ const rows = computed(() =>
             variant="outline"
             size="sm"
             type="button"
-            class="pointer-coarse:h-11 aria-disabled:opacity-50"
+            class="[grid-area:1/1] pointer-coarse:h-11 aria-disabled:opacity-50"
             :aria-disabled="row.busy || row.undo === 'settling' || undefined"
             :data-incident-undo="row.incident.id"
             :aria-label="$t('fleet.keepalive.actions.undoLabel', { name: row.claim })"
