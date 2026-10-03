@@ -45,7 +45,8 @@ import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { createConfirmReturn } from "./confirmFocus";
-import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
+import { failingMonitors, healthRank, monitorHealth, operatorMonitors, type MonitorHealth } from "./monitorHealthModel";
+import LatencyLayer from "./LatencyLayer.vue";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
@@ -112,16 +113,19 @@ const now = useNow({ interval: 1000 });
 const owned = useOwnedRoute();
 
 /**
- * Two layers: Keepalive (the incidents the server holds, first, since it
- * answers "what is broken now") and Monitors (the definitions and their
- * results). A link that opens a monitor or narrows to a node (?open=,
- * ?node=, the old /monitoring/:id) lands on Monitors, so every link written
- * before the layers still shows what it pointed at.
+ * Three layers (design 23, section 3.4): Keepalive (the incidents the server
+ * holds, first, since it answers "what is broken now"), Monitors (the probes
+ * an operator made and their results) and Latency (the source by target
+ * matrix the latency probe configuration generates; the generated monitors
+ * live only there). A link that opens a monitor or narrows to a node
+ * (?open=, ?node=, the old /monitoring/:id) lands on Monitors, so every link
+ * written before the layers still shows what it pointed at. Latency is never
+ * the fallback, so every link into it names it (?view=latency).
  */
-type MonitoringLayer = "keepalive" | "monitors";
+type MonitoringLayer = "keepalive" | "monitors" | "latency";
 const layer = bindLayer<MonitoringLayer>(
   owned,
-  () => ["keepalive", "monitors"],
+  () => ["keepalive", "monitors", "latency"],
   () => {
     const query = owned.query();
     return query.open || query.node || route.params.id ? "monitors" : "keepalive";
@@ -138,7 +142,9 @@ watch(
   },
   { immediate: true },
 );
-const monitorNames = computed(() => new Map(monitors.value.map((m) => [m.id, m.name || m.id])));
+// Every monitor the server listed, generated ones included, so an incident
+// that names one still reads by its name.
+const monitorNames = computed(() => new Map((monitorsQuery.data.value ?? []).map((m) => [m.id, m.name || m.id])));
 const incidentCounts = computed(() => filterCounts(incidentsQuery.data.value?.incidents ?? [], now.value.getTime()));
 const criticalOpen = computed(() =>
   (incidentsQuery.data.value?.incidents ?? []).some(
@@ -248,7 +254,9 @@ const resultsQuery = useAsyncData(
   { pollInterval: 8000, immediate: canReadMonitors.value },
 );
 
-const monitors = computed(() => monitorsQuery.data.value ?? []);
+const monitors = computed(() => operatorMonitors(monitorsQuery.data.value ?? []));
+/** Generated monitors the list leaves to the Latency layer. */
+const generatedCount = computed(() => (monitorsQuery.data.value ?? []).length - monitors.value.length);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const selectedMonitor = computed(() =>
   monitors.value.find((monitor) => monitor.id === selectedMonitorId.value),
@@ -669,6 +677,8 @@ const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
     count: failing.value.length ? failing.value.length : undefined,
     tone: failing.value.length ? "destructive" : "default",
   },
+  // No count: the matrix is read inside the layer, and its proof line says what fails.
+  { value: "latency", label: t("fleet.monitoring.layers.latency") },
 ]);
 
 const columns = computed<DataTableColumn<MonitorView>[]>(() => [
@@ -745,9 +755,9 @@ const deleteImpact = computed(() => {
     <PageHeader :title="$t('fleet.monitoring.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
-        <ProofLine v-if="canReadMonitors" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+        <ProofLine v-if="canReadMonitors && layer !== 'latency'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
-      <template v-if="canReadMonitors" #actions>
+      <template v-if="canReadMonitors && layer !== 'latency'" #actions>
         <Button v-if="canAdminMonitors && monitors.length && layer === 'monitors'" size="sm" type="button" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.create.title') }}
@@ -780,8 +790,20 @@ const deleteImpact = computed(() => {
       @refresh="incidentsQuery.refresh()"
     />
 
+    <LatencyLayer v-if="canReadMonitors && layer === 'latency'" :owned="owned" />
+
     <template v-if="canReadMonitors && layer === 'monitors'">
     <AttentionList :items="attention" />
+
+    <!-- Generated latency monitors are left to the Latency layer; say so and link there. -->
+    <p v-if="generatedCount > 0" class="text-xs text-muted-foreground" data-testid="monitors-generated-note">
+      {{ $t('fleet.monitoring.latency.generatedNote', { n: generatedCount }, generatedCount) }}
+      <button
+        type="button"
+        class="ms-1 font-medium text-foreground underline decoration-dotted underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+        @click="layer = 'latency'"
+      >{{ $t('fleet.monitoring.latency.generatedOpen') }}</button>
+    </p>
 
     <!-- No monitors yet: one sentence and the two watches worth starting with. -->
     <section

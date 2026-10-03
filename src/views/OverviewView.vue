@@ -41,7 +41,7 @@ import { proofReason } from "@/components/common/proofModel";
 import { countNodeStatuses } from "@/lib/nodeStatus";
 import { cn } from "@/lib/utils";
 import { PANEL_WITHIN_DAYS, UPCOMING_SCOPES, groupByWeek, isOverdue, todayOf } from "@/views/fleet/upcomingModel";
-import { failingMonitors, monitorHealth } from "@/views/fleet/monitorHealthModel";
+import { failingMonitors, monitorHealth, operatorMonitors } from "@/views/fleet/monitorHealthModel";
 import { homeIncidents } from "@/views/fleet/incidentsModel";
 import {
   CHANGES_QUERY,
@@ -123,7 +123,7 @@ const failingMonitorRows = computed(() => {
   const list = monitorList.data.value;
   if (list === undefined) return undefined;
   const at = monitorList.lastUpdated.value ?? Date.now();
-  return failingMonitors(list, (monitor) => monitorHealth(monitor, monitor.latest, at)).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
+  return failingMonitors(operatorMonitors(list), (monitor) => monitorHealth(monitor, monitor.latest, at)).map(({ monitor }) => ({ id: monitor.id, name: monitor.name || monitor.id }));
 });
 
 // Keepalive incidents and the maintenance windows holding their messages.
