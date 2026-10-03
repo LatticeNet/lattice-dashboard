@@ -1682,7 +1682,7 @@ export default {
       toast: {
         acked: "已确认：{name}。不会再发提醒。",
         undo: "撤销",
-        unacked: "已撤销确认：{name} 恢复为未处理。",
+        unacked: "已撤销确认：{name}。事件恢复为未处理。",
         unackClosed: "{name} 已在此期间恢复，确认保留。",
         unackFailed: "撤销失败",
         ackFailed: "确认失败",

@@ -1703,7 +1703,7 @@ export default {
       toast: {
         acked: "Acknowledged: {name}. No reminder will be re-sent.",
         undo: "Undo",
-        unacked: "Acknowledgement undone: {name} is open again.",
+        unacked: "Acknowledgement undone: {name}. The incident is open again.",
         unackClosed: "{name} closed meanwhile, so its acknowledgement stays.",
         unackFailed: "Undo failed",
         ackFailed: "Acknowledge failed",
