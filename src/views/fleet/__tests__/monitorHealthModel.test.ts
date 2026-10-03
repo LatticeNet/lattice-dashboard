@@ -77,3 +77,22 @@ test("failing sorts first and the most-failing monitor leads the attention list"
     ["c", "a"],
   );
 });
+
+test("the list's latest field is the state, for every monitor however many there are", () => {
+  // The server sends each node's newest result with the list. Sixty monitors
+  // used to stop at fifty reads, and the rest said "not read".
+  const listed = Array.from({ length: 60 }, (_, i) => ({
+    ...monitor({ id: `mon_${i}` }),
+    latest: [
+      { node_id: "fsn", at: secondsAgo(20), success: i % 25 !== 24, latency_ms: 40, fail_streak: i % 25 === 24 ? 3 : 0, since: secondsAgo(90) },
+    ],
+  }));
+  const states = listed.map((m) => monitorHealth(m, m.latest, NOW));
+  assert.equal(states.filter((s) => s.kind === "unread").length, 0);
+  assert.deepEqual(
+    failingMonitors(listed, (m) => monitorHealth(m, m.latest, NOW)).map((f) => f.monitor.id),
+    ["mon_24", "mon_49"],
+  );
+  // A list without the field (an older server) is not read, never up.
+  assert.equal(monitorHealth(monitor(), undefined, NOW).kind, "unread");
+});

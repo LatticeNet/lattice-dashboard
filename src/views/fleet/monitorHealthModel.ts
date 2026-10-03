@@ -5,7 +5,9 @@
  * every enabled monitor in the success colour, so a monitor that had failed
  * its last three checks sat beside the healthy ones with the same green
  * icon. The state comes from each node's newest result, the same rule the
- * sheet's badge uses, so the row and the sheet never disagree.
+ * sheet's badge uses, so the row and the sheet never disagree. The server
+ * sends those newest results with the monitors list (`latest`), so every
+ * listed monitor has a state without a read of its own.
  *
  * A newest result older than three intervals (three minutes at least) is not
  * a current reading: the agents stopped reporting it, and the row says when
@@ -104,12 +106,3 @@ export function failingMonitors<M extends HealthMonitor>(
   }
   return out.sort((a, b) => b.failing - a.failing);
 }
-
-/**
- * yagni: the list reads each monitor's results itself (the server has no
- * latest-result field on GET /api/monitors, and keeps up to 500 results per
- * monitor). Production has no monitors today; past this many the rest of the
- * rows say "not read" instead of guessing. Upgrade path: a `latest` field per
- * monitor (newest result per node) on GET /api/monitors, then drop the reads.
- */
-export const HEALTH_READ_CAP = 50;
