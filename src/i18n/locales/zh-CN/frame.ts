@@ -236,6 +236,7 @@ export default {
     sections: {
       overview: "概览",
       fleet: "机群",
+      vpn: "VPN",
       operations: "运维",
       networking: "网络",
       proxy: "代理",
@@ -306,6 +307,8 @@ export default {
       pin: "固定此入口",
       unpin: "取消固定此入口",
       extensionsLoading: "正在加载已激活扩展…",
+      pluginPages: "{n} 个页面",
+      pluginMark: "来自插件 {name} 的页面",
       extensionUnavailable: "扩展不可用",
       extensionUnavailableHint: "此扩展未激活、不可用或超出你的权限范围；基础控制台不受影响。",
     },

@@ -146,6 +146,8 @@ function resetContributionCache() {
 export interface PluginNavEntry {
   pluginId: string;
   pluginName: string;
+  /** The manifest's publisher; the server loaded it only if its signature verified under that name. */
+  publisher: string;
   section: string;
   sectionTitle?: string;
   title: string;
@@ -208,6 +210,7 @@ export function usePluginContributions() {
         out.push({
           pluginId: plugin.id,
           pluginName: plugin.name || plugin.id,
+          publisher: plugin.publisher ?? "",
           section: entry.section,
           sectionTitle: entry.section_title,
           title: entry.title || entry.route,

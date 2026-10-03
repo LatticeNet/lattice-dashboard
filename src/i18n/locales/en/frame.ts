@@ -241,6 +241,7 @@ export default {
     sections: {
       overview: "Overview",
       fleet: "Fleet",
+      vpn: "VPN",
       operations: "Operations",
       networking: "Networking",
       proxy: "Proxy",
@@ -311,6 +312,8 @@ export default {
       pin: "Pin destination",
       unpin: "Unpin destination",
       extensionsLoading: "Loading active extensions…",
+      pluginPages: "{n} page | {n} pages",
+      pluginMark: "Plugin page from {name}",
       extensionUnavailable: "Extension unavailable",
       extensionUnavailableHint: "This extension is inactive, unavailable, or outside your permissions. The base console is unaffected.",
     },

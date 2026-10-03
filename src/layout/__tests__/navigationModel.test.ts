@@ -3,8 +3,12 @@ import test from "node:test";
 
 import {
   buildExtensionPluginGroups,
+  consoleSectionForPlugin,
   extensionWorkspaceVisible,
   nextNavIndex,
+  partitionPluginNav,
+  placeHoistedItems,
+  pluginIdOfRoute,
   reconcileCollapsedSections,
   toggleCollapsedSection,
   workspaceForRoute,
@@ -163,4 +167,102 @@ test("keys the navigation does not own, and an empty list, are left to the brows
 test("focus starts at the top when nothing in the list is focused yet", () => {
   assert.equal(nextNavIndex(3, -1, "ArrowDown"), 1);
   assert.equal(nextNavIndex(3, -1, "ArrowUp"), 2);
+});
+
+/* ------------------------------------------------------------------ */
+/* Official plugins in console sections                                 */
+/* ------------------------------------------------------------------ */
+
+test("the four official plugins signed by latticenet move into console sections", () => {
+  assert.equal(consoleSectionForPlugin("latticenet.vpn-core", "latticenet"), "vpn");
+  assert.equal(consoleSectionForPlugin("latticenet.sub-store", "latticenet"), "vpn");
+  assert.equal(consoleSectionForPlugin("latticenet.netguard", "latticenet"), "networking");
+  assert.equal(consoleSectionForPlugin("latticenet.wireguard", "latticenet"), "networking");
+  assert.equal(consoleSectionForPlugin("latticenet.vpn-core", " latticenet "), "vpn");
+});
+
+test("an official id under another publisher, or no publisher, stays in Extensions", () => {
+  assert.equal(consoleSectionForPlugin("latticenet.vpn-core", "acme"), null);
+  assert.equal(consoleSectionForPlugin("latticenet.vpn-core", ""), null);
+  assert.equal(consoleSectionForPlugin("latticenet.vpn-core", undefined), null);
+  // A latticenet plugin that is not one of the four keeps the Extensions home.
+  assert.equal(consoleSectionForPlugin("latticenet.experimental", "latticenet"), null);
+  assert.equal(consoleSectionForPlugin("example.leases", "latticenet"), null);
+});
+
+test("placed pages follow the official plugin order whatever the listing order; Extensions keeps its order", () => {
+  // The server lists plugins by id, so Sub-Store and NetGuard come first.
+  const entries = [
+    { pluginId: "latticenet.netguard", publisher: "latticenet", route: "firewall" },
+    { pluginId: "example.leases", publisher: "", route: "leases" },
+    { pluginId: "latticenet.sub-store", publisher: "latticenet", route: "sub-store" },
+    { pluginId: "latticenet.vpn-core", publisher: "latticenet", route: "lines" },
+    { pluginId: "acme.dns", publisher: "acme", route: "zones" },
+    { pluginId: "latticenet.vpn-core", publisher: "latticenet", route: "users" },
+    { pluginId: "latticenet.wireguard", publisher: "latticenet", route: "networks" },
+  ];
+  const { hoisted, extensions } = partitionPluginNav(entries);
+  assert.deepEqual(hoisted.map((h) => [h.sectionId, h.entry.route]), [
+    ["vpn", "lines"],
+    ["vpn", "users"],
+    ["vpn", "sub-store"],
+    ["networking", "firewall"],
+    ["networking", "networks"],
+  ]);
+  assert.deepEqual(extensions.map((e) => e.route), ["leases", "zones"]);
+});
+
+const ORDER = ["overview", "fleet", "vpn", "operations", "networking", "platform", "settings"];
+const section = (id: string, items: string[]) => ({ id, items });
+
+test("hoisted pages follow a section's own destinations, and VPN is created after Fleet", () => {
+  const placed = placeHoistedItems(
+    [section("overview", ["overview"]), section("fleet", ["nodes"]), section("operations", ["tasks"]), section("networking", ["network-policy"])],
+    [
+      { sectionId: "vpn", item: "vpn-core:lines" },
+      { sectionId: "networking", item: "netguard:firewall" },
+      { sectionId: "vpn", item: "sub-store:sub-store" },
+    ],
+    (id) => (id === "vpn" ? section("vpn", []) : undefined),
+    ORDER,
+  );
+  assert.deepEqual(placed.map((s) => s.id), ["overview", "fleet", "vpn", "operations", "networking"]);
+  assert.deepEqual(placed.find((s) => s.id === "vpn")?.items, ["vpn-core:lines", "sub-store:sub-store"]);
+  assert.deepEqual(placed.find((s) => s.id === "networking")?.items, ["network-policy", "netguard:firewall"]);
+});
+
+test("a principal who sees no Networking page but holds a plugin's scope gets the section in its place", () => {
+  const placed = placeHoistedItems(
+    [section("overview", ["overview"]), section("platform", ["platform-plugins"]), section("settings", ["settings-about"])],
+    [{ sectionId: "networking", item: "wireguard:networks" }],
+    (id) => (id === "networking" ? section("networking", []) : undefined),
+    ORDER,
+  );
+  assert.deepEqual(placed.map((s) => s.id), ["overview", "networking", "platform", "settings"]);
+});
+
+test("placing does not mutate the sections it was given, and an unknown section is dropped", () => {
+  const fleet = section("fleet", ["nodes"]);
+  const placed = placeHoistedItems([fleet], [{ sectionId: "fleet", item: "x" }, { sectionId: "nowhere", item: "y" }], () => undefined, ORDER);
+  assert.deepEqual(fleet.items, ["nodes"]);
+  assert.deepEqual(placed.map((s) => [s.id, s.items]), [["fleet", ["nodes", "x"]]]);
+});
+
+test("an official plugin's routes belong to the console workspace; others stay in Extensions", () => {
+  const consoleIds = new Set(["latticenet.vpn-core", "latticenet.netguard"]);
+  assert.equal(pluginIdOfRoute("/plugins/latticenet.vpn-core/users"), "latticenet.vpn-core");
+  assert.equal(pluginIdOfRoute("/plugins/latticenet.vpn-core"), "latticenet.vpn-core");
+  assert.equal(pluginIdOfRoute("/nodes"), null);
+  assert.equal(workspaceForRoute("/plugins/latticenet.vpn-core/users", consoleIds), "console");
+  assert.equal(workspaceForRoute("/plugins/latticenet.vpn-core/users/deep/path", consoleIds), "console");
+  assert.equal(workspaceForRoute("/plugins/example.leases/leases", consoleIds), "extensions");
+  assert.equal(workspaceForRoute("/plugins", consoleIds), "extensions");
+  // A look-alike id is a different plugin.
+  assert.equal(workspaceForRoute("/plugins/latticenet.vpn-core-evil/users", consoleIds), "extensions");
+});
+
+test("with only official plugins installed the Extensions switch is gone, except on a third-party route", () => {
+  const consoleIds = new Set(["latticenet.vpn-core"]);
+  assert.equal(extensionWorkspaceVisible(0, "/plugins/latticenet.vpn-core/lines", consoleIds), false);
+  assert.equal(extensionWorkspaceVisible(0, "/plugins/example.removed/view", consoleIds), true);
 });
