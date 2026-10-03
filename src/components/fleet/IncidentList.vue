@@ -78,13 +78,28 @@ function onAck(incident: Incident): void {
 
 // Fulfil a focus request once its target exists: Snooze after an
 // acknowledgement (Acknowledge is gone), Acknowledge after a failure or Undo.
+// The caller's list is read again after the action, so a target that is
+// missing now (Acknowledge before the read that reopens the row) is waited
+// for, up to FOCUS_WAIT_MS; after that the row's first control stands in.
+// The rows are recomputed at least every second (they age), so the watch
+// runs again within that time.
+const FOCUS_WAIT_MS = 3000;
+let requestedAt = 0;
+watch(
+  () => props.focusRequest,
+  (request) => {
+    requestedAt = request ? Date.now() : 0;
+  },
+  { flush: "sync" },
+);
 watch(
   () => [props.focusRequest, props.incidents] as const,
   async ([request]) => {
     if (!request) return;
     await nextTick();
-    const target = list.value?.querySelector<HTMLElement>(`[data-incident-${request.target}="${CSS.escape(request.id)}"]`)
-      ?? list.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(request.id)}"] button`);
+    const exact = list.value?.querySelector<HTMLElement>(`[data-incident-${request.target}="${CSS.escape(request.id)}"]`);
+    if (!exact && Date.now() - requestedAt < FOCUS_WAIT_MS) return;
+    const target = exact ?? list.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(request.id)}"] button`);
     if (!target) return;
     target.focus();
     emit("focused");
