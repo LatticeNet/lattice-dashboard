@@ -36,15 +36,16 @@ function clock(iso: string): string {
   return d.toLocaleString(locale.value, sameDay ? { hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// Each covered name is its own unbreakable piece in the sentence, so a
+// narrow banner moves "[cd]-hetzner-hel" to the next line whole instead of
+// splitting it at its hyphen; one too long for the line is cut with an ellipsis.
 const lines = computed(() =>
   props.windows
     .filter((window) => windowPhase(window, props.now) === "active")
     .map((window) => {
       const coverage = windowCoverage(window, props.nodeNames, props.groupNames);
       const names = [...coverage.nodes, ...coverage.groups.map((g) => t("fleet.keepalive.maintenance.groupName", { name: g }))];
-      const shown = names.slice(0, 3).join(", ");
-      const covers = names.length > 3 ? t("fleet.keepalive.maintenance.andMore", { names: shown, n: names.length - 3 }) : shown;
-      return { window, text: t("fleet.keepalive.maintenance.banner", { name: window.name, covers, time: clock(window.ends_at) }) };
+      return { window, shown: names.slice(0, 3), more: Math.max(0, names.length - 3), time: clock(window.ends_at) };
     }),
 );
 </script>
@@ -58,7 +59,17 @@ const lines = computed(() =>
     >
       <span class="flex min-w-0 flex-1 items-start gap-2.5">
         <Wrench class="mt-0.5 size-4 shrink-0 text-info-text" aria-hidden="true" />
-        <span class="min-w-0 break-words">{{ line.text }}</span>
+        <i18n-t keypath="fleet.keepalive.maintenance.banner" tag="span" class="min-w-0 break-words" scope="global">
+          <template #name>{{ line.window.name }}</template>
+          <template #time>{{ line.time }}</template>
+          <template #covers>
+            <i18n-t v-if="line.more" keypath="fleet.keepalive.maintenance.andMore" scope="global">
+              <template #names><template v-for="(covered, i) in line.shown" :key="i"><template v-if="i">, </template><span class="inline-block max-w-full truncate align-bottom">{{ covered }}</span></template></template>
+              <template #n>{{ line.more }}</template>
+            </i18n-t>
+            <template v-else><template v-for="(covered, i) in line.shown" :key="i"><template v-if="i">, </template><span class="inline-block max-w-full truncate align-bottom">{{ covered }}</span></template></template>
+          </template>
+        </i18n-t>
       </span>
       <span v-if="canEdit" class="flex shrink-0 gap-1.5 ps-6.5 sm:ps-0">
         <!-- aria-disabled while it runs, not disabled: a disabled button drops focus to the page. -->
