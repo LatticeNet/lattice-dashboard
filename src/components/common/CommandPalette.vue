@@ -18,7 +18,7 @@ import {
   ComboboxItem,
   VisuallyHidden,
 } from "reka-ui";
-import { ArrowRight, CalendarCheck, ListChecks, Search, Server, Share2, ShieldCheck, UserPlus, Zap } from "lucide-vue-next";
+import { ArrowRight, CalendarCheck, Keyboard, ListChecks, Search, Server, Share2, ShieldCheck, UserPlus, Zap } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
@@ -29,6 +29,7 @@ import { approvalRawLabel, approvalTitleMessage } from "@/lib/approvalKind";
 import { partitionBatchResults, runWithConcurrency } from "@/views/operations/approvalsModel";
 import { approvalDigest } from "@/views/operations/approvalsListModel";
 import { useConsoleNavigation } from "@/layout/useConsoleNavigation";
+import { shortcutsHelpOpen } from "@/layout/useKeyboardShortcuts";
 import {
   createTtlCache,
   filterPendingSystemApprovals,
@@ -81,7 +82,7 @@ const isOpen = computed({
   set: (v: boolean) => emit("update:open", v),
 });
 
-type ActionId = "approve-system-events";
+type ActionId = "approve-system-events" | "keyboard-shortcuts";
 type Payload =
   | { type: "nav"; item: NavItem; icon: Component }
   | { type: "go"; to: RouteLocationRaw; icon: Component }
@@ -333,6 +334,14 @@ const actionEntries = computed<Entry[]>(() => {
       payload: { type: "nav", item: upcoming, icon: CalendarCheck },
     });
   }
+  out.push({
+    key: "action:keyboard-shortcuts",
+    group: "action",
+    label: t("shell.command.keyboardShortcuts"),
+    detail: "?",
+    terms: termsOf("keyboardShortcuts"),
+    payload: { type: "action", id: "keyboard-shortcuts", icon: Keyboard },
+  });
   return out;
 });
 
@@ -415,6 +424,11 @@ function onPick(value: unknown) {
   if (!payload) return;
   if (payload.type === "action") {
     if (payload.id === "approve-system-events") void runApproveSystemEvents();
+    if (payload.id === "keyboard-shortcuts") {
+      isOpen.value = false;
+      // After the palette has let go of focus, or its close would take it back.
+      setTimeout(() => (shortcutsHelpOpen.value = true), 0);
+    }
     return;
   }
   isOpen.value = false;

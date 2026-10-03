@@ -359,6 +359,7 @@ export default {
       shareSubscriptionDetail: "A new share in Publishing",
       recordRenewal: "Record a renewal",
       recordRenewalDetail: "Upcoming lists what is due",
+      keyboardShortcuts: "Keyboard shortcuts",
       approvalDetail: "{node} · {raw}",
       // Words that find a destination besides its label. The palette searches
       // these and the English ones, so a verb finds the page that does it.
@@ -390,7 +391,21 @@ export default {
         addVpnUser: "add new create vpn user identity account",
         shareSubscription: "share subscription link new publish",
         recordRenewal: "renew renewal record pay due",
+        keyboardShortcuts: "keyboard shortcuts keys hotkeys help",
       },
+    },
+    keys: {
+      title: "Keyboard shortcuts",
+      description: "They work anywhere except while you type, inside Terminal, or under another dialog.",
+      palette: "Open the command palette",
+      search: "Search this page",
+      rows: "Next or previous row, when a row has focus",
+      open: "Open the focused row",
+      step: "Previous or next row in the open sheet",
+      close: "Close the sheet or dialog",
+      help: "This list",
+      go: "Go to a page",
+      then: "then",
     },
   },
 

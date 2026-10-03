@@ -20,8 +20,8 @@ import {
   opensCommandPalette,
   resolvePluginBreadcrumb,
   type Crumb,
-  type ShortcutTarget,
 } from "@/layout/headerModel";
+import { keyTargetOf } from "@/layout/keyboardShortcutsModel";
 import { useAuthStore } from "@/stores/auth";
 import { objectTitle } from "@/layout/useObjectTitle";
 import { resetRestoredView, restoredView, viewQueriesEqual, viewQuery } from "@/router/viewMemory";
@@ -149,17 +149,9 @@ const accountLabel = computed(
 const apple = currentPlatformIsApple();
 const shortcutKey = commandShortcutKey(apple);
 
-function shortcutTarget(el: Element | null): ShortcutTarget {
-  if (!el) return "other";
-  // xterm's hidden input: Ctrl+K there is the shell's.
-  if (el.classList.contains("xterm-helper-textarea") || el.closest(".xterm")) return "terminal";
-  const tag = el.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable) return "editable";
-  return "other";
-}
-
 useEventListener(window, "keydown", (e: KeyboardEvent) => {
-  if (e.repeat || !opensCommandPalette(e, { apple, target: shortcutTarget(document.activeElement) })) return;
+  // xterm's hidden input reads as "terminal": Ctrl+K there is the shell's.
+  if (e.repeat || !opensCommandPalette(e, { apple, target: keyTargetOf(document.activeElement) })) return;
   e.preventDefault();
   emit("open-command");
 });

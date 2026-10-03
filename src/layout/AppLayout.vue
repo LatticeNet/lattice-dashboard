@@ -14,6 +14,8 @@ import CommandPalette from "@/components/common/CommandPalette.vue";
 import RouteProgress from "@/components/common/RouteProgress.vue";
 import RouteDenied from "./components/RouteDenied.vue";
 import { viewportPaneClaimed } from "./viewportPane";
+import KeyboardShortcutsDialog from "./components/KeyboardShortcutsDialog.vue";
+import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 
 const ui = useUiStore();
 const { density } = storeToRefs(ui);
@@ -38,6 +40,9 @@ const deniedScopes = computed(() => missingRouteScopes(route.meta.scopes, (scope
 
 const mobileOpen = ref(false);
 const commandOpen = ref(false);
+
+// / search, j k rows, [ ] sheet, g page, ? the list (layout/keyboardShortcutsModel).
+useKeyboardShortcuts();
 
 // Reflect the persisted density preference onto <html data-density> so the
 // opt-in `density-*` utilities in app.css take effect. Runs on mount and on
@@ -105,6 +110,7 @@ watchEffect(() => {
     </div>
 
     <CommandPalette v-model:open="commandOpen" />
+    <KeyboardShortcutsDialog />
 
     <Toaster />
   </TooltipProvider>

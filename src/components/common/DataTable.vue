@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
+import { nextRowIndex } from "@/layout/keyboardShortcutsModel";
 import { tableSearchVisible } from "./chassisModel";
 import { groupedEntries, groupRows, toggleGroup, type GroupedEntry, type RowGroup } from "./tableGroupModel";
 import {
@@ -273,9 +274,31 @@ function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
  * the cursor says so.
  */
 function onRowKeydown(row: T, event: KeyboardEvent): void {
+  if (event.target !== event.currentTarget) return;
+  if (moveRowFocus(event)) return;
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   onRowActivate(row, event);
+}
+
+/**
+ * j and k (and the arrows, Home, End) walk the rows while one has focus,
+ * so a keyboard operator reads 34 nodes in 34 presses instead of 68 Tabs
+ * (each row and its menu). Only the rows of this table, as shown: a
+ * collapsed group's rows are not there to land on.
+ */
+function moveRowFocus(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  const current = event.currentTarget as HTMLElement | null;
+  const list = current?.closest("tbody, ul");
+  if (!current || !list) return false;
+  const rows = [...list.querySelectorAll<HTMLElement>('[data-row-key][tabindex="0"]')];
+  const next = nextRowIndex(rows.length, rows.indexOf(current), event.key);
+  if (next < 0) return false;
+  event.preventDefault();
+  rows[next]?.focus();
+  rows[next]?.scrollIntoView({ block: "nearest" });
+  return true;
 }
 
 /** Selected row ids. Two-way bindable via `v-model:selected`. */
