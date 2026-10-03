@@ -17,8 +17,10 @@
  * each page's failed and stale states can be drawn: nodes, audit, counts,
  * approvals, expiring, machines, monitors, groups, ddns, geo, tasks, or all.
  * `?fail=nodes:later` lets the first read land and fails every one after it
- * (the stale state). `?deny=tasks,approvals,audit` answers those reads 403 and
- * drops their read scopes, for a principal that cannot read them.
+ * (the stale state). `?deny=tasks,approvals,audit,machines` answers those reads
+ * 403 and drops their read scopes, for a principal that cannot read them.
+ * Reads are counted by name on window.__harnessReads, so a render can prove
+ * a read happened or did not.
  * `?expire=<ms>` ends the session that long after the page loads: every read
  * and /api/me then answer 401, reported the way the real client reports them,
  * and signing in again starts a session that does not expire.
@@ -76,8 +78,9 @@ const FAIL = new Map(
     }),
 );
 const reads = new Map<string, number>();
+const READ_COUNTS: Record<string, number> = ((window as unknown as { __harnessReads?: Record<string, number> }).__harnessReads = {});
 const DENY = new Set((PARAMS.get("deny") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
-const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "approval:read", audit: "audit:read" };
+const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "approval:read", audit: "audit:read", machines: "inventory:read" };
 
 const EXPIRE_MS = Number(PARAMS.get("expire") ?? "");
 let sessionEndsAt = EXPIRE_MS > 0 ? Date.now() + EXPIRE_MS : Number.POSITIVE_INFINITY;
@@ -95,6 +98,7 @@ function sessionGone<T>(path: string, ms = LATENCY_MS): Promise<T> | undefined {
 function answer<T>(name: string, value: () => T, ms = LATENCY_MS): Promise<T> {
   const count = (reads.get(name) ?? 0) + 1;
   reads.set(name, count);
+  READ_COUNTS[name] = count;
   const gone = sessionGone<T>(`/api/${name}`, ms);
   if (gone) return gone;
   if (DENY.has(name)) {

@@ -5,32 +5,44 @@
  *
  *   ● offline for 6d        last report 09-24 03:10
  *   No report since the agent went quiet; ...
+ *   Its renewal on 2026-09-26 passed before it went quiet; ...
  *   Tasks   1 stalled · 0 running · 0 queued       [Tasks]
  *   SSH     password open                           [SSH Guard]
  *   Lines   on vpn-core                             [Lines]
+ *   Machine DMIT · US, Los Angeles
+ *           2026-09-26 · 7d overdue    [Provider console] [Inventory]
  *
  * Nodes, Map and Groups open the same sheet on `?open=<node id>`, so a node
  * reads the same wherever it is opened. The page passes its node list and
  * the actions it allows (RowMenu items); the sheet reads the tasks and the
  * SSH posture of the open node only, once per opening and when asked.
+ *
+ * The machine row comes from the list Inventory reads (one row per node the
+ * principal holds inventory:read for), read when the sheet first opens and
+ * again after a minute, so stepping through nodes does not re-read it per
+ * node. The provider console link is sealed on the server and revealed per
+ * step-up grant, as on Inventory (useMachineLinkReveal).
  */
 import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { SquareTerminal } from "lucide-vue-next";
+import { ExternalLink, RefreshCw, SquareTerminal } from "lucide-vue-next";
 
-import { api, unwrap, type Node, type SSHGuardNodeStatus, type TaskView } from "@/lib/api";
+import { api, unwrap, type MachineView, type Node, type SSHGuardNodeStatus, type TaskView } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
+import { useMachineLinkReveal } from "@/composables/useMachineLinkReveal";
 import { usePluginContributions } from "@/composables/usePluginContributions";
 import { formatAge, formatDateTime, formatRelativeTime, isZeroTime } from "@/lib/format";
 import { describeNodeStatus, isReporting, nodeStatus, nodeStatusReason, nodeStatusSince } from "@/lib/nodeStatus";
 import { useAuthStore } from "@/stores/auth";
 import { buildNodeQueue } from "@/views/fleet/nodeTaskQueueModel";
+import { likelyUnpaid, nodeMachine, type RenewalState } from "@/views/fleet/nodeMachineModel";
 import { proofReason } from "@/components/common/proofModel";
 
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
+import MachineLinkStepUpDialog from "@/components/fleet/MachineLinkStepUpDialog.vue";
 import { Button } from "@/components/ui/button";
 
 const props = withDefaults(
@@ -68,6 +80,8 @@ const state = computed(() => {
 
 const canTasks = auth.can("task:read");
 const canGuard = auth.can("sshguard:read") || auth.can("sshguard:admin");
+const canInventory = auth.can("inventory:read");
+const canRevealLinks = auth.can("inventory:admin");
 
 const tasks = useAsyncData<TaskView[]>(
   (signal) => api.tasks.listForNode(props.nodeId ?? "", 50, { signal }).then((r) => unwrap(r, "tasks")),
@@ -79,6 +93,18 @@ const guard = useAsyncData<SSHGuardNodeStatus | undefined>(
   { immediate: false },
 );
 
+/** Renewal dates move by days, so one read serves every node opened within this. */
+const MACHINES_FRESH_MS = 60_000;
+let machinesReadAt = 0;
+const machines = useAsyncData<MachineView[]>(
+  (signal) =>
+    api.machines.list({ signal }).then((r) => {
+      machinesReadAt = Date.now();
+      return unwrap(r, "machines");
+    }),
+  { immediate: false },
+);
+
 watch(
   () => props.nodeId,
   (id) => {
@@ -87,6 +113,7 @@ watch(
     guard.data.value = undefined;
     if (canTasks) void tasks.refresh();
     if (canGuard) void guard.refresh();
+    if (canInventory && Date.now() - machinesReadAt > MACHINES_FRESH_MS) void machines.refresh();
   },
   { immediate: true },
 );
@@ -108,6 +135,34 @@ const reason = computed(() => {
   return t(statusInfo.value.hintKey);
 });
 const lastSeen = computed(() => (node.value?.last_seen && !isZeroTime(node.value.last_seen) ? node.value.last_seen : undefined));
+
+const machine = computed(() => (node.value && machines.data.value ? nodeMachine(machines.data.value, node.value.id) : undefined));
+const renewal = computed<RenewalState | undefined>(() => (machine.value?.kind === "profiled" ? machine.value.renewal : undefined));
+/** A passed renewal that likely explains a node gone quiet: said beside the status, with the console a row below. */
+const unpaid = computed(() => !!node.value && !!renewal.value && likelyUnpaid(renewal.value, isReporting(node.value), since.value));
+
+function renewalText(state: RenewalState): string {
+  switch (state.kind) {
+    case "passed":
+      return `${state.date} · ${t("fleet.inventory.renewal.overdue", { days: state.days })}`;
+    case "today":
+      return `${state.date} · ${t("fleet.inventory.renewal.dueToday")}`;
+    case "upcoming":
+      return `${state.date} · ${t("fleet.inventory.renewal.daysLeft", { days: state.days })}`;
+    case "incomplete":
+      return t("fleet.inventory.renewal.incomplete");
+    default:
+      return t("fleet.inventory.renewal.notTracked");
+  }
+}
+
+function renewalTone(state: RenewalState): string | undefined {
+  if (state.kind === "passed") return "text-destructive";
+  if (state.kind === "today" || state.kind === "incomplete" || (state.kind === "upcoming" && state.soon)) return "text-warning-text";
+  return undefined;
+}
+
+const links = useMachineLinkReveal();
 
 const queue = computed(() => (node.value && tasks.data.value ? buildNodeQueue(tasks.data.value, node.value.id) : undefined));
 
@@ -173,6 +228,9 @@ const STATUS_TONE: Record<string, string> = {
           </span>
         </p>
         <p v-if="reason" class="text-muted-foreground">{{ reason }}</p>
+        <p v-if="unpaid && renewal?.kind === 'passed'" class="text-destructive" data-testid="node-sheet-unpaid">
+          {{ $t('fleet.nodes.sheet.likelyUnpaid', { date: renewal.date }) }}
+        </p>
       </section>
 
       <dl class="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2.5">
@@ -233,6 +291,52 @@ const STATUS_TONE: Record<string, string> = {
           </dd>
         </template>
 
+        <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.sheet.machine') }}</dt>
+        <dd class="min-w-0" data-testid="node-sheet-machine">
+          <template v-if="!canInventory"><span class="text-muted-foreground">{{ $t('fleet.nodes.sheet.noAccess') }}</span></template>
+          <template v-else-if="machine?.kind === 'unreadable'"><span class="text-muted-foreground">{{ $t('fleet.nodes.sheet.noAccess') }}</span></template>
+          <template v-else-if="machine?.kind === 'unprofiled'">
+            <p class="text-muted-foreground">{{ $t('fleet.nodes.sheet.machineUnprofiled') }}</p>
+            <RouterLink
+              :to="{ name: 'inventory', query: { node: node.id } }"
+              class="mt-1 inline-block text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+            >
+              {{ $t('fleet.nodes.sheet.openInventory') }}
+            </RouterLink>
+          </template>
+          <template v-else-if="machine?.kind === 'profiled'">
+            <p class="break-words">{{ [machine.machine.vendor || $t('fleet.inventory.group.unknownVendor'), machine.machine.region].filter(Boolean).join(' · ') }}</p>
+            <p class="font-mono text-xs" :class="renewalTone(machine.renewal)">{{ renewalText(machine.renewal) }}</p>
+            <p v-if="machine.machine.auto_roll" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.sheet.autoRoll') }}</p>
+            <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Button
+                v-if="machine.machine.has_console_url && canRevealLinks"
+                type="button"
+                variant="outline"
+                size="sm"
+                class="pointer-coarse:min-h-11"
+                :disabled="!!links.pending.value"
+                @click="links.reveal(machine.machine, 'console')"
+              >
+                <RefreshCw v-if="links.pending.value === links.pendingKey(machine.machine, 'console')" class="size-3.5 animate-spin" aria-hidden="true" />
+                <ExternalLink v-else class="size-3.5" aria-hidden="true" />
+                {{ $t('fleet.nodes.sheet.providerConsole') }}
+              </Button>
+              <span v-else-if="machine.machine.has_console_url" class="text-xs text-muted-foreground">{{ $t('fleet.inventory.list.consoleLinkStored') }}</span>
+              <RouterLink
+                :to="{ name: 'inventory', query: { node: node.id } }"
+                class="text-xs text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+              >
+                {{ $t('fleet.nodes.sheet.openInventory') }}
+              </RouterLink>
+            </div>
+          </template>
+          <template v-else-if="machines.error.value">
+            <span class="text-muted-foreground">{{ $t('fleet.nodes.sheet.notRead', { reason: proofReason(machines.error.value) }) }}</span>
+          </template>
+          <span v-else class="text-muted-foreground">{{ $t('fleet.nodes.sheet.reading') }}</span>
+        </dd>
+
         <dt class="text-xs text-muted-foreground">{{ $t('fleet.nodes.sheet.agent') }}</dt>
         <dd class="font-mono text-xs">{{ node.agent_version || $t('fleet.nodes.sheet.notReported') }}</dd>
 
@@ -264,4 +368,6 @@ const STATUS_TONE: Record<string, string> = {
       <RowMenu v-if="node && menuItems.length" :name="node.name || node.id" :items="menuItems" />
     </template>
   </ObjectSheet>
+  <!-- After the sheet, so the step-up prompt stacks above it. -->
+  <MachineLinkStepUpDialog :step-up="links.stepUp" />
 </template>
