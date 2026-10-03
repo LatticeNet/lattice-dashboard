@@ -214,14 +214,16 @@ const problemText = computed(() => problems.value.map((p) => t(`fleet.monitoring
         </div>
         <ul class="max-h-[26rem] divide-y divide-border overflow-auto rounded-md border border-border" data-testid="latency-config-nodes">
           <li v-for="node in filteredNodes" :key="node.node_id" class="grid gap-2 px-2.5 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-            <div class="flex min-w-0 items-start gap-2">
+            <!-- The checkbox, the name and its line are one label: tapping the name
+                 toggles the source, and on touch the target is at least 44 px tall. -->
+            <label class="-mx-1 flex min-w-0 cursor-pointer items-start gap-2 rounded-md px-1 hover:bg-muted/40 pointer-coarse:min-h-11 pointer-coarse:items-center" data-testid="latency-source-toggle">
               <Checkbox
                 :model-value="draft.sources.includes(node.node_id)"
                 :aria-label="$t('fleet.monitoring.latency.config.sourceToggle', { name: node.name })"
-                class="mt-0.5"
+                class="mt-0.5 pointer-coarse:mt-0"
                 @update:model-value="(v) => toggleSource(node, v === true)"
               />
-              <div class="min-w-0">
+              <span class="block min-w-0">
                 <span class="block truncate font-medium" :title="node.name">{{ node.name || node.node_id }}</span>
                 <span class="block text-xs text-muted-foreground">
                   <span v-if="node.country" class="font-mono">{{ node.country }} · </span>
@@ -231,8 +233,8 @@ const problemText = computed(() => problems.value.map((p) => t(`fleet.monitoring
                     {{ $t(`fleet.monitoring.latency.reason.${preview(node).reason}`) }}
                   </span>
                 </span>
-              </div>
-            </div>
+              </span>
+            </label>
             <div class="flex rounded-md border border-border p-0.5 text-xs" role="group" :aria-label="$t('fleet.monitoring.latency.config.modeLabel', { name: node.name })">
               <button
                 v-for="mode in MODES"
