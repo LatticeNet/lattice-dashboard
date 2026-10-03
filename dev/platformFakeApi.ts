@@ -76,6 +76,10 @@ export * from "@/lib/api/index";
  *   ?links-fail       Every link status answers 502.
  *   ?links-none       No identity has a link (the share lens's empty section).
  *   ?stepup-fail      The step-up refuses every passcode.
+ *   ?fleet-detected   cd-self's record now reads the fleet export (fleet_feed_now: "fleet").
+ *   ?fleet-unchecked  The server cannot read Sub-Store's record list: cd-self answers
+ *                     fleet_feed_now "unknown" and every unflagged Sub-Store publish is
+ *                     refused as unchecked.
  *
  * Shares: production's one share (cd-self, rendered by Sub-Store from the
  * merge-openjobs record) plus an invented family-tv share whose render budget
@@ -107,6 +111,8 @@ const LINKS_SLOW = flags.has("links-slow");
 const LINKS_FAIL = flags.has("links-fail");
 const LINKS_NONE = flags.has("links-none");
 const STEPUP_FAIL = flags.has("stepup-fail");
+const FLEET_DETECTED = flags.has("fleet-detected");
+const FLEET_UNCHECKED = flags.has("fleet-unchecked");
 const HARNESS_GRANT = "harness_step_up_grant";
 
 /** Calls per read, on window.__platformCalls, so a drive can see what a layer reads. */
@@ -327,6 +333,7 @@ const shares: SubscriptionShareView[] = [
     expires_at: SHARE_EXPIRED ? iso(-2 * DAY) : SHARE_EXPIRING ? iso(5 * DAY) : undefined,
     update_interval_hours: 2,
     render_budget: { remaining: 21, burst: 24, per_hour: 60, exhausted: false, refused: 0 },
+    ...(FLEET_UNCHECKED ? { fleet_feed_now: "unknown" as const } : FLEET_DETECTED ? { fleet_feed_now: "fleet" as const } : {}),
   },
   {
     id: "shr_family_tv",
@@ -709,13 +716,23 @@ export const api = {
       publishes_fleet_credentials?: boolean;
     }) => {
       await delay(undefined);
+      if (FLEET_UNCHECKED && body.source.kind === "plugin" && !body.publishes_fleet_credentials) {
+        const message = `cannot check whether subscription ${body.source.subscription_id} publishes every user's credentials: Sub-Store's record list is over 4194304 bytes or does not parse. To share it anyway, send publishes_fleet_credentials: true`;
+        throw new ApiError(400, "fleet_feed_flag_required", message, undefined, {
+          error: { code: "fleet_feed_flag_required", message },
+          fleet_feed: "unknown",
+          via: "",
+        });
+      }
       // cd-home reads vpn-core's identity-less export, as the guard's case does.
       if (body.source.kind === "plugin" && body.source.subscription_id === "imported-col-cd-home" && !body.publishes_fleet_credentials) {
-        throw new ApiError(
-          400,
-          "fleet_feed_flag_required",
-          'subscription cd-home publishes every user\'s credentials: it reads the vpn-core fleet export with no identity (through "vpn-core"). Give each person their identity\'s own link instead; to publish the fleet feed anyway, send publishes_fleet_credentials: true',
-        );
+        const message =
+          'subscription cd-home publishes every user\'s credentials: it reads the vpn-core fleet export with no identity (through "vpn-core"). Give each person their identity\'s own link instead; to publish the fleet feed anyway, send publishes_fleet_credentials: true';
+        throw new ApiError(400, "fleet_feed_flag_required", message, undefined, {
+          error: { code: "fleet_feed_flag_required", message },
+          fleet_feed: "fleet",
+          via: "vpn-core",
+        });
       }
       const next: SubscriptionShareView = {
         id: `shr_${body.slug}`,
