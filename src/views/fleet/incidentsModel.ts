@@ -135,11 +135,23 @@ export function holdOrder<T extends { id: string }>(sorted: readonly T[], held: 
   return [...known, ...sorted.filter((row) => !at.has(row.id))];
 }
 
-/** The rows a list shows for its filters, worst first (or in a held order). */
-export function visibleIncidents(incidents: readonly Incident[], query: IncidentQuery, now: number, held?: readonly string[] | null): Incident[] {
+/**
+ * The rows a list shows for its filters, worst first (or in a held order).
+ * A `pinned` row stays even when it no longer matches the state filter: the
+ * operator just acted on it (Acknowledge under Open, Snooze under Open), and
+ * dropping it would slide the next row's Acknowledge under the pointer and
+ * take keyboard focus with it (useIncidentActions holds the pin briefly).
+ */
+export function visibleIncidents(
+  incidents: readonly Incident[],
+  query: IncidentQuery,
+  now: number,
+  held?: readonly string[] | null,
+  pinned?: ReadonlySet<string> | null,
+): Incident[] {
   const needle = query.search.trim().toLowerCase();
   const sorted = incidents
-    .filter((incident) => matchesFilter(incident, query.filter, now))
+    .filter((incident) => pinned?.has(incident.id) || matchesFilter(incident, query.filter, now))
     .filter((incident) => !query.kind || incident.kind === query.kind)
     .filter((incident) => {
       if (!needle) return true;
@@ -328,13 +340,37 @@ export function listedWindows(windows: readonly MaintenanceWindow[], now: number
     });
 }
 
+/** Whether a window covers a node: by id, or through a group's resolved members. */
+function windowCovers(window: Pick<MaintenanceWindow, "node_ids" | "group_ids">, nodeId: string, groupMembers: ReadonlyMap<string, readonly string[]>): boolean {
+  if ((window.node_ids ?? []).includes(nodeId)) return true;
+  return (window.group_ids ?? []).some((group) => groupMembers.get(group)?.includes(nodeId));
+}
+
 /**
- * The open incidents whose first message a window is holding: ending the
- * window sends each of them on the next check. An incident someone
- * acknowledged owes nothing.
+ * The open incidents whose first message ending this window sends on the
+ * next check. An incident someone acknowledged owes nothing, and one that
+ * something else still holds stays held when this window ends: a snooze,
+ * flapping, or another active window over its node (the server names only
+ * one window per incident). A window that covers groups is resolved through
+ * `groupMembers`; without them (no group:read) it is not counted as cover.
  */
-export function windowHeldIncidents(incidents: readonly Incident[], windowId: string): Incident[] {
-  return incidents.filter((incident) => incident.maintenance_id === windowId && incident.state === "open" && !!incident.owed_open);
+export function windowHeldIncidents(
+  incidents: readonly Incident[],
+  window: Pick<MaintenanceWindow, "id">,
+  now: number,
+  windows: readonly MaintenanceWindow[] = [],
+  groupMembers: ReadonlyMap<string, readonly string[]> = new Map(),
+): Incident[] {
+  const others = windows.filter((other) => other.id !== window.id && windowPhase(other, now) === "active");
+  return incidents.filter(
+    (incident) =>
+      incident.maintenance_id === window.id &&
+      incident.state === "open" &&
+      !!incident.owed_open &&
+      !isSnoozed(incident, now) &&
+      !incident.flapping &&
+      !(incident.node_id && others.some((other) => windowCovers(other, incident.node_id!, groupMembers))),
+  );
 }
 
 /** What a window covers, by name: nodes, then groups. A name the console cannot resolve shows its id. */
@@ -430,6 +466,16 @@ export function windowDraftInput(draft: WindowDraft): MaintenanceWindowInput {
   if (draft.reason.trim()) input.reason = draft.reason.trim();
   if (draft.id || draft.start === "at") input.starts_at = new Date(fromLocalInput(draft.startsAt)).toISOString();
   return input;
+}
+
+/**
+ * Of the incidents a window released, those whose first message has gone
+ * out since (the server's 20 s sweep can run before Undo): restoring the
+ * window cannot take those back, and the restore says so.
+ */
+export function releasedAndPaged(incidents: readonly Incident[], releasedIds: readonly string[]): Incident[] {
+  const released = new Set(releasedIds);
+  return incidents.filter((incident) => released.has(incident.id) && incident.notified === "open" && !incident.owed_open);
 }
 
 /** A window as an upsert of itself; Undo after End now sends this to put the end time back. */

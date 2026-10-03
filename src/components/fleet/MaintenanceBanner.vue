@@ -8,7 +8,7 @@
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { Wrench } from "lucide-vue-next";
+import { Undo2, Wrench } from "lucide-vue-next";
 
 import type { MaintenanceWindow } from "@/lib/api";
 import { windowCoverage, windowPhase } from "@/views/fleet/incidentsModel";
@@ -20,14 +20,16 @@ const props = withDefaults(
     now: number;
     nodeNames?: ReadonlyMap<string, string>;
     groupNames?: ReadonlyMap<string, string>;
-    /** Shows End now and Edit; Home leaves them to the Keepalive layer. */
+    /** Shows End now and Edit; Home leaves them to the Incidents layer. */
     canEdit?: boolean;
     busy?: string | null;
+    /** Windows End now just ended, as they were: each keeps a line with Undo in End now's place. */
+    ended?: MaintenanceWindow[];
   }>(),
-  { nodeNames: () => new Map(), groupNames: () => new Map(), canEdit: false, busy: null },
+  { nodeNames: () => new Map(), groupNames: () => new Map(), canEdit: false, busy: null, ended: () => [] },
 );
 
-const emit = defineEmits<{ end: [window: MaintenanceWindow]; edit: [window: MaintenanceWindow] }>();
+const emit = defineEmits<{ end: [window: MaintenanceWindow]; edit: [window: MaintenanceWindow]; undo: [window: MaintenanceWindow] }>();
 const { t, locale } = useI18n();
 
 function clock(iso: string): string {
@@ -39,15 +41,16 @@ function clock(iso: string): string {
 // Each covered name is its own unbreakable piece in the sentence, so a
 // narrow banner moves "[cd]-hetzner-hel" to the next line whole instead of
 // splitting it at its hyphen; one too long for the line is cut with an ellipsis.
-const lines = computed(() =>
-  props.windows
-    .filter((window) => windowPhase(window, props.now) === "active")
-    .map((window) => {
-      const coverage = windowCoverage(window, props.nodeNames, props.groupNames);
-      const names = [...coverage.nodes, ...coverage.groups.map((g) => t("fleet.keepalive.maintenance.groupName", { name: g }))];
-      return { window, shown: names.slice(0, 3), more: Math.max(0, names.length - 3), time: clock(window.ends_at) };
-    }),
-);
+function line(window: MaintenanceWindow, ended: boolean) {
+  const coverage = windowCoverage(window, props.nodeNames, props.groupNames);
+  const names = [...coverage.nodes, ...coverage.groups.map((g) => t("fleet.keepalive.maintenance.groupName", { name: g }))];
+  return { window, ended, shown: names.slice(0, 3), more: Math.max(0, names.length - 3), time: clock(window.ends_at) };
+}
+
+const lines = computed(() => [
+  ...props.windows.filter((window) => windowPhase(window, props.now) === "active").map((window) => line(window, false)),
+  ...(props.canEdit ? props.ended.map((window) => line(window, true)) : []),
+]);
 </script>
 
 <template>
@@ -59,7 +62,7 @@ const lines = computed(() =>
     >
       <span class="flex min-w-0 flex-1 items-start gap-2.5">
         <Wrench class="mt-0.5 size-4 shrink-0 text-info-text" aria-hidden="true" />
-        <i18n-t keypath="fleet.keepalive.maintenance.banner" tag="span" class="min-w-0 break-words" scope="global">
+        <i18n-t :keypath="line.ended ? 'fleet.keepalive.maintenance.bannerEnded' : 'fleet.keepalive.maintenance.banner'" tag="span" class="min-w-0 break-words" scope="global">
           <template #name>{{ line.window.name }}</template>
           <template #time>{{ line.time }}</template>
           <template #covers>
@@ -72,8 +75,23 @@ const lines = computed(() =>
         </i18n-t>
       </span>
       <span v-if="canEdit" class="flex shrink-0 gap-1.5 ps-6.5 sm:ps-0">
+        <!-- Just ended: Undo takes End now's place, where focus and the pointer already are. -->
+        <Button
+          v-if="line.ended"
+          variant="outline"
+          size="sm"
+          type="button"
+          class="pointer-coarse:h-11"
+          :data-window-undo="line.window.id"
+          :aria-label="$t('fleet.keepalive.maintenance.undoEnd', { name: line.window.name })"
+          @click="emit('undo', line.window)"
+        >
+          <Undo2 aria-hidden="true" />
+          {{ $t('fleet.keepalive.toast.undo') }}
+        </Button>
         <!-- aria-disabled while it runs, not disabled: a disabled button drops focus to the page. -->
         <Button
+          v-else
           variant="outline"
           size="sm"
           type="button"

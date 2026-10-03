@@ -16,7 +16,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { AlertTriangle, BellOff, Check, Clock, Info, OctagonAlert, CircleCheck } from "lucide-vue-next";
+import { AlertTriangle, BellOff, Check, Clock, Info, OctagonAlert, CircleCheck, Undo2 } from "lucide-vue-next";
 
 import type { Incident } from "@/lib/api";
 import type { IncidentFocusRequest } from "@/composables/useIncidentActions";
@@ -56,25 +56,65 @@ const props = withDefaults(
     monitorNames?: ReadonlyMap<string, string>;
     /** A row control to focus once the row has re-rendered (useIncidentActions). */
     focusRequest?: IncidentFocusRequest | null;
+    /** Acknowledged rows that offer Undo in Acknowledge's place. */
+    undoable?: ReadonlySet<string>;
   }>(),
-  { busy: () => new Set<string>(), nodeNames: () => new Map<string, string>(), monitorNames: () => new Map<string, string>(), focusRequest: null },
+  { busy: () => new Set<string>(), nodeNames: () => new Map<string, string>(), monitorNames: () => new Map<string, string>(), focusRequest: null, undoable: () => new Set<string>() },
 );
 
 const emit = defineEmits<{
-  /** `order` is the row ids as shown, which the caller holds while the acknowledgement settles. */
-  ack: [incident: Incident, order: string[]];
-  snooze: [incident: Incident, minutes: number];
+  /** `order` is the row ids as shown, which the caller holds while the action settles; `name` is the row's claim, for the toast. */
+  ack: [incident: Incident, order: string[], name: string];
+  undo: [incident: Incident, name: string];
+  snooze: [incident: Incident, minutes: number, order: string[], name: string];
   focused: [];
 }>();
 
 const list = ref<HTMLElement | null>(null);
 
-function onAck(incident: Incident): void {
+function order(): string[] {
+  return props.incidents.map((i) => i.id);
+}
+
+function onAck(incident: Incident, name: string): void {
   // The button stays focusable while busy (aria-disabled, not disabled): a
   // disabled button drops focus to the page.
   if (props.busy.has(incident.id)) return;
-  emit("ack", incident, props.incidents.map((i) => i.id));
+  emit("ack", incident, order(), name);
 }
+
+function onUndo(incident: Incident, name: string): void {
+  if (props.busy.has(incident.id)) return;
+  emit("undo", incident, name);
+}
+
+// Keep focus in the list when an update takes it away. Two updates do:
+// releasing a held order moves the focused row's element, which blurs it,
+// and a row leaving the list (its hold ended under a filter it no longer
+// matches, or a read dropped it) takes its focus with it. The moved
+// element is focused again; a row that left hands focus to the row that
+// takes its place, or the one above at the end. The row itself takes
+// focus, not its Acknowledge: focus that moved on its own must not leave a
+// stray Enter acknowledging an incident nobody chose. Only focus this
+// update lost is restored, so a click elsewhere is never undone.
+watch(
+  () => props.incidents,
+  async () => {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    if (!(active instanceof HTMLElement) || !list.value?.contains(active)) return;
+    const row = active.closest<HTMLElement>("[data-incident-row]");
+    const index = row ? [...list.value.children].indexOf(row) : -1;
+    await nextTick();
+    if (document.activeElement && document.activeElement !== document.body) return;
+    if (active.isConnected) {
+      active.focus();
+      return;
+    }
+    const rows = list.value?.querySelectorAll<HTMLElement>("[data-incident-row]") ?? [];
+    rows[Math.min(Math.max(index, 0), rows.length - 1)]?.focus();
+  },
+  { flush: "pre" },
+);
 
 // Fulfil a focus request once its target exists: Snooze after an
 // acknowledgement (Acknowledge is gone), Acknowledge after a failure or Undo.
@@ -233,6 +273,7 @@ const rows = computed(() =>
       phone: phoneLine(incident),
       badges,
       actions: incidentActions(incident, props.now, props.canAdmin),
+      undo: props.canAdmin && props.undoable.has(incident.id),
       open: openTarget(incident),
       busy: props.busy.has(incident.id),
     };
@@ -246,7 +287,8 @@ const rows = computed(() =>
       v-for="row in rows"
       :key="row.incident.id"
       :data-incident-row="row.incident.id"
-      class="flex flex-col gap-2 px-3.5 py-2.5 sm:flex-row sm:items-start sm:gap-3"
+      tabindex="-1"
+      class="flex flex-col gap-2 px-3.5 py-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:flex-row sm:items-start sm:gap-3"
       :data-tone="row.tone"
       :data-state="row.incident.state"
     >
@@ -266,8 +308,30 @@ const rows = computed(() =>
       </div>
       <!-- Below 640 px the actions take their own line, flush with the row so all three fit at 375. -->
       <div class="flex shrink-0 flex-wrap items-center gap-1.5 sm:ps-0">
+        <!-- Just acknowledged: Undo takes Acknowledge's place, where focus and the
+             pointer already are. A second press there undoes rather than
+             acknowledging another incident, which fails safe. -->
+        <span v-if="row.undo" class="inline-flex items-center gap-1.5" :data-incident-undo-group="row.incident.id">
+          <span class="inline-flex items-center gap-1 ps-1 text-xs text-muted-foreground">
+            <Check class="size-3.5" aria-hidden="true" />
+            {{ $t('fleet.keepalive.actions.acked') }}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            class="pointer-coarse:h-11 aria-disabled:opacity-50"
+            :aria-disabled="row.busy || undefined"
+            :data-incident-undo="row.incident.id"
+            :aria-label="$t('fleet.keepalive.actions.undoLabel', { name: row.claim })"
+            @click="onUndo(row.incident, row.claim)"
+          >
+            <Undo2 aria-hidden="true" />
+            {{ $t('fleet.keepalive.toast.undo') }}
+          </Button>
+        </span>
         <Button
-          v-if="row.actions.ack"
+          v-else-if="row.actions.ack"
           variant="outline"
           size="sm"
           type="button"
@@ -275,7 +339,7 @@ const rows = computed(() =>
           :aria-disabled="row.busy || undefined"
           :data-incident-ack="row.incident.id"
           :aria-label="$t('fleet.keepalive.actions.ackLabel', { name: row.claim })"
-          @click="onAck(row.incident)"
+          @click="onAck(row.incident, row.claim)"
         >
           <Check aria-hidden="true" />
           {{ $t('fleet.keepalive.actions.ack') }}
@@ -296,13 +360,13 @@ const rows = computed(() =>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem v-for="minutes in SNOOZE_MINUTES" :key="minutes" class="pointer-coarse:min-h-11" @select="emit('snooze', row.incident, minutes)">
+            <DropdownMenuItem v-for="minutes in SNOOZE_MINUTES" :key="minutes" class="pointer-coarse:min-h-11" @select="emit('snooze', row.incident, minutes, order(), row.claim)">
               <Clock aria-hidden="true" />
               {{ $t(`fleet.keepalive.snooze.m${minutes}`) }}
             </DropdownMenuItem>
             <template v-if="row.actions.unsnooze">
               <DropdownMenuSeparator />
-              <DropdownMenuItem class="pointer-coarse:min-h-11" @select="emit('snooze', row.incident, 0)">
+              <DropdownMenuItem class="pointer-coarse:min-h-11" @select="emit('snooze', row.incident, 0, order(), row.claim)">
                 {{ $t('fleet.keepalive.snooze.end') }}
               </DropdownMenuItem>
             </template>

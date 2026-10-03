@@ -54,7 +54,9 @@ const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCID
       :node-names="nodeNames"
       :monitor-names="monitorNames"
       :focus-request="actions.focusRequest.value"
+      :undoable="actions.undoable.value"
       @ack="actions.ack"
+      @undo="actions.undoAck"
       @snooze="actions.snooze"
       @focused="actions.focusDone"
     />

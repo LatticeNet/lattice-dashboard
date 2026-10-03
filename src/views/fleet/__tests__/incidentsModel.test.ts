@@ -17,6 +17,7 @@ import {
   newWindowDraft,
   parseIncidentFilter,
   phoneState,
+  releasedAndPaged,
   toLocalInput,
   visibleIncidents,
   windowCoverage,
@@ -78,6 +79,12 @@ test("search matches subject, node and kind, and the kind filter narrows", () =>
   assert.deepEqual(rows.map((i) => i.id), ["crit-new", "done-new"]);
   const monitors = visibleIncidents(INCIDENTS, { filter: "all", kind: "monitor.down", search: "" }, NOW);
   assert.deepEqual(monitors.map((i) => i.id), ["done-new"]);
+  // A pinned row stays under a state filter it no longer matches.
+  const acked = { ...INCIDENTS[1]!, state: "acknowledged" as const };
+  const open = visibleIncidents([acked, INCIDENTS[2]!], { filter: "open", kind: "", search: "" }, NOW);
+  assert.deepEqual(open.map((i) => i.id), ["crit-old"]);
+  const pinned = visibleIncidents([acked, INCIDENTS[2]!], { filter: "open", kind: "", search: "" }, NOW, ["crit-new", "crit-old"], new Set(["crit-new"]));
+  assert.deepEqual(pinned.map((i) => i.id), ["crit-new", "crit-old"]);
   assert.deepEqual(kindsPresent([...INCIDENTS, incident({ kind: "line.down" })]), ["node.offline", "service.down", "monitor.down", "line.down"]);
 });
 
@@ -185,7 +192,25 @@ test("ending a window names what it releases, and Undo sends the window back as 
     incident({ id: "acked", maintenance_id: "mw_1", state: "acknowledged", owed_open: true }),
     incident({ id: "other", maintenance_id: "mw_2", owed_open: true }),
   ];
-  assert.deepEqual(windowHeldIncidents(held, "mw_1").map((i) => i.id), ["held"]);
+  assert.deepEqual(windowHeldIncidents(held, WINDOW, NOW).map((i) => i.id), ["held"]);
+  // Something else still holds it: a snooze, flapping, or another active window over its node (by id or group).
+  const stillHeld = [
+    incident({ id: "snoozed", maintenance_id: "mw_1", owed_open: true, snoozed_until: ahead(30) }),
+    incident({ id: "flapping", maintenance_id: "mw_1", owed_open: true, flapping: true }),
+    incident({ id: "other-window", maintenance_id: "mw_1", owed_open: true, node_id: "n9" }),
+    incident({ id: "other-group", maintenance_id: "mw_1", owed_open: true, node_id: "n8" }),
+    incident({ id: "released", maintenance_id: "mw_1", owed_open: true, node_id: "n7" }),
+  ];
+  const disk = { ...WINDOW, id: "mw_disk", node_ids: ["n9"], group_ids: ["grp_eu"] };
+  const later = { ...WINDOW, id: "mw_later", node_ids: ["n7"], starts_at: ahead(60), ends_at: ahead(120) };
+  assert.deepEqual(windowHeldIncidents(stillHeld, WINDOW, NOW, [WINDOW, disk, later], new Map([["grp_eu", ["n8"]]])).map((i) => i.id), ["released"]);
+  // Undo cannot take back a message the sweep already sent: the restore names those.
+  const afterSweep = [
+    incident({ id: "paged", notified: "open", open_notified_at: ago(0) }),
+    incident({ id: "still-owed", owed_open: true }),
+    incident({ id: "never-held", notified: "open" }),
+  ];
+  assert.deepEqual(releasedAndPaged(afterSweep, ["paged", "still-owed"]).map((i) => i.id), ["paged"]);
   const ended = endWindowInput(WINDOW, NOW);
   assert.equal(ended.ends_at, new Date(NOW).toISOString());
   assert.deepEqual(windowInput(WINDOW), { ...ended, ends_at: WINDOW.ends_at });
