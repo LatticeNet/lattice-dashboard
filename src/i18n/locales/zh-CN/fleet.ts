@@ -1256,6 +1256,7 @@ export default {
           under: "不超过 {ms} ms",
           over: "超过 {ms} ms",
           unknown: "没有收到数据",
+          failing: "探测全部失败",
           partial: "“收到”表示这个窗口收到的探测不到 {pct}%",
           label: "如何看这张表",
           method: "每一格是源节点到目标公网线路端口的 TCP 握手时间。未知从不用颜色表示。",

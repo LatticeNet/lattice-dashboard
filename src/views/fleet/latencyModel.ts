@@ -49,12 +49,16 @@ export type LatencyBand = "success" | "chart-2" | "warning" | "destructive";
 /**
  * Full class names per band, written out so Tailwind sees every one of them
  * at build time: a class built from a template string is never generated.
+ *
+ * Over 250 ms is still a measurement: a red bar and a red number on a plain
+ * cell. The red tint belongs to a pair whose every probe failed
+ * (LatencyLayer's failing cell), so the two never look alike.
  */
 export const BAND_STYLE: Record<LatencyBand, { bar: string; tint: string; text: string; swatch: string }> = {
   success: { bar: "bg-success", tint: "bg-success/10", text: "text-foreground", swatch: "bg-success" },
   "chart-2": { bar: "bg-chart-2", tint: "bg-chart-2/10", text: "text-foreground", swatch: "bg-chart-2" },
   warning: { bar: "bg-warning", tint: "bg-warning/12", text: "text-warning-text", swatch: "bg-warning" },
-  destructive: { bar: "bg-destructive", tint: "bg-destructive/10", text: "text-destructive", swatch: "bg-destructive" },
+  destructive: { bar: "bg-destructive", tint: "", text: "text-destructive", swatch: "bg-destructive" },
 };
 
 export function latencyBand(ms: number | undefined): LatencyBand | undefined {

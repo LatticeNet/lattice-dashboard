@@ -136,6 +136,8 @@ const attention = computed<AttentionItem[]>(() => {
 /* ---- Cells ---- */
 
 const UNKNOWN_HATCH = "bg-[repeating-linear-gradient(135deg,var(--border)_0_1.5px,transparent_1.5px_7px)]";
+/** Every probe failed: the only cell with a red tint (over 250 ms is a red bar on a plain cell). */
+const FAILING_TINT = "bg-destructive/6";
 
 function cellOpenable(cell: LatencyCell): boolean {
   return cell.kind === "measured" || cell.kind === "failing" || cell.kind === "unknown" || (cell.kind === "paused" && cell.hasHistory);
@@ -146,7 +148,8 @@ function cellClass(cell: LatencyCell): string {
     case "measured":
       return BAND_STYLE[cell.band ?? "destructive"].tint;
     case "failing":
-      return "bg-destructive/10";
+      // Light enough that its red word keeps 4.5:1 in the light theme (10% left it at 4.46).
+      return FAILING_TINT;
     case "unknown":
       return UNKNOWN_HATCH;
     default:
@@ -392,30 +395,31 @@ const LEGEND = computed(() => [
                 <caption class="sr-only">{{ $t('fleet.monitoring.latency.matrixCaption', { window: $t(`fleet.monitoring.latency.window.${windowParam}`), reading: readingParam }) }}</caption>
                 <thead>
                   <tr class="border-b border-border bg-muted/40 text-xs text-muted-foreground">
-                    <th scope="col" class="sticky start-0 z-10 w-72 min-w-40 bg-muted px-3 py-2 text-start font-medium max-sm:w-auto max-sm:min-w-36">
+                    <th scope="col" class="sticky start-0 z-10 w-72 min-w-40 bg-muted px-3 py-2 text-start font-medium max-sm:w-auto max-sm:min-w-28 max-sm:px-2">
                       {{ $t('fleet.monitoring.latency.targetColumn') }}
                     </th>
                     <th
                       v-for="source in matrix.sources"
                       :key="source.nodeId"
                       scope="col"
-                      class="w-36 min-w-28 px-2 py-2 text-start font-medium"
+                      class="w-36 min-w-28 px-2 py-2 text-start font-medium max-sm:min-w-20"
                     >
                       <span class="block text-[10px] uppercase tracking-wide">{{ $t('fleet.monitoring.latency.fromLabel') }}</span>
-                      <span class="block truncate text-foreground" :title="source.name">{{ source.name }}</span>
+                      <span class="block truncate text-foreground max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:break-words" :title="source.name">{{ source.name }}</span>
                       <span v-if="source.note" class="block text-[11px] font-normal text-warning-text">{{ sourceNoteText(source.note) }}</span>
                     </th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="row in matrix.rows" :key="row.node.node_id" class="border-b border-border last:border-b-0" :data-target="row.node.node_id">
-                    <th scope="row" class="sticky start-0 z-10 bg-card px-3 py-1.5 text-start align-middle font-normal">
+                    <th scope="row" class="sticky start-0 z-10 bg-card px-3 py-1.5 text-start align-middle font-normal max-sm:px-2">
+                      <!-- On a phone the name wraps to two lines instead of being cut, so the column can stay narrow enough for two sources beside it. -->
                       <RouterLink
                         :to="{ name: 'node-detail', params: { id: row.node.node_id } }"
-                        class="flex max-w-56 items-center font-medium hover:underline max-sm:max-w-36 pointer-coarse:min-h-11"
+                        class="flex max-w-56 items-center font-medium hover:underline max-sm:max-w-28 pointer-coarse:min-h-11"
                         :title="row.node.name"
-                      ><span class="truncate">{{ row.node.name || row.node.node_id }}</span></RouterLink>
-                      <span class="block max-w-56 truncate text-xs text-muted-foreground max-sm:max-w-36" :title="targetDetail(row.node.node_id)">
+                      ><span class="truncate max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:break-words">{{ row.node.name || row.node.node_id }}</span></RouterLink>
+                      <span class="block max-w-56 truncate text-xs text-muted-foreground max-sm:max-w-28" :title="targetDetail(row.node.node_id)">
                         <span v-if="row.node.country" class="font-mono">{{ row.node.country }}</span>
                         <template v-if="row.node.country && targetDetail(row.node.node_id)"> · </template>
                         <span :class="row.node.target === 'not_probeable' ? '' : 'font-mono'">{{ targetDetail(row.node.node_id) }}</span>
@@ -425,7 +429,7 @@ const LEGEND = computed(() => [
                       <button
                         v-if="cellOpenable(cell)"
                         type="button"
-                        :class="cn('group relative flex h-11 w-full min-w-24 items-center overflow-hidden rounded-md border border-transparent ps-3 pe-2 text-start outline-none transition-colors hover:border-border focus-visible:ring-2 focus-visible:ring-ring', cellClass(cell), pairSheet.openId.value === pairKey(cell.source, cell.target) && 'border-ring')"
+                        :class="cn('group relative flex h-11 w-full min-w-24 max-sm:min-w-20 items-center overflow-hidden rounded-md border border-transparent ps-3 pe-2 text-start outline-none transition-colors hover:border-border focus-visible:ring-2 focus-visible:ring-ring', cellClass(cell), pairSheet.openId.value === pairKey(cell.source, cell.target) && 'border-ring')"
                         :aria-label="cellLabel(cell, row.node.name, matrix.sources[index]!.name)"
                         :data-cell="cell.kind"
                         @click="(e) => pairSheet.open(pairKey(cell.source, cell.target), e.currentTarget as HTMLElement)"
@@ -447,7 +451,7 @@ const LEGEND = computed(() => [
                       </button>
                       <span
                         v-else
-                        class="flex h-11 min-w-24 items-center rounded-md px-3 text-xs text-muted-foreground"
+                        class="flex h-11 min-w-24 items-center rounded-md px-3 text-xs text-muted-foreground max-sm:min-w-20"
                         :data-cell="cell.kind"
                         :aria-label="cell.kind === 'self' ? undefined : cellLabel(cell, row.node.name, matrix.sources[index]!.name)"
                       >
@@ -469,6 +473,10 @@ const LEGEND = computed(() => [
               <span v-for="item in LEGEND" :key="item.key" class="inline-flex items-center gap-1.5">
                 <span :class="cn('size-2.5 rounded-[2px]', item.swatch)" aria-hidden="true" />
                 {{ item.label }}
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span class="size-2.5 rounded-[2px] border border-destructive/50 bg-destructive/15" aria-hidden="true" />
+                {{ $t('fleet.monitoring.latency.legend.failing') }}
               </span>
               <span class="inline-flex items-center gap-1.5">
                 <span :class="cn('size-2.5 rounded-[2px] border border-muted-foreground/50', UNKNOWN_HATCH)" aria-hidden="true" />

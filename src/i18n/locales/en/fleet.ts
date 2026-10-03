@@ -1272,6 +1272,7 @@ export default {
           under: "up to {ms} ms",
           over: "over {ms} ms",
           unknown: "nothing heard",
+          failing: "every probe failed",
           partial: "\"heard\" marks a window with under {pct}% of its probes",
           label: "How to read the matrix",
           method: "Each cell is the TCP handshake time from the source to the target's public line port. Unknown is never drawn as a colour.",
