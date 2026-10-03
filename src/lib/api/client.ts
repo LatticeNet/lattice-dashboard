@@ -83,7 +83,7 @@ export function reportUnauthorized(path: string): void {
   }
 }
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -254,6 +254,11 @@ export const http = {
   // to send the whole record and silently drop whatever they forgot.
   patch: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
     request<T>("PATCH", path, body, opts),
+  // PUT for a record that is always sent whole and versioned: the latency
+  // probe configuration names the version it was read at, and the server
+  // refuses a save made from a stale one, so nothing is dropped silently.
+  put: <T>(path: string, body?: unknown, opts?: RequestOptions) =>
+    request<T>("PUT", path, body, opts),
   // First DELETE the dashboard has needed. It goes through the same `request`
   // as the others, so it inherits the CSRF header that every unsafe method
   // requires. Which is the reason this belongs here rather than as a one-off

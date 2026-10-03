@@ -14,6 +14,11 @@
  *   ?sent=memory   the server runs without the bolt hot store (history is memory only)
  *   ?sent=many     620 rows, so the log shows the newest 500 of them
  *   ?sent=slow     the deliveries read answers after 4 s, to see the table loading
+ *   ?sent=incidents adds what keepalive incidents leave in the log: an open
+ *                  message a maintenance window held, one flap damping held,
+ *                  one quiet hours hold until morning, an escalation re-sent
+ *                  at Bark level critical, and an offline page and its
+ *                  recovery that quiet hours held and withdrew at their end
  *   ?fail=sent     the deliveries read answers 502
  *   ?test=ok       a stored-channel test of Bark urgent succeeds (it fails by default)
  */
@@ -53,7 +58,10 @@ function fixtureRows(): NotifyDelivery[] {
     ...(withFallback
       ? [row({ event_type: "node.offline", channel_id: "ch_tg_fallback", rule_id: "rule_offline", rule_name: "Node offline", role: "fallback", fallback_for: "Bark urgent", outcome: "sent", title: "Lattice nodes offline: 3 (DMIT-4, gomami-jpn-pulse-nano, huoshan-shanghai)", body: offlineBody + "\n\nSent through the fallback channel because Bark urgent did not deliver it.", event_id: "evt_off_1", attempts: [attempt(4 * MINUTE - 900, true, undefined, undefined, 640)] }, 4 * MINUTE - 800)]
       : []),
-    row({ event_type: "service.down", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "planned", reason: "upstream status 502 after 2 attempts, retrying", title: "sing-box failed on [cd]-LegendVPS-SG-EVO", body: "[cd]-LegendVPS-SG-EVO (node_sg): sing-box has been failed since 2026-10-02T09:01:12Z (unit failed/failed, restarts 3).", attempts: [attempt(50_000, false, "upstream_5xx", 502), attempt(45_000, false, "upstream_5xx", 502)], next_attempt_at: iso(15_000) }, 51_000),
+    ...(withFallback
+      ? [row({ event_type: "service.down", channel_id: "ch_tg_fallback", rule_id: "rule_offline", rule_name: "Node offline", role: "fallback", fallback_for: "Bark urgent", fallback_of: "nd_fixture_service_down", outcome: "sent", event_id: "evt_svc_1", title: "sing-box failed on [cd]-LegendVPS-SG-EVO", body: "[cd]-LegendVPS-SG-EVO (node_sg): sing-box has been failed since 2026-10-02T09:01:12Z (unit failed/failed, restarts 3).\n\nSent through the fallback channel because Bark urgent failed to deliver this critical alert and is still retrying.", attempts: [attempt(49_500, true, undefined, undefined, 520)] }, 49_800)]
+      : []),
+    row({ id: "nd_fixture_service_down", event_id: "evt_svc_1", event_type: "service.down", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "planned", reason: "upstream status 502 after 2 attempts, retrying", title: "sing-box failed on [cd]-LegendVPS-SG-EVO", body: "[cd]-LegendVPS-SG-EVO (node_sg): sing-box has been failed since 2026-10-02T09:01:12Z (unit failed/failed, restarts 3).", attempts: [attempt(50_000, false, "upstream_5xx", 502), attempt(45_000, false, "upstream_5xx", 502)], next_attempt_at: iso(15_000) }, 51_000),
     row({ event_type: "notify.channel_failing", channel_id: "ch_bark_info", outcome: "sent", title: "Lattice notification channel failing: Bark urgent", body: "Bark urgent (bark) has failed 3 deliveries in a row since 2026-10-02T08:30:00Z: the endpoint refused it (HTTP 400); the key, token or chat id is likely wrong. Alerts routed only to it are not arriving. Check its settings, then send a test from Notifications.", attempts: [attempt(12 * MINUTE, true)] }, 12 * MINUTE),
     row({ event_type: "node.offline", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "failed", reason: "upstream status 400", title: "Lattice node offline: [cd]-mkcloud-hr-iplc", body: "[cd]-mkcloud-hr-iplc (node_hr): no heartbeat since 2026-10-02T08:20:00Z.", attempts: [attempt(13 * MINUTE, false, "upstream_4xx", 400)] }, 13 * MINUTE),
     row({ event_type: "notify.test", source: "operator", role: "test", channel_id: "ch_bark_urgent", outcome: "failed", reason: "upstream status 400", title: "Lattice test", body: "Test message for the bark channel \"Bark urgent\", sent from Notifications at 2026-10-02T08:52:00Z. If you can read this, the channel works.", attempts: [attempt(20 * MINUTE, false, "upstream_4xx", 400, 310)] }, 20 * MINUTE),
@@ -66,6 +74,18 @@ function fixtureRows(): NotifyDelivery[] {
     row({ event_type: "inventory.renewal", channel_id: "ch_bark_info", rule_id: "rule_expiry", rule_name: "Machine renewals", outcome: "sent", title: "Lattice renewal: [cd]-Akkocloud-UK-London-KVM renews in 3 days (2026-10-05)", body: "Renews 2026-10-05 at 9.99 USD per month.", attempts: [attempt(9 * 60 * MINUTE, true)] }, 9 * 60 * MINUTE),
     row({ event_type: "proxy.quota", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "failed", reason: "channel deleted before delivery", title: "Lattice proxy quota: alice at 92%" }, 26 * 60 * MINUTE),
   ];
+  if (flags.get("sent") === "incidents") {
+    const until = new Date(Date.now() + 40 * MINUTE).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const morning = new Date(Date.now() + 7 * 60 * MINUTE).toISOString().replace(/\.\d{3}Z$/, "Z");
+    rows.push(
+      row({ event_type: "service.down", source_id: "inc_svc_hel", outcome: "suppressed", reason: `held by maintenance window "Kernel upgrade" until ${until}`, title: "sing-box inactive on [cd]-hetzner-hel", body: "[cd]-hetzner-hel (node_hel): sing-box has been inactive since 2026-10-03T09:41:00Z." }, 7 * MINUTE),
+      row({ event_type: "node.offline", source_id: "inc_off_mac", outcome: "suppressed", reason: "flapping (5 reopenings within 30m), at most one message an hour", title: "Lattice node offline: [cd]-mac-air" }, 18 * MINUTE),
+      row({ event_type: "monitor.down", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "planned", held_until: morning, title: "Monitor down: HK relay port on [cd]-hetzner-fsn" }, 3 * MINUTE),
+      row({ event_type: "service.down", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "sent", bark_level: "critical", title: "sing-box inactive on [cd]-bandwagon-dc6", attempts: [attempt(11 * MINUTE, true)] }, 11 * MINUTE),
+      row({ event_type: "node.offline", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "suppressed", held_until: iso(-5 * 60 * MINUTE), settled_at: iso(-5 * 60 * MINUTE), reason: "withdrawn when quiet hours ended: the incident was resolved, acknowledged or snoozed meanwhile", title: "Lattice node offline: [cd]-xuezhang-jp-NAT", body: "[cd]-xuezhang-jp-NAT (node_xjp): no heartbeat since 2026-10-03T01:12:00Z.", incident_ids: ["inc_off_xjp"] }, 8 * 60 * MINUTE),
+      row({ event_type: "node.online", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "suppressed", held_until: iso(-5 * 60 * MINUTE), settled_at: iso(-5 * 60 * MINUTE), reason: "withdrawn when quiet hours ended: the open message it answers was withdrawn too", title: "Lattice node online: [cd]-xuezhang-jp-NAT", body: "[cd]-xuezhang-jp-NAT (node_xjp) is back after 41 min.", incident_ids: ["inc_off_xjp"] }, 7 * 60 * MINUTE),
+    );
+  }
   if (flags.get("sent") === "many") {
     for (let i = 0; i < 608; i += 1) {
       rows.push(row({ event_type: i % 3 ? "ssh.login" : "monitor.recovered", channel_id: "ch_bark_info", outcome: "sent", title: `SSH login on node ${i}`, attempts: [attempt((30 + i) * 60 * MINUTE, true)] }, (30 + i) * 60 * MINUTE));

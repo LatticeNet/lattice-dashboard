@@ -279,8 +279,146 @@ export interface Node {
   agent_debug?: AgentDebugPolicy;
   agent_launch?: AgentLaunchConfig | null;
   agent_runtime?: AgentRuntimeConfig | null;
+  /** The agent's account of its work loop (node-agent 0.3.10 and later); absent before. */
+  loop_health?: AgentLoopHealth | null;
   ip_config?: NodeIPConfig | null;
   group_ids?: string[];
+}
+
+/** One work loop step's outcome, by the agent's clock. */
+export interface AgentLoopStep {
+  last_ok_at?: string;
+  last_error_at?: string;
+  last_error?: string;
+  consecutive_errors?: number;
+}
+
+/** A problem the server derived from loop health. */
+export interface AgentLoopProblem {
+  kind: "stalled" | "linechain_blocked" | "step_stale" | "results_dropped" | string;
+  step?: string;
+  /** This server's clock. */
+  since: string;
+  /** An English sentence; the console words the kind itself. */
+  reason: string;
+  /** It degrades the node's status. */
+  degrades?: boolean;
+  /** It opens agent.stalled. */
+  pages?: boolean;
+}
+
+/**
+ * Loop health as the agent sent it on its last beat. Every instant except
+ * received_at and the problems' since is the agent's clock: the age of an
+ * instant t is (collected_at - t) + (now - received_at), so a skewed node
+ * still reads correctly.
+ */
+export interface AgentLoopHealth {
+  started_at: string;
+  cycle_started_at?: string;
+  cycle_completed_at?: string;
+  cycle_duration_ms?: number;
+  step?: string;
+  step_since?: string;
+  linechain_blocked?: string;
+  linechain_blocked_since?: string;
+  steps?: Record<string, AgentLoopStep>;
+  task_busy_since?: string;
+  monitor_results_queued?: number;
+  monitor_results_dropped?: number;
+  watchdog?: boolean;
+  collected_at: string;
+  received_at: string;
+  problems?: AgentLoopProblem[];
+}
+
+export type IncidentState = "pending" | "open" | "acknowledged" | "resolved";
+export type IncidentSeverity = "info" | "warning" | "critical";
+
+/** One problem on one subject (lattice-server incidents.go). */
+export interface Incident {
+  /** "pending:<key>" for a derived pending incident. */
+  id: string;
+  key: string;
+  /** The open event type: node.offline, service.down, monitor.down, agent.stalled. */
+  kind: string;
+  recovery_kind?: string;
+  severity: IncidentSeverity | string;
+  state: IncidentState | string;
+  node_id?: string;
+  node_name?: string;
+  monitor_id?: string;
+  subject?: string;
+  title?: string;
+  detail?: string;
+  since?: string;
+  first_opened_at?: string;
+  opened_at?: string;
+  resolved_at?: string;
+  updated_at?: string;
+  acked_by?: string;
+  acked_at?: string;
+  snoozed_by?: string;
+  snoozed_until?: string;
+  snoozed?: boolean;
+  /** What the phone was last told: "open", "resolved", or nothing yet. */
+  notified?: "open" | "resolved" | "";
+  notified_at?: string;
+  open_notified_at?: string;
+  owed_open?: boolean;
+  owed_recovery?: boolean;
+  /** The last reason a message about it was held. */
+  suppressed?: string;
+  suppressed_at?: string;
+  flaps?: number;
+  flapping?: boolean;
+  /** Rule id ("" for the no-rules broadcast) to when it was escalated. */
+  escalated?: Record<string, string>;
+  no_escalate?: boolean;
+  /** The active maintenance window covering its node. */
+  maintenance?: string;
+  maintenance_id?: string;
+  /** When a pending incident opens if its condition holds. */
+  opens_at?: string;
+}
+
+export interface IncidentListResponse {
+  incidents: Incident[];
+  /** Active maintenance windows the caller may see. */
+  windows: MaintenanceWindow[];
+  /** Incidents survive a restart (the server runs the bolt hot store). */
+  durable: boolean;
+  now: string;
+}
+
+export interface IncidentListQuery {
+  state?: string;
+  node_id?: string;
+  limit?: number;
+}
+
+export interface MaintenanceWindow {
+  id: string;
+  name: string;
+  reason?: string;
+  node_ids?: string[];
+  group_ids?: string[];
+  starts_at: string;
+  ends_at: string;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MaintenanceWindowInput {
+  id?: string;
+  name: string;
+  reason?: string;
+  node_ids?: string[];
+  group_ids?: string[];
+  /** Absent starts now (a new window) or keeps the start (an edit). */
+  starts_at?: string;
+  ends_at: string;
 }
 
 // NodeDeletePlanView mirrors the server's nodeDeleteSummary wire DTO returned by
@@ -1050,6 +1188,122 @@ export interface MonitorView {
    * list, so a monitor's state needs no read of its history.
    */
   latest?: MonitorLatest[];
+  /**
+   * Set on a monitor the control plane generates ("latency": one per latency
+   * probe target). It is changed through its configuration, never deleted on
+   * its own; absent on a monitor an operator made.
+   */
+  managed_by?: string;
+}
+
+/* ---- Latency probes (lattice-sdk model/latency.go) ---- */
+
+export type LatencyWindow = "1h" | "24h" | "7d";
+
+export interface LatencyPair {
+  source: string;
+  target: string;
+}
+
+/** The operator's latency probe configuration. A save sends it whole with the version it was read at. */
+export interface LatencyProbeConfig {
+  /** Off pauses every generated probe and keeps the history. */
+  enabled: boolean;
+  interval_sec: number;
+  timeout_sec: number;
+  /** Nodes that run the probes. */
+  sources: string[];
+  /** Probe every node whose country is set and is not CN. */
+  auto_targets: boolean;
+  include_targets?: string[];
+  exclude_targets?: string[];
+  disabled_pairs?: LatencyPair[];
+  version: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export type LatencyRegion = "outside_mainland" | "mainland" | "unknown";
+export type LatencyTargetState = "probed" | "not_probeable" | "paused" | "none";
+
+export interface LatencyProbeNode {
+  node_id: string;
+  name: string;
+  country?: string;
+  region: LatencyRegion | string;
+  source: boolean;
+  target: LatencyTargetState | string;
+  /** auto, included, excluded, mainland, region_unknown, auto_off, node_disabled, config_off, pairs_off, no_source. */
+  target_reason?: string;
+  /** host:port the sources dial. */
+  endpoint?: string;
+  protocol?: string;
+  line_name?: string;
+  /** last_known, no_public_address, udp_only, no_tcp_line, no_inventory. */
+  endpoint_note?: string;
+  monitor_id?: string;
+}
+
+export interface LatencyProbePairState {
+  source: string;
+  target: string;
+  /** The operator's switch for the pair. */
+  enabled: boolean;
+  /** Whether the source runs the probe now. */
+  active: boolean;
+  monitor_id?: string;
+}
+
+export interface LatencyProbePlan {
+  config: LatencyProbeConfig;
+  /** False while no operator has saved and the defaults hold. */
+  stored: boolean;
+  default_source_name: string;
+  nodes: LatencyProbeNode[];
+  pairs: LatencyProbePairState[];
+  /** Configured source ids that cannot probe: unknown_node or node_disabled. */
+  source_notes?: Record<string, string>;
+}
+
+/** One pair over one window or one bucket. Unknown stays absent, never zero. */
+export interface LatencyStats {
+  samples: number;
+  failures: number;
+  /** Probes the interval would have produced; expected minus samples is unknown. */
+  expected: number;
+  p50_ms?: number;
+  p95_ms?: number;
+  /** Failure share of the probes heard, 0 to 1. */
+  loss?: number;
+}
+
+export interface LatencyPairRollup {
+  source: string;
+  target: string;
+  monitor_id: string;
+  windows: Partial<Record<LatencyWindow, LatencyStats>>;
+  latest?: MonitorResult;
+}
+
+export interface LatencyRollups {
+  generated_at: string;
+  interval_sec: number;
+  pairs: LatencyPairRollup[];
+}
+
+export interface LatencyBucket extends LatencyStats {
+  at: string;
+}
+
+export interface LatencySeries {
+  source: string;
+  target: string;
+  monitor_id: string;
+  window: LatencyWindow;
+  bucket_sec: number;
+  from: string;
+  to: string;
+  buckets: LatencyBucket[];
 }
 
 export interface MonitorResult {
@@ -1918,6 +2172,8 @@ export interface PublishingRecord {
   /** Reserved routes cannot be moved or deleted: something outside this server depends on the URL. */
   reserved: boolean;
   share_id?: string;
+  /** Set instead of share_id on a read-only row projected from an identity's link; the identity is where it is edited. */
+  identity_id?: string;
   /** The scope that gates editing this route, so a control can be disabled rather than 403. */
   admin_scope: string;
 }
@@ -2054,6 +2310,11 @@ export interface NotifyChannelHealth {
   last_status_code?: number;
   consecutive_failures: number;
   failing_since?: string;
+  /** When a critical message this channel failed was last handed to its fallback, and to which channel. */
+  last_fallback_at?: string;
+  last_fallback_channel_id?: string;
+  /** How many critical messages it has handed to its fallback. */
+  fallbacks?: number;
 }
 
 export interface NotifyChannelView {
@@ -2066,6 +2327,10 @@ export interface NotifyChannelView {
   updated_at: string;
   /** Absent from a server older than the outbox. */
   health?: NotifyChannelHealth;
+  /** Takes the critical messages this channel fails, at their first failed attempt. */
+  fallback_channel_id?: string;
+  /** The events a channel's fallback carries, as the server decides them; absent on older servers. */
+  critical_event_types?: string[];
 }
 
 /** The receipt of one send. */
@@ -2077,7 +2342,7 @@ export interface NotifyAttempt {
   duration_ms: number;
 }
 
-export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route";
+export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route" | "suppressed";
 export type NotifyDeliveryRole = "primary" | "fallback" | "test";
 export type NotifyDeliverySource = "server" | "plugin" | "webhook" | "operator";
 
@@ -2096,6 +2361,8 @@ export interface NotifyDelivery {
   role?: NotifyDeliveryRole | string;
   /** Names of the channels whose failure a fallback delivery stands in for. */
   fallback_for?: string;
+  /** The one delivery a channel's critical fallback stands in for; a rule's fallback leaves it empty. */
+  fallback_of?: string;
   outcome: NotifyDeliveryOutcome | string;
   /** A fixed server string; the console composes its own words where it can. */
   reason?: string;
@@ -2111,6 +2378,12 @@ export interface NotifyDelivery {
   /** A not-routed row folds later repeats of the same event within the hour: how many, and the latest. */
   repeats?: number;
   last_seen_at?: string;
+  /** An incident escalation re-sent at this Bark level. */
+  bark_level?: string;
+  /** The rule's quiet hours hold it until then. */
+  held_until?: string;
+  /** The incidents an incident message reports. */
+  incident_ids?: string[];
 }
 
 export interface NotifyDeliveriesQuery {
@@ -2143,6 +2416,106 @@ export interface NotifyChannelUpsertRequest {
   kind: NotifyKind | string;
   config: Record<string, string>;
   enabled?: boolean;
+  /** Absent keeps the stored fallback, "" clears it. */
+  fallback_channel_id?: string;
+}
+
+// ── Control-plane witness ────────────────────────────────────────────────────
+
+export type WitnessPhase = "starting" | "watching" | "failing" | "down" | "network_down" | "unknown";
+
+/** The witness's own status file, relayed by the node's agent on its heartbeat. */
+export interface WitnessReport {
+  version: number;
+  config_sha256?: string;
+  started_at?: string;
+  phase: WitnessPhase | string;
+  health_url?: string;
+  reference_count?: number;
+  interval_seconds?: number;
+  hold_seconds?: number;
+  last_check_at?: string;
+  last_check_ok: boolean;
+  last_check_detail?: string;
+  last_ok_at?: string;
+  failing_since?: string;
+  consecutive_failures?: number;
+  network_down_since?: string;
+  alerted: boolean;
+  alerted_at?: string;
+  down_since?: string;
+  last_push_at?: string;
+  last_push_kind?: "down" | "recovery" | string;
+  last_push_ok: boolean;
+  last_push_error?: string;
+  pushes?: number;
+  /** The node's clock when its agent read the status file; same clock as the times above. */
+  relayed_at?: string;
+}
+
+/** A witness plan as the status reads it. */
+export interface WitnessApprovalView {
+  approval_id: string;
+  action: "configure" | "remove" | string;
+  status: string;
+  reason?: string;
+  config_sha256?: string;
+  channel_id?: string;
+  channel_name?: string;
+  key_sha256_prefix?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface WitnessNodeView {
+  node_id: string;
+  node_name: string;
+  capable: boolean;
+  configured?: WitnessApprovalView;
+  pending?: WitnessApprovalView;
+  last_failed?: WitnessApprovalView;
+  report?: WitnessReport;
+  reported_at?: string;
+  report_fresh: boolean;
+  /**
+   * The witness stopped updating its status (its last check is older than
+   * three intervals, by the node's own clock) while the agent still relays
+   * it: nothing is watching the control plane from this node.
+   */
+  check_stale: boolean;
+  config_matches: boolean;
+}
+
+export interface WitnessStatusResponse {
+  /** The address the witness watches: this server's public URL plus /readyz. */
+  health_url?: string;
+  /** Why there is no health URL (the server has no public URL). */
+  health_url_error?: string;
+  nodes: WitnessNodeView[];
+  capable_nodes: { node_id: string; node_name: string; online: boolean }[];
+  defaults: {
+    reference_urls: string[];
+    interval_seconds: number;
+    hold_seconds: number;
+    recover_seconds: number;
+    bark_level: string;
+    bark_levels: string[];
+    key_file: string;
+    config_file: string;
+    unit: string;
+  };
+}
+
+export interface WitnessPlanRequest {
+  node_id: string;
+  remove?: boolean;
+  channel_id?: string;
+  bark_url?: string;
+  reference_urls?: string[];
+  bark_level?: string;
+  interval_seconds?: number;
+  hold_seconds?: number;
+  recover_seconds?: number;
 }
 
 export interface NotifyTestRequest {
@@ -2164,6 +2537,19 @@ export interface NotifyRuleView {
   updated_at: string;
   /** Receives the rule's message when every channel above failed it for good. */
   fallback_channel_id?: string;
+  /** Effective escalation of unacknowledged critical incidents (defaults included). */
+  escalation_off?: boolean;
+  escalate_after_minutes?: number;
+  escalation_bark_level?: string;
+  /** Null when the rule has no quiet hours (the default). */
+  quiet_hours?: NotifyQuietHours | null;
+}
+
+/** A daily window in a time zone, "HH:MM"; an end not after the start runs past midnight. */
+export interface NotifyQuietHours {
+  start: string;
+  end: string;
+  time_zone: string;
 }
 
 /**
@@ -2242,6 +2628,11 @@ export interface NotifyRuleUpsertRequest {
   enabled?: boolean;
   /** Absent keeps the rule's fallback, "" clears it, an id sets it. */
   fallback_channel_id?: string;
+  escalation_off?: boolean;
+  escalate_after_minutes?: number;
+  escalation_bark_level?: string;
+  /** Absent keeps the rule's quiet hours, null turns them off. */
+  quiet_hours?: NotifyQuietHours | null;
 }
 
 export interface AgentUpdatePolicy {
@@ -2439,7 +2830,6 @@ export interface ProxyUserView {
   enabled: boolean;
   has_uuid: boolean;
   has_password: boolean;
-  has_sub_token: boolean;
   inbound_ids?: string[];
   traffic_limit_bytes?: number;
   /**
@@ -2467,14 +2857,18 @@ export type ShareSource =
   | { kind: "plugin"; plugin_id: string; subscription_id: string };
 
 /**
- * The server returns the token on purpose. The share URL is copied out of the
- * dashboard repeatedly, so hiding it after creation would trade a real
- * workflow for protection the at-rest sealing already provides.
+ * A share as list, create, update and rotate answer it: route facts, never
+ * the token. The share URL is a credential for whatever the share publishes,
+ * and the operator's rule (2026-10-02) is that a credential reaches a person
+ * only after step-up: the token comes from POST .../<id>/reveal
+ * (ShareRevealResponse) with a step-up grant. A server from before that rule
+ * still sends `token`; nothing here reads it.
  */
 export interface SubscriptionShareView {
   id: string;
   slug: string;
-  token: string;
+  /** Empty or absent from wave 3 on; never read. */
+  token?: string;
   source: ShareSource;
   default_format?: string;
   enabled: boolean;
@@ -2482,6 +2876,52 @@ export interface SubscriptionShareView {
   updated_at: string;
   rotated_at?: string;
   expires_at?: string;
+  /** The refresh period the link advertises to clients (Profile-Update-Interval), in hours: its own or the default. */
+  update_interval_hours?: number;
+  /** Created with the explicit flag for a record that reads the identity-less vpn-core export: it hands out every user's credentials. */
+  publishes_fleet_credentials?: boolean;
+  /**
+   * The fleet-feed guard re-run at this read, for an unflagged Sub-Store
+   * share: "fleet" when its record now reads the identity-less vpn-core
+   * export (edited after the share was made), "unknown" when the server
+   * cannot read the record list to check. Absent when clean or flagged.
+   */
+  fleet_feed_now?: "fleet" | "unknown";
+  /** The link's plugin render budget, present once it has rendered since the server started. */
+  render_budget?: ShareRenderBudget;
+}
+
+/** The body beside a 400 fleet_feed_flag_required: which case refused the share. */
+export interface FleetFeedRefusalBody {
+  fleet_feed?: "fleet" | "unknown";
+  /** The record that reads the export, for "fleet". */
+  via?: string;
+}
+
+/**
+ * A share's plugin render budget. While it is exhausted, a fetch that needs a
+ * new render answers the decoy until the budget refills at `per_hour`.
+ */
+export interface ShareRenderBudget {
+  remaining: number;
+  burst: number;
+  per_hour: number;
+  exhausted: boolean;
+  /** Renders refused since the server started. */
+  refused: number;
+  last_refused_at?: string;
+}
+
+/** POST /api/subscription-shares/<id>/reveal and POST /api/vpn/users/<id>/link/reveal, after step-up. */
+export interface ShareRevealResponse {
+  kind: "share" | "identity";
+  id: string;
+  slug: string;
+  token: string;
+  /** /sub/<slug>/<token> */
+  path: string;
+  /** The full URL when the server knows its public address. */
+  url?: string;
 }
 
 export interface SubscriptionShareCreateRequest {
@@ -2489,6 +2929,10 @@ export interface SubscriptionShareCreateRequest {
   source: ShareSource;
   default_format?: string;
   expires_at?: string;
+  /** 0 or absent advertises the default (2 hours); otherwise 1 to 168. */
+  update_interval_hours?: number;
+  /** Required for a Sub-Store record that reads the identity-less vpn-core export (400 fleet_feed_flag_required otherwise). */
+  publishes_fleet_credentials?: boolean;
 }
 
 /**
@@ -2502,6 +2946,49 @@ export interface SubscriptionShareUpdateRequest {
   clear_expiry?: boolean;
   default_format?: string;
   enabled?: boolean;
+  /** 0 returns to the default (2 hours); otherwise 1 to 168. */
+  update_interval_hours?: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Identity subscription links (lattice-server identity_link_api.go)   */
+/* ------------------------------------------------------------------ */
+
+/** The link as every identity view carries it: route facts, never the token. */
+export interface IdentityLinkSummary {
+  slug: string;
+  enabled: boolean;
+  issued_at: string;
+  rotated_at?: string;
+  expires_at?: string;
+  update_interval_hours: number;
+}
+
+export interface IdentityLinkLine {
+  line_hash_id: string;
+  node_id?: string;
+  node_name?: string;
+  line_name?: string;
+  protocol?: string;
+  reason?: string;
+  fix?: string;
+  detail?: string;
+}
+
+/** GET /api/vpn/users/<id>/link: what the link serves now, never the token. */
+export interface IdentityLinkStatus {
+  identity_id: string;
+  issued: boolean;
+  link?: IdentityLinkSummary;
+  answer: "nodes" | "placeholder" | "decoy" | string;
+  answer_reason: string;
+  placeholder?: string;
+  subscription_userinfo?: string;
+  included: IdentityLinkLine[];
+  excluded: IdentityLinkLine[];
+  formats: { native: string[]; converted: string[]; convert_available: boolean; fallback?: string };
+  /** The last fetch since the server started; memory only on the server. */
+  last_fetch?: { at: string; ua_class: string; answer: string };
 }
 
 /* ------------------------------------------------------------------ */

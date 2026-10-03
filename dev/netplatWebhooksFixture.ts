@@ -12,6 +12,9 @@
  * channel whose last send timed out, so every health state is on screen;
  * `?health=ok` makes every channel healthy; `?health=none` drops health, as
  * a server older than the outbox answers.
+ *
+ * Critical fallback: with `?channels=4` Bark urgent hands its critical alerts
+ * to the Telegram channel and has done so twice.
  */
 import type { NotifyChannelView, NotifyRuleView, NotifyWebhookDelivery, NotifyWebhookView } from "@/lib/api/index";
 
@@ -53,13 +56,33 @@ const extraChannels: NotifyChannelView[] = [
   { id: "ch_discord", name: "war-room-discord", kind: "discord", config_keys: ["webhook_url"], enabled: true, created_at: iso(-20 * DAY), updated_at: iso(-20 * DAY) },
 ];
 
+const CRITICAL = ["node.offline", "service.down", "ssh.compromise_suspected"];
+
+function withFallback(channel: NotifyChannelView): NotifyChannelView {
+  const h = health(channel.id);
+  if (flags.get("channels") !== "4" || channel.id !== "ch_bark_urgent") return { ...channel, health: h, critical_event_types: CRITICAL };
+  return {
+    ...channel,
+    critical_event_types: CRITICAL,
+    fallback_channel_id: "ch_tg_fallback",
+    health: h ? { ...h, fallbacks: 2, last_fallback_at: iso(-4 * MINUTE + 900), last_fallback_channel_id: "ch_tg_fallback" } : h,
+  };
+}
+
 export const NOTIFY_CHANNELS: NotifyChannelView[] =
   flags.get("channels") === "0"
     ? []
-    : [...baseChannels, ...(flags.get("channels") === "4" ? extraChannels : [])].map((channel) => ({ ...channel, health: health(channel.id) }));
+    : [...baseChannels, ...(flags.get("channels") === "4" ? extraChannels : [])].map(withFallback);
 
+// Every rule carries the server's effective incident options (escalation after
+// 30 minutes at critical, no quiet hours); `?rule=quiet` gives Node offline
+// quiet hours and a slower escalation at timeSensitive.
+const QUIET = flags.get("rule") === "quiet";
 export const NOTIFY_RULES: NotifyRuleView[] = [
-  { id: "rule_offline", name: "Node offline", event_types: ["node.offline"], channel_ids: ["ch_bark_urgent"], enabled: true, created_at: iso(-90 * DAY), updated_at: iso(-20 * DAY), fallback_channel_id: flags.get("channels") === "4" ? "ch_tg_fallback" : undefined },
+  {
+    id: "rule_offline", name: "Node offline", event_types: ["node.offline"], channel_ids: ["ch_bark_urgent"], enabled: true, created_at: iso(-90 * DAY), updated_at: iso(-20 * DAY), fallback_channel_id: flags.get("channels") === "4" ? "ch_tg_fallback" : undefined,
+    escalate_after_minutes: QUIET ? 45 : 30, escalation_bark_level: QUIET ? "timeSensitive" : "critical", quiet_hours: QUIET ? { start: "23:00", end: "07:00", time_zone: "Asia/Shanghai" } : null,
+  },
   { id: "rule_expiry", name: "Machine renewals", event_types: ["inventory.renewal"], channel_ids: ["ch_bark_info"], enabled: true, created_at: iso(-60 * DAY), updated_at: iso(-20 * DAY) },
   { id: "rule_quota", name: "VPN quota and expiry", event_types: ["proxy.quota", "proxy.expiry"], channel_ids: ["ch_bark_info"], enabled: true, created_at: iso(-60 * DAY), updated_at: iso(-20 * DAY) },
   { id: "rule_backup", name: "Backups", event_types: ["backup.finished"], channel_ids: ["ch_bark_info"], enabled: true, created_at: iso(-30 * DAY), updated_at: iso(-10 * DAY) },

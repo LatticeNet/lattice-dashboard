@@ -15,7 +15,8 @@ import {
   Trash2,
   X,
 } from "lucide-vue-next";
-import { api, unwrap, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
+import { useNow } from "@vueuse/core";
+import { api, unwrap, type IncidentListResponse, type MonitorResult, type MonitorView, type Node } from "@/lib/api";
 import {
   AGENT_DEFAULT_INTERVAL_SEC,
   AGENT_DEFAULT_TIMEOUT_SEC,
@@ -44,10 +45,15 @@ import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { createConfirmReturn } from "./confirmFocus";
-import { failingMonitors, healthRank, monitorHealth, type MonitorHealth } from "./monitorHealthModel";
+import { failingMonitors, healthRank, monitorHealth, operatorMonitors, type MonitorHealth } from "./monitorHealthModel";
+import LatencyLayer from "./LatencyLayer.vue";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
+import { bindLayer } from "@/composables/useLayer";
+import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
+import KeepaliveLayer from "@/components/fleet/KeepaliveLayer.vue";
+import { filterCounts, isSnoozed } from "./incidentsModel";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import TrendChart from "@/components/common/TrendChart.vue";
@@ -94,9 +100,57 @@ const nodesQuery = useAsyncData(
   },
 );
 
+// Keepalive incidents (the Keepalive layer, and the count on its tab).
+const incidentsQuery = useAsyncData<IncidentListResponse>(
+  (signal) => api.incidents.list(undefined, { signal }),
+  // A session without monitor:read never sends it, first read or poll.
+  { pollInterval: canReadMonitors.value ? 10000 : 0, immediate: canReadMonitors.value },
+);
+const now = useNow({ interval: 1000 });
+
 // One monitor open in the sheet on ?open=. An old /monitoring/:id link (the
 // Upcoming list's TLS rows) lands on /monitoring?open=<id> instead.
 const owned = useOwnedRoute();
+
+/**
+ * Three layers (design 23, section 3.4): Keepalive (the incidents the server
+ * holds, first, since it answers "what is broken now"), Monitors (the probes
+ * an operator made and their results) and Latency (the source by target
+ * matrix the latency probe configuration generates; the generated monitors
+ * live only there). A link that opens a monitor or narrows to a node
+ * (?open=, ?node=, the old /monitoring/:id) lands on Monitors, so every link
+ * written before the layers still shows what it pointed at. Latency is never
+ * the fallback, so every link into it names it (?view=latency).
+ */
+type MonitoringLayer = "keepalive" | "monitors" | "latency";
+const layer = bindLayer<MonitoringLayer>(
+  owned,
+  () => ["keepalive", "monitors", "latency"],
+  () => {
+    const query = owned.query();
+    return query.open || query.node || route.params.id ? "monitors" : "keepalive";
+  },
+);
+// Such a link lands on Monitors because of ?open= or ?node=, so the address
+// names the layer too: closing the sheet or clearing the node chip removes
+// the parameter, and the page must not switch to Keepalive under the operator.
+watch(
+  () => owned.query(),
+  (query) => {
+    if (!owned.owns() || query.view || query.tab) return;
+    if (query.open || query.node) owned.replace({ ...query, view: "monitors" });
+  },
+  { immediate: true },
+);
+// Every monitor the server listed, generated ones included, so an incident
+// that names one still reads by its name.
+const monitorNames = computed(() => new Map((monitorsQuery.data.value ?? []).map((m) => [m.id, m.name || m.id])));
+const incidentCounts = computed(() => filterCounts(incidentsQuery.data.value?.incidents ?? [], now.value.getTime()));
+const criticalOpen = computed(() =>
+  (incidentsQuery.data.value?.incidents ?? []).some(
+    (i) => i.state === "open" && i.severity === "critical" && !isSnoozed(i, now.value.getTime()) && !i.maintenance,
+  ),
+);
 const sheet = bindRouteOpen(owned);
 watch(
   () => route.params.id,
@@ -200,7 +254,9 @@ const resultsQuery = useAsyncData(
   { pollInterval: 8000, immediate: canReadMonitors.value },
 );
 
-const monitors = computed(() => monitorsQuery.data.value ?? []);
+const monitors = computed(() => operatorMonitors(monitorsQuery.data.value ?? []));
+/** Generated monitors the list leaves to the Latency layer. */
+const generatedCount = computed(() => (monitorsQuery.data.value ?? []).length - monitors.value.length);
 const nodes = computed(() => nodesQuery.data.value ?? []);
 const selectedMonitor = computed(() =>
   monitors.value.find((monitor) => monitor.id === selectedMonitorId.value),
@@ -411,6 +467,7 @@ function refreshAll() {
   if (canReadMonitors.value) {
     monitorsQuery.refresh();
     resultsQuery.refresh();
+    incidentsQuery.refresh();
   }
   if (canReadNodes.value) nodesQuery.refresh();
 }
@@ -509,10 +566,20 @@ async function deleteMonitor() {
 /* Head, list and sheet (design 23, 4.2)                               */
 /* ------------------------------------------------------------------ */
 
-const proof = useProof(monitorsQuery);
+const monitorsProof = useProof(monitorsQuery);
+const incidentsProof = useProof(incidentsQuery);
+const proof = computed(() => (layer.value === "keepalive" ? incidentsProof.value : monitorsProof.value));
 const failing = computed(() => failingMonitors(monitors.value, healthOf));
 const staleMonitors = computed(() => monitors.value.filter((monitor) => healthOf(monitor).kind === "stale"));
 const proofSegments = computed<ProofSegment[]>(() => {
+  if (layer.value === "keepalive") {
+    const c = incidentCounts.value;
+    const out: ProofSegment[] = [{ key: "open", text: t("fleet.keepalive.proof.open", { n: c.open }, c.open), tone: c.open > 0 ? (criticalOpen.value ? "destructive" : "warning") : undefined }];
+    if (c.acknowledged) out.push({ key: "acked", text: t("fleet.keepalive.proof.acknowledged", { n: c.acknowledged }) });
+    if (c.snoozed) out.push({ key: "snoozed", text: t("fleet.keepalive.proof.snoozed", { n: c.snoozed }) });
+    if (c.pending) out.push({ key: "pending", text: t("fleet.keepalive.proof.pending", { n: c.pending }) });
+    return out;
+  }
   const out: ProofSegment[] = [{ key: "monitors", text: t("fleet.monitoring.proof.monitors", { n: monitors.value.length }, monitors.value.length) }];
   if (monitors.value.length) out.push({ key: "enabled", text: t("fleet.monitoring.proof.enabled", { n: enabledCount.value }) });
   if (failing.value.length) out.push({ key: "failing", tone: "destructive", text: t("fleet.monitoring.proof.failing", { n: failing.value.length }) });
@@ -596,6 +663,24 @@ const listedMonitors = computed(() => {
   );
 });
 
+const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
+  {
+    value: "keepalive",
+    label: t("fleet.monitoring.layers.keepalive"),
+    // Like Monitors' failing count, absent at zero.
+    count: incidentCounts.value.open || undefined,
+    tone: incidentCounts.value.open > 0 ? (criticalOpen.value ? "destructive" : "warning") : "default",
+  },
+  {
+    value: "monitors",
+    label: t("fleet.monitoring.layers.monitors"),
+    count: failing.value.length ? failing.value.length : undefined,
+    tone: failing.value.length ? "destructive" : "default",
+  },
+  // No count: the matrix is read inside the layer, and its proof line says what fails.
+  { value: "latency", label: t("fleet.monitoring.layers.latency") },
+]);
+
 const columns = computed<DataTableColumn<MonitorView>[]>(() => [
   { key: "name", label: t("fleet.monitoring.table.name"), sortable: true, searchable: true, value: (m) => m.name || m.id },
   { key: "status", label: t("fleet.monitoring.table.status"), sortable: true, value: (m) => healthRank(healthOf(m)) },
@@ -670,10 +755,10 @@ const deleteImpact = computed(() => {
     <PageHeader :title="$t('fleet.monitoring.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
-        <ProofLine v-if="canReadMonitors" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+        <ProofLine v-if="canReadMonitors && layer !== 'latency'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
-      <template v-if="canReadMonitors" #actions>
-        <Button v-if="canAdminMonitors && monitors.length" size="sm" type="button" @click="openCreate()">
+      <template v-if="canReadMonitors && layer !== 'latency'" #actions>
+        <Button v-if="canAdminMonitors && monitors.length && layer === 'monitors'" size="sm" type="button" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.create.title') }}
         </Button>
@@ -684,8 +769,6 @@ const deleteImpact = computed(() => {
       </template>
     </PageHeader>
 
-    <AttentionList v-if="canReadMonitors" :items="attention" />
-
     <EmptyState
       v-if="!canReadMonitors"
       :icon="RadioTower"
@@ -693,9 +776,38 @@ const deleteImpact = computed(() => {
       :description="$t('fleet.monitoring.noAccessDescription')"
     />
 
+    <LayerTabs v-if="canReadMonitors" v-model="layer" :tabs="layerTabs" :label="$t('fleet.monitoring.layers.label')" />
+
+    <KeepaliveLayer
+      v-if="canReadMonitors && layer === 'keepalive'"
+      :owned="owned"
+      :response="incidentsQuery.data.value"
+      :error="incidentsQuery.error.value"
+      :loading="incidentsQuery.loading.value"
+      :nodes="nodes"
+      :monitor-names="monitorNames"
+      :now="now.getTime()"
+      @refresh="incidentsQuery.refresh()"
+    />
+
+    <LatencyLayer v-if="canReadMonitors && layer === 'latency'" :owned="owned" />
+
+    <template v-if="canReadMonitors && layer === 'monitors'">
+    <AttentionList :items="attention" />
+
+    <!-- Generated latency monitors are left to the Latency layer; say so and link there. -->
+    <p v-if="generatedCount > 0" class="text-xs text-muted-foreground" data-testid="monitors-generated-note">
+      {{ $t('fleet.monitoring.latency.generatedNote', { n: generatedCount }, generatedCount) }}
+      <button
+        type="button"
+        class="ms-1 font-medium text-foreground underline decoration-dotted underline-offset-2 pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+        @click="layer = 'latency'"
+      >{{ $t('fleet.monitoring.latency.generatedOpen') }}</button>
+    </p>
+
     <!-- No monitors yet: one sentence and the two watches worth starting with. -->
     <section
-      v-else-if="monitorsQuery.data.value !== undefined && monitors.length === 0"
+      v-if="monitorsQuery.data.value !== undefined && monitors.length === 0"
       class="rounded-lg border border-dashed border-border px-5 py-8 text-center"
       aria-labelledby="monitoring-empty"
     >
@@ -784,6 +896,7 @@ const deleteImpact = computed(() => {
         </EmptyState>
       </template>
     </DataTable>
+    </template>
 
     <!-- One monitor: its latest state, trend and results. -->
     <ObjectSheet

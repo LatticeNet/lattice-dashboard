@@ -97,6 +97,10 @@ export default {
       noMatchTitle: "No matching rows",
       noMatchDescription: "Change the search or the filter to widen the result.",
     },
+    stepUp: {
+      code: "2FA passcode",
+      passkey: "Use passkey",
+    },
     actions: {
       refresh: "Refresh",
       save: "Save",
@@ -363,7 +367,7 @@ export default {
       reviewNext: "Review the next approval",
       reviewNextDetail: "{n} waiting | {n} waiting",
       addVpnUser: "Add a VPN user",
-      addVpnUserDetail: "On vpn-core Users, where New identity starts it",
+      addVpnUserDetail: "Opens New identity on vpn-core Users",
       shareSubscription: "Share a subscription",
       shareSubscriptionDetail: "A new share in Publishing",
       recordRenewal: "Record a renewal",
@@ -454,6 +458,12 @@ export default {
       ddns: "DDNS profiles were not read, so failing ones are not listed",
       expiring: "Renewals and expiries were not read, so nothing due is listed",
       monitors: "Monitor results were not read, so failing monitors are not listed",
+      incidents: "Incidents were not read, so open ones are not listed",
+    },
+    incidents: {
+      title: "Incidents ({n} active) | Incidents ({n} active)",
+      all: "All incidents",
+      allMore: "{n} more in Keepalive",
     },
     // Where a number would be, when its read gave none.
     read: {

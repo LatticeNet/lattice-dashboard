@@ -95,6 +95,10 @@ export default {
       noMatchTitle: "没有匹配的行",
       noMatchDescription: "调整搜索或筛选条件以扩大结果范围。",
     },
+    stepUp: {
+      code: "两步验证码",
+      passkey: "使用通行密钥",
+    },
     actions: {
       refresh: "刷新",
       save: "保存",
@@ -358,7 +362,7 @@ export default {
       reviewNext: "审阅下一个审批",
       reviewNextDetail: "{n} 个待处理",
       addVpnUser: "添加 VPN 用户",
-      addVpnUserDetail: "在 vpn-core 的 Users 页面，从新建身份开始",
+      addVpnUserDetail: "在 vpn-core 的 Users 页面打开新建身份",
       shareSubscription: "分享订阅",
       shareSubscriptionDetail: "在发布页新建分享",
       recordRenewal: "记录续费",
@@ -446,6 +450,12 @@ export default {
       ddns: "未读取到 DDNS 配置，更新失败的没有列出",
       expiring: "未读取到续费与到期信息，到期项没有列出",
       monitors: "未读取到监控结果，失败的监控没有列出",
+      incidents: "未读取到事件，未处理的事件没有列出",
+    },
+    incidents: {
+      title: "事件（{n} 个进行中） | 事件（{n} 个进行中）",
+      all: "全部事件",
+      allMore: "保活中还有 {n} 个",
     },
     read: {
       reading: "读取中",

@@ -90,6 +90,8 @@ export default {
         wireguardConfig: "应用 WireGuard 配置",
         sshGuardArm: "用 SSH Guard 加固",
         sshGuardConfirm: "确认 SSH Guard 加固",
+        witnessConfigure: "设置控制面见证者",
+        witnessRemove: "移除控制面见证者",
         generic: "{action}（{plugin}）",
       },
       /** agent 更新计划过时的原因，从服务端的英文原因解析而来(approvalsModel.describeAgentUpdateStale)。 */
