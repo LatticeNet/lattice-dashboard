@@ -34,7 +34,7 @@ const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCID
 </script>
 
 <template>
-  <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents">
+  <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents" v-on="actions.listEvents">
     <header class="flex items-center gap-2 border-b border-border px-3.5 py-2">
       <h2 id="home-incidents" class="text-xs font-medium text-muted-foreground">
         {{ $t('overview.incidents.title', { n: view.total }, view.total) }}
@@ -55,6 +55,7 @@ const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCID
       :monitor-names="monitorNames"
       :focus-request="actions.focusRequest.value"
       :undoable="actions.undoable.value"
+      :undone="actions.undone.value"
       @ack="actions.ack"
       @undo="actions.undoAck"
       @snooze="actions.snooze"

@@ -14,7 +14,7 @@
  * The incident list belongs to MonitoringView (its count rides on the layer
  * tab); this component reads the windows and groups itself.
  */
-import { computed, nextTick, ref, shallowRef } from "vue";
+import { computed, nextTick, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { Plus, Wrench } from "lucide-vue-next";
 
@@ -92,6 +92,9 @@ const counts = computed(() => filterCounts(incidents.value, props.now));
 const kinds = computed(() => kindsPresent(incidents.value));
 const actions = useIncidentActions(() => emit("refresh"));
 const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.value, kind: kind.value, search: search.value }, props.now, actions.held.value, actions.pinned.value));
+
+// A changed filter or search is a new view: rows held for the old one go.
+watch([filter, kind, search], () => actions.release());
 
 const nodeNames = computed(() => new Map(props.nodes.map((n) => [n.id, n.name || n.id])));
 const groupNames = computed(() => new Map((groupsQuery.data.value ?? []).map((g) => [g.id, g.name])));
@@ -355,7 +358,7 @@ function coverageText(window: MaintenanceWindow): string {
       </Button>
     </div>
 
-    <section class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')">
+    <section class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')" v-on="actions.listEvents">
       <div v-if="error && !response" class="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-muted-foreground">
         <span class="min-w-0 break-words">{{ $t('fleet.keepalive.readFailed', { reason: proofReason(error) }) }}</span>
         <Button variant="outline" size="sm" type="button" @click="emit('refresh')">{{ $t('common.actions.retry') }}</Button>
@@ -372,6 +375,7 @@ function coverageText(window: MaintenanceWindow): string {
           :monitor-names="monitorNames"
           :focus-request="actions.focusRequest.value"
           :undoable="actions.undoable.value"
+          :undone="actions.undone.value"
           @ack="actions.ack"
           @undo="actions.undoAck"
           @snooze="actions.snooze"

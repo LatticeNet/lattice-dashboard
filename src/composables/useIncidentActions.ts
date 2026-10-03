@@ -4,77 +4,121 @@
  * toast that names the incident and says what happened, then the caller's
  * list is read again.
  *
- * Acknowledging can be undone from the row itself: for ACK_UNDO_MS the row
- * shows "Acknowledged" and an Undo button in Acknowledge's place, and focus
- * moves to that Undo (the server's /api/incidents/unack puts the reminder
- * schedule back as it was). The Undo stays while it has keyboard focus, so
- * it never disappears under the operator; the toast only announces.
+ * Acknowledging can be undone from the row itself: the row shows Undo in
+ * Acknowledge's place, and focus moves to that Undo (the server's
+ * /api/incidents/unack puts the reminder schedule back as it was). The toast
+ * only announces.
  *
  * While that runs, the rows keep the order they had when the action was
  * pressed, and the acted-on row stays listed even under a filter it no
  * longer matches (Acknowledge or Snooze under Open), so the next row's
- * Acknowledge does not slide under a pointer that is still there.
+ * Acknowledge does not slide under a pointer that is still there. The rows
+ * acted on are released together (lib/actionHold), at least ACK_UNDO_MS
+ * after the last action, and not while the pointer is over the list, a
+ * touch has not scrolled since, or an Undo has keyboard focus. Spread
+ * `listEvents` on the element around the list so the hold can see the
+ * pointer, and call `release()` when the caller's filters change.
  *
  * Focus follows the action instead of falling to the page: after an
  * acknowledgement to the row's Undo, after a failed one back to Acknowledge,
  * and after Undo to Acknowledge again. IncidentList fulfils `focusRequest`
  * once the row has re-rendered.
  */
-import { computed, ref, shallowRef } from "vue";
+import { onScopeDispose, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { api, ApiError, type Incident } from "@/lib/api";
+import { createActionHold } from "@/lib/actionHold";
 import { toast } from "@/lib/toast";
 
-/** How long a row offers Undo after Acknowledge, and holds its place after an action. */
+/** How long a row offers Undo after Acknowledge, and holds its place after an action, at least. */
 export const ACK_UNDO_MS = 10_000;
-/** How often an Undo that has focus checks again whether it may go. */
-const FOCUS_RECHECK_MS = 500;
 
 export interface IncidentFocusRequest {
   id: string;
   target: "ack" | "snooze" | "undo";
 }
 
-/** The element that marks a row's inline Undo, so the Undo stays while it has focus. */
-export function undoMarker(id: string): string {
-  return `[data-incident-undo="${CSS.escape(id)}"]`;
-}
-
-function hasFocus(selector: string): boolean {
+/**
+ * Only keyboard focus keeps an Undo: a pointer press also focuses it, and an
+ * Undo held by that would never go and would freeze the list's order.
+ */
+function keyboardOnUndo(): boolean {
   if (typeof document === "undefined") return false;
   const active = document.activeElement;
-  return !!active && !!active.closest(selector);
+  return active instanceof HTMLElement && active.hasAttribute("data-incident-undo") && active.matches(":focus-visible");
 }
 
 export function useIncidentActions(refresh: () => unknown, options: { holdMs?: number } = {}) {
   const { t } = useI18n();
-  const holdMs = options.holdMs ?? ACK_UNDO_MS;
   const busy = ref<Set<string>>(new Set());
-  /** Row ids in the order they had when an action was pressed, while that order is held. */
-  const held = ref<string[] | null>(null);
   const focusRequest = ref<IncidentFocusRequest | null>(null);
-  /** Acknowledged rows that still offer Undo. */
+  /** Row ids in the order they had when an action was pressed, while that order is held. */
+  const held = shallowRef<readonly string[] | null>(null);
+  /** Acknowledged rows that offer Undo, and those whose Undo landed (undoSlot). */
   const undoable = shallowRef<ReadonlySet<string>>(new Set());
-  /** Snoozed rows kept listed for the hold. */
-  const snoozePinned = shallowRef<ReadonlySet<string>>(new Set());
+  const undone = shallowRef<ReadonlySet<string>>(new Set());
   /** Rows that stay listed whatever the filter says: the ones just acted on. */
-  const pinned = computed<ReadonlySet<string>>(() => new Set([...undoable.value, ...snoozePinned.value]));
-  let holdTimer: ReturnType<typeof setTimeout> | undefined;
-  const undoTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pinned = shallowRef<ReadonlySet<string>>(new Set());
+
+  // The pointer over the list. A mouse or pen says when it leaves; a finger
+  // does not hover, so after a tap the rows stay until the next scroll.
+  let pointerOver = false;
+  let touched = false;
+
+  const hold = createActionHold({
+    holdMs: options.holdMs ?? ACK_UNDO_MS,
+    blocked: () => pointerOver || touched || keyboardOnUndo(),
+    changed: () => {
+      const state = hold.state();
+      held.value = state.order;
+      undoable.value = state.undoable;
+      undone.value = state.undone;
+      pinned.value = state.pinned;
+    },
+  });
+
+  function onScroll(): void {
+    if (!touched) return;
+    touched = false;
+    hold.check();
+  }
+  if (typeof window !== "undefined") window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+  onScopeDispose(() => {
+    if (typeof window !== "undefined") window.removeEventListener("scroll", onScroll, { capture: true });
+    hold.dispose();
+  });
+
+  const listEvents = {
+    pointerenter(event: PointerEvent): void {
+      if (event.pointerType === "touch") return;
+      pointerOver = true;
+      touched = false;
+    },
+    pointerleave(event: PointerEvent): void {
+      if (event.pointerType === "touch") return;
+      pointerOver = false;
+      hold.check();
+    },
+    pointerdown(event: PointerEvent): void {
+      if (event.pointerType === "touch") {
+        touched = true;
+      } else {
+        pointerOver = true;
+        touched = false;
+      }
+    },
+    focusout(): void {
+      // activeElement settles after focusout; an Undo losing keyboard focus may free the group.
+      setTimeout(() => hold.check(), 0);
+    },
+  };
 
   function mark(id: string, on: boolean): void {
     const next = new Set(busy.value);
     if (on) next.add(id);
     else next.delete(id);
     busy.value = next;
-  }
-
-  function withId(set: ReadonlySet<string>, id: string, on: boolean): ReadonlySet<string> {
-    const next = new Set(set);
-    if (on) next.add(id);
-    else next.delete(id);
-    return next;
   }
 
   async function reread(): Promise<void> {
@@ -87,60 +131,21 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     }
   }
 
-  /** Release the held order once its time is up and no row still offers Undo. */
-  function releaseHold(): void {
-    if (undoable.value.size > 0) {
-      holdTimer = setTimeout(releaseHold, FOCUS_RECHECK_MS);
-      return;
-    }
-    held.value = null;
-  }
-
-  function hold(order: readonly string[] | undefined): void {
-    if (!order?.length) return;
-    held.value = [...order];
-    clearTimeout(holdTimer);
-    holdTimer = setTimeout(releaseHold, holdMs);
-  }
-
-  function closeUndo(id: string): void {
-    clearTimeout(undoTimers.get(id));
-    undoTimers.delete(id);
-    undoable.value = withId(undoable.value, id, false);
-  }
-
-  /** Undo goes when its time is up, unless it has keyboard focus: then when focus leaves it. */
-  function expireUndo(id: string): void {
-    if (hasFocus(undoMarker(id))) {
-      undoTimers.set(id, setTimeout(() => expireUndo(id), FOCUS_RECHECK_MS));
-      return;
-    }
-    closeUndo(id);
-  }
-
-  function openUndo(id: string): void {
-    clearTimeout(undoTimers.get(id));
-    undoable.value = withId(undoable.value, id, true);
-    undoTimers.set(id, setTimeout(() => expireUndo(id), holdMs));
-  }
-
-  function pinSnoozed(id: string): void {
-    snoozePinned.value = withId(snoozePinned.value, id, true);
-    setTimeout(() => {
-      snoozePinned.value = withId(snoozePinned.value, id, false);
-    }, holdMs);
-  }
-
-  /** `name` is the row's claim as shown, so stacked toasts say which incident each is about. */
+  /**
+   * `name` is the row's claim as shown, so stacked toasts say which incident
+   * each is about. The row keeps its pin and an inert Undo until the list
+   * shows it open again (undoSlot): unpinned before that, it would drop out
+   * of Open and put the next row's Acknowledge under the pointer.
+   */
   async function undoAck(incident: Incident, name: string): Promise<void> {
-    if (busy.value.has(incident.id)) return;
+    if (busy.value.has(incident.id) || undone.value.has(incident.id)) return;
+    hold.begin();
     mark(incident.id, true);
     try {
       await api.incidents.unack(incident.id);
-      toast.success(t("fleet.keepalive.toast.unacked", { name }));
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
-        closeUndo(incident.id);
+        hold.closeUndo(incident.id);
         toast.error(t("fleet.keepalive.toast.unackClosed", { name }));
       } else {
         toast.error(error instanceof Error && error.message ? `${t("fleet.keepalive.toast.unackFailed")}: ${error.message}` : t("fleet.keepalive.toast.unackFailed"));
@@ -149,15 +154,16 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     } finally {
       mark(incident.id, false);
     }
-    closeUndo(incident.id);
-    await reread();
+    hold.undone(incident.id);
+    toast.success(t("fleet.keepalive.toast.unacked", { name }));
     focusRequest.value = { id: incident.id, target: "ack" };
+    await reread();
   }
 
   /** `order` is the list's row ids as shown, held while the acknowledgement settles. */
   async function ack(incident: Incident, order: readonly string[] | undefined, name: string): Promise<void> {
     if (busy.value.has(incident.id)) return;
-    hold(order);
+    hold.begin(order);
     mark(incident.id, true);
     try {
       await api.incidents.ack(incident.id);
@@ -168,7 +174,7 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     } finally {
       mark(incident.id, false);
     }
-    openUndo(incident.id);
+    hold.acked(incident.id);
     toast.success(t("fleet.keepalive.toast.acked", { name }));
     focusRequest.value = { id: incident.id, target: "undo" };
     await reread();
@@ -176,8 +182,8 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
 
   async function snooze(incident: Incident, minutes: number, order: readonly string[] | undefined, name: string): Promise<boolean> {
     if (busy.value.has(incident.id)) return false;
-    hold(order);
-    pinSnoozed(incident.id);
+    hold.begin(order);
+    hold.snoozed(incident.id);
     mark(incident.id, true);
     try {
       await api.incidents.snooze(incident.id, minutes);
@@ -196,5 +202,5 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     focusRequest.value = null;
   }
 
-  return { busy, held, pinned, undoable, focusRequest, focusDone, ack, undoAck, snooze };
+  return { busy, held, pinned, undoable, undone, focusRequest, focusDone, ack, undoAck, snooze, listEvents, release: () => hold.release() };
 }

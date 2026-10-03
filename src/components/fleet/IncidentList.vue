@@ -23,6 +23,7 @@ import type { IncidentFocusRequest } from "@/composables/useIncidentActions";
 import { formatAge } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { incidentSeverity } from "@/lib/incidentSeverity";
+import { undoSlot } from "@/lib/actionHold";
 import {
   SNOOZE_MINUTES,
   incidentActions,
@@ -56,10 +57,18 @@ const props = withDefaults(
     monitorNames?: ReadonlyMap<string, string>;
     /** A row control to focus once the row has re-rendered (useIncidentActions). */
     focusRequest?: IncidentFocusRequest | null;
-    /** Acknowledged rows that offer Undo in Acknowledge's place. */
+    /** Acknowledged rows that offer Undo in Acknowledge's place, and those whose Undo landed (actionHold.undoSlot). */
     undoable?: ReadonlySet<string>;
+    undone?: ReadonlySet<string>;
   }>(),
-  { busy: () => new Set<string>(), nodeNames: () => new Map<string, string>(), monitorNames: () => new Map<string, string>(), focusRequest: null, undoable: () => new Set<string>() },
+  {
+    busy: () => new Set<string>(),
+    nodeNames: () => new Map<string, string>(),
+    monitorNames: () => new Map<string, string>(),
+    focusRequest: null,
+    undoable: () => new Set<string>(),
+    undone: () => new Set<string>(),
+  },
 );
 
 const emit = defineEmits<{
@@ -273,7 +282,7 @@ const rows = computed(() =>
       phone: phoneLine(incident),
       badges,
       actions: incidentActions(incident, props.now, props.canAdmin),
-      undo: props.canAdmin && props.undoable.has(incident.id),
+      undo: props.canAdmin ? undoSlot(incident.id, incident.state, { undoable: props.undoable, undone: props.undone }) : null,
       open: openTarget(incident),
       busy: props.busy.has(incident.id),
     };
@@ -321,7 +330,7 @@ const rows = computed(() =>
             size="sm"
             type="button"
             class="pointer-coarse:h-11 aria-disabled:opacity-50"
-            :aria-disabled="row.busy || undefined"
+            :aria-disabled="row.busy || row.undo === 'settling' || undefined"
             :data-incident-undo="row.incident.id"
             :aria-label="$t('fleet.keepalive.actions.undoLabel', { name: row.claim })"
             @click="onUndo(row.incident, row.claim)"
