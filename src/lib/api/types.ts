@@ -279,8 +279,57 @@ export interface Node {
   agent_debug?: AgentDebugPolicy;
   agent_launch?: AgentLaunchConfig | null;
   agent_runtime?: AgentRuntimeConfig | null;
+  /** The agent's account of its work loop (node-agent 0.3.10 and later); absent before. */
+  loop_health?: AgentLoopHealth | null;
   ip_config?: NodeIPConfig | null;
   group_ids?: string[];
+}
+
+/** One work loop step's outcome, by the agent's clock. */
+export interface AgentLoopStep {
+  last_ok_at?: string;
+  last_error_at?: string;
+  last_error?: string;
+  consecutive_errors?: number;
+}
+
+/** A problem the server derived from loop health. */
+export interface AgentLoopProblem {
+  kind: "stalled" | "linechain_blocked" | "step_stale" | "results_dropped" | string;
+  step?: string;
+  /** This server's clock. */
+  since: string;
+  /** An English sentence; the console words the kind itself. */
+  reason: string;
+  /** It degrades the node's status. */
+  degrades?: boolean;
+  /** It opens agent.stalled. */
+  pages?: boolean;
+}
+
+/**
+ * Loop health as the agent sent it on its last beat. Every instant except
+ * received_at and the problems' since is the agent's clock: the age of an
+ * instant t is (collected_at - t) + (now - received_at), so a skewed node
+ * still reads correctly.
+ */
+export interface AgentLoopHealth {
+  started_at: string;
+  cycle_started_at?: string;
+  cycle_completed_at?: string;
+  cycle_duration_ms?: number;
+  step?: string;
+  step_since?: string;
+  linechain_blocked?: string;
+  linechain_blocked_since?: string;
+  steps?: Record<string, AgentLoopStep>;
+  task_busy_since?: string;
+  monitor_results_queued?: number;
+  monitor_results_dropped?: number;
+  watchdog?: boolean;
+  collected_at: string;
+  received_at: string;
+  problems?: AgentLoopProblem[];
 }
 
 // NodeDeletePlanView mirrors the server's nodeDeleteSummary wire DTO returned by

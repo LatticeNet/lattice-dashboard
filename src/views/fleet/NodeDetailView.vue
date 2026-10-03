@@ -11,6 +11,7 @@
  * read-only operator sees a quiet section rather than an error wall.
  */
 import { computed, nextTick, reactive, watch, ref } from "vue";
+import { useNow } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter, type RouteLocationRaw } from "vue-router";
 import { toast } from "@/lib/toast";
@@ -86,6 +87,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import SettingsSection from "@/components/fleet/SettingsSection.vue";
+import AgentLoopPanel from "@/components/fleet/AgentLoopPanel.vue";
 import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
@@ -330,6 +332,9 @@ const nodeApprovalsQuery = useAsyncData<ApprovalView[] | undefined>(
   soften((signal) => api.approvals.list({ node_id: nodeId.value }, { signal }).then((r) => unwrap(r, "approvals")), "approvals"),
   { pollInterval: 20000 },
 );
+
+// Loop health ages tick between polls.
+const loopNow = useNow({ interval: 1000 });
 
 const node = computed<Node | undefined>(() =>
   (nodesQuery.data.value ?? []).find((n) => n.id === nodeId.value),
@@ -1755,6 +1760,9 @@ async function saveDebug(): Promise<void> {
                 </div>
               </CardContent>
             </Card>
+
+            <!-- Is the agent doing its work, or only beating (node-agent 0.3.10+). -->
+            <AgentLoopPanel :health="node.loop_health" :now="loopNow.getTime()" />
 
             <!-- Addresses: what the agent reported. Discovery is in Settings. -->
             <Card>
