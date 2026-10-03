@@ -91,6 +91,8 @@ export default {
         wireguardConfig: "Apply the WireGuard config",
         sshGuardArm: "Arm SSH Guard",
         sshGuardConfirm: "Confirm the SSH Guard arm",
+        witnessConfigure: "Set up the control-plane witness",
+        witnessRemove: "Remove the control-plane witness",
         generic: "{action} ({plugin})",
       },
       /** An agent update plan's stale reason, read from the server's English (approvalsModel.describeAgentUpdateStale). */
