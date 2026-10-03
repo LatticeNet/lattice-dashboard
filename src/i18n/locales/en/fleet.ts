@@ -1654,6 +1654,7 @@ export default {
         critical: "Critical",
         warning: "Warning",
       },
+      severityLead: "{severity}: ",
       // What the operator's phone was told about the incident, the row's second line.
       phone: {
         pendingAt: "Opens in {age} if it lasts",

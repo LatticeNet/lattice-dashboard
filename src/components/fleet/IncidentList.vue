@@ -239,7 +239,7 @@ const rows = computed(() =>
         <component :is="row.icon" :class="cn('mt-0.5 size-4 shrink-0', ICON_TONE[row.tone])" aria-hidden="true" />
         <div class="min-w-0 flex-1">
           <p class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm text-foreground">
-            <span class="sr-only">{{ row.severity }}: </span>
+            <span class="sr-only">{{ $t('fleet.keepalive.severityLead', { severity: row.severity }) }}</span>
             <span class="min-w-0 break-words">{{ row.claim }}</span>
             <span v-if="row.age" class="font-mono text-xs text-muted-foreground tabular">{{ row.age }}</span>
           </p>

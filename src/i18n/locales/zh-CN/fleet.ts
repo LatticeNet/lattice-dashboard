@@ -1634,6 +1634,7 @@ export default {
         critical: "严重",
         warning: "警告",
       },
+      severityLead: "{severity}：",
       phone: {
         pendingAt: "若持续，{age}后转为事件",
         pendingNext: "若持续，下次检查时转为事件",
