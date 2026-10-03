@@ -9,7 +9,7 @@ import {
   PopoverPortal,
   PopoverContent,
 } from "reka-ui";
-import { Menu, Palette, LogOut, User, KeyRound, Search } from "lucide-vue-next";
+import { Menu, Palette, LogOut, User, KeyRound, Search, RotateCcw } from "lucide-vue-next";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -20,10 +20,11 @@ import {
   opensCommandPalette,
   resolvePluginBreadcrumb,
   type Crumb,
-  type ShortcutTarget,
 } from "@/layout/headerModel";
+import { keyTargetOf } from "@/layout/keyboardShortcutsModel";
 import { useAuthStore } from "@/stores/auth";
 import { objectTitle } from "@/layout/useObjectTitle";
+import { resetRestoredView, restoredView, viewQueriesEqual, viewQuery } from "@/router/viewMemory";
 import { NAV } from "@/router/nav";
 import { usePluginContributions } from "@/composables/usePluginContributions";
 import ThemeToggle from "./ThemeToggle.vue";
@@ -148,20 +149,26 @@ const accountLabel = computed(
 const apple = currentPlatformIsApple();
 const shortcutKey = commandShortcutKey(apple);
 
-function shortcutTarget(el: Element | null): ShortcutTarget {
-  if (!el) return "other";
-  // xterm's hidden input: Ctrl+K there is the shell's.
-  if (el.classList.contains("xterm-helper-textarea") || el.closest(".xterm")) return "terminal";
-  const tag = el.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (el as HTMLElement).isContentEditable) return "editable";
-  return "other";
-}
-
 useEventListener(window, "keydown", (e: KeyboardEvent) => {
-  if (e.repeat || !opensCommandPalette(e, { apple, target: shortcutTarget(document.activeElement) })) return;
+  // xterm's hidden input reads as "terminal": Ctrl+K there is the shell's.
+  if (e.repeat || !opensCommandPalette(e, { apple, target: keyTargetOf(document.activeElement) })) return;
   e.preventDefault();
   emit("open-command");
 });
+
+/**
+ * Reset view, while the page still shows the view a navigation restored
+ * (router/viewMemory). Once the operator changes the view it is theirs, and
+ * the control goes.
+ */
+const viewRestored = computed(() => {
+  const restored = restoredView.value;
+  return !!restored && restored.path === route.path && viewQueriesEqual(viewQuery(route.query), restored.query);
+});
+
+function resetView() {
+  resetRestoredView(router);
+}
 
 async function logout() {
   await auth.logout();
@@ -218,6 +225,19 @@ function openSecurity() {
         </template>
       </template>
     </nav>
+
+    <Button
+      v-if="viewRestored"
+      variant="ghost"
+      size="sm"
+      class="h-8 shrink-0 gap-1.5 px-2 text-xs text-muted-foreground pointer-coarse:size-11 pointer-coarse:px-0 sm:pointer-coarse:w-auto sm:pointer-coarse:px-2"
+      :title="$t('shell.header.viewRestored')"
+      data-reset-view
+      @click="resetView"
+    >
+      <RotateCcw class="size-3.5" aria-hidden="true" />
+      <span class="sr-only sm:not-sr-only">{{ $t('shell.header.resetView') }}</span>
+    </Button>
 
     <div class="ml-auto flex items-center gap-1">
       <!-- Command palette trigger -->

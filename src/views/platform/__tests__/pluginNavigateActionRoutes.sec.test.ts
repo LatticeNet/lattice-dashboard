@@ -75,3 +75,22 @@ test("an encoded dot segment cannot borrow an allowed path's permission", () => 
     assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "invalid", route);
   }
 });
+
+/**
+ * vpn-core files a plan and sends the operator to it. Arriving on an open
+ * approval shows the plan; it does not approve, queue or reject it.
+ */
+test("a frame may open the approval it filed, and nothing else on Approvals", () => {
+  for (const route of ["/approvals?open=approval_k2lineuserrm001", "/approvals/?open=approval_abc"]) {
+    assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "navigate", route);
+  }
+  for (const route of [
+    "/approvals?open=approval_abc&approve=1",
+    "/approvals?open=approval_abc&queue_apply=true",
+    "/approvals?view=history",
+    "/approvals?decide=approval_abc",
+    "/approvals/%2e%2e/terminal?open=approval_abc",
+  ]) {
+    assert.equal(classifyPluginNavigateMessage({ type: "lattice:navigate", route }).kind, "invalid", route);
+  }
+});

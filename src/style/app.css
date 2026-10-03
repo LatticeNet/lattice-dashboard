@@ -564,6 +564,20 @@
     min-width: 44px;
   }
 
+  /* A toast's close button is a 20 px circle on its corner, and on a phone
+     it is the one way to clear an error before its 15 s are up (inside an
+     open sheet too, where the toaster moves while the sheet is modal). It
+     gets the same invisible 44 px pad as the small icon controls below. */
+  [data-sonner-toast] [data-close-button]::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
   /* Invisible centered hit-area pad for icon-only buttons that keep their
      small visual box (e.g. inline size-7 controls inside dense rows). */
   .touch-target::after {

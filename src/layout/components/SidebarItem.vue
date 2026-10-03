@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { RouterLink } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Pin, PinOff } from "lucide-vue-next";
+import { Package, Pin, PinOff } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { NavItem } from "@/router/nav";
@@ -26,7 +26,17 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const label = computed(() => (props.plugin ? props.item.title : t(`nav.items.${props.item.name}`)));
+/** A plugin's page, in Extensions or placed in a console section. */
+const isPlugin = computed(() => props.plugin || !!props.item.plugin);
+const label = computed(() => (isPlugin.value ? props.item.title : t(`nav.items.${props.item.name}`)));
+/**
+ * A plugin page placed among console pages carries a small mark naming the
+ * plugin, so the operator still knows a sandboxed frame is talking (design
+ * 10). In Extensions the plugin's group header already says so.
+ */
+const pluginMark = computed(() =>
+  props.item.plugin && !props.plugin ? t("shell.sidebar.pluginMark", { name: props.item.plugin.name }) : "",
+);
 
 /**
  * Overview lives at "/" and would otherwise read as active everywhere, so it is
@@ -66,7 +76,7 @@ const active = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
               aria-hidden="true"
             />
           </span>
-          <span class="sr-only">{{ label }}<template v-if="signal">, {{ signal.label }}</template></span>
+          <span class="sr-only">{{ label }}<template v-if="pluginMark">, {{ pluginMark }}</template><template v-if="signal">, {{ signal.label }}</template></span>
         </a>
       </TooltipTrigger>
       <TooltipContent side="right">
@@ -74,6 +84,7 @@ const active = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
         <div v-if="signal" class="text-[10px]" :class="signal.tone === 'attention' ? 'text-destructive' : 'text-warning'">
           {{ signal.label }}
         </div>
+        <div v-if="pluginMark" class="text-[10px] text-muted-foreground">{{ pluginMark }}</div>
         <div v-if="context" class="text-[10px] text-muted-foreground">{{ context }}</div>
       </TooltipContent>
     </Tooltip>
@@ -89,6 +100,10 @@ const active = "bg-sidebar-accent font-medium text-sidebar-accent-foreground";
       >
         <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
         <span class="truncate" :title="label">{{ label }}</span>
+        <span v-if="pluginMark" class="inline-flex shrink-0" :title="pluginMark" data-plugin-mark>
+          <Package class="size-3 text-muted-foreground/80" aria-hidden="true" />
+          <span class="sr-only">{{ pluginMark }}</span>
+        </span>
         <span
           v-if="signal"
           :class="cn(

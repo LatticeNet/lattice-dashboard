@@ -277,6 +277,7 @@ defineExpose({ draft, submit, revert, settle });
           :aria-label="label"
           :placeholder="placeholder"
           :data-testid="`${testid}-field`"
+          data-page-search
           @input="onInput"
           @keydown.escape="revert"
         />

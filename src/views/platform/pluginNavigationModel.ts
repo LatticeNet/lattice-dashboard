@@ -51,9 +51,11 @@ export function isInternalDashboardRoute(route: string): boolean {
  * cannot be driven from a frame until someone adds it to this map, and adding
  * to this map is the moment to ask whether it should act on arrival at all.
  *
- * The first entry is the whole of the real usage: Sub-Store's "publish a
- * share for this subscription" button, whose route opens the create form with
- * a record pre-chosen. It opens a form; it does not submit one.
+ * The first entry was the whole of the original usage: Sub-Store's "publish
+ * a share for this subscription" button, whose route opens the create form
+ * with a record pre-chosen. It opens a form; it does not submit one. Each
+ * entry since has been held to the same rule: it shows something, and the
+ * operator still makes every change.
  */
 const PLUGIN_PARAMETERIZED_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   // Shares live on Publishing's share lens (DESIGN-PROGRAM-2026-09 §9).
@@ -64,6 +66,12 @@ const PLUGIN_PARAMETERIZED_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = ne
   // on a lens with a node and a line pre-filtered. It opens a read view; it
   // changes nothing.
   ["/platform/evidence", new Set(["lens", "node_id", "line_uuid", "user_id", "tab"])],
+  // vpn-core files a plan (adding or removing a VPN user on an adopted line)
+  // and sends the operator to it. `open` shows that one approval in the
+  // object sheet, read only until the operator acts: the sheet takes focus
+  // on its title, not on Approve, and deciding still needs the operator's
+  // own click on a plan whose hash binds what they were shown.
+  ["/approvals", new Set(["open"])],
 ]);
 
 /**

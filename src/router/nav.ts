@@ -26,6 +26,7 @@ import {
   SlidersHorizontal,
   CircleArrowUp,
   Webhook,
+  Radar,
 } from "lucide-vue-next";
 import { UPCOMING_SCOPES } from "@/views/fleet/upcomingModel";
 
@@ -36,6 +37,12 @@ export type NavItem = {
   path: string;
   icon: any;
   scopes?: string[];
+  /**
+   * Set on a plugin's page. Its `title` is the manifest's, already user
+   * facing, so it has no static i18n key; and where it sits in a console
+   * section the row carries the plugin's mark.
+   */
+  plugin?: { id: string; name: string };
 };
 
 /** A labelled group of nav items. */
@@ -171,4 +178,25 @@ export const NAV: NavSection[] = [
       { name: "settings-about", title: "About", path: "/settings/about", icon: Info, scopes: [] },
     ],
   },
+];
+
+/**
+ * Console sections that exist only for plugin pages placed in them
+ * (navigationModel.OFFICIAL_PLUGIN_SECTIONS). They have no destinations of
+ * their own, so they stay out of NAV, which builds the route table; the
+ * sidebar and the palette create them when a page lands in one.
+ */
+export const PLUGIN_HOST_SECTIONS: NavSection[] = [
+  { id: "vpn", title: "VPN", icon: Radar, items: [] },
+];
+
+/** The order sections appear in once plugin pages are placed: VPN after Fleet. */
+export const CONSOLE_SECTION_ORDER: readonly string[] = [
+  "overview",
+  "fleet",
+  "vpn",
+  "operations",
+  "networking",
+  "platform",
+  "settings",
 ];
