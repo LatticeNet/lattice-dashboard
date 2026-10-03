@@ -17,13 +17,9 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useAuthStore } from "@/stores/auth";
 import { useNavShortcutsStore } from "@/stores/navShortcuts";
-import { NAV, type NavItem, type NavSection } from "@/router/nav";
-import {
-  resolvePluginNavIcon,
-  usePluginContributions,
-} from "@/composables/usePluginContributions";
+import type { NavItem, NavSection } from "@/router/nav";
+import { useConsoleNavigation } from "@/layout/useConsoleNavigation";
 import {
   buildExtensionPluginGroups,
   extensionWorkspaceVisible,
@@ -67,7 +63,6 @@ const emit = defineEmits<{
 }>();
 
 const route = useRoute();
-const auth = useAuthStore();
 const { t } = useI18n();
 const shortcuts = useNavShortcutsStore();
 const isDesktop = useMediaQuery("(min-width: 768px)");
@@ -93,26 +88,20 @@ const controlPlane = computed(() =>
     serverVersion: buildQuery.data.value?.server_version,
   }),
 );
+/**
+ * Console sections (the official plugins' pages already placed in VPN and
+ * Networking) and the third-party pages left for Extensions. The palette
+ * reads the same composable, so the two can never disagree about what this
+ * principal may open.
+ */
 const {
   ready: contributionsReady,
-  navContributions,
-} = usePluginContributions();
+  consoleSections: visibleConsoleSections,
+  extensionItems,
+  consolePluginIds,
+} = useConsoleNavigation();
 
 type VisibleConsoleSection = NavSection & { items: NavItem[] };
-
-type ExtensionSidebarItem = NavItem & {
-  pluginId: string;
-  pluginName: string;
-  route: string;
-  to: string;
-};
-
-const visibleConsoleSections = computed<VisibleConsoleSection[]>(() =>
-  NAV.map((section) => ({
-    ...section,
-    items: section.items.filter((item) => auth.canAny(item.scopes ?? [])),
-  })).filter((section) => section.items.length > 0),
-);
 
 const overviewItems = computed(
   () => visibleConsoleSections.value.find((section) => section.id === "overview")?.items ?? [],
@@ -122,23 +111,9 @@ const consoleAccordionSections = computed(() =>
   visibleConsoleSections.value.filter((section) => section.id !== "overview"),
 );
 
-const extensionItems = computed<ExtensionSidebarItem[]>(() =>
-  navContributions.value.map((entry) => ({
-    name: `plugin:${entry.pluginId}:${entry.route}`,
-    title: entry.title,
-    path: entry.to,
-    icon: resolvePluginNavIcon(entry.icon),
-    scopes: entry.scopes,
-    pluginId: entry.pluginId,
-    pluginName: entry.pluginName,
-    route: entry.route,
-    to: entry.to,
-  })),
-);
-
 const extensionPluginGroups = computed(() => buildExtensionPluginGroups(extensionItems.value));
 const extensionsVisible = computed(() =>
-  extensionWorkspaceVisible(extensionItems.value.length, route.path),
+  extensionWorkspaceVisible(extensionItems.value.length, route.path, consolePluginIds.value),
 );
 // Desktop collapse is a rail preference, not a mobile navigation mode. Opening
 // the mobile drawer always restores labels and full-size touch targets.
@@ -147,12 +122,12 @@ const effectiveCollapsed = computed(() => props.collapsed && !props.mobileOpen);
 // Route ownership is authoritative. Manually switching the navigation workspace
 // never causes an unexpected route change, but the next navigation selects its
 // owning workspace again.
-const workspace = ref<NavigationWorkspace>(workspaceForRoute(route.path));
+const workspace = ref<NavigationWorkspace>(workspaceForRoute(route.path, consolePluginIds.value));
 
 watch(
-  () => route.path,
-  (path) => {
-    workspace.value = workspaceForRoute(path);
+  [() => route.path, consolePluginIds],
+  ([path, ids]) => {
+    workspace.value = workspaceForRoute(path, ids);
   },
   { immediate: true },
 );
@@ -188,11 +163,14 @@ const navigationIndex = computed(() => {
   const index = new Map<string, NavigationIndexEntry>();
   for (const section of visibleConsoleSections.value) {
     for (const item of section.items) {
+      const sectionTitle = t(`nav.sections.${section.id}`);
       index.set(item.name, {
         item,
-        sectionTitle: t(`nav.sections.${section.id}`),
+        // A placed plugin page says whose page it is under its title, as its
+        // row does with the plugin mark.
+        sectionTitle: item.plugin ? `${sectionTitle} · ${item.plugin.name}` : sectionTitle,
         workspace: "console",
-        manifestLabel: false,
+        manifestLabel: !!item.plugin,
       });
     }
   }
@@ -222,18 +200,15 @@ function resolvePinnedTarget(id: string): WorkspaceShortcutTarget | null {
   };
 }
 
+/**
+ * One pinned list, shown in both workspaces. Pins used to be split by
+ * workspace, so a pinned plugin page vanished the moment the operator went
+ * back to the console, which is where a pin is for.
+ */
 const pinnedTargets = computed(() =>
   shortcuts.pinned
     .map(resolvePinnedTarget)
     .filter((target): target is WorkspaceShortcutTarget => target !== null),
-);
-
-const consolePinnedTargets = computed(() =>
-  pinnedTargets.value.filter((target) => target.workspace === "console"),
-);
-
-const extensionPinnedTargets = computed(() =>
-  pinnedTargets.value.filter((target) => target.workspace === "extensions"),
 );
 
 /**
@@ -256,7 +231,8 @@ const previousBodyUserSelect = ref("");
 
 function consoleSectionOwnsRoute(section: VisibleConsoleSection): boolean {
   const routeName = route.name ? String(route.name) : "";
-  return section.items.some((item) => item.name === routeName);
+  // A placed plugin page is matched by its path; its nav name is synthetic.
+  return section.items.some((item) => (item.plugin ? item.path === route.path : item.name === routeName));
 }
 
 function extensionPluginOwnsRoute(group: (typeof extensionPluginGroups.value)[number]): boolean {
@@ -609,9 +585,9 @@ function onNavKeydown(event: KeyboardEvent) {
         >
           <!-- Collapsed rail: sections stay the unit, so the IA survives 64px. -->
           <template v-if="effectiveCollapsed">
-            <div v-if="consolePinnedTargets.length" class="space-y-1">
+            <div v-if="pinnedTargets.length" class="space-y-1">
               <SidebarItem
-                v-for="target in consolePinnedTargets"
+                v-for="target in pinnedTargets"
                 :key="target.id"
                 :item="target.item"
                 :collapsed="true"
@@ -648,14 +624,14 @@ function onNavKeydown(event: KeyboardEvent) {
           </template>
 
           <template v-else>
-            <div v-if="consolePinnedTargets.length" class="space-y-1">
+            <div v-if="pinnedTargets.length" class="space-y-1">
               <p class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 {{ $t('shell.sidebar.pinned') }}
               </p>
               <div class="relative space-y-px pl-3">
                 <span class="absolute inset-y-1 left-[7px] w-px bg-sidebar-border" aria-hidden="true" />
                 <SidebarShortcut
-                  v-for="target in consolePinnedTargets"
+                  v-for="target in pinnedTargets"
                   :key="target.id"
                   :target="target"
                   @toggle-pin="shortcuts.togglePin"
@@ -742,14 +718,26 @@ function onNavKeydown(event: KeyboardEvent) {
           class="h-full space-y-4 overflow-y-auto px-2 py-3"
           @keydown="onNavKeydown"
         >
-          <div v-if="!effectiveCollapsed && extensionPinnedTargets.length" class="space-y-1">
+          <div v-if="effectiveCollapsed && pinnedTargets.length" class="space-y-1">
+            <SidebarItem
+              v-for="target in pinnedTargets"
+              :key="target.id"
+              :item="target.item"
+              :collapsed="true"
+              :signal="signals[target.item.name]"
+              :context="$t('shell.sidebar.pinned')"
+              @click="closeMobile"
+            />
+            <div class="mx-2 h-px bg-sidebar-border" role="presentation" />
+          </div>
+          <div v-else-if="pinnedTargets.length" class="space-y-1">
             <p class="px-3 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
               {{ $t('shell.sidebar.pinned') }}
             </p>
             <div class="relative space-y-px pl-3">
               <span class="absolute inset-y-1 left-[7px] w-px bg-sidebar-border" aria-hidden="true" />
               <SidebarShortcut
-                v-for="target in extensionPinnedTargets"
+                v-for="target in pinnedTargets"
                 :key="target.id"
                 :target="target"
                 @toggle-pin="shortcuts.togglePin"
@@ -823,11 +811,11 @@ function onNavKeydown(event: KeyboardEvent) {
                         {{ group.id }}
                       </span>
                     </span>
-                    <span
-                      class="grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sidebar-accent px-1.5 text-[10px] font-medium tabular-nums text-sidebar-foreground/65"
-                      :aria-label="String(group.items.length)"
-                    >
-                      {{ group.items.length }}
+                    <!-- Muted text, not a pill: the console draws its alert
+                         counts as pills (Nodes "2" is two not reporting), so a
+                         pill here read as two of something failing. -->
+                    <span class="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {{ $t('shell.sidebar.pluginPages', { n: group.items.length }, group.items.length) }}
                     </span>
                     <ChevronDown
                       :class="cn('size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200 motion-reduce:transition-none', !isExtensionGroupOpen(group.id) && '-rotate-90')"

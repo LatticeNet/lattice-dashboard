@@ -1071,7 +1071,7 @@ export default {
         slug: "Slug",
         state: "状态",
         source: "提供内容",
-        format: "编码",
+        format: "格式",
         rotated: "上次轮换",
       },
       state: {
@@ -1115,8 +1115,8 @@ export default {
         saved: "过期时间已更新",
         saveFailed: "更新过期时间失败",
       },
-      formatAuto: "自动",
-      formatHint: "仅指编码封套。客户端配置格式由 URL 参数或 User-Agent 决定。",
+      formatAuto: "客户端原生格式",
+      formatHint: "留空时，每个客户端拿到自己的格式（由 URL 参数或 User-Agent 判断），只有纯链接列表才做 base64 编码。选一个值则对所有客户端强制使用它。",
       refreshSource: "刷新来源",
       refreshHint: "立即向上游抓取，而不是等下一次客户端轮询。",
       refreshPluginOnly: "只有由插件提供内容的分享才能刷新。这个分享服务的是代理用户，没有可抓取的上游。",
@@ -1156,7 +1156,7 @@ export default {
       slugHint: "会出现在 URL 和反向代理日志里，所以它是标签而不是秘密。",
       slugRule: "小写字母、数字和连字符，以字母或数字开头。",
       slugTaken: "已存在使用该 slug 的分享。",
-      defaultFormat: "编码",
+      defaultFormat: "格式",
       clipboardUnavailable: "剪贴板不可用，请手动选中 URL 复制。",
     },
 

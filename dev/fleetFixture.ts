@@ -15,6 +15,9 @@
  *                   waiting, due and overdue renewals, a second stalled task
  *   empty           nothing enrolled (first run)
  * `?monitors=some` gives Monitoring an HTTP and a TLS monitor with results.
+ * `?monitors=many` gives sixty, past the fifty the list once read one by one:
+ * three failing and one whose results stopped arriving (names and targets
+ * invented).
  *
  * Dates are relative to now so the shape holds on any day.
  */
@@ -25,6 +28,7 @@ import type {
   ExpiringItem,
   GroupView,
   MachineView,
+  MonitorLatest,
   MonitorResult,
   MonitorView,
   Node,
@@ -486,13 +490,31 @@ export function sshGuardFor(id: string): SSHGuardNodeStatus | undefined {
   } as unknown as SSHGuardNodeStatus;
 }
 
-export const MONITORS: MonitorView[] = PARAMS.get("monitors") === "some" && SHAPE !== "empty"
-  ? [
-      { id: "mon_console", name: "Lattice console", type: "http", target: "https://lattice.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: NODES.slice(0, 3).map((n) => n.id), enabled: true, created_at: iso(-20 * DAY) },
-      { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [], enabled: true, created_at: iso(-20 * DAY) },
-      { id: "mon_hk_tcp", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: NODES.slice(3, 5).map((n) => n.id), enabled: true, created_at: iso(-3 * DAY) },
-    ]
-  : [];
+function someMonitors(): MonitorView[] {
+  return [
+    { id: "mon_console", name: "Lattice console", type: "http", target: "https://lattice.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: NODES.slice(0, 3).map((n) => n.id), enabled: true, created_at: iso(-20 * DAY) },
+    { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [], enabled: true, created_at: iso(-20 * DAY) },
+    { id: "mon_hk_tcp", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: NODES.slice(3, 5).map((n) => n.id), enabled: true, created_at: iso(-3 * DAY) },
+  ];
+}
+
+/** One relay-port watch per node, round the fleet, until there are sixty. */
+function manyMonitors(): MonitorView[] {
+  const out = someMonitors();
+  for (let i = 0; out.length < 60; i++) {
+    const node = NODES[i % NODES.length]!;
+    const port = 17000 + i;
+    out.push({ id: `mon_port_${i}`, name: `${node.name} relay ${port}`, type: "tcp", target: `${node.public_ip ?? `198.51.100.${i}`}:${port}`, interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: [node.id], enabled: true, created_at: iso(-(i + 1) * HOUR) });
+  }
+  return out;
+}
+
+export const MONITORS: MonitorView[] =
+  SHAPE === "empty" ? [] : PARAMS.get("monitors") === "some" ? someMonitors() : PARAMS.get("monitors") === "many" ? manyMonitors() : [];
+
+/** In `?monitors=many`: failing for the last four checks, and gone quiet half an hour ago. */
+const FAILING_PORTS = new Set(["mon_port_7", "mon_port_41", "mon_port_52"]);
+const QUIET_PORTS = new Set(["mon_port_55"]);
 
 export function monitorResults(monitorId: string): MonitorResult[] {
   const monitor = MONITORS.find((m) => m.id === monitorId);
@@ -501,19 +523,52 @@ export function monitorResults(monitorId: string): MonitorResult[] {
   // The control plane dials a tls monitor itself, hourly: its results carry no node.
   const tls = monitor.type === "tls";
   const nodes = tls ? [""] : (monitor.node_ids ?? []);
+  const quiet = QUIET_PORTS.has(monitorId) ? 30 * MINUTE : 0;
   for (let i = 0; i < 24; i++) {
     for (const node of nodes) {
-      const failing = monitorId === "mon_hk_tcp" && i < 3 && node === nodes[0];
+      const failing = (monitorId === "mon_hk_tcp" && i < 3 && node === nodes[0]) || (FAILING_PORTS.has(monitorId) && i < 4);
       out.push({
         monitor_id: monitorId,
         node_id: node,
-        at: iso(-i * (tls ? 60 : 5) * MINUTE),
+        at: iso(-quiet - i * (tls ? 60 : 5) * MINUTE),
         success: !failing,
         latency_ms: failing ? undefined : monitorId === "mon_console" ? 118 + ((i * 7) % 23) : 42 + ((i * 5) % 17),
-        error: failing ? "dial tcp 203.0.113.21:443: i/o timeout" : undefined,
+        error: failing ? `dial tcp ${monitor.target}: i/o timeout` : undefined,
         cert_not_after: monitor.type === "tls" ? dateIn(SHAPE === "dense" ? 6 : 44) : undefined,
       });
     }
   }
   return out;
+}
+
+/**
+ * Each node's newest result with the run it ends, as the server sends it on
+ * the monitors list.
+ */
+export function monitorLatest(monitorId: string): MonitorLatest[] {
+  const byNode = new Map<string, MonitorResult[]>();
+  for (const result of monitorResults(monitorId)) {
+    const rows = byNode.get(result.node_id) ?? [];
+    rows.push(result);
+    byNode.set(result.node_id, rows);
+  }
+  return [...byNode.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([, rows]) => {
+      rows.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+      const newest = rows[0]!;
+      let run = 1;
+      while (run < rows.length && rows[run]!.success === newest.success) run++;
+      return {
+        node_id: newest.node_id,
+        at: newest.at,
+        success: newest.success,
+        latency_ms: newest.latency_ms,
+        error: newest.error,
+        cert_not_after: newest.cert_not_after,
+        received_at: newest.at,
+        fail_streak: newest.success ? 0 : run,
+        since: rows[run - 1]!.at,
+      };
+    });
 }

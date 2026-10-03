@@ -6,6 +6,7 @@ import {
 import { useAuthStore } from "@/stores/auth";
 import { setUnauthorizedListener } from "@/lib/api";
 import { installSessionExpiry } from "./expiredSession";
+import { installViewMemory } from "./viewMemory";
 import { NAV } from "./nav";
 import { concreteRoutes } from "./routeComponents";
 import { WORKERS_REDIRECT_TO } from "@/views/platform/publishingModel";
@@ -212,5 +213,9 @@ router.beforeEach(async (to) => {
     return { path: safeInternalRedirect(to.query.redirect) };
   }
 });
+
+// Each page lands on the view the operator left it in (router/viewMemory).
+// Registered after the sign-in guard, so a redirect to sign-in wins.
+installViewMemory(router, new Set(NAV.flatMap((section) => section.items.map((item) => item.path))));
 
 export default router;

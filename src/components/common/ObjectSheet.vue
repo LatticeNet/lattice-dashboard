@@ -14,6 +14,12 @@
  * not the first control: Enter from a keyboard-opened sheet must not follow
  * "Open page", which appears when the object has a route of its own.
  *
+ * While it is modal the sheet also hosts the console's toaster (an empty
+ * element at the end of its content, see lib/toastHost), so a toast raised
+ * over it, an error after Approve in particular, can be dismissed, tabbed to
+ * and heard without closing the sheet. Beside the collection the toaster
+ * stays in the shell and moves clear of the sheet instead.
+ *
  * States: `loading` before the object is known, `gone` when it no longer
  * exists (it offers the collection back; the page may name what is gone with
  * `goneTitle` and `goneDescription`), `stale` when the page shows the last
@@ -22,7 +28,7 @@
  * `retry`), `ready` otherwise. `readOnly` hides the action footer and says
  * why there is none.
  */
-import { computed, ref } from "vue";
+import { computed, ref, watchEffect } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import { ArrowUpRight, CircleAlert, SearchX } from "lucide-vue-next";
 
@@ -32,6 +38,7 @@ import { SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useMediaQuery } from "@/composables/useMediaQuery";
 import { useObjectTitle } from "@/layout/useObjectTitle";
+import { registerToastHost } from "@/lib/toastHost";
 import { cn } from "@/lib/utils";
 
 const props = withDefaults(
@@ -72,6 +79,18 @@ const props = withDefaults(
 /** Beside the collection, not over it: from 768 px up the rows stay live. */
 const beside = useMediaQuery("(min-width: 768px)");
 const header = ref<HTMLElement | null>(null);
+
+/**
+ * The toaster's home while this sheet is modal and open. Withdrawn the
+ * moment the sheet starts closing, so the toaster is back in the shell
+ * before the sheet slides away with it.
+ */
+const toastHostEl = ref<HTMLElement | null>(null);
+watchEffect((onCleanup) => {
+  const el = toastHostEl.value;
+  if (!el || !props.open || beside.value) return;
+  onCleanup(registerToastHost(el));
+});
 
 const emit = defineEmits<{ close: []; retry: [] }>();
 
@@ -194,6 +213,7 @@ useObjectTitle(() => (props.open && showBody.value ? props.title : undefined));
       >
         <slot name="actions" />
       </footer>
+      <div v-if="!beside" ref="toastHostEl" data-toast-host />
     </SheetContent>
   </Dialog>
 </template>

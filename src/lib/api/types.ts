@@ -1044,6 +1044,12 @@ export interface MonitorView {
   enabled: boolean;
   created_at?: string;
   updated_at?: string;
+  /**
+   * Each assigned node's newest result that this session may see, sorted by
+   * node id; empty when the monitor has none. The server sends it with every
+   * list, so a monitor's state needs no read of its history.
+   */
+  latest?: MonitorLatest[];
 }
 
 export interface MonitorResult {
@@ -1056,6 +1062,24 @@ export interface MonitorResult {
   error?: string;
   /** `tls` only: the leaf certificate expiry the probe read, set whenever the handshake completed. */
   cert_not_after?: string;
+  /** When the server received it. Well after `at`, the result waited in an agent's buffer. */
+  received_at?: string;
+}
+
+/** One node's newest result for a monitor, and the run it ends. */
+export interface MonitorLatest {
+  /** Empty on a `tls` monitor: the server dials those itself. */
+  node_id: string;
+  at: string;
+  success: boolean;
+  latency_ms?: number;
+  error?: string;
+  cert_not_after?: string;
+  received_at?: string;
+  /** Failures in a row ending with this result; 0 after a success. */
+  fail_streak: number;
+  /** When the current run of passes or failures began. */
+  since: string;
 }
 
 export interface MonitorCreateInput {
@@ -2003,6 +2027,35 @@ export interface LogSourceStatsView {
 
 export type NotifyKind = "telegram" | "bark" | "discord" | "webhook";
 
+/** How a channel's deliveries are going, decided by the server. */
+export type NotifyHealthState = "unknown" | "ok" | "degraded" | "failing";
+
+/**
+ * Server-classified failure kinds. The transport error never reaches the
+ * console: it embeds the channel credential, and the upstream body is text
+ * the remote side chose.
+ */
+export type NotifyFailureKind =
+  | "network"
+  | "timeout"
+  | "upstream_4xx"
+  | "upstream_5xx"
+  | "rate_limited"
+  | "config_invalid"
+  | "unknown";
+
+/** A channel's delivery health, joined in by the server at read time. */
+export interface NotifyChannelHealth {
+  state: NotifyHealthState | string;
+  last_attempt_at?: string;
+  last_ok_at?: string;
+  last_failure_at?: string;
+  last_failure_kind?: NotifyFailureKind | string;
+  last_status_code?: number;
+  consecutive_failures: number;
+  failing_since?: string;
+}
+
 export interface NotifyChannelView {
   id: string;
   name: string;
@@ -2011,6 +2064,77 @@ export interface NotifyChannelView {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  /** Absent from a server older than the outbox. */
+  health?: NotifyChannelHealth;
+}
+
+/** The receipt of one send. */
+export interface NotifyAttempt {
+  at: string;
+  ok: boolean;
+  kind?: NotifyFailureKind | string;
+  status?: number;
+  duration_ms: number;
+}
+
+export type NotifyDeliveryOutcome = "planned" | "sent" | "failed" | "no_route";
+export type NotifyDeliveryRole = "primary" | "fallback" | "test";
+export type NotifyDeliverySource = "server" | "plugin" | "webhook" | "operator";
+
+/** One message to one channel, from the server's notification outbox. */
+export interface NotifyDelivery {
+  id: string;
+  event_id: string;
+  event_type: string;
+  source: NotifyDeliverySource | string;
+  source_id?: string;
+  rule_id?: string;
+  rule_name?: string;
+  channel_id?: string;
+  channel_name?: string;
+  channel_kind?: string;
+  role?: NotifyDeliveryRole | string;
+  /** Names of the channels whose failure a fallback delivery stands in for. */
+  fallback_for?: string;
+  outcome: NotifyDeliveryOutcome | string;
+  /** A fixed server string; the console composes its own words where it can. */
+  reason?: string;
+  attempts?: NotifyAttempt[];
+  next_attempt_at?: string;
+  redriven?: boolean;
+  title?: string;
+  body?: string;
+  /** The message was cut to the server's bound (512 byte title, 4 KB body); the channel received this text. */
+  truncated?: boolean;
+  created_at: string;
+  settled_at?: string;
+  /** A not-routed row folds later repeats of the same event within the hour: how many, and the latest. */
+  repeats?: number;
+  last_seen_at?: string;
+}
+
+export interface NotifyDeliveriesQuery {
+  outcome?: string;
+  channel_id?: string;
+  event_type?: string;
+  q?: string;
+  limit?: number;
+}
+
+export interface NotifyDeliveriesResponse {
+  deliveries: NotifyDelivery[];
+  /** Rows the outbox holds in all. */
+  stored: number;
+  /** Whether the history survives a restart (only on the bolt hot store). */
+  durable: boolean;
+  max: number;
+  floor: number;
+}
+
+export interface NotifyChannelTestResponse {
+  ok: boolean;
+  delivery: NotifyDelivery;
+  health: NotifyChannelHealth;
 }
 
 export interface NotifyChannelUpsertRequest {
@@ -2038,6 +2162,8 @@ export interface NotifyRuleView {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  /** Receives the rule's message when every channel above failed it for good. */
+  fallback_channel_id?: string;
 }
 
 /**
@@ -2114,6 +2240,8 @@ export interface NotifyRuleUpsertRequest {
   title_template?: string;
   body_template?: string;
   enabled?: boolean;
+  /** Absent keeps the rule's fallback, "" clears it, an id sets it. */
+  fallback_channel_id?: string;
 }
 
 export interface AgentUpdatePolicy {

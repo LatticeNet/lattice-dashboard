@@ -184,6 +184,18 @@ export const api = {
       return { ok: true, channel: input.channel };
     },
     rules: () => delay({ rules: rules.map((r) => ({ ...r })) }),
+    testChannel: async (id: string) => {
+      await delay(undefined, 400);
+      const c = channels.find((entry) => entry.id === id);
+      if (!c) throw new ApiError(404, "not_found", "notification channel not found");
+      const at = iso(0);
+      return {
+        ok: true,
+        delivery: { id: `nd_${seq++}`, event_id: `evt_${seq}`, event_type: "notify.test", source: "operator", role: "test", channel_id: id, channel_name: c.name, outcome: "sent", attempts: [{ at, ok: true, duration_ms: 240 }], title: "Lattice test", created_at: at, settled_at: at },
+        health: { state: "ok", last_attempt_at: at, last_ok_at: at, consecutive_failures: 0 },
+      };
+    },
+    deliveries: () => delay({ deliveries: [], stored: 0, durable: true, max: 1000, floor: 50 }),
     upsertRule: async (input: NotifyRuleUpsertRequest) => {
       await delay(undefined);
       const existing = rules.find((r) => r.id === input.id);

@@ -1,4 +1,4 @@
-import type { NotifyKind } from "@/lib/api";
+import type { NotifyChannelHealth, NotifyKind } from "@/lib/api";
 
 /**
  * The channel form is a kind switch over a list of config fields. The lists
@@ -222,4 +222,114 @@ export function channelDeleteImpact(
   }
   if (!silenced.length && !kept.length) return { lines: [{ kind: "unrouted" }], typed: false };
   return { lines: [...silenced, ...kept], typed: silenced.length > 0 };
+}
+
+// ── channel health ──────────────────────────────────────────────────────────
+
+/**
+ * Why a send failed, in words the console chooses. The server returns a
+ * classified kind and a status code and never the transport error, which
+ * carries the channel credential, so these are the only failure details a
+ * page can show.
+ */
+export type FailureCauseKey = "refused" | "serverError" | "rateLimited" | "timeout" | "unreachable" | "configRefused" | "failed";
+
+export interface FailureCause {
+  key: FailureCauseKey;
+  status?: number;
+}
+
+export function failureCause(kind?: string, status?: number): FailureCause {
+  switch (kind) {
+    case "upstream_4xx":
+      return { key: "refused", status };
+    case "upstream_5xx":
+      return { key: "serverError", status };
+    case "rate_limited":
+      return { key: "rateLimited", status: status || 429 };
+    case "timeout":
+      return { key: "timeout" };
+    case "network":
+      return { key: "unreachable" };
+    case "config_invalid":
+      return { key: "configRefused" };
+    default:
+      return { key: "failed" };
+  }
+}
+
+export type HealthTone = "muted" | "warning" | "danger";
+
+/**
+ * One line for a channel's health. `unreported` is a server older than the
+ * outbox, which sends no health at all: the line says so rather than calling
+ * the channel unused.
+ */
+export interface HealthLine {
+  state: "unreported" | "unknown" | "ok" | "degraded" | "failing";
+  tone: HealthTone;
+  /** When the line's claim dates from: the last success, the last failure, or failing since. */
+  at?: string;
+  failures: number;
+  cause?: FailureCause;
+}
+
+export function channelHealthLine(health?: NotifyChannelHealth): HealthLine {
+  if (!health) return { state: "unreported", tone: "muted", failures: 0 };
+  const failures = health.consecutive_failures ?? 0;
+  const cause = health.last_failure_kind ? failureCause(health.last_failure_kind, health.last_status_code) : undefined;
+  switch (health.state) {
+    case "failing":
+      return { state: "failing", tone: "danger", at: health.failing_since ?? health.last_failure_at, failures, cause };
+    case "degraded":
+      return { state: "degraded", tone: "warning", at: health.last_failure_at, failures, cause };
+    case "ok":
+      return { state: "ok", tone: "muted", at: health.last_ok_at ?? health.last_attempt_at, failures: 0 };
+    default:
+      return { state: "unknown", tone: "muted", failures: 0 };
+  }
+}
+
+interface HealthChannel {
+  id: string;
+  name?: string;
+  enabled: boolean;
+  health?: NotifyChannelHealth;
+}
+
+/**
+ * Enabled channels the server calls failing, worst first: the longest run of
+ * failures, then the earliest start. A disabled channel sends nothing, so its
+ * old failures are not a claim worth the attention list.
+ */
+export function failingChannels<T extends HealthChannel>(channels: readonly T[]): T[] {
+  return channels
+    .filter((channel) => channel.enabled && channel.health?.state === "failing")
+    .sort(
+      (a, b) =>
+        (b.health?.consecutive_failures ?? 0) - (a.health?.consecutive_failures ?? 0) ||
+        (a.health?.failing_since ?? "").localeCompare(b.health?.failing_since ?? ""),
+    );
+}
+
+// ── fallback channel ────────────────────────────────────────────────────────
+
+/**
+ * Channels a rule may fall back to: every stored channel except the rule's
+ * own, since a channel that is also a primary has already failed by the time
+ * the fallback would be used (the server refuses it too).
+ */
+export function fallbackChoices<T extends { id: string }>(channels: readonly T[], primaryIds: readonly string[]): T[] {
+  return channels.filter((channel) => !primaryIds.includes(channel.id));
+}
+
+/**
+ * The fallback a save sends: "" clears a fallback that the operator removed
+ * or that became one of the rule's own channels, and undefined leaves a rule
+ * that never had one untouched on a server that may not know the field.
+ */
+export function fallbackForSave(selected: string, primaryIds: readonly string[], hadFallback: boolean): string | undefined {
+  const value = primaryIds.includes(selected) ? "" : selected;
+  if (!value && !hadFallback) return undefined;
+  return value;
 }

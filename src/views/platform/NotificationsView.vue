@@ -7,6 +7,7 @@ import { toast } from "@/lib/toast";
 import {
   Bell,
   CalendarClock,
+  CornerDownRight,
   GitBranch,
   TriangleAlert,
   Pencil,
@@ -23,6 +24,7 @@ import {
   type Node,
   type NotifyChannelUpsertRequest,
   type NotifyChannelView,
+  type NotifyDelivery,
   type NotifyKind,
   type NotifyRuleUpsertRequest,
   type NotifyRuleView,
@@ -37,13 +39,19 @@ import {
   ruleRoutesNodeOffline,
 } from "@/views/platform/nodeOfflineModel";
 import { useAuthStore } from "@/stores/auth";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import {
   buildConfig as buildConfigFor,
   channelDeleteImpact as channelDeleteImpactFor,
+  channelHealthLine,
   channelSaveGate,
   configComplete as configCompleteFor,
+  failingChannels,
+  fallbackChoices,
+  fallbackForSave,
+  type FailureCause,
+  type HealthLine,
   fromSelectValue,
   KIND_FIELDS,
   KIND_OPTIONS,
@@ -51,13 +59,34 @@ import {
   toSelectValue,
   type FieldDef,
 } from "./notificationsModel";
+import {
+  parseSentOutcome,
+  SENT_LIMIT,
+  SENT_OUTCOMES,
+  sentCause,
+  sentEventChoices,
+  sentNote,
+  sentOccurrences,
+  sentQuery,
+  sentState,
+  sentTone,
+  type SentOutcomeFilter,
+} from "./notifySentModel";
+import { useLayer } from "@/composables/useLayer";
+import { writeLayer } from "@/composables/layerModel";
+import type { QueryRecord } from "@/components/common/tableUrlState";
+import { useQueryParam } from "@/composables/useQueryParam";
+import { useRouteOpen } from "@/composables/useRouteOpen";
 
 import PageHeader from "@/components/common/PageHeader.vue";
+import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
+import LayerTabs, { type LayerTab } from "@/components/common/LayerTabs.vue";
 import DataTable, { type DataTableColumn } from "@/components/common/DataTable.vue";
 import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue";
 import RowMenu, { type RowMenuItem } from "@/components/common/RowMenu.vue";
 import { useProof } from "@/composables/useProof";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
+import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -95,7 +124,8 @@ type RulePreset = {
 };
 
 // Every event type the server sends, typed or classified. ssh.pressure_window
-// is left out on purpose: it is recorded, never notified.
+// is left out on purpose: it is recorded, never notified. The two notify.*
+// types report a channel's own delivery health.
 const EVENT_OPTIONS = [
   "*",
   "monitor.down",
@@ -110,6 +140,8 @@ const EVENT_OPTIONS = [
   "proxy.quota",
   "proxy.expiry",
   "inventory.renewal",
+  "notify.channel_failing",
+  "notify.channel_ok",
 ];
 // renderNotifyTemplate substitutes exactly three variables: event_type, title,
 // and body. Anything else is left in the delivered message verbatim, which is
@@ -141,6 +173,15 @@ const auth = useAuthStore();
 // webhooks; notify:send is dispatch only and gates just the test-send below.
 const canManage = computed(() => auth.can("notify:admin"));
 const canSend = computed(() => auth.can("notify:send"));
+
+/*
+ * Two layers (design 23, section 3.4): Routing (channels and rules) and Sent,
+ * the outbox's delivery log. Reading deliveries needs notify:admin, as the
+ * channel list does.
+ */
+type Layer = "routing" | "sent";
+const layers = computed<Layer[]>(() => (canManage.value ? ["routing", "sent"] : ["routing"]));
+const layer = useLayer<Layer>(() => layers.value, () => "routing");
 
 // BARE ARRAY endpoint: do NOT unwrap.
 const channelsQuery = useAsyncData((signal) => api.notify.channels({ signal }), { pollInterval: 12000 });
@@ -177,6 +218,7 @@ const proofSegments = computed<ProofSegment[]>(() => {
 /* One menu per row (design 23, section 3.6): Edit, then Delete after the separator. */
 function channelMenu(channel: NotifyChannelView): RowMenuItem[] {
   return [
+    { key: "test", label: t("platform.notifications.testStored"), icon: Send, run: () => void testStoredChannel(channel) },
     { key: "edit", label: t("common.actions.edit"), icon: Pencil, run: () => openEdit(channel) },
     { key: "delete", label: t("common.actions.delete"), icon: Trash2, danger: true, run: () => (deleteTarget.value = channel) },
   ];
@@ -320,6 +362,7 @@ const sortedRules = computed(() =>
 
 const channelColumns = computed<DataTableColumn<NotifyChannelView>[]>(() => [
   { key: "name", label: t("platform.notifications.colName"), sortable: true, searchable: true, value: (c) => c.name || c.id },
+  { key: "health", label: t("platform.notifications.colHealth"), wrap: true },
   { key: "kind", label: t("platform.notifications.colKind"), sortable: true, searchable: true },
   { key: "config_keys", label: t("platform.notifications.colConfiguredKeys") },
   { key: "enabled", label: t("platform.notifications.colStatus"), sortable: true },
@@ -335,6 +378,234 @@ const ruleColumns = computed<DataTableColumn<NotifyRuleView>[]>(() => [
   { key: "enabled", label: t("platform.notifications.colStatus"), sortable: true },
   { key: "actions", label: "", class: "w-12", pin: "end" },
 ]);
+
+// ── Channel health ───────────────────────────────────────────────────────────
+
+function causeText(cause?: FailureCause): string {
+  if (!cause) return t("platform.notifications.cause.failed");
+  return t(`platform.notifications.cause.${cause.key}`, { status: cause.status ?? "" });
+}
+
+function healthText(line: HealthLine): string {
+  switch (line.state) {
+    case "ok":
+      return t("platform.notifications.health.ok", { when: formatRelativeTime(line.at) });
+    case "degraded":
+      return t("platform.notifications.health.degraded", { when: formatRelativeTime(line.at) });
+    case "failing":
+      return t("platform.notifications.health.failing", { since: formatDateTime(line.at), n: line.failures }, line.failures);
+    case "unknown":
+      return t("platform.notifications.health.unknown");
+    default:
+      return t("platform.notifications.health.unreported");
+  }
+}
+
+/** A channel whose last sends failed carries the cause under its row, at the table's width. */
+function channelHasHealthDetail(channel: NotifyChannelView): boolean {
+  const state = channelHealthLine(channel.health).state;
+  return state === "failing" || state === "degraded";
+}
+
+/** A failing channel is a claim with a fix beside it: test it after correcting the key. */
+const attentionItems = computed<AttentionItem[]>(() =>
+  failingChannels(channels.value).map((channel) => {
+    const line = channelHealthLine(channel.health);
+    return {
+      key: `failing:${channel.id}`,
+      tone: "danger" as const,
+      claim: t("platform.notifications.attention.failing", { name: channel.name || channel.id }),
+      proof: t(
+        "platform.notifications.attention.failingProof",
+        { since: formatDateTime(line.at), n: line.failures, cause: causeText(line.cause) },
+        line.failures,
+      ),
+      action: canManage.value
+        ? { label: t("platform.notifications.testStored"), run: () => void testStoredChannel(channel) }
+        : undefined,
+    };
+  }),
+);
+
+const testingChannelId = ref<string | undefined>();
+
+/**
+ * Tests a stored channel server-side. The answer is 200 either way, with the
+ * classified cause on a failure; the health it returns is what the table shows
+ * once the channel list is read again, and the test lands in the Sent log.
+ */
+async function testStoredChannel(channel: NotifyChannelView): Promise<void> {
+  if (!canManage.value || testingChannelId.value) return;
+  const name = channel.name || channel.id;
+  testingChannelId.value = channel.id;
+  try {
+    const res = await api.notify.testChannel(channel.id);
+    if (res.ok) toast.success(t("platform.notifications.testStoredDelivered", { name }));
+    else toast.error(t("platform.notifications.testStoredFailed", { name, cause: causeText(sentCause(res.delivery)) }));
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : t("platform.notifications.testStoredError"));
+  } finally {
+    testingChannelId.value = undefined;
+    channelsQuery.refresh();
+    if (layer.value === "sent") sentQueryState.refresh();
+  }
+}
+
+// ── Sent log ─────────────────────────────────────────────────────────────────
+
+/* Filters live in the address, so the attention list can open one channel's failures. */
+const sentOutcome = useQueryParam<SentOutcomeFilter>("outcome", {
+  parse: (raw) => parseSentOutcome(raw),
+  format: (value) => (value === "all" ? undefined : value),
+});
+const textCodec = { parse: (raw: unknown) => (typeof raw === "string" ? raw : ""), format: (value: string) => value || undefined };
+const sentChannel = useQueryParam<string>("channel", textCodec);
+const sentEvent = useQueryParam<string>("event", textCodec);
+
+const sentQueryState = useAsyncData(
+  (signal) =>
+    layer.value === "sent" && canManage.value
+      ? api.notify.deliveries(sentQuery({ outcome: sentOutcome.value, channel: sentChannel.value, event: sentEvent.value }), { signal })
+      : Promise.resolve(undefined),
+  { pollInterval: 15_000 },
+);
+watch(
+  () => layer.value,
+  () => void sentQueryState.refresh(),
+);
+// A changed filter shows the table loading rather than the previous filter's rows.
+watch([() => sentOutcome.value, () => sentChannel.value, () => sentEvent.value], () => {
+  sentQueryState.data.value = undefined;
+  void sentQueryState.refresh();
+});
+const sentRows = computed<NotifyDelivery[]>(() => sentQueryState.data.value?.deliveries ?? []);
+const sentRead = computed(() => sentQueryState.data.value !== undefined);
+const sentFiltered = computed(() => sentOutcome.value !== "all" || !!sentChannel.value || !!sentEvent.value);
+const sentEventOptions = computed(() => sentEventChoices(EVENT_OPTIONS, sentRows.value, sentEvent.value));
+
+/* One write for all three filters, for the reason openChannelSent gives. */
+function clearSentFilters(): void {
+  const query: QueryRecord = { ...owned.query() };
+  delete query.outcome;
+  delete query.channel;
+  delete query.event;
+  owned.replace(query);
+}
+
+const sentProof = useProof([sentQueryState]);
+const sentProofSegments = computed<ProofSegment[]>(() => {
+  const page = sentQueryState.data.value;
+  if (!page) return [];
+  const parts: ProofSegment[] = [
+    { key: "stored", text: t("platform.notifications.sent.proofStored", { n: page.stored }) },
+  ];
+  if (page.deliveries.length >= SENT_LIMIT) {
+    parts.push({ key: "shown", text: t("platform.notifications.sent.proofShown", { n: page.deliveries.length }) });
+  }
+  parts.push(
+    page.durable
+      ? { key: "kept", tone: "muted", text: t("platform.notifications.sent.proofDurable", { max: page.max, floor: page.floor }) }
+      : { key: "kept", tone: "muted", text: t("platform.notifications.sent.proofMemory") },
+  );
+  return parts;
+});
+
+/* The Routing count appears only when a channel is failing, tinted, since it asks for action. */
+const layerTabs = computed<LayerTab<Layer>[]>(() => {
+  const failing = failingChannels(channels.value).length;
+  return [
+    {
+      value: "routing",
+      label: t("platform.notifications.layers.routing"),
+      count: failing || undefined,
+      tone: failing ? "destructive" : "default",
+    },
+    { value: "sent", label: t("platform.notifications.layers.sent") },
+  ];
+});
+
+/*
+ * One navigation for the layer and the filter: two writes in a row would
+ * each start from the address before the other landed, and the second would
+ * drop the first.
+ */
+function openChannelSent(channelId: string): void {
+  const query: QueryRecord = { ...owned.query(), channel: channelId };
+  delete query.outcome;
+  delete query.event;
+  delete query.open;
+  owned.push(writeLayer(query, "sent", "routing"));
+}
+
+const sentColumns = computed<DataTableColumn<NotifyDelivery>[]>(() => [
+  { key: "created_at", label: t("platform.notifications.sent.colTime"), sortable: true, class: "w-40" },
+  {
+    key: "message",
+    label: t("platform.notifications.sent.colMessage"),
+    searchable: true,
+    wrap: true,
+    value: (d) => `${d.event_type} ${d.title ?? ""} ${d.body ?? ""}`,
+  },
+  {
+    key: "channel",
+    label: t("platform.notifications.sent.colChannel"),
+    searchable: true,
+    value: (d) => d.channel_name || d.channel_id || "",
+  },
+  { key: "outcome", label: t("platform.notifications.sent.colOutcome"), wrap: true },
+]);
+
+function sentBadgeVariant(d: NotifyDelivery): "destructive" | "warning" | "secondary" {
+  const tone = sentTone(sentState(d));
+  return tone === "quiet" ? "secondary" : tone;
+}
+
+function sentChannelLabel(d: NotifyDelivery): string {
+  if (!d.channel_id) return t("platform.notifications.sent.noChannel");
+  const current = channels.value.find((channel) => channel.id === d.channel_id);
+  const name = current?.name || d.channel_name || d.channel_id;
+  // A channel deleted since keeps the name it had when the row was planned.
+  return channelsRead.value && !current ? t("platform.notifications.sent.channelDeleted", { name }) : name;
+}
+
+function sentNoteText(d: NotifyDelivery): string {
+  const note = sentNote(d);
+  if (!note) return "";
+  return "key" in note ? t(`platform.notifications.sent.note.${note.key}`) : note.raw;
+}
+
+/** Rows that carry a sentence under them: why it failed, a note, how often an unrouted event repeated, or what a fallback stood in for. */
+function sentHasDetail(d: NotifyDelivery): boolean {
+  const state = sentState(d);
+  return (
+    ((state === "failed" || state === "retrying") && !!sentCause(d)) ||
+    !!sentNote(d) ||
+    !!sentOccurrences(d) ||
+    (d.role === "fallback" && !!d.fallback_for)
+  );
+}
+
+function sentOccurrencesText(d: NotifyDelivery): string {
+  const seen = sentOccurrences(d);
+  return seen ? t("platform.notifications.sent.occurrences", { n: seen.count, when: formatRelativeTime(seen.last) }) : "";
+}
+
+/* A row opens in the object sheet (design 23, section 3.5): the message, the receipts and where it came from. */
+const sheet = useRouteOpen();
+const openDelivery = computed(() => (layer.value === "sent" ? sentRows.value.find((d) => d.id === sheet.openId.value) : undefined));
+const sheetState = computed<"ready" | "loading" | "gone" | "failed">(() => {
+  if (openDelivery.value) return "ready";
+  if (!sentRead.value) return sentQueryState.error.value ? "failed" : "loading";
+  return "gone";
+});
+
+function sentOrigin(d: NotifyDelivery): string {
+  const via = ["server", "plugin", "webhook", "operator"].includes(d.source) ? d.source : "server";
+  const parts = [t(`platform.notifications.sent.via.${via}`, { id: d.source_id ?? "" })];
+  if (d.rule_name || d.rule_id) parts.push(t("platform.notifications.sent.rule", { name: d.rule_name || d.rule_id }));
+  else if (d.role !== "test" && d.outcome !== "no_route" && d.source !== "operator") parts.push(t("platform.notifications.sent.everyChannel"));
+  return parts.join(" · ");
+}
 
 // ── Create / edit dialog ─────────────────────────────────────────────────────
 const formOpen = ref(false);
@@ -531,7 +802,11 @@ const ruleChannelIds = ref<string[]>([]);
 const ruleTitleTemplate = ref("");
 const ruleBodyTemplate = ref("");
 const ruleEnabled = ref(true);
+const ruleFallback = ref("");
+/** Whether the rule being edited had a fallback, so clearing it sends "". */
+const ruleHadFallback = ref(false);
 const deleteRuleTarget = ref<NotifyRuleView | undefined>();
+const ruleFallbackChoices = computed(() => fallbackChoices(sortedChannels.value, ruleChannelIds.value));
 const deletingRule = ref(false);
 
 function openRuleCreate(): void {
@@ -543,6 +818,8 @@ function openRuleCreate(): void {
   ruleTitleTemplate.value = "";
   ruleBodyTemplate.value = "";
   ruleEnabled.value = true;
+  ruleFallback.value = "";
+  ruleHadFallback.value = false;
   ruleOpen.value = true;
 }
 
@@ -555,6 +832,8 @@ function openRulePreset(preset: RulePreset): void {
   ruleTitleTemplate.value = preset.title;
   ruleBodyTemplate.value = preset.body;
   ruleEnabled.value = true;
+  ruleFallback.value = "";
+  ruleHadFallback.value = false;
   ruleOpen.value = true;
 }
 
@@ -567,6 +846,8 @@ function openRuleEdit(rule: NotifyRuleView): void {
   ruleTitleTemplate.value = rule.title_template ?? "";
   ruleBodyTemplate.value = rule.body_template ?? "";
   ruleEnabled.value = rule.enabled;
+  ruleFallback.value = rule.fallback_channel_id ?? "";
+  ruleHadFallback.value = !!rule.fallback_channel_id;
   ruleOpen.value = true;
 }
 
@@ -589,6 +870,8 @@ function channelKnown(id: string): boolean {
 function toggleRuleChannel(id: string, checked: boolean): void {
   const next = ruleChannelIds.value.filter((current) => current !== id);
   ruleChannelIds.value = checked ? [...next, id] : next;
+  // A channel that becomes one of the rule's own cannot also be its fallback.
+  if (checked && ruleFallback.value === id) ruleFallback.value = "";
 }
 
 const canSubmitRule = computed(
@@ -607,6 +890,7 @@ async function submitRule(): Promise<void> {
       title_template: ruleTitleTemplate.value.trim() || undefined,
       body_template: ruleBodyTemplate.value.trim() || undefined,
       enabled: ruleEnabled.value,
+      fallback_channel_id: fallbackForSave(ruleFallback.value, ruleChannelIds.value, ruleHadFallback.value),
     };
     await api.notify.upsertRule(req);
     toast.success(ruleEditingId.value ? t("platform.notifications.ruleUpdated") : t("platform.notifications.ruleCreated"));
@@ -689,6 +973,11 @@ async function confirmDeleteRule(): Promise<void> {
       </template>
     </PageHeader>
 
+    <LayerTabs v-if="layers.length > 1" v-model="layer" :tabs="layerTabs" :label="$t('platform.notifications.layers.label')" />
+
+    <template v-if="layer === 'routing'">
+    <AttentionList :items="attentionItems" :title="$t('platform.notifications.attention.title')" />
+
     <Card>
       <CardHeader>
         <CardTitle class="flex items-center gap-2">
@@ -708,6 +997,7 @@ async function confirmDeleteRule(): Promise<void> {
           :loading="channelsQuery.loading.value"
           :error="channelsQuery.error.value"
           :has-data="channelsQuery.data.value !== undefined"
+          :row-expanded="channelHasHealthDetail"
           :page-size="0"
           :show-summary="false"
           :searchable="sortedChannels.length > 6"
@@ -724,6 +1014,38 @@ async function confirmDeleteRule(): Promise<void> {
           </template>
           <template #cell-kind="{ row }">
             <Badge variant="outline" class="font-mono text-[11px]">{{ row.kind }}</Badge>
+          </template>
+          <template #cell-health="{ row }">
+            <div class="max-w-xs" data-testid="channel-health" :data-state="channelHealthLine(row.health).state">
+              <div v-if="channelHealthLine(row.health).state === 'failing'" class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Badge variant="destructive">{{ $t('platform.notifications.health.failingBadge') }}</Badge>
+                <span class="text-xs text-destructive">{{ healthText(channelHealthLine(row.health)) }}</span>
+              </div>
+              <p
+                v-else
+                :class="cn('flex items-start gap-1.5 text-xs', channelHealthLine(row.health).tone === 'warning' ? 'text-warning-text' : 'text-muted-foreground')"
+              >
+                <TriangleAlert v-if="channelHealthLine(row.health).tone === 'warning'" class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>{{ healthText(channelHealthLine(row.health)) }}</span>
+              </p>
+            </div>
+          </template>
+          <template #row-detail="{ row }">
+            <p
+              :class="cn('flex items-start gap-2 text-xs', channelHealthLine(row.health).tone === 'danger' ? 'text-destructive' : 'text-warning-text')"
+              data-testid="channel-health-cause"
+            >
+              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              <span>
+                {{ $t('platform.notifications.health.lastFailure', { cause: causeText(channelHealthLine(row.health).cause) }) }}
+                <button
+                  v-if="canManage"
+                  type="button"
+                  class="rounded-sm font-medium underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-primary pointer-coarse:py-1"
+                  @click="openChannelSent(row.id)"
+                >{{ $t('platform.notifications.attention.showSent') }}</button>
+              </span>
+            </p>
           </template>
           <template #cell-config_keys="{ row }">
             <div class="flex flex-wrap gap-1">
@@ -848,6 +1170,16 @@ async function confirmDeleteRule(): Promise<void> {
               <span v-if="!channelsRead" class="text-xs text-muted-foreground">{{ $t('platform.notifications.ruleChannelsUnread', { n: (row.channel_ids ?? []).length }, (row.channel_ids ?? []).length) }}</span>
               <template v-else>
                 <Badge v-for="id in (row.channel_ids ?? [])" :key="id" :variant="channelKnown(id) ? 'secondary' : 'outline'">{{ channelKnown(id) ? channelName(id) : $t('platform.notifications.channelGone', { id }) }}</Badge>
+                <span
+                  v-if="row.fallback_channel_id"
+                  class="inline-flex items-center gap-1 text-xs text-muted-foreground"
+                  data-testid="rule-fallback"
+                >
+                  <CornerDownRight class="size-3.5" aria-hidden="true" />
+                  {{ channelKnown(row.fallback_channel_id)
+                    ? $t('platform.notifications.fallback.badge', { name: channelName(row.fallback_channel_id) })
+                    : $t('platform.notifications.fallback.gone', { id: row.fallback_channel_id }) }}
+                </span>
               </template>
             </div>
           </template>
@@ -868,6 +1200,222 @@ async function confirmDeleteRule(): Promise<void> {
         </DataTable>
       </CardContent>
     </Card>
+    </template>
+
+    <Card v-else-if="layer === 'sent'" data-testid="sent-log">
+      <CardHeader>
+        <CardTitle class="flex items-center gap-2">
+          <Send aria-hidden="true" class="size-4 text-muted-foreground" />
+          {{ $t('platform.notifications.sent.title') }}
+        </CardTitle>
+        <CardDescription class="space-y-1">
+          <span class="block">{{ $t('platform.notifications.sent.description') }}</span>
+          <ProofLine v-bind="sentProof" :segments="sentProofSegments" @retry="sentQueryState.refresh()" />
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <DataTable
+          state-key="sent"
+          :columns="sentColumns"
+          :rows="sentRows"
+          :row-key="(d) => d.id"
+          :loading="sentQueryState.loading.value"
+          :error="sentQueryState.error.value"
+          :has-data="sentRead"
+          :row-expanded="sentHasDetail"
+          :row-click="(d, el) => sheet.open(d.id, el)"
+          :active-row-id="sheet.openId.value"
+          :page-size="50"
+          narrow-layout="cards"
+          :show-summary="false"
+          :searchable="true"
+          :expression-filter="false"
+          :search-placeholder="$t('platform.notifications.sent.searchPlaceholder')"
+          :empty-title="sentFiltered ? $t('platform.shared.noMatchesTitle') : $t('platform.notifications.sent.emptyTitle')"
+          :empty-description="sentFiltered ? $t('platform.shared.noMatchesDescription') : $t('platform.notifications.sent.emptyDescription')"
+          :no-match-title="$t('platform.shared.noMatchesTitle')"
+          :no-match-description="$t('platform.shared.noMatchesDescription')"
+          @retry="sentQueryState.refresh"
+        >
+          <template #toolbar>
+            <div class="grid grid-cols-2 items-end gap-2 sm:flex sm:flex-wrap">
+              <div class="grid min-w-0 gap-1">
+                <Label for="sent-outcome" class="text-xs text-muted-foreground">{{ $t('platform.notifications.sent.filterOutcome') }}</Label>
+                <Select v-model="sentOutcome">
+                  <SelectTrigger id="sent-outcome" class="h-9 w-full min-w-0 pointer-coarse:h-11 sm:w-40" data-testid="sent-outcome">
+                    <SelectValue class="min-w-0 overflow-hidden" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="outcome in SENT_OUTCOMES" :key="outcome" :value="outcome">
+                      {{ $t(`platform.notifications.sent.outcomeFilter.${outcome}`) }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="grid min-w-0 gap-1">
+                <Label for="sent-channel" class="text-xs text-muted-foreground">{{ $t('platform.notifications.sent.filterChannel') }}</Label>
+                <Select
+                  :model-value="sentChannel || SELECT_DEFAULT"
+                  @update:model-value="(value) => (sentChannel = fromSelectValue(String(value ?? '')))"
+                >
+                  <SelectTrigger id="sent-channel" class="h-9 w-full min-w-0 pointer-coarse:h-11 sm:w-44" data-testid="sent-channel">
+                    <SelectValue class="min-w-0 overflow-hidden" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="SELECT_DEFAULT">{{ $t('platform.notifications.sent.allChannels') }}</SelectItem>
+                    <SelectItem v-for="channel in sortedChannels" :key="channel.id" :value="channel.id">
+                      {{ channel.name || channel.id }}
+                    </SelectItem>
+                    <SelectItem v-if="sentChannel && channelsRead && !channelKnown(sentChannel)" :value="sentChannel">
+                      {{ $t('platform.notifications.channelGone', { id: sentChannel }) }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div class="col-span-2 grid min-w-0 gap-1">
+                <Label for="sent-event" class="text-xs text-muted-foreground">{{ $t('platform.notifications.sent.filterEvent') }}</Label>
+                <Select
+                  :model-value="sentEvent || SELECT_DEFAULT"
+                  @update:model-value="(value) => (sentEvent = fromSelectValue(String(value ?? '')))"
+                >
+                  <SelectTrigger id="sent-event" class="h-9 w-full min-w-0 pointer-coarse:h-11 sm:w-52" data-testid="sent-event">
+                    <SelectValue class="min-w-0 overflow-hidden" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="SELECT_DEFAULT">{{ $t('platform.notifications.sent.allEvents') }}</SelectItem>
+                    <SelectItem v-for="event in sentEventOptions" :key="event" :value="event">
+                      <span class="font-mono text-xs">{{ event }}</span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button v-if="sentFiltered" variant="ghost" size="sm" class="col-span-2 h-9 justify-self-start pointer-coarse:h-11" data-testid="sent-clear" @click="clearSentFilters">
+                {{ $t('platform.notifications.sent.clearFilters') }}
+              </Button>
+            </div>
+          </template>
+          <template #cell-created_at="{ row }">
+            <span class="text-xs tabular text-muted-foreground" :title="formatDateTime(row.created_at)">{{ formatRelativeTime(row.created_at) }}</span>
+          </template>
+          <template #cell-message="{ row }">
+            <div class="min-w-0 max-w-xl">
+              <Badge variant="outline" class="h-auto max-w-full whitespace-normal break-all text-left font-mono text-[10px]">{{ row.event_type }}</Badge>
+              <p class="mt-1 text-sm text-foreground max-md:break-words">{{ row.title || row.event_type }}</p>
+              <p class="mt-0.5 text-xs text-muted-foreground max-md:break-words">{{ sentOrigin(row) }}</p>
+            </div>
+          </template>
+          <template #cell-channel="{ row }">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-sm">{{ sentChannelLabel(row) }}</span>
+              <Badge v-if="row.role === 'fallback' || row.role === 'test'" variant="outline" class="text-[10px]">{{ $t(`platform.notifications.sent.role.${row.role}`) }}</Badge>
+            </div>
+          </template>
+          <template #cell-outcome="{ row }">
+            <div class="flex flex-col items-start gap-1" data-testid="sent-outcome-cell" :data-state="sentState(row)">
+              <span v-if="sentTone(sentState(row)) === 'quiet'" class="text-xs text-muted-foreground">{{ $t(`platform.notifications.sent.state.${sentState(row)}`) }}</span>
+              <Badge v-else :variant="sentBadgeVariant(row)">{{ $t(`platform.notifications.sent.state.${sentState(row)}`) }}</Badge>
+              <span v-if="(row.attempts?.length ?? 0) > 1" class="text-xs tabular text-muted-foreground">
+                {{ $t('platform.notifications.sent.attempts', { n: row.attempts?.length ?? 0 }, row.attempts?.length ?? 0) }}
+              </span>
+              <span v-if="sentState(row) === 'retrying' && row.next_attempt_at" class="text-xs text-muted-foreground">
+                {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(row.next_attempt_at) }) }}
+              </span>
+            </div>
+          </template>
+          <template #row-detail="{ row }">
+            <div class="space-y-1 text-xs text-muted-foreground" data-testid="sent-detail">
+              <p v-if="(sentState(row) === 'failed' || sentState(row) === 'retrying') && sentCause(row)" class="text-destructive">
+                {{ causeText(sentCause(row)) }}
+              </p>
+              <p v-if="sentNote(row)">{{ sentNoteText(row) }}</p>
+              <p v-if="sentOccurrences(row)" data-testid="sent-occurrences">{{ sentOccurrencesText(row) }}</p>
+              <p v-if="row.role === 'fallback' && row.fallback_for">{{ $t('platform.notifications.sent.fallbackFor', { names: row.fallback_for }) }}</p>
+            </div>
+          </template>
+        </DataTable>
+      </CardContent>
+    </Card>
+
+    <ObjectSheet
+      v-if="layer === 'sent'"
+      :open="!!sheet.openId.value"
+      :title="openDelivery ? (openDelivery.title || openDelivery.event_type) : (sheet.openId.value ?? '')"
+      :subtitle="openDelivery ? `${openDelivery.event_type} · ${sentChannelLabel(openDelivery)}` : undefined"
+      :state="sheetState"
+      :error="sentQueryState.error.value?.message ?? null"
+      :return-focus="sheet.returnFocus"
+      :gone-title="$t('platform.notifications.sent.sheet.goneTitle')"
+      :gone-description="$t('platform.notifications.sent.sheet.goneDescription')"
+      @close="sheet.close"
+      @retry="sentQueryState.refresh()"
+    >
+      <div v-if="openDelivery" class="space-y-5 text-sm" data-testid="sent-sheet">
+        <div class="flex flex-wrap items-center gap-2">
+          <span v-if="sentTone(sentState(openDelivery)) === 'quiet'" class="text-sm font-medium">{{ $t(`platform.notifications.sent.state.${sentState(openDelivery)}`) }}</span>
+          <Badge v-else :variant="sentBadgeVariant(openDelivery)">{{ $t(`platform.notifications.sent.state.${sentState(openDelivery)}`) }}</Badge>
+          <Badge v-if="openDelivery.role === 'fallback' || openDelivery.role === 'test'" variant="outline">{{ $t(`platform.notifications.sent.role.${openDelivery.role}`) }}</Badge>
+          <span v-if="(openDelivery.attempts?.length ?? 0) > 0" class="text-xs tabular text-muted-foreground">
+            {{ $t('platform.notifications.sent.attempts', { n: openDelivery.attempts?.length ?? 0 }, openDelivery.attempts?.length ?? 0) }}
+          </span>
+        </div>
+        <div v-if="sentHasDetail(openDelivery)" class="space-y-1 text-sm">
+          <p v-if="(sentState(openDelivery) === 'failed' || sentState(openDelivery) === 'retrying') && sentCause(openDelivery)" class="text-destructive">
+            {{ causeText(sentCause(openDelivery)) }}
+          </p>
+          <p v-if="sentNote(openDelivery)" class="text-muted-foreground">{{ sentNoteText(openDelivery) }}</p>
+          <p v-if="sentOccurrences(openDelivery)" class="text-muted-foreground">{{ sentOccurrencesText(openDelivery) }}</p>
+          <p v-if="openDelivery.role === 'fallback' && openDelivery.fallback_for" class="text-muted-foreground">{{ $t('platform.notifications.sent.fallbackFor', { names: openDelivery.fallback_for }) }}</p>
+          <p v-if="sentState(openDelivery) === 'retrying' && openDelivery.next_attempt_at" class="text-muted-foreground">
+            {{ $t('platform.notifications.sent.nextTry', { when: formatRelativeTime(openDelivery.next_attempt_at) }) }}
+          </p>
+        </div>
+
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.notifications.sent.sheet.message') }}</h3>
+          <p v-if="openDelivery.truncated" class="text-xs text-muted-foreground" data-testid="sent-truncated">{{ $t('platform.notifications.sent.sheet.truncated') }}</p>
+          <div class="rounded-md border border-border px-3 py-2">
+            <p class="font-medium break-words">{{ openDelivery.title || openDelivery.event_type }}</p>
+            <p v-if="openDelivery.body" class="mt-1 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">{{ openDelivery.body }}</p>
+            <p v-else class="mt-1 text-xs text-muted-foreground">{{ $t('platform.notifications.sent.sheet.noBody') }}</p>
+          </div>
+        </section>
+
+        <section v-if="openDelivery.attempts?.length" class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.notifications.sent.receipts') }}</h3>
+          <ol class="divide-y divide-border rounded-md border border-border" data-testid="sent-receipts">
+            <li v-for="(attempt, index) in openDelivery.attempts" :key="index" class="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 px-3 py-2 text-xs">
+              <span class="tabular text-muted-foreground">{{ formatDateTime(attempt.at) }}</span>
+              <span :class="attempt.ok ? 'text-foreground' : 'text-destructive'">{{ attempt.ok ? $t('platform.notifications.sent.receiptOk') : causeText(sentCause({ attempts: [attempt] })) }}</span>
+              <span class="tabular text-muted-foreground">{{ $t('platform.notifications.sent.receiptMs', { ms: attempt.duration_ms }) }}</span>
+            </li>
+          </ol>
+        </section>
+
+        <section class="space-y-1.5">
+          <h3 class="text-xs font-medium text-muted-foreground">{{ $t('platform.notifications.sent.sheet.details') }}</h3>
+          <dl class="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-xs">
+            <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.origin') }}</dt>
+            <dd class="break-words">{{ sentOrigin(openDelivery) }}</dd>
+            <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.colChannel') }}</dt>
+            <dd class="break-words">{{ sentChannelLabel(openDelivery) }}<span v-if="openDelivery.channel_kind" class="text-muted-foreground"> · {{ openDelivery.channel_kind }}</span></dd>
+            <dt class="text-muted-foreground">{{ $t(sentOccurrences(openDelivery) ? 'platform.notifications.sent.sheet.firstSeen' : 'platform.notifications.sent.sheet.created') }}</dt>
+            <dd class="tabular">{{ formatDateTime(openDelivery.created_at) }}</dd>
+            <template v-if="sentOccurrences(openDelivery)">
+              <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.lastSeen') }}</dt>
+              <dd class="tabular">{{ formatDateTime(sentOccurrences(openDelivery)?.last ?? openDelivery.created_at) }}</dd>
+            </template>
+            <template v-if="openDelivery.settled_at && !sentOccurrences(openDelivery)">
+              <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.settled') }}</dt>
+              <dd class="tabular">{{ formatDateTime(openDelivery.settled_at) }}</dd>
+            </template>
+            <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.eventId') }}</dt>
+            <dd class="break-all font-mono">{{ openDelivery.event_id }}</dd>
+            <dt class="text-muted-foreground">{{ $t('platform.notifications.sent.sheet.deliveryId') }}</dt>
+            <dd class="break-all font-mono">{{ openDelivery.id }}</dd>
+          </dl>
+        </section>
+      </div>
+    </ObjectSheet>
 
     <!-- Create / edit dialog -->
     <Dialog v-model:open="formOpen">
@@ -1037,6 +1585,7 @@ async function confirmDeleteRule(): Promise<void> {
             </div>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.ruleEventsHint') }}</p>
             <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.nodeOfflineHint') }}</p>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.channelFailingHint') }}</p>
           </div>
 
           <div class="space-y-2 rounded-md border border-border p-3">
@@ -1062,6 +1611,29 @@ async function confirmDeleteRule(): Promise<void> {
             </div>
             <p v-else-if="!channelsRead" class="text-sm text-muted-foreground" data-testid="rule-channels-unread">{{ $t('platform.notifications.ruleFormChannelsUnread') }}</p>
             <p v-else class="text-sm text-muted-foreground">{{ $t('platform.notifications.createChannelFirst') }}</p>
+          </div>
+
+          <div v-if="sortedChannels.length > 1 || ruleFallback" class="grid min-w-0 gap-2">
+            <Label for="rule-fallback">{{ $t('platform.notifications.fallback.label') }}</Label>
+            <Select
+              :model-value="ruleFallback || SELECT_DEFAULT"
+              @update:model-value="(value) => (ruleFallback = fromSelectValue(String(value ?? '')))"
+            >
+              <!-- A long channel name must not set the dialog's width: the value clips inside the trigger. -->
+              <SelectTrigger id="rule-fallback" class="min-w-0 sm:w-80" data-testid="rule-fallback-select">
+                <SelectValue class="min-w-0 overflow-hidden" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem :value="SELECT_DEFAULT">{{ $t('platform.notifications.fallback.none') }}</SelectItem>
+                <SelectItem v-for="channel in ruleFallbackChoices" :key="channel.id" :value="channel.id">
+                  {{ channel.name || channel.id }} · {{ channel.kind }}
+                </SelectItem>
+                <SelectItem v-if="ruleFallback && !channelKnown(ruleFallback)" :value="ruleFallback">
+                  {{ $t('platform.notifications.channelGone', { id: ruleFallback }) }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <p class="text-xs text-muted-foreground">{{ $t('platform.notifications.fallback.hint') }}</p>
           </div>
 
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">

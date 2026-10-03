@@ -5,6 +5,11 @@ import "vue-sonner/style.css";
 import { useThemeStore } from "@/stores/theme";
 import { useIsMobile } from "@/composables/useMediaQuery";
 import { TOAST_AVOID_SELECTOR, TOAST_HEADER_SELECTOR, TOAST_SHEET_SELECTOR, toastPlacement, type ToastPlacement } from "@/lib/toastClearance";
+import { toastHost } from "@/lib/toastHost";
+
+// The root is a Teleport, which cannot inherit attributes; they are bound to
+// the toaster explicitly below.
+defineOptions({ inheritAttrs: false });
 
 const props = defineProps<ToasterProps>();
 
@@ -22,6 +27,13 @@ const activeTheme = computed<ToasterProps["theme"]>(() => (theme.isDark ? "dark"
  * they move left of it, or, without room for a toast there, rise above its
  * footer at the bottom right. One measurement per frame at most, on DOM
  * changes, resizes and the end of a sheet's slide.
+ *
+ * Below 768 px the sheet is modal, and a modal layer leaves everything
+ * outside it inert to pointer, keyboard and screen reader. While one is open
+ * the toaster moves into it (lib/toastHost), where its close button works
+ * and a tap on a toast does not reach the sheet. The placement rules are the
+ * same in both homes: the sheet covers the viewport, so the toaster's fixed
+ * box still measures from the screen's edges.
  */
 const mobile = useIsMobile();
 const placement = ref<ToastPlacement | null>(null);
@@ -89,6 +101,7 @@ const mobileOffset = computed<ToasterProps["mobileOffset"]>(() => placedOffset(p
 </script>
 
 <template>
+  <Teleport :to="toastHost ?? 'body'" :disabled="!toastHost">
   <Sonner
     class="toaster group"
     :theme="props.theme ?? activeTheme"
@@ -111,4 +124,5 @@ const mobileOffset = computed<ToasterProps["mobileOffset"]>(() => placedOffset(p
     "
     v-bind="$attrs"
   />
+  </Teleport>
 </template>

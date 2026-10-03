@@ -106,6 +106,33 @@ export interface ToastPlacementInput {
   headerBottom?: number;
 }
 
+/* ------------------------------------------------------------------ */
+/* Below 768 px: inside the modal sheet's layer                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Below 768 px an object sheet is modal. reka's modal layer turns pointer
+ * events off on everything outside the dialog, traps focus inside it and
+ * hides the rest of the page from assistive technology, so a toast drawn
+ * over the sheet from the console's own toaster could be seen but not
+ * dismissed, tabbed to or heard (a103 sweep, MEDIUM 4). The toaster
+ * therefore moves into the open modal sheet while one is open, and back
+ * when it closes. These keep the stack of sheets offering a home: the one
+ * opened last is on top, and closing it hands the toaster to the one below.
+ */
+export function withToastHost<T>(stack: readonly T[], host: T): T[] {
+  return [...stack.filter((entry) => entry !== host), host];
+}
+
+export function withoutToastHost<T>(stack: readonly T[], host: T): T[] {
+  return stack.filter((entry) => entry !== host);
+}
+
+/** The host the toaster belongs in, or null for its own place in the shell. */
+export function topToastHost<T>(stack: readonly T[]): T | null {
+  return stack.length > 0 ? (stack[stack.length - 1] as T) : null;
+}
+
 export function toastPlacement(input: ToastPlacementInput): ToastPlacement {
   if (input.mobile) return { position: "bottom-center", bottom: toastLift(input.viewportHeight, input.footers) };
   // Sheets anchored to the right edge and laid out; the leftmost decides.

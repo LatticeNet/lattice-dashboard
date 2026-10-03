@@ -405,6 +405,8 @@ export default {
           generate: "Generate reconfigure command",
           copy: "Copy reconfigure command",
           nodeIdMismatch: "Command node id mismatch: page is {expected}, command contains {actual}. Do not run this command.",
+          installs: "This command installs lattice-agent {target}, the release this server pins, then restarts the agent with these launch settings.",
+          installMoves: "This command installs lattice-agent {target}, the release this server pins. The node reports {current}, so running it moves the node to {target}.",
           toastGenerated: "Reconfigure command generated",
           toastFailed: "Failed to generate reconfigure command",
         },
@@ -1190,8 +1192,6 @@ export default {
         monitors: "{n} monitor | {n} monitors",
         enabled: "{n} enabled",
         failing: "{n} failing",
-        statusNotRead: "status not read: {reason}",
-        statusCapped: "status not read for {n} more",
       },
       status: {
         up: "up",
@@ -1282,7 +1282,7 @@ export default {
       },
       assignment: {
         allNodes: "all nodes",
-        nodeCount: "{count} nodes",
+        nodeCount: "{count} node | {count} nodes",
         controlPlane: "dialled by the control plane",
       },
       result: {

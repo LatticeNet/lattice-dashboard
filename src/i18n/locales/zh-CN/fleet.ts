@@ -399,6 +399,8 @@ export default {
           generate: "生成重配置命令",
           copy: "复制重配置命令",
           nodeIdMismatch: "命令节点 ID 不一致：当前页面是 {expected}，命令里是 {actual}。不要执行这条命令。",
+          installs: "这条命令会安装本服务器固定的 lattice-agent {target}，再按上面的启动配置重启 agent。",
+          installMoves: "这条命令会安装本服务器固定的 lattice-agent {target}。节点当前上报 {current}，执行后会改为 {target}。",
           toastGenerated: "重配置命令已生成",
           toastFailed: "生成重配置命令失败",
         },
@@ -1174,8 +1176,6 @@ export default {
         monitors: "{n} 个监控 | {n} 个监控",
         enabled: "{n} 个已启用",
         failing: "{n} 个失败",
-        statusNotRead: "状态未读取：{reason}",
-        statusCapped: "另有 {n} 个监控的状态未读取",
       },
       status: {
         up: "正常",
@@ -1265,7 +1265,7 @@ export default {
       },
       assignment: {
         allNodes: "全部节点",
-        nodeCount: "{count} 个节点",
+        nodeCount: "{count} 个节点 | {count} 个节点",
         controlPlane: "由控制面直接拨号",
       },
       result: {

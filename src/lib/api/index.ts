@@ -61,8 +61,11 @@ import type {
   NodeGeoResolveResponse,
   NodeGeoView,
   NodeInventory,
+  NotifyChannelTestResponse,
   NotifyChannelUpsertRequest,
   NotifyChannelView,
+  NotifyDeliveriesQuery,
+  NotifyDeliveriesResponse,
   NotifyRuleUpsertRequest,
   NotifyRuleView,
   NotifyTestRequest,
@@ -275,6 +278,8 @@ export const api = {
         command: string;
         commands?: Record<string, string>;
         agent_launch?: AgentLaunchConfig;
+        /** The pinned agent release the Linux command installs; absent on older servers. */
+        agent_version?: string;
       }>("/api/nodes/reconfigure-command", input),
     rotateToken: (node_id: string) =>
       http.post<{ node_id: string; token: string }>("/api/nodes/rotate-token", { node_id }),
@@ -824,6 +829,13 @@ export const api = {
       http.post<{ ok: boolean }>("/api/notify/channels/delete", { id }),
     test: (input: NotifyTestRequest) =>
       http.post<{ ok: boolean; channel: string }>("/api/notify/test", input),
+    // Tests a stored channel server-side: no config leaves the server, and a
+    // failed send still answers 200 with ok false and the classified reason.
+    testChannel: (id: string) =>
+      http.post<NotifyChannelTestResponse>("/api/notify/channels/test", { id }),
+    // The Sent log: the notification outbox, newest first.
+    deliveries: (query: NotifyDeliveriesQuery, opts?: RequestOptions) =>
+      http.get<NotifyDeliveriesResponse>("/api/notify/deliveries", query as Record<string, unknown>, opts),
     webhooks: (opts?: RequestOptions) =>
       http.get<{ webhooks: NotifyWebhookView[] }>("/api/notify/webhooks", undefined, opts),
     // Create returns the plaintext secret; edit returns the plain view. The

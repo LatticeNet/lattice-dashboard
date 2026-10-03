@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import DataState from "./DataState.vue";
+import { nextRowIndex } from "@/layout/keyboardShortcutsModel";
 import { tableSearchVisible } from "./chassisModel";
 import { groupedEntries, groupRows, toggleGroup, type GroupedEntry, type RowGroup } from "./tableGroupModel";
 import {
@@ -271,11 +272,41 @@ function onRowActivate(row: T, event: MouseEvent | KeyboardEvent): void {
  * a per-row action button, claims a button contains a button. The row stays a
  * row; it is still reachable by Tab and still activates on Enter or Space, and
  * the cursor says so.
+ *
+ * Only keys pressed on the row itself count. A key on a control inside the
+ * row (its menu button, a link, a checkbox) belongs to that control: the row
+ * neither moves focus nor activates. Before row keys existed, Enter or Space
+ * on such a control bubbled here and the row cancelled it, which stopped a
+ * link or a plain button inside the row from activating at all (a menu
+ * trigger, which opens on its own keydown, still worked). No cell relies on
+ * the row activating from inside it.
  */
 function onRowKeydown(row: T, event: KeyboardEvent): void {
+  if (event.target !== event.currentTarget) return;
+  if (moveRowFocus(event)) return;
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   onRowActivate(row, event);
+}
+
+/**
+ * j and k (and the arrows, Home, End) walk the rows while one has focus,
+ * so a keyboard operator reads 34 nodes in 34 presses instead of 68 Tabs
+ * (each row and its menu). Only the rows of this table, as shown: a
+ * collapsed group's rows are not there to land on.
+ */
+function moveRowFocus(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  const current = event.currentTarget as HTMLElement | null;
+  const list = current?.closest("tbody, ul");
+  if (!current || !list) return false;
+  const rows = [...list.querySelectorAll<HTMLElement>('[data-row-key][tabindex="0"]')];
+  const next = nextRowIndex(rows.length, rows.indexOf(current), event.key);
+  if (next < 0) return false;
+  event.preventDefault();
+  rows[next]?.focus();
+  rows[next]?.scrollIntoView({ block: "nearest" });
+  return true;
 }
 
 /** Selected row ids. Two-way bindable via `v-model:selected`. */

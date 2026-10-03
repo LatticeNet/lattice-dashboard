@@ -5,6 +5,11 @@ import {
   BARK_LEVELS,
   buildConfig,
   channelDeleteImpact,
+  channelHealthLine,
+  failingChannels,
+  failureCause,
+  fallbackChoices,
+  fallbackForSave,
   channelSaveGate,
   configComplete,
   droppedStoredKeys,
@@ -229,4 +234,66 @@ test("a channel no enabled rule routes to receives nothing today", () => {
   const impact = channelDeleteImpact(barkInfo, [rule("r1", "Node offline", ["ch_bark_urgent"])], [barkInfo, barkUrgent]);
   assert.deepEqual(impact.lines, [{ kind: "unrouted" }]);
   assert.equal(impact.typed, false);
+});
+
+// ── channel health and fallback ─────────────────────────────────────────────
+
+test("each failure kind gets its own words, and a refusal keeps its status", () => {
+  assert.deepEqual(failureCause("upstream_4xx", 400), { key: "refused", status: 400 });
+  assert.deepEqual(failureCause("upstream_5xx", 502), { key: "serverError", status: 502 });
+  assert.deepEqual(failureCause("rate_limited"), { key: "rateLimited", status: 429 });
+  assert.deepEqual(failureCause("timeout"), { key: "timeout" });
+  assert.deepEqual(failureCause("network"), { key: "unreachable" });
+  assert.deepEqual(failureCause("config_invalid"), { key: "configRefused" });
+  assert.deepEqual(failureCause("something_new"), { key: "failed" });
+});
+
+test("health reads the server's state and dates the claim from the right instant", () => {
+  assert.deepEqual(channelHealthLine(undefined), { state: "unreported", tone: "muted", failures: 0 });
+  assert.equal(channelHealthLine({ state: "unknown", consecutive_failures: 0 }).state, "unknown");
+  assert.deepEqual(channelHealthLine({ state: "ok", consecutive_failures: 0, last_ok_at: "t-ok", last_attempt_at: "t-ok" }), {
+    state: "ok",
+    tone: "muted",
+    at: "t-ok",
+    failures: 0,
+  });
+  const degraded = channelHealthLine({ state: "degraded", consecutive_failures: 0, last_failure_at: "t-fail", last_failure_kind: "timeout" });
+  assert.equal(degraded.tone, "warning");
+  assert.equal(degraded.at, "t-fail");
+  assert.deepEqual(degraded.cause, { key: "timeout" });
+  const failing = channelHealthLine({
+    state: "failing",
+    consecutive_failures: 4,
+    failing_since: "t-since",
+    last_failure_at: "t-last",
+    last_failure_kind: "upstream_4xx",
+    last_status_code: 400,
+  });
+  assert.deepEqual(failing, { state: "failing", tone: "danger", at: "t-since", failures: 4, cause: { key: "refused", status: 400 } });
+});
+
+test("only enabled failing channels need attention, the longest run first", () => {
+  const channel = (id: string, enabled: boolean, state: string, failures: number, since = "") => ({
+    id,
+    enabled,
+    health: { state, consecutive_failures: failures, failing_since: since },
+  });
+  const list = [
+    channel("a", true, "failing", 3, "2026-10-02T09:10:00Z"),
+    channel("b", true, "failing", 7, "2026-10-02T08:00:00Z"),
+    channel("c", false, "failing", 9),
+    channel("d", true, "degraded", 0),
+    channel("e", true, "failing", 3, "2026-10-02T09:00:00Z"),
+  ];
+  assert.deepEqual(failingChannels(list).map((c) => c.id), ["b", "e", "a"]);
+});
+
+test("a rule can fall back to any channel but its own, and a save clears a fallback that became a primary", () => {
+  const channels = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  assert.deepEqual(fallbackChoices(channels, ["a"]).map((c) => c.id), ["b", "c"]);
+  assert.equal(fallbackForSave("b", ["a"], false), "b");
+  assert.equal(fallbackForSave("b", ["a", "b"], true), "");
+  assert.equal(fallbackForSave("", ["a"], true), "");
+  // A rule that never had a fallback sends nothing for it.
+  assert.equal(fallbackForSave("", ["a"], false), undefined);
 });

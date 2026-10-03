@@ -1161,8 +1161,9 @@ export default {
         saved: "Expiry updated",
         saveFailed: "Failed to update the expiry",
       },
-      formatAuto: "automatic",
-      formatHint: "Only the encoding envelope. The client's configuration format comes from the URL or its User-Agent.",
+      formatAuto: "client native",
+      formatHint:
+        "Left empty, each client gets its own format, read from the URL or its User-Agent, and only a plain list of links is base64 encoded. Pick a value to force it for every client.",
       refreshSource: "Refresh source",
       refreshHint: "Fetch from the provider now instead of waiting for the next client poll.",
       refreshPluginOnly:
@@ -1206,7 +1207,7 @@ export default {
       slugHint: "Appears in the URL and in reverse-proxy logs, so it is a label rather than a secret.",
       slugRule: "Lowercase letters, digits and hyphens, starting with a letter or digit.",
       slugTaken: "A share with this slug already exists.",
-      defaultFormat: "Encoding",
+      defaultFormat: "Format",
       clipboardUnavailable: "The clipboard is unavailable, select the URL and copy it manually.",
     },
 
