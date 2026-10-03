@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   SYSTEM_WRITER,
+  StaleLoadError,
+  VPN_USERS_PAGE,
   createTtlCache,
   filterPendingSystemApprovals,
+  paletteListAccess,
 } from "../commandPaletteModel.ts";
 
 test("only pending items written by the server itself qualify", () => {
@@ -90,6 +93,60 @@ test("a failed fetch is not cached. The next load retries", async () => {
 
   assert.equal(retried, "recovered");
   assert.equal(calls, 2);
+});
+
+/** A fetch the test resolves by hand, standing in for a read still on the wire. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("a read still in flight when the cache is invalidated never lands, and the next load reads again", async () => {
+  const cache = createTtlCache<string>(30_000, () => 0);
+  const oldRead = deferred<string>();
+  const before = cache.load(() => oldRead.promise);
+  // The principal changes while the old principal's read is on the wire.
+  cache.invalidate();
+  let newReads = 0;
+  const after = cache.load(async () => {
+    newReads += 1;
+    return "new principal's list";
+  });
+  oldRead.resolve("old principal's list");
+
+  await assert.rejects(before, StaleLoadError, "the old read rejects instead of resolving into state");
+  assert.equal(await after, "new principal's list", "a load after invalidate does not join the disowned read");
+  assert.equal(newReads, 1);
+  assert.equal(await cache.load(async () => "unused"), "new principal's list", "and only the new answer is cached");
+});
+
+test("a failed read that invalidate overtook rejects as stale, so the caller keeps what the invalidating code set", async () => {
+  const cache = createTtlCache<string>(30_000, () => 0);
+  const read = deferred<string>();
+  const load = cache.load(() => read.promise);
+  cache.invalidate();
+  read.reject(new Error("offline"));
+  await assert.rejects(load, StaleLoadError);
+});
+
+test("the palette reads each list only behind the gate of the page that opens it", () => {
+  const pages = (...names: string[]) => new Set(names);
+  const scopes = (...granted: string[]) => (scope: string) => granted.includes(scope);
+
+  assert.deepEqual(paletteListAccess(pages(), scopes("proxy:admin")), { nodes: false, approvals: false, identities: false, shares: false });
+  assert.deepEqual(paletteListAccess(pages("nodes", "approvals"), scopes()), { nodes: true, approvals: true, identities: false, shares: false });
+  // Identities need vpn-core's Users page in the sidebar, which carries that page's own scope.
+  assert.equal(paletteListAccess(pages(VPN_USERS_PAGE), scopes()).identities, true);
+  assert.equal(paletteListAccess(pages("plugin:latticenet.vpn-core:lines"), scopes()).identities, false);
+  // Publishing is offered without proxy:admin, so the share list needs both.
+  assert.equal(paletteListAccess(pages("platform-publishing"), scopes()).shares, false);
+  assert.equal(paletteListAccess(pages(), scopes("proxy:admin")).shares, false);
+  assert.equal(paletteListAccess(pages("platform-publishing"), scopes("proxy:admin")).shares, true);
 });
 
 /* ------------------------------------------------------------------ */
@@ -205,4 +262,137 @@ test("search words come from the destination, official plugin pages included", (
   assert.equal(paletteTermsKey({ name: "plugin:latticenet.vpn-core:users", plugin: { id: "latticenet.vpn-core" }, route: "users" }), "vpnUsers");
   assert.equal(paletteTermsKey({ name: "plugin:latticenet.sub-store:sub-store", plugin: { id: "latticenet.sub-store" }, route: "sub-store" }), "subStore");
   assert.equal(paletteTermsKey({ name: "plugin:example.leases:leases", plugin: { id: "example.leases" }, route: "leases" }), null);
+});
+
+/* ------------------------------------------------------------------ */
+/* VPN identities, shares and recent objects                            */
+/* ------------------------------------------------------------------ */
+
+import {
+  RECENT_OBJECTS_MAX,
+  objectState,
+  paletteIdentities,
+  paletteShares,
+  pushRecentObject,
+  readRecentObjects,
+  serializeRecentObjects,
+} from "../commandPaletteModel.ts";
+
+test("identities keep the address, name, state and expiry, and nothing else of the answer", () => {
+  const answer = {
+    count: 3,
+    users: [
+      {
+        id: "vpnuser_alice",
+        email: "alice@example.com",
+        name: "Alice",
+        enabled: true,
+        expires_at: "2026-11-01T00:00:00Z",
+        group: "family",
+        credentials: [{ protocol: "vless", has_secret: true }],
+        bindings: [{ line_hash_id: "l1", enabled: true }],
+        quota_bytes: 1_000,
+        used_bytes: 10,
+      },
+      // Go writes an unset time.Time as year 1 even with omitempty.
+      { id: "vpnuser_bob", email: "bob@example.com", enabled: false, expires_at: "0001-01-01T00:00:00Z" },
+      { id: "", email: "nobody@example.com" },
+      { id: "vpnuser_noemail", email: "" },
+      null,
+      "junk",
+    ],
+  };
+  const identities = paletteIdentities(answer);
+  assert.deepEqual(identities, [
+    { id: "vpnuser_alice", email: "alice@example.com", name: "Alice", enabled: true, expiresAt: "2026-11-01T00:00:00Z", group: "family" },
+    { id: "vpnuser_bob", email: "bob@example.com", enabled: false },
+  ]);
+  assert.ok(!JSON.stringify(identities).includes("credentials"), "credential descriptors never reach the palette");
+  assert.deepEqual(paletteIdentities(undefined), []);
+  assert.deepEqual(paletteIdentities({ users: "nope" }), []);
+});
+
+test("shares keep the name and state and drop the token, the link itself", () => {
+  const shares = paletteShares([
+    { id: "share_1", slug: "family-clash", token: "tok_secret_abc", enabled: true, expires_at: "2027-01-01T00:00:00Z", source: { kind: "plugin" } },
+    { id: "share_2", slug: "travel", token: "tok_secret_def", enabled: false },
+    { id: "share_3", slug: "", token: "tok_secret_ghi" },
+  ]);
+  assert.deepEqual(shares, [
+    { id: "share_1", slug: "family-clash", enabled: true, expiresAt: "2027-01-01T00:00:00Z" },
+    { id: "share_2", slug: "travel", enabled: false },
+  ]);
+  assert.ok(!JSON.stringify(shares).includes("tok_secret"), "no token survives the projection");
+  assert.equal(paletteShares({ shares: [{ id: "share_4", slug: "wrapped", token: "t" }] }).length, 1, "a wrapped list reads too");
+});
+
+test("an object is off before it is expired, and expired only once its time has passed", () => {
+  const now = Date.parse("2026-10-03T12:00:00Z");
+  assert.equal(objectState({ enabled: true }, now), "on");
+  assert.equal(objectState({ enabled: true, expiresAt: "2026-10-03T12:00:01Z" }, now), "on");
+  assert.equal(objectState({ enabled: true, expiresAt: "2026-10-03T12:00:00Z" }, now), "expired");
+  assert.equal(objectState({ enabled: false, expiresAt: "2026-01-01T00:00:00Z" }, now), "off");
+});
+
+test("recent objects are read only for the principal that stored them", () => {
+  const items = [
+    { kind: "identity", id: "vpnuser_alice" },
+    { kind: "node", id: "node_020" },
+  ] as const;
+  const raw = serializeRecentObjects("usr_cdcd", items);
+  assert.deepEqual(readRecentObjects(raw, "usr_cdcd"), items);
+  assert.deepEqual(readRecentObjects(raw, "usr_other"), [], "another operator's list is not shown");
+  assert.deepEqual(readRecentObjects(raw, undefined), [], "nothing is shown signed out");
+  assert.deepEqual(readRecentObjects(null, "usr_cdcd"), []);
+  assert.deepEqual(readRecentObjects("{not json", "usr_cdcd"), []);
+  assert.deepEqual(readRecentObjects(JSON.stringify(items), "usr_cdcd"), [], "an unowned list (the old shape) is not read");
+});
+
+test("stored recent objects are cleaned: unknown kinds, bad ids and repeats dropped, capped", () => {
+  const raw = JSON.stringify({
+    owner: "usr_cdcd",
+    items: [
+      { kind: "node", id: "node_1" },
+      { kind: "task", id: "task_1" },
+      { kind: "node", id: "" },
+      { kind: "node", id: "x".repeat(129) },
+      { kind: "node", id: "node_1" },
+      { kind: "share", id: "share_1", label: "travel", token: "tok" },
+      { kind: "approval", id: "approval_1" },
+      { kind: "identity", id: "vpnuser_1" },
+      { kind: "node", id: "node_2" },
+      { kind: "node", id: "node_3" },
+    ],
+  });
+  const read = readRecentObjects(raw, "usr_cdcd");
+  assert.equal(read.length, RECENT_OBJECTS_MAX);
+  assert.deepEqual(read, [
+    { kind: "node", id: "node_1" },
+    { kind: "share", id: "share_1" },
+    { kind: "approval", id: "approval_1" },
+    { kind: "identity", id: "vpnuser_1" },
+    { kind: "node", id: "node_2" },
+  ]);
+});
+
+test("opening an object again moves it first, and the list stays capped", () => {
+  let list = pushRecentObject([], { kind: "node", id: "node_1" });
+  list = pushRecentObject(list, { kind: "identity", id: "vpnuser_1" });
+  list = pushRecentObject(list, { kind: "node", id: "node_1" });
+  assert.deepEqual(list, [
+    { kind: "node", id: "node_1" },
+    { kind: "identity", id: "vpnuser_1" },
+  ]);
+  for (let index = 2; index < 9; index += 1) list = pushRecentObject(list, { kind: "share", id: `share_${index}` });
+  assert.equal(list.length, RECENT_OBJECTS_MAX);
+  assert.equal(list[0]?.id, "share_8");
+  assert.ok(!serializeRecentObjects("usr_cdcd", list).includes("label"), "only kind and id are stored");
+});
+
+test("an identity is found by any part of its address", () => {
+  const alice = entry("identity:vpnuser_alice", "identity", "alice@example.com", { detail: "Alice", terms: ["vpnuser_alice", "Alice", "family"] });
+  assert.ok(paletteMatchScore(alice, "alice") >= 80);
+  assert.ok(paletteMatchScore(alice, "example") >= 60, "the domain is a word of the label");
+  assert.ok(paletteMatchScore(alice, "family") > 0, "and the group a term");
+  assert.equal(paletteMatchScore(alice, "bob"), 0);
 });

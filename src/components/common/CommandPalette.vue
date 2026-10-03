@@ -18,7 +18,7 @@ import {
   ComboboxItem,
   VisuallyHidden,
 } from "reka-ui";
-import { ArrowRight, CalendarCheck, Keyboard, ListChecks, Search, Server, Share2, ShieldCheck, UserPlus, Zap } from "lucide-vue-next";
+import { ArrowRight, CalendarCheck, Keyboard, Link2, ListChecks, Search, Server, Share2, ShieldCheck, UserPlus, UserRound, Zap } from "lucide-vue-next";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth";
@@ -31,14 +31,29 @@ import { approvalDigest } from "@/views/operations/approvalsListModel";
 import { useConsoleNavigation } from "@/layout/useConsoleNavigation";
 import { shortcutsHelpOpen } from "@/layout/useKeyboardShortcuts";
 import {
+  StaleLoadError,
+  VPN_CORE_PLUGIN_ID,
+  VPN_USERS_PAGE,
+  VPN_USERS_SERVICE,
   createTtlCache,
   filterPendingSystemApprovals,
+  objectState,
+  paletteIdentities,
   paletteIdJump,
   paletteJumpLocation,
+  paletteListAccess,
+  paletteShares,
   paletteTermsKey,
+  pushRecentObject,
   rankPaletteEntries,
+  readRecentObjects,
+  serializeRecentObjects,
   type PaletteEntry,
   type PaletteGroup,
+  type PaletteIdentity,
+  type PaletteShare,
+  type RecentObject,
+  type TtlCache,
 } from "./commandPaletteModel";
 
 /**
@@ -49,18 +64,28 @@ import {
  * sections and third-party ones under Extensions, from the same
  * useConsoleNavigation the sidebar reads, so it can never offer a page the
  * principal may not open), nodes by name, id, address and tag, the
- * approvals waiting, a pasted approval, task or node id, and a few actions
- * ("approve", "renew", "add VPN user", "share subscription"). Verbs and
- * synonyms find pages through the locales' search words.
+ * approvals waiting, VPN identities by address and name, subscription shares
+ * by name, a pasted approval, task or node id, and a few actions ("approve",
+ * "renew", "add VPN user", "share subscription"). Verbs and synonyms find
+ * pages through the locales' search words.
  *
- * Nodes and pending approvals are read when the palette opens, each behind
- * a 30 s cache, and the last answer stays on screen while a refresh runs, so
- * opening it never waits on the network. Ranking is a pure function
- * (commandPaletteModel.rankPaletteEntries); the Combobox's own filter is
- * off. Built on reka-ui DialogRoot (focus trap, Esc) wrapping a ComboboxRoot
- * (arrows, Home, End, Enter).
+ * Nodes, pending approvals, identities and shares are read when the palette
+ * opens, each behind a 30 s cache, and the last answer stays on screen while
+ * a refresh runs, so opening it never waits on the network. Each list is
+ * read only when the page that opens its objects is one the principal may
+ * open (the same gate as the sidebar): identities through vpn-core's own
+ * users/list method on the plugin call path, when vpn-core's Users page is
+ * listed; shares through the share list Publishing reads, with proxy:admin
+ * as Publishing requires. The share list carries each share's token, which
+ * is its link; commandPaletteModel.paletteShares drops it on receipt.
+ * Ranking is a pure function (commandPaletteModel.rankPaletteEntries); the
+ * Combobox's own filter is off. Built on reka-ui DialogRoot (focus trap,
+ * Esc) wrapping a ComboboxRoot (arrows, Home, End, Enter).
  *
- * Recents keep nav names only, never anything sensitive.
+ * Recent pages keep nav names only. Recent objects keep a kind and an id,
+ * for the principal that opened them, and take their words from the lists
+ * read on open, so nothing sensitive sits in storage and an object the
+ * principal can no longer read is not shown.
  */
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ (e: "update:open", value: boolean): void }>();
@@ -70,9 +95,17 @@ const auth = useAuthStore();
 const { t } = useI18n();
 
 const RECENTS_KEY = "lattice.ui.commandRecents";
+const RECENT_OBJECTS_KEY = "lattice.ui.commandRecentObjects";
 const RECENTS_MAX = 5;
 const CACHE_MS = 30_000;
-const LIMITS: Partial<Record<PaletteGroup, number>> = { action: 5, approval: 6, node: 8, page: 12 };
+/**
+ * The identity list rides vpn-core's users/list on the plugin call path, and
+ * the server writes one plugin.call audit row per call. Identities change
+ * rarely, so the palette rereads them at most every five minutes rather than
+ * on every open past thirty seconds; a user added since is on the Users page.
+ */
+const IDENTITY_CACHE_MS = 5 * 60_000;
+const LIMITS: Partial<Record<PaletteGroup, number>> = { action: 5, approval: 6, node: 8, identity: 8, share: 6, page: 12 };
 
 const search = ref("");
 const query = computed(() => search.value.trim());
@@ -85,7 +118,7 @@ const isOpen = computed({
 type ActionId = "approve-system-events" | "keyboard-shortcuts";
 type Payload =
   | { type: "nav"; item: NavItem; icon: Component }
-  | { type: "go"; to: RouteLocationRaw; icon: Component }
+  | { type: "go"; to: RouteLocationRaw; icon: Component; object?: RecentObject }
   | { type: "action"; id: ActionId; icon: Component };
 type Entry = PaletteEntry<Payload>;
 
@@ -112,6 +145,22 @@ const itemsByName = computed(() => {
   for (const group of pageGroups.value) for (const item of group.items) map.set(item.name, item);
   return map;
 });
+
+/** Which object lists this principal may read, by the gates of the pages that open them. */
+const access = computed(() => paletteListAccess(itemsByName.value, (scope) => auth.can(scope)));
+
+/**
+ * Load through `cache` for the principal signed in when the load started.
+ * The cache disowns a fetch that `invalidate` overtook; this also catches a
+ * principal change in the few microtasks between the cache resolving and
+ * the caller writing the answer into state.
+ */
+async function loadForPrincipal<T>(cache: TtlCache<T>, fetcher: () => Promise<T>): Promise<T> {
+  const actor = auth.principal?.actor_id;
+  const value = await cache.load(fetcher);
+  if (auth.principal?.actor_id !== actor) throw new StaleLoadError();
+  return value;
+}
 
 function navLabel(item: NavItem): string {
   return item.plugin ? item.title : t(`nav.items.${item.name}`);
@@ -179,15 +228,16 @@ const nodesCache = createTtlCache<Node[]>(CACHE_MS);
 const nodes = ref<Node[]>([]);
 
 async function refreshNodes(): Promise<void> {
-  if (!itemsByName.value.has("nodes")) {
+  if (!access.value.nodes) {
     nodes.value = [];
     return;
   }
   try {
-    nodes.value = await nodesCache.load(() => api.nodes.list().then((r) => unwrap(r, "nodes")));
+    nodes.value = await loadForPrincipal(nodesCache, () => api.nodes.list().then((r) => unwrap(r, "nodes")));
   } catch {
     // Keep the last list: a node that existed thirty seconds ago is still
-    // the right place to jump to, and its page says if it is gone.
+    // the right place to jump to, and its page says if it is gone. A stale
+    // load lands here too, after the principal watcher emptied the list.
   }
 }
 
@@ -213,7 +263,7 @@ const nodeEntries = computed<Entry[]>(() =>
         node.geo?.country ?? "",
         node.geo?.provider ?? "",
       ].filter(Boolean),
-      payload: { type: "go", to: { name: "node-detail", params: { id: node.id } }, icon: Server },
+      payload: { type: "go", to: { name: "node-detail", params: { id: node.id } }, icon: Server, object: { kind: "node", id: node.id } },
     };
   }),
 );
@@ -234,19 +284,22 @@ const pendingSystemApprovals = ref<ApprovalView[]>([]);
 const systemActionRunning = ref(false);
 
 async function refreshApprovals(): Promise<void> {
-  if (!itemsByName.value.has("approvals")) {
+  if (!access.value.approvals) {
     pendingApprovals.value = [];
     pendingSystemApprovals.value = [];
     return;
   }
   try {
-    const approvals = await approvalsCache.load(() => api.approvals.list({ status: "pending" }).then((r) => unwrap(r, "approvals")));
+    const approvals = await loadForPrincipal(approvalsCache, () => api.approvals.list({ status: "pending" }).then((r) => unwrap(r, "approvals")));
     pendingApprovals.value = approvals.filter((item) => item.status === "pending");
     // Stale plans would fail server-side, so the batch counts only the items
     // the Approvals event cards would also act on.
     pendingSystemApprovals.value = filterPendingSystemApprovals(approvals).filter(isActionablePendingApproval);
-  } catch {
-    pendingSystemApprovals.value = [];
+  } catch (error) {
+    // A stale load was overtaken by whoever invalidated (the principal
+    // watcher, or the batch action that set the remainder itself), and that
+    // code already wrote the right state.
+    if (!(error instanceof StaleLoadError)) pendingSystemApprovals.value = [];
   }
 }
 
@@ -269,9 +322,138 @@ const approvalEntries = computed<Entry[]>(() =>
       raw: approvalRawLabel(approval),
     }),
     terms: [approval.id, approval.node_id, nodeNames.value.get(approval.node_id) ?? "", ...termsOf("approvals")],
-    payload: { type: "go", to: { path: "/approvals", query: { open: approval.id } }, icon: ShieldCheck },
+    payload: { type: "go", to: { path: "/approvals", query: { open: approval.id } }, icon: ShieldCheck, object: { kind: "approval", id: approval.id } },
   })),
 );
+
+// ── VPN identities ────────────────────────────────────────────────────────
+// Read through vpn-core's users/list, the method its Users page reads, on
+// the plugin call path the server gates by the manifest's scope
+// (vpncore:read). Offered only while vpn-core's Users page is one this
+// principal may open, and an identity opens in that page's panel (`open` is
+// vpn-core's page-state key for the open object).
+
+const identitiesCache = createTtlCache<PaletteIdentity[]>(IDENTITY_CACHE_MS);
+const identities = ref<PaletteIdentity[]>([]);
+
+async function refreshIdentities(): Promise<void> {
+  if (!access.value.identities) {
+    identities.value = [];
+    return;
+  }
+  try {
+    identities.value = await loadForPrincipal(identitiesCache, () =>
+      api.plugins.call(VPN_CORE_PLUGIN_ID, VPN_USERS_SERVICE, "list").then(paletteIdentities),
+    );
+  } catch {
+    // Keep the last list, as for nodes: the Users page says if one is gone.
+  }
+}
+
+const identityEntries = computed<Entry[]>(() => {
+  const users = itemsByName.value.get(VPN_USERS_PAGE);
+  if (!users) return [];
+  const now = Date.now();
+  return identities.value.map((identity) => {
+    const state = objectState(identity, now);
+    return {
+      key: `identity:${identity.id}`,
+      group: "identity",
+      label: identity.email,
+      detail: [identity.name, identity.group, state === "on" ? "" : t(`shell.command.objectState.${state}`)].filter(Boolean).join(" · ") || t("shell.command.identityDetail"),
+      terms: [identity.id, identity.name ?? "", identity.group ?? "", ...termsOf("vpnUsers")].filter(Boolean),
+      payload: { type: "go", to: { path: users.path, query: { open: identity.id } }, icon: UserRound, object: { kind: "identity", id: identity.id } },
+    };
+  });
+});
+
+// ── Subscription shares ───────────────────────────────────────────────────
+// The list Publishing reads, behind the scope Publishing asks for it
+// (proxy:admin). The projection keeps the name and the state and drops the
+// token, so the palette never holds a link; a share opens in Publishing's
+// sheet, which reads it itself.
+
+const sharesCache = createTtlCache<PaletteShare[]>(CACHE_MS);
+const shares = ref<PaletteShare[]>([]);
+
+async function refreshShares(): Promise<void> {
+  if (!access.value.shares) {
+    shares.value = [];
+    return;
+  }
+  try {
+    shares.value = await loadForPrincipal(sharesCache, () => api.subscriptionShares.list().then(paletteShares));
+  } catch {
+    // Keep the last list; Publishing says if a share is gone.
+  }
+}
+
+const shareEntries = computed<Entry[]>(() => {
+  if (!access.value.shares) return [];
+  const now = Date.now();
+  return shares.value.map((share) => {
+    const state = objectState(share, now);
+    return {
+      key: `share:${share.id}`,
+      group: "share",
+      label: share.slug,
+      detail: [t("shell.command.shareDetail"), state === "on" ? "" : t(`shell.command.objectState.${state}`)].filter(Boolean).join(" · "),
+      terms: [share.id, ...termsOf("publishing")],
+      payload: { type: "go", to: { path: "/platform/publishing", query: { open: share.id } }, icon: Link2, object: { kind: "share", id: share.id } },
+    };
+  });
+});
+
+// A list read for one principal is not served to the next one that signs in.
+watch(
+  () => auth.principal?.actor_id,
+  () => {
+    nodesCache.invalidate();
+    approvalsCache.invalidate();
+    identitiesCache.invalidate();
+    sharesCache.invalidate();
+    nodes.value = [];
+    pendingApprovals.value = [];
+    pendingSystemApprovals.value = [];
+    identities.value = [];
+    shares.value = [];
+    recentObjects.value = readStoredRecentObjects();
+  },
+);
+
+// ── Recent objects ────────────────────────────────────────────────────────
+
+function readStoredRecentObjects(): RecentObject[] {
+  try {
+    return readRecentObjects(localStorage.getItem(RECENT_OBJECTS_KEY), auth.principal?.actor_id);
+  } catch {
+    return [];
+  }
+}
+
+const recentObjects = ref<RecentObject[]>(readStoredRecentObjects());
+
+function pushRecentObjectFor(object: RecentObject) {
+  const owner = auth.principal?.actor_id;
+  if (!owner) return;
+  const next = pushRecentObject(readStoredRecentObjects(), object);
+  recentObjects.value = next;
+  try {
+    localStorage.setItem(RECENT_OBJECTS_KEY, serializeRecentObjects(owner, next));
+  } catch {
+    /* ignore quota / disabled storage */
+  }
+}
+
+/** Recent objects that are in a list this principal read: the row's words come from there. */
+const recentObjectEntries = computed<Entry[]>(() => {
+  const byKey = new Map<string, Entry>();
+  for (const entry of [...nodeEntries.value, ...approvalEntries.value, ...identityEntries.value, ...shareEntries.value]) byKey.set(entry.key, entry);
+  return recentObjects.value
+    .map((object) => byKey.get(`${object.kind}:${object.id}`))
+    .filter((entry): entry is Entry => entry !== undefined)
+    .map((entry) => ({ ...entry, key: `recent:${entry.key}` }));
+});
 
 // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -301,7 +483,7 @@ const actionEntries = computed<Entry[]>(() => {
   }
   // vpn-core's page state has no "new identity" key yet, so the action lands
   // on Users, where New identity is one click; the plugin half is queued.
-  const vpnUsers = itemsByName.value.get("plugin:latticenet.vpn-core:users");
+  const vpnUsers = itemsByName.value.get(VPN_USERS_PAGE);
   if (vpnUsers?.plugin) {
     out.push({
       key: "action:add-vpn-user",
@@ -312,7 +494,7 @@ const actionEntries = computed<Entry[]>(() => {
       payload: { type: "nav", item: vpnUsers, icon: UserPlus },
     });
   }
-  if (itemsByName.value.has("platform-publishing") && auth.can("proxy:admin")) {
+  if (access.value.shares) {
     out.push({
       key: "action:share-subscription",
       group: "action",
@@ -369,6 +551,8 @@ const GROUP_LABEL: Record<PaletteGroup, string> = {
   action: "shell.command.actions",
   approval: "shell.command.groupApprovals",
   node: "shell.command.groupNodes",
+  identity: "shell.command.groupIdentities",
+  share: "shell.command.groupShares",
   page: "shell.command.groupPages",
 };
 
@@ -379,6 +563,8 @@ const rankedGroups = computed(() => {
     ...actionEntries.value,
     ...approvalEntries.value,
     ...nodeEntries.value,
+    ...identityEntries.value,
+    ...shareEntries.value,
     ...pageEntries.value,
   ];
   const ranked = rankPaletteEntries(entries, query.value, LIMITS);
@@ -396,9 +582,10 @@ const rankedGroups = computed(() => {
   return groups;
 });
 
-/** Browsing (no query): recent pages, the actions, then every page by section. */
+/** Browsing (no query): recent pages and recent objects, the actions, then every page by section. */
 const browseGroups = computed(() => [
   ...(recentEntries.value.length ? [{ id: "recent", label: t("shell.command.recent"), entries: recentEntries.value }] : []),
+  ...(recentObjectEntries.value.length ? [{ id: "recent-objects", label: t("shell.command.recentObjects"), entries: recentObjectEntries.value }] : []),
   ...(actionEntries.value.length ? [{ id: "actions", label: t("shell.command.actions"), entries: actionEntries.value }] : []),
   ...pageGroups.value.map((group) => ({ id: `section-${group.id}`, label: group.label, entries: group.items.map((item) => pageEntry(item, group, false)) })),
 ]);
@@ -437,6 +624,7 @@ function onPick(value: unknown) {
     if (router.currentRoute.value.path !== payload.item.path) void router.push(payload.item.path);
     return;
   }
+  if (payload.object) pushRecentObjectFor(payload.object);
   void router.push(payload.to);
 }
 
@@ -487,14 +675,17 @@ async function runApproveSystemEvents(): Promise<void> {
 }
 
 // Reset the query and refresh recents each time the palette opens; the input
-// auto-focuses on mount (reka-ui `autoFocus`). Nodes and approvals ride the
-// same open event, behind their caches.
+// auto-focuses on mount (reka-ui `autoFocus`). Nodes, approvals, identities
+// and shares ride the same open event, behind their caches.
 watch(isOpen, (open) => {
   if (open) {
     search.value = "";
     recentNames.value = readRecents();
+    recentObjects.value = readStoredRecentObjects();
     void refreshApprovals();
     void refreshNodes();
+    void refreshIdentities();
+    void refreshShares();
   }
 });
 
