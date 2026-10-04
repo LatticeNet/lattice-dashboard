@@ -1203,6 +1203,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
              title says why, in one sentence per case. -->
         <Button
           variant="outline"
+          size="sm"
           :disabled="!canAdmin || !rotateOpenable(headerRotate)"
           :title="rotateReason(headerRotate)"
           data-testid="rotate-knock"
@@ -1212,6 +1213,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
           {{ $t('networking.sshGuard.actions.rotateKnock') }}
         </Button>
         <Button
+          size="sm"
           :disabled="!canAdmin || !armableSelected.length"
           :title="armableSelected.length ? undefined : $t('networking.sshGuard.actions.armSelectedNone')"
           @click="openSheet(armableSelected.map((s) => s.nodeId))"
