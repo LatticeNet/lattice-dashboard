@@ -1593,6 +1593,7 @@ export default {
           quietHours: "The rule's quiet hours held it until {until}.",
           withdrawnOpen: "Not sent: quiet hours held it, and when they ended the incident was already resolved, acknowledged or snoozed.",
           withdrawnRecovery: "Not sent: the down message it answers was withdrawn when quiet hours ended, so this channel never heard about the problem.",
+          withheldRecovery: "Not sent: this rule never sent the down message it answers, so its channels never heard about the problem.",
           escalation: "Re-sent because nobody acknowledged the incident, at Bark level {level}.",
         },
         receipts: "Attempts",
