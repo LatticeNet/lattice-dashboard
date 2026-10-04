@@ -47,14 +47,26 @@ test("a passed renewal explains a quiet node only when it went quiet on or after
   assert.equal(likelyUnpaid(later, false, "2026-09-27T03:10:00Z"), false, "renewal still ahead");
 });
 
-test("the sheet reads the machine list again when it is old or has no row for the node it opens", () => {
+test("the sheet reads the machine list again when it is old or has no row for a node that enrolled since", () => {
   const rows = [machine({})];
-  assert.equal(machinesNeedRead(undefined, "node_1", 0, 1_000), true, "never read");
-  assert.equal(machinesNeedRead(rows, "node_1", 1_000, 1_000 + MACHINES_FRESH_MS - 1), false, "a fresh list with the row serves it");
-  assert.equal(machinesNeedRead(rows, "node_1", 1_000, 1_000 + MACHINES_FRESH_MS + 1), true, "past a minute");
-  // A node enrolled after the read is missing from it; reading again tells that from a lack of access.
-  assert.equal(machinesNeedRead(rows, "node_new", 1_000, 1_001), true);
-  assert.equal(machinesNeedRead([], "node_1", 1_000, 1_001), true);
+  const read = (listed: string[], at = 1_000) => ({ at, listed: new Set(listed) });
+  assert.equal(machinesNeedRead(undefined, "node_1", read([], 0), 1_000), true, "never read");
+  assert.equal(machinesNeedRead(rows, "node_1", read(["node_1"]), 1_000 + MACHINES_FRESH_MS - 1), false, "a fresh list with the row serves it");
+  assert.equal(machinesNeedRead(rows, "node_1", read(["node_1"]), 1_000 + MACHINES_FRESH_MS + 1), true, "past a minute");
+  // A node the page did not list when the read started may have enrolled after it; reading again tells that from a lack of access.
+  assert.equal(machinesNeedRead(rows, "node_new", read(["node_1"]), 1_001), true);
+  assert.equal(machinesNeedRead([], "node_1", read([]), 1_001), true, "a read that started before the page's list landed");
+});
+
+test("stepping through nodes the principal may not read re-reads nothing once a read could have listed them", () => {
+  // The page listed node_1 to node_4 when the read started; the principal may read only node_1.
+  const rows = [machine({})];
+  const read = { at: 1_000, listed: new Set(["node_1", "node_2", "node_3", "node_4"]) };
+  for (const [step, id] of ["node_2", "node_3", "node_4", "node_2"].entries()) {
+    assert.equal(machinesNeedRead(rows, id, read, 1_001 + step * 300), false, `${id} at step ${step}: the missing row is the answer`);
+  }
+  // Past a minute the list is read again whatever it holds (a grant may have changed).
+  assert.equal(machinesNeedRead(rows, "node_2", read, 1_000 + MACHINES_FRESH_MS + 1), true);
 });
 
 test("the provider console is revealed only with inventory:admin; without it the row says a link is stored", () => {

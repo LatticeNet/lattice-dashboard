@@ -5,9 +5,11 @@ import {
   SYSTEM_WRITER,
   StaleLoadError,
   VPN_USERS_PAGE,
+  createPrincipalCache,
   createTtlCache,
   filterPendingSystemApprovals,
   paletteListAccess,
+  wantsIdentityList,
 } from "../commandPaletteModel.ts";
 
 test("only pending items written by the server itself qualify", () => {
@@ -132,6 +134,67 @@ test("a failed read that invalidate overtook rejects as stale, so the caller kee
   cache.invalidate();
   read.reject(new Error("offline"));
   await assert.rejects(load, StaleLoadError);
+});
+
+test("a list cached for one principal is not served to the next, even when nothing invalidated the cache", async () => {
+  let actor: string | undefined = "alice";
+  const cache = createPrincipalCache<string>(30_000, () => actor, () => 0);
+  assert.equal(await cache.load(async () => "alice's list"), "alice's list");
+  assert.equal(await cache.load(async () => "unused"), "alice's list", "the same principal is served from the cache");
+  actor = "bob";
+  let reads = 0;
+  const answer = await cache.load(async () => {
+    reads += 1;
+    return "bob's list";
+  });
+  assert.equal(answer, "bob's list", "a new principal reads its own list");
+  assert.equal(reads, 1);
+  actor = undefined;
+  assert.equal(await cache.load(async () => "signed out"), "signed out", "nor is it served once signed out");
+});
+
+test("a read for one principal that lands after another signed in rejects as stale", async () => {
+  let actor: string | undefined = "alice";
+  const cache = createPrincipalCache<string>(30_000, () => actor, () => 0);
+  const read = deferred<string>();
+  const load = cache.load(() => read.promise);
+  actor = "bob";
+  read.resolve("alice's list");
+  await assert.rejects(load, StaleLoadError, "the caller does not write alice's list while bob is signed in");
+
+  // Signing out while the read is on the wire is a change too.
+  actor = "carol";
+  const later = deferred<string>();
+  const outLoad = cache.load(() => later.promise);
+  actor = undefined;
+  later.resolve("carol's list");
+  await assert.rejects(outLoad, StaleLoadError);
+
+  // Bob's own read after alice's landed is not handed alice's list.
+  actor = "bob";
+  assert.equal(await cache.load(async () => "bob's list"), "bob's list");
+});
+
+test("a read that finishes for the principal that started it resolves, and joins one fetch", async () => {
+  const cache = createPrincipalCache<string>(30_000, () => "alice", () => 0);
+  const read = deferred<string>();
+  let fetches = 0;
+  const fetcher = () => {
+    fetches += 1;
+    return read.promise;
+  };
+  const a = cache.load(fetcher);
+  const b = cache.load(fetcher);
+  read.resolve("alice's list");
+  assert.deepEqual(await Promise.all([a, b]), ["alice's list", "alice's list"]);
+  assert.equal(fetches, 1);
+});
+
+test("the identity list is read for an opening that searches, or that shows a recent identity, and not for one that browses", () => {
+  assert.equal(wantsIdentityList("", []), false, "opening to browse pages reads nothing");
+  assert.equal(wantsIdentityList("   ", [{ kind: "node", id: "node_1" }, { kind: "share", id: "shr_1" }]), false, "nor do recent nodes and shares");
+  assert.equal(wantsIdentityList("a", []), true, "the first keystroke asks");
+  assert.equal(wantsIdentityList("", [{ kind: "node", id: "node_1" }, { kind: "identity", id: "usr_1" }]), true, "a recent identity takes its words from the list");
 });
 
 test("the palette reads each list only behind the gate of the page that opens it", () => {

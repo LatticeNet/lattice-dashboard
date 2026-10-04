@@ -11,7 +11,8 @@
  * `createTtlCache` backs the palette's on-open fetch: opening ⌘K must feel
  * instant, so a fresh result is served for 30s; a failed fetch is never
  * cached, so the next open retries instead of hiding the action on a
- * transient blip. `invalidate` also disowns a fetch still in flight, so a
+ * transient blip. `invalidate` also disowns a fetch still in flight, and
+ * `createPrincipalCache` keys the cache to the principal that loads it, so a
  * list read for one principal never lands after the next one signs in.
  */
 
@@ -91,6 +92,48 @@ export function createTtlCache<T>(ttlMs: number, now: () => number = () => Date.
       inflight = undefined;
     },
   };
+}
+
+/**
+ * A TtlCache that belongs to the principal signed in when it is loaded.
+ * `actor` names that principal (its actor id, undefined when signed out). A
+ * value read for one principal is never served to another: a load under a
+ * different actor than the last one drops the cached value and disowns the
+ * read in flight first. A load whose actor changed while it waited rejects
+ * with StaleLoadError, so the caller does not write one principal's list into
+ * state while the next one is signed in. The palette's principal watcher
+ * still clears what is on screen; this keeps the cache itself from depending
+ * on that watcher.
+ */
+export function createPrincipalCache<T>(ttlMs: number, actor: () => string | undefined, now?: () => number): TtlCache<T> {
+  const cache = createTtlCache<T>(ttlMs, now);
+  let owner: string | undefined;
+  return {
+    async load(fetcher) {
+      const mine = actor();
+      if (mine !== owner) {
+        cache.invalidate();
+        owner = mine;
+      }
+      const value = await cache.load(fetcher);
+      if (actor() !== mine) throw new StaleLoadError();
+      return value;
+    },
+    invalidate: () => cache.invalidate(),
+  };
+}
+
+/**
+ * Whether the palette reads the identity list now. The list rides vpn-core's
+ * users/list on the plugin call path, where the server writes one plugin.call
+ * audit row per call, and the method answers every identity at once (it takes
+ * no filter). So the palette reads it only when it has a use for it: the
+ * operator typed something, and an address may be what they are after, or
+ * the browse view holds a recent identity, whose row takes its words from the
+ * list. Opening the palette to pick a page or a recent node reads nothing.
+ */
+export function wantsIdentityList(query: string, recent: readonly RecentObject[]): boolean {
+  return query.trim() !== "" || recent.some((object) => object.kind === "identity");
 }
 
 /**
