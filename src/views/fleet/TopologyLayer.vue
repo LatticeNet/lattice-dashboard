@@ -8,7 +8,9 @@
  * and when they were heard; click for the node sheet (?peek=), the pair's
  * series on the Latency layer, or the monitor sheet (?open=, the page's).
  *
- * Under 768 px, and on ?as=list, the same model reads as a list of paths.
+ * Under 768 px the same model reads as a list of paths. On a touch screen
+ * wider than that the list is the default and the graph is one tap away
+ * (?as=graph); with a mouse the graph is the default (?as=list for the list).
  *
  * The page passes what it already polls (nodes, monitors, incidents); this
  * layer reads the probe plan and rollups (every 30 s, like Latency) and the
@@ -64,6 +66,7 @@ const canRead = computed(() => auth.can("monitor:read"));
 const canReadNodes = computed(() => auth.can("node:read"));
 const canReadChains = computed(() => auth.can("proxy:read"));
 const wide = useMediaQuery("(min-width: 768px)");
+const finePointer = useMediaQuery("(pointer: fine)");
 const now = useNow({ interval: 5000 });
 
 const planQuery = useAsyncData(
@@ -88,11 +91,22 @@ const layerParam = bindQueryParam<TopologyLayer>(props.owned, "topo", {
   parse: (raw) => (TOPOLOGY_LAYERS.includes(raw as TopologyLayer) ? (raw as TopologyLayer) : "all"),
   format: (value) => (value === "all" ? undefined : value),
 });
-const asParam = bindQueryParam<"graph" | "list">(props.owned, "as", {
-  parse: (raw) => (raw === "list" ? "list" : "graph"),
-  format: (value) => (value === "graph" ? undefined : value),
+// No ?as= means the default for this screen: the graph with a mouse, the
+// list on touch (32 px rows and a 14 px stroke are not touch targets).
+const asParam = bindQueryParam<"auto" | "graph" | "list">(props.owned, "as", {
+  parse: (raw) => (raw === "list" || raw === "graph" ? raw : "auto"),
+  format: (value) => (value === "auto" ? undefined : value),
 });
-const presentation = computed(() => (wide.value ? asParam.value : "list"));
+const defaultPresentation = computed<"graph" | "list">(() => (finePointer.value ? "graph" : "list"));
+const presentation = computed<"graph" | "list">(() => {
+  if (!wide.value) return "list";
+  return asParam.value === "auto" ? defaultPresentation.value : asParam.value;
+});
+function present(value: "graph" | "list"): void {
+  asParam.value = value === defaultPresentation.value ? "auto" : value;
+}
+
+/* ---- Reads ---- */
 
 /** The last chains read; a failed refresh keeps the last good list, a session without proxy:read has none. */
 const chains = computed(() => (canReadChains.value ? chainsQuery.data.value : undefined));
@@ -288,14 +302,14 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
             {{ $t(`fleet.monitoring.latency.window.${w}`) }}
           </button>
         </div>
-        <div v-if="wide" class="flex rounded-md border border-border p-0.5 text-xs md:ms-auto" role="group" :aria-label="$t('fleet.monitoring.topology.viewLabel')">
+        <div v-if="wide" class="flex rounded-md border border-border p-0.5 text-xs md:ms-auto" role="group" :aria-label="$t('fleet.monitoring.topology.viewLabel')" data-testid="topology-presentation">
           <button
             v-for="v in (['graph', 'list'] as const)"
             :key="v"
             type="button"
-            :class="cn(SEGMENT, asParam === v ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
-            :aria-pressed="asParam === v"
-            @click="asParam = v"
+            :class="cn(SEGMENT, presentation === v ? 'bg-muted font-medium text-foreground' : 'text-muted-foreground hover:text-foreground')"
+            :aria-pressed="presentation === v"
+            @click="present(v)"
           >
             {{ $t(`fleet.monitoring.topology.view.${v}`) }}
           </button>
