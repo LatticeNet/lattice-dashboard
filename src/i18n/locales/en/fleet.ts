@@ -1618,6 +1618,15 @@ export default {
       notDurable: "This server keeps incidents in memory only: a restart forgets them and their acknowledgements.",
       pendingNote: "{n} pending: it becomes an incident if the problem lasts. | {n} pending: each becomes an incident if its problem lasts.",
       showPending: "Show pending",
+      // While rows are held in place, incidents that belong above them wait below; this says so.
+      arrivals: {
+        critical: "{n} new critical incident | {n} new critical incidents",
+        mixed: "{n} new incident, {c} critical | {n} new incidents, {c} critical",
+        plain: "{n} new incident | {n} new incidents",
+        show: "Show",
+        showLabel: "Show the new incidents in their place",
+        hint: "Press N in the list to reach Show.",
+      },
       proof: {
         open: "{n} open | {n} open",
         acknowledged: "{n} acknowledged",
@@ -1741,6 +1750,9 @@ export default {
         start: "Start window",
         create: "Create window",
         endNow: "End now",
+        endNowLabel: "End now: {name}",
+        editLabel: "Edit: {name}",
+        deleteLabel: "Delete: {name}",
         endTitle: 'End maintenance window "{name}" now?',
         endHeld: "{n} open incident it holds will notify on the next check: {names}. | {n} open incidents it holds will notify on the next check: {names}.",
         heldItem: "{kind} on {node}",

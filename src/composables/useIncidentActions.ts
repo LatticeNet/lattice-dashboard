@@ -19,7 +19,9 @@
  * its list as one), a touch has not scrolled since, a row's menu is open, or
  * an Undo has keyboard focus. `keep()` adds anything else an action leaves
  * on screen to the same group (End now's ended line). Call `release()` when
- * the caller's filters change.
+ * the caller's filters change, or when the operator asks for the rows the
+ * hold keeps below their place (`heldRows` feeds incidentsModel.arrivals,
+ * which finds them; the caller says they are there and offers Show).
  *
  * Focus follows the action instead of falling to the page: after an
  * acknowledgement to the row's Undo, after a failed one back to Acknowledge,
@@ -52,7 +54,15 @@ function keyboardOnUndo(): boolean {
   return active instanceof HTMLElement && active.matches("[data-incident-undo], [data-window-undo]") && active.matches(":focus-visible");
 }
 
-export function useIncidentActions(refresh: () => unknown, options: { holdMs?: number; zone?: () => HTMLElement | null | undefined } = {}) {
+export function useIncidentActions(
+  refresh: () => unknown,
+  options: {
+    holdMs?: number;
+    zone?: () => HTMLElement | null | undefined;
+    /** The caller's incidents, read when a hold begins (`heldRows`). */
+    rows?: () => readonly Incident[];
+  } = {},
+) {
   const { t } = useI18n();
   const busy = ref<Set<string>>(new Set());
   const focusRequest = ref<IncidentFocusRequest | null>(null);
@@ -65,6 +75,8 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
   const pinned = shallowRef<ReadonlySet<string>>(new Set());
   /** Other things kept on screen with the rows (keep()). */
   const kept = shallowRef<ReadonlySet<string>>(new Set());
+  /** Each incident as it was when the hold began: one that sorts higher now, or is new, has arrived. */
+  const heldRows = shallowRef<ReadonlyMap<string, Incident> | null>(null);
 
   const pointer = createPointerWatch();
 
@@ -78,6 +90,8 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     blocked: () => pointer.holds(options.zone?.()?.getBoundingClientRect() ?? null) || menuOpen() || keyboardOnUndo(),
     changed: () => {
       const state = hold.state();
+      if (!state.order) heldRows.value = null;
+      else if (!held.value && options.rows) heldRows.value = new Map(options.rows().map((incident) => [incident.id, incident]));
       held.value = state.order;
       undoable.value = state.undoable;
       undone.value = state.undone;
@@ -213,6 +227,7 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     undoable,
     undone,
     kept,
+    heldRows,
     focusRequest,
     focusDone,
     ack,

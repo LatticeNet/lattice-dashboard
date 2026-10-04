@@ -163,6 +163,52 @@ export function visibleIncidents(
   return holdOrder(sorted, held);
 }
 
+/** The held state behind arrivals(): the order shown, the rows acted on, and each incident as it was when the hold began. */
+export interface HeldView {
+  order: readonly string[] | null | undefined;
+  pinned?: ReadonlySet<string> | null;
+  before?: ReadonlyMap<string, Incident> | null;
+}
+
+/**
+ * Rows a held order keeps out of their place. While the operator acts, the
+ * rows hold still, and an incident that arrives meanwhile goes after them,
+ * where it may sit below rows it should be above: a reopened critical under
+ * a warning. An incident has arrived when it is new since the hold began, or
+ * would now sort above where it sorted then (it reopened, its snooze ended,
+ * it stopped pending); with no `before`, any row the held order does not
+ * know has arrived. Such a row is held back when it would sort above a row
+ * shown before it, or, with `limit` (Home's three), when it belongs among
+ * the first `limit` rows but is not shown there. Rows acted on (pinned) do
+ * not count as rows shown above: the hold keeps them out of place on
+ * purpose, and a row another operator acknowledged sinks rather than
+ * arrives. The list cannot move held-back rows up under a resting pointer,
+ * so it says they are there (HoldArrivals). Worst first.
+ */
+export function arrivals(shown: readonly Incident[], held: HeldView, now: number, limit?: number): Incident[] {
+  if (!held.order?.length) return [];
+  const inOrder = new Set(held.order);
+  const arrived = (incident: Incident): boolean => {
+    if (!held.before) return !inOrder.has(incident.id);
+    const was = held.before.get(incident.id);
+    return !was || compareIncidents(incident, was, now) < 0;
+  };
+  const out = new Set<Incident>();
+  const rest = shown.filter((incident) => !held.pinned?.has(incident.id));
+  const rank = new Map([...rest].sort((a, b) => compareIncidents(a, b, now)).map((incident, index) => [incident.id, index]));
+  let lowestAbove = -1;
+  for (const incident of rest) {
+    const at = rank.get(incident.id) ?? 0;
+    if (at < lowestAbove && arrived(incident)) out.add(incident);
+    lowestAbove = Math.max(lowestAbove, at);
+  }
+  if (limit !== undefined) {
+    const top = new Set([...shown].sort((a, b) => compareIncidents(a, b, now)).slice(0, limit));
+    for (const incident of shown.slice(limit)) if (top.has(incident) && arrived(incident)) out.add(incident);
+  }
+  return [...out].sort((a, b) => compareIncidents(a, b, now));
+}
+
 /** The kinds present, for the kind filter; known kinds first in their fixed order. */
 export function kindsPresent(incidents: readonly Incident[]): string[] {
   const present = new Set(incidents.map((incident) => incident.kind));
@@ -277,12 +323,22 @@ export function homeIncidents(
   now: number,
   max = HOME_INCIDENTS_MAX,
   held?: readonly string[] | null,
-): { shown: Incident[]; more: number; total: number; nodeKinds: Map<string, Set<string>>; pendingNodes: Map<string, Map<string, number | undefined>> } {
+  hold?: Omit<HeldView, "order">,
+): {
+  shown: Incident[];
+  more: number;
+  total: number;
+  /** Active incidents the held order keeps below their place or out of the rows shown (arrivals). */
+  arrived: Incident[];
+  nodeKinds: Map<string, Set<string>>;
+  pendingNodes: Map<string, Map<string, number | undefined>>;
+} {
   const active = holdOrder(
     incidents.filter(isActive).sort((a, b) => compareIncidents(a, b, now)),
     held,
   );
   const shown = active.slice(0, max);
+  const arrived = arrivals(active, { order: held, ...hold }, now, max);
   const nodeKinds = new Map<string, Set<string>>();
   for (const incident of shown) {
     if (!incident.node_id) continue;
@@ -299,7 +355,7 @@ export function homeIncidents(
     kinds.set(incident.kind, Number.isNaN(opens) ? undefined : opens);
     pendingNodes.set(incident.node_id, kinds);
   }
-  return { shown, more: Math.max(0, active.length - max), total: active.length, nodeKinds, pendingNodes };
+  return { shown, more: Math.max(0, active.length - max), total: active.length, arrived, nodeKinds, pendingNodes };
 }
 
 /**
