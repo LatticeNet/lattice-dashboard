@@ -235,3 +235,30 @@ test("a mouse after a tap ends the finger's hold: the mouse is the pointer now",
   watch.pointer("mouse", 1000, 10, false);
   assert.equal(watch.holds({ left: 0, top: 100, right: 800, bottom: 900 }), false);
 });
+
+test("releaseRows() puts the rows in their place but keeps an ended banner line, which goes with the group later", () => {
+  const { hold, time } = setup();
+  hold.keep("window:mw_kernel");
+  hold.begin(["dmit4", "bandwagon"]);
+  hold.acked("dmit4");
+  hold.releaseRows();
+  assert.equal(hold.state().order, null);
+  assert.equal(hold.state().pinned.size, 0);
+  assert.equal(hold.state().undoable.size, 0);
+  assert.equal(hold.state().kept.has("window:mw_kernel"), true, "the line above the list stays");
+  time.advance(10_000);
+  assert.equal(hold.state().kept.size, 0, "and goes when the group's time is up");
+});
+
+test("releaseRows() with only rows held ends the group", () => {
+  const { hold, changes } = setup();
+  hold.begin(["a"]);
+  hold.snoozed("a");
+  const before = changes();
+  hold.releaseRows();
+  assert.equal(hold.due(), false);
+  assert.equal(hold.state().pinned.size, 0);
+  assert.equal(changes(), before + 1);
+  hold.releaseRows();
+  assert.equal(changes(), before + 1, "nothing left to release");
+});

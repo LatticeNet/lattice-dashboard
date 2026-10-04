@@ -65,6 +65,12 @@ export interface ActionHold {
   due(): boolean;
   /** Drop the group at once: the view changed under it (a filter, a search). */
   release(): void;
+  /**
+   * Put the rows in their place now (the operator pressed Show) but keep
+   * what `keep()` holds: an ended banner line above the list going at the
+   * same moment would move the whole list under the finger that pressed.
+   */
+  releaseRows(): void;
   dispose(): void;
 }
 
@@ -157,6 +163,11 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
     check,
     due: () => active() && now() >= deadline,
     release,
+    releaseRows() {
+      if (state.order === null && state.undoable.size === 0 && state.pinned.size === 0) return;
+      set({ order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY });
+      if (!active()) release();
+    },
     dispose() {
       if (timer !== undefined) clearTimer(timer);
       timer = undefined;

@@ -236,5 +236,7 @@ export function useIncidentActions(
     /** Keep `key` on screen with the rows until the group goes. */
     keep: (key: string) => hold.keep(key),
     release: () => hold.release(),
+    /** Put the rows in their place, keeping kept lines (Show on the arrivals notice). */
+    releaseRows: () => hold.releaseRows(),
   };
 }
