@@ -399,7 +399,25 @@ const LEGEND = computed(() => [
             <Button v-if="canAdmin" size="sm" type="button" @click="configOpen = true">{{ $t('fleet.monitoring.latency.configure') }}</Button>
           </EmptyState>
           <template v-else>
-            <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+            <div class="space-y-3">
+            <!-- The key in one row above the matrix, as on Topology, so the matrix keeps the page's width. -->
+            <aside class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" data-testid="latency-legend" :aria-label="$t('fleet.monitoring.latency.legend.label')">
+              <span v-for="item in LEGEND" :key="item.key" class="inline-flex items-center gap-1.5">
+                <span :class="cn('size-2.5 rounded-[2px]', item.swatch)" aria-hidden="true" />
+                {{ item.label }}
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span :class="cn('size-2.5 rounded-[2px] border border-destructive/50', FAILING_TINT)" aria-hidden="true" />
+                {{ $t('fleet.monitoring.latency.legend.failing') }}
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span :class="cn('size-2.5 rounded-[2px] border border-muted-foreground/50', UNKNOWN_HATCH)" aria-hidden="true" />
+                {{ $t('fleet.monitoring.latency.legend.unknown') }}
+              </span>
+              <span>{{ $t('fleet.monitoring.latency.legend.partial', { pct: 50 }) }}</span>
+              <span>{{ $t('fleet.monitoring.latency.legend.quiet') }}</span>
+              <span class="hidden basis-full lg:block">{{ $t('fleet.monitoring.latency.legend.method') }}</span>
+            </aside>
             <!-- Shrink-wrapped: a column per source stays a cell wide, so one source does not stretch into a bar. -->
             <div
               class="w-fit max-w-full overflow-x-auto rounded-lg border border-border bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -466,7 +484,7 @@ const LEGEND = computed(() => [
                         class="flex max-w-72 items-center font-medium hover:underline pointer-coarse:min-h-11"
                         :title="row.node.name"
                       ><span class="truncate">{{ row.node.name || row.node.node_id }}</span></RouterLink>
-                      <span class="block max-w-72 truncate text-xs text-muted-foreground" :title="targetDetail(row.node.node_id)">
+                      <span class="line-clamp-2 max-w-72 text-xs text-muted-foreground" :title="targetDetail(row.node.node_id)">
                         <span v-if="row.node.country" class="font-mono">{{ row.node.country }}</span>
                         <template v-if="row.node.country && targetDetail(row.node.node_id)"> · </template>
                         <span :class="row.node.target === 'not_probeable' ? '' : 'font-mono'">{{ targetDetail(row.node.node_id) }}</span>
@@ -516,24 +534,6 @@ const LEGEND = computed(() => [
               </table>
             </div>
 
-            <!-- The key beside the matrix where there is room, below it on a phone; it stays in view while the rows scroll. -->
-            <aside class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground lg:sticky lg:top-4 lg:w-60 lg:flex-col lg:items-start" data-testid="latency-legend" :aria-label="$t('fleet.monitoring.latency.legend.label')">
-              <span v-for="item in LEGEND" :key="item.key" class="inline-flex items-center gap-1.5">
-                <span :class="cn('size-2.5 rounded-[2px]', item.swatch)" aria-hidden="true" />
-                {{ item.label }}
-              </span>
-              <span class="inline-flex items-center gap-1.5">
-                <span :class="cn('size-2.5 rounded-[2px] border border-destructive/50', FAILING_TINT)" aria-hidden="true" />
-                {{ $t('fleet.monitoring.latency.legend.failing') }}
-              </span>
-              <span class="inline-flex items-center gap-1.5">
-                <span :class="cn('size-2.5 rounded-[2px] border border-muted-foreground/50', UNKNOWN_HATCH)" aria-hidden="true" />
-                {{ $t('fleet.monitoring.latency.legend.unknown') }}
-              </span>
-              <span class="lg:mt-1">{{ $t('fleet.monitoring.latency.legend.partial', { pct: 50 }) }}</span>
-              <span>{{ $t('fleet.monitoring.latency.legend.quiet') }}</span>
-              <span class="hidden lg:mt-1 lg:block">{{ $t('fleet.monitoring.latency.legend.method') }}</span>
-            </aside>
             </div>
           </template>
         </template>
