@@ -1602,8 +1602,11 @@ export default {
         critical: "{n} 个新的严重事件 | {n} 个新的严重事件",
         mixed: "{n} 个新事件，其中 {c} 个严重 | {n} 个新事件，其中 {c} 个严重",
         plain: "{n} 个新事件 | {n} 个新事件",
+        movedCritical: "{n} 个严重事件上移 | {n} 个严重事件上移",
+        moved: "{n} 个事件上移 | {n} 个事件上移",
+        andMoved: "{text}，{n} 个上移",
         show: "显示",
-        showLabel: "把新事件排到它们该在的位置",
+        showLabel: "显示这些事件，排到它们该在的位置",
         hint: "在列表中按 N 可跳到「显示」。",
       },
       proof: {

@@ -36,6 +36,7 @@ import {
   listedWindows,
   parseIncidentFilter,
   releasedAndPaged,
+  splitArrivals,
   visibleIncidents,
   windowCoverage,
   windowHeldIncidents,
@@ -103,14 +104,20 @@ const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.v
 // hides what arrives meanwhile: rows held below their place are named above
 // the list (HoldArrivals), and Show puts every row in its place.
 const arrived = computed(() => arrivals(rows.value, { order: actions.held.value, pinned: actions.pinned.value, before: actions.heldRows.value }, props.now));
+const arrivedSplit = computed(() => splitArrivals(arrived.value, actions.heldRows.value));
 
-async function showArrivals(): Promise<void> {
+/**
+ * Show puts the rows in their place (an ended banner line stays: it would move
+ * the list under the finger) and focuses the worst row it named, in place of
+ * the notice that goes. Only a key scrolls to it: a tap or click leaves the
+ * page where it is, so the finger is not over some other row's control.
+ */
+async function showArrivals(byKeyboard: boolean): Promise<void> {
   const first = arrived.value[0]?.id;
   const fromShow = Boolean(document.activeElement?.closest("[data-hold-arrivals-show]"));
-  actions.release();
+  actions.releaseRows();
   await nextTick();
-  // Show is gone with the notice: focus goes to the worst row it named.
-  if (first && fromShow) root.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(first)}"]`)?.focus();
+  if (first && fromShow) root.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(first)}"]`)?.focus({ preventScroll: !byKeyboard });
 }
 
 /** N inside the list reaches Show, so a keyboard user deep in the rows does not Tab back for it. */
@@ -442,7 +449,7 @@ function coverageText(window: MaintenanceWindow): string {
     </div>
 
     <div class="relative" @keydown="onListKey">
-      <HoldArrivals :arrived="arrived" @show="showArrivals" />
+      <HoldArrivals :fresh="arrivedSplit.fresh" :moved="arrivedSplit.moved" @show="showArrivals" />
       <section ref="listSection" class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')">
         <div v-if="error && !response" class="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-muted-foreground">
           <span class="min-w-0 break-words">{{ $t('fleet.keepalive.readFailed', { reason: proofReason(error) }) }}</span>
