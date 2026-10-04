@@ -2,9 +2,12 @@
  * A shell tokenizer for reading scripts, not for running them.
  *
  * The console shows scripts a node ran or will run: a task's script after
- * step-up, and the plans that are shell (SSH Guard's apply, the witness
- * configure, the line-chain apply). Highlighting them is a reading aid only,
- * so this is deliberately small and audited rather than a grammar:
+ * step-up (the server's own apply scripts, the witness and line-chain ones
+ * among them, are task scripts). A plan is coloured only if it declares
+ * itself shell (looksLikeShell); no plan the server renders today does, so
+ * plans get the view's line numbers and wrap without colour. Highlighting is
+ * a reading aid only, so this is deliberately small and audited rather than
+ * a grammar:
  *
  * - Lossless. Every character of the input lands in exactly one token, in
  *   order, and the lines joined with "\n" are the input. The view renders
@@ -14,11 +17,19 @@
  *   heredoc runs to the end as what it was, and nothing throws.
  * - Linear and flat. One pass over the characters with an explicit frame
  *   stack, so a deeply nested `$( $( ... ) )` cannot overflow the call stack.
+ * - Never inert by mistake. A comment and a heredoc body are the two colours
+ *   that say "the shell does not run this", so they follow the shell's own
+ *   rules where a looser reading would hide a command: `<<` inside `(( ))`,
+ *   `for (( ))`, `$(( ))` and `$[ ]` is a shift, not a heredoc, and a comment
+ *   inside backquotes ends at the closing backquote.
  *
  * Known approximations, all of which only change a colour: a `case` pattern's
  * `)` inside `$( ... )` closes the substitution early; a heredoc opened inside
  * a double-quoted string that spans lines starts at the next unquoted line
- * end; expansions inside an unquoted heredoc body are found per line.
+ * end; expansions inside an unquoted heredoc body are found per line; the
+ * commands of `((cmd) )`, which the shell reads as two subshells once the
+ * first `)` is not followed by another, keep arithmetic colours up to that
+ * `)`.
  */
 
 export type ShellTokenKind =
@@ -81,10 +92,16 @@ const NAME_START = /[A-Za-z_]/;
 const NAME_CHAR = /[A-Za-z0-9_]/;
 
 type Frame =
-  | { t: "cmd"; end: "" | ")" | "`"; depth: number; atCommand: boolean; pendingIn: boolean }
+  /** `start` is where the command text begins: a comment may open there even with no blank before it. */
+  | { t: "cmd"; end: "" | ")" | "`"; depth: number; atCommand: boolean; pendingIn: boolean; start: number }
   | { t: "dq" }
   | { t: "param"; depth: number }
-  | { t: "arith"; depth: number };
+  /**
+   * Arithmetic. `$((` and the `((` command (`command`) close at `))`; the
+   * deprecated `$[` closes at `]` (`bracket`). `depth` counts the parentheses
+   * or brackets opened inside.
+   */
+  | { t: "arith"; depth: number; bracket: boolean; command: boolean };
 
 interface PendingHeredoc {
   delim: string;
@@ -109,8 +126,10 @@ class Lexer {
   private i = 0;
   readonly lines: ShellLine[] = [];
   private cur: ShellLine;
-  private readonly frames: Frame[] = [{ t: "cmd", end: "", depth: 0, atCommand: true, pendingIn: false }];
+  private readonly frames: Frame[] = [{ t: "cmd", end: "", depth: 0, atCommand: true, pendingIn: false, start: 0 }];
   private pending: PendingHeredoc[] = [];
+  /** Open backquoted commands on the stack, so a comment can tell in O(1) that a backquote bounds it. */
+  private backquotes = 0;
 
   constructor(src: string) {
     this.src = src;
@@ -165,6 +184,20 @@ class Lexer {
     this.i += length;
   }
 
+  /** A command list from the cursor: `$(` closes at `)`, a backquote at the next backquote. */
+  private pushCommand(end: "" | ")" | "`"): void {
+    this.frames.push({ t: "cmd", end, depth: 0, atCommand: true, pendingIn: false, start: this.i });
+    if (end === "`") this.backquotes++;
+  }
+
+  /** The keyword `for` just before the cursor, past blanks: `for ((` opens an arithmetic loop head. */
+  private afterFor(): boolean {
+    const tokens = this.cur.tokens;
+    let k = tokens.length - 1;
+    if (k >= 0 && tokens[k]!.kind === "plain" && tokens[k]!.text.trim() === "") k--;
+    return k >= 0 && tokens[k]!.kind === "keyword" && tokens[k]!.text === "for";
+  }
+
   private stepCommand(frame: Extract<Frame, { t: "cmd" }>): void {
     const src = this.src;
     const c = src[this.i]!;
@@ -177,6 +210,7 @@ class Lexer {
     if (frame.end === "`" && c === "`") {
       this.take("variable", 1);
       this.frames.pop();
+      this.backquotes--;
       return;
     }
     if (c === "\n") {
@@ -197,9 +231,22 @@ class Lexer {
       frame.atCommand = false;
       return;
     }
-    if (c === "#" && (this.i === 0 || isBoundary(src[this.i - 1]))) {
+    if (c === "#" && (this.i === frame.start || isBoundary(src[this.i - 1]))) {
       const nl = src.indexOf("\n", this.i);
-      this.take("comment", (nl === -1 ? this.n : nl) - this.i);
+      let end = nl === -1 ? this.n : nl;
+      // The shell finds a backquoted command's closing backquote before it
+      // reads the comment inside, so the comment ends there, and whatever
+      // follows the backquote runs.
+      if (this.backquotes > 0) {
+        for (let k = this.i + 1; k < end; k++) {
+          if (src[k] === "\\") k++;
+          else if (src[k] === "`") {
+            end = k;
+            break;
+          }
+        }
+      }
+      this.take("comment", end - this.i);
       return;
     }
     if (c === "'") {
@@ -222,7 +269,16 @@ class Lexer {
     if (c === "`") {
       this.take("variable", 1);
       frame.atCommand = false;
-      this.frames.push({ t: "cmd", end: "`", depth: 0, atCommand: true, pendingIn: false });
+      this.pushCommand("`");
+      return;
+    }
+    // `((` where a command may start, or after `for`, is arithmetic: a `<<`
+    // inside it shifts, and reading it as a heredoc would mark the lines
+    // after it as a file the script writes when the shell runs them.
+    if (c === "(" && src[this.i + 1] === "(" && (frame.atCommand || this.afterFor())) {
+      this.take("keyword", 2);
+      frame.atCommand = false;
+      this.frames.push({ t: "arith", depth: 0, bracket: false, command: true });
       return;
     }
     const op = OPERATORS.find((candidate) => src.startsWith(candidate, this.i));
@@ -332,12 +388,17 @@ class Lexer {
     const next = src[this.i + 1];
     if (next === "(" && src[this.i + 2] === "(") {
       this.take("variable", 3);
-      this.frames.push({ t: "arith", depth: 0 });
+      this.frames.push({ t: "arith", depth: 0, bracket: false, command: false });
       return;
     }
     if (next === "(") {
       this.take("variable", 2);
-      this.frames.push({ t: "cmd", end: ")", depth: 0, atCommand: true, pendingIn: false });
+      this.pushCommand(")");
+      return;
+    }
+    if (next === "[") {
+      this.take("variable", 2);
+      this.frames.push({ t: "arith", depth: 0, bracket: true, command: false });
       return;
     }
     if (next === "{") {
@@ -425,7 +486,7 @@ class Lexer {
     }
     if (c === "`") {
       this.take("variable", 1);
-      this.frames.push({ t: "cmd", end: "`", depth: 0, atCommand: true, pendingIn: false });
+      this.pushCommand("`");
       return;
     }
     let j = this.i + 1;
@@ -473,18 +534,43 @@ class Lexer {
   private stepArith(frame: Extract<Frame, { t: "arith" }>): void {
     const src = this.src;
     const c = src[this.i]!;
-    if (c === ")" && frame.depth === 0 && src[this.i + 1] === ")") {
-      this.take("variable", 2);
+    const open = frame.bracket ? "[" : "(";
+    const close = frame.bracket ? "]" : ")";
+    if (c === close && frame.depth === 0) {
+      if (frame.bracket) {
+        this.take("variable", 1);
+        this.frames.pop();
+        return;
+      }
+      if (src[this.i + 1] === ")") {
+        this.take(frame.command ? "keyword" : "variable", 2);
+        this.frames.pop();
+        return;
+      }
+      // A `)` the next character does not double: as in the shell, this was
+      // never arithmetic. `((` opened two subshells and `$((` a substitution
+      // around a subshell; this `)` closes the inner one, and the outer one
+      // still waits for its own `)`.
       this.frames.pop();
+      this.take("operator", 1);
+      const parent = this.frames[this.frames.length - 1]!;
+      if (frame.command) {
+        if (parent.t === "cmd") {
+          parent.atCommand = false;
+          if (parent.end === ")") parent.depth++;
+        }
+      } else {
+        this.frames.push({ t: "cmd", end: ")", depth: 0, atCommand: false, pendingIn: false, start: this.i });
+      }
       return;
     }
-    if (c === "(") {
+    if (c === open) {
       frame.depth++;
       this.take("operator", 1);
       return;
     }
-    if (c === ")") {
-      if (frame.depth > 0) frame.depth--;
+    if (c === close) {
+      frame.depth--;
       this.take("operator", 1);
       return;
     }

