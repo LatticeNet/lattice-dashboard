@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { Incident, MaintenanceWindow } from "@/lib/api/types";
 import {
+  arrivals,
   compareIncidents,
   draftFromWindow,
   endWindowInput,
@@ -263,3 +264,76 @@ test("datetime-local values round trip through the browser's zone", () => {
   assert.equal(fromLocalInput(toLocalInput(at)), at);
   assert.ok(Number.isNaN(fromLocalInput("2026-10-03 09:45")));
 });
+
+describeArrivals();
+
+function describeArrivals(): void {
+  const crit = (id: string, over: Partial<Incident> = {}) => incident({ id, severity: "critical", state: "open", since: ago(30), ...over });
+  const warn = (id: string, over: Partial<Incident> = {}) => incident({ id, kind: "agent.stalled", severity: "warning", state: "open", since: ago(30), ...over });
+  const ids = (rows: readonly Incident[]) => rows.map((row) => row.id);
+  const asWas = (...rows: Incident[]) => new Map(rows.map((row) => [row.id, row]));
+
+  test("arrivals: nothing while no order is held", () => {
+    assert.deepEqual(arrivals([warn("w"), crit("c")], { order: null }, NOW), []);
+  });
+
+  test("arrivals: a critical that arrived during the hold, held below a warning, is named", () => {
+    // Rows held as [dmit4, stall]; the new critical goes after them.
+    const shown = [crit("dmit4"), warn("stall"), crit("new", { since: ago(1) })];
+    assert.deepEqual(ids(arrivals(shown, { order: ["dmit4", "stall"] }, NOW)), ["new"]);
+    assert.deepEqual(ids(arrivals(shown, { order: ["dmit4", "stall"], before: asWas(crit("dmit4"), warn("stall")) }, NOW)), ["new"]);
+  });
+
+  test("arrivals: an arrival that belongs at the bottom anyway is not news", () => {
+    assert.deepEqual(arrivals([crit("dmit4"), warn("late")], { order: ["dmit4"] }, NOW), []);
+  });
+
+  test("arrivals: rows acted on are left out, so an acknowledged row kept on top does not flag the rows below it", () => {
+    const shown = [crit("acked", { state: "acknowledged" }), crit("bandwagon"), warn("stall")];
+    const held = { order: ["acked", "bandwagon", "stall"], pinned: new Set(["acked"]), before: asWas(crit("acked"), crit("bandwagon"), warn("stall")) };
+    assert.deepEqual(arrivals(shown, held, NOW), []);
+    assert.deepEqual(ids(arrivals([...shown, crit("new", { since: ago(1) })], held, NOW)), ["new"]);
+  });
+
+  test("arrivals: a row that reopened during the hold counts as arrived though the held order knows it", () => {
+    // Under All, the resolved row was shown at the bottom when the hold began.
+    const was = asWas(crit("dmit4"), warn("stall"), incident({ id: "mac", state: "resolved", resolved_at: ago(5) }));
+    const shown = [crit("dmit4"), warn("stall"), crit("mac", { since: ago(1) })];
+    assert.deepEqual(ids(arrivals(shown, { order: ["dmit4", "stall", "mac"], before: was }, NOW)), ["mac"]);
+    const still = [crit("dmit4"), warn("stall"), incident({ id: "mac", state: "resolved", resolved_at: ago(5) })];
+    assert.deepEqual(arrivals(still, { order: ["dmit4", "stall", "mac"], before: was }, NOW), []);
+  });
+
+  test("arrivals: a row another operator acknowledged sinks; nothing below it is flagged", () => {
+    const shown = [crit("a", { state: "acknowledged" }), crit("b")];
+    assert.deepEqual(arrivals(shown, { order: ["a", "b"], before: asWas(crit("a"), crit("b")) }, NOW), []);
+  });
+
+  test("arrivals: a row filtered out when the hold began (it was pending) counts once it opens", () => {
+    // Under Active the pending row was not shown, so the held order does not have it; it was known, though.
+    const was = asWas(crit("dmit4"), warn("stall"), crit("cloudcone", { state: "pending" }));
+    const shown = [crit("dmit4"), warn("stall"), crit("cloudcone", { since: ago(1) })];
+    assert.deepEqual(ids(arrivals(shown, { order: ["dmit4", "stall"], before: was }, NOW)), ["cloudcone"]);
+  });
+
+  test("arrivals: several are returned worst first", () => {
+    const shown = [crit("dmit4"), warn("stall"), warn("w2", { since: ago(2) }), crit("c2", { since: ago(1) })];
+    assert.deepEqual(ids(arrivals(shown, { order: ["dmit4", "stall"] }, NOW)), ["c2"]);
+    const both = [crit("dmit4", { state: "acknowledged" }), warn("stall"), crit("c3", { since: ago(3) }), crit("c2", { since: ago(1) })];
+    assert.deepEqual(ids(arrivals(both, { order: ["dmit4", "stall"], pinned: new Set(["dmit4"]) }, NOW)), ["c3", "c2"]);
+  });
+
+  test("homeIncidents: a critical that arrives while an acknowledged row keeps its slot is missing from the three, and named", () => {
+    // Before: DMIT-4, bandwagon and DMIT-1 shown, the stall fourth. DMIT-4 is acknowledged and pinned.
+    const was = asWas(crit("dmit4"), crit("bandwagon"), crit("dmit1"), warn("stall"), incident({ id: "mac", state: "resolved", resolved_at: ago(5) }));
+    const rows = [crit("dmit4", { state: "acknowledged" }), crit("bandwagon"), crit("dmit1"), warn("stall"), crit("mac", { since: ago(1) })];
+    const view = homeIncidents(rows, NOW, 3, ["dmit4", "bandwagon", "dmit1"], { pinned: new Set(["dmit4"]), before: was });
+    assert.deepEqual(ids(view.shown), ["dmit4", "bandwagon", "dmit1"]);
+    assert.deepEqual(ids(view.arrived), ["mac"]);
+    assert.equal(view.total, 5);
+    // The stall was there all along: it is not news though the acknowledgement freed a slot it would take.
+    const quiet = homeIncidents(rows.slice(0, 4), NOW, 3, ["dmit4", "bandwagon", "dmit1"], { pinned: new Set(["dmit4"]), before: was });
+    assert.deepEqual(quiet.arrived, []);
+    assert.deepEqual(homeIncidents(rows, NOW, 3).arrived, [], "no hold, nothing held back");
+  });
+}

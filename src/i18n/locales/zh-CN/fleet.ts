@@ -1598,6 +1598,14 @@ export default {
       notDurable: "当前服务端只在内存里保存事件：重启后事件和确认记录都会丢失。",
       pendingNote: "{n} 个待定：问题持续就会转为事件。 | {n} 个待定：问题持续就会转为事件。",
       showPending: "查看待定",
+      arrivals: {
+        critical: "{n} 个新的严重事件 | {n} 个新的严重事件",
+        mixed: "{n} 个新事件，其中 {c} 个严重 | {n} 个新事件，其中 {c} 个严重",
+        plain: "{n} 个新事件 | {n} 个新事件",
+        show: "显示",
+        showLabel: "把新事件排到它们该在的位置",
+        hint: "在列表中按 N 可跳到「显示」。",
+      },
       proof: {
         open: "{n} 个未处理 | {n} 个未处理",
         acknowledged: "{n} 个已确认",

@@ -28,6 +28,7 @@ import { toast } from "@/lib/toast";
 import { proofReason } from "@/components/common/proofModel";
 import {
   INCIDENT_FILTERS,
+  arrivals,
   endWindowInput,
   filterCounts,
   kindsPresent,
@@ -42,6 +43,7 @@ import {
   windowPhase,
   type IncidentFilter,
 } from "@/views/fleet/incidentsModel";
+import HoldArrivals from "@/components/fleet/HoldArrivals.vue";
 import IncidentList from "@/components/fleet/IncidentList.vue";
 import MaintenanceBanner from "@/components/fleet/MaintenanceBanner.vue";
 import MaintenanceWindowSheet from "@/components/fleet/MaintenanceWindowSheet.vue";
@@ -94,8 +96,33 @@ const root = ref<HTMLElement | null>(null);
 // One hold for the whole layer: the banner and the list share a column, so
 // an ended banner line that went on its own clock would move the list under
 // a resting pointer as surely as a row leaving it.
-const actions = useIncidentActions(() => emit("refresh"), { zone: () => root.value });
+const actions = useIncidentActions(() => emit("refresh"), { zone: () => root.value, rows: () => incidents.value });
 const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.value, kind: kind.value, search: search.value }, props.now, actions.held.value, actions.pinned.value));
+
+// The hold has no end while the pointer rests on the layer, so it never
+// hides what arrives meanwhile: rows held below their place are named above
+// the list (HoldArrivals), and Show puts every row in its place.
+const arrived = computed(() => arrivals(rows.value, { order: actions.held.value, pinned: actions.pinned.value, before: actions.heldRows.value }, props.now));
+
+async function showArrivals(): Promise<void> {
+  const first = arrived.value[0]?.id;
+  const fromShow = Boolean(document.activeElement?.closest("[data-hold-arrivals-show]"));
+  actions.release();
+  await nextTick();
+  // Show is gone with the notice: focus goes to the worst row it named.
+  if (first && fromShow) root.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(first)}"]`)?.focus();
+}
+
+/** N inside the list reaches Show, so a keyboard user deep in the rows does not Tab back for it. */
+function onListKey(event: KeyboardEvent): void {
+  if (event.key.toLowerCase() !== "n" || event.ctrlKey || event.metaKey || event.altKey || !arrived.value.length) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+  const show = root.value?.querySelector<HTMLElement>("[data-hold-arrivals-show]");
+  if (!show) return;
+  event.preventDefault();
+  show.focus();
+}
 
 // A changed filter or search is a new view: rows held for the old one go.
 watch([filter, kind, search], () => actions.release());
@@ -406,41 +433,44 @@ function coverageText(window: MaintenanceWindow): string {
       </Button>
     </div>
 
-    <section ref="listSection" class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')">
-      <div v-if="error && !response" class="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-muted-foreground">
-        <span class="min-w-0 break-words">{{ $t('fleet.keepalive.readFailed', { reason: proofReason(error) }) }}</span>
-        <Button variant="outline" size="sm" type="button" @click="emit('refresh')">{{ $t('common.actions.retry') }}</Button>
-      </div>
-      <p v-else-if="!response && loading" class="px-4 py-6 text-sm text-muted-foreground">{{ $t('fleet.keepalive.reading') }}</p>
-      <template v-else>
-        <IncidentList
-          v-if="rows.length"
-          :incidents="rows"
-          :now="now"
-          :can-admin="canAdmin"
-          :busy="actions.busy.value"
-          :node-names="nodeNames"
-          :monitor-names="monitorNames"
-          :focus-request="actions.focusRequest.value"
-          :undoable="actions.undoable.value"
-          :undone="actions.undone.value"
-          @ack="actions.ack"
-          @undo="actions.undoAck"
-          @snooze="actions.snooze"
-          @focused="actions.focusDone"
-        />
-        <div v-else tabindex="-1" class="space-y-1 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" data-incidents-empty>
-          <p class="text-sm">{{ filter === 'active' && !kind && !search ? $t('fleet.keepalive.empty.active') : $t('fleet.keepalive.empty.filtered') }}</p>
-          <p v-if="filter === 'active'" class="text-xs text-muted-foreground">{{ $t('fleet.keepalive.empty.explain') }}</p>
+    <div class="relative" @keydown="onListKey">
+      <HoldArrivals :arrived="arrived" @show="showArrivals" />
+      <section ref="listSection" class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')">
+        <div v-if="error && !response" class="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-muted-foreground">
+          <span class="min-w-0 break-words">{{ $t('fleet.keepalive.readFailed', { reason: proofReason(error) }) }}</span>
+          <Button variant="outline" size="sm" type="button" @click="emit('refresh')">{{ $t('common.actions.retry') }}</Button>
         </div>
-        <!-- Pending conditions are not incidents yet, so Active leaves them out; say how many and offer them. -->
-        <p v-if="response && filter === 'active' && counts.pending > 0" class="flex flex-wrap items-center gap-x-2 border-t border-border px-4 py-1.5 text-xs text-muted-foreground" data-testid="incidents-pending-note">
-          <span>{{ $t('fleet.keepalive.pendingNote', { n: counts.pending }, counts.pending) }}</span>
-          <Button variant="link" size="sm" type="button" class="h-auto px-0 py-1 text-xs pointer-coarse:min-h-11" @click="filter = 'pending'">{{ $t('fleet.keepalive.showPending') }}</Button>
-        </p>
-        <p v-if="response && !response.durable" class="border-t border-border px-4 py-2 text-xs text-muted-foreground">{{ $t('fleet.keepalive.notDurable') }}</p>
-      </template>
-    </section>
+        <p v-else-if="!response && loading" class="px-4 py-6 text-sm text-muted-foreground">{{ $t('fleet.keepalive.reading') }}</p>
+        <template v-else>
+          <IncidentList
+            v-if="rows.length"
+            :incidents="rows"
+            :now="now"
+            :can-admin="canAdmin"
+            :busy="actions.busy.value"
+            :node-names="nodeNames"
+            :monitor-names="monitorNames"
+            :focus-request="actions.focusRequest.value"
+            :undoable="actions.undoable.value"
+            :undone="actions.undone.value"
+            @ack="actions.ack"
+            @undo="actions.undoAck"
+            @snooze="actions.snooze"
+            @focused="actions.focusDone"
+          />
+          <div v-else tabindex="-1" class="space-y-1 px-4 py-6 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset" data-incidents-empty>
+            <p class="text-sm">{{ filter === 'active' && !kind && !search ? $t('fleet.keepalive.empty.active') : $t('fleet.keepalive.empty.filtered') }}</p>
+            <p v-if="filter === 'active'" class="text-xs text-muted-foreground">{{ $t('fleet.keepalive.empty.explain') }}</p>
+          </div>
+          <!-- Pending conditions are not incidents yet, so Active leaves them out; say how many and offer them. -->
+          <p v-if="response && filter === 'active' && counts.pending > 0" class="flex flex-wrap items-center gap-x-2 border-t border-border px-4 py-1.5 text-xs text-muted-foreground" data-testid="incidents-pending-note">
+            <span>{{ $t('fleet.keepalive.pendingNote', { n: counts.pending }, counts.pending) }}</span>
+            <Button variant="link" size="sm" type="button" class="h-auto px-0 py-1 text-xs pointer-coarse:min-h-11" @click="filter = 'pending'">{{ $t('fleet.keepalive.showPending') }}</Button>
+          </p>
+          <p v-if="response && !response.durable" class="border-t border-border px-4 py-2 text-xs text-muted-foreground">{{ $t('fleet.keepalive.notDurable') }}</p>
+        </template>
+      </section>
+    </div>
 
     <section v-if="listed.length" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="keepalive-windows">
       <h2 id="keepalive-windows" class="flex items-center gap-2 border-b border-border px-3.5 py-2 text-xs font-medium text-muted-foreground">
