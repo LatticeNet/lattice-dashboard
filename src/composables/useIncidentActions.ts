@@ -14,10 +14,12 @@
  * longer matches (Acknowledge or Snooze under Open), so the next row's
  * Acknowledge does not slide under a pointer that is still there. The rows
  * acted on are released together (lib/actionHold), at least ACK_UNDO_MS
- * after the last action, and not while the pointer is over the list, a
- * touch has not scrolled since, or an Undo has keyboard focus. Spread
- * `listEvents` on the element around the list so the hold can see the
- * pointer, and call `release()` when the caller's filters change.
+ * after the last action, and not while a mouse or pen is over `zone` (the
+ * caller's whole surface: Monitoring's Incidents layer holds its banner and
+ * its list as one), a touch has not scrolled since, a row's menu is open, or
+ * an Undo has keyboard focus. `keep()` adds anything else an action leaves
+ * on screen to the same group (End now's ended line). Call `release()` when
+ * the caller's filters change.
  *
  * Focus follows the action instead of falling to the page: after an
  * acknowledgement to the row's Undo, after a failed one back to Acknowledge,
@@ -28,7 +30,7 @@ import { onScopeDispose, ref, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { api, ApiError, type Incident } from "@/lib/api";
-import { createActionHold } from "@/lib/actionHold";
+import { createActionHold, createPointerWatch } from "@/lib/actionHold";
 import { toast } from "@/lib/toast";
 
 /** How long a row offers Undo after Acknowledge, and holds its place after an action, at least. */
@@ -40,16 +42,17 @@ export interface IncidentFocusRequest {
 }
 
 /**
- * Only keyboard focus keeps an Undo: a pointer press also focuses it, and an
- * Undo held by that would never go and would freeze the list's order.
+ * Only keyboard focus keeps an Undo (a row's, or an ended window's): a
+ * pointer press also focuses it, and an Undo held by that would never go and
+ * would freeze the list's order.
  */
 function keyboardOnUndo(): boolean {
   if (typeof document === "undefined") return false;
   const active = document.activeElement;
-  return active instanceof HTMLElement && active.hasAttribute("data-incident-undo") && active.matches(":focus-visible");
+  return active instanceof HTMLElement && active.matches("[data-incident-undo], [data-window-undo]") && active.matches(":focus-visible");
 }
 
-export function useIncidentActions(refresh: () => unknown, options: { holdMs?: number } = {}) {
+export function useIncidentActions(refresh: () => unknown, options: { holdMs?: number; zone?: () => HTMLElement | null | undefined } = {}) {
   const { t } = useI18n();
   const busy = ref<Set<string>>(new Set());
   const focusRequest = ref<IncidentFocusRequest | null>(null);
@@ -60,59 +63,60 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
   const undone = shallowRef<ReadonlySet<string>>(new Set());
   /** Rows that stay listed whatever the filter says: the ones just acted on. */
   const pinned = shallowRef<ReadonlySet<string>>(new Set());
+  /** Other things kept on screen with the rows (keep()). */
+  const kept = shallowRef<ReadonlySet<string>>(new Set());
 
-  // The pointer over the list. A mouse or pen says when it leaves; a finger
-  // does not hover, so after a tap the rows stay until the next scroll.
-  let pointerOver = false;
-  let touched = false;
+  const pointer = createPointerWatch();
+
+  /** A row's menu (Snooze) is open: the pointer is on it, over or beside the rows. */
+  function menuOpen(): boolean {
+    return Boolean(options.zone?.()?.querySelector('[aria-haspopup="menu"][aria-expanded="true"]'));
+  }
 
   const hold = createActionHold({
     holdMs: options.holdMs ?? ACK_UNDO_MS,
-    blocked: () => pointerOver || touched || keyboardOnUndo(),
+    blocked: () => pointer.holds(options.zone?.()?.getBoundingClientRect() ?? null) || menuOpen() || keyboardOnUndo(),
     changed: () => {
       const state = hold.state();
       held.value = state.order;
       undoable.value = state.undoable;
       undone.value = state.undone;
       pinned.value = state.pinned;
+      kept.value = state.kept;
     },
   });
 
-  function onScroll(): void {
-    if (!touched) return;
-    touched = false;
+  // Listened to on the window, not the zone: the zone's own boundary events
+  // lie while a modal menu takes pointer events off the page (PointerWatch).
+  function onPointer(event: PointerEvent): void {
+    pointer.pointer(event.pointerType, event.clientX, event.clientY, event.type === "pointerdown");
+    // Once the group's time is up, the move that takes the pointer off the zone frees it.
+    if (hold.due()) hold.check();
+  }
+  function onPointerOut(event: PointerEvent): void {
+    if (event.pointerType === "touch" || event.relatedTarget) return;
+    pointer.left();
     hold.check();
   }
-  if (typeof window !== "undefined") window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+  function onScroll(): void {
+    if (pointer.scrolled()) hold.check();
+  }
+  function onFocusOut(): void {
+    // activeElement settles after focusout; an Undo losing keyboard focus may free the group.
+    setTimeout(() => hold.check(), 0);
+  }
+  const listeners: [string, (event: never) => void, AddEventListenerOptions][] = [
+    ["pointermove", onPointer, { capture: true, passive: true }],
+    ["pointerdown", onPointer, { capture: true, passive: true }],
+    ["pointerout", onPointerOut, { capture: true, passive: true }],
+    ["scroll", onScroll, { capture: true, passive: true }],
+    ["focusout", onFocusOut, { capture: true }],
+  ];
+  if (typeof window !== "undefined") for (const [type, fn, opts] of listeners) window.addEventListener(type, fn as EventListener, opts);
   onScopeDispose(() => {
-    if (typeof window !== "undefined") window.removeEventListener("scroll", onScroll, { capture: true });
+    if (typeof window !== "undefined") for (const [type, fn, opts] of listeners) window.removeEventListener(type, fn as EventListener, opts);
     hold.dispose();
   });
-
-  const listEvents = {
-    pointerenter(event: PointerEvent): void {
-      if (event.pointerType === "touch") return;
-      pointerOver = true;
-      touched = false;
-    },
-    pointerleave(event: PointerEvent): void {
-      if (event.pointerType === "touch") return;
-      pointerOver = false;
-      hold.check();
-    },
-    pointerdown(event: PointerEvent): void {
-      if (event.pointerType === "touch") {
-        touched = true;
-      } else {
-        pointerOver = true;
-        touched = false;
-      }
-    },
-    focusout(): void {
-      // activeElement settles after focusout; an Undo losing keyboard focus may free the group.
-      setTimeout(() => hold.check(), 0);
-    },
-  };
 
   function mark(id: string, on: boolean): void {
     const next = new Set(busy.value);
@@ -202,5 +206,20 @@ export function useIncidentActions(refresh: () => unknown, options: { holdMs?: n
     focusRequest.value = null;
   }
 
-  return { busy, held, pinned, undoable, undone, focusRequest, focusDone, ack, undoAck, snooze, listEvents, release: () => hold.release() };
+  return {
+    busy,
+    held,
+    pinned,
+    undoable,
+    undone,
+    kept,
+    focusRequest,
+    focusDone,
+    ack,
+    undoAck,
+    snooze,
+    /** Keep `key` on screen with the rows until the group goes. */
+    keep: (key: string) => hold.keep(key),
+    release: () => hold.release(),
+  };
 }

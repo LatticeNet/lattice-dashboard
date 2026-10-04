@@ -9,7 +9,7 @@
  *   (!) sing-box is down on DMIT-4      14m          [Acknowledge] [Snooze] [Open]
  *       Paged 14:02 · not acknowledged
  */
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
 
 import type { Incident } from "@/lib/api";
@@ -29,12 +29,13 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ refresh: [] }>();
 
-const actions = useIncidentActions(() => emit("refresh"));
+const panel = ref<HTMLElement | null>(null);
+const actions = useIncidentActions(() => emit("refresh"), { zone: () => panel.value });
 const view = computed(() => homeIncidents(props.incidents, props.now, HOME_INCIDENTS_MAX, actions.held.value));
 </script>
 
 <template>
-  <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents" v-on="actions.listEvents">
+  <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents" ref="panel">
     <header class="flex items-center gap-2 border-b border-border px-3.5 py-2">
       <h2 id="home-incidents" class="text-xs font-medium text-muted-foreground">
         {{ $t('overview.incidents.title', { n: view.total }, view.total) }}

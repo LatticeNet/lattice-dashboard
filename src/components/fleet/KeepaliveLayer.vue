@@ -20,7 +20,7 @@ import { Plus, Wrench } from "lucide-vue-next";
 
 import { api, type GroupView, type Incident, type IncidentListResponse, type MaintenanceWindow, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
-import { ACK_UNDO_MS, useIncidentActions } from "@/composables/useIncidentActions";
+import { useIncidentActions } from "@/composables/useIncidentActions";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import type { OwnedRoute } from "@/composables/useOwnedRoute";
 import { useAuthStore } from "@/stores/auth";
@@ -90,7 +90,11 @@ const groupsQuery = useAsyncData<GroupView[]>(
 const incidents = computed(() => props.response?.incidents ?? []);
 const counts = computed(() => filterCounts(incidents.value, props.now));
 const kinds = computed(() => kindsPresent(incidents.value));
-const actions = useIncidentActions(() => emit("refresh"));
+const root = ref<HTMLElement | null>(null);
+// One hold for the whole layer: the banner and the list share a column, so
+// an ended banner line that went on its own clock would move the list under
+// a resting pointer as surely as a row leaving it.
+const actions = useIncidentActions(() => emit("refresh"), { zone: () => root.value });
 const rows = computed(() => visibleIncidents(incidents.value, { filter: filter.value, kind: kind.value, search: search.value }, props.now, actions.held.value, actions.pinned.value));
 
 // A changed filter or search is a new view: rows held for the old one go.
@@ -125,7 +129,6 @@ function kindLabel(value: string): string {
 
 /* --------------------------- maintenance windows --------------------------- */
 
-const root = ref<HTMLElement | null>(null);
 const sheetOpen = ref(false);
 const editing = ref<MaintenanceWindow | undefined>();
 const ending = ref<string | null>(null);
@@ -136,44 +139,71 @@ let askedId: string | null = null;
 let endedId: string | null = null;
 
 /**
- * Windows End now just ended, with the incidents they were holding. For
- * ACK_UNDO_MS the banner keeps a line for each with Undo in End now's
- * place, where focus and the pointer already are; the Undo stays while it
- * has keyboard focus. The toast only announces.
+ * Windows End now just ended, as they were, with the incidents they were
+ * holding. Each keeps its banner line, in its own slot, with Undo in End
+ * now's place, where focus and the pointer already are; after Undo the line
+ * shows the window running again, from the window as it was, until the list
+ * is read again. The lines stay as long as the layer's hold (actions.keep):
+ * they go with the rows acted on, at once, and not while the pointer is over
+ * the layer. The toast only announces.
  */
-const endedUndo = shallowRef<ReadonlyMap<string, { window: MaintenanceWindow; heldIds: string[] }>>(new Map());
-const endedTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const endedWindows = computed(() => [...endedUndo.value.values()].map((entry) => entry.window));
-const bannerWindows = computed(() => activeWindows.value.filter((w) => !endedUndo.value.has(w.id)));
+const endedUndo = shallowRef<ReadonlyMap<string, { window: MaintenanceWindow; heldIds: string[]; restored: boolean }>>(new Map());
+const keptKey = (id: string) => `window:${id}`;
+
+// The hold went: the lines it kept go with it.
+watch(actions.kept, (kept) => {
+  if ([...endedUndo.value.keys()].every((id) => kept.has(keptKey(id)))) return;
+  endedUndo.value = new Map([...endedUndo.value].filter(([id]) => kept.has(keptKey(id))));
+});
+
+function windowOrder(a: MaintenanceWindow, b: MaintenanceWindow): number {
+  return Date.parse(a.starts_at) - Date.parse(b.starts_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
+ * The banner's lines in one stable order (by start, then id), so a line
+ * keeps its slot when its window ends or comes back. Ending the first of two
+ * windows used to drop its line below the second, sliding the second's End
+ * now under the pointer that had just pressed the first.
+ */
+const bannerWindows = computed(() => {
+  const lines = new Map(activeWindows.value.map((w) => [w.id, w]));
+  for (const [id, entry] of endedUndo.value) lines.set(id, entry.window);
+  return [...lines.values()].sort(windowOrder);
+});
+const endedIds = computed<ReadonlySet<string>>(() => new Set([...endedUndo.value].filter(([, entry]) => !entry.restored).map(([id]) => id)));
 
 function windowUndoButton(id: string): HTMLElement | null {
   return root.value?.querySelector<HTMLElement>(`[data-window-undo="${CSS.escape(id)}"]`) ?? null;
 }
 
-function closeEndedUndo(id: string): void {
-  clearTimeout(endedTimers.get(id));
-  endedTimers.delete(id);
-  const next = new Map(endedUndo.value);
-  next.delete(id);
-  endedUndo.value = next;
-}
-
-function expireEndedUndo(id: string): void {
-  if (document.activeElement?.closest(`[data-window-undo="${CSS.escape(id)}"]`)) {
-    endedTimers.set(id, setTimeout(() => expireEndedUndo(id), 500));
-    return;
-  }
-  // Focus on the line's Edit would fall to the page with the line.
-  const hadFocus = Boolean(document.activeElement?.closest(`[data-window-line="${CSS.escape(id)}"]`));
-  closeEndedUndo(id);
-  if (hadFocus) void focusAfter(newWindowButton);
-}
-
 function openEndedUndo(window: MaintenanceWindow, heldIds: string[]): void {
-  clearTimeout(endedTimers.get(window.id));
-  endedUndo.value = new Map(endedUndo.value).set(window.id, { window, heldIds });
-  endedTimers.set(window.id, setTimeout(() => expireEndedUndo(window.id), ACK_UNDO_MS));
+  endedUndo.value = new Map(endedUndo.value).set(window.id, { window, heldIds, restored: false });
+  actions.keep(keptKey(window.id));
 }
+
+function markRestored(id: string): void {
+  const entry = endedUndo.value.get(id);
+  if (!entry) return;
+  endedUndo.value = new Map(endedUndo.value).set(id, { ...entry, restored: true });
+  actions.keep(keptKey(id));
+}
+
+// A banner line that goes takes its focus with it (the hold released an
+// ended line whose Edit had focus): New maintenance window takes it.
+watch(
+  bannerWindows,
+  async (now, before) => {
+    const active = typeof document === "undefined" ? null : document.activeElement;
+    const line = active instanceof HTMLElement ? active.closest<HTMLElement>("[data-window-line]") : null;
+    const id = line?.dataset.windowLine;
+    if (!id || !before.some((w) => w.id === id) || now.some((w) => w.id === id)) return;
+    await nextTick();
+    if (document.activeElement && document.activeElement !== document.body) return;
+    newWindowButton()?.focus();
+  },
+  { flush: "pre" },
+);
 const deleting = ref<MaintenanceWindow | undefined>();
 const deletePending = ref(false);
 
@@ -279,7 +309,10 @@ async function restoreWindow(window: MaintenanceWindow): Promise<void> {
   } finally {
     restoring = null;
   }
-  closeEndedUndo(window.id);
+  // The line shows the window running again in the same slot, with End now
+  // where Undo was; the list's read confirms it.
+  markRestored(window.id);
+  await focusAfter(() => endButton(window.id));
   // The server's sweep runs every 20 s, so a message the window released may
   // already have gone out; restoring the window cannot take it back.
   let paged: Incident[] = [];
@@ -298,7 +331,6 @@ async function restoreWindow(window: MaintenanceWindow): Promise<void> {
   );
   emit("refresh");
   await windowsQuery.refresh();
-  await focusAfter(() => endButton(window.id));
 }
 
 async function confirmDelete(): Promise<void> {
@@ -334,7 +366,7 @@ function coverageText(window: MaintenanceWindow): string {
   <div ref="root" class="space-y-4" data-testid="keepalive-layer">
     <MaintenanceBanner
       :windows="bannerWindows"
-      :ended="endedWindows"
+      :ended="endedIds"
       :now="now"
       :node-names="nodeNames"
       :group-names="groupNames"
@@ -374,7 +406,7 @@ function coverageText(window: MaintenanceWindow): string {
       </Button>
     </div>
 
-    <section ref="listSection" class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')" v-on="actions.listEvents">
+    <section ref="listSection" class="overflow-hidden rounded-lg border border-border bg-card" :aria-label="$t('fleet.keepalive.listLabel')">
       <div v-if="error && !response" class="flex flex-wrap items-center gap-3 px-4 py-6 text-sm text-muted-foreground">
         <span class="min-w-0 break-words">{{ $t('fleet.keepalive.readFailed', { reason: proofReason(error) }) }}</span>
         <Button variant="outline" size="sm" type="button" @click="emit('refresh')">{{ $t('common.actions.retry') }}</Button>

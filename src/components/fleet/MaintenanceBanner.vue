@@ -3,6 +3,8 @@
  * One line per active maintenance window, above Home and the Keepalive
  * layer: which window, what it covers, until when, and that notifications
  * for those nodes are held. Renders nothing when no window is active.
+ * Lines keep the order of `windows`, so a line keeps its slot when its
+ * window ends (End now) or comes back (Undo).
  *
  *   [wrench] Maintenance "kernel upgrade" on vultr-sg, edge until 15:00: notifications held   [End now] [Edit]
  */
@@ -23,10 +25,10 @@ const props = withDefaults(
     /** Shows End now and Edit; Home leaves them to the Incidents layer. */
     canEdit?: boolean;
     busy?: string | null;
-    /** Windows End now just ended, as they were: each keeps a line with Undo in End now's place. */
-    ended?: MaintenanceWindow[];
+    /** Ids among `windows` that End now just ended (passed as they were): their lines offer Undo in End now's place. */
+    ended?: ReadonlySet<string>;
   }>(),
-  { nodeNames: () => new Map(), groupNames: () => new Map(), canEdit: false, busy: null, ended: () => [] },
+  { nodeNames: () => new Map(), groupNames: () => new Map(), canEdit: false, busy: null, ended: () => new Set<string>() },
 );
 
 const emit = defineEmits<{ end: [window: MaintenanceWindow]; edit: [window: MaintenanceWindow]; undo: [window: MaintenanceWindow] }>();
@@ -47,10 +49,12 @@ function line(window: MaintenanceWindow, ended: boolean) {
   return { window, ended, shown: names.slice(0, 3), more: Math.max(0, names.length - 3), time: clock(window.ends_at) };
 }
 
-const lines = computed(() => [
-  ...props.windows.filter((window) => windowPhase(window, props.now) === "active").map((window) => line(window, false)),
-  ...(props.canEdit ? props.ended.map((window) => line(window, true)) : []),
-]);
+const lines = computed(() =>
+  props.windows
+    .map((window) => ({ window, ended: props.canEdit && props.ended.has(window.id) }))
+    .filter(({ window, ended }) => ended || windowPhase(window, props.now) === "active")
+    .map(({ window, ended }) => line(window, ended)),
+);
 </script>
 
 <template>
