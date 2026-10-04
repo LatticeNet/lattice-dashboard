@@ -47,6 +47,7 @@ import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { createConfirmReturn } from "./confirmFocus";
 import { failingMonitors, healthRank, monitorHealth, operatorMonitors, type MonitorHealth } from "./monitorHealthModel";
 import LatencyLayer from "./LatencyLayer.vue";
+import TopologyLayer from "./TopologyLayer.vue";
 import AttentionList, { type AttentionItem } from "@/components/common/AttentionList.vue";
 import StatusDot from "@/components/common/StatusDot.vue";
 import { bindQueryParam } from "@/composables/useQueryParam";
@@ -114,21 +115,22 @@ const now = useNow({ interval: 1000 });
 const owned = useOwnedRoute();
 
 /**
- * Three layers (design 23, section 3.4): Incidents (the incidents the server
- * holds, first, since it answers "what is broken now"), Monitors (the probes
- * an operator made and their results) and Latency (the source by target
- * matrix the latency probe configuration generates; the generated monitors
- * live only there). A link that opens a monitor or narrows to a node
+ * Four layers (design 23, section 3.4): Incidents (the incidents the server
+ * holds, first, since it answers "what is broken now"), Topology (every path
+ * the console knows, drawn once: heartbeats, latency probes, relay chains and
+ * checks), Monitors (the probes an operator made and their results) and
+ * Latency (the source by target matrix the latency probe configuration
+ * generates; the generated monitors live only there). A link that opens a monitor or narrows to a node
  * (?open=, ?node=, the old /monitoring/:id) lands on Monitors, so every link
  * written before the layers still shows what it pointed at. Latency is never
  * the fallback, so every link into it names it (?view=latency).
  */
-type MonitoringLayer = "incidents" | "monitors" | "latency";
+type MonitoringLayer = "incidents" | "topology" | "monitors" | "latency";
 const layerFallback = (): MonitoringLayer => {
   const query = owned.query();
   return query.open || query.node || route.params.id ? "monitors" : "incidents";
 };
-const layer = bindLayer<MonitoringLayer>(owned, () => ["incidents", "monitors", "latency"], layerFallback);
+const layer = bindLayer<MonitoringLayer>(owned, () => ["incidents", "topology", "monitors", "latency"], layerFallback);
 // The Incidents layer was called Keepalive, and links written then say
 // ?view=keepalive (or ?tab=keepalive); they open Incidents and the address
 // is rewritten to the current spelling.
@@ -680,6 +682,8 @@ const layerTabs = computed<LayerTab<MonitoringLayer>[]>(() => [
     count: incidentCounts.value.open || undefined,
     tone: incidentCounts.value.open > 0 ? (criticalOpen.value ? "destructive" : "warning") : "default",
   },
+  // No count: the drawing's own proof line says what is broken and where.
+  { value: "topology", label: t("fleet.monitoring.layers.topology") },
   {
     value: "monitors",
     label: t("fleet.monitoring.layers.monitors"),
@@ -764,9 +768,9 @@ const deleteImpact = computed(() => {
     <PageHeader :title="$t('fleet.monitoring.title')">
       <template #description>
         <p class="text-sm text-muted-foreground">{{ $t('fleet.monitoring.description') }}</p>
-        <ProofLine v-if="canReadMonitors && layer !== 'latency'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
+        <ProofLine v-if="canReadMonitors && layer !== 'latency' && layer !== 'topology'" v-bind="proof" :segments="proofSegments" @retry="refreshAll" />
       </template>
-      <template v-if="canReadMonitors && layer !== 'latency'" #actions>
+      <template v-if="canReadMonitors && layer !== 'latency' && layer !== 'topology'" #actions>
         <Button v-if="canAdminMonitors && monitors.length && layer === 'monitors'" size="sm" type="button" @click="openCreate()">
           <Plus class="size-4" aria-hidden="true" />
           {{ $t('fleet.monitoring.create.title') }}
@@ -797,6 +801,18 @@ const deleteImpact = computed(() => {
       :monitor-names="monitorNames"
       :now="now.getTime()"
       @refresh="incidentsQuery.refresh()"
+    />
+
+    <TopologyLayer
+      v-if="canReadMonitors && layer === 'topology'"
+      :owned="owned"
+      :nodes="canReadNodes ? nodesQuery.data.value : undefined"
+      :nodes-error="nodesQuery.error.value ?? null"
+      :monitors="monitorsQuery.data.value"
+      :incidents="incidentsQuery.data.value?.incidents"
+      @layer="(next) => (layer = next)"
+      @refresh-page="refreshAll"
+      @open-monitor="(id, el) => sheet.open(id, el)"
     />
 
     <LatencyLayer v-if="canReadMonitors && layer === 'latency'" :owned="owned" />

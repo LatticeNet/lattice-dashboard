@@ -95,6 +95,7 @@ import type {
   PluginView,
   Principal,
   ProxyUserView,
+  LineChainView,
   PublishingRecordList,
   RenewalReminderFire,
   SSHGuardPlanRequest,
@@ -968,6 +969,10 @@ export const api = {
     // is what lets the console offer a choice and mark a dangling share.
     users: (opts?: RequestOptions) =>
       http.get<{ users: ProxyUserView[] }>("/api/proxy/users", undefined, opts),
+    // Every relay line's downstream route whose two ends this session may
+    // read (proxy:read). Monitoring's Topology draws them relay to exit.
+    lineChains: (opts?: RequestOptions) =>
+      http.get<{ chains: LineChainView[] | null }>("/api/network/lines/chains", undefined, opts),
   },
 
   subscriptionShares: {
