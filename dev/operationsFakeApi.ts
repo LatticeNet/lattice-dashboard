@@ -36,6 +36,7 @@ import type { ApprovalView, Principal, TaskResult, TaskView } from "@/lib/api/ty
 
 import { fakeApprovalsApi, isLineChain } from "./approvalsFixture";
 import { AUDIT_VERIFY, HAND_WRITTEN_NODES, NODES, buildApprovals, buildTasks, countTasks, linkAudit, queryAudit, type AuditQuery } from "./operationsFixture";
+import { PYTHON_SCRIPT, WITNESS_SCRIPT, longScript } from "./scriptFixture";
 
 export * from "@/lib/api/index";
 
@@ -259,7 +260,17 @@ export const api = {
     counts: () => guard(() => delay(countTasks(tasks), 80)),
     listForNode: (nodeId: string, limit = 50) => guard(() => queryTasks({ node_id: nodeId, limit })),
     results: (params?: Record<string, unknown>) => guard(() => queryResults(params)),
-    revealScript: () => Promise.reject(new ApiError(403, "step_up_required", "revealing a script needs a fresh second factor")),
+    // The script comes back only with a step-up grant, as on the server.
+    // `&script=long` answers about 200 KB (past the server's 64 KiB cap, to
+    // judge the view's render), `&script=empty` an empty script.
+    revealScript: (id: string, grant?: string) => {
+      if (!grant) return Promise.reject(new ApiError(403, "step_up_required", "revealing a script needs a fresh second factor"));
+      const task = findTask(id);
+      if (!task) return Promise.reject(new ApiError(404, "not_found", "task not found"));
+      const which = flags.get("script");
+      const script = which === "long" ? longScript(200 * 1024) : which === "empty" ? "" : task.interpreter === "python3" ? PYTHON_SCRIPT : WITNESS_SCRIPT;
+      return delay({ script }, 300);
+    },
     create: (input: { targets: string[]; interpreter: string }) => {
       const task = newTask({ ...(tasks[0] as TaskView), interpreter: input.interpreter }, input.targets, "direct");
       return delay(task);
@@ -304,4 +315,12 @@ export const api = {
   capabilities: { list: () => delay({ capabilities: [] }) },
   plugins: { contributions: () => delay([]) },
   terminal: { list: () => delay({ sessions: [] }) },
+  // Step-up for Reveal script: any six digits but 000000.
+  security: {
+    stepUp: (code: string) =>
+      code === "000000"
+        ? Promise.reject(new ApiError(401, "invalid_code", "invalid or expired passcode"))
+        : delay({ ok: true, grant: "harness-grant", expires_at: new Date(Date.now() + 60_000).toISOString() }, 300),
+    stepUpWebAuthnBegin: () => Promise.reject(new ApiError(400, "no_passkey", "no passkey is registered for this account")),
+  },
 } as unknown as typeof import("@/lib/api/index").api;

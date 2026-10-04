@@ -92,6 +92,7 @@ import DataState from "@/components/common/DataState.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import ShellText from "@/components/common/ShellText.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import NodeLatencyCard from "./NodeLatencyCard.vue";
 import { Button } from "@/components/ui/button";
@@ -2343,9 +2344,7 @@ async function saveDebug(): Promise<void> {
                   : $t('fleet.nodes.detail.launch.installs', { target: reconfigureInstallNote.target })
               }}
             </p>
-            <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs">
-              {{ reconfigureCommand }}
-            </code>
+            <code class="block relative overflow-x-auto whitespace-pre-wrap rounded-md bg-background/70 p-3 font-mono text-xs"><ShellText :text="reconfigureCommand" /></code>
           </div>
           <template #actions>
             <Button size="sm" :disabled="reconfigurePending || !launchDirty" @click="generateReconfigureCommand">

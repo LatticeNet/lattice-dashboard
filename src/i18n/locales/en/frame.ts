@@ -58,6 +58,14 @@ export default {
       failedTitle: "Could not read this",
       failedDescription: "The read failed before anything came back.",
     },
+    script: {
+      lines: "{n} line | {n} lines",
+      wrap: "Wrap",
+      wrapTitle: "Wrap long lines at the edge instead of scrolling sideways",
+      region: "Script, {n} line | Script, {n} lines",
+      plainOverLimit: "shown without color above {size}",
+      empty: "The script is empty.",
+    },
     rowMenu: {
       label: "Actions for {name}",
     },

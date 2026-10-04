@@ -52,6 +52,7 @@ import ProofLine, { type ProofSegment } from "@/components/common/ProofLine.vue"
 import { useProof } from "@/composables/useProof";
 import DataState from "@/components/common/DataState.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import ShellText from "@/components/common/ShellText.vue";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -2251,7 +2252,7 @@ const advancedId = (name: string) => `sshguard-adv-${name}`;
                       <!-- break-words, not break-all: lines wrap at the spaces between
                            ports, so a port is never split across a line end where its
                            tail would read as a port of its own. -->
-                      <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground">{{ entry.command }}</pre>
+                      <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-foreground"><ShellText :text="entry.command" /></pre>
                       <p class="text-xs text-muted-foreground">
                         {{ entry.id === 'knock' ? $t('networking.sshGuard.knock.commandKnockHint') : $t('networking.sshGuard.knock.commandBashHint') }}
                       </p>

@@ -22,11 +22,13 @@ import { approvalPlanSummary } from "@/lib/approvalKind";
 import { describeNodeStatus } from "@/lib/nodeStatus";
 import { formatDateTime, formatRelativeTime, shortId } from "@/lib/format";
 import { taskStateStyle } from "@/lib/taskLease";
+import { looksLikeShell } from "@/lib/shellTokens";
 import { cn } from "@/lib/utils";
 
 import CopyButton from "@/components/common/CopyButton.vue";
 import NodeLabel from "@/components/common/NodeLabel.vue";
 import PlanDiff from "@/components/common/PlanDiff.vue";
+import ScriptView from "@/components/common/ScriptView.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -84,6 +86,8 @@ function waitingVariant(): "warning" | "destructive" | "outline" {
 /* ------------------------------------------------------------------ */
 
 const planView = ref<"diff" | "full">("diff");
+/** Coloured only when the plan says it is shell (lib/shellTokens, looksLikeShell). */
+const planLanguage = computed(() => (looksLikeShell(props.approval.plan || "") ? "shell" : "plain"));
 
 const baselines = ref<Record<string, ApprovalView[]>>({});
 async function loadBaseline(row: ApprovalView): Promise<void> {
@@ -321,7 +325,18 @@ function statusLabel(status: string): string {
         </p>
         <PlanDiff :before="previousPlan" :after="approval.plan || ''" />
       </template>
-      <pre v-else class="relative max-h-[520px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-border p-4 font-mono text-xs leading-relaxed">{{ approval.plan }}</pre>
+      <!-- The plan exactly as hashed. Shell plans (SSH Guard's apply, the
+           witness configure) are coloured; JSON, nft and key-value plans keep
+           the same gutter without colour. The header's Copy covers both views. -->
+      <ScriptView
+        v-else
+        :text="approval.plan || ''"
+        :language="planLanguage"
+        wrap
+        :copy="false"
+        max-height="520px"
+        :label="$t('operations.approvals.plan')"
+      />
     </section>
 
     <section class="space-y-1 text-xs" data-testid="approval-hash">

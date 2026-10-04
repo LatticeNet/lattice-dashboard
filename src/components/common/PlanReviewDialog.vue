@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { ExternalLink, RefreshCw } from "lucide-vue-next";
 import { RouterLink } from "vue-router";
 import { cn } from "@/lib/utils";
+import { looksLikeShell } from "@/lib/shellTokens";
 
 import CopyButton from "@/components/common/CopyButton.vue";
+import ScriptView from "@/components/common/ScriptView.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,12 +29,13 @@ import {
  * EXACT bytes it passes here as `planText`, then passes that hex string as
  * `digest`. Because the digest the operator reads is rendered from the same
  * `digest` prop that the caller binds the approval to. And that digest was
- * derived from the same `planText` string shown in the <pre>. The displayed
+ * derived from the same `planText` string shown in the plan view. The displayed
  * digest provably matches the bytes the approval will bind. Do NOT re-derive the
  * digest in this component; doing so could desync displayed-vs-bound bytes.
  *
- * The plan body is rendered with plain text interpolation inside a <pre> (NOT
- * v-html) to stay CSP-safe with untrusted plan content.
+ * The plan body is rendered by ScriptView, token by token as text nodes (NOT
+ * v-html), to stay CSP-safe with untrusted plan content; its Copy copies
+ * `planText` itself.
  *
  * All user-facing copy is exposed as props with plain-English defaults so callers
  * can pass translated strings (via vue-i18n `t(...)`) without this component
@@ -125,6 +129,9 @@ function setOpen(value: boolean) {
   emit("update:open", value);
   if (!value) emit("cancel");
 }
+
+/** Coloured only when the plan says it is shell (lib/shellTokens, looksLikeShell). */
+const planLanguage = computed(() => (looksLikeShell(props.planText || "") ? "shell" : "plain"));
 </script>
 
 <template>
@@ -152,18 +159,20 @@ function setOpen(value: boolean) {
           </slot>
         </div>
 
-        <!-- Plan diff (CSP-safe text. NOT v-html) -->
-        <div class="rounded-md border border-border">
-          <div
-            class="flex items-center justify-between gap-3 border-b border-border px-3 py-2"
-          >
-            <span class="text-sm font-medium">{{ props.planLabel }}</span>
-            <CopyButton :value="props.planText || ''" />
-          </div>
-          <pre
-            class="max-h-[420px] relative overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed"
-          >{{ props.planText }}</pre>
-        </div>
+        <!-- The plan as text nodes (CSP-safe, NOT v-html), coloured when it
+             is shell; Copy copies planText itself. -->
+        <ScriptView
+          :text="props.planText || ''"
+          :language="planLanguage"
+          wrap
+          max-height="420px"
+          :label="props.planLabel"
+        >
+          <template #meta>
+            <span class="text-sm font-medium text-foreground">{{ props.planLabel }}</span>
+            <span aria-hidden="true">·</span>
+          </template>
+        </ScriptView>
 
         <!-- SHA-256 digest binding (rendered from the same bytes the approval binds) -->
         <div
