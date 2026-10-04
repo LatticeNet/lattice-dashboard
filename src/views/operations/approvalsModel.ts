@@ -462,6 +462,7 @@ export const AGENT_UPDATE_STALE_FIELDS = [
   "target_version",
   "binary_source",
   "binary_url",
+  "fallback_url",
   "sha256",
   "install_path",
   "service_name",

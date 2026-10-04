@@ -105,6 +105,7 @@ export default {
           target_version: "目标版本",
           binary_source: "二进制来源",
           binary_url: "二进制地址",
+          fallback_url: "备用下载地址",
           sha256: "校验值",
           install_path: "安装路径",
           service_name: "服务名",

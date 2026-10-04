@@ -106,6 +106,7 @@ export default {
           target_version: "target version",
           binary_source: "binary source",
           binary_url: "binary URL",
+          fallback_url: "fallback URL",
           sha256: "checksum",
           install_path: "install path",
           service_name: "service name",

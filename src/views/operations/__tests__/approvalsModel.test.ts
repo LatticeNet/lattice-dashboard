@@ -372,6 +372,14 @@ test("a stale agent update reason reads into fields, causes and the rest verbati
       other: [],
     },
   );
+  // Since a116 a control-plane plan also pins the release URL as fallback_url; an
+  // empty planned value is a plan written before the fallback existed.
+  assert.deepEqual(
+    describeAgentUpdateStale(
+      "agent update policy changed since this approval was planned; changed fields: fallback_url planned= current=https://github.com/LatticeNet/lattice-node-agent/releases/download/v0.3.10-alpha.3/lattice-agent-linux-amd64; re-plan before approving",
+    ).changes,
+    [{ field: "fallback_url", planned: "", current: "https://github.com/LatticeNet/lattice-node-agent/releases/download/v0.3.10-alpha.3/lattice-agent-linux-amd64" }],
+  );
   // The older wording the fixture and early rows carry.
   assert.deepEqual(describeAgentUpdateStale("agent update approval is stale; target_version planned=0.3.8 current=0.3.9-alpha.7; re-plan before approving").changes, [
     { field: "target_version", planned: "0.3.8", current: "0.3.9-alpha.7" },
