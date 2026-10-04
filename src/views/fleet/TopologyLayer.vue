@@ -12,19 +12,21 @@
  * wider than that the list is the default and the graph is one tap away
  * (?as=graph); with a mouse the graph is the default (?as=list for the list).
  *
- * The page passes what it already polls (nodes, monitors, incidents); this
- * layer reads the probe plan and rollups (every 30 s, like Latency) and the
- * line chains (every 60 s, only with proxy:read).
+ * The page passes the reads it already polls (nodes, monitors, incidents);
+ * this layer reads the probe plan and rollups (every 30 s, like Latency) and
+ * the line chains (every 60 s, only with proxy:read). The proof line speaks
+ * for every read the current filter draws from (topologyModel.readsFor), and
+ * a read that never landed says so above the drawing with a retry.
  */
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMediaQuery, useNow } from "@vueuse/core";
 import { Network, RefreshCw } from "lucide-vue-next";
 
-import { api, unwrap, type Incident, type LatencyProbePlan, type LatencyWindow, type LineChainView, type MonitorView, type Node } from "@/lib/api";
+import { api, unwrap, type IncidentListResponse, type LatencyProbePlan, type LatencyWindow, type LineChainView, type MonitorView, type Node } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useAsyncData } from "@/composables/useAsyncData";
-import { useProof } from "@/composables/useProof";
+import { useAsyncData, type AsyncData } from "@/composables/useAsyncData";
+import { useProof, type ProofBinding } from "@/composables/useProof";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import type { OwnedRoute } from "@/composables/useOwnedRoute";
@@ -41,16 +43,27 @@ import { Button } from "@/components/ui/button";
 import TopologyGraph from "./TopologyGraph.vue";
 import TopologyList from "./TopologyList.vue";
 import { LATENCY_WINDOWS, LOSS_ATTENTION, pairKey } from "./latencyModel";
-import { COLLAPSE_AT, TOPOLOGY_LAYERS, buildTopology, type TopologyLayer } from "./topologyModel";
+import {
+  COLLAPSE_AT,
+  TOPOLOGY_LAYERS,
+  buildTopology,
+  layerEmpty as emptyKind,
+  missingReads,
+  readState,
+  readsFor,
+  type TopoRead,
+  type TopoReadStatus,
+  type TopoReadStatuses,
+  type TopologyLayer,
+} from "./topologyModel";
 
 const props = defineProps<{
   owned: OwnedRoute;
-  /** The page's node list; undefined until read, or when node:read is missing. */
-  nodes: readonly Node[] | undefined;
-  nodesError?: Error | null;
+  /** The page's node list read; never sent without node:read. */
+  nodesQuery: AsyncData<Node[]>;
   /** Every monitor the page listed, generated ones included. */
-  monitors: readonly MonitorView[] | undefined;
-  incidents: readonly Incident[] | undefined;
+  monitorsQuery: AsyncData<MonitorView[]>;
+  incidentsQuery: AsyncData<IncidentListResponse>;
 }>();
 
 const emit = defineEmits<{
@@ -108,17 +121,41 @@ function present(value: "graph" | "list"): void {
 
 /* ---- Reads ---- */
 
+const nodes = computed(() => (canReadNodes.value ? props.nodesQuery.data.value : undefined));
+const monitors = computed(() => props.monitorsQuery.data.value);
+const incidents = computed(() => props.incidentsQuery.data.value?.incidents);
 /** The last chains read; a failed refresh keeps the last good list, a session without proxy:read has none. */
 const chains = computed(() => (canReadChains.value ? chainsQuery.data.value : undefined));
 
+type Query = Pick<AsyncData<unknown>, "data" | "error" | "loading" | "refreshing" | "lastUpdated" | "pollMs" | "refresh">;
+const QUERIES: Record<TopoRead, Query> = {
+  plan: planQuery,
+  rollups: rollupsQuery,
+  nodes: props.nodesQuery,
+  incidents: props.incidentsQuery,
+  monitors: props.monitorsQuery,
+  chains: chainsQuery,
+};
+const status = (query: Query, allowed: boolean): TopoReadStatus => ({ allowed, hasData: query.data.value !== undefined, failed: !!query.error.value });
+const statuses = computed<TopoReadStatuses>(() => ({
+  plan: status(planQuery, true),
+  rollups: status(rollupsQuery, true),
+  nodes: status(props.nodesQuery, canReadNodes.value),
+  incidents: status(props.incidentsQuery, true),
+  monitors: status(props.monitorsQuery, true),
+  chains: status(chainsQuery, canReadChains.value),
+}));
+const readName = (read: TopoRead) => t(`fleet.monitoring.topology.reads.${read}`);
+const readReason = (read: TopoRead) => proofReason(QUERIES[read].error.value);
+
 const model = computed(() =>
   buildTopology({
-    nodes: canReadNodes.value ? props.nodes : undefined,
+    nodes: nodes.value,
     plan: planQuery.data.value,
     rollups: rollupsQuery.data.value,
     chains: chains.value,
-    monitors: props.monitors,
-    incidents: props.incidents,
+    monitors: monitors.value,
+    incidents: incidents.value,
     window: windowParam.value,
     layer: layerParam.value,
     now: now.value.getTime(),
@@ -135,7 +172,17 @@ function refreshAll(): void {
 
 /* ---- Head ---- */
 
-const proof = useProof([planQuery, rollupsQuery], { hasData: () => planQuery.data.value !== undefined });
+// The weakest of the reads this filter draws from sets the age and the error;
+// before the probe plan lands nothing is drawn, so it alone decides "not read".
+const proofReads = computed(() => readsFor(layerParam.value, statuses.value));
+const proofBase = useProof(() => proofReads.value.map((read) => QUERIES[read]), { hasData: () => planQuery.data.value !== undefined });
+const proof = computed<ProofBinding>(() => {
+  const failing = proofReads.value.find((read) => QUERIES[read].error.value);
+  return {
+    ...proofBase.value,
+    error: failing ? t("fleet.monitoring.topology.proof.readFailed", { read: readName(failing), reason: readReason(failing) }) : null,
+  };
+});
 const proofSegments = computed<ProofSegment[]>(() => {
   const m = model.value;
   if (!planQuery.data.value) return [];
@@ -154,7 +201,8 @@ const proofSegments = computed<ProofSegment[]>(() => {
     out.push({ key: "chains", text: t("fleet.monitoring.topology.proof.chains", { n: c.chains }, c.chains) });
     if (c.chainsBroken) out.push({ key: "chainsBroken", tone: "warning", text: t("fleet.monitoring.topology.proof.chainsBroken", { n: c.chainsBroken }, c.chainsBroken) });
   }
-  if (layerParam.value === "all" || layerParam.value === "checks") {
+  // No monitor list read, no count: "0 checks" would be a guess.
+  if ((layerParam.value === "all" || layerParam.value === "checks") && monitors.value) {
     if (c.checks || layerParam.value === "checks") out.push({ key: "checks", text: t("fleet.monitoring.topology.proof.checks", { n: c.checks }, c.checks) });
     if (c.checksFailing) out.push({ key: "checksFailing", tone: "destructive", text: t("fleet.monitoring.topology.proof.checksFailing", { n: c.checksFailing }) });
   }
@@ -167,53 +215,51 @@ const layerTabs = computed(() =>
 
 /* ---- States ---- */
 
-const chainsNote = computed(() => {
-  if (layerParam.value !== "all") return "";
-  if (!canReadChains.value) return t("fleet.monitoring.topology.legend.noChains");
-  if (chainsQuery.error.value && chainsQuery.data.value === undefined) return t("fleet.monitoring.topology.legend.chainsFailed", { reason: proofReason(chainsQuery.error.value) });
-  return "";
+/**
+ * One line for each read the drawing is missing outright, with what that
+ * costs it and a retry. The Chains filter and the Checks filter say it in
+ * their empty state instead.
+ */
+const missingNotes = computed(() => {
+  const own = layerParam.value === "chains" ? "chains" : layerParam.value === "checks" ? "monitors" : undefined;
+  return missingReads(layerParam.value, statuses.value)
+    .filter((read) => read !== own && read !== "plan")
+    .map((read) => ({
+      read,
+      text: t(`fleet.monitoring.topology.missing.${read}`, { reason: readReason(read) }),
+      retry: () => void QUERIES[read].refresh(),
+    }));
 });
 
 type LayerEmpty = { title: string; description: string; action?: { label: string; run: () => void } } | null;
 const layerEmpty = computed<LayerEmpty>(() => {
-  const m = model.value;
-  switch (layerParam.value) {
-    case "probes":
-      if (m.sources.length === 0) {
-        return { title: t("fleet.monitoring.topology.empty.noSourcesTitle"), description: t("fleet.monitoring.topology.empty.noSourcesDescription"), action: { label: t("fleet.monitoring.topology.empty.openLatency"), run: () => emit("layer", "latency") } };
-      }
-      return null;
-    case "chains":
-      if (!canReadChains.value) return { title: t("fleet.monitoring.topology.empty.noChainAccessTitle"), description: t("fleet.monitoring.topology.empty.noChainAccessDescription") };
-      if (chainsQuery.data.value === undefined) {
-        // Never read: say why, with a way to try again, instead of a skeleton that never ends.
-        if (chainsQuery.error.value) {
-          return {
-            title: t("fleet.monitoring.topology.empty.chainsFailedTitle"),
-            description: proofReason(chainsQuery.error.value),
-            action: { label: t("common.actions.retry"), run: () => void chainsQuery.refresh() },
-          };
-        }
-        return null;
-      }
-      if (m.counts.chains === 0) {
-        const planned = m.counts.chainsUnplaced ? ` ${t("fleet.monitoring.topology.legend.unplaced", { n: m.counts.chainsUnplaced }, m.counts.chainsUnplaced)}` : "";
-        return { title: t("fleet.monitoring.topology.empty.noChainsTitle"), description: t("fleet.monitoring.topology.empty.noChainsDescription") + planned };
-      }
-      return null;
-    case "checks":
-      if (m.checks.length === 0) {
-        return { title: t("fleet.monitoring.topology.empty.noChecksTitle"), description: t("fleet.monitoring.topology.empty.noChecksDescription"), action: { label: t("fleet.monitoring.topology.empty.openMonitors"), run: () => emit("layer", "monitors") } };
-      }
-      return null;
+  switch (emptyKind(model.value, statuses.value)) {
+    case "noSources":
+      return { title: t("fleet.monitoring.topology.empty.noSourcesTitle"), description: t("fleet.monitoring.topology.empty.noSourcesDescription"), action: { label: t("fleet.monitoring.topology.empty.openLatency"), run: () => emit("layer", "latency") } };
+    case "chainsDenied":
+      return { title: t("fleet.monitoring.topology.empty.noChainAccessTitle"), description: t("fleet.monitoring.topology.empty.noChainAccessDescription") };
+    case "chainsFailed":
+      // Never read: say why, with a way to try again, instead of a skeleton that never ends.
+      return { title: t("fleet.monitoring.topology.empty.chainsFailedTitle"), description: readReason("chains"), action: { label: t("common.actions.retry"), run: () => void chainsQuery.refresh() } };
+    case "noChains": {
+      const n = model.value.counts.chainsUnplaced;
+      const planned = n ? ` ${t("fleet.monitoring.topology.legend.unplaced", { n }, n)}` : "";
+      return { title: t("fleet.monitoring.topology.empty.noChainsTitle"), description: t("fleet.monitoring.topology.empty.noChainsDescription") + planned };
+    }
+    case "monitorsFailed":
+      return { title: t("fleet.monitoring.topology.empty.monitorsFailedTitle"), description: readReason("monitors"), action: { label: t("common.actions.retry"), run: () => void props.monitorsQuery.refresh() } };
+    case "noChecks":
+      return { title: t("fleet.monitoring.topology.empty.noChecksTitle"), description: t("fleet.monitoring.topology.empty.noChecksDescription"), action: { label: t("fleet.monitoring.topology.empty.openMonitors"), run: () => emit("layer", "monitors") } };
+    case "noNodes":
+      return { title: t("fleet.monitoring.topology.empty.noNodesTitle"), description: t("fleet.monitoring.topology.empty.noNodesDescription") };
     default:
-      if (m.members.length === 0 && m.sources.length === 0) return { title: t("fleet.monitoring.topology.empty.noNodesTitle"), description: t("fleet.monitoring.topology.empty.noNodesDescription") };
       return null;
   }
 });
-const chainsLoading = computed(
-  () => layerParam.value === "chains" && canReadChains.value && chainsQuery.data.value === undefined && !chainsQuery.error.value,
-);
+const filterLoading = computed(() => emptyKind(model.value, statuses.value) === "loading");
+
+const nodesState = computed(() => readState(statuses.value.nodes));
+const nodesReason = computed(() => (nodesState.value === "failed" ? readReason("nodes") : null));
 
 /* ---- Legend ---- */
 
@@ -242,7 +288,7 @@ const folds = computed(() => model.value.members.length > COLLAPSE_AT);
 /* ---- Opening things ---- */
 
 const peek = bindRouteOpen(props.owned, "peek");
-const nodeSheetError = computed(() => (props.nodesError ? proofReason(props.nodesError) : null));
+const nodeSheetError = computed(() => (props.nodesQuery.error.value ? proofReason(props.nodesQuery.error.value) : null));
 
 function openPair(source: string, target: string): void {
   props.owned.push({ ...props.owned.query(), view: "latency", pair: pairKey(source, target), peek: undefined, topo: undefined, as: undefined });
@@ -317,7 +363,7 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
       </div>
 
       <DataState
-        :loading="planQuery.loading.value || chainsLoading"
+        :loading="planQuery.loading.value || filterLoading"
         :error="planQuery.error.value ?? null"
         :has-data="!!planQuery.data.value"
         :skeleton-rows="8"
@@ -345,7 +391,23 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
               </span>
             </div>
             <p v-if="!canReadNodes" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.topology.nodesUnread') }}</p>
-            <p v-if="chainsNote" class="text-xs text-muted-foreground" data-testid="topology-chains-note">{{ chainsNote }}</p>
+            <!-- A read the drawing is missing outright: what it costs, and a retry. -->
+            <p
+              v-for="note in missingNotes"
+              :key="note.read"
+              class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-destructive"
+              :data-testid="`topology-missing-${note.read}`"
+            >
+              <span class="min-w-0 break-words">{{ note.text }}</span>
+              <button
+                type="button"
+                class="inline-flex h-6 items-center rounded-sm border border-border px-2 text-xs text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-11 pointer-coarse:px-3"
+                @click="note.retry"
+              >
+                {{ $t('common.actions.retry') }}
+              </button>
+            </p>
+            <p v-if="!canReadChains && layerParam === 'all'" class="text-xs text-muted-foreground" data-testid="topology-chains-note">{{ $t('fleet.monitoring.topology.legend.noChains') }}</p>
             <p v-if="model.counts.chainsUnplaced && (layerParam === 'all' || layerParam === 'chains')" class="text-xs text-muted-foreground">
               {{ $t('fleet.monitoring.topology.legend.unplaced', { n: model.counts.chainsUnplaced }, model.counts.chainsUnplaced) }}
             </p>
@@ -356,9 +418,12 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
               :model="model"
               :now="now.getTime()"
               :window-label="windowLabel"
+              :nodes-state="nodesState"
+              :nodes-reason="nodesReason"
               @open-node="(id, el) => peek.open(id, el)"
               @open-pair="openPair"
               @open-monitor="openMonitor"
+              @retry-nodes="() => void props.nodesQuery.refresh()"
             />
             <TopologyList
               v-else
@@ -375,7 +440,7 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
 
     <NodeSheet
       :node-id="peek.openId.value"
-      :nodes="canReadNodes ? nodes : undefined"
+      :nodes="nodes"
       :error="nodeSheetError"
       :return-focus="peek.returnFocus"
       @close="peek.close"

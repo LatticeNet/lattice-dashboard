@@ -37,11 +37,15 @@ export interface UseProofOptions {
   hasData?: MaybeRefOrGetter<boolean | undefined>;
 }
 
-export function useProof(sources: ProofSource | ProofSource[], options: UseProofOptions = {}): ComputedRef<ProofBinding> {
-  const list = Array.isArray(sources) ? sources : [sources];
+/**
+ * A getter in place of the list lets the reads change with the page's state
+ * (Monitoring's Topology speaks for the reads its current filter draws from).
+ */
+export function useProof(sources: ProofSource | ProofSource[] | (() => ProofSource[]), options: UseProofOptions = {}): ComputedRef<ProofBinding> {
   const now = useNow({ interval: 1000 });
 
   return computed<ProofBinding>(() => {
+    const list = typeof sources === "function" ? sources() : Array.isArray(sources) ? sources : [sources];
     const override = toValue(options.hasData);
     const states = list.map((source) =>
       proofState({

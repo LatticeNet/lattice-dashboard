@@ -806,10 +806,9 @@ const deleteImpact = computed(() => {
     <TopologyLayer
       v-if="canReadMonitors && layer === 'topology'"
       :owned="owned"
-      :nodes="canReadNodes ? nodesQuery.data.value : undefined"
-      :nodes-error="nodesQuery.error.value ?? null"
-      :monitors="monitorsQuery.data.value"
-      :incidents="incidentsQuery.data.value?.incidents"
+      :nodes-query="nodesQuery"
+      :monitors-query="monitorsQuery"
+      :incidents-query="incidentsQuery"
       @layer="(next) => (layer = next)"
       @refresh-page="refreshAll"
       @open-monitor="(id, el) => sheet.open(id, el)"

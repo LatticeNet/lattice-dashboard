@@ -15,12 +15,18 @@ import {
   chainState,
   checkEndpoint,
   edgeStyle,
+  layerEmpty,
   layoutTopology,
+  missingReads,
   neighbourhood,
   pathsWorstFirst,
   quietAfterMs,
+  readState,
+  readsFor,
   regionOf,
   rowProbe,
+  type TopoReadStatus,
+  type TopoReadStatuses,
   type TopologyInput,
 } from "../topologyModel.ts";
 
@@ -466,4 +472,48 @@ test("a folded bundle is drawn as its worst live member; grey only when every me
 test("chains are drawn as two rails, so shape and not only hue tells them from probes", () => {
   const m = buildTopology(input());
   for (const e of m.edges) assert.equal(!!edgeStyle(e).double, e.kind === "chain", e.id);
+});
+
+const OK: TopoReadStatus = { allowed: true, hasData: true, failed: false };
+const FAILED: TopoReadStatus = { allowed: true, hasData: false, failed: true };
+const STALE: TopoReadStatus = { allowed: true, hasData: true, failed: true };
+const LOADING: TopoReadStatus = { allowed: true, hasData: false, failed: false };
+const DENIED: TopoReadStatus = { allowed: false, hasData: false, failed: false };
+const reads = (over: Partial<TopoReadStatuses> = {}): TopoReadStatuses => ({ plan: OK, rollups: OK, nodes: OK, incidents: OK, monitors: OK, chains: OK, ...over });
+
+test("the proof line speaks for every read the filter draws from, and never for one the session cannot send", () => {
+  assert.deepEqual(readsFor("all", reads()), ["plan", "rollups", "nodes", "incidents", "monitors", "chains"]);
+  assert.deepEqual(readsFor("probes", reads()), ["plan", "rollups", "nodes", "incidents"]);
+  assert.deepEqual(readsFor("checks", reads()), ["plan", "nodes", "incidents", "monitors"]);
+  assert.deepEqual(readsFor("chains", reads({ nodes: DENIED })), ["plan", "incidents", "chains"]);
+  assert.deepEqual(readsFor("all", reads({ chains: DENIED })), ["plan", "rollups", "nodes", "incidents", "monitors"]);
+});
+
+test("a read that never landed and failed is missing; a failed refresh after a good read is only stale", () => {
+  assert.equal(readState(FAILED), "failed");
+  assert.equal(readState(STALE), "read");
+  assert.equal(readState(LOADING), "loading");
+  assert.equal(readState(DENIED), "unreadable");
+  assert.deepEqual(missingReads("all", reads({ monitors: FAILED, nodes: FAILED, incidents: STALE })), ["nodes", "monitors"]);
+  assert.deepEqual(missingReads("probes", reads({ monitors: FAILED })), [], "the Probes filter draws no checks");
+  assert.deepEqual(missingReads("all", reads({ nodes: { ...FAILED, allowed: false } })), [], "a read never sent cannot fail");
+});
+
+test("the Checks filter tells an unread monitor list from an empty one", () => {
+  const unread = buildTopology(input({ layer: "checks", monitors: undefined }));
+  assert.equal(layerEmpty(unread, reads({ monitors: FAILED })), "monitorsFailed");
+  assert.equal(layerEmpty(unread, reads({ monitors: LOADING })), "loading");
+  assert.equal(layerEmpty(buildTopology(input({ layer: "checks", monitors: [] })), reads()), "noChecks");
+  const some = buildTopology(input({ layer: "checks", monitors: [monitor({ id: "m", node_ids: ["de"] })] }));
+  assert.equal(layerEmpty(some, reads({ monitors: STALE })), null, "a stale list still draws its checks");
+});
+
+test("the Chains filter says denied, failed, loading or none, in that order of what is known", () => {
+  const none = buildTopology(input({ layer: "chains", chains: [] }));
+  assert.equal(layerEmpty(none, reads({ chains: DENIED })), "chainsDenied");
+  assert.equal(layerEmpty(none, reads({ chains: FAILED })), "chainsFailed");
+  assert.equal(layerEmpty(none, reads({ chains: LOADING })), "loading");
+  assert.equal(layerEmpty(none, reads()), "noChains");
+  assert.equal(layerEmpty(buildTopology(input({ layer: "chains" })), reads()), null);
+  assert.equal(layerEmpty(buildTopology(input({ layer: "probes", plan: plan({ config: { ...plan().config, sources: [] } }) })), reads()), "noSources");
 });

@@ -917,3 +917,96 @@ export function neighbourhood(model: Pick<TopologyModel, "edges">, id: string): 
   }
   return out;
 }
+
+/* ------------------------------------------------------------------ */
+/* Reads                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The reads the drawing is made of. The layer makes the first two and the
+ * chains read; the page makes the node list, incidents and monitors, which it
+ * polls for its other layers anyway.
+ */
+export type TopoRead = "plan" | "rollups" | "nodes" | "incidents" | "monitors" | "chains";
+
+export interface TopoReadStatus {
+  /** The session holds the scope the read needs; a read it cannot make is never sent. */
+  allowed: boolean;
+  /** A read has landed at least once. */
+  hasData: boolean;
+  /** The latest attempt failed. */
+  failed: boolean;
+}
+
+export type TopoReadStatuses = Record<TopoRead, TopoReadStatus>;
+
+/** Where one read stands, in the words the drawing uses. */
+export type TopoReadState = "unreadable" | "loading" | "failed" | "read";
+
+export function readState(status: TopoReadStatus): TopoReadState {
+  if (!status.allowed) return "unreadable";
+  if (status.hasData) return "read";
+  return status.failed ? "failed" : "loading";
+}
+
+/**
+ * The reads a layer's drawing is built from, in the order the proof line
+ * names a failure. The proof line speaks for exactly these: its age is the
+ * oldest of them and its error the first, so a failed monitor list cannot
+ * hide behind a fresh probe plan.
+ */
+export function readsFor(layer: TopologyLayer, statuses: TopoReadStatuses): TopoRead[] {
+  const out: TopoRead[] = ["plan"];
+  if (layer === "all" || layer === "probes") out.push("rollups");
+  out.push("nodes", "incidents");
+  if (layer === "all" || layer === "checks") out.push("monitors");
+  if (layer === "all" || layer === "chains") out.push("chains");
+  return out.filter((read) => statuses[read].allowed);
+}
+
+/**
+ * Reads the layer needs that never landed and whose last attempt failed.
+ * The drawing is missing their part outright (no heartbeats, no incident
+ * marks, no checks), so each gets a line that says so, with a retry. A
+ * failed refresh after a good read is only stale, and the proof line already
+ * says that.
+ */
+export function missingReads(layer: TopologyLayer, statuses: TopoReadStatuses): TopoRead[] {
+  return readsFor(layer, statuses).filter((read) => readState(statuses[read]) === "failed");
+}
+
+/** Why a filter has nothing to draw, or "loading" while the read it needs is still on its way. */
+export type TopologyEmpty = "noSources" | "chainsDenied" | "chainsFailed" | "noChains" | "monitorsFailed" | "noChecks" | "noNodes";
+
+export function layerEmpty(
+  model: Pick<TopologyModel, "layer" | "sources" | "members" | "checks" | "counts">,
+  statuses: TopoReadStatuses,
+): TopologyEmpty | "loading" | null {
+  switch (model.layer) {
+    case "probes":
+      return model.sources.length === 0 ? "noSources" : null;
+    case "chains":
+      switch (readState(statuses.chains)) {
+        case "unreadable":
+          return "chainsDenied";
+        case "failed":
+          return "chainsFailed";
+        case "loading":
+          return "loading";
+        default:
+          return model.counts.chains === 0 ? "noChains" : null;
+      }
+    case "checks":
+      // An unread monitor list is not an empty one: "No checks yet" would be a guess.
+      switch (readState(statuses.monitors)) {
+        case "failed":
+          return "monitorsFailed";
+        case "loading":
+          return "loading";
+        default:
+          return model.checks.length === 0 ? "noChecks" : null;
+      }
+    default:
+      return model.members.length === 0 && model.sources.length === 0 ? "noNodes" : null;
+  }
+}

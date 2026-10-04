@@ -34,20 +34,29 @@ import {
   type TopoCheck,
   type TopoEdge,
   type TopoNode,
+  type TopoReadState,
   type TopologyModel,
 } from "./topologyModel";
 import { edgeValue, freshnessDot, freshnessText, lastSampleText, partialText, quietText, stateLabel } from "./topologyCopy";
 
-const props = defineProps<{
-  model: TopologyModel;
-  now: number;
-  windowLabel: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    model: TopologyModel;
+    now: number;
+    windowLabel: string;
+    /** Where the node list read stands; the control plane box says it. */
+    nodesState?: TopoReadState;
+    /** Why the node list read failed, when it never landed. */
+    nodesReason?: string | null;
+  }>(),
+  { nodesState: "read", nodesReason: null },
+);
 
 const emit = defineEmits<{
   openNode: [id: string, el: HTMLElement | null];
   openPair: [source: string, target: string];
   openMonitor: [id: string, el: HTMLElement | null];
+  retryNodes: [];
 }>();
 
 const { t, locale } = useI18n();
@@ -271,7 +280,12 @@ function checkFrom(check: TopoCheck): string {
 
 const cpLine = computed(() => {
   const cp = props.model.cp;
-  if (!cp.known) return [{ key: "unread", text: t("fleet.monitoring.topology.cp.unread"), tone: "text-muted-foreground" }];
+  if (!cp.known) {
+    // Not read is three different facts: no scope, not yet, or failed (with why).
+    if (props.nodesState === "failed") return [{ key: "failed", text: t("fleet.monitoring.topology.cp.failed"), tone: "text-destructive" }];
+    if (props.nodesState === "loading") return [{ key: "loading", text: t("fleet.monitoring.topology.cp.loading"), tone: "text-muted-foreground" }];
+    return [{ key: "unread", text: t("fleet.monitoring.topology.cp.unread"), tone: "text-muted-foreground" }];
+  }
   const out = [{ key: "beating", text: t("fleet.monitoring.topology.cp.beating", { fresh: cp.fresh, total: cp.total }), tone: "text-foreground" }];
   if (cp.quiet) out.push({ key: "quiet", text: t("fleet.monitoring.topology.cp.quiet", { n: cp.quiet }), tone: "text-destructive" });
   if (cp.degraded) out.push({ key: "degraded", text: t("fleet.monitoring.topology.cp.degraded", { n: cp.degraded }), tone: "text-warning-text" });
@@ -382,11 +396,13 @@ const card = computed<Card | null>(() => {
     const quiet = [...props.model.nodes.values()]
       .filter((n) => n.freshness && n.freshness !== "fresh")
       .sort((a, b) => order[a.freshness!] - order[b.freshness!] || a.name.localeCompare(b.name));
+    const lines = cpLine.value.map((l) => ({ text: l.text, tone: l.tone }));
+    if (props.nodesReason && !props.model.cp.known) lines.push({ text: props.nodesReason, tone: "text-muted-foreground" });
     return {
       title: t("fleet.monitoring.topology.cp.title"),
       pathsTitle: quiet.length ? t("fleet.monitoring.topology.card.notBeating") : undefined,
       rows: [],
-      lines: cpLine.value.map((l) => ({ text: l.text, tone: l.tone })),
+      lines,
       paths: quiet.slice(0, 8).map((n) => ({ key: n.id, text: n.name, value: freshnessText(t, locale.value, n, props.now), tone: n.freshness === "quiet" ? "text-destructive" : "text-muted-foreground" })),
       more: Math.max(0, quiet.length - 8),
     };
@@ -509,22 +525,36 @@ const cardStyle = computed(() => {
       </svg>
 
       <div class="absolute" :style="{ left: `${PAD}px`, top: `${PAD}px` }">
-        <!-- Control plane: the heartbeat every node sends, counted. -->
+        <!-- Control plane: the heartbeat every node sends, counted. A group, since a failed node list read puts a Retry inside it. -->
         <div
-          class="absolute flex flex-col justify-center rounded-lg border border-border bg-muted/40 px-3 outline-none transition-opacity duration-150 focus-visible:ring-2 focus-visible:ring-ring"
-          :class="dimmed(CONTROL_PLANE) && 'opacity-35'"
+          class="absolute flex flex-col justify-center rounded-lg border bg-muted/40 px-3 outline-none transition-opacity duration-150 focus-visible:ring-2 focus-visible:ring-ring"
+          :class="[dimmed(CONTROL_PLANE) && 'opacity-35', nodesState === 'failed' && !model.cp.known ? 'border-destructive/50' : 'border-border']"
           :style="{ left: `${layout.cp.x}px`, top: `${layout.cp.y}px`, width: `${layout.cp.w}px`, height: `${layout.cp.h}px` }"
+          role="group"
           tabindex="0"
           data-testid="topology-cp"
-          :aria-label="$t('fleet.monitoring.topology.cp.label', { state: cpLine.map((l) => l.text).join(', ') })"
+          :data-nodes="model.cp.known ? 'read' : nodesState"
+          :aria-label="$t('fleet.monitoring.topology.cp.label', { state: [...cpLine.map((l) => l.text), ...(nodesReason && !model.cp.known ? [nodesReason] : [])].join(', ') })"
           @pointerenter="(e) => onBoxEnter('cp', CONTROL_PLANE, e)"
           @pointerleave="onBoxLeave(CONTROL_PLANE)"
           @focus="(e) => onBoxEnter('cp', CONTROL_PLANE, e)"
           @blur="onBoxLeave(CONTROL_PLANE)"
         >
-          <span class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.monitoring.topology.cp.title') }}</span>
+          <span class="flex items-center gap-2">
+            <span class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{{ $t('fleet.monitoring.topology.cp.title') }}</span>
+            <button
+              v-if="nodesState === 'failed' && !model.cp.known"
+              type="button"
+              class="ms-auto inline-flex h-5 items-center rounded-sm border border-border bg-card px-1.5 text-[11px] text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+              data-testid="topology-cp-retry"
+              @click="emit('retryNodes')"
+            >
+              {{ $t('common.actions.retry') }}
+            </button>
+          </span>
           <span class="truncate text-xs leading-snug" :class="cpLine[0]!.tone">{{ cpLine[0]!.text }}</span>
-          <span v-if="cpLine.length > 1" class="flex flex-wrap gap-x-2 text-[11px] leading-snug">
+          <span v-if="nodesReason && !model.cp.known" class="truncate text-[11px] leading-snug text-muted-foreground" :title="nodesReason">{{ nodesReason }}</span>
+          <span v-else-if="cpLine.length > 1" class="flex flex-wrap gap-x-2 text-[11px] leading-snug">
             <span v-for="part in cpLine.slice(1)" :key="part.key" :class="part.tone">{{ part.text }}</span>
           </span>
         </div>
