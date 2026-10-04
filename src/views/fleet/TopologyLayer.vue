@@ -171,8 +171,21 @@ const layerEmpty = computed<LayerEmpty>(() => {
       return null;
     case "chains":
       if (!canReadChains.value) return { title: t("fleet.monitoring.topology.empty.noChainAccessTitle"), description: t("fleet.monitoring.topology.empty.noChainAccessDescription") };
-      if (chainsQuery.data.value === undefined) return null;
-      if (m.counts.chains === 0) return { title: t("fleet.monitoring.topology.empty.noChainsTitle"), description: t("fleet.monitoring.topology.empty.noChainsDescription") };
+      if (chainsQuery.data.value === undefined) {
+        // Never read: say why, with a way to try again, instead of a skeleton that never ends.
+        if (chainsQuery.error.value) {
+          return {
+            title: t("fleet.monitoring.topology.empty.chainsFailedTitle"),
+            description: proofReason(chainsQuery.error.value),
+            action: { label: t("common.actions.retry"), run: () => void chainsQuery.refresh() },
+          };
+        }
+        return null;
+      }
+      if (m.counts.chains === 0) {
+        const planned = m.counts.chainsUnplaced ? ` ${t("fleet.monitoring.topology.legend.unplaced", { n: m.counts.chainsUnplaced }, m.counts.chainsUnplaced)}` : "";
+        return { title: t("fleet.monitoring.topology.empty.noChainsTitle"), description: t("fleet.monitoring.topology.empty.noChainsDescription") + planned };
+      }
       return null;
     case "checks":
       if (m.checks.length === 0) {
@@ -184,7 +197,9 @@ const layerEmpty = computed<LayerEmpty>(() => {
       return null;
   }
 });
-const chainsLoading = computed(() => layerParam.value === "chains" && canReadChains.value && chainsQuery.data.value === undefined);
+const chainsLoading = computed(
+  () => layerParam.value === "chains" && canReadChains.value && chainsQuery.data.value === undefined && !chainsQuery.error.value,
+);
 
 /* ---- Legend ---- */
 

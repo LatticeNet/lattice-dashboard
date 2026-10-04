@@ -1536,6 +1536,7 @@ export default {
           openLatency: "Open Latency",
           noChainsTitle: "No relay chains",
           noChainsDescription: "No line forwards to a downstream exit. Chains are set on vpn-core's Lines page and approved like any change.",
+          chainsFailedTitle: "Line chains not read",
           noChainAccessTitle: "Chains need proxy:read",
           noChainAccessDescription: "This session cannot read line chains, so relay to exit routes are not drawn.",
           noChecksTitle: "No checks yet",

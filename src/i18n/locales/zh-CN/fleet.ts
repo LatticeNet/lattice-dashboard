@@ -1520,6 +1520,7 @@ export default {
           openLatency: "打开延迟",
           noChainsTitle: "没有中转链路",
           noChainsDescription: "没有线路转发到下游出口。链路在 vpn-core 的线路页设置，和其他变更一样需要审批。",
+          chainsFailedTitle: "没有读到线路链",
           noChainAccessTitle: "查看链路需要 proxy:read 权限",
           noChainAccessDescription: "当前会话不能读取线路链，所以不画中转到出口的路径。",
           noChecksTitle: "还没有检查",
