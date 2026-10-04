@@ -22,6 +22,7 @@
  *   ?readonly         the session holds read scopes only
  *   ?scopes=a,b       the session holds exactly these scopes (Access layers by scope)
  *   ?users=slow       the account list answers after 1.5 s
+ *   ?system=...       the System page's fixture (dev/systemFixture.ts lists its modes)
  *
  * Page fixtures carry their own switches (netplatPolicyFixture,
  * netplatPluginsFixture, ...); each file's header lists them.
@@ -52,6 +53,8 @@ import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./net
 import { CAPABILITIES, MACHINES, PROVIDERS, TOKENS, USERS, buildInfo } from "./netplatSettingsFixture";
 import { NODES, delay, flags, iso } from "./netplatFixture";
 import { SUBSCRIPTION_SHARES, VPN_USERS } from "./netplatPaletteFixture";
+import { systemHealth, systemSeries } from "./systemFixture";
+import type { MetricsRange } from "@/lib/api/systemTypes";
 
 export * from "@/lib/api/index";
 
@@ -88,9 +91,28 @@ const principal: Principal = {
 
 let seq = 100;
 
+/** ?system=forbidden and ?system=disabled answer the self-monitoring reads 403 and 503. */
+function systemRead<T>(value: () => T): Promise<T> {
+  const mode = flags.get("system");
+  if (mode === "forbidden" || mode === "disabled") {
+    READS.system = (READS.system ?? 0) + 1;
+    return delay(undefined, 120).then(() => {
+      throw mode === "forbidden"
+        ? new ApiError(403, "capability_denied", "control-plane internals need a full administrator (scope *, no node restriction)")
+        : new ApiError(503, "service_unavailable", "this server keeps no metrics history (it runs without a data directory)");
+    });
+  }
+  return read("system", value);
+}
+
 export const api = {
   auth: {
     me: () => delay(principal),
+  },
+  system: {
+    health: (range: MetricsRange) => systemRead(() => systemHealth(range, flags.get("system"))),
+    series: (owner: string, series: string[], range: MetricsRange, points = 360) =>
+      systemRead(() => systemSeries(owner, series, range, points, flags.get("system"))),
   },
   nodes: {
     list: () => read("nodes", () => ({ nodes: NODES.map((node) => ({ ...node })) })),

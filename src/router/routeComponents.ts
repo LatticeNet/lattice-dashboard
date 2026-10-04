@@ -34,6 +34,7 @@ export const concreteRoutes: Record<string, () => Promise<unknown>> = {
   "platform-notifications": () => import("@/views/platform/NotificationsView.vue"),
   "platform-webhooks": () => import("@/views/platform/WebhooksView.vue"),
   "platform-agent-updates": () => import("@/views/platform/AgentUpdatesView.vue"),
+  "platform-system": () => import("@/views/platform/SystemView.vue"),
   // Settings
   "settings-security": () => import("@/views/settings/SecurityView.vue"),
   "settings-capabilities": () => import("@/views/settings/CapabilitiesView.vue"),

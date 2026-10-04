@@ -65,7 +65,8 @@ test("every nav destination carries an icon and a path rooted at /", () => {
  * invariant, that anything the console gates on can also be handed out by it.
  */
 test("every scope the nav gates on can be granted from the scope picker", () => {
-  const grantable = new Set(SCOPE_CATALOG);
+  // "*" is granted by the picker's full administrator switch, not a grid entry.
+  const grantable = new Set([...SCOPE_CATALOG, "*"]);
   const ungrantable = NAV.flatMap((section) =>
     section.items.flatMap((item) =>
       (item.scopes ?? []).filter((scope) => !grantable.has(scope)),
