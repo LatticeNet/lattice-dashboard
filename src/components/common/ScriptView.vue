@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * A script to read: a task's script after step-up, or a plan that is shell.
+ * A script to read: a task's script after step-up, or a plan (coloured only
+ * when it declares itself shell; see lib/shellTokens).
  *
  * Line numbers in a gutter that stays put while long lines scroll sideways,
  * shell colours from lib/shellTokens, a wrap toggle, and Copy, which copies

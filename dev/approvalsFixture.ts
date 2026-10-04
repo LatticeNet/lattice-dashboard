@@ -25,7 +25,7 @@ import type { ApprovalCounts, ApprovalView } from "@/lib/api/types";
 import { isStaleAgentUpdateApprovalView } from "@/lib/api/index";
 import { ApiError } from "@/lib/api/client";
 
-import { WITNESS_SCRIPT } from "./scriptFixture";
+import { witnessPlan } from "./scriptFixture";
 
 export const NOW = Date.now();
 export const MINUTE = 60_000;
@@ -530,13 +530,14 @@ export const PENDING_KINDS: ApprovalView[] = [
     updated_at: iso(-3 * HOUR),
   },
   {
-    // A plan that is shell, as the witness configure plan is: the review
-    // colours it and marks the unit file its heredoc writes.
+    // The witness configure plan as the server renders it: prose, key-value
+    // lines and two file sections. Not shell, so Full plan shows it with
+    // line numbers and wrap and no colour.
     id: "approval_k7witnessconf01",
     node_id: nodeIdFor(6),
-    plugin: "witness",
-    action: "witness-configure",
-    plan: WITNESS_SCRIPT,
+    plugin: "controlplane-witness",
+    action: "witness-configure:v1",
+    plan: witnessPlan(NODE_NAMES[6]!, nodeIdFor(6)),
     status: "pending",
     actor_id: "cdcd",
     created_at: iso(-4 * HOUR),

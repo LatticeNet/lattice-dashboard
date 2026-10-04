@@ -86,7 +86,7 @@ function waitingVariant(): "warning" | "destructive" | "outline" {
 /* ------------------------------------------------------------------ */
 
 const planView = ref<"diff" | "full">("diff");
-/** Coloured only when the plan says it is shell (lib/shellTokens, looksLikeShell). */
+/** Coloured only when the plan declares itself shell (lib/shellTokens, looksLikeShell); no server-rendered plan does today. */
 const planLanguage = computed(() => (looksLikeShell(props.approval.plan || "") ? "shell" : "plain"));
 
 const baselines = ref<Record<string, ApprovalView[]>>({});
@@ -325,9 +325,12 @@ function statusLabel(status: string): string {
         </p>
         <PlanDiff :before="previousPlan" :after="approval.plan || ''" />
       </template>
-      <!-- The plan exactly as hashed. Shell plans (SSH Guard's apply, the
-           witness configure) are coloured; JSON, nft and key-value plans keep
-           the same gutter without colour. The header's Copy covers both views. -->
+      <!-- The plan exactly as hashed, with line numbers and wrap. The plans
+           the server renders (SSH Guard and witness prose with key-value
+           lines and file sections, line-chain JSON, nft rulesets, DNS and
+           agent-update key-value) are shown without colour; colour turns on
+           only for a plan that declares itself shell (a shell shebang or a
+           leading `set -X`). The header's Copy covers both views. -->
       <ScriptView
         v-else
         :text="approval.plan || ''"

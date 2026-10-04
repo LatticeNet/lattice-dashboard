@@ -130,7 +130,12 @@ function setOpen(value: boolean) {
   if (!value) emit("cancel");
 }
 
-/** Coloured only when the plan says it is shell (lib/shellTokens, looksLikeShell). */
+/**
+ * Coloured only when the plan declares itself shell (lib/shellTokens,
+ * looksLikeShell). The three callers today pass an nft ruleset (Policy), a
+ * DNS plan and an agent-update plan, none of them shell, so they get the
+ * gutter and wrap without colour.
+ */
 const planLanguage = computed(() => (looksLikeShell(props.planText || "") ? "shell" : "plain"));
 </script>
 
@@ -159,8 +164,8 @@ const planLanguage = computed(() => (looksLikeShell(props.planText || "") ? "she
           </slot>
         </div>
 
-        <!-- The plan as text nodes (CSP-safe, NOT v-html), coloured when it
-             is shell; Copy copies planText itself. -->
+        <!-- The plan as text nodes (CSP-safe, NOT v-html), coloured only
+             when it declares itself shell; Copy copies planText itself. -->
         <ScriptView
           :text="props.planText || ''"
           :language="planLanguage"
