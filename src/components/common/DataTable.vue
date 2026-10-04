@@ -342,9 +342,11 @@ const isDesktop = useMediaQuery("(min-width: 768px)");
  * off screen with the first rows: Tasks lists 1,771 runs, Approvals history
  * and Audit as many. So the wrapper scrolls sideways only while the table is
  * wider than it; a table that fits is clipped instead (`overflow-x: clip`
- * makes no scroll container) and its header sticks. A phone in the scroll
- * layout, where the columns do not fit, keeps the sideways scroll and the
- * header that scrolls with the rows, as before.
+ * makes no scroll container) and its header sticks. A table wider than its
+ * box keeps the sideways scroll and a header that scrolls with the rows, as
+ * before: every table on a phone in the scroll layout, and below about
+ * 1280 px the widest ones (at 1024, Tasks, Audit, Inventory, DDNS and
+ * Approvals history all scroll sideways).
  */
 const scroller = ref<HTMLElement | null>(null);
 const tableEl = ref<HTMLTableElement | null>(null);
@@ -354,6 +356,17 @@ useResizeObserver([scroller, tableEl], () => {
   const table = tableEl.value;
   if (!box || !table) return;
   fitsWidth.value = table.getBoundingClientRect().width <= box.clientWidth + 0.5;
+});
+
+/**
+ * The bulk action bar sticks to the same top edge, above the header (z-20
+ * over z-15). While it shows, the header sticks just under it instead of
+ * behind it, or the column names vanish the moment a row is selected.
+ */
+const bulkBar = ref<HTMLElement | null>(null);
+const bulkBarHeight = ref(0);
+useResizeObserver(bulkBar, () => {
+  bulkBarHeight.value = bulkBar.value?.getBoundingClientRect().height ?? 0;
 });
 
 /**
@@ -865,6 +878,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
     <!-- Bulk action bar -->
     <div
       v-if="selectable && selectedCount > 0"
+      ref="bulkBar"
       class="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm"
     >
       <span class="font-medium tabular-nums">{{ selectedCount }}</span>
@@ -928,8 +942,11 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
         ]"
       >
         <table ref="tableEl" class="w-full min-w-[640px] text-sm">
-          <thead class="sticky top-0 z-[15] bg-[var(--table-ground,var(--background))]">
-            <tr class="border-b border-border text-xs text-muted-foreground">
+          <thead
+            class="sticky top-0 z-[15] bg-[var(--table-ground,var(--background))]"
+            :style="selectable && selectedCount > 0 && bulkBarHeight ? { top: `${bulkBarHeight}px` } : undefined"
+          >
+            <tr class="text-xs text-muted-foreground [&>th]:th-rule">
               <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2 pointer-coarse:h-12 pointer-coarse:w-11 pointer-coarse:px-3.5', selectGutterClass)">
                 <Checkbox
                   class="touch-target"
