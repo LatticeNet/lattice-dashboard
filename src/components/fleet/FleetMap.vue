@@ -18,7 +18,10 @@
  *   - a click on one node emits it (the page opens its sheet); on a cluster
  *     a zoom can split, it zooms there; on a pile no zoom can split (GeoIP
  *     puts a city's nodes on one point), it spreads the pile out around its
- *     spot, each member a mark of its own on a leader line;
+ *     spot, each member a mark of its own on a leader line, first gliding a
+ *     spot near the frame's edge toward the middle so no line crosses a leg;
+ *     a pile the frame cannot hold apart is emitted for the page to list;
+ *     a zoom, a pan or a new width folds a spread back;
  *   - the pointer or the keyboard focus on a mark shows what it is
  *     (FleetMapCard); hovering a pile lists its members;
  *   - the marks are one tab stop: arrow keys move to the nearest mark that
@@ -43,27 +46,33 @@ import {
   MAP_HEIGHT,
   MAP_WIDTH,
   arcPaths,
+  cardBesideSpread,
+  centreOn,
   clampViewport,
+  clusterAction,
   clusterArcTone,
   clusterPlace,
   clusterPoints,
   clusterRadius,
   clusterTone,
   fitViewport,
+  leadersClear,
   maxZoomFor,
   nearestInDirection,
   project,
   ringPath,
   spreadBox,
+  spreadCapacity,
   spreadSlots,
   viewportBetween,
   zoomAround,
-  splitView,
   type ArcTone,
+  type ClusterAction,
   type ClusterReach,
   type ClusterTone,
   type MapCluster,
   type MapDirection,
+  type PxBox,
   type ReachCircle,
   type SpreadSlot,
   type Viewport,
@@ -95,10 +104,10 @@ const props = withDefaults(
     arcs?: boolean;
     /** A member the page's list points at, drawn as if hovered. */
     highlightId?: string | null;
-    /** The side of a spread the page's list covers; a leg's card opens on the other side. */
-    spreadListSide?: "left" | "right" | null;
+    /** The box the page's list of a spread's members covers, in px from the map's top left; a leg's card stays clear of it. */
+    listBox?: PxBox | null;
   }>(),
-  { compact: false, activeIds: () => [], facts: undefined, arcs: false, highlightId: null, spreadListSide: null },
+  { compact: false, activeIds: () => [], facts: undefined, arcs: false, highlightId: null, listBox: null },
 );
 
 const emit = defineEmits<{
@@ -142,6 +151,7 @@ const points = computed(() =>
     return { id: node.id, x: at.x, y: at.y, status: nodeStatus(node) };
   }),
 );
+const pointById = computed(() => new Map(points.value.map((point) => [point.id, point])));
 
 /** A 44 px target where a finger is the pointer; just past the mark where a mouse is. */
 const coarse = useMediaQuery("(pointer: coarse)");
@@ -214,19 +224,34 @@ const LEG_TONE: Record<ClusterTone, string> = {
   muted: "fill-muted-foreground/50 stroke-muted-foreground",
 };
 
-function screenX(x: number): number {
-  return viewport.value.x + x * viewport.value.scale;
+/**
+ * A map point at the current zoom, pan left out, in the frame's map units.
+ * The marks, the spread and the arcs are drawn in this space inside one group
+ * that the pan translates, so a drag changes that group's transform rather
+ * than every mark's position, and nothing drawn from it is recomputed while
+ * the map pans. At 500 nodes a pointermove re-patched every mark (4 to 8 ms).
+ */
+function zx(x: number): number {
+  return x * zoomLevel.value;
 }
-function screenY(y: number): number {
-  return viewport.value.y + y * viewport.value.scale;
+function zy(y: number): number {
+  return y * zoomLevel.value;
 }
 /** A size in screen px, in map units, so marks stay the same size as the map zooms. */
 function px(value: number): number {
   return value * unitsPerPx.value;
 }
+/** A map point in px at the current zoom, pan left out: what the arrow keys and the nearest-mark search compare. */
+function zoomPx(x: number, y: number): { x: number; y: number } {
+  return { x: zx(x) / unitsPerPx.value, y: zy(y) / unitsPerPx.value };
+}
+/** Zoom-space px (zoomPx) to px from the map's top left, the pan added. */
+function panPx(at: { x: number; y: number }): { x: number; y: number } {
+  return { x: at.x + viewport.value.x / unitsPerPx.value, y: at.y + viewport.value.y / unitsPerPx.value };
+}
 /** A map point in px from the map's top left. */
 function framePx(x: number, y: number): { x: number; y: number } {
-  return { x: screenX(x) / unitsPerPx.value, y: screenY(y) / unitsPerPx.value };
+  return panPx(zoomPx(x, y));
 }
 
 /** Named from every member: a city, a country, or how many places. */
@@ -486,7 +511,8 @@ interface Spread {
   /** The shared spot, in map units. */
   x: number;
   y: number;
-  scale: number;
+  /** The view and the width it was laid out for: a zoom, a pan or a new width folds it. */
+  view: Viewport;
   width: number;
   slots: SpreadSlot[];
 }
@@ -499,6 +525,27 @@ let spreadSeq = 0;
 let foldTimer: ReturnType<typeof setTimeout> | undefined;
 
 const legHit = computed(() => (coarse.value ? 22 : hitRadius(1)));
+/** Leader lines keep this far from every other leg's mark: its radius, half its stroke and a hair. */
+const LEADER_CLEARANCE = MARK_PX + 1;
+
+/** Where a spread's legs go around a spot at `anchor` (px from the map's top left), or undefined when the frame cannot hold them. */
+function slotsAt(count: number, anchor: { x: number; y: number }): SpreadSlot[] | undefined {
+  return spreadSlots(count, anchor, { width: svgWidth.value, height: svgHeight.value }, coarse.value ? 46 : 26, legHit.value + 1, LEADER_CLEARANCE);
+}
+
+/** The view that brings a cluster's spot as near the frame's middle as the pan allows at this zoom. */
+function centredOn(cluster: MapCluster): Viewport {
+  return centreOn(cluster.x, cluster.y, zoomLevel.value, maxZoom.value);
+}
+
+/** Whether a pile could spread once its spot sits where centredOn puts it; independent of the pan, so labels need not follow it. */
+function spreadFits(cluster: MapCluster): boolean {
+  const view = centredOn(cluster);
+  const anchor = { x: (view.x + cluster.x * view.scale) / unitsPerPx.value, y: (view.y + cluster.y * view.scale) / unitsPerPx.value };
+  // Capacity only: clearance never turns a fit into a miss.
+  const frame = { width: svgWidth.value, height: svgHeight.value };
+  return spreadCapacity(anchor, frame, coarse.value ? 46 : 26, legHit.value + 1) >= cluster.ids.length;
+}
 
 function membersInOrder(ids: readonly string[]): string[] {
   return ids
@@ -523,17 +570,10 @@ function spreadState(at: Spread): FleetMapSpread {
  */
 function openSpread(cluster: MapCluster, fromKeyboard: boolean): boolean {
   const ids = membersInOrder(cluster.ids);
-  const anchor = framePx(cluster.x, cluster.y);
-  const slots = spreadSlots(
-    ids.length,
-    anchor,
-    { width: svgWidth.value, height: svgHeight.value },
-    coarse.value ? 46 : 26,
-    legHit.value + 1,
-  );
+  const slots = slotsAt(ids.length, framePx(cluster.x, cluster.y));
   if (!slots) return false;
   clearTimeout(foldTimer);
-  const next: Spread = { key: cluster.key, ids, x: cluster.x, y: cluster.y, scale: viewport.value.scale, width: svgWidth.value, slots };
+  const next: Spread = { key: cluster.key, ids, x: cluster.x, y: cluster.y, view: { ...viewport.value }, width: svgWidth.value, slots };
   spread.value = next;
   spreadOpen.value = false;
   const seq = ++spreadSeq;
@@ -550,12 +590,18 @@ function openSpread(cluster: MapCluster, fromKeyboard: boolean): boolean {
   return true;
 }
 
-/** Fold the spread back onto its spot; focus returns to the pile when asked. */
+/**
+ * Fold the spread back onto its spot; focus returns to the pile when asked.
+ * The page's member list closes at once, so focus that was in it moves to
+ * the map straight away, and to the pile once the legs are back on it,
+ * never left on the page's body in between.
+ */
 function collapseSpread(returnFocus: boolean, animate = true): void {
   const open = spread.value;
   if (!open) return;
   spreadSeq += 1;
   spreadOpen.value = false;
+  if (returnFocus && svg.value && !svg.value.contains(document.activeElement)) svg.value.focus({ preventScroll: true });
   emit("spread", null);
   clearTimeout(foldTimer);
   const finish = () => {
@@ -567,11 +613,17 @@ function collapseSpread(returnFocus: boolean, animate = true): void {
   else foldTimer = setTimeout(finish, 200);
 }
 
-// A zoom or a new width moves every other mark, so a spread folds at once rather than float over a new layout.
-watch([zoomLevel, svgWidth], () => {
-  const open = spread.value;
-  if (open && (Math.abs(open.scale - zoomLevel.value) > 1e-3 || Math.abs(open.width - svgWidth.value) > 0.5)) collapseSpread(false, false);
-});
+// A zoom or a new width moves every other mark, so a spread folds at once rather than float over a new layout. A pan
+// folds it too: its slots were fitted to the frame where it opened, and the page's list beside it stays where it was.
+watch(
+  () => [viewport.value.scale, viewport.value.x, viewport.value.y, svgWidth.value] as const,
+  ([scale, x, y, width]) => {
+    const open = spread.value;
+    if (!open) return;
+    const moved = Math.abs(open.view.scale - scale) > 1e-3 || Math.abs(open.view.x - x) > 0.5 || Math.abs(open.view.y - y) > 0.5;
+    if (moved || Math.abs(open.width - width) > 0.5) collapseSpread(false, false);
+  },
+);
 
 // A member gone from the list leaves its leg empty; under two left, there is nothing to spread.
 watch(byId, (nodes) => {
@@ -584,11 +636,11 @@ onBeforeUnmount(() => clearTimeout(foldTimer));
 /** Clusters drawn as marks: all of them but the one spread out. */
 const visibleClusters = computed(() => (spread.value ? clusters.value.filter((cluster) => cluster.key !== spread.value!.key) : clusters.value));
 
-/** The spread's legs: member, slot, and where the leg's mark is in frame px. */
+/** The spread's legs: member, slot, and where the leg's mark is in zoom-space px (zoomPx; panPx adds the pan). */
 const legs = computed(() => {
   const open = spread.value;
   if (!open) return [];
-  const anchor = framePx(open.x, open.y);
+  const anchor = zoomPx(open.x, open.y);
   return open.ids
     .map((id, index) => ({ id, slot: open.slots[index]!, node: byId.value.get(id) }))
     .filter((leg): leg is { id: string; slot: SpreadSlot; node: FleetMapNode } => !!leg.node)
@@ -597,39 +649,60 @@ const legs = computed(() => {
 
 /* ---------------------------- clicks and the keys ---------------------------- */
 
-type Action = "open" | "zoom" | "spread" | "list";
+type Action = ClusterAction["action"];
 
 /**
- * What a click on a cluster does: open its one node; zoom in while a zoom
- * can split it, so every member that has a place of its own is drawn there;
- * spread it once none can (members on one spot, or closer than two targets
- * at the deepest zoom). Twelve on one Los Angeles point and one in San Jose
- * take a zoom, then a spread: a spread straight away would hang San Jose on
- * a leader line from Los Angeles.
+ * What a click on each drawn cluster does (fleetMapModel.clusterAction),
+ * worked out once per zoom rather than on every render: the labels and the
+ * card read it, and at 500 nodes working it out per render cost a frame.
+ * It reads the zoom alone, never the pan, so a drag leaves it as it was.
  */
-function actionFor(cluster: MapCluster): { action: Action; view?: Viewport } {
-  if (cluster.ids.length === 1) return { action: "open" };
-  const members = points.value.filter((point) => cluster.ids.includes(point.id));
+const actions = computed(() => {
+  const scale = zoomLevel.value;
+  const max = maxZoom.value;
   // Room for a whole target at the frame's edge.
-  const view = splitView(members, clusteringAt, viewport.value.scale, maxZoom.value, px(hitRadius(1) + 6));
-  return view ? { action: "zoom", view } : { action: "spread" };
+  const margin = px(hitRadius(1) + 6);
+  const byKey = new Map<string, ClusterAction>();
+  for (const cluster of clusters.value) {
+    const members = cluster.ids.length > 1 ? cluster.ids.map((id) => pointById.value.get(id)).filter((point) => point !== undefined) : [];
+    byKey.set(cluster.key, cluster.ids.length > 1 ? clusterAction(members, clusteringAt, scale, max, margin, () => spreadFits(cluster)) : { action: "open" });
+  }
+  return byKey;
+});
+
+function actionFor(cluster: MapCluster): ClusterAction {
+  return actions.value.get(cluster.key) ?? { action: cluster.ids.length === 1 ? "open" : "list" };
 }
 
 function activateCluster(cluster: MapCluster, opener: Element, fromKeyboard = false): void {
   if (props.compact || Date.now() < suppressClickUntil) return;
-  const { action, view } = actionFor(cluster);
-  if (action === "zoom" && view) {
+  const plan = actionFor(cluster);
+  if (plan.action === "zoom") {
     const wasFocused = opener.contains(document.activeElement);
     hideCard();
-    animateTo(view, () => {
+    animateTo(plan.view, () => {
       // The pile split under the focus: move it to the mark nearest where the pile was.
-      if (wasFocused) focusNearest(framePx(cluster.x, cluster.y));
+      if (wasFocused) focusNearest(zoomPx(cluster.x, cluster.y));
     });
     return;
   }
-  if (action === "spread" && openSpread(cluster, fromKeyboard)) return;
+  if (plan.action === "spread") {
+    const here = slotsAt(cluster.ids.length, framePx(cluster.x, cluster.y));
+    const centred = centredOn(cluster);
+    const canGlide = Math.abs(centred.x - viewport.value.x) > 0.5 || Math.abs(centred.y - viewport.value.y) > 0.5;
+    if (here && (leadersClear(here, LEADER_CLEARANCE) || !canGlide) && openSpread(cluster, fromKeyboard)) return;
+    if (canGlide) {
+      // Near the frame's edge the legs crowd to one side, so a leader line crosses a leg or they do not fit at all:
+      // glide the spot toward the middle, then spread it there.
+      hideCard();
+      animateTo(centred, () => {
+        if (!openSpread(cluster, fromKeyboard)) emit("select", membersInOrder(cluster.ids), opener);
+      });
+      return;
+    }
+  }
   hideCard();
-  emit("select", action === "open" ? cluster.ids : membersInOrder(cluster.ids), opener);
+  emit("select", plan.action === "open" ? cluster.ids : membersInOrder(cluster.ids), opener);
 }
 
 function activateLeg(id: string, opener: Element): void {
@@ -648,10 +721,14 @@ function onClusterClick(cluster: MapCluster, event: MouseEvent): void {
   activateCluster(cluster, event.currentTarget as Element);
 }
 
-/** Every mark the keys can reach, in frame px; a spread's legs alone while one is open. */
+/**
+ * Every mark the keys can reach, in zoom-space px (zoomPx: the pan moves
+ * them all alike, so directions and distances hold without it); a spread's
+ * legs alone while one is open.
+ */
 const markers = computed(() => {
   if (legs.value.length) return legs.value.map((leg) => ({ key: `n:${leg.id}`, ...leg.at }));
-  return visibleClusters.value.map((cluster) => ({ key: `c:${cluster.key}`, ...framePx(cluster.x, cluster.y) }));
+  return visibleClusters.value.map((cluster) => ({ key: `c:${cluster.key}`, ...zoomPx(cluster.x, cluster.y) }));
 });
 
 /** The one mark in the tab order: the last one focused while it is still drawn, else the westmost. */
@@ -662,14 +739,23 @@ const tabKey = computed(() => {
   return [...list].sort((a, b) => a.x - b.x || a.y - b.y)[0]?.key;
 });
 
+/**
+ * Move focus to a mark. A mark that already holds focus fires no focus
+ * event: after Enter zoomed a pile whose key survived the zoom, Vue kept the
+ * same element and the ring never came back. Its focus state is noted here
+ * as the focus event would have.
+ */
 function focusMarker(key: string): void {
   focusKey.value = key;
   void nextTick(() => {
     const element = svg.value?.querySelector<SVGElement>(`[data-marker="${CSS.escape(key)}"]`);
-    element?.focus({ preventScroll: true });
+    if (!element) return;
+    element.focus({ preventScroll: true });
+    if (element === document.activeElement) noteFocus(element, key);
   });
 }
 
+/** Focus the mark nearest a point in zoom-space px. */
 function focusNearest(at: { x: number; y: number }): void {
   let best: string | undefined;
   let bestDistance = Infinity;
@@ -731,7 +817,8 @@ function onMapKeydown(event: KeyboardEvent): void {
   }
   const focused = (event.target as Element | null)?.closest?.("[data-marker]")?.getAttribute("data-marker");
   const marker = markers.value.find((entry) => entry.key === focused);
-  const anchor = marker ? { x: marker.x * unitsPerPx.value, y: marker.y * unitsPerPx.value } : undefined;
+  // Markers are in zoom-space px; the zoom anchor is in the frame's map units, the pan included.
+  const anchor = marker ? { x: marker.x * unitsPerPx.value + viewport.value.x, y: marker.y * unitsPerPx.value + viewport.value.y } : undefined;
   if (event.key === "+" || event.key === "=") zoomBy(1.6, anchor);
   else if (event.key === "-" || event.key === "_") zoomBy(1 / 1.6, anchor);
   else if (event.key === "0") fitFleet();
@@ -744,8 +831,19 @@ function onMapKeydown(event: KeyboardEvent): void {
 type Hot = { kind: "cluster"; key: string } | { kind: "node"; id: string } | { kind: "arc"; key: string };
 
 const hovered = ref<Hot | null>(null);
+/** The mark whose card the keyboard's focus shows; put away with the card (a wheel zoom, a pan) while focus stays. */
 const focused = ref<Hot | null>(null);
+/**
+ * The mark holding the keyboard's focus, for its ring: set on focus, cleared
+ * on blur only. Kept apart from the card, which a zoom puts away while the
+ * focus stays, so the ring never vanishes from a mark that still has focus.
+ */
+const keyFocus = ref<Hot | null>(null);
 let hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+function hotOf(markerKey: string): Hot {
+  return markerKey.startsWith("n:") ? { kind: "node", id: markerKey.slice(2) } : { kind: "cluster", key: markerKey.slice(2) };
+}
 
 function sameHot(a: Hot | null, b: Hot): boolean {
   if (!a || a.kind !== b.kind) return false;
@@ -768,15 +866,33 @@ function onMarkLeave(): void {
   }, 80);
 }
 
-/** The keyboard's focus shows the same card; a click's focus does not. */
-function onMarkFocus(event: FocusEvent, key: string, hot: Hot): void {
+/** The keyboard's focus shows a ring and the same card the pointer does; a click's focus shows neither. */
+function noteFocus(element: Element, key: string): void {
   focusKey.value = key;
-  if ((event.target as Element).matches(":focus-visible")) focused.value = hot;
+  if (!element.matches(":focus-visible")) return;
+  keyFocus.value = hotOf(key);
+  focused.value = hotOf(key);
+}
+
+function onMarkFocus(event: FocusEvent, key: string): void {
+  noteFocus(event.target as Element, key);
 }
 
 function onMarkBlur(): void {
+  keyFocus.value = null;
   focused.value = null;
 }
+
+// A focused mark that is no longer drawn (folded into a spread, merged by a zoom) loses its ring and card with it.
+watch(markers, (list) => {
+  const held = keyFocus.value;
+  if (!held) return;
+  const key = held.kind === "node" ? `n:${held.id}` : `c:${held.key}`;
+  if (!list.some((marker) => marker.key === key)) {
+    keyFocus.value = null;
+    focused.value = null;
+  }
+});
 
 function hideCard(): void {
   clearTimeout(hideTimer);
@@ -797,7 +913,7 @@ function isActive(ids: readonly string[]): boolean {
 
 /** The ring around a mark: solid and thicker for the keyboard's focus, solid for an open node, faint for the pointer. */
 function ringFor(ids: readonly string[], hot: Hot): { cls: string; width: number } | undefined {
-  if (sameHot(focused.value, hot)) return { cls: "stroke-white", width: 2.5 };
+  if (sameHot(keyFocus.value, hot)) return { cls: "stroke-white", width: 2.5 };
   if (isActive(ids)) return { cls: "stroke-white", width: 1.5 };
   if (isHot(hot)) return { cls: "stroke-white/60", width: 1.5 };
   return undefined;
@@ -809,6 +925,10 @@ const HINT: Record<Action, string> = {
   spread: "fleet.map.card.hintSpread",
   list: "fleet.map.card.hintList",
 };
+
+/** The card's width (FleetMapCard is w-64) and a generous height for a node's card, for placing it before it is laid out. */
+const CARD_W = 256;
+const CARD_H = 230;
 
 /** What the card shows and where, in px from this component's top left. */
 const card = computed(() => {
@@ -824,7 +944,7 @@ const card = computed(() => {
     if (!leg) return null;
     mode = "node";
     ids = [leg.id];
-    at = leg.at;
+    at = panPx(leg.at);
     reach = legHit.value;
     hint = t(HINT.open);
   } else {
@@ -842,19 +962,21 @@ const card = computed(() => {
     }
   }
   const nodes = ids.map((id) => byId.value.get(id)).filter((node): node is FleetMapNode => !!node);
-  // Beside the mark, on whichever side has room; above it in the lower half of the map.
-  // A leg's card goes beside the whole spread, on the side the page's list leaves free, so it covers neither.
-  const width = 256;
-  let left = at.x + reach + 10 + width <= svgWidth.value ? at.x + reach + 10 : at.x - reach - 10 - width;
+  const style: Record<string, string> = {};
   if (hot.kind === "node" && spread.value) {
+    // A leg's card goes beside the whole spread, clear of its legs and of the page's list (fleetMapModel.cardBesideSpread).
     const box = spreadBox(framePx(spread.value.x, spread.value.y), spread.value.slots, legHit.value);
-    const leftSide = box.left - 10 - width;
-    const rightSide = box.right + 10;
-    if (props.spreadListSide === "right") left = leftSide >= 4 ? leftSide : rightSide;
-    else if (props.spreadListSide === "left") left = rightSide + width <= svgWidth.value ? rightSide : leftSide;
-    else left = rightSide + width <= svgWidth.value ? rightSide : leftSide;
+    // The page measures from the frame's outer edge; the svg sits inside its 1 px border.
+    const list = props.listBox ? { left: props.listBox.left - 1, top: props.listBox.top - 1, right: props.listBox.right - 1, bottom: props.listBox.bottom - 1 } : null;
+    const place = cardBesideSpread(box, at, list, { width: svgWidth.value, height: svgHeight.value }, { width: CARD_W, height: CARD_H });
+    style.left = `${place.left + 1}px`;
+    if (place.top !== undefined) style.top = `${place.top + 1}px`;
+    else style.bottom = `${place.bottom}px`;
+    return { mode, nodes, place: placeOf(ids), hint, style };
   }
-  const style: Record<string, string> = { left: `${Math.max(4, left) + 1}px` };
+  // Beside the mark, on whichever side has room; above it in the lower half of the map.
+  const left = at.x + reach + 10 + CARD_W <= svgWidth.value ? at.x + reach + 10 : at.x - reach - 10 - CARD_W;
+  style.left = `${Math.max(4, left) + 1}px`;
   if (at.y > svgHeight.value / 2) style.bottom = `${Math.max(4, svgHeight.value - at.y - 16)}px`;
   else style.top = `${Math.max(4, at.y - 16) + 1}px`;
   return { mode, nodes, place: placeOf(ids), hint, style };
@@ -880,22 +1002,47 @@ const source = computed(() => {
   return cluster ? { key: cluster.key, x: cluster.x, y: cluster.y, count: cluster.ids.length } : undefined;
 });
 
-/** One arc per place the source probes, drawn as its worst member. */
+/**
+ * One arc per place the source probes, drawn as its worst member, in zoom
+ * space (zx). None until the layer is ready: while the rollups are still
+ * being read every pair would draw as "nothing heard".
+ */
 const arcs = computed(() => {
   const latency = props.facts?.latency;
   const from = source.value;
-  if (!latency || !from) return [];
+  if (!latency || !from || props.facts?.latencyState !== "ready") return [];
   const targets: { key: string; x: number; y: number; ids: readonly string[] }[] = visibleClusters.value.map((cluster) => cluster);
   if (spread.value) targets.push({ key: spread.value.key, x: spread.value.x, y: spread.value.y, ids: spread.value.ids });
-  const start = { x: screenX(from.x), y: screenY(from.y) };
+  const start = { x: zx(from.x), y: zy(from.y) };
   const out: { key: string; tone: ArcTone; paths: string[] }[] = [];
   for (const target of targets) {
     if (target.key === from.key) continue;
     const tone = clusterArcTone(target.ids.map((id) => latency.readings.get(id)), latency.lossAttention);
     if (!tone) continue;
-    out.push({ key: target.key, tone, paths: arcPaths(start, { x: screenX(target.x), y: screenY(target.y) }, MAP_WIDTH * viewport.value.scale) });
+    out.push({ key: target.key, tone, paths: arcPaths(start, { x: zx(target.x), y: zy(target.y) }, MAP_WIDTH * zoomLevel.value) });
   }
   return out;
+});
+
+/**
+ * The source's name beside its mark: below and to the right, or to the left
+ * where it would run past the frame's right edge (cd-hs-sh at Shanghai was
+ * cut off on a phone), and above where it would run past the foot.
+ */
+const sourceLabel = computed(() => {
+  const from = source.value;
+  if (!from) return undefined;
+  const radius = clusterRadius(from.count, MARK_PX);
+  // A monospace advance is about 0.6 em; 10.5 px type.
+  const width = (props.facts?.latency?.sourceName ?? "").length * 10.5 * 0.62;
+  const at = framePx(from.x, from.y);
+  const left = at.x + radius + 9 + width > svgWidth.value - 4;
+  const up = at.y + radius + 16 > svgHeight.value - 4;
+  return {
+    x: zx(from.x) + px(left ? -(radius + 9) : radius + 9),
+    y: zy(from.y) + px(up ? -(radius + 6) : radius + 12),
+    anchor: left ? "end" : "start",
+  };
 });
 
 function arcDash(tone: ArcTone): string | undefined {
@@ -914,13 +1061,17 @@ function clusterLabel(cluster: MapCluster): string {
   return parts.join(", ");
 }
 
+/** Every drawn cluster's label, worked out when the clusters, the names or the actions change, never per pan frame. */
+const labels = computed(() => new Map(visibleClusters.value.map((cluster) => [cluster.key, clusterLabel(cluster)])));
+
 function legTone(node: FleetMapNode): string {
   return LEG_TONE[clusterTone([nodeStatus(node)])];
 }
 
 defineExpose({
   reset: () => setViewport({ scale: 1, x: 0, y: 0 }),
-  collapse: () => collapseSpread(false),
+  /** Fold an open spread; with `returnFocus`, focus goes back to its pile (the page's list closing it from the keyboard). */
+  collapse: (returnFocus = false) => collapseSpread(returnFocus),
 });
 </script>
 
@@ -956,171 +1107,180 @@ defineExpose({
           />
         </g>
 
-        <!-- Probe arcs, under the marks so a mark always takes the pointer first. -->
-        <g v-if="arcs.length" data-testid="fleet-map-arcs">
-          <g
-            v-for="arc in arcs"
-            :key="arc.key"
-            :data-arc="arc.key"
-            :data-tone="arc.tone.tone"
-            @pointerenter="onMarkEnter($event, { kind: 'arc', key: arc.key })"
-            @pointerleave="onMarkLeave"
-          >
-            <path
-              v-for="(d, index) in arc.paths"
-              :key="index"
-              :d="d"
-              fill="none"
-              :class="ARC_CLASS[arc.tone.tone]"
-              :stroke-width="px(isHot({ kind: 'arc', key: arc.key }) ? 2.5 : 1.5)"
-              :stroke-dasharray="arcDash(arc.tone)"
-              stroke-linecap="round"
-              :opacity="isHot({ kind: 'arc', key: arc.key }) ? 1 : 0.8"
-            />
-            <path v-for="(d, index) in arc.paths" :key="`hit${index}`" :d="d" fill="none" stroke="transparent" :stroke-width="px(10)" pointer-events="stroke" />
+        <!--
+          Everything drawn per mark sits in one group the pan translates, at
+          positions that change only with the zoom (zx, zy): a drag rewrites
+          this one transform, not every mark.
+        -->
+        <g :transform="`translate(${viewport.x} ${viewport.y})`">
+          <!-- Probe arcs, under the marks so a mark always takes the pointer first. -->
+          <g v-if="arcs.length" data-testid="fleet-map-arcs">
+            <g
+              v-for="arc in arcs"
+              :key="arc.key"
+              :class="spread && arc.key !== spread.key ? 'fleet-map-dim' : undefined"
+              :data-arc="arc.key"
+              :data-tone="arc.tone.tone"
+              @pointerenter="onMarkEnter($event, { kind: 'arc', key: arc.key })"
+              @pointerleave="onMarkLeave"
+            >
+              <path
+                v-for="(d, index) in arc.paths"
+                :key="index"
+                :d="d"
+                fill="none"
+                :class="ARC_CLASS[arc.tone.tone]"
+                :stroke-width="px(isHot({ kind: 'arc', key: arc.key }) ? 2.5 : 1.5)"
+                :stroke-dasharray="arcDash(arc.tone)"
+                stroke-linecap="round"
+                :opacity="isHot({ kind: 'arc', key: arc.key }) ? 1 : 0.8"
+              />
+              <path v-for="(d, index) in arc.paths" :key="`hit${index}`" :d="d" fill="none" stroke="transparent" :stroke-width="px(10)" pointer-events="stroke" />
+            </g>
           </g>
-        </g>
 
-        <g
-          v-for="cluster in visibleClusters"
-          :key="cluster.key"
-          :role="compact ? undefined : 'button'"
-          :tabindex="compact ? undefined : tabKey === `c:${cluster.key}` ? 0 : -1"
-          :aria-label="compact ? undefined : clusterLabel(cluster)"
-          :class="cn('fleet-map-mark', !compact && 'cursor-pointer', spread && 'fleet-map-dim')"
-          :data-cluster="cluster.key"
-          :data-count="cluster.ids.length"
-          :data-marker="compact ? undefined : `c:${cluster.key}`"
-          :data-hot="isHot({ kind: 'cluster', key: cluster.key }) || undefined"
-          @click="onClusterClick(cluster, $event)"
-          @keydown="onMarkerKeydown($event, `c:${cluster.key}`, () => activateCluster(cluster, $event.currentTarget as Element, true))"
-          @pointerenter="onMarkEnter($event, { kind: 'cluster', key: cluster.key })"
-          @pointerleave="onMarkLeave"
-          @focus="onMarkFocus($event, `c:${cluster.key}`, { kind: 'cluster', key: cluster.key })"
-          @blur="onMarkBlur"
-        >
-          <title v-if="compact">{{ clusterLabel(cluster) }}</title>
-          <!-- 44 px across on a phone, just past the mark with a mouse. -->
-          <circle v-if="!compact" :cx="screenX(cluster.x)" :cy="screenY(cluster.y)" :r="px(hitRadius(cluster.ids.length))" fill="transparent" />
-          <circle
-            v-if="ringFor(cluster.ids, { kind: 'cluster', key: cluster.key })"
-            :cx="screenX(cluster.x)"
-            :cy="screenY(cluster.y)"
-            :r="px(clusterRadius(cluster.ids.length, MARK_PX) + 4.5)"
-            fill="none"
-            :class="ringFor(cluster.ids, { kind: 'cluster', key: cluster.key })!.cls"
-            :stroke-width="px(ringFor(cluster.ids, { kind: 'cluster', key: cluster.key })!.width)"
-          />
-          <g class="fleet-map-body">
+          <g
+            v-for="cluster in visibleClusters"
+            :key="cluster.key"
+            :role="compact ? undefined : 'button'"
+            :tabindex="compact ? undefined : tabKey === `c:${cluster.key}` ? 0 : -1"
+            :aria-label="compact ? undefined : labels.get(cluster.key)"
+            :class="['fleet-map-mark', !compact && 'cursor-pointer', spread && 'fleet-map-dim']"
+            :data-cluster="cluster.key"
+            :data-count="cluster.ids.length"
+            :data-marker="compact ? undefined : `c:${cluster.key}`"
+            :data-hot="isHot({ kind: 'cluster', key: cluster.key }) || undefined"
+            @click="onClusterClick(cluster, $event)"
+            @keydown="onMarkerKeydown($event, `c:${cluster.key}`, () => activateCluster(cluster, $event.currentTarget as Element, true))"
+            @pointerenter="onMarkEnter($event, { kind: 'cluster', key: cluster.key })"
+            @pointerleave="onMarkLeave"
+            @focus="onMarkFocus($event, `c:${cluster.key}`)"
+            @blur="onMarkBlur"
+          >
+            <title v-if="compact">{{ labels.get(cluster.key) }}</title>
+            <!-- 44 px across on a phone, just past the mark with a mouse. -->
+            <circle v-if="!compact" :cx="zx(cluster.x)" :cy="zy(cluster.y)" :r="px(hitRadius(cluster.ids.length))" fill="transparent" />
             <circle
-              :cx="screenX(cluster.x)"
-              :cy="screenY(cluster.y)"
-              :r="px(clusterRadius(cluster.ids.length, MARK_PX))"
-              :class="cn(TONE[cluster.tone].fill, TONE[cluster.tone].stroke)"
-              :stroke-width="px(1.5)"
+              v-if="ringFor(cluster.ids, { kind: 'cluster', key: cluster.key })"
+              :cx="zx(cluster.x)"
+              :cy="zy(cluster.y)"
+              :r="px(clusterRadius(cluster.ids.length, MARK_PX) + 4.5)"
+              fill="none"
+              :class="ringFor(cluster.ids, { kind: 'cluster', key: cluster.key })!.cls"
+              :stroke-width="px(ringFor(cluster.ids, { kind: 'cluster', key: cluster.key })!.width)"
             />
-            <text
-              v-if="cluster.ids.length > 1"
-              :x="screenX(cluster.x)"
-              :y="screenY(cluster.y)"
-              text-anchor="middle"
-              dominant-baseline="central"
-              class="fill-white font-mono font-semibold"
-              :font-size="px(10)"
-            >{{ cluster.ids.length }}</text>
-            <g v-if="cluster.down > 0 && cluster.ids.length > 1">
+            <g class="fleet-map-body">
               <circle
-                :cx="screenX(cluster.x) + px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
-                :cy="screenY(cluster.y) - px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
-                :r="px(6.5)"
-                class="fill-destructive"
+                :cx="zx(cluster.x)"
+                :cy="zy(cluster.y)"
+                :r="px(clusterRadius(cluster.ids.length, MARK_PX))"
+                :class="[TONE[cluster.tone].fill, TONE[cluster.tone].stroke]"
+                :stroke-width="px(1.5)"
               />
               <text
-                :x="screenX(cluster.x) + px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
-                :y="screenY(cluster.y) - px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
+                v-if="cluster.ids.length > 1"
+                :x="zx(cluster.x)"
+                :y="zy(cluster.y)"
                 text-anchor="middle"
                 dominant-baseline="central"
                 class="fill-white font-mono font-semibold"
-                :font-size="px(8.5)"
-              >{{ cluster.down }}</text>
+                :font-size="px(10)"
+              >{{ cluster.ids.length }}</text>
+              <g v-if="cluster.down > 0 && cluster.ids.length > 1">
+                <circle
+                  :cx="zx(cluster.x) + px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
+                  :cy="zy(cluster.y) - px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
+                  :r="px(6.5)"
+                  class="fill-destructive"
+                />
+                <text
+                  :x="zx(cluster.x) + px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
+                  :y="zy(cluster.y) - px(clusterRadius(cluster.ids.length, MARK_PX) * 0.8)"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                  class="fill-white font-mono font-semibold"
+                  :font-size="px(8.5)"
+                >{{ cluster.down }}</text>
+              </g>
             </g>
           </g>
-        </g>
 
-        <!-- A pile spread out: the shared spot, a leader line to each member, each member its own mark. -->
-        <g
-          v-if="spread"
-          class="fleet-map-spread"
-          :data-open="spreadOpen || undefined"
-          :transform="`translate(${screenX(spread.x)} ${screenY(spread.y)})`"
-          data-testid="fleet-map-spread"
-          :data-count="legs.length"
-        >
-          <line
-            v-for="leg in legs"
-            :key="`line-${leg.id}`"
-            class="fleet-map-leader stroke-white/50"
-            x1="0"
-            y1="0"
-            :x2="px(leg.slot.dx)"
-            :y2="px(leg.slot.dy)"
-            :stroke-width="px(1)"
-          />
-          <circle :r="px(3.5)" class="fill-white/85">
-            <title>{{ $t('fleet.map.spread.spot', { n: legs.length, place: placeOf(spread.ids) || $t('fleet.map.cluster.somewhere') }) }}</title>
-          </circle>
+          <!-- A pile spread out: the shared spot, a leader line to each member, each member its own mark. -->
           <g
-            v-for="leg in legs"
-            :key="leg.id"
-            role="button"
-            :tabindex="tabKey === `n:${leg.id}` ? 0 : -1"
-            :aria-label="nodeLabel(leg.id)"
-            class="fleet-map-leg fleet-map-mark cursor-pointer"
-            :style="{ '--dx': `${px(leg.slot.dx)}px`, '--dy': `${px(leg.slot.dy)}px` }"
-            :data-marker="`n:${leg.id}`"
-            :data-node="leg.id"
-            :data-hot="isHot({ kind: 'node', id: leg.id }) || undefined"
-            @click.stop="activateLeg(leg.id, $event.currentTarget as Element)"
-            @keydown="onMarkerKeydown($event, `n:${leg.id}`, () => activateLeg(leg.id, $event.currentTarget as Element))"
-            @pointerenter="onMarkEnter($event, { kind: 'node', id: leg.id })"
-            @pointerleave="onMarkLeave"
-            @focus="onMarkFocus($event, `n:${leg.id}`, { kind: 'node', id: leg.id })"
-            @blur="onMarkBlur"
+            v-if="spread"
+            class="fleet-map-spread"
+            :data-open="spreadOpen || undefined"
+            :transform="`translate(${zx(spread.x)} ${zy(spread.y)})`"
+            data-testid="fleet-map-spread"
+            :data-count="legs.length"
           >
-            <circle :r="px(legHit)" fill="transparent" />
-            <circle
-              v-if="ringFor([leg.id], { kind: 'node', id: leg.id })"
-              :r="px(MARK_PX + 4.5)"
-              fill="none"
-              :class="ringFor([leg.id], { kind: 'node', id: leg.id })!.cls"
-              :stroke-width="px(ringFor([leg.id], { kind: 'node', id: leg.id })!.width)"
+            <line
+              v-for="leg in legs"
+              :key="`line-${leg.id}`"
+              class="fleet-map-leader stroke-white/50"
+              x1="0"
+              y1="0"
+              :x2="px(leg.slot.dx)"
+              :y2="px(leg.slot.dy)"
+              :stroke-width="px(1)"
             />
-            <g class="fleet-map-body">
-              <circle :r="px(MARK_PX)" :class="legTone(leg.node)" :stroke-width="px(1.5)" />
+            <circle :r="px(3.5)" class="fill-white/85">
+              <title>{{ $t('fleet.map.spread.spot', { n: legs.length, place: placeOf(spread.ids) || $t('fleet.map.cluster.somewhere') }) }}</title>
+            </circle>
+            <g
+              v-for="leg in legs"
+              :key="leg.id"
+              role="button"
+              :tabindex="tabKey === `n:${leg.id}` ? 0 : -1"
+              :aria-label="nodeLabel(leg.id)"
+              class="fleet-map-leg fleet-map-mark cursor-pointer"
+              :style="{ '--dx': `${px(leg.slot.dx)}px`, '--dy': `${px(leg.slot.dy)}px` }"
+              :data-marker="`n:${leg.id}`"
+              :data-node="leg.id"
+              :data-hot="isHot({ kind: 'node', id: leg.id }) || undefined"
+              @click.stop="activateLeg(leg.id, $event.currentTarget as Element)"
+              @keydown="onMarkerKeydown($event, `n:${leg.id}`, () => activateLeg(leg.id, $event.currentTarget as Element))"
+              @pointerenter="onMarkEnter($event, { kind: 'node', id: leg.id })"
+              @pointerleave="onMarkLeave"
+              @focus="onMarkFocus($event, `n:${leg.id}`)"
+              @blur="onMarkBlur"
+            >
+              <circle :r="px(legHit)" fill="transparent" />
+              <circle
+                v-if="ringFor([leg.id], { kind: 'node', id: leg.id })"
+                :r="px(MARK_PX + 4.5)"
+                fill="none"
+                :class="ringFor([leg.id], { kind: 'node', id: leg.id })!.cls"
+                :stroke-width="px(ringFor([leg.id], { kind: 'node', id: leg.id })!.width)"
+              />
+              <g class="fleet-map-body">
+                <circle :r="px(MARK_PX)" :class="legTone(leg.node)" :stroke-width="px(1.5)" />
+              </g>
             </g>
           </g>
-        </g>
 
-        <!-- The latency source, named, while the arcs are drawn. -->
-        <g v-if="source && arcs.length" class="pointer-events-none" data-testid="fleet-map-source">
-          <circle
-            :cx="screenX(source.x)"
-            :cy="screenY(source.y)"
-            :r="px(clusterRadius(source.count, MARK_PX) + 5)"
-            fill="none"
-            class="stroke-white/80"
-            :stroke-width="px(1)"
-            :stroke-dasharray="`${px(2)} ${px(2)}`"
-          />
-          <text
-            :x="screenX(source.x) + px(clusterRadius(source.count, MARK_PX) + 9)"
-            :y="screenY(source.y) + px(clusterRadius(source.count, MARK_PX) + 12)"
-            class="fill-white font-mono"
-            :font-size="px(10.5)"
-            :stroke-width="px(3)"
-            stroke="oklch(0.18 0.025 265)"
-            paint-order="stroke"
-          >{{ facts?.latency?.sourceName }}</text>
+          <!-- The latency source, named, while the arcs are drawn. -->
+          <g v-if="source && sourceLabel && arcs.length" class="pointer-events-none" data-testid="fleet-map-source">
+            <circle
+              :cx="zx(source.x)"
+              :cy="zy(source.y)"
+              :r="px(clusterRadius(source.count, MARK_PX) + 5)"
+              fill="none"
+              class="stroke-white/80"
+              :stroke-width="px(1)"
+              :stroke-dasharray="`${px(2)} ${px(2)}`"
+            />
+            <text
+              :x="sourceLabel.x"
+              :y="sourceLabel.y"
+              :text-anchor="sourceLabel.anchor"
+              class="fill-white font-mono"
+              :font-size="px(10.5)"
+              :stroke-width="px(3)"
+              stroke="oklch(0.18 0.025 265)"
+              paint-order="stroke"
+            >{{ facts?.latency?.sourceName }}</text>
+          </g>
         </g>
       </svg>
 

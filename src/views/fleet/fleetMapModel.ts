@@ -460,6 +460,134 @@ export function splitView(members: readonly MapPoint[], clusteringAt: Clustering
   return centreOn(biggest.x, biggest.y, scale, max);
 }
 
+/** What a click on a cluster does. */
+export type ClusterAction = { action: "open" } | { action: "zoom"; view: Viewport } | { action: "spread" } | { action: "list" };
+
+/**
+ * What a click on a cluster does: open its one node; zoom in while a zoom
+ * can split it (splitView), so every member that has a place of its own is
+ * drawn there; spread it once none can (members on one spot, or closer than
+ * two targets at the deepest zoom); and list its members when the frame
+ * cannot hold a spread of that many. Twelve on one Los Angeles point and one
+ * in San Jose take a zoom, then a spread: a spread straight away would hang
+ * San Jose on a leader line from Los Angeles.
+ *
+ * `spreadFits` answers for the spot as near the frame's middle as the map
+ * can pan it, so the card's "spread them out" is what the click then does.
+ */
+export function clusterAction(
+  members: readonly MapPoint[],
+  clusteringAt: ClusteringAt,
+  current: number,
+  max: number,
+  marginUnits: number,
+  spreadFits: (count: number) => boolean,
+): ClusterAction {
+  if (members.length < 2) return { action: "open" };
+  const view = splitView(members, clusteringAt, current, max, marginUnits);
+  if (view) return { action: "zoom", view };
+  return spreadFits(members.length) ? { action: "spread" } : { action: "list" };
+}
+
+/* ------------------------------ latency layer ------------------------------ */
+
+/** Where the map's latency layer stands; nosource: the probes have no source configured. */
+export type LatencyLayerState = "ready" | "loading" | "failed" | "denied" | "nosource";
+
+/** One read as the layer needs it: whether it holds an answer, and whether its last try failed. */
+export interface LayerRead {
+  hasData: boolean;
+  failed: boolean;
+}
+
+/**
+ * The latency layer's state from its two reads: the probe plan (which names
+ * the source) and the rollups (what was heard). Arcs and readings are drawn
+ * only when both have answered. With the plan in and the rollups still on
+ * their way, every pair used to read as "nothing heard", drawn as grey arcs
+ * as if that had been measured.
+ */
+export function latencyLayerState(input: { canRead: boolean; plan: LayerRead; rollups: LayerRead; hasSource: boolean }): LatencyLayerState {
+  if (!input.canRead) return "denied";
+  if (!input.plan.hasData) return input.plan.failed ? "failed" : "loading";
+  if (!input.hasSource) return "nosource";
+  if (!input.rollups.hasData) return input.rollups.failed ? "failed" : "loading";
+  return "ready";
+}
+
+/* ---------------------------------- card ---------------------------------- */
+
+/** A box in px from the map's top left. */
+export interface PxBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function boxesMeet(a: PxBox, b: PxBox): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+/**
+ * Where a spread leg's card goes: beside the whole spread, clear of its legs
+ * and of the box the page's member list covers (`avoid`). In order: beside
+ * the spread on the side away from the list, the other side, past the far
+ * edge of the list, above the spread, below it. The card's height is an
+ * estimate (it is laid out after it is placed), so it is taken generously.
+ * Returns `left` and either `top` or `bottom` (px from the frame's bottom).
+ *
+ * With the spread near the frame's left edge the left side did not fit and
+ * the card fell back to the right, onto the list it was meant to sit beside:
+ * over its header, its Close and the highlighted row.
+ */
+export function cardBesideSpread(
+  spread: PxBox,
+  leg: { y: number },
+  avoid: PxBox | null,
+  frame: { width: number; height: number },
+  card: { width: number; height: number },
+  gap = 10,
+  edge = 4,
+): { left: number; top?: number; bottom?: number } {
+  type Place = { left: number; top?: number; bottom?: number };
+  type Candidate = { place: Place; box: PxBox; above?: boolean };
+  // Beside the spread the card lines up with the leg: from just above it, or (in the frame's lower half) ending just below it.
+  const lower = leg.y > frame.height / 2;
+  const besideBottom = Math.min(frame.height - edge, leg.y + 16);
+  const besideTop = lower ? besideBottom - card.height : Math.max(edge, leg.y - 16);
+  const beside = (left: number): Candidate => ({
+    place: lower ? { left, bottom: frame.height - besideBottom } : { left, top: besideTop },
+    box: { left, right: left + card.width, top: besideTop, bottom: besideTop + card.height },
+  });
+  const leftOf = (x: number) => x - gap - card.width;
+  const listOnLeft = avoid !== null && avoid.right <= (spread.left + spread.right) / 2;
+  const right = beside(spread.right + gap);
+  const left = beside(leftOf(spread.left));
+  const candidates: Candidate[] = listOnLeft ? [right, left] : avoid ? [left, right] : [right, left];
+  if (avoid) candidates.push(beside(listOnLeft ? leftOf(avoid.left) : avoid.right + gap));
+  const centred = Math.min(Math.max(edge, (spread.left + spread.right) / 2 - card.width / 2), frame.width - edge - card.width);
+  candidates.push({
+    place: { left: centred, bottom: frame.height - (spread.top - gap) },
+    box: { left: centred, right: centred + card.width, top: spread.top - gap - card.height, bottom: spread.top - gap },
+    above: true,
+  });
+  candidates.push({
+    place: { left: centred, top: spread.bottom + gap },
+    box: { left: centred, right: centred + card.width, top: spread.bottom + gap, bottom: spread.bottom + gap + card.height },
+  });
+  for (const { place, box, above } of candidates) {
+    if (box.left < edge || box.right > frame.width - edge) continue;
+    // Above must stay inside the frame (over it sit the page's header and controls); below may hang past its foot.
+    if ((above && box.top < edge) || box.top > frame.height) continue;
+    if (boxesMeet(box, spread) || (avoid && boxesMeet(box, avoid))) continue;
+    return place;
+  }
+  // Nothing is free: beside the spread on the side away from the list, inside the frame.
+  const fallback = candidates[0]!.place;
+  return { ...fallback, left: Math.min(Math.max(edge, fallback.left), frame.width - edge - card.width) };
+}
+
 /* --------------------------------- spread --------------------------------- */
 
 /** One member's place in a spread, in screen px from the shared spot. */
@@ -468,18 +596,31 @@ export interface SpreadSlot {
   dy: number;
 }
 
+/** How far a point is from the segment that runs from the origin to (x, y). */
+function distanceToLeader(px: number, py: number, x: number, y: number): number {
+  const length2 = x * x + y * y;
+  const t = length2 > 0 ? Math.max(0, Math.min(1, (px * x + py * y) / length2)) : 0;
+  return Math.hypot(px - t * x, py - t * y);
+}
+
 /**
  * Where a spread puts `count` members around their shared spot (`anchor`, in
  * screen px inside a frame of `frame` px): the cells of a hex grid `spacing`
  * px apart, nearest first, keeping every target whole inside the frame
  * (`inset` px from each edge). Six members make one ring with the first at
  * twelve o'clock; twelve add the six nearest cells of the next ring, between
- * the first six, so every leader line runs clear of the inner marks.
+ * the first six.
  *
  * A circle of twelve 44 px targets needs about 190 px across, more than a
  * 343 px phone map is tall (171 px); hex cells pack the same targets into
  * the frame and slide to one side of a spot near its edge. Returns undefined
  * when the frame cannot hold them all (the page lists them instead).
+ *
+ * Near an edge the nearest free cells include ones straight behind a chosen
+ * inner cell, and a leader line to such a cell ran through the inner mark
+ * (5 of 12 on a phone's Los Angeles). A cell whose leader line passes within
+ * `clearance` px of a chosen nearer mark is passed over while a farther cell
+ * with a clear line remains, and taken only when nothing else fits.
  *
  * Slots come in the order members should take them: inner ring first, then
  * clockwise from twelve o'clock, so the member that needs a hand most (the
@@ -491,6 +632,7 @@ export function spreadSlots(
   frame: { width: number; height: number },
   spacing: number,
   inset: number,
+  clearance = 0,
   maxRings = 12,
 ): SpreadSlot[] | undefined {
   if (count < 1 || !(spacing > 0)) return count < 1 ? [] : undefined;
@@ -519,8 +661,48 @@ export function spreadSlots(
     }
   }
   if (cells.length < count) return undefined;
-  cells.sort((a, b) => a.distance - b.distance || a.angle - b.angle);
-  return cells.slice(0, count).map(({ dx, dy }) => ({ dx: Math.round(dx * 100) / 100 || 0, dy: Math.round(dy * 100) / 100 || 0 }));
+  const byDistance = (a: (typeof cells)[number], b: (typeof cells)[number]) => a.distance - b.distance || a.angle - b.angle;
+  cells.sort(byDistance);
+  // A farther cell can never sit on a nearer cell's line (it would be within `clearance` of that cell), so each
+  // cell is checked only against the nearer ones already chosen.
+  const chosen: typeof cells = [];
+  const blocked: typeof cells = [];
+  for (const cell of cells) {
+    if (chosen.length === count) break;
+    const clear = clearance <= 0 || chosen.every((mark) => distanceToLeader(mark.dx, mark.dy, cell.dx, cell.dy) > clearance);
+    (clear ? chosen : blocked).push(cell);
+  }
+  for (const cell of blocked) {
+    if (chosen.length === count) break;
+    chosen.push(cell);
+  }
+  return chosen.sort(byDistance).map(({ dx, dy }) => ({ dx: Math.round(dx * 100) / 100 || 0, dy: Math.round(dy * 100) / 100 || 0 }));
+}
+
+/**
+ * How many legs a spread around `anchor` can hold: the hex cells spreadSlots
+ * would choose from, counted without placing them, so a label can say
+ * whether a click spreads or lists without laying a spread out per pile.
+ */
+export function spreadCapacity(anchor: { x: number; y: number }, frame: { width: number; height: number }, spacing: number, inset: number, maxRings = 12): number {
+  if (!(spacing > 0)) return 0;
+  const bx = (spacing * Math.sqrt(3)) / 2;
+  let count = 0;
+  for (let q = -maxRings; q <= maxRings; q += 1) {
+    for (let r = -maxRings; r <= maxRings; r += 1) {
+      const ring = (Math.abs(q) + Math.abs(r) + Math.abs(q + r)) / 2;
+      if (ring === 0 || ring > maxRings) continue;
+      const x = anchor.x + r * bx;
+      const y = anchor.y - q * spacing - (r * spacing) / 2;
+      if (x >= inset && x <= frame.width - inset && y >= inset && y <= frame.height - inset) count += 1;
+    }
+  }
+  return count;
+}
+
+/** Whether every leader line of a spread keeps more than `clearance` px from every other leg's mark. */
+export function leadersClear(slots: readonly SpreadSlot[], clearance: number): boolean {
+  return slots.every((end, i) => slots.every((mark, j) => i === j || distanceToLeader(mark.dx, mark.dy, end.dx, end.dy) > clearance));
 }
 
 /** The box a spread covers around its spot, in the same px, its targets included. */

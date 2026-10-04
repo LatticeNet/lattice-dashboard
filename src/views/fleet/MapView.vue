@@ -23,8 +23,9 @@
  * leaving a blank. The arcs are off until asked for, and ?layer=latency
  * keeps them on across a reload or a shared link.
  */
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useElementSize, useNow } from "@vueuse/core";
 import { RouterLink } from "vue-router";
 import { toast } from "@/lib/toast";
 import { RotateCw, Waypoints } from "lucide-vue-next";
@@ -40,7 +41,7 @@ import { countryName } from "@/lib/fleet";
 import { formatAge } from "@/lib/format";
 import { compareByAttention, describeNodeStatus, isReporting, nodeStatus } from "@/lib/nodeStatus";
 import { useMediaQuery } from "@/composables/useMediaQuery";
-import { clusterPlace } from "./fleetMapModel";
+import { clusterPlace, latencyLayerState } from "./fleetMapModel";
 import { isActive as incidentIsOpen } from "./incidentsModel";
 import { BAND_STYLE, LOSS_ATTENTION, buildLatencyMatrix } from "./latencyModel";
 import { cn } from "@/lib/utils";
@@ -60,7 +61,7 @@ import { Button } from "@/components/ui/button";
 const auth = useAuthStore();
 const { t, locale } = useI18n();
 const canAdminNodes = computed(() => auth.can("node:admin"));
-const canReadMonitors = auth.can("monitor:read");
+const canReadMonitors = computed(() => auth.can("monitor:read"));
 
 const nodesQuery = useAsyncData<Node[]>((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 10_000,
@@ -90,20 +91,27 @@ const proofSegments = computed<ProofSegment[]>(() => {
 
 // Both need monitor:read; without it nothing is asked for and the card leaves the rows out.
 const incidentsQuery = useAsyncData<IncidentListResponse | undefined>(
-  (signal) => (canReadMonitors ? api.incidents.list(undefined, { signal }) : Promise.resolve(undefined)),
-  { pollInterval: 30_000, immediate: canReadMonitors },
+  (signal) => (canReadMonitors.value ? api.incidents.list(undefined, { signal }) : Promise.resolve(undefined)),
+  { pollInterval: 30_000, immediate: canReadMonitors.value },
 );
 const planQuery = useAsyncData<LatencyProbePlan | undefined>(
-  (signal) => (canReadMonitors ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined)),
-  { pollInterval: 60_000, immediate: canReadMonitors },
+  (signal) => (canReadMonitors.value ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined)),
+  { pollInterval: 60_000, immediate: canReadMonitors.value },
 );
 const rollupsQuery = useAsyncData<LatencyRollups | undefined>(
-  (signal) => (canReadMonitors ? api.monitors.latency.rollups({ signal }) : Promise.resolve(undefined)),
-  { pollInterval: 60_000, immediate: canReadMonitors },
+  (signal) => (canReadMonitors.value ? api.monitors.latency.rollups({ signal }) : Promise.resolve(undefined)),
+  { pollInterval: 60_000, immediate: canReadMonitors.value },
 );
+// Access granted after the page opened (the session's scopes read later): read now rather than at the next poll.
+watch(canReadMonitors, (can) => {
+  if (!can) return;
+  void incidentsQuery.refresh();
+  void planQuery.refresh();
+  void rollupsQuery.refresh();
+});
 
 function stateOf(query: { data: { value: unknown }; error: { value: unknown } }): FactState {
-  if (!canReadMonitors) return "denied";
+  if (!canReadMonitors.value) return "denied";
   if (query.data.value !== undefined) return "ready";
   return query.error.value ? "failed" : "loading";
 }
@@ -117,15 +125,19 @@ const openIncidents = computed(() => {
   return counts;
 });
 
-/** The last hour from the first configured source, one reading per target. */
+/** The probe matrix for the last hour, p50; its first source is the one the map draws from. */
+const matrix = computed(() => (planQuery.data.value ? buildLatencyMatrix(planQuery.data.value, rollupsQuery.data.value, "1h", "p50") : undefined));
+
+/**
+ * The last hour from the first configured source, one reading per target.
+ * Its readings count only once latencyState is ready; before that the
+ * source's name still labels the toggle and the card's row.
+ */
 const latency = computed(() => {
-  const plan = planQuery.data.value;
-  if (!plan) return undefined;
-  const matrix = buildLatencyMatrix(plan, rollupsQuery.data.value, "1h", "p50");
-  const source = matrix.sources[0];
-  if (!source) return undefined;
+  const source = matrix.value?.sources[0];
+  if (!matrix.value || !source) return undefined;
   const readings = new Map<string, LatencyFact>();
-  for (const row of matrix.rows) {
+  for (const row of matrix.value.rows) {
     const cell = row.cells[0];
     if (!cell) continue;
     readings.set(row.node.node_id, {
@@ -137,14 +149,18 @@ const latency = computed(() => {
       expected: cell.expected,
     });
   }
-  return { sourceId: source.nodeId, sourceName: source.name, readings, lossAttention: LOSS_ATTENTION, otherSources: matrix.sources.length - 1 };
+  return { sourceId: source.nodeId, sourceName: source.name, readings, lossAttention: LOSS_ATTENTION, otherSources: matrix.value.sources.length - 1 };
 });
 
-const latencyState = computed<FleetMapFacts["latencyState"]>(() => {
-  const state = stateOf(planQuery);
-  if (state !== "ready") return state;
-  return latency.value ? (rollupsQuery.data.value === undefined && rollupsQuery.error.value ? "failed" : "ready") : "nosource";
-});
+// Reading until both the plan and the rollups have answered (fleetMapModel.latencyLayerState).
+const latencyState = computed<FleetMapFacts["latencyState"]>(() =>
+  latencyLayerState({
+    canRead: canReadMonitors.value,
+    plan: { hasData: planQuery.data.value !== undefined, failed: !!planQuery.error.value },
+    rollups: { hasData: rollupsQuery.data.value !== undefined, failed: !!rollupsQuery.error.value },
+    hasSource: !!matrix.value?.sources.length,
+  }),
+);
 
 const facts = computed<FleetMapFacts>(() => ({
   incidents: openIncidents.value,
@@ -171,9 +187,11 @@ const layerNotice = computed(() => {
   }
 });
 
+/** How old the rollups are, ticking with the proof line's second. */
+const now = useNow({ interval: 1000 });
 const rollupsAge = computed(() => {
   const at = Date.parse(rollupsQuery.data.value?.generated_at ?? "");
-  return Number.isFinite(at) ? formatAge(Math.max(0, Date.now() - at), locale.value) : "";
+  return Number.isFinite(at) ? formatAge(Math.max(0, now.value.getTime() - at), locale.value) : "";
 });
 
 const legendBands = computed(() => [
@@ -278,13 +296,28 @@ const panelSide = computed<"left" | "right" | null>(() => {
   if (!at || !wide.value || !listed.value.length) return null;
   return at.right + 16 + PANEL_W <= at.width - 8 ? "right" : "left";
 });
-const panelStyle = computed(() => {
+/** Where the panel sits, in px inside the map. */
+const panelRect = computed(() => {
   const at = anchor.value;
-  if (!at) return {};
+  if (!at) return null;
   const maxHeight = Math.max(160, Math.min(360, at.height - 16));
   const left = panelSide.value === "right" ? at.right + 16 : Math.max(8, at.left - 16 - PANEL_W);
   const top = Math.min(Math.max(8, at.top), Math.max(8, at.height - maxHeight - 8));
-  return { left: `${left}px`, top: `${top}px`, width: `${PANEL_W}px`, maxHeight: `${maxHeight}px` };
+  return { left, top, maxHeight };
+});
+const panelStyle = computed(() => {
+  const rect = panelRect.value;
+  if (!rect) return {};
+  return { left: `${rect.left}px`, top: `${rect.top}px`, width: `${PANEL_W}px`, maxHeight: `${rect.maxHeight}px` };
+});
+const panel = ref<HTMLElement | null>(null);
+const { height: panelHeight } = useElementSize(panel, undefined, { box: "border-box" });
+/** The box the panel covers beside a spread, so a leg's card on the map keeps clear of it. */
+const listBox = computed(() => {
+  const rect = panelRect.value;
+  if (!rect || listedFrom.value !== "spread" || !panelSide.value) return null;
+  const height = panelHeight.value > 0 ? panelHeight.value : rect.maxHeight;
+  return { left: rect.left, top: rect.top, right: rect.left + PANEL_W, bottom: rect.top + height };
 });
 
 /** The member under the pointer, on the map or in the list: both light up. */
@@ -350,7 +383,8 @@ function onSpread(spread: FleetMapSpread | null): void {
 
 function closeList(returnFocus = true): void {
   if (listedFrom.value === "spread") {
-    map.value?.collapse();
+    // The map folds the spread and gives focus back to its pile.
+    map.value?.collapse(returnFocus);
     return;
   }
   listedIds.value = [];
@@ -411,7 +445,7 @@ const STATUS_TEXT: Record<string, string> = {
             :facts="facts"
             :arcs="arcsOn"
             :highlight-id="hoverId"
-            :spread-list-side="listedFrom === 'spread' ? panelSide : null"
+            :list-box="listBox"
             @select="onSelect"
             @spread="onSpread"
             @hover="onMapHover"
@@ -439,6 +473,7 @@ const STATUS_TEXT: Record<string, string> = {
           <!-- From 768 px: the members beside the spread or the cluster they came from. -->
           <section
             v-if="listed.length && wide"
+            ref="panel"
             class="absolute z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
             :style="panelStyle"
             aria-labelledby="map-listed"
@@ -480,7 +515,12 @@ const STATUS_TEXT: Record<string, string> = {
         <div v-if="arcsOn" class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" data-testid="map-latency-legend">
           <template v-if="layerNotice">
             <span :class="latencyState === 'failed' ? 'text-destructive' : undefined">{{ layerNotice }}</span>
-            <button v-if="latencyState === 'failed'" type="button" class="underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:min-h-11" @click="retryLatency">
+            <button
+              v-if="latencyState === 'failed'"
+              type="button"
+              class="underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:px-2"
+              @click="retryLatency"
+            >
               {{ $t('common.actions.retry') }}
             </button>
           </template>

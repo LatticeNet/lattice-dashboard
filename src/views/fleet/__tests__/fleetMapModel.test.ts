@@ -7,19 +7,24 @@ import {
   MIN_MAX_ZOOM,
   PAN_SLACK,
   arcPaths,
+  cardBesideSpread,
   centreOn,
   clampViewport,
+  clusterAction,
   clusterArcTone,
   clusterPlace,
   clusterPoints,
   clusterRadius,
   clusterTone,
   fitViewport,
+  latencyLayerState,
+  leadersClear,
   maxZoomFor,
   nearestInDirection,
   project,
   ringPath,
   spreadBox,
+  spreadCapacity,
   splitView,
   spreadSlots,
   viewportBetween,
@@ -431,7 +436,158 @@ test("a click's zoom keeps every member in the frame, and splits as far as that 
   const next = splitView([...six, ...region], phone, view.scale, max, margin)!;
   assert.ok(next.scale > 30, String(next.scale));
   assert.equal(splitView(six, phone, max, max, margin), undefined);
-  // Members too far apart for any split to hold: the view centres on the biggest mark.
-  const wide = splitView([spot("a", 10, 250), spot("b", 10, 250), spot("c", 990, 250)], (s) => ({ radius: 300 / s, reach: () => [{ dx: 0, dy: 0, r: 1 / s }] }), 1, 8, 20)!;
-  assert.ok(Math.abs(wide.x + 10 * wide.scale - MAP_WIDTH / 2) < 1e-6 || wide.x === PAN_SLACK, JSON.stringify(wide));
+  // Members too far apart for the first split to hold: the view centres on the biggest mark (the pair at 450), not on
+  // the members' middle (500, which would put x at -125), and the pan is not clamped here, so the centring shows.
+  const wide = splitView(
+    [spot("d", 10, 250), spot("a", 450, 250), spot("b", 450, 250), spot("c", 990, 250)],
+    (s) => ({ radius: 300 / s, reach: () => [{ dx: 0, dy: 0, r: 1 / s }] }),
+    1,
+    8,
+    20,
+  )!;
+  assert.deepEqual(wide, { scale: 1.25, x: -62.5, y: -62.5 });
+});
+
+/** How far a point is from the segment from the origin to (x, y). */
+function offLeader(point: SpreadSlot, end: SpreadSlot): number {
+  const length2 = end.dx * end.dx + end.dy * end.dy;
+  const t = Math.max(0, Math.min(1, (point.dx * end.dx + point.dy * end.dy) / length2));
+  return Math.hypot(point.dx - t * end.dx, point.dy - t * end.dy);
+}
+
+/** Leader lines that run within `clear` px of another leg's mark. */
+function linesThroughMarks(slots: readonly SpreadSlot[], clear: number): number {
+  return slots.filter((end, i) => slots.some((mark, j) => i !== j && offLeader(mark, end) < clear)).length;
+}
+
+test("near the frame's edge no leader line runs through another leg's mark", () => {
+  // A leg's mark is 7 px across the radius with a 1.5 px stroke; the map asks for 8 px of clearance.
+  const phone = { width: 343, height: 171.5 };
+  const cases = [
+    { name: "phone, Los Angeles at x1", anchor: { x: (171 / 1000) * 343, y: (155 / 500) * 171.5 }, frame: phone, spacing: 46, inset: 23 },
+    { name: "phone, mid frame", anchor: { x: 171.5, y: 85.75 }, frame: phone, spacing: 46, inset: 23 },
+    { name: "1440, left edge", anchor: { x: 40, y: 200 }, frame: { width: 1392, height: 696 }, spacing: 26, inset: 13 },
+  ];
+  for (const { name, anchor, frame, spacing, inset } of cases) {
+    // Taking the nearest cells alone ran lines straight through inner marks.
+    assert.ok(linesThroughMarks(spreadSlots(12, anchor, frame, spacing, inset)!, 8) > 0, `${name}: the nearest cells alone cross marks`);
+    const slots = spreadSlots(12, anchor, frame, spacing, inset, 8)!;
+    assert.equal(slots.length, 12, name);
+    assert.equal(linesThroughMarks(slots, 8), 0, name);
+    assert.ok(pairwiseClear(slots, spacing), name);
+    for (const slot of slots) {
+      const x = anchor.x + slot.dx;
+      const y = anchor.y + slot.dy;
+      assert.ok(x >= inset && x <= frame.width - inset && y >= inset && y <= frame.height - inset, `${name}: ${x},${y}`);
+    }
+    // Still inner first: no slot is nearer the spot than one before it.
+    const distances = slots.map((slot) => Math.hypot(slot.dx, slot.dy));
+    assert.ok(distances.every((distance, i) => i === 0 || distance >= distances[i - 1]! - 0.01), name);
+  }
+  // Open ground keeps the compact layout: one ring of six, then the six between them.
+  assert.deepEqual(spreadSlots(12, { x: 500, y: 300 }, { width: 1392, height: 696 }, 26, 13, 8), spreadSlots(12, { x: 500, y: 300 }, { width: 1392, height: 696 }, 26, 13));
+  // The map glides a spot toward the middle when its spread here would cross a leg: leadersClear says which.
+  assert.equal(leadersClear(spreadSlots(12, { x: 500, y: 300 }, { width: 1392, height: 696 }, 26, 13)!, 8), true);
+  assert.equal(leadersClear([{ dx: 0, dy: -26 }, { dx: 0, dy: -52 }], 8), false, "a leg straight behind another");
+  assert.equal(leadersClear([{ dx: 0, dy: -26 }, { dx: 22.52, dy: -65 }], 8), true, "8.5 px clear of the inner mark");
+  // When only blocked cells are left they are still taken: twelve still fit wherever they fitted before.
+  const tight = { width: 120, height: 120 };
+  assert.equal(spreadSlots(6, { x: 60, y: 60 }, tight, 26, 13, 8)?.length, 6);
+  assert.equal(spreadSlots(12, { x: 60, y: 60 }, tight, 26, 13, 8)?.length, spreadSlots(12, { x: 60, y: 60 }, tight, 26, 13)?.length);
+});
+
+test("a spread's capacity is exactly how many legs spreadSlots can place there", () => {
+  const phone = { width: 343, height: 171.5 };
+  for (const anchor of [{ x: 58.6, y: 53.2 }, { x: 171.5, y: 85.75 }, { x: 330, y: 160 }]) {
+    const capacity = spreadCapacity(anchor, phone, 46, 23);
+    assert.ok(capacity > 0, JSON.stringify(anchor));
+    assert.equal(spreadSlots(capacity, anchor, phone, 46, 23)?.length, capacity);
+    assert.equal(spreadSlots(capacity + 1, anchor, phone, 46, 23), undefined);
+  }
+  assert.equal(spreadCapacity({ x: 10, y: 10 }, { width: 20, height: 20 }, 46, 23), 0);
+});
+
+test("a click opens one node, zooms while a zoom splits, spreads a pile, and lists one the frame cannot hold", () => {
+  const desk = (scale: number) => ({ radius: 18 / 1.392 / scale, reach: () => [{ dx: 0, dy: 0, r: 11 / 1.392 / scale }] });
+  const la = Array.from({ length: 12 }, (_, i) => spot(`la${String(i).padStart(2, "0")}`, 171.6, 155.4));
+  const sanJose = spot("sj", 161.4, 146.3);
+  const fits = () => true;
+  assert.deepEqual(clusterAction([sanJose], desk, 1, 8.28, 12, fits), { action: "open" });
+  const zoom = clusterAction([...la, sanJose], desk, 1, 8.28, 12, fits);
+  assert.equal(zoom.action, "zoom");
+  assert.ok(zoom.action === "zoom" && zoom.view.scale > 1);
+  assert.deepEqual(clusterAction(la, desk, 8.28, 8.28, 12, fits), { action: "spread" });
+  // The frame cannot hold twelve apart: the click lists them, and the card says so.
+  const asked: number[] = [];
+  assert.deepEqual(clusterAction(la, desk, 8.28, 8.28, 12, (count) => (asked.push(count), false)), { action: "list" });
+  assert.deepEqual(asked, [12]);
+});
+
+test("the latency layer reads as loading until both the plan and the rollups have answered", () => {
+  const read = (hasData: boolean, failed = false) => ({ hasData, failed });
+  const state = (plan: ReturnType<typeof read>, rollups: ReturnType<typeof read>, hasSource = true, canRead = true) =>
+    latencyLayerState({ canRead, plan, rollups, hasSource });
+  // The plan is in and the rollups are on their way: reading, not "nothing heard" from every target.
+  assert.equal(state(read(true), read(false)), "loading");
+  assert.equal(state(read(true), read(true)), "ready");
+  assert.equal(state(read(false), read(false)), "loading");
+  assert.equal(state(read(false), read(true)), "loading");
+  assert.equal(state(read(false, true), read(false)), "failed");
+  assert.equal(state(read(true), read(false, true)), "failed");
+  // A failed refresh over an answer still shows the answer.
+  assert.equal(state(read(true, true), read(true, true)), "ready");
+  // No source configured: nothing to wait for.
+  assert.equal(state(read(true), read(false), false), "nosource");
+  assert.equal(state(read(true), read(true), true, false), "denied");
+});
+
+test("a leg's card sits clear of the spread and of the page's list", () => {
+  const card = { width: 256, height: 220 };
+  const frame = { width: 1392, height: 696 };
+  const meets = (place: { left: number; top?: number; bottom?: number }, box: { left: number; top: number; right: number; bottom: number }) => {
+    const top = place.top ?? frame.height - place.bottom! - card.height;
+    return place.left < box.right && place.left + card.width > box.left && top < box.bottom && top + card.height > box.top;
+  };
+  // Los Angeles after one click at 1440: the spread at the left edge and the list to its right. The left side does not
+  // fit, and the right side used to put the card on the list.
+  const spread = { left: 20, top: 150, right: 130, bottom: 260 };
+  const list = { left: 146, top: 150, right: 466, bottom: 510 };
+  const beside = cardBesideSpread(spread, { y: 180 }, list, frame, card);
+  assert.equal(beside.left, 476, "past the list's far edge");
+  assert.ok(!meets(beside, spread) && !meets(beside, list));
+  // Room on the side away from the list: there.
+  const middle = { left: 600, top: 150, right: 710, bottom: 260 };
+  const away = cardBesideSpread(middle, { y: 180 }, { left: 726, top: 150, right: 1046, bottom: 510 }, frame, card);
+  assert.equal(away.left, 600 - 10 - 256);
+  // The list on the left: the right side, clear of both.
+  const right = cardBesideSpread(middle, { y: 180 }, { left: 264, top: 150, right: 584, bottom: 510 }, frame, card);
+  assert.equal(right.left, 720);
+  // A frame too narrow for any side: above the spread when it is low enough, inside the frame.
+  const low = { left: 20, top: 400, right: 130, bottom: 510 };
+  const narrow = { width: 700, height: 696 };
+  const above = cardBesideSpread(low, { y: 420 }, { left: 146, top: 400, right: 466, bottom: 560 }, narrow, card);
+  assert.ok(above.bottom !== undefined && narrow.height - above.bottom! <= low.top - 10, JSON.stringify(above));
+  assert.ok(!meets({ ...above }, low));
+  // No list (a phone lists the members under the map): the right side first, as before.
+  assert.equal(cardBesideSpread(middle, { y: 180 }, null, frame, card).left, 720);
+  // In the frame's lower half the card ends just below the leg.
+  assert.deepEqual(cardBesideSpread(middle, { y: 600 }, null, frame, card), { left: 720, bottom: 696 - 616 });
+});
+
+test("an arc from a western source to Asia also goes the short way, west across the edge", () => {
+  const la = project(-118.24, 34.05);
+  const tokyo = project(139.69, 35.68);
+  const pieces = arcPaths(la, tokyo);
+  assert.equal(pieces.length, 2);
+  // The first piece leaves west past the left edge; the second arrives from beyond the right edge.
+  assert.ok(Number(pieces[0]!.split(" ").at(-2)) < 0, pieces[0]);
+  assert.ok(Number(pieces[1]!.slice(1).split(" ")[0]) > MAP_WIDTH, pieces[1]);
+});
+
+test("an arrow key falls back to the nearest mark on that side when none lies within the cone", () => {
+  const from = { x: 100, y: 100 };
+  // Only a mark far off to the side on the right: still reachable with the right arrow.
+  assert.equal(nearestInDirection(from, [{ key: "off", x: 120, y: 300 }, { key: "behind", x: 40, y: 100 }], "right"), "off");
+  // A mark in the cone wins over a nearer one off the cone.
+  assert.equal(nearestInDirection(from, [{ key: "off", x: 110, y: 160 }, { key: "cone", x: 200, y: 110 }], "right"), "cone");
 });
