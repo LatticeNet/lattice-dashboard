@@ -27,6 +27,7 @@ import {
   CircleArrowUp,
   Webhook,
   Radar,
+  Gauge,
 } from "lucide-vue-next";
 import { UPCOMING_SCOPES } from "@/views/fleet/upcomingModel";
 
@@ -159,6 +160,12 @@ export const NAV: NavSection[] = [
       // nav entry did not, and NAV is what builds the route table, so the whole
       // surface was unreachable in a running console.
       { name: "platform-agent-updates", title: "Agent Updates", path: "/platform/agent-updates", icon: CircleArrowUp, scopes: ["node:admin"] },
+      // The control plane's own health and history (metrics.db): its host,
+      // its process, its data files, how its plugins and routes perform.
+      // The server answers only a full administrator ("*", no node
+      // restriction), so the entry asks for "*" too; a node's history is on
+      // the node's page for anyone who may read the node.
+      { name: "platform-system", title: "System", path: "/platform/system", icon: Gauge, scopes: ["*"] },
     ],
   },
   {

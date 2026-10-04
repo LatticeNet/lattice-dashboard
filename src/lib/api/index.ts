@@ -1,6 +1,7 @@
 import { ApiError, http, type RequestOptions } from "./client";
 import { unwrapApproval, unwrapApprovalCounts } from "./approvalsEnvelope";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
+import type { MetricsQuery, MetricsRange, SystemHealth } from "./systemTypes";
 import type {
   Incident,
   IncidentListQuery,
@@ -152,6 +153,7 @@ import type {
 } from "./types";
 
 export * from "./types";
+export * from "./systemTypes";
 export * from "./approvalsEnvelope";
 export { ApiError, setCsrfToken, getCsrfToken, setUnauthorizedListener } from "./client";
 
@@ -276,6 +278,9 @@ export const api = {
   },
   nodes: {
     list: (opts?: RequestOptions) => http.get<{ nodes: Node[] } | Node[]>("/api/nodes", undefined, opts),
+    /** A node's long-term cpu, memory, disk, load, network and beat gap (node:read on it). */
+    history: (node_id: string, range: MetricsRange, opts?: RequestOptions) =>
+      http.get<MetricsQuery>("/api/nodes/history", { node_id, range }, opts),
     enrollToken: (input: {
       node_id?: string;
       name: string;
@@ -1014,6 +1019,15 @@ export const api = {
   vpnLinks: {
     get: (identityId: string, opts?: RequestOptions) =>
       http.get<IdentityLinkStatus>(`/api/vpn/users/${encodeURIComponent(identityId)}/link`, undefined, opts),
+  },
+
+  // The control plane's own health and history (metrics.db). Full
+  // administrator only; 503 when the server keeps no history.
+  system: {
+    health: (range: MetricsRange, opts?: RequestOptions) =>
+      http.get<SystemHealth>("/api/system/health", { range }, opts),
+    series: (owner: string, series: string[], range: MetricsRange, points?: number, opts?: RequestOptions) =>
+      http.get<MetricsQuery>("/api/system/series", { owner, series: series.join(","), range, points }, opts),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),

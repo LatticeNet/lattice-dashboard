@@ -33,6 +33,7 @@ import NotificationsView from "@/views/platform/NotificationsView.vue";
 import AccessView from "@/views/settings/AccessView.vue";
 import AboutView from "@/views/settings/AboutView.vue";
 import CapabilitiesView from "@/views/settings/CapabilitiesView.vue";
+import SystemView from "@/views/platform/SystemView.vue";
 
 import "@/style/app.css";
 
@@ -69,6 +70,7 @@ const router = createRouter({
     { path: "/netplat-access.html", name: "settings-access", component: AccessView },
     { path: "/netplat-about.html", name: "settings-about", component: AboutView },
     { path: "/netplat-capabilities.html", name: "settings-capabilities", component: CapabilitiesView },
+    { path: "/netplat-system.html", name: "platform-system", component: SystemView },
     { path: "/inventory", name: "inventory", component: placeholder("Inventory") },
     { path: "/nodes", name: "nodes", component: placeholder("Nodes") },
     { path: "/settings/security", name: "settings-security", component: placeholder("Security") },

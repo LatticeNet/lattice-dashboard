@@ -308,6 +308,7 @@ const NAV_TERMS: Readonly<Record<string, string>> = {
   "platform-publishing": "publishing",
   "platform-notifications": "notifications",
   "platform-agent-updates": "agentUpdates",
+  "platform-system": "system",
   "settings-access": "access",
   "settings-appearance": "appearance",
 };
