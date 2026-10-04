@@ -17,10 +17,11 @@
  */
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useNow } from "@vueuse/core";
 import { Gauge, RefreshCw, Settings2 } from "lucide-vue-next";
 
 import { api, type LatencyProbePlan, type LatencyWindow } from "@/lib/api";
-import { formatRelativeTime } from "@/lib/format";
+import { formatAge, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { useAsyncData } from "@/composables/useAsyncData";
@@ -45,10 +46,13 @@ import {
   LATENCY_READINGS,
   LATENCY_WINDOWS,
   buildLatencyMatrix,
+  cellQuietFor,
+  coveragePercent,
   draftFromConfig,
   draftToConfig,
   formatLoss,
   formatMs,
+  groupLatencyRows,
   latencyProblems,
   pairKey,
   parsePairKey,
@@ -59,8 +63,9 @@ import {
 
 const props = defineProps<{ owned: OwnedRoute }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
+const now = useNow({ interval: 30000 });
 const canRead = computed(() => auth.can("monitor:read"));
 const canAdmin = computed(() => auth.can("monitor:admin"));
 
@@ -84,6 +89,8 @@ const readingParam = bindQueryParam<LatencyReading>(props.owned, "read", {
 });
 
 const matrix = computed(() => (plan.value ? buildLatencyMatrix(plan.value, rollupsQuery.data.value, windowParam.value, readingParam.value) : undefined));
+/** Targets by region, near mainland China first, so the times climb down the column. */
+const groups = computed(() => (matrix.value ? groupLatencyRows(matrix.value.rows) : []));
 const intervalSec = computed(() => plan.value?.config.interval_sec ?? 60);
 
 function refreshAll(): void {
@@ -143,7 +150,13 @@ function cellOpenable(cell: LatencyCell): boolean {
   return cell.kind === "measured" || cell.kind === "failing" || cell.kind === "unknown" || (cell.kind === "paused" && cell.hasHistory);
 }
 
+/** Numbers whose last probe is old: drawn without a band, like a stopped pair's history. */
+function isQuiet(cell: LatencyCell): boolean {
+  return cellQuietFor(cell, intervalSec.value, now.value.getTime()) !== undefined;
+}
+
 function cellClass(cell: LatencyCell): string {
+  if (isQuiet(cell)) return "";
   switch (cell.kind) {
     case "measured":
       return BAND_STYLE[cell.band ?? "destructive"].tint;
@@ -158,6 +171,7 @@ function cellClass(cell: LatencyCell): string {
 }
 
 function cellBar(cell: LatencyCell): string {
+  if (isQuiet(cell)) return "bg-muted-foreground/40";
   if (cell.kind === "measured") return BAND_STYLE[cell.band ?? "destructive"].bar;
   if (cell.kind === "failing") return "bg-destructive";
   return "bg-transparent";
@@ -184,7 +198,10 @@ function cellSub(cell: LatencyCell): string {
   if (cell.kind === "measured" || cell.kind === "failing") {
     const parts: string[] = [];
     if (cell.loss !== undefined && (cell.kind === "failing" || cell.loss > 0)) parts.push(t("fleet.monitoring.latency.cell.loss", { loss: formatLoss(cell.loss) }));
-    if (cell.partial && cell.coverage !== undefined) parts.push(t("fleet.monitoring.latency.cell.partial", { pct: Math.round(cell.coverage * 100) }));
+    if (cell.partial && cell.coverage !== undefined) parts.push(t("fleet.monitoring.latency.cell.partial", { pct: coveragePercent(cell.coverage) }));
+    // A window full of numbers whose last probe is days old is history, and says so.
+    const quiet = cellQuietFor(cell, intervalSec.value, now.value.getTime());
+    if (quiet !== undefined) parts.push(t("fleet.monitoring.latency.cell.quiet", { age: formatAge(quiet, locale.value) }));
     return parts.join(" · ");
   }
   if (cell.kind === "paused") return t(`fleet.monitoring.latency.paused.${cell.pausedReason ?? "target"}`);
@@ -382,7 +399,25 @@ const LEGEND = computed(() => [
             <Button v-if="canAdmin" size="sm" type="button" @click="configOpen = true">{{ $t('fleet.monitoring.latency.configure') }}</Button>
           </EmptyState>
           <template v-else>
-            <div class="flex flex-wrap items-start gap-x-6 gap-y-3">
+            <div class="space-y-3">
+            <!-- The key in one row above the matrix, as on Topology, so the matrix keeps the page's width. -->
+            <aside class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" data-testid="latency-legend" :aria-label="$t('fleet.monitoring.latency.legend.label')">
+              <span v-for="item in LEGEND" :key="item.key" class="inline-flex items-center gap-1.5">
+                <span :class="cn('size-2.5 rounded-[2px]', item.swatch)" aria-hidden="true" />
+                {{ item.label }}
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span :class="cn('size-2.5 rounded-[2px] border border-destructive/50', FAILING_TINT)" aria-hidden="true" />
+                {{ $t('fleet.monitoring.latency.legend.failing') }}
+              </span>
+              <span class="inline-flex items-center gap-1.5">
+                <span :class="cn('size-2.5 rounded-[2px] border border-muted-foreground/50', UNKNOWN_HATCH)" aria-hidden="true" />
+                {{ $t('fleet.monitoring.latency.legend.unknown') }}
+              </span>
+              <span>{{ $t('fleet.monitoring.latency.legend.partial', { pct: 50 }) }}</span>
+              <span>{{ $t('fleet.monitoring.latency.legend.quiet') }}</span>
+              <span class="hidden basis-full lg:block">{{ $t('fleet.monitoring.latency.legend.method') }}</span>
+            </aside>
             <!-- Shrink-wrapped: a column per source stays a cell wide, so one source does not stretch into a bar. -->
             <div
               class="w-fit max-w-full overflow-x-auto rounded-lg border border-border bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -396,7 +431,7 @@ const LEGEND = computed(() => [
                 <thead>
                   <tr class="border-b border-border bg-muted/40 text-xs text-muted-foreground">
                     <!-- On a phone each target's name has its own line above its cells, so the target column goes. -->
-                    <th scope="col" class="sticky start-0 z-10 w-72 min-w-40 bg-muted px-3 py-2 text-start font-medium max-sm:hidden">
+                    <th scope="col" class="sticky start-0 z-10 w-80 min-w-40 bg-muted px-3 py-2 text-start font-medium max-sm:hidden">
                       {{ $t('fleet.monitoring.latency.targetColumn') }}
                     </th>
                     <th
@@ -415,7 +450,20 @@ const LEGEND = computed(() => [
                 <!-- One body per target: on a phone its name and line take a full-width
                      row above its cells (whole, not broken at a hyphen into a narrow
                      column), and every source fits beside the others. -->
-                <tbody v-for="row in matrix.rows" :key="row.node.node_id" class="border-b border-border last:border-b-0" :data-target="row.node.node_id">
+                <template v-for="group in groups" :key="group.region">
+                <tbody class="border-b border-border">
+                  <tr>
+                    <th
+                      :colspan="matrix.sources.length + 1"
+                      scope="rowgroup"
+                      class="bg-muted/30 px-3 pb-1 pt-2.5 text-start text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                      :data-region="group.region"
+                    >
+                      {{ $t(`fleet.monitoring.topology.region.${group.region}`) }} · <span class="font-mono tabular">{{ group.rows.length }}</span>
+                    </th>
+                  </tr>
+                </tbody>
+                <tbody v-for="row in group.rows" :key="row.node.node_id" class="border-b border-border last:border-b-0" :data-target="row.node.node_id">
                   <tr class="sm:hidden">
                     <th :colspan="matrix.sources.length" scope="rowgroup" class="px-2 pt-1.5 text-start font-normal">
                       <RouterLink
@@ -433,10 +481,10 @@ const LEGEND = computed(() => [
                     <th scope="row" class="sticky start-0 z-10 bg-card px-3 py-1.5 text-start align-middle font-normal max-sm:hidden">
                       <RouterLink
                         :to="{ name: 'node-detail', params: { id: row.node.node_id } }"
-                        class="flex max-w-56 items-center font-medium hover:underline pointer-coarse:min-h-11"
+                        class="flex max-w-72 items-center font-medium hover:underline pointer-coarse:min-h-11"
                         :title="row.node.name"
                       ><span class="truncate">{{ row.node.name || row.node.node_id }}</span></RouterLink>
-                      <span class="block max-w-56 truncate text-xs text-muted-foreground" :title="targetDetail(row.node.node_id)">
+                      <span class="line-clamp-2 max-w-72 text-xs text-muted-foreground" :title="targetDetail(row.node.node_id)">
                         <span v-if="row.node.country" class="font-mono">{{ row.node.country }}</span>
                         <template v-if="row.node.country && targetDetail(row.node.node_id)"> · </template>
                         <span :class="row.node.target === 'not_probeable' ? '' : 'font-mono'">{{ targetDetail(row.node.node_id) }}</span>
@@ -457,7 +505,7 @@ const LEGEND = computed(() => [
                             :class="cn(
                               'block truncate leading-tight',
                               cell.kind === 'measured' && 'font-mono font-medium tabular',
-                              cell.kind === 'measured' && BAND_STYLE[cell.band ?? 'destructive'].text,
+                              cell.kind === 'measured' && (isQuiet(cell) ? 'text-muted-foreground' : BAND_STYLE[cell.band ?? 'destructive'].text),
                               cell.kind === 'failing' && 'text-xs font-medium text-destructive',
                               cell.kind === 'unknown' && 'text-xs font-medium text-muted-foreground',
                               cell.kind === 'paused' && 'font-mono text-muted-foreground tabular',
@@ -482,26 +530,10 @@ const LEGEND = computed(() => [
                     </td>
                   </tr>
                 </tbody>
+                </template>
               </table>
             </div>
 
-            <!-- The key beside the matrix where there is room, below it on a phone; it stays in view while the rows scroll. -->
-            <aside class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground lg:sticky lg:top-4 lg:w-60 lg:flex-col lg:items-start" data-testid="latency-legend" :aria-label="$t('fleet.monitoring.latency.legend.label')">
-              <span v-for="item in LEGEND" :key="item.key" class="inline-flex items-center gap-1.5">
-                <span :class="cn('size-2.5 rounded-[2px]', item.swatch)" aria-hidden="true" />
-                {{ item.label }}
-              </span>
-              <span class="inline-flex items-center gap-1.5">
-                <span :class="cn('size-2.5 rounded-[2px] border border-destructive/50', FAILING_TINT)" aria-hidden="true" />
-                {{ $t('fleet.monitoring.latency.legend.failing') }}
-              </span>
-              <span class="inline-flex items-center gap-1.5">
-                <span :class="cn('size-2.5 rounded-[2px] border border-muted-foreground/50', UNKNOWN_HATCH)" aria-hidden="true" />
-                {{ $t('fleet.monitoring.latency.legend.unknown') }}
-              </span>
-              <span class="lg:mt-1">{{ $t('fleet.monitoring.latency.legend.partial', { pct: 50 }) }}</span>
-              <span class="hidden lg:mt-1 lg:block">{{ $t('fleet.monitoring.latency.legend.method') }}</span>
-            </aside>
             </div>
           </template>
         </template>

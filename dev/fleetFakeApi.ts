@@ -30,7 +30,10 @@
  * `?latency=one|three|defaults|nosource|off` shapes the Latency layer and the
  * node page's latency card (dev/latencyFixture.ts); `?fail=latency` fails its
  * reads, and saving the probe settings recomputes the plan by the server's rule.
- * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
+ * `?chains=some|none` shapes the Topology layer's line chains
+ * (dev/topologyFixture.ts); `?deny=chains` and `?fail=chains` refuse or fail
+ * them, and `?topo=many` adds 280 nodes so the topology folds by country.
+ * `?resultsMs=` slows monitor results; `?latencyMs=` slows the latency plan and rollups; `?rollupsMs=` slows the rollups alone (the map's layer reads until both answer). `?audit=old` answers audit reads as a
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
@@ -73,7 +76,10 @@ import {
   ungrouped,
 } from "./fleetFixture";
 import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
-import { SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, rollupsFor, seriesFor } from "./latencyFixture";
+import { EXTRA_NODES, SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, rollupsFor, seriesFor } from "./latencyFixture";
+import { lineChains } from "./topologyFixture";
+import { nodeHistory } from "./systemFixture";
+import type { MetricsRange } from "@/lib/api/systemTypes";
 
 export * from "@/lib/api/index";
 
@@ -96,7 +102,7 @@ const FAIL = new Map(
 const reads = new Map<string, number>();
 const READ_COUNTS: Record<string, number> = ((window as unknown as { __harnessReads?: Record<string, number> }).__harnessReads = {});
 const DENY = new Set((PARAMS.get("deny") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
-const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "approval:read", audit: "audit:read", machines: "inventory:read" };
+const DENIED_SCOPES: Record<string, string> = { tasks: "task:read", approvals: "approval:read", audit: "audit:read", machines: "inventory:read", chains: "proxy:read", nodes: "node:read" };
 const idList = (name: string) => new Set((PARAMS.get(name) ?? "").split(",").map((entry) => entry.trim()).filter(Boolean));
 const MACHINES_LATE = idList("machinesLate");
 const MACHINES_HIDDEN = idList("machinesHidden");
@@ -166,10 +172,29 @@ const principal: Principal = {
 
 // cd-hs-sh joins only on latency renders; every node, it included, carries
 // the keepalive state and loop health the incidents fixture gives it.
-let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : [])].map((node, index) => {
+let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : []), ...manyNodes(), ...EXTRA_NODES].map((node, index) => {
   const shaped = { ...node, ...keepaliveNodeState(node) };
   return { ...shaped, loop_health: loopHealthFor(shaped, index) };
 });
+
+/**
+ * `?many=N` (up to 2000) adds N copies of the located nodes, half on their
+ * city's own point and half scattered across the land between 50S and 65N,
+ * to time the map at fleet sizes well past production's 34.
+ */
+function manyNodes(): typeof NODES {
+  const count = Math.max(0, Math.min(2000, Number(PARAMS.get("many")) || 0));
+  const located = NODES.filter((node) => typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number");
+  if (!count || !located.length) return [];
+  let seed = 17;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  return Array.from({ length: count }, (_, i) => {
+    const base = located[i % located.length]!;
+    const piled = i % 2 === 0;
+    const geo = piled ? base.geo : { ...base.geo, lat: -50 + random() * 115, lon: -180 + random() * 360, city: undefined };
+    return { ...base, id: `many_${String(i).padStart(4, "0")}`, name: `${base.name ?? base.id}-x${i}`, geo };
+  });
+}
 let latency = initialConfig();
 let machines = MACHINES.map((machine) => ({ ...machine }));
 let monitors = MONITORS.map((monitor) => ({ ...monitor }));
@@ -237,6 +262,18 @@ export const api = {
   nodes: {
     list: () => answer("nodes", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
     geo: () => answer("geo", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
+    // ?history=empty|disabled|unavailable|gaps shapes the node page's History card (dev/systemFixture.ts).
+    history: (nodeId: string, range: MetricsRange) => {
+      const mode = PARAMS.get("history");
+      if (mode === "disabled" || mode === "unavailable") {
+        READ_COUNTS.history = (READ_COUNTS.history ?? 0) + 1;
+        return delay(undefined, LATENCY_MS).then(() => {
+          // The server scrubs 5xx messages; the code tells the cases apart.
+          throw new ApiError(503, mode === "disabled" ? "metrics_disabled" : "metrics_unavailable", "internal server error");
+        });
+      }
+      return answer("history", () => nodeHistory(nodeId, range, mode));
+    },
     duplicates: () => delay({ groups: SHAPE === "dense" ? [{ reason: "host_fingerprint", confidence: "high", signal: "machine-id", node_ids: [nodes[1]!.id, nodes[33]!.id] }] : [] }),
     disable: (id: string, disabled: boolean) => {
       nodes = nodes.map((n) => (n.id === id ? { ...n, disabled: disabled || undefined, status: disabled ? "disabled" : "online" } : n));
@@ -466,8 +503,10 @@ export const api = {
       return delay({ ok: true });
     },
     latency: {
-      plan: () => answer("latency", () => planFor(latency.config, latency.stored)),
-      rollups: () => answer("latency", () => rollupsFor(planFor(latency.config, latency.stored))),
+      // `?latencyMs=<ms>` slows the plan and rollups reads, so the loading state can be drawn.
+      plan: () => answer("latency", () => planFor(latency.config, latency.stored), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
+      rollups: () =>
+        answer("latency", () => rollupsFor(planFor(latency.config, latency.stored)), Number(PARAMS.get("rollupsMs")) || Number(PARAMS.get("latencyMs")) || LATENCY_MS),
       series: (source: string, target: string, window: LatencyWindow) =>
         answer("latency", () => seriesFor(planFor(latency.config, latency.stored), source, target, window)),
       // A save names the version it was read at, as the server requires.
@@ -492,6 +531,10 @@ export const api = {
         ],
       }),
     setEnforced: (capability: string, enforced: boolean) => delay({ capability, enforced, mutates: true, derived: true, allow_count: 30, refuse_count: 4 }),
+  },
+  // Monitoring's Topology reads the relay to exit routes (dev/topologyFixture.ts).
+  proxy: {
+    lineChains: () => answer("chains", () => ({ chains: lineChains() })),
   },
   plugins: {
     // vpn-core is installed in production; the node sheet links to its Lines.

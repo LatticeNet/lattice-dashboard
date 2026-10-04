@@ -14,10 +14,20 @@
  *                   a never-reported and a disabled node, three approvals
  *                   waiting, due and overdue renewals, a second stalled task
  *   empty           nothing enrolled (first run)
- * `?monitors=some` gives Monitoring an HTTP and a TLS monitor with results.
+ * `?monitors=some` gives Monitoring an HTTP and a TLS monitor with results;
+ * with `?topo=many` it adds a check run from three of the invented US nodes,
+ * so the folded Topology draws a check bundle out of one country.
  * `?monitors=many` gives sixty, past the fifty the list once read one by one:
  * three failing and one whose results stopped arriving (names and targets
  * invented).
+ * `?geo=` shapes the coordinates (all invented, city points rounded):
+ *   jitter (default)  each node a little off its city's point
+ *   exact             every node on its city's one point, as a GeoIP lookup
+ *                     answers: Los Angeles holds 12 on one spot
+ *   six               six nodes on one Los Angeles point, the other six Los
+ *                     Angeles nodes on cities of the region 1.1 degrees
+ *                     or more apart, so a zoom splits the region and only
+ *                     the six need a spread
  *
  * Dates are relative to now so the shape holds on any day.
  */
@@ -75,6 +85,19 @@ const FSN: Place = ["DE", "Saxony", "Falkenstein", 50.48, 12.37];
 const HEL: Place = ["FI", "Uusimaa", "Helsinki", 60.17, 24.94];
 const LON: Place = ["GB", "England", "London", 51.5, -0.12];
 const SYD: Place = ["AU", "NSW", "Sydney", -33.87, 151.2];
+
+export const GEO_SHAPE = (PARAMS.get("geo") ?? "jitter") as "jitter" | "exact" | "six";
+/** `?geo=six`: the six that keep the Los Angeles point. */
+const LA_SIX = new Set(["[cd]-DMIT-pro-malibu", "[cd]-racknerd-la", "[Metix]-DMIT-1", "[Metix]-DMIT-2", "[Metix]-DMIT-3", "[Metix]-DMIT-4"]);
+/** `?geo=six`: where the other Los Angeles nodes go, in fleet order: far enough apart that the deepest zoom at 1440 parts them from the six. */
+const REGION: Place[] = [
+  ["US", "California", "Santa Barbara", 34.42, -119.7],
+  ["US", "California", "Bakersfield", 35.37, -119.02],
+  ["US", "California", "Palm Springs", 33.83, -116.55],
+  ["US", "California", "San Diego", 32.72, -117.16],
+  ["US", "Nevada", "Las Vegas", 36.17, -115.14],
+  ["US", "California", "Barstow", 34.9, -117.02],
+];
 
 interface Entry {
   name: string;
@@ -164,6 +187,18 @@ function denseStatus(e: Entry): Pick<Entry, "status" | "sinceMs" | "reason"> | u
   return undefined;
 }
 
+/** Where a node sits under `?geo=`. */
+function placeOf(e: Entry, index: number): { place: Place; lat: number; lon: number } | undefined {
+  if (!e.place) return undefined;
+  if (GEO_SHAPE === "six" && e.place === LA && !LA_SIX.has(e.name)) {
+    const order = FLEET.filter((other) => other.place === LA && !LA_SIX.has(other.name)).indexOf(e);
+    const place = REGION[order % REGION.length]!;
+    return { place, lat: place[3], lon: place[4] };
+  }
+  if (GEO_SHAPE !== "jitter") return { place: e.place, lat: e.place[3], lon: e.place[4] };
+  return { place: e.place, lat: e.place[3] + (index % 3) * 0.08, lon: e.place[4] + (index % 4) * 0.08 };
+}
+
 export function nodeId(index: number): string {
   return `node_${String(index + 1).padStart(3, "0")}`;
 }
@@ -179,6 +214,7 @@ function toNode(e: Entry, index: number): Node {
   const diskTotal = 80 * 1024 ** 3;
   const cpu = e.cpu ?? 10;
   const lastSeen = never ? "0001-01-01T00:00:00Z" : status === "offline" ? iso(-sinceMs) : iso(-3000);
+  const at = placeOf(e, index);
   return {
     id: nodeId(index),
     name: e.name,
@@ -216,9 +252,7 @@ function toNode(e: Entry, index: number): Node {
           arch: e.arch ?? "amd64",
           cpu_cores: 2,
         },
-    geo: e.place
-      ? { country: e.place[0], region: e.place[1], city: e.place[2], lat: e.place[3] + (index % 3) * 0.08, lon: e.place[4] + (index % 4) * 0.08, source: "auto" }
-      : undefined,
+    geo: at ? { country: at.place[0], region: at.place[1], city: at.place[2], lat: at.lat, lon: at.lon, as_org: e.vendor, source: "auto" } : undefined,
     agent_runtime: reporting
       ? { allow_exec: true, allow_root_exec: e.root === true, no_exec: false, allow_terminal: !e.noTerminal, terminal_transport: "poll", ssh_alerts: true, singbox_discover: true, reported_at: iso(-3000) }
       : null,
@@ -501,6 +535,10 @@ function someMonitors(): MonitorView[] {
     { id: "mon_console", name: "Lattice console", type: "http", target: "https://lattice.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: NODES.slice(0, 3).map((n) => n.id), enabled: true, created_at: iso(-20 * DAY) },
     { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [], enabled: true, created_at: iso(-20 * DAY) },
     { id: "mon_hk_tcp", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: NODES.slice(3, 5).map((n) => n.id), enabled: true, created_at: iso(-3 * DAY) },
+    // dev/latencyFixture.ts: node_x000 and node_x009 are in Los Angeles, node_x001 in San Jose.
+    ...(PARAMS.get("topo") === "many"
+      ? [{ id: "mon_bulk_us", name: "US edge health", type: "http", target: "https://edge.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: ["node_x000", "node_x001", "node_x009"], enabled: true, created_at: iso(-2 * DAY) }]
+      : []),
   ];
 }
 

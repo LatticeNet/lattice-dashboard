@@ -26,6 +26,7 @@ import type {
   LatencyWindow,
 } from "@/lib/api/types";
 import { latencyClass } from "@/lib/latency";
+import { regionOf, regionRank, type RegionKey } from "@/lib/regions";
 
 export const LATENCY_WINDOWS: readonly LatencyWindow[] = ["1h", "24h", "7d"];
 export type LatencyReading = "p50" | "p95";
@@ -42,6 +43,11 @@ export const LATENCY_DEFAULT_TIMEOUT_SEC = 5;
 export const PARTIAL_COVERAGE = 0.5;
 /** Loss at or above this share in the shown window puts a pair on the attention list. */
 export const LOSS_ATTENTION = 0.2;
+
+/** A pair whose newest result is older than this reads as quiet, whatever its window says. */
+export function quietAfterMs(intervalSec: number): number {
+  return Math.max(3 * Math.max(intervalSec, 1) * 1000, 180_000);
+}
 
 /** A band from src/lib/latency.ts, or none when nothing was measured. */
 export type LatencyBand = "success" | "chart-2" | "warning" | "destructive";
@@ -106,6 +112,8 @@ export interface LatencyCell {
   pairEnabled: boolean;
   /** A pair exists for this source and target (the source can probe). */
   exists: boolean;
+  /** When the pair's newest result was taken, epoch ms, however old. */
+  lastAt?: number;
 }
 
 export interface LatencyRow {
@@ -177,6 +185,8 @@ export function latencyCell(
     pairEnabled: pair?.enabled ?? true,
     exists: !!pair,
   };
+  const lastAt = rollup?.latest?.at ? Date.parse(rollup.latest.at) : NaN;
+  if (!Number.isNaN(lastAt)) base.lastAt = lastAt;
   if (stats && stats.samples > 0) {
     base.loss = stats.loss;
     base.p50Ms = stats.p50_ms;
@@ -242,6 +252,51 @@ export function buildLatencyMatrix(
     return { node, cells };
   });
   return { sources, rows, counts };
+}
+
+export interface LatencyRowGroup {
+  region: RegionKey;
+  rows: LatencyRow[];
+}
+
+/**
+ * The matrix's rows by region (src/lib/regions.ts), near first, then by
+ * country and name: from mainland China the handshake times climb down the
+ * column, so the one that does not fit its neighbours is the one to read.
+ */
+export function groupLatencyRows(rows: readonly LatencyRow[]): LatencyRowGroup[] {
+  const sorted = [...rows].sort((a, b) => {
+    const ra = regionOf(a.node.country);
+    const rb = regionOf(b.node.country);
+    return (
+      regionRank(ra) - regionRank(rb) ||
+      (a.node.country ?? "~").toUpperCase().localeCompare((b.node.country ?? "~").toUpperCase()) ||
+      (a.node.name || a.node.node_id).localeCompare(b.node.name || b.node.node_id) ||
+      a.node.node_id.localeCompare(b.node.node_id)
+    );
+  });
+  const groups: LatencyRowGroup[] = [];
+  for (const row of sorted) {
+    const region = regionOf(row.node.country);
+    const last = groups[groups.length - 1];
+    if (last && last.region === region) last.rows.push(row);
+    else groups.push({ region, rows: [row] });
+  }
+  return groups;
+}
+
+/** A pair whose last result is older than quietAfterMs: its window's numbers are history. */
+export function cellQuietFor(cell: Pick<LatencyCell, "kind" | "lastAt">, intervalSec: number, now: number): number | undefined {
+  if (cell.kind !== "measured" && cell.kind !== "failing") return undefined;
+  if (cell.lastAt === undefined) return undefined;
+  const age = now - cell.lastAt;
+  return age > quietAfterMs(intervalSec) ? age : undefined;
+}
+
+/** Coverage as a whole percent, and "<1" for a share heard at all but under one percent. */
+export function coveragePercent(coverage: number): string {
+  if (coverage > 0 && coverage < 0.01) return "<1";
+  return String(Math.round(coverage * 100));
 }
 
 export interface LatencyProblem {

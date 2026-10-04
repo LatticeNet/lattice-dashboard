@@ -5,7 +5,9 @@ import type { LatencyProbePlan, LatencyRollups, LatencySeries } from "@/lib/api/
 
 import {
   buildLatencyMatrix,
+  cellQuietFor,
   chartCeiling,
+  coveragePercent,
   draftFromConfig,
   draftProblems,
   draftTargetReason,
@@ -13,6 +15,7 @@ import {
   draftsDiffer,
   formatLoss,
   formatMs,
+  groupLatencyRows,
   latencyBand,
   latencyProblems,
   pairEnabledIn,
@@ -256,4 +259,32 @@ test("every code the plan and the page interpolate into a key has copy in both l
       for (const code of codes) assert.equal(typeof latency.config[group]?.[code], "string", `${locale}: fleet.monitoring.latency.config.${group}.${code}`);
     }
   }
+});
+
+test("matrix rows group by region, near mainland China first, then country and name", () => {
+  const m = buildLatencyMatrix(plan(), rollups, "1h", "p50");
+  const groups = groupLatencyRows(m.rows);
+  assert.deepEqual(
+    groups.map((g) => [g.region, g.rows.map((r) => r.node.name)]),
+    [
+      ["eastAsia", ["hk-relay", "gomami-jp"]],
+      ["southeastAsia", ["sg-1"]],
+      ["northAmerica", ["us-nat"]],
+      ["europe", ["de-fsn"]],
+    ],
+  );
+});
+
+test("coverage under one percent says so instead of rounding to 0%", () => {
+  assert.equal(coveragePercent(0.003), "<1");
+  assert.equal(coveragePercent(0.2), "20");
+  assert.equal(coveragePercent(0), "0");
+});
+
+test("a measured cell whose last probe is old reads as quiet; a fresh one does not", () => {
+  const now = Date.parse("2026-10-03T12:00:00Z");
+  assert.equal(cellQuietFor({ kind: "measured", lastAt: now - 2 * 86_400_000 }, 60, now), 2 * 86_400_000);
+  assert.equal(cellQuietFor({ kind: "measured", lastAt: now - 30_000 }, 60, now), undefined);
+  assert.equal(cellQuietFor({ kind: "unknown", lastAt: now - 2 * 86_400_000 }, 60, now), undefined, "nothing heard already says so");
+  assert.equal(cellQuietFor({ kind: "failing", lastAt: undefined }, 60, now), undefined);
 });
