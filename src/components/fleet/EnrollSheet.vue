@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import ObjectSheet from "@/components/common/ObjectSheet.vue";
 import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
+import ShellText from "@/components/common/ShellText.vue";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -189,7 +190,7 @@ const CHOICE =
             {{ choice === 'linux' ? $t('fleet.nodes.enroll.platformLinux') : $t('fleet.nodes.enroll.platformManual') }}
           </button>
         </div>
-        <code class="block overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-background/70 p-3 font-mono text-xs">{{ command }}</code>
+        <code class="block overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-background/70 p-3 font-mono text-xs"><ShellText v-if="platform === 'linux'" :text="command" /><template v-else>{{ command }}</template></code>
       </div>
 
       <form id="enroll-form" class="grid grid-cols-1 gap-3 sm:grid-cols-2" @submit.prevent="submit">

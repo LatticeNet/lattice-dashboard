@@ -2,7 +2,7 @@
 import { computed, getCurrentInstance, nextTick, onMounted, ref, watch, type HTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
-import { useDebounceFn, useMediaQuery } from "@vueuse/core";
+import { useDebounceFn, useMediaQuery, useResizeObserver } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Funnel, Search, X } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
@@ -332,6 +332,42 @@ defineSlots<
 >();
 
 const isDesktop = useMediaQuery("(min-width: 768px)");
+
+/**
+ * The header row sticks to the top of the page's scroller while the rows
+ * scroll under it, which it can only do while nothing between them is a
+ * scroll container. The sideways scroller around the table is one whenever
+ * it is `overflow-x: auto` (the other axis turns `auto` with it), so the
+ * header used to stick inside a box that never scrolls vertically and went
+ * off screen with the first rows: Tasks lists 1,771 runs, Approvals history
+ * and Audit as many. So the wrapper scrolls sideways only while the table is
+ * wider than it; a table that fits is clipped instead (`overflow-x: clip`
+ * makes no scroll container) and its header sticks. A table wider than its
+ * box keeps the sideways scroll and a header that scrolls with the rows, as
+ * before: every table on a phone in the scroll layout, and below about
+ * 1280 px the widest ones (at 1024, Tasks, Audit, Inventory, DDNS and
+ * Approvals history all scroll sideways).
+ */
+const scroller = ref<HTMLElement | null>(null);
+const tableEl = ref<HTMLTableElement | null>(null);
+const fitsWidth = ref(true);
+useResizeObserver([scroller, tableEl], () => {
+  const box = scroller.value;
+  const table = tableEl.value;
+  if (!box || !table) return;
+  fitsWidth.value = table.getBoundingClientRect().width <= box.clientWidth + 0.5;
+});
+
+/**
+ * The bulk action bar sticks to the same top edge, above the header (z-20
+ * over z-15). While it shows, the header sticks just under it instead of
+ * behind it, or the column names vanish the moment a row is selected.
+ */
+const bulkBar = ref<HTMLElement | null>(null);
+const bulkBarHeight = ref(0);
+useResizeObserver(bulkBar, () => {
+  bulkBarHeight.value = bulkBar.value?.getBoundingClientRect().height ?? 0;
+});
 
 /**
  * The first data column stays in view while a scroll-layout table scrolls
@@ -842,6 +878,7 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
     <!-- Bulk action bar -->
     <div
       v-if="selectable && selectedCount > 0"
+      ref="bulkBar"
       class="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm"
     >
       <span class="font-medium tabular-nums">{{ selectedCount }}</span>
@@ -897,14 +934,19 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
            cell is clipped by the scroller's overflow either way; the
            console's menus are portaled.) -->
       <div
+        ref="scroller"
         :class="[
-          narrowLayout === 'scroll' ? 'relative overflow-x-auto' : 'relative hidden overflow-x-auto md:block',
+          narrowLayout === 'scroll' ? 'relative' : 'relative hidden md:block',
+          fitsWidth ? 'overflow-x-clip' : 'overflow-x-auto',
           $slots['row-detail'] && '[container-type:inline-size]',
         ]"
       >
-        <table class="w-full min-w-[640px] text-sm">
-          <thead class="sticky top-0 z-10 bg-[var(--table-ground,var(--background))]">
-            <tr class="border-b border-border text-xs text-muted-foreground">
+        <table ref="tableEl" class="w-full min-w-[640px] text-sm">
+          <thead
+            class="sticky top-0 z-[15] bg-[var(--table-ground,var(--background))]"
+            :style="selectable && selectedCount > 0 && bulkBarHeight ? { top: `${bulkBarHeight}px` } : undefined"
+          >
+            <tr class="text-xs text-muted-foreground [&>th]:th-rule">
               <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2 pointer-coarse:h-12 pointer-coarse:w-11 pointer-coarse:px-3.5', selectGutterClass)">
                 <Checkbox
                   class="touch-target"

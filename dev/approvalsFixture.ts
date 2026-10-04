@@ -25,6 +25,8 @@ import type { ApprovalCounts, ApprovalView } from "@/lib/api/types";
 import { isStaleAgentUpdateApprovalView } from "@/lib/api/index";
 import { ApiError } from "@/lib/api/client";
 
+import { witnessPlan } from "./scriptFixture";
+
 export const NOW = Date.now();
 export const MINUTE = 60_000;
 export const HOUR = 60 * MINUTE;
@@ -526,6 +528,20 @@ export const PENDING_KINDS: ApprovalView[] = [
     actor_id: "cdcd",
     created_at: iso(-3 * HOUR),
     updated_at: iso(-3 * HOUR),
+  },
+  {
+    // The witness configure plan as the server renders it: prose, key-value
+    // lines and two file sections. Not shell, so Full plan shows it with
+    // line numbers and wrap and no colour.
+    id: "approval_k7witnessconf01",
+    node_id: nodeIdFor(6),
+    plugin: "controlplane-witness",
+    action: "witness-configure:v1",
+    plan: witnessPlan(NODE_NAMES[6]!, nodeIdFor(6)),
+    status: "pending",
+    actor_id: "cdcd",
+    created_at: iso(-4 * HOUR),
+    updated_at: iso(-4 * HOUR),
   },
   {
     id: "approval_k6runtimeplugin",

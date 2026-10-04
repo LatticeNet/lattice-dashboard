@@ -56,6 +56,14 @@ export default {
       failedTitle: "读取失败",
       failedDescription: "还没拿到任何数据，读取就失败了。",
     },
+    script: {
+      lines: "{n} 行",
+      wrap: "自动换行",
+      wrapTitle: "长行在边缘处换行，而不是横向滚动",
+      region: "脚本，共 {n} 行",
+      plainOverLimit: "超过 {size} 时不着色显示",
+      empty: "脚本为空。",
+    },
     rowMenu: {
       label: "「{name}」的操作",
     },

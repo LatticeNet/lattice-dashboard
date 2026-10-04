@@ -22,12 +22,13 @@ import { api, unwrap, type Node, type TaskResult, type TaskView } from "@/lib/ap
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useStepUp } from "@/composables/useStepUp";
 import { formatBytes, formatDateTime, shortId } from "@/lib/format";
+import { scriptLanguage } from "@/lib/shellTokens";
 import { leaseAttemptLabel, stalledText, taskLeaseProgress, taskStateStyle, type TaskLeaseProgress } from "@/lib/taskLease";
 import { cn } from "@/lib/utils";
 
-import CopyButton from "@/components/common/CopyButton.vue";
 import DataState from "@/components/common/DataState.vue";
 import NodeLabel from "@/components/common/NodeLabel.vue";
+import ScriptView from "@/components/common/ScriptView.vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -312,7 +313,9 @@ async function revealScript(): Promise<void> {
   }
 }
 
-const shownScript = computed(() => (revealed.value?.id === props.task.id ? revealed.value.script : ""));
+/** Revealed for this task, an empty script included: an empty script is an answer, not nothing. */
+const scriptShown = computed(() => revealed.value?.id === props.task.id);
+const shownScript = computed(() => (scriptShown.value ? revealed.value!.script : ""));
 
 function originText(): string {
   const task = props.task;
@@ -379,22 +382,21 @@ function originText(): string {
           <Button variant="outline" size="sm" type="button" :disabled="revealing" @click="revealScript">
             <RefreshCw v-if="revealing" class="size-4 animate-spin" aria-hidden="true" />
             <KeyRound v-else class="size-4" aria-hidden="true" />
-            {{ shownScript ? $t('operations.tasks.hideScript') : $t('operations.tasks.revealScript') }}
+            {{ scriptShown ? $t('operations.tasks.hideScript') : $t('operations.tasks.revealScript') }}
           </Button>
         </dd>
       </div>
     </dl>
 
-    <div v-if="shownScript" class="rounded-md border border-border bg-muted/20 p-3">
-      <div class="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+    <ScriptView v-if="scriptShown" :text="shownScript" :language="scriptLanguage(task.interpreter)" max-height="24rem">
+      <template #meta>
         <span class="inline-flex items-center gap-1">
           <Lock class="size-3.5" aria-hidden="true" />
           {{ $t('operations.tasks.scriptRevealed') }}
         </span>
-        <CopyButton :value="shownScript" />
-      </div>
-      <pre class="relative max-h-64 overflow-auto rounded bg-background/70 p-3 font-mono text-xs">{{ shownScript }}</pre>
-    </div>
+        <span aria-hidden="true">·</span>
+      </template>
+    </ScriptView>
 
     <section class="space-y-2" :aria-label="$t('operations.tasks.sheet.perNode')">
       <h3 class="text-sm font-medium">{{ $t('operations.tasks.sheet.perNode') }}</h3>
