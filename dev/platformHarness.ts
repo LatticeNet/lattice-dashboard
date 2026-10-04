@@ -25,6 +25,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import PublishingView from "@/views/platform/PublishingView.vue";
 import StoreView from "@/views/platform/StoreView.vue";
+import PluginStepUpHarness from "./PluginStepUpHarness.vue";
 
 import "@/style/app.css";
 
@@ -33,6 +34,7 @@ const LINKS = [
   ["/store", "Store"],
   ["/store?kind=kv&bucket=vpnmeta%2Flineuuid", "Store: line identity map"],
   ["/store?kind=kv&bucket=line-secrets", "Store: reserved bucket"],
+  ["/plugin-step-up", "Plugin step-up"],
 ] as const;
 
 const Shell = defineComponent({
@@ -60,6 +62,18 @@ const router = createRouter({
   routes: [
     { path: "/publishing", name: "publishing", component: PublishingView },
     { path: "/store", name: "store", component: StoreView },
+    { path: "/plugin-step-up", name: "plugin-step-up", component: PluginStepUpHarness },
+    // Where an identity row leads (vpn-core's Users page), shown as the address it was given.
+    {
+      path: "/plugins/:plugin/:route",
+      name: "plugin-page-stub",
+      component: defineComponent({
+        name: "PluginPageStub",
+        render() {
+          return h("p", { class: "p-6 font-mono text-sm", "data-testid": "plugin-page-stub" }, this.$route.fullPath);
+        },
+      }),
+    },
     // The pages link to their app paths; land those on the harness routes.
     { path: "/platform/publishing", redirect: (to) => ({ path: "/publishing", query: to.query }) },
     { path: "/platform/store", redirect: (to) => ({ path: "/store", query: to.query }) },

@@ -43,6 +43,7 @@ export default {
         warning: "警告",
         info: "提示",
       },
+      toneLead: "{tone}：",
     },
     sheet: {
       openPage: "打开页面",
@@ -94,6 +95,11 @@ export default {
       nextPage: "下一页",
       noMatchTitle: "没有匹配的行",
       noMatchDescription: "调整搜索或筛选条件以扩大结果范围。",
+    },
+    stepUp: {
+      code: "两步验证码",
+      passkey: "使用通行密钥",
+      rejected: "验证码不对或已过期，请输入身份验证器上当前显示的验证码。",
     },
     actions: {
       refresh: "刷新",
@@ -358,7 +364,7 @@ export default {
       reviewNext: "审阅下一个审批",
       reviewNextDetail: "{n} 个待处理",
       addVpnUser: "添加 VPN 用户",
-      addVpnUserDetail: "在 vpn-core 的 Users 页面，从新建身份开始",
+      addVpnUserDetail: "在 vpn-core 的 Users 页面打开新建身份",
       shareSubscription: "分享订阅",
       shareSubscriptionDetail: "在发布页新建分享",
       recordRenewal: "记录续费",
@@ -446,6 +452,15 @@ export default {
       ddns: "未读取到 DDNS 配置，更新失败的没有列出",
       expiring: "未读取到续费与到期信息，到期项没有列出",
       monitors: "未读取到监控结果，失败的监控没有列出",
+      incidents: "未读取到事件，未处理的事件没有列出",
+    },
+    incidents: {
+      title: "事件（{n} 个进行中） | 事件（{n} 个进行中）",
+      titleNew: "事件（{n} 个进行中，{new} 个新） | 事件（{n} 个进行中，{new} 个新）",
+      titleMoved: "事件（{n} 个进行中，{moved} 个上移） | 事件（{n} 个进行中，{moved} 个上移）",
+      titleNewMoved: "事件（{n} 个进行中，{new} 个新，{moved} 个上移） | 事件（{n} 个进行中，{new} 个新，{moved} 个上移）",
+      all: "全部事件",
+      allMore: "还有 {n} 个事件 | 还有 {n} 个事件",
     },
     read: {
       reading: "读取中",
@@ -472,6 +487,7 @@ export default {
       proofNever: "{age} 前接入，此后没有上报",
       monitors: "{n} 个监控检测失败 | {n} 个监控检测失败",
       monitorsAction: "监控",
+      monitorsHandled: "已在事件中确认、暂缓、暂不发送或待定",
       stalled: "{n} 个任务卡住 | {n} 个任务卡住",
       ddns: "{n} 个 DDNS 配置更新失败 | {n} 个 DDNS 配置更新失败",
       overdue: "{n} 项已过期 | {n} 项已过期",

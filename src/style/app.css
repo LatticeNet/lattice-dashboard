@@ -578,6 +578,15 @@
     transform: translate(-50%, -50%);
   }
 
+  /* A toast's action (Undo after acknowledging an incident or ending a
+     maintenance window) is a 24 px button; a finger needs it 44 px tall,
+     which the toast has room for. min-height wins over sonner's height. */
+  [data-sonner-toast] [data-button] {
+    min-height: 44px;
+    min-width: 44px;
+    justify-content: center;
+  }
+
   /* Invisible centered hit-area pad for icon-only buttons that keep their
      small visual box (e.g. inline size-7 controls inside dense rows). */
   .touch-target::after {

@@ -84,7 +84,7 @@ const steps = computed<{ key: string; to: RouteLocationRaw }[]>(() => [
            there to fill the row or not. -->
       <button
         type="button"
-        class="ml-auto inline-flex shrink-0 items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        class="ml-auto inline-flex shrink-0 items-center gap-1 rounded-sm text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 pointer-coarse:min-h-11 pointer-coarse:px-1"
         :aria-expanded="expanded"
         :aria-controls="bodyId"
         @click="toggle"

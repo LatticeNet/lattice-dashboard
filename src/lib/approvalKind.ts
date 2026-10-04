@@ -54,6 +54,8 @@ export const APPROVAL_KINDS = [
   "wireguardConfig",
   "sshGuardArm",
   "sshGuardConfirm",
+  "witnessConfigure",
+  "witnessRemove",
 ] as const;
 
 export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
@@ -107,6 +109,10 @@ export function approvalKind(source: ApprovalKindSource): ApprovalKind | null {
     case "sshguard":
       if (prefix === "sshguard-arm") return "sshGuardArm";
       if (prefix === "sshguard-confirm") return "sshGuardConfirm";
+      return null;
+    case "controlplane-witness":
+      if (prefix === "witness-configure") return "witnessConfigure";
+      if (prefix === "witness-remove") return "witnessRemove";
       return null;
     default:
       return null;

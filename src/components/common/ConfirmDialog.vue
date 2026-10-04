@@ -18,7 +18,8 @@ import { typedConfirmMatches } from "./chassisModel";
  *
  * One reusable replacement for the many hand-rolled delete/confirm Dialogs and
  * the few native `window.confirm()` calls across the app. Callers pass already
- * translated strings via props (plain-English defaults keep it usable bare).
+ * translated strings via props; the button labels default to the console's own
+ * Cancel and Confirm in the current locale.
  *
  * Usage:
  *   <ConfirmDialog
@@ -66,9 +67,9 @@ const props = withDefaults(
     title: string;
     /** Optional body copy explaining the consequence. */
     description?: string;
-    /** Confirm button label. */
+    /** Confirm button label; left out, the console's own "Confirm". */
     confirmLabel?: string;
-    /** Cancel button label. */
+    /** Cancel button label; left out, the console's own "Cancel", so a caller that omits it is still translated. */
     cancelLabel?: string;
     /** Confirm button style; destructive for irreversible actions. */
     variant?: "destructive" | "default";
@@ -96,8 +97,8 @@ const props = withDefaults(
   }>(),
   {
     description: undefined,
-    confirmLabel: "Confirm",
-    cancelLabel: "Cancel",
+    confirmLabel: undefined,
+    cancelLabel: undefined,
     variant: "destructive",
     pending: false,
     confirmDisabled: false,
@@ -166,7 +167,8 @@ function onCloseAutoFocus(event: Event) {
     <DialogScrollContent class="w-[calc(100%-2rem)] sm:max-w-md" v-bind="describedBy" @close-auto-focus="onCloseAutoFocus">
       <DialogHeader class="pe-6">
         <DialogTitle>{{ title }}</DialogTitle>
-        <DialogDescription v-if="description && !impact?.length">
+        <!-- break-words: a long name kept whole (non-breaking hyphens) still wraps rather than widening the dialog. -->
+        <DialogDescription v-if="description && !impact?.length" class="break-words">
           {{ description }}
         </DialogDescription>
       </DialogHeader>
@@ -210,7 +212,7 @@ function onCloseAutoFocus(event: Event) {
 
       <DialogFooter>
         <Button type="button" variant="outline" :disabled="pending" @click="onCancel">
-          {{ cancelLabel }}
+          {{ cancelLabel ?? $t('common.actions.cancel') }}
         </Button>
         <Button
         type="button"
@@ -219,7 +221,7 @@ function onCloseAutoFocus(event: Event) {
         @click="onConfirm"
       >
           <RefreshCw v-if="pending" class="size-4 animate-spin" aria-hidden="true" />
-          {{ confirmLabel }}
+          {{ confirmLabel ?? $t('common.actions.confirm') }}
         </Button>
       </DialogFooter>
     </DialogScrollContent>

@@ -1,5 +1,7 @@
-import { ref } from "vue";
+import { nextTick, ref } from "vue";
+import { useI18n } from "vue-i18n";
 import { api } from "@/lib/api";
+import { isRejectedPasscode } from "@/lib/stepUpRefusal";
 import {
   isPasskeyCancellation,
   isWebAuthnSupported,
@@ -12,7 +14,21 @@ export interface StepUpCopy {
   passkeyFailed: string;
 }
 
+/**
+ * After a refused code, focus goes back to the form's code field with the
+ * code selected, so the next attempt is typed over it. Without this it fell
+ * to the page: the submit button is disabled under focus while the check
+ * runs. Every step-up form marks its field autocomplete="one-time-code".
+ */
+async function refocusCode(form: HTMLFormElement | null | undefined): Promise<void> {
+  await nextTick();
+  const input = form?.isConnected ? form.querySelector<HTMLInputElement>('input[autocomplete="one-time-code"]') : null;
+  input?.focus();
+  input?.select();
+}
+
 export function useStepUp(copy: StepUpCopy) {
+  const { t } = useI18n();
   const open = ref(false);
   const code = ref("");
   const error = ref("");
@@ -53,13 +69,17 @@ export function useStepUp(copy: StepUpCopy) {
   async function submitTotp() {
     const trimmed = code.value.trim();
     if (!trimmed || pending.value) return;
+    // The form being submitted: the focused field or button sits inside it.
+    const form = typeof document === "undefined" ? null : document.activeElement?.closest("form");
     pending.value = "totp";
     error.value = "";
     try {
       const result = await api.security.stepUp(trimmed);
       accept(result.grant, result.expires_at);
     } catch (err) {
-      error.value = err instanceof Error ? err.message : copy.failed;
+      error.value = isRejectedPasscode(err) ? t("common.stepUp.rejected") : err instanceof Error ? err.message : copy.failed;
+      pending.value = "";
+      await refocusCode(form);
     } finally {
       pending.value = "";
     }
@@ -96,6 +116,8 @@ export function useStepUp(copy: StepUpCopy) {
     error,
     pending,
     supportsPasskey,
+    /** The grant still inside its lifetime, or "", without prompting. */
+    peek: cachedGrant,
     request,
     submitTotp,
     submitPasskey,

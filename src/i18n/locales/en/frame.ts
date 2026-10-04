@@ -45,6 +45,7 @@ export default {
         warning: "Warning",
         info: "Note",
       },
+      toneLead: "{tone}: ",
     },
     sheet: {
       openPage: "Open page",
@@ -96,6 +97,11 @@ export default {
       nextPage: "Next page",
       noMatchTitle: "No matching rows",
       noMatchDescription: "Change the search or the filter to widen the result.",
+    },
+    stepUp: {
+      code: "2FA passcode",
+      passkey: "Use passkey",
+      rejected: "That passcode was not accepted. Enter the code your authenticator shows now.",
     },
     actions: {
       refresh: "Refresh",
@@ -363,7 +369,7 @@ export default {
       reviewNext: "Review the next approval",
       reviewNextDetail: "{n} waiting | {n} waiting",
       addVpnUser: "Add a VPN user",
-      addVpnUserDetail: "On vpn-core Users, where New identity starts it",
+      addVpnUserDetail: "Opens New identity on vpn-core Users",
       shareSubscription: "Share a subscription",
       shareSubscriptionDetail: "A new share in Publishing",
       recordRenewal: "Record a renewal",
@@ -454,6 +460,15 @@ export default {
       ddns: "DDNS profiles were not read, so failing ones are not listed",
       expiring: "Renewals and expiries were not read, so nothing due is listed",
       monitors: "Monitor results were not read, so failing monitors are not listed",
+      incidents: "Incidents were not read, so open ones are not listed",
+    },
+    incidents: {
+      title: "Incidents ({n} active) | Incidents ({n} active)",
+      titleNew: "Incidents ({n} active, {new} new) | Incidents ({n} active, {new} new)",
+      titleMoved: "Incidents ({n} active, {moved} moved up) | Incidents ({n} active, {moved} moved up)",
+      titleNewMoved: "Incidents ({n} active, {new} new, {moved} moved up) | Incidents ({n} active, {new} new, {moved} moved up)",
+      all: "All incidents",
+      allMore: "{n} more incident | {n} more incidents",
     },
     // Where a number would be, when its read gave none.
     read: {
@@ -481,6 +496,7 @@ export default {
       proofNever: "enrolled {age} ago, no report since",
       monitors: "{n} monitor failing | {n} monitors failing",
       monitorsAction: "Monitoring",
+      monitorsHandled: "acknowledged, snoozed, held or pending in Incidents",
       stalled: "{n} task stalled | {n} tasks stalled",
       ddns: "{n} DDNS profile failing | {n} DDNS profiles failing",
       overdue: "{n} item overdue | {n} items overdue",

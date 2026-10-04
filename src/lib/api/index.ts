@@ -2,6 +2,11 @@ import { ApiError, http, type RequestOptions } from "./client";
 import { unwrapApproval, unwrapApprovalCounts } from "./approvalsEnvelope";
 import type { RegistrationResponseJSON, AuthenticationResponseJSON } from "@/lib/webauthn";
 import type {
+  Incident,
+  IncidentListQuery,
+  IncidentListResponse,
+  MaintenanceWindow,
+  MaintenanceWindowInput,
   AgentArtifactListing,
   AgentArtifactRequest,
   AgentArtifactView,
@@ -45,6 +50,11 @@ import type {
   MachineVendorView,
   MachineView,
   MonitorCreateInput,
+  LatencyProbeConfig,
+  LatencyProbePlan,
+  LatencyRollups,
+  LatencySeries,
+  LatencyWindow,
   MonitorResult,
   MonitorView,
   NetPolicyGraph,
@@ -66,6 +76,8 @@ import type {
   NotifyChannelView,
   NotifyDeliveriesQuery,
   NotifyDeliveriesResponse,
+  WitnessPlanRequest,
+  WitnessStatusResponse,
   NotifyRuleUpsertRequest,
   NotifyRuleView,
   NotifyTestRequest,
@@ -100,6 +112,8 @@ import type {
   StorageKind,
   StorageTokenCreateResponse,
   StorageTokenView,
+  ShareRevealResponse,
+  IdentityLinkStatus,
   SubscriptionShareCreateRequest,
   SubscriptionShareUpdateRequest,
   SubscriptionShareView,
@@ -514,6 +528,33 @@ export const api = {
         { monitor_id },
         opts,
       ),
+    latency: {
+      plan: (opts?: RequestOptions) => http.get<LatencyProbePlan>("/api/monitors/latency", undefined, opts),
+      /** Answers the new plan; 409 when someone saved since `config.version` was read. */
+      save: (config: LatencyProbeConfig) => http.put<LatencyProbePlan>("/api/monitors/latency", config),
+      rollups: (opts?: RequestOptions) => http.get<LatencyRollups>("/api/monitors/latency/rollups", undefined, opts),
+      series: (source: string, target: string, window: LatencyWindow, opts?: RequestOptions) =>
+        http.get<LatencySeries>("/api/monitors/latency/series", { source, target, window }, opts),
+    },
+  },
+
+  // Keepalive incidents (lattice-server incidents.go): pending, open,
+  // acknowledged and recent resolved ones, plus the active maintenance windows.
+  incidents: {
+    list: (query?: IncidentListQuery, opts?: RequestOptions) =>
+      http.get<IncidentListResponse>("/api/incidents", query as Record<string, unknown> | undefined, opts),
+    ack: (id: string) => http.post<Incident>("/api/incidents/ack", { id }),
+    // Undoes an acknowledgement while the incident is still open; 409 once it closed.
+    unack: (id: string) => http.post<Incident>("/api/incidents/unack", { id }),
+    // minutes 0 ends a snooze.
+    snooze: (id: string, minutes: number) => http.post<Incident>("/api/incidents/snooze", { id, minutes }),
+  },
+
+  maintenance: {
+    list: (opts?: RequestOptions) =>
+      http.get<{ windows: MaintenanceWindow[]; now: string }>("/api/maintenance-windows", undefined, opts),
+    upsert: (input: MaintenanceWindowInput) => http.post<MaintenanceWindow>("/api/maintenance-windows", input),
+    delete: (id: string) => http.post<{ ok: boolean }>("/api/maintenance-windows/delete", { id }),
   },
 
   machines: {
@@ -836,6 +877,14 @@ export const api = {
     // The Sent log: the notification outbox, newest first.
     deliveries: (query: NotifyDeliveriesQuery, opts?: RequestOptions) =>
       http.get<NotifyDeliveriesResponse>("/api/notify/deliveries", query as Record<string, unknown>, opts),
+    // The control-plane witness: what each witness node last relayed, read
+    // against the plans that configured it.
+    witness: (opts?: RequestOptions) =>
+      http.get<WitnessStatusResponse>("/api/notify/witness", undefined, opts),
+    // Files a witness plan (configure or remove); nothing changes on the node
+    // until the approval is decided.
+    planWitness: (input: WitnessPlanRequest) =>
+      http.post<{ approval: ApprovalView }>("/api/notify/witness/plan", input),
     webhooks: (opts?: RequestOptions) =>
       http.get<{ webhooks: NotifyWebhookView[] }>("/api/notify/webhooks", undefined, opts),
     // Create returns the plaintext secret; edit returns the plain view. The
@@ -936,8 +985,8 @@ export const api = {
         body,
       ),
     // Rotation invalidates the old URL immediately and drops the cached output
-    // for that share, and returns the share carrying its new token. So the
-    // caller replaces the row it has rather than refetching the whole list.
+    // for that share. The answer is the share without its token, like every
+    // share view; the new URL comes from reveal, after step-up.
     rotate: (id: string) =>
       http.post<SubscriptionShareView>(
         `/api/subscription-shares/${encodeURIComponent(id)}/rotate`,
@@ -946,6 +995,20 @@ export const api = {
     refresh: (id: string) =>
       http.post<unknown>(`/api/subscription-shares/${encodeURIComponent(id)}/refresh`, {}),
     remove: (id: string) => http.del<void>(`/api/subscription-shares/${encodeURIComponent(id)}`),
+    // The token, through the one reveal gate: 403 step_up_required without a
+    // grant, then the share's path and URL with one. Each reveal is audited.
+    reveal: (id: string, stepUpGrant: string) =>
+      http.post<ShareRevealResponse>(
+        `/api/subscription-shares/${encodeURIComponent(id)}/reveal`,
+        { step_up_grant: stepUpGrant },
+      ),
+  },
+
+  // An identity's subscription link. vpn-core's Users page owns editing it;
+  // Publishing reads its status for the read-only rows it projects.
+  vpnLinks: {
+    get: (identityId: string, opts?: RequestOptions) =>
+      http.get<IdentityLinkStatus>(`/api/vpn/users/${encodeURIComponent(identityId)}/link`, undefined, opts),
   },
 
   health: () => http.get<{ status: string }>("/api/health"),

@@ -15,7 +15,7 @@
  *                     names: nodes, ddns, netpolicy, matrix, groupPolicy, graph, plugins,
  *                     dns, monitors, tunnels, geo, agents, release, artifacts,
  *                     webhooks, channels, rules, deliveries, sent, users, tokens, oidc,
- *                     version, capabilities, machines, vpnusers, shares
+ *                     version, capabilities, machines, vpnusers, shares, witness
  *   ?ddns=empty       no DDNS profiles
  *   ?run=fail         a DDNS run answers 502 and records the error
  *   ?slow             every write takes 1.5 s, to see a confirm's pending state
@@ -34,6 +34,7 @@ import type {
   NotifyDeliveriesQuery,
   NotifyRuleUpsertRequest,
   OIDCProviderUpsertRequest,
+  WitnessPlanRequest,
   Principal,
   TokenCreateRequest,
   UserCreateRequest,
@@ -45,6 +46,7 @@ import { GROUP_POLICIES, NODE_POLICIES, policyGraph, policyMatrix } from "./netp
 import { DECLARATIVE_PLUGIN, PLUGIN_INSTALLS, leaseRows, pluginViews } from "./netplatPluginsFixture";
 import { NOTIFY_CHANNELS, NOTIFY_RULES, WEBHOOKS, deliveriesFor } from "./netplatWebhooksFixture";
 import { sentPage, testStoredChannel } from "./netplatSentFixture";
+import { planWitness, witnessStatus } from "./netplatWitnessFixture";
 import { AGENT_APPROVALS, AGENT_ARTIFACTS, AGENT_POLICIES, AGENT_RELEASE } from "./netplatAgentFixture";
 import { DNS_DEPLOYMENTS, GEO_ROUTINGS, MONITORS, TUNNELS, geoPlan } from "./netplatResolversFixture";
 import { CAPABILITIES, MACHINES, PROVIDERS, TOKENS, USERS, buildInfo } from "./netplatSettingsFixture";
@@ -359,7 +361,10 @@ export const api = {
     upsertChannel: async (input: NotifyChannelUpsertRequest) => {
       await delay(undefined, WRITE_MS);
       const existing = NOTIFY_CHANNELS.find((channel) => channel.id === input.id);
-      const next = { id: existing?.id ?? `ch_new_${seq++}`, name: input.name, kind: input.kind, config_keys: Object.keys(input.config), enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0), health: existing?.health ?? { state: "unknown", consecutive_failures: 0 } };
+      // As the server: an absent fallback keeps the channel's, "" clears it, and the channel itself is refused.
+      const fallback = input.fallback_channel_id === undefined ? existing?.fallback_channel_id : input.fallback_channel_id || undefined;
+      if (fallback && fallback === input.id) throw new ApiError(400, "bad_request", "a channel cannot be its own fallback");
+      const next = { id: existing?.id ?? `ch_new_${seq++}`, name: input.name, kind: input.kind, config_keys: Object.keys(input.config), enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0), health: existing?.health ?? { state: "unknown", consecutive_failures: 0 }, fallback_channel_id: fallback, critical_event_types: ["node.offline", "service.down", "ssh.compromise_suspected"] };
       if (existing) Object.assign(existing, next);
       else NOTIFY_CHANNELS.push(next);
       return { ...next };
@@ -374,6 +379,11 @@ export const api = {
       if (!NOTIFY_CHANNELS.some((channel) => channel.id === id)) throw new ApiError(404, "not_found", "notification channel not found");
       return testStoredChannel(id);
     },
+    witness: () => read("witness", () => witnessStatus()),
+    planWitness: async (input: WitnessPlanRequest) => {
+      await delay(undefined, WRITE_MS);
+      return planWitness(input);
+    },
     deliveries: (query: NotifyDeliveriesQuery) =>
       flags.get("sent") === "slow"
         ? delay(undefined, 4000).then(() => read("sent", () => sentPage(query)))
@@ -384,7 +394,15 @@ export const api = {
       // As the server: an absent fallback keeps the rule's, "" clears it, and one of the rule's own channels is refused.
       const fallback = input.fallback_channel_id === undefined ? existing?.fallback_channel_id : input.fallback_channel_id || undefined;
       if (fallback && input.channel_ids?.includes(fallback)) throw new ApiError(400, "bad_request", "the fallback channel must differ from the rule's own channels");
-      const next = { id: existing?.id ?? `rule_new_${seq++}`, name: input.name, event_types: input.event_types, channel_ids: input.channel_ids, title_template: input.title_template, body_template: input.body_template, enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0), fallback_channel_id: fallback };
+      // Escalation and quiet hours: absent keeps, quiet_hours null clears (applyNotifyRuleOptions).
+      const options = {
+        escalation_off: input.escalation_off ?? existing?.escalation_off ?? false,
+        escalate_after_minutes: input.escalate_after_minutes ?? existing?.escalate_after_minutes ?? 30,
+        escalation_bark_level: input.escalation_bark_level ?? existing?.escalation_bark_level ?? "critical",
+        quiet_hours: input.quiet_hours !== undefined ? input.quiet_hours : (existing?.quiet_hours ?? null),
+      };
+      (window as unknown as { __lastRuleRequest?: unknown }).__lastRuleRequest = input;
+      const next = { id: existing?.id ?? `rule_new_${seq++}`, name: input.name, event_types: input.event_types, channel_ids: input.channel_ids, title_template: input.title_template, body_template: input.body_template, enabled: input.enabled ?? true, created_at: existing?.created_at ?? iso(0), updated_at: iso(0), fallback_channel_id: fallback, ...options };
       if (existing) Object.assign(existing, next);
       else NOTIFY_RULES.push(next);
       return { ...next };

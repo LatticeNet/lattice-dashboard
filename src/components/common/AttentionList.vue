@@ -55,7 +55,7 @@ const ICON_TONE = { danger: "text-destructive", warning: "text-warning-text", in
           <component :is="ICON[item.tone]" :class="cn('mt-0.5 size-4 shrink-0', ICON_TONE[item.tone])" aria-hidden="true" />
           <div class="min-w-0">
             <p class="text-sm text-foreground">
-              <span class="sr-only">{{ $t(`common.attention.tone.${item.tone}`) }}: </span>{{ item.claim }}
+              <span class="sr-only">{{ $t('common.attention.toneLead', { tone: $t(`common.attention.tone.${item.tone}`) }) }}</span>{{ item.claim }}
             </p>
             <p v-if="item.proof" class="mt-0.5 break-words font-mono text-xs text-muted-foreground">{{ item.proof }}</p>
           </div>
