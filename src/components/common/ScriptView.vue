@@ -93,10 +93,14 @@ const overLimit = computed(() => props.language === "shell" && !view.value.highl
 
     <p v-if="lineCount === 0" class="px-3 py-3 text-xs text-muted-foreground">{{ $t('common.script.empty') }}</p>
     <!-- The region scrolls both ways and takes focus, so a keyboard can
-         scroll a long script; its name says what it is and how long. -->
+         scroll a long script; its name says what it is and how long. Its
+         scroll chains to the sheet at either end: contained, a phone's
+         swipes that started on the code (most of the sheet's height at 375)
+         stopped at the script's last line and never reached Per node or
+         the footer. -->
     <div
       v-else
-      class="overflow-auto overscroll-contain font-mono text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+      class="overflow-auto font-mono text-xs leading-5 outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
       :style="{ maxHeight }"
       tabindex="0"
       role="region"
