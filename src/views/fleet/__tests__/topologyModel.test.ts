@@ -469,9 +469,66 @@ test("a folded bundle is drawn as its worst live member; grey only when every me
   assert.equal(allOld.edges.find((e) => e.key.endsWith(">country:US"))!.edge.state, "quiet");
 });
 
+test("countries fold only past COLLAPSE_AT rows", () => {
+  assert.equal(layoutTopology(buildTopology(fleet(COLLAPSE_AT)), { width: 1200 }).collapsed, false);
+  assert.equal(layoutTopology(buildTopology(fleet(COLLAPSE_AT + 1)), { width: 1200 }).collapsed, true);
+});
+
+test("a chain between two nodes of one folded country is not drawn; one across countries is", () => {
+  const chain = (from: string, to: string): LineChainView => ({ source_line_uuid: `line-${from}`, source_node_id: from, status: "converged", current: { target_node_id: to, target_line_uuid: `line-${to}`, artifact_digest: "d", status: "converged" }, attempt: null });
+  // n000 and n004 are both US; n001 is JP.
+  const m = buildTopology(fleet(COLLAPSE_AT + 1, { layer: "all", chains: [chain("n000", "n004"), chain("n000", "n001")] }));
+  assert.equal(m.counts.chains, 2, "both chains are in the model");
+  const a = layoutTopology(m, { width: 1200 });
+  assert.deepEqual(a.edges.filter((e) => e.edge.kind === "chain").map((e) => e.key), ["chain:country:US>country:JP"]);
+});
+
+test("a chain out of a probe source rides below the probe to the same row", () => {
+  const sh: LineChainView = { source_line_uuid: "line-sh", source_node_id: "sh", status: "converged", current: { target_node_id: "hk", target_line_uuid: "line-hk", artifact_digest: "e", status: "converged" }, attempt: null };
+  const a = layoutTopology(buildTopology(input({ chains: [...CHAINS, sh] })), { width: 1200 });
+  const probe = a.edges.find((e) => e.edge.id === "probe:sh~hk")!;
+  const chain = a.edges.find((e) => e.edge.id === "chain:line-sh")!;
+  assert.equal(chain.end.y, probe.end.y + 6);
+});
+
 test("chains are drawn as two rails, so shape and not only hue tells them from probes", () => {
   const m = buildTopology(input());
   for (const e of m.edges) assert.equal(!!edgeStyle(e).double, e.kind === "chain", e.id);
+});
+
+test("a disabled check draws nothing and counts as no failure", () => {
+  const off = monitor({ id: "off", enabled: false, node_ids: ["us1"], latest: [{ node_id: "us1", at: ago(10_000), success: false, fail_streak: 9, since: ago(600_000) }] });
+  const m = buildTopology(input({ monitors: [off] }));
+  assert.equal(m.checks.length, 1);
+  assert.equal(m.checks[0]!.enabled, false);
+  assert.equal(m.checks[0]!.summary.failing, 1, "the result is still counted on the check");
+  assert.equal(m.edges.filter((e) => e.kind === "check").length, 0);
+  assert.equal(m.counts.checksFailing, 0);
+});
+
+test("a source that does not probe a target draws no edge to it", () => {
+  const p = plan();
+  p.pairs = p.pairs.filter((pair) => pair.target !== "us1");
+  const m = buildTopology(input({ plan: p }));
+  assert.equal(m.edges.find((e) => e.id === "probe:sh~us1"), undefined);
+  assert.equal(m.counts.paths, buildTopology(input()).counts.paths - 1);
+});
+
+test("an every-node check fans out from CHECK_FAN + 1 sources, not at CHECK_FAN", () => {
+  const runners = (n: number) => Array.from({ length: n }, (_, i) => node(`r${i}`, `runner-${i}`, "JP"));
+  const allUp = (list: Node[]) => monitor({ id: "all", assign_all: true, latest: list.map((n) => ({ node_id: n.id, at: ago(5_000), success: true, fail_streak: 0, since: ago(60_000) })) });
+  const at = runners(CHECK_FAN);
+  const atFan = buildTopology(input({ nodes: at, monitors: [allUp(at)] }));
+  assert.equal(atFan.checks[0]!.fannedOut, false);
+  assert.equal(atFan.edges.filter((e) => e.kind === "check").length, CHECK_FAN, "every source drawn");
+  const past = runners(CHECK_FAN + 1);
+  const pastFan = buildTopology(input({ nodes: past, monitors: [allUp(past)] }));
+  assert.equal(pastFan.checks[0]!.fannedOut, true);
+  assert.equal(pastFan.edges.filter((e) => e.kind === "check").length, 0, "healthy sources are counted, not drawn");
+});
+
+test("a probe interval under a minute still waits three minutes before calling a path quiet", () => {
+  assert.equal(quietAfterMs(20), 180_000);
 });
 
 const OK: TopoReadStatus = { allowed: true, hasData: true, failed: false };
