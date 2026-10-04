@@ -14,6 +14,8 @@ vite.harness.config.js
 vite.harness.config.d.ts
 vite.harness.ssh-guard.config.js
 vite.harness.ssh-guard.config.d.ts
+vite.harness.frame.config.js
+vite.harness.frame.config.d.ts
 
 # Local working notes (not part of the app; kept locally, not committed)
 /POLISH_ROADMAP_2026-06-19.md
