@@ -11,6 +11,9 @@
  * Edges answer the pointer through a 14 px transparent stroke. The keyboard
  * reaches every path through the boxes (a focused box's card lists its
  * paths) and through the List presentation.
+ *
+ * The card lives outside the scrolling frame, in a host that does not
+ * scroll, so a card near the bottom or the right edge is moved, never cut.
  */
 import { computed, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -62,12 +65,18 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 
 const PAD = 16;
+/** The card's frame of reference: wraps the scrolling frame and does not scroll itself. */
+const host = ref<HTMLElement | null>(null);
 const frame = ref<HTMLElement | null>(null);
-const inner = ref<HTMLElement | null>(null);
 const frameWidth = ref(1100);
+const hostSize = ref({ w: 1100, h: 600 });
 useResizeObserver(frame, (entries) => {
   const width = entries[0]?.contentRect.width;
   if (width) frameWidth.value = Math.floor(width);
+});
+useResizeObserver(host, () => {
+  const el = host.value;
+  if (el) hostSize.value = { w: el.clientWidth, h: el.clientHeight };
 });
 
 const expanded = shallowRef<Set<string>>(new Set());
@@ -82,9 +91,13 @@ const layout = computed(() => layoutTopology(props.model, { width: frameWidth.va
 
 /* ---- Hover and focus ---- */
 
+/**
+ * What the pointer or focus is on, in the host's coordinates: the pointer for
+ * an edge, the box's top right corner and size for a box.
+ */
 type Target =
   | { type: "edge"; key: string; x: number; y: number }
-  | { type: "node" | "source" | "check" | "cp" | "country"; key: string; x: number; y: number; anchored: true };
+  | { type: "node" | "source" | "check" | "cp" | "country"; key: string; x: number; y: number; w: number; h: number; anchored: true };
 
 const hover = ref<Target | null>(null);
 // A layer or window switch rebuilds everything under the pointer.
@@ -144,7 +157,7 @@ const rowDimmed = (row: LayoutRow) => {
 };
 
 function local(event: PointerEvent): { x: number; y: number } {
-  const box = inner.value?.getBoundingClientRect();
+  const box = host.value?.getBoundingClientRect();
   return box ? { x: event.clientX - box.left, y: event.clientY - box.top } : { x: 0, y: 0 };
 }
 
@@ -160,23 +173,36 @@ function onEdgeLeave(le: LayoutEdge): void {
 function onBoxEnter(type: "node" | "source" | "check" | "cp" | "country", key: string, event: Event): void {
   const el = event.currentTarget as HTMLElement;
   const box = el.getBoundingClientRect();
-  const host = inner.value?.getBoundingClientRect();
-  const x = host ? box.right - host.left : 0;
-  const y = host ? box.top - host.top : 0;
-  hover.value = { type, key, x, y, anchored: true };
+  const origin = host.value?.getBoundingClientRect();
+  const x = origin ? box.right - origin.left : 0;
+  const y = origin ? box.top - origin.top : 0;
+  hover.value = { type, key, x, y, w: box.width, h: box.height, anchored: true };
 }
 
 function onBoxLeave(key: string): void {
   if (hover.value && hover.value.type !== "edge" && hover.value.key === key) hover.value = null;
 }
 
+/**
+ * The folded country a bundle touches, and from which side: probes go into
+ * one; checks, and chains between countries, come out of one.
+ */
+function bundleCountry(le: LayoutEdge): { row: Extract<LayoutRow, { type: "country" }>; side: "into" | "out" } | undefined {
+  for (const [id, side] of [[le.edge.to, "into"], [le.edge.from, "out"]] as const) {
+    const row = rowByKey.value.get(layout.value.anchorOf.get(id) ?? "");
+    if (row?.type === "country") return { row, side };
+  }
+  return undefined;
+}
+
+/** The state a bundle's members count as healthy, by kind. */
+const HEALTHY = { probe: "measured", check: "up", chain: "converged" } as const;
+
 function onEdgeClick(le: LayoutEdge): void {
   const edge = le.edge;
   if (le.bundle.length > 1) {
-    // A folded bundle opens the country it goes into.
-    const toRow = layout.value.anchorOf.get(edge.to);
-    const row = toRow ? rowByKey.value.get(toRow) : undefined;
-    if (row?.type === "country") toggleCountry(row.country);
+    const hit = bundleCountry(le);
+    if (hit) toggleCountry(hit.row.country);
     return;
   }
   if (edge.kind === "probe") emit("openPair", edge.from, edge.to);
@@ -343,14 +369,15 @@ function probeRows(edge: TopoEdge): CardRow[] {
 function edgeCard(le: LayoutEdge): Card {
   const edge = le.edge;
   if (le.bundle.length > 1) {
-    const row = rowByKey.value.get(layout.value.anchorOf.get(edge.to) ?? "");
-    const country = row?.type === "country" ? row.country : nodeName(edge.to);
-    const measured = le.bundle.filter((e) => e.state === "measured").length;
+    const hit = bundleCountry(le);
+    const country = hit ? hit.row.country : nodeName(edge.to);
+    const healthy = le.bundle.filter((e) => e.state === HEALTHY[e.kind]).length;
+    const other = le.bundle.length - healthy;
     return {
-      title: t("fleet.monitoring.topology.card.bundle", { n: le.bundle.length, country }),
-      subtitle: `${stateLabel(t, edge)} · ${nodeName(edge.to)}`,
+      title: t(hit?.side === "out" ? "fleet.monitoring.topology.card.bundleOut" : "fleet.monitoring.topology.card.bundle", { n: le.bundle.length, country }),
+      subtitle: `${stateLabel(t, edge)} · ${nodeName(hit?.side === "out" ? edge.from : edge.to)}`,
       rows: edge.kind === "probe" ? probeRows(edge) : [],
-      lines: [{ text: t("fleet.monitoring.topology.card.bundleCounts", { measured, other: le.bundle.length - measured }) }],
+      lines: [{ text: t(`fleet.monitoring.topology.card.bundleCounts.${edge.kind}`, { healthy, other }) }],
       hint: t("fleet.monitoring.topology.card.hint.country"),
     };
   }
@@ -445,34 +472,63 @@ const card = computed<Card | null>(() => {
 });
 
 const CARD_W = 288;
+const MARGIN = 4;
+const cardEl = ref<HTMLElement | null>(null);
+/** The card's rendered height, measured after each change of what it says and before the browser paints. */
+const cardH = ref(0);
+watch(
+  () => card.value,
+  () => {
+    cardH.value = cardEl.value?.offsetHeight ?? 0;
+  },
+  { flush: "post" },
+);
+
+/**
+ * Where the card goes, inside the host. A box's card sits to its right, or to
+ * its left past the box's own width when there is no room; it moves up to
+ * stay inside the host's bottom edge. An edge's card sits below the pointer,
+ * or above it near the bottom. A card taller than the whole drawing starts at
+ * the top and runs past it: the host does not clip, so nothing is cut.
+ */
 const cardStyle = computed(() => {
   const h = hover.value;
   if (!h) return {};
-  const width = layout.value.width + PAD * 2;
-  let x = h.x + 14;
-  let y = h.y + 14;
+  const { w: hostW, h: hostH } = hostSize.value;
+  const height = cardH.value;
+  let x: number;
+  let y: number;
   if ("anchored" in h) {
     x = h.x + 8;
     y = h.y;
-    // Boxes near the right edge put their card on their left.
-    if (x + CARD_W > width) x = Math.max(4, h.x - CARD_W - 8 - (h.type === "node" ? layout.value.rowsW : 0));
-  } else if (x + CARD_W > width) {
-    x = Math.max(4, h.x - CARD_W - 14);
+    if (x + CARD_W > hostW - MARGIN) x = h.x - h.w - CARD_W - 8;
+    if (x < MARGIN) {
+      // No room on either side: under the box instead.
+      x = Math.min(Math.max(MARGIN, h.x - h.w), hostW - CARD_W - MARGIN);
+      y = h.y + h.h + 4;
+    }
+    if (y + height > hostH - MARGIN) y = hostH - MARGIN - height;
+  } else {
+    x = h.x + 14;
+    y = h.y + 14;
+    if (x + CARD_W > hostW - MARGIN) x = h.x - CARD_W - 14;
+    if (y + height > hostH - MARGIN) y = h.y - 14 - height;
   }
-  return { left: `${x}px`, top: `${Math.max(4, y)}px`, width: `${CARD_W}px` };
+  return { left: `${Math.max(MARGIN, x)}px`, top: `${Math.max(MARGIN, y)}px`, width: `${CARD_W}px` };
 });
 </script>
 
 <template>
+  <div ref="host" class="relative">
   <div
     ref="frame"
     class="relative overflow-x-auto rounded-lg border border-border bg-card"
     data-testid="topology-graph"
     role="group"
     :aria-label="$t('fleet.monitoring.topology.graphLabel')"
+    @scroll.passive="hover = null"
   >
     <div
-      ref="inner"
       class="relative"
       :style="{ width: `${layout.width + PAD * 2}px`, height: `${layout.height + PAD * 2}px` }"
       @pointerleave="hover = null"
@@ -683,13 +739,19 @@ const cardStyle = computed(() => {
           </span>
         </button>
       </div>
+    </div>
+  </div>
 
-      <!-- What the pointer or focus is on, with when it was heard. -->
+      <!--
+        What the pointer or focus is on, with when it was heard. Outside the
+        scrolling frame, so it is never clipped; no live region, since the
+        focused box already carries its label and the List view every path.
+      -->
       <div
         v-if="card"
+        ref="cardEl"
         class="pointer-events-none absolute z-30 rounded-md border border-border bg-popover p-3 text-xs text-popover-foreground shadow-(--shadow-overlay)"
         :style="cardStyle"
-        role="status"
         data-testid="topology-card"
       >
         <p class="font-medium text-sm leading-snug break-words">{{ card.title }}</p>
@@ -714,6 +776,5 @@ const cardStyle = computed(() => {
         </template>
         <p v-if="card.hint" class="mt-2 border-t border-border pt-1.5 text-[11px] text-muted-foreground">{{ card.hint }}</p>
       </div>
-    </div>
   </div>
 </template>

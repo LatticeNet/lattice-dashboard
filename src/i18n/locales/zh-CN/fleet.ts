@@ -1483,7 +1483,12 @@ export default {
           chainLines: "线路 {source} 到线路 {target}",
           chainError: "最近错误：{error}",
           bundle: "进入 {country} 的 {n} 条路径；画出的是最差的一条",
-          bundleCounts: "{measured} 条已测得，{other} 条有问题",
+          bundleOut: "从 {country} 出发的 {n} 条路径；画出的是最差的一条",
+          bundleCounts: {
+            probe: "{healthy} 条已测得，{other} 条有问题",
+            check: "{healthy} 条正常，{other} 条有问题",
+            chain: "{healthy} 条已生效，{other} 条需要查看",
+          },
           hint: {
             probe: "点击查看这一对的时间序列",
             node: "点击打开节点",

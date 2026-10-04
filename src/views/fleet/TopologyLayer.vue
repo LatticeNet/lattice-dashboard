@@ -18,7 +18,7 @@
  * for every read the current filter draws from (topologyModel.readsFor), and
  * a read that never landed says so above the drawing with a retry.
  */
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMediaQuery, useNow } from "@vueuse/core";
 import { Network, RefreshCw } from "lucide-vue-next";
@@ -303,6 +303,14 @@ function openTerminal(node: Node): void {
   window.open(`/terminal?node_id=${encodeURIComponent(node.id)}&connect=1`, "_blank", "noopener");
 }
 
+/** The graph's skip link: the list holds every path in one tab stop each, worst first. */
+const listRef = ref<InstanceType<typeof TopologyList> | null>(null);
+async function skipToList(): Promise<void> {
+  present("list");
+  await nextTick();
+  (listRef.value?.$el as HTMLElement | undefined)?.querySelector<HTMLElement>("button")?.focus();
+}
+
 const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11 pointer-coarse:min-w-11";
 </script>
 
@@ -413,20 +421,31 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
             </p>
             <p v-if="folds && presentation === 'graph'" class="text-xs text-muted-foreground">{{ $t('fleet.monitoring.topology.legend.folded', { n: COLLAPSE_AT }) }}</p>
 
-            <TopologyGraph
-              v-if="presentation === 'graph'"
-              :model="model"
-              :now="now.getTime()"
-              :window-label="windowLabel"
-              :nodes-state="nodesState"
-              :nodes-reason="nodesReason"
-              @open-node="(id, el) => peek.open(id, el)"
-              @open-pair="openPair"
-              @open-monitor="openMonitor"
-              @retry-nodes="() => void props.nodesQuery.refresh()"
-            />
+            <div v-if="presentation === 'graph'" class="relative">
+              <!-- Past the drawing in one step: the list reaches every path with one tab stop each. Shown over the drawing's corner while focused, so nothing moves. -->
+              <button
+                type="button"
+                class="sr-only rounded-md border border-border bg-card text-xs font-medium shadow-(--shadow-overlay) outline-none focus:not-sr-only focus:absolute focus:start-2 focus:top-2 focus:z-40 focus:px-3 focus:py-1.5 focus-visible:ring-2 focus-visible:ring-ring"
+                data-testid="topology-skip"
+                @click="skipToList"
+              >
+                {{ $t('fleet.monitoring.topology.skipToList') }}
+              </button>
+              <TopologyGraph
+                :model="model"
+                :now="now.getTime()"
+                :window-label="windowLabel"
+                :nodes-state="nodesState"
+                :nodes-reason="nodesReason"
+                @open-node="(id, el) => peek.open(id, el)"
+                @open-pair="openPair"
+                @open-monitor="openMonitor"
+                @retry-nodes="() => void props.nodesQuery.refresh()"
+              />
+            </div>
             <TopologyList
               v-else
+              ref="listRef"
               :model="model"
               :now="now.getTime()"
               @open-node="(id, el) => peek.open(id, el)"

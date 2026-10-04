@@ -1499,7 +1499,12 @@ export default {
           chainLines: "line {source} to line {target}",
           chainError: "last error: {error}",
           bundle: "{n} paths into {country}; the worst is drawn",
-          bundleCounts: "{measured} measured, {other} with a problem",
+          bundleOut: "{n} paths out of {country}; the worst is drawn",
+          bundleCounts: {
+            probe: "{healthy} measured, {other} with a problem",
+            check: "{healthy} up, {other} with a problem",
+            chain: "{healthy} in effect, {other} need a look",
+          },
           hint: {
             probe: "Click for the pair's series",
             node: "Click to open the node",
