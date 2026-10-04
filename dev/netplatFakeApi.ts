@@ -91,15 +91,16 @@ const principal: Principal = {
 
 let seq = 100;
 
-/** ?system=forbidden and ?system=disabled answer the self-monitoring reads 403 and 503. */
+/** ?system=forbidden, disabled and unavailable answer the self-monitoring reads 403 and 503. */
 function systemRead<T>(value: () => T): Promise<T> {
   const mode = flags.get("system");
-  if (mode === "forbidden" || mode === "disabled") {
+  if (mode === "forbidden" || mode === "disabled" || mode === "unavailable") {
     READS.system = (READS.system ?? 0) + 1;
     return delay(undefined, 120).then(() => {
+      // The server scrubs 5xx messages; the code is what tells the cases apart.
       throw mode === "forbidden"
         ? new ApiError(403, "capability_denied", "control-plane internals need a full administrator (scope *, no node restriction)")
-        : new ApiError(503, "service_unavailable", "this server keeps no metrics history (it runs without a data directory)");
+        : new ApiError(503, mode === "disabled" ? "metrics_disabled" : "metrics_unavailable", "internal server error");
     });
   }
   return read("system", value);

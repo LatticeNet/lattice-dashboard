@@ -21,7 +21,7 @@ import DataState from "@/components/common/DataState.vue";
 import HistoryChart, { type HistoryChartSeries } from "@/components/common/HistoryChart.vue";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-import { DEFAULT_SYSTEM_RANGE, SYSTEM_RANGES, spanParts } from "@/views/platform/systemModel";
+import { DEFAULT_SYSTEM_RANGE, SYSTEM_RANGES, metricsBlock, spanParts } from "@/views/platform/systemModel";
 
 const props = defineProps<{ nodeId: string }>();
 
@@ -31,8 +31,17 @@ const range = ref<MetricsRange>(DEFAULT_SYSTEM_RANGE);
 const query = useAsyncData<MetricsQuery>((signal) => api.nodes.history(props.nodeId, range.value, { signal }), { pollInterval: 60_000 });
 watch([range, () => props.nodeId], () => void query.refresh());
 
-const disabled = computed(() => query.error.value instanceof ApiError && query.error.value.status === 503);
-const forbidden = computed(() => query.error.value instanceof ApiError && query.error.value.isForbidden);
+// A 403 or a metrics 503 does not change by asking again: say so and stop
+// polling (metricsBlock).
+const block = computed(() => {
+  const err = query.error.value;
+  return err instanceof ApiError ? metricsBlock({ status: err.status, code: err.code, forbidden: err.isForbidden }) : null;
+});
+const disabled = computed(() => block.value === "disabled" || block.value === "unavailable");
+const forbidden = computed(() => block.value === "forbidden");
+watch(block, (b) => {
+  if (b) query.stop();
+});
 const data = computed(() => query.data.value);
 const byName = computed(() => new Map((data.value?.series ?? []).map((s) => [s.name, s])));
 const from = computed(() => Math.floor(Date.parse(data.value?.from ?? "") / 1000) || 0);
@@ -103,7 +112,7 @@ const stepLabel = computed(() => {
       <CardDescription>{{ $t('platform.system.nodeHistory.description') }}</CardDescription>
     </CardHeader>
     <CardContent>
-      <p v-if="disabled" class="text-sm text-muted-foreground">{{ $t('platform.system.nodeHistory.disabled') }}</p>
+      <p v-if="disabled" class="text-sm text-muted-foreground">{{ $t(block === 'unavailable' ? 'platform.system.nodeHistory.unavailable' : 'platform.system.nodeHistory.disabled') }}</p>
       <DataState
         v-else
         :loading="query.loading.value"

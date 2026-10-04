@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { MetricsSeries, SystemEventRow } from "@/lib/api/systemTypes";
+import type { MetricsSeries, SystemEventRow, SystemRefusedSeries } from "@/lib/api/systemTypes";
 
 import {
   chartCeiling,
@@ -19,9 +19,11 @@ import {
   freeSpaceTone,
   groupPluginRows,
   memoryTone,
+  metricsBlock,
   niceCeil,
   parseRange,
   pointAt,
+  refusedGroups,
   segments,
   seriesPoints,
   spanParts,
@@ -204,4 +206,45 @@ test("sparklines break where nothing was heard and keep the slot widths", () => 
   assert.equal(sparkPath(undefined, [], { from: 0, to: 1, w: 96, h: 24 }), "");
   assert.equal(sparkChange({ step_seconds: 60, t: [0, 60], n: [1, 1], avg: [100, 350] }), 250);
   assert.equal(sparkChange({ step_seconds: 60, t: [0], n: [1], avg: [100] }), undefined);
+});
+
+test("a 403 and the two metrics 503 codes block the page; any other failure is retried", () => {
+  assert.equal(metricsBlock(undefined), null);
+  assert.equal(metricsBlock({ status: 403, code: "capability_denied" }), "forbidden");
+  assert.equal(metricsBlock({ status: 400, code: "x", forbidden: true }), "forbidden");
+  assert.equal(metricsBlock({ status: 503, code: "metrics_disabled" }), "disabled");
+  assert.equal(metricsBlock({ status: 503, code: "metrics_unavailable" }), "unavailable");
+  // A proxy's 503 during a restart, or a 502, is a failure to retry, not an answer.
+  assert.equal(metricsBlock({ status: 503, code: "internal_error" }), null);
+  assert.equal(metricsBlock({ status: 502, code: "bad_gateway" }), null);
+});
+
+function refused(owner: string, name: string, reason: string): SystemRefusedSeries {
+  return { owner, name, reason, first: "2026-10-04T10:00:00Z", last: "2026-10-04T11:00:00Z", samples: 60 };
+}
+
+test("refused series group by the cap that refused them, the total cap first, a few named each", () => {
+  const groups = refusedGroups([
+    refused("cp", "b", "kind_mismatch"),
+    refused("plugin/p", "m1", "max_series_per_owner"),
+    refused("node/a", "cpu", "max_series"),
+    refused("node/a", "mem", "max_series"),
+    refused("node/b", "cpu", "max_series"),
+    refused("node/b", "mem", "max_series"),
+    refused("plugin/q", "m9", "max_series_per_owner"),
+    refused("plugin/p", "m2", "max_series_per_owner"),
+    refused("cp", "bad�name", "invalid"),
+  ]);
+  assert.deepEqual(
+    groups.map((g) => [g.reason, g.owner, g.names, g.total]),
+    [
+      ["max_series", undefined, ["node/a cpu", "node/a mem", "node/b cpu"], 4],
+      // Each owner's own cap is its own group, naming the series without the owner.
+      ["max_series_per_owner", "plugin/p", ["m1", "m2"], 2],
+      ["max_series_per_owner", "plugin/q", ["m9"], 1],
+      ["kind_mismatch", undefined, ["cp b"], 1],
+      ["invalid", undefined, ["cp bad�name"], 1],
+    ],
+  );
+  assert.deepEqual(refusedGroups([]), []);
 });

@@ -9,16 +9,20 @@
  *   ?system=fresh      the metrics store started a minute ago: no write yet,
  *                      no rows, no file sizes
  *   ?system=busy       long method names, failing and slow rows, 60 route
- *                      groups, the series cap nearly full with series dropped,
- *                      and a write that is late
+ *                      groups, the series cap nearly full with series refused
+ *                      for each reason (more than are listed), and a write
+ *                      that is late
  *   ?system=forbidden  the reads answer 403 (not a full administrator)
- *   ?system=disabled   the reads answer 503 (no data directory)
+ *   ?system=disabled   the reads answer 503 metrics_disabled (no data directory)
+ *   ?system=unavailable the reads answer 503 metrics_unavailable (metrics.db
+ *                      could not be opened at start)
  *   ?fail=system       the reads answer 502
  *   ?history=empty     the node has no history yet
- *   ?history=disabled  node history answers 503
+ *   ?history=disabled  node history answers 503 metrics_disabled
+ *   ?history=unavailable node history answers 503 metrics_unavailable
  *   ?history=gaps      the node went quiet for a stretch
  */
-import type { MetricsQuery, MetricsRange, MetricsSeries, SystemEventRow, SystemHealth, SystemSpark } from "@/lib/api/systemTypes";
+import type { MetricsQuery, MetricsRange, MetricsSeries, SystemEventRow, SystemHealth, SystemRefusedSeries, SystemSpark } from "@/lib/api/systemTypes";
 
 const SPAN: Record<MetricsRange, number> = {
   "1h": 3600,
@@ -38,12 +42,16 @@ const TIERS = [
   { name: "1d", res: 86400, keep: 1830 * 86400 },
 ];
 
-/** The server's tier rule (metricsdb.pickTier) and step merge. */
+/**
+ * The server's tier rule (metricsdb.pickTier) and step merge. A tier holds
+ * the range when it reaches back to within one of its buckets, so 90 days
+ * reads the 1h tier, as it does on the server.
+ */
 export function stepFor(range: MetricsRange, points: number): { tier: (typeof TIERS)[number]; step: number } {
   const span = SPAN[range];
   let tier = TIERS[TIERS.length - 1]!;
   for (const t of TIERS) {
-    if (span > t.keep) continue;
+    if (span > t.keep + t.res) continue;
     if (span / t.res <= 8 * points) {
       tier = t;
       break;
@@ -156,6 +164,32 @@ function fileSpark(range: MetricsRange, now: number, size: number, growth: numbe
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
+
+/**
+ * The busy store's refused series: the total cap full for two new nodes,
+ * one plugin at its own cap of methods (long names, to wrap at 375 px), a
+ * series that changed kind, and an invalid name.
+ */
+function refusedSeries(now: number): SystemRefusedSeries[] {
+  const at = (minutesAgo: number) => new Date((Math.floor(now / 60) - minutesAgo) * 60_000).toISOString();
+  const row = (owner: string, name: string, reason: string, firstAgo: number, samples: number): SystemRefusedSeries => ({
+    owner,
+    name,
+    reason,
+    first: at(firstAgo),
+    last: at(1),
+    samples,
+  });
+  return [
+    row("node/node_031", "cpu", "max_series", 420, 419),
+    row("node/node_031", "mem", "max_series", 420, 419),
+    row("node/node_032", "cpu", "max_series", 95, 94),
+    row("node/node_032", "mem", "max_series", 95, 94),
+    row("plugin/latticenet.sub-store", "subscription/import-provider-with-very-long-name", "max_series_per_owner", 300, 38),
+    row("plugin/latticenet.sub-store", "subscription/rebuild-every-artifact-for-every-user", "max_series_per_owner", 240, 12),
+    row("cp.store", "SaveLatencyProbeResults", "kind_mismatch", 60, 59),
+  ];
+}
 
 export function systemHealth(range: MetricsRange, mode: string | null, nowMs = Date.now()): SystemHealth {
   const now = Math.floor(nowMs / 1000);
@@ -289,7 +323,10 @@ export function systemHealth(range: MetricsRange, mode: string | null, nowMs = D
       max_series: 1024,
       max_series_per_owner: 256,
       owners: fresh ? 0 : busy ? 140 : 42,
-      dropped_series: busy ? 23 : 0,
+      refused_series: busy ? refusedSeries(now) : [],
+      refused_series_more: busy,
+      refused_samples: busy ? 18_412 : 0,
+      late_samples: 0,
       slots_per_series: 10902,
       tiers: TIERS.map((t) => ({
         name: t.name,
@@ -303,7 +340,8 @@ export function systemHealth(range: MetricsRange, mode: string | null, nowMs = D
         at: iso(lastWrite ? Math.floor(lastWrite / 60) * 60 - 60 : 0),
         points: fresh ? 0 : 333,
         rows: fresh ? 0 : 41,
-        dropped: 0,
+        refused: busy ? 23 : 0,
+        late: 0,
         rolled: 1,
         trimmed: 41,
         duration: 7_400_000,

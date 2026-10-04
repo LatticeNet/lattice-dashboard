@@ -95,6 +95,20 @@ export interface SystemTier {
   last_rolled?: number;
 }
 
+/** Why the metrics store would not keep a series' samples. */
+export type RefusedReason = "max_series" | "max_series_per_owner" | "invalid" | "kind_mismatch";
+
+/** A series the metrics store refused, named once however often it is sent. */
+export interface SystemRefusedSeries {
+  owner: string;
+  name: string;
+  reason: RefusedReason | string;
+  /** Write minutes of the first and the latest refused sample. */
+  first: string;
+  last: string;
+  samples: number;
+}
+
 export interface SystemMetricsStore {
   path: string;
   size_bytes: number;
@@ -102,14 +116,21 @@ export interface SystemMetricsStore {
   max_series: number;
   max_series_per_owner: number;
   owners: number;
-  dropped_series: number;
+  /** Series refused in the last day, the first refused first, at most 64. */
+  refused_series: SystemRefusedSeries[];
+  /** More series were refused than are listed. */
+  refused_series_more: boolean;
+  /** Since the server started: samples refused for their series, and for arriving too late to store. */
+  refused_samples: number;
+  late_samples: number;
   slots_per_series: number;
   tiers: SystemTier[];
   last_write: {
     at: string;
     points: number;
     rows: number;
-    dropped: number;
+    refused: number;
+    late: number;
     rolled: number;
     trimmed: number;
     /** Nanoseconds. */

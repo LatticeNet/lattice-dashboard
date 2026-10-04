@@ -1544,8 +1544,14 @@ export default {
       attention: {
         writeFailing: "指标库最近一次写入失败；在恢复写入前历史会出现缺口",
         late: "指标库已超过三分钟没有写入",
-        dropped: "有 {n} 条新序列未被保存：序列上限已满",
-        droppedProof: "上限 {max}；可用 LATTICE_METRICS_MAX_SERIES 调高",
+        refused: "有 {n} 条序列没有被保存",
+        refusedMore: "超过 {n} 条序列没有被保存",
+        refusedWhy: {
+          max_series: "指标库的 {max} 条序列上限已满（可用 LATTICE_METRICS_MAX_SERIES 调高）：{names}",
+          max_series_per_owner: "{owner} 已达到单个归属 {perOwner} 条序列的上限：{names}",
+          kind_mismatch: "已按另一种类型记录：{names}",
+          invalid: "名称无效：{names}",
+        },
         disk: "数据卷剩余 {free}（{dir}）",
         diskProof: "共 {total}",
         memory: "主机可用内存 {avail}",
@@ -1614,7 +1620,7 @@ export default {
       retention: {
         title: "保留策略",
         short: "{res} 粒度保留 {keep}",
-        body: "每种粒度都保留固定时长，因此一条序列最多 {slots} 个点，各层写满后文件不再增长。指标库最多保存 {max} 条序列，单个归属最多 {perOwner} 条；超过上限的新序列只计数，不保存。",
+        body: "每种粒度都保留固定时长，因此一条序列最多 {slots} 个点，各层写满后文件不再增长。指标库最多保存 {max} 条序列，单个归属最多 {perOwner} 条；超过上限的新序列不会保存，本页会列出它们。所有点都已过期的序列会移出目录，让出名额。",
         row: "保留 {keep}，每条序列最多 {slots} 个点",
         rows: "{n} 行",
       },
@@ -1626,6 +1632,10 @@ export default {
         disabled: {
           title: "此服务端不保存历史",
           body: "它没有数据目录，因此没有指标库。使用状态文件启动后，会在旁边创建 metrics.db。",
+        },
+        unavailable: {
+          title: "指标库无法打开",
+          body: "服务端启动时无法打开 metrics.db，因此在用可用的文件重启之前不保存历史。原因见服务端日志；无法读取的文件已改名保留在旁边，文件名以 metrics.db.unreadable- 开头。",
         },
       },
       chart: {
@@ -1648,6 +1658,7 @@ export default {
         beatGapHint: "控制面收到的两次心跳之间的时间；高的柱表示一次停顿。",
         empty: "暂无历史：控制面从升级后的第一次心跳起保存此节点的数据。",
         disabled: "此服务端不保存历史。",
+        unavailable: "此服务端的指标库无法打开，重启之前不保存历史。",
         chartLabel: "范围内的{metric}",
       },
     },

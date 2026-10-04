@@ -36,14 +36,16 @@ const TONE_TEXT: Record<Tone, string> = { default: "", warning: "text-warning-te
     </div>
     <div class="space-y-0.5 py-2 md:hidden">
       <div class="flex items-center gap-3">
-        <span class="min-w-0 grow truncate font-mono text-sm" :title="row.name">{{ row.name }}</span>
+        <!-- Wraps on a phone: a truncated method name with only a title is unreadable on touch. -->
+        <span class="min-w-0 grow font-mono text-sm wrap-anywhere">{{ row.name }}</span>
         <RangeSparkline :spark="row.spark" :from="from" :to="to" :tone="tone" />
       </div>
+      <!-- Each figure stays whole; the line breaks only between them. -->
       <p class="font-mono text-xs tabular text-muted-foreground">
-        {{ $t('platform.system.row.calls', { n: row.calls.toLocaleString('en-US') }, row.calls) }}
-        · p50 {{ formatSeconds(row.p50_seconds) }}
-        · <span :class="slow ? 'text-warning-text' : 'text-foreground'">p95 {{ formatSeconds(row.p95_seconds) }}</span>
-        · <span :class="TONE_TEXT[failTone]">{{ $t('platform.system.row.failed', { rate: formatErrorRate(row) }) }}</span>
+        <span class="whitespace-nowrap">{{ $t('platform.system.row.calls', { n: row.calls.toLocaleString('en-US') }, row.calls) }}</span>
+        · <span class="whitespace-nowrap">p50 {{ formatSeconds(row.p50_seconds) }}</span>
+        · <span :class="cn('whitespace-nowrap', slow ? 'text-warning-text' : 'text-foreground')">p95 {{ formatSeconds(row.p95_seconds) }}</span>
+        · <span :class="cn('whitespace-nowrap', TONE_TEXT[failTone])">{{ $t('platform.system.row.failed', { rate: formatErrorRate(row) }) }}</span>
       </p>
     </div>
   </li>

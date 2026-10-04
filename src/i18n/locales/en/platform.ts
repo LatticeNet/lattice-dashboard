@@ -1652,8 +1652,14 @@ export default {
       attention: {
         writeFailing: "The metrics store's last write failed; history has a gap until it writes again",
         late: "The metrics store has not written for more than three minutes",
-        dropped: "{n} new series was not stored: the series cap is full | {n} new series were not stored: the series cap is full",
-        droppedProof: "cap {max}; LATTICE_METRICS_MAX_SERIES raises it",
+        refused: "{n} series is not being stored | {n} series are not being stored",
+        refusedMore: "More than {n} series are not being stored",
+        refusedWhy: {
+          max_series: "the store's cap of {max} series is full (LATTICE_METRICS_MAX_SERIES raises it): {names}",
+          max_series_per_owner: "{owner} has reached its own cap of {perOwner} series: {names}",
+          kind_mismatch: "already recorded as the other kind: {names}",
+          invalid: "not a valid name: {names}",
+        },
         disk: "The data volume has {free} free ({dir})",
         diskProof: "of {total}",
         memory: "The host has {avail} of memory available",
@@ -1722,7 +1728,7 @@ export default {
       retention: {
         title: "Retention",
         short: "{res} for {keep}",
-        body: "Every resolution is kept for a fixed time, so a series holds at most {slots} points and the file stops growing once each tier is full. The store keeps at most {max} series, {perOwner} for any one owner; a new series past the cap is counted, not stored.",
+        body: "Every resolution is kept for a fixed time, so a series holds at most {slots} points and the file stops growing once each tier is full. The store keeps at most {max} series, {perOwner} for any one owner; a new series past a cap is not stored, and this page names it. A series whose points have all aged out leaves the catalog and gives its place back.",
         row: "kept {keep}, at most {slots} points a series",
         rows: "{n} rows",
       },
@@ -1734,6 +1740,10 @@ export default {
         disabled: {
           title: "This server keeps no history",
           body: "It runs without a data directory, so it has no metrics store. Start it with a state file and metrics.db is created beside it.",
+        },
+        unavailable: {
+          title: "The metrics store could not be opened",
+          body: "metrics.db could not be opened when the server started, so it keeps no history until it restarts with a usable file. The server log says why, and a file it could not read was kept beside it under a name starting metrics.db.unreadable-.",
         },
       },
       chart: {
@@ -1756,6 +1766,7 @@ export default {
         beatGapHint: "Time between beats as the control plane heard them; a tall bar is a pause.",
         empty: "No history yet: the control plane keeps this node's beats from its first beat after the upgrade.",
         disabled: "This server keeps no history.",
+        unavailable: "This server's metrics store could not be opened, so it keeps no history until it restarts.",
         chartLabel: "{metric} over the range",
       },
     },

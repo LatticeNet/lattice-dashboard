@@ -239,13 +239,18 @@ export const api = {
   nodes: {
     list: () => answer("nodes", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
     geo: () => answer("geo", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
-    // ?history=empty|disabled|gaps shapes the node page's History card (dev/systemFixture.ts).
-    history: (nodeId: string, range: MetricsRange) =>
-      PARAMS.get("history") === "disabled"
-        ? delay(undefined, LATENCY_MS).then(() => {
-            throw new ApiError(503, "service_unavailable", "this server keeps no metrics history (it runs without a data directory)");
-          })
-        : answer("history", () => nodeHistory(nodeId, range, PARAMS.get("history"))),
+    // ?history=empty|disabled|unavailable|gaps shapes the node page's History card (dev/systemFixture.ts).
+    history: (nodeId: string, range: MetricsRange) => {
+      const mode = PARAMS.get("history");
+      if (mode === "disabled" || mode === "unavailable") {
+        READ_COUNTS.history = (READ_COUNTS.history ?? 0) + 1;
+        return delay(undefined, LATENCY_MS).then(() => {
+          // The server scrubs 5xx messages; the code tells the cases apart.
+          throw new ApiError(503, mode === "disabled" ? "metrics_disabled" : "metrics_unavailable", "internal server error");
+        });
+      }
+      return answer("history", () => nodeHistory(nodeId, range, mode));
+    },
     duplicates: () => delay({ groups: SHAPE === "dense" ? [{ reason: "host_fingerprint", confidence: "high", signal: "machine-id", node_ids: [nodes[1]!.id, nodes[33]!.id] }] : [] }),
     disable: (id: string, disabled: boolean) => {
       nodes = nodes.map((n) => (n.id === id ? { ...n, disabled: disabled || undefined, status: disabled ? "disabled" : "online" } : n));

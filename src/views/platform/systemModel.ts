@@ -17,6 +17,7 @@ import type {
   MetricsUnit,
   SystemEventRow,
   SystemMetricsStore,
+  SystemRefusedSeries,
   SystemSpark,
   SystemTier,
 } from "@/lib/api/systemTypes";
@@ -207,6 +208,64 @@ export function storeFreshness(store: Pick<SystemMetricsStore, "last_write_at" |
   if (!store.last_write_at) return "waiting";
   const age = now - Date.parse(store.last_write_at);
   return age > 3 * 60_000 ? "late" : "fresh";
+}
+
+/**
+ * Why a self-monitoring read has nothing to show, when that is an answer
+ * rather than a failure: the principal is not a full administrator (403), the
+ * server runs without a data directory (503 metrics_disabled), or its
+ * metrics.db could not be opened at start (503 metrics_unavailable). These do
+ * not change by asking again, so the page stops polling. Anything else, a
+ * proxy's 503 during a restart included, is a failure the page retries.
+ */
+export type MetricsBlock = "forbidden" | "disabled" | "unavailable";
+
+export function metricsBlock(err: { status: number; code: string; forbidden?: boolean } | undefined): MetricsBlock | null {
+  if (!err) return null;
+  if (err.forbidden || err.status === 403) return "forbidden";
+  if (err.status !== 503) return null;
+  if (err.code === "metrics_unavailable") return "unavailable";
+  if (err.code === "metrics_disabled") return "disabled";
+  return null;
+}
+
+/** One reason the metrics store gave for refusing series, with a few of them. */
+export interface RefusedGroup {
+  reason: string;
+  /** Set for the per-owner cap, which is full for one owner at a time. */
+  owner?: string;
+  /** At most `max` of the series, "owner name" unless the owner is above. */
+  names: string[];
+  /** How many series the group holds, named or not. */
+  total: number;
+}
+
+const REFUSED_ORDER = ["max_series", "max_series_per_owner", "kind_mismatch", "invalid"];
+
+/**
+ * The refused series grouped by why, so the attention line can say which cap
+ * was hit and name a few: the store's total cap first (the one an operator
+ * raises), then each owner whose own cap is full, then the series that
+ * clash with an existing kind or have an invalid name.
+ */
+export function refusedGroups(refused: readonly SystemRefusedSeries[], max = 3): RefusedGroup[] {
+  const groups = new Map<string, RefusedGroup>();
+  for (const r of refused) {
+    const perOwner = r.reason === "max_series_per_owner";
+    const key = perOwner ? `${r.reason}\u0000${r.owner}` : r.reason;
+    let g = groups.get(key);
+    if (!g) {
+      g = { reason: r.reason, owner: perOwner ? r.owner : undefined, names: [], total: 0 };
+      groups.set(key, g);
+    }
+    g.total++;
+    if (g.names.length < max) g.names.push(perOwner ? r.name : `${r.owner} ${r.name}`);
+  }
+  const rank = (reason: string) => {
+    const i = REFUSED_ORDER.indexOf(reason);
+    return i < 0 ? REFUSED_ORDER.length : i;
+  };
+  return [...groups.values()].sort((a, b) => rank(a.reason) - rank(b.reason) || b.total - a.total || (a.owner ?? "").localeCompare(b.owner ?? ""));
 }
 
 /** When the next one-minute point is due: the end of the current minute plus the flush delay. */

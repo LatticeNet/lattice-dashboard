@@ -179,7 +179,10 @@ const toLabel = computed(() => formatAxisTime(props.to, props.to - props.from, l
 
 <template>
   <figure class="min-w-0 space-y-1">
-    <p class="min-h-4 truncate font-mono text-xs tabular text-muted-foreground" aria-live="polite" :title="readout">{{ readout }}</p>
+    <!-- Below 640 px the readout wraps rather than truncating (a title is out of
+         reach on touch), and keeps two lines' room so scrubbing never moves
+         the plot. -->
+    <p class="min-h-8 font-mono text-xs break-words tabular text-muted-foreground sm:min-h-4 sm:truncate" aria-live="polite" :title="readout">{{ readout }}</p>
     <div class="relative">
       <span v-if="hasData" class="pointer-events-none absolute start-0 top-0 font-mono text-[10px] text-muted-foreground tabular">{{ ceilingLabel }}</span>
       <div

@@ -51,7 +51,9 @@ import {
   freeSpaceTone,
   groupPluginRows,
   memoryTone,
+  metricsBlock,
   parseRange,
+  refusedGroups,
   sortedTiers,
   spanParts,
   sparkChange,
@@ -84,13 +86,19 @@ watch(range, () => {
 const health = computed(() => healthQuery.data.value);
 const proof = useProof([healthQuery, seriesQuery]);
 
-/** 403 and 503 are answers, not failures: say what they mean instead of a retry. */
-const blocked = computed<"forbidden" | "disabled" | null>(() => {
+/**
+ * 403 and the two 503 codes are answers, not failures: say what they mean
+ * instead of offering a retry, and stop polling, since asking again changes
+ * nothing. A forbidden poll is a deny written to the audit log every time.
+ */
+const blocked = computed(() => {
   const err = healthQuery.error.value;
-  if (!(err instanceof ApiError)) return null;
-  if (err.isForbidden) return "forbidden";
-  if (err.status === 503) return "disabled";
-  return null;
+  return err instanceof ApiError ? metricsBlock({ status: err.status, code: err.code, forbidden: err.isForbidden }) : null;
+});
+watch(blocked, (b) => {
+  if (!b) return;
+  healthQuery.stop();
+  seriesQuery.stop();
 });
 
 const store = computed(() => health.value?.metrics_store);
@@ -121,6 +129,8 @@ const proofSegments = computed<ProofSegment[]>(() => {
   return segs;
 });
 
+const REFUSED_REASONS = new Set(["max_series", "max_series_per_owner", "kind_mismatch", "invalid"]);
+
 const attention = computed<AttentionItem[]>(() => {
   const h = health.value;
   const s = store.value;
@@ -131,12 +141,22 @@ const attention = computed<AttentionItem[]>(() => {
   } else if (freshness.value === "late" && s.last_write_at) {
     items.push({ key: "late", tone: "warning", claim: t("platform.system.attention.late"), proof: formatDateTime(s.last_write_at) });
   }
-  if (s.dropped_series > 0) {
+  if (s.refused_series.length > 0) {
+    const n = s.refused_series.length;
     items.push({
-      key: "dropped",
+      key: "refused",
       tone: "warning",
-      claim: t("platform.system.attention.dropped", { n: s.dropped_series }, s.dropped_series),
-      proof: t("platform.system.attention.droppedProof", { max: s.max_series }),
+      claim: s.refused_series_more ? t("platform.system.attention.refusedMore", { n }) : t("platform.system.attention.refused", { n }, n),
+      proof: refusedGroups(s.refused_series)
+        .map((g) =>
+          t(`platform.system.attention.refusedWhy.${REFUSED_REASONS.has(g.reason) ? g.reason : "invalid"}`, {
+            names: g.total > g.names.length ? `${g.names.join(", ")} +${g.total - g.names.length}` : g.names.join(", "),
+            owner: g.owner ?? "",
+            max: s.max_series.toLocaleString("en-US"),
+            perOwner: s.max_series_per_owner.toLocaleString("en-US"),
+          }),
+        )
+        .join(" · "),
     });
   }
   const free = h.host.disk_free_bytes;
