@@ -1630,6 +1630,12 @@ export default {
       rangeLabel: "Range",
       range: { "24h": "24h", "7d": "7d", "30d": "30d", "90d": "90d", "1y": "1y" },
       stepEvery: "One point every {span} in this range; the band behind each line is the spread inside a point.",
+      stepEveryOne: {
+        min: "One point a minute in this range; the band behind each line is the spread inside a point.",
+        h: "One point an hour in this range; the band behind each line is the spread inside a point.",
+        d: "One point a day in this range; the band behind each line is the spread inside a point.",
+        y: "One point a year in this range; the band behind each line is the spread inside a point.",
+      },
       span: {
         min: "{n} minute | {n} minutes",
         h: "{n} hour | {n} hours",

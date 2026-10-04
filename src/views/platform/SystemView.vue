@@ -172,6 +172,7 @@ const stepLabel = computed(() => {
   const step = seriesQuery.data.value?.step_seconds;
   if (!step) return "";
   const parts = spanParts(step);
+  if (parts.n === 1) return t(`platform.system.stepEveryOne.${parts.unit}`);
   return t("platform.system.stepEvery", { span: t(`platform.system.span.${parts.unit}`, { n: parts.n }, parts.n) });
 });
 

@@ -74,6 +74,7 @@ const panels = computed<Panel[]>(() => [
 const stepLabel = computed(() => {
   if (!data.value) return "";
   const parts = spanParts(data.value.step_seconds);
+  if (parts.n === 1) return t(`platform.system.stepEveryOne.${parts.unit}`);
   return t("platform.system.stepEvery", { span: t(`platform.system.span.${parts.unit}`, { n: parts.n }, parts.n) });
 });
 </script>
