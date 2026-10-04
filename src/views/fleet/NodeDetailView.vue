@@ -94,6 +94,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog.vue";
 import CopyButton from "@/components/common/CopyButton.vue";
 import MetricBar from "@/components/common/MetricBar.vue";
 import NodeLatencyCard from "./NodeLatencyCard.vue";
+import NodeHistoryCard from "./NodeHistoryCard.vue";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -1761,6 +1762,9 @@ async function saveDebug(): Promise<void> {
                 </div>
               </CardContent>
             </Card>
+
+            <!-- Whether now is normal: what its beats carried over days and months. -->
+            <NodeHistoryCard :node-id="node.id" />
 
             <!-- Is the agent doing its work, or only beating (node-agent 0.3.10+). -->
             <AgentLoopPanel :health="node.loop_health" :now="loopNow.getTime()" />

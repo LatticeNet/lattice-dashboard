@@ -74,6 +74,8 @@ import {
 } from "./fleetFixture";
 import { findIncident, incidentList, keepaliveNodeState, loopHealthFor, setWindows, updateIncident, windows } from "./keepaliveFixture";
 import { SOURCE_NODE, generatedLatencyMonitors, initialConfig, planFor, rollupsFor, seriesFor } from "./latencyFixture";
+import { nodeHistory } from "./systemFixture";
+import type { MetricsRange } from "@/lib/api/systemTypes";
 
 export * from "@/lib/api/index";
 
@@ -237,6 +239,13 @@ export const api = {
   nodes: {
     list: () => answer("nodes", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
     geo: () => answer("geo", () => ({ nodes: nodes.filter(enrolled).map((n) => ({ ...n })) })),
+    // ?history=empty|disabled|gaps shapes the node page's History card (dev/systemFixture.ts).
+    history: (nodeId: string, range: MetricsRange) =>
+      PARAMS.get("history") === "disabled"
+        ? delay(undefined, LATENCY_MS).then(() => {
+            throw new ApiError(503, "service_unavailable", "this server keeps no metrics history (it runs without a data directory)");
+          })
+        : answer("history", () => nodeHistory(nodeId, range, PARAMS.get("history"))),
     duplicates: () => delay({ groups: SHAPE === "dense" ? [{ reason: "host_fingerprint", confidence: "high", signal: "machine-id", node_ids: [nodes[1]!.id, nodes[33]!.id] }] : [] }),
     disable: (id: string, disabled: boolean) => {
       nodes = nodes.map((n) => (n.id === id ? { ...n, disabled: disabled || undefined, status: disabled ? "disabled" : "online" } : n));
