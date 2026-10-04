@@ -1623,8 +1623,11 @@ export default {
         critical: "{n} new critical incident | {n} new critical incidents",
         mixed: "{n} new incident, {c} critical | {n} new incidents, {c} critical",
         plain: "{n} new incident | {n} new incidents",
+        movedCritical: "{n} critical incident moved up | {n} critical incidents moved up",
+        moved: "{n} incident moved up | {n} incidents moved up",
+        andMoved: "{text}, {n} moved up",
         show: "Show",
-        showLabel: "Show the new incidents in their place",
+        showLabel: "Show these incidents in their place",
         hint: "Press N in the list to reach Show.",
       },
       proof: {

@@ -71,6 +71,7 @@ export function useIncidentActions(
   /** Acknowledged rows that offer Undo, and those whose Undo landed (undoSlot). */
   const undoable = shallowRef<ReadonlySet<string>>(new Set());
   const undone = shallowRef<ReadonlySet<string>>(new Set());
+  const settling = shallowRef<ReadonlySet<string>>(new Set());
   /** Rows that stay listed whatever the filter says: the ones just acted on. */
   const pinned = shallowRef<ReadonlySet<string>>(new Set());
   /** Other things kept on screen with the rows (keep()). */
@@ -95,6 +96,7 @@ export function useIncidentActions(
       held.value = state.order;
       undoable.value = state.undoable;
       undone.value = state.undone;
+      settling.value = state.settling;
       pinned.value = state.pinned;
       kept.value = state.kept;
     },
@@ -157,6 +159,7 @@ export function useIncidentActions(
    */
   async function undoAck(incident: Incident, name: string): Promise<void> {
     if (busy.value.has(incident.id) || undone.value.has(incident.id)) return;
+    const pressedAt = Date.now();
     hold.begin();
     mark(incident.id, true);
     try {
@@ -172,7 +175,7 @@ export function useIncidentActions(
     } finally {
       mark(incident.id, false);
     }
-    hold.undone(incident.id);
+    hold.undone(incident.id, pressedAt);
     toast.success(t("fleet.keepalive.toast.unacked", { name }));
     focusRequest.value = { id: incident.id, target: "ack" };
     await reread();
@@ -226,6 +229,7 @@ export function useIncidentActions(
     pinned,
     undoable,
     undone,
+    settling,
     kept,
     heldRows,
     focusRequest,
@@ -236,5 +240,7 @@ export function useIncidentActions(
     /** Keep `key` on screen with the rows until the group goes. */
     keep: (key: string) => hold.keep(key),
     release: () => hold.release(),
+    /** Put the rows in their place, keeping kept lines (Show on the arrivals notice). */
+    releaseRows: () => hold.releaseRows(),
   };
 }

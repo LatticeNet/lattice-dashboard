@@ -134,3 +134,12 @@ test("a held message withdrawn when quiet hours ended reads as held and says why
   assert.deepEqual(sentNote(withdrawnOpen), { key: "withdrawnOpen" });
   assert.deepEqual(sentNote(withdrawnRecovery), { key: "withdrawnRecovery" });
 });
+
+test("a recovery withheld from a rule that never sent its open message reads as held and says why", () => {
+  // lattice-server records one suppressed row per rule a recovery leaves out.
+  const withheld = row({ outcome: "suppressed", reason: "withheld: the open message it answers never reached this rule" });
+  assert.equal(sentState(withheld, Date.parse("2026-10-03T08:00:00Z")), "held");
+  assert.deepEqual(sentNote(withheld), { key: "withheldRecovery" });
+  // Not shown raw: the console words it in the operator's language.
+  assert.equal("raw" in (sentNote(withheld) ?? {}), false);
+});

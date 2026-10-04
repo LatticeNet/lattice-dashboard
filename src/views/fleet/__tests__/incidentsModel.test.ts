@@ -5,6 +5,7 @@ import type { Incident, MaintenanceWindow } from "@/lib/api/types";
 import {
   arrivals,
   compareIncidents,
+  splitArrivals,
   draftFromWindow,
   endWindowInput,
   filterCounts,
@@ -321,6 +322,35 @@ function describeArrivals(): void {
     assert.deepEqual(ids(arrivals(shown, { order: ["dmit4", "stall"] }, NOW)), ["c2"]);
     const both = [crit("dmit4", { state: "acknowledged" }), warn("stall"), crit("c3", { since: ago(3) }), crit("c2", { since: ago(1) })];
     assert.deepEqual(ids(arrivals(both, { order: ["dmit4", "stall"], pinned: new Set(["dmit4"]) }, NOW)), ["c3", "c2"]);
+  });
+
+  test("arrivals: a reopened critical that another operator then acknowledged is not counted", () => {
+    const was = asWas(crit("dmit4"), warn("stall"), incident({ id: "mac", state: "resolved", resolved_at: ago(5) }));
+    const reopened = crit("mac", { since: ago(1) });
+    const order = ["dmit4", "stall"];
+    assert.deepEqual(ids(arrivals([crit("dmit4"), warn("stall"), reopened], { order, before: was }, NOW)), ["mac"]);
+    const ackedByAlice = { ...reopened, state: "acknowledged" as const, acked_by: "alice", acked_at: ago(0) };
+    // Under All it would still sort above a resolved row shown before it; it is still not news.
+    const under = [crit("dmit4"), warn("stall"), incident({ id: "old", state: "resolved", resolved_at: ago(50) }), ackedByAlice];
+    assert.deepEqual(arrivals(under, { order: [...order, "old"], before: was }, NOW), []);
+  });
+
+  test("splitArrivals: new for incidents that did not exist, were resolved or pending; moved up for ones already open", () => {
+    const was = asWas(warn("snoozed", { snoozed: true, snoozed_until: ahead(30) }), incident({ id: "mac", state: "resolved", resolved_at: ago(5) }), crit("cloudcone", { state: "pending" }));
+    const arrived = [crit("brand-new"), crit("mac"), crit("cloudcone"), warn("snoozed")];
+    const { fresh, moved } = splitArrivals(arrived, was);
+    assert.deepEqual(ids(fresh), ["brand-new", "mac", "cloudcone"]);
+    assert.deepEqual(ids(moved), ["snoozed"]);
+    assert.deepEqual(ids(splitArrivals(arrived, null).fresh), ids(arrived), "without a snapshot every arrival is new");
+  });
+
+  test("arrivals: an incident whose snooze ended moves up past a warning shown before it", () => {
+    const was = asWas(crit("dmit4"), warn("stall"), warn("hk", { snoozed: true, snoozed_until: ago(-30) }));
+    // The snooze ended: the monitor failure is open again and belongs above the stall it was shown under.
+    const shown = [crit("dmit4"), warn("stall", { since: ago(5) }), warn("hk", { since: ago(40) })];
+    const arrived = arrivals(shown, { order: ["dmit4", "stall", "hk"], before: was }, NOW);
+    assert.deepEqual(ids(arrived), ["hk"]);
+    assert.deepEqual(ids(splitArrivals(arrived, was).moved), ["hk"]);
   });
 
   test("homeIncidents: a critical that arrives while an acknowledged row keeps its slot is missing from the three, and named", () => {

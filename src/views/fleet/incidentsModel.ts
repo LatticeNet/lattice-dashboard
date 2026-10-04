@@ -181,14 +181,16 @@ export interface HeldView {
  * shown before it, or, with `limit` (Home's three), when it belongs among
  * the first `limit` rows but is not shown there. Rows acted on (pinned) do
  * not count as rows shown above: the hold keeps them out of place on
- * purpose, and a row another operator acknowledged sinks rather than
- * arrives. The list cannot move held-back rows up under a resting pointer,
+ * purpose. An acknowledged incident is never an arrival: someone is on it,
+ * whether it sank because another operator acknowledged it or reopened and
+ * was acknowledged since. The list cannot move held-back rows up under a resting pointer,
  * so it says they are there (HoldArrivals). Worst first.
  */
 export function arrivals(shown: readonly Incident[], held: HeldView, now: number, limit?: number): Incident[] {
   if (!held.order?.length) return [];
   const inOrder = new Set(held.order);
   const arrived = (incident: Incident): boolean => {
+    if (incident.state === "acknowledged") return false;
     if (!held.before) return !inOrder.has(incident.id);
     const was = held.before.get(incident.id);
     return !was || compareIncidents(incident, was, now) < 0;
@@ -207,6 +209,24 @@ export function arrivals(shown: readonly Incident[], held: HeldView, now: number
     for (const incident of shown.slice(limit)) if (top.has(incident) && arrived(incident)) out.add(incident);
   }
   return [...out].sort((a, b) => compareIncidents(a, b, now));
+}
+
+/**
+ * Arrivals split by what happened, so the notice says "new" only when it is:
+ * an incident that did not exist when the hold began, or was resolved or
+ * still pending then, is new to the operator; one that was already open and
+ * now sorts higher (its snooze or its window ended) has moved up. Without
+ * `before`, every arrival is new.
+ */
+export function splitArrivals(arrived: readonly Incident[], before: ReadonlyMap<string, Incident> | null | undefined): { fresh: Incident[]; moved: Incident[] } {
+  const fresh: Incident[] = [];
+  const moved: Incident[] = [];
+  for (const incident of arrived) {
+    const was = before?.get(incident.id);
+    if (!was || was.state === "resolved" || was.state === "pending") fresh.push(incident);
+    else moved.push(incident);
+  }
+  return { fresh, moved };
 }
 
 /** The kinds present, for the kind filter; known kinds first in their fixed order. */

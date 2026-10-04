@@ -465,6 +465,8 @@ export default {
     incidents: {
       title: "Incidents ({n} active) | Incidents ({n} active)",
       titleNew: "Incidents ({n} active, {new} new) | Incidents ({n} active, {new} new)",
+      titleMoved: "Incidents ({n} active, {moved} moved up) | Incidents ({n} active, {moved} moved up)",
+      titleNewMoved: "Incidents ({n} active, {new} new, {moved} moved up) | Incidents ({n} active, {new} new, {moved} moved up)",
       all: "All incidents",
       allMore: "{n} more incident | {n} more incidents",
     },

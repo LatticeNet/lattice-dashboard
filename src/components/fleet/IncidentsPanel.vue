@@ -14,10 +14,11 @@
  */
 import { computed, nextTick, ref } from "vue";
 import { RouterLink } from "vue-router";
+import { useI18n } from "vue-i18n";
 
 import type { Incident } from "@/lib/api";
 import { useIncidentActions } from "@/composables/useIncidentActions";
-import { HOME_INCIDENTS_MAX, homeIncidents } from "@/views/fleet/incidentsModel";
+import { HOME_INCIDENTS_MAX, homeIncidents, splitArrivals } from "@/views/fleet/incidentsModel";
 import HoldArrivals from "@/components/fleet/HoldArrivals.vue";
 import IncidentList from "@/components/fleet/IncidentList.vue";
 
@@ -32,6 +33,7 @@ const props = withDefaults(
   { nodeNames: () => new Map<string, string>(), monitorNames: () => new Map<string, string>() },
 );
 const emit = defineEmits<{ refresh: [] }>();
+const { t } = useI18n();
 
 const panel = ref<HTMLElement | null>(null);
 const actions = useIncidentActions(() => emit("refresh"), { zone: () => panel.value, rows: () => props.incidents });
@@ -39,12 +41,24 @@ const view = computed(() =>
   homeIncidents(props.incidents, props.now, HOME_INCIDENTS_MAX, actions.held.value, { pinned: actions.pinned.value, before: actions.heldRows.value }),
 );
 
-async function showArrivals(): Promise<void> {
+const arrivedSplit = computed(() => splitArrivals(view.value.arrived, actions.heldRows.value));
+const title = computed(() => {
+  const n = view.value.total;
+  const fresh = arrivedSplit.value.fresh.length;
+  const moved = arrivedSplit.value.moved.length;
+  if (fresh && moved) return t("overview.incidents.titleNewMoved", { n, new: fresh, moved }, n);
+  if (fresh) return t("overview.incidents.titleNew", { n, new: fresh }, n);
+  if (moved) return t("overview.incidents.titleMoved", { n, moved }, n);
+  return t("overview.incidents.title", { n }, n);
+});
+
+/** As on Monitoring's list: rows in place, focus on the worst named, scrolled to only from a key. */
+async function showArrivals(byKeyboard: boolean): Promise<void> {
   const first = view.value.arrived[0]?.id;
   const fromShow = Boolean(document.activeElement?.closest("[data-hold-arrivals-show]"));
-  actions.release();
+  actions.releaseRows();
   await nextTick();
-  if (first && fromShow) panel.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(first)}"]`)?.focus();
+  if (first && fromShow) panel.value?.querySelector<HTMLElement>(`[data-incident-row="${CSS.escape(first)}"]`)?.focus({ preventScroll: !byKeyboard });
 }
 
 /** N inside the panel reaches Show. */
@@ -61,11 +75,7 @@ function onListKey(event: KeyboardEvent): void {
   <section v-if="view.total > 0" class="overflow-hidden rounded-lg border border-border bg-card" aria-labelledby="home-incidents" data-testid="home-incidents" ref="panel">
     <header class="flex items-center gap-2 border-b border-border px-3.5 py-2">
       <h2 id="home-incidents" class="text-xs font-medium text-muted-foreground">
-        {{
-          view.arrived.length
-            ? $t('overview.incidents.titleNew', { n: view.total, new: view.arrived.length }, view.total)
-            : $t('overview.incidents.title', { n: view.total }, view.total)
-        }}
+        {{ title }}
       </h2>
       <RouterLink
         :to="{ name: 'monitoring', query: { view: 'incidents' } }"
@@ -75,7 +85,7 @@ function onListKey(event: KeyboardEvent): void {
       </RouterLink>
     </header>
     <div class="relative" @keydown="onListKey">
-      <HoldArrivals :arrived="view.arrived" @show="showArrivals" />
+      <HoldArrivals :fresh="arrivedSplit.fresh" :moved="arrivedSplit.moved" @show="showArrivals" />
       <IncidentList
         :incidents="view.shown"
         :now="now"
@@ -86,6 +96,7 @@ function onListKey(event: KeyboardEvent): void {
         :focus-request="actions.focusRequest.value"
         :undoable="actions.undoable.value"
         :undone="actions.undone.value"
+        :settling="actions.settling.value"
         @ack="actions.ack"
         @undo="actions.undoAck"
         @snooze="actions.snooze"

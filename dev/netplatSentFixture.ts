@@ -84,6 +84,9 @@ function fixtureRows(): NotifyDelivery[] {
       row({ event_type: "service.down", channel_id: "ch_bark_urgent", rule_id: "rule_offline", rule_name: "Node offline", outcome: "sent", bark_level: "critical", title: "sing-box inactive on [cd]-bandwagon-dc6", attempts: [attempt(11 * MINUTE, true)] }, 11 * MINUTE),
       row({ event_type: "node.offline", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "suppressed", held_until: iso(-5 * 60 * MINUTE), settled_at: iso(-5 * 60 * MINUTE), reason: "withdrawn when quiet hours ended: the incident was resolved, acknowledged or snoozed meanwhile", title: "Lattice node offline: [cd]-xuezhang-jp-NAT", body: "[cd]-xuezhang-jp-NAT (node_xjp): no heartbeat since 2026-10-03T01:12:00Z.", incident_ids: ["inc_off_xjp"] }, 8 * 60 * MINUTE),
       row({ event_type: "node.online", channel_id: "ch_bark_info", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "suppressed", held_until: iso(-5 * 60 * MINUTE), settled_at: iso(-5 * 60 * MINUTE), reason: "withdrawn when quiet hours ended: the open message it answers was withdrawn too", title: "Lattice node online: [cd]-xuezhang-jp-NAT", body: "[cd]-xuezhang-jp-NAT (node_xjp) is back after 41 min.", incident_ids: ["inc_off_xjp"] }, 7 * 60 * MINUTE),
+      // A recovery kept from a rule that never sent the open message it answers (lattice-server
+      // notifyWithheldRecovery): one row per rule, no channel, naming the incidents left out.
+      row({ event_type: "node.online", rule_id: "rule_quota", rule_name: "VPN quota and expiry", outcome: "suppressed", reason: "withheld: the open message it answers never reached this rule", title: "Lattice node online: [cd]-cloudcone-la", body: "[cd]-cloudcone-la (node_cla) is reporting again after 4m.", incident_ids: ["inc_off_cla"] }, 9 * MINUTE),
     );
   }
   if (flags.get("sent") === "many") {

@@ -457,6 +457,8 @@ export default {
     incidents: {
       title: "事件（{n} 个进行中） | 事件（{n} 个进行中）",
       titleNew: "事件（{n} 个进行中，{new} 个新） | 事件（{n} 个进行中，{new} 个新）",
+      titleMoved: "事件（{n} 个进行中，{moved} 个上移） | 事件（{n} 个进行中，{moved} 个上移）",
+      titleNewMoved: "事件（{n} 个进行中，{new} 个新，{moved} 个上移） | 事件（{n} 个进行中，{new} 个新，{moved} 个上移）",
       all: "全部事件",
       allMore: "还有 {n} 个事件 | 还有 {n} 个事件",
     },

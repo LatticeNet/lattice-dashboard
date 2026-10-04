@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createActionHold, createPointerWatch, undoSlot } from "../actionHold.ts";
+import { SETTLE_MS, createActionHold, createPointerWatch, settleLeft, undoSlot } from "../actionHold.ts";
 
 /** A clock and timers the test moves by hand. */
 function fakeTime() {
@@ -105,10 +105,12 @@ test("an Undo that landed keeps the row pinned and its Undo inert until the list
   // Open, and no Acknowledge may appear where the Undo was.
   assert.equal(state.pinned.has("dmit4"), true);
   assert.equal(undoSlot("dmit4", "acknowledged", state), "settling");
-  // Once the list shows it open, Acknowledge comes back in the same place.
-  assert.equal(undoSlot("dmit4", "open", state), null);
+  // Once the list shows it open, and SETTLE_MS after the press, Acknowledge comes back in the same place.
+  assert.equal(undoSlot("dmit4", "open", state), "settling");
+  time.advance(500);
+  assert.equal(undoSlot("dmit4", "open", hold.state()), null);
   // The Undo restarted the group's time: the pointer that pressed it is still there.
-  time.advance(9_000);
+  time.advance(8_500);
   assert.equal(hold.state().pinned.has("dmit4"), true);
   time.advance(1_000);
   assert.equal(hold.state().pinned.size, 0);
@@ -234,4 +236,88 @@ test("a mouse after a tap ends the finger's hold: the mouse is the pointer now",
   watch.pointer("touch", 97, 233, true);
   watch.pointer("mouse", 1000, 10, false);
   assert.equal(watch.holds({ left: 0, top: 100, right: 800, bottom: 900 }), false);
+});
+
+test("releaseRows() puts the rows in their place but keeps an ended banner line, which goes with the group later", () => {
+  const { hold, time } = setup();
+  hold.keep("window:mw_kernel");
+  hold.begin(["dmit4", "bandwagon"]);
+  hold.acked("dmit4");
+  hold.releaseRows();
+  assert.equal(hold.state().order, null);
+  assert.equal(hold.state().pinned.size, 0);
+  assert.equal(hold.state().undoable.size, 0);
+  assert.equal(hold.state().kept.has("window:mw_kernel"), true, "the line above the list stays");
+  time.advance(10_000);
+  assert.equal(hold.state().kept.size, 0, "and goes when the group's time is up");
+});
+
+test("releaseRows() with only rows held ends the group", () => {
+  const { hold, changes } = setup();
+  hold.begin(["a"]);
+  hold.snoozed("a");
+  const before = changes();
+  hold.releaseRows();
+  assert.equal(hold.due(), false);
+  assert.equal(hold.state().pinned.size, 0);
+  assert.equal(changes(), before + 1);
+  hold.releaseRows();
+  assert.equal(changes(), before + 1, "nothing left to release");
+});
+
+test("settleLeft: what is left of SETTLE_MS since a press, never below zero", () => {
+  assert.equal(SETTLE_MS, 500);
+  assert.equal(settleLeft(1_000, 1_000), 500);
+  assert.equal(settleLeft(1_000, 1_150), 350);
+  assert.equal(settleLeft(1_000, 1_500), 0);
+  assert.equal(settleLeft(1_000, 2_000), 0);
+});
+
+test("after Undo the row stays inert for SETTLE_MS from the press, even once the list reads it open", () => {
+  const { hold, time } = setup();
+  hold.begin(["dmit4", "bandwagon"]);
+  hold.acked("dmit4");
+  time.advance(2_000);
+  const pressedAt = time.now();
+  // The unack call lands 80 ms after the press; the read 70 ms later shows it open.
+  time.advance(80);
+  hold.undone("dmit4", pressedAt);
+  time.advance(70);
+  assert.equal(undoSlot("dmit4", "open", hold.state()), "settling", "150 ms after the press: still inert");
+  time.advance(199);
+  assert.equal(undoSlot("dmit4", "open", hold.state()), "settling", "349 ms");
+  time.advance(100);
+  assert.equal(undoSlot("dmit4", "open", hold.state()), "settling", "449 ms: a slow double press here acts on nothing");
+  time.advance(51);
+  assert.equal(undoSlot("dmit4", "open", hold.state()), null, "500 ms: Acknowledge is back");
+  // And while the list still says acknowledged, it stays inert past 500 ms.
+  assert.equal(undoSlot("dmit4", "acknowledged", hold.state()), "settling");
+});
+
+test("an Undo that lands after SETTLE_MS settles only on the read", () => {
+  const { hold, time } = setup();
+  hold.begin(["a"]);
+  hold.acked("a");
+  const pressedAt = time.now();
+  time.advance(600);
+  hold.undone("a", pressedAt);
+  assert.equal(hold.state().settling.has("a"), false);
+  assert.equal(undoSlot("a", "acknowledged", hold.state()), "settling");
+  assert.equal(undoSlot("a", "open", hold.state()), null);
+});
+
+test("acknowledging again inside the settle window ends it, and release clears it", () => {
+  const { hold, time } = setup();
+  hold.begin(["a"]);
+  hold.acked("a");
+  hold.undone("a", time.now());
+  assert.equal(hold.state().settling.has("a"), true);
+  hold.acked("a");
+  assert.equal(hold.state().settling.has("a"), false);
+  assert.equal(undoSlot("a", "open", hold.state()), "undo");
+  hold.undone("a", time.now());
+  hold.release();
+  assert.equal(hold.state().settling.size, 0);
+  time.advance(1_000);
+  assert.equal(hold.state().settling.size, 0, "no late timer brings it back");
 });

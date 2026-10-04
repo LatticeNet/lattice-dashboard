@@ -85,6 +85,7 @@ export type SentNoteKey =
   | "quietHours"
   | "withdrawnOpen"
   | "withdrawnRecovery"
+  | "withheldRecovery"
   | "escalation"
   | "noRule"
   | "noChannel"
@@ -116,6 +117,10 @@ const KNOWN_REASONS: Record<string, SentNoteKey> = {
   // (lattice-server notify_outbox.go heldIncidentWithdrawal).
   "withdrawn when quiet hours ended: the incident was resolved, acknowledged or snoozed meanwhile": "withdrawnOpen",
   "withdrawn when quiet hours ended: the open message it answers was withdrawn too": "withdrawnRecovery",
+  // A recovery kept from a rule that never sent the open message it answers;
+  // one row per rule, naming the incidents left out (lattice-server
+  // notify_outbox.go notifyWithheldRecovery).
+  "withheld: the open message it answers never reached this rule": "withheldRecovery",
 };
 
 const FAILURE_SENTENCE = /^(upstream status \d+|timed out|network error|channel config refused|send failed)( after \d+ attempts)?(, retrying)?$/;
