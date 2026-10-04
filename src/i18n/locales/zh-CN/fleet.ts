@@ -1647,6 +1647,7 @@ export default {
         paged: "{time} 已通知",
         escalated: "{time} 已重发提醒",
         unacknowledged: "尚未确认",
+        acknowledgedBy: "{who} 于 {time} 确认",
         recoveryOwed: "恢复通知排队中",
         recoveryHeld: "停止抖动前暂不发送恢复通知",
         recovered: "{time} 已发恢复通知",
@@ -1656,7 +1657,6 @@ export default {
         lasted: "持续了 {age}",
       },
       badge: {
-        acknowledged: "{who} 于 {time} 确认",
         snoozed: "暂缓到 {time}",
         maintenance: "维护：{name}",
         flapping: "抖动了 {n} 次",
