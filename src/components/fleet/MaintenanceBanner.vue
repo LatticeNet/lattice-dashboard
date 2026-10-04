@@ -91,7 +91,7 @@ const lines = computed(() =>
           class="pointer-coarse:h-11"
           :data-window-undo="line.window.id"
           :aria-label="$t('fleet.keepalive.maintenance.undoEnd', { name: line.window.name })"
-          @click="emit('undo', line.window)"
+          @click="(event: MouseEvent) => event.detail > 1 || emit('undo', line.window)"
         >
           <Undo2 aria-hidden="true" />
           {{ $t('fleet.keepalive.toast.undo') }}
@@ -106,7 +106,7 @@ const lines = computed(() =>
           :aria-disabled="busy === line.window.id || settling.has(line.window.id) || undefined"
           :aria-label="$t('fleet.keepalive.maintenance.endNowLabel', { name: line.window.name })"
           :data-window-end="line.window.id"
-          @click="busy === line.window.id || settling.has(line.window.id) || emit('end', line.window)"
+          @click="(event: MouseEvent) => event.detail > 1 || busy === line.window.id || settling.has(line.window.id) || emit('end', line.window)"
         >
           {{ $t('fleet.keepalive.maintenance.endNow') }}
         </Button>

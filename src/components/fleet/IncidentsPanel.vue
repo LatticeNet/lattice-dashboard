@@ -96,6 +96,7 @@ function onListKey(event: KeyboardEvent): void {
         :focus-request="actions.focusRequest.value"
         :undoable="actions.undoable.value"
         :undone="actions.undone.value"
+        :settling="actions.settling.value"
         @ack="actions.ack"
         @undo="actions.undoAck"
         @snooze="actions.snooze"

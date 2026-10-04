@@ -20,6 +20,20 @@
  * expire on its own clock and move the whole list below it.
  */
 
+/**
+ * How long the control that comes back after an Undo stays inert, at least,
+ * counted from the press: Acknowledge on a row, End now on a banner line. A
+ * slow double press lands well after the list read (150 to 450 ms in the
+ * harness) and would otherwise act at once, acknowledging again or ending
+ * the window again.
+ */
+export const SETTLE_MS = 500;
+
+/** Milliseconds left before a control that came back after an Undo pressed at `pressedAt` may act. */
+export function settleLeft(pressedAt: number, now: number, settleMs = SETTLE_MS): number {
+  return Math.max(0, pressedAt + settleMs - now);
+}
+
 export interface ActionHoldState {
   /** Row ids in the order they had when an action was pressed, while that order is held. */
   order: readonly string[] | null;
@@ -27,6 +41,8 @@ export interface ActionHoldState {
   undoable: ReadonlySet<string>;
   /** Undoable rows whose Undo landed: Undo stays, inert, until the list shows them open. */
   undone: ReadonlySet<string>;
+  /** Undone rows still inside SETTLE_MS of their Undo press: Undo stays, inert, however the list reads. */
+  settling: ReadonlySet<string>;
   /** Rows that stay listed whatever the filter says. */
   pinned: ReadonlySet<string>;
   /** Other keys the caller keeps on screen until the group goes (ended banner lines). */
@@ -40,6 +56,7 @@ export interface ActionHoldOptions {
   /** Called after every change to the state. */
   changed: () => void;
   recheckMs?: number;
+  settleMs?: number;
   setTimer?: (run: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   now?: () => number;
@@ -55,8 +72,11 @@ export interface ActionHold {
   snoozed(id: string): void;
   /** Something else was acted on and stays on screen with the group (`kept`). */
   keep(key: string): void;
-  /** Undo landed: Acknowledge comes back once the list shows the row open (undoSlot). */
-  undone(id: string): void;
+  /**
+   * Undo landed: Acknowledge comes back once the list shows the row open and
+   * SETTLE_MS have passed since the press at `pressedAt` (undoSlot).
+   */
+  undone(id: string, pressedAt?: number): void;
   /** The row can no longer be undone (the server refused): it shows what its state allows. */
   closeUndo(id: string): void;
   /** Something blocked() reads may have changed: release now if the group may go. */
@@ -93,9 +113,21 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
   const clearTimer = options.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const now = options.now ?? (() => Date.now());
 
-  let state: ActionHoldState = { order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY, kept: EMPTY };
+  const settleMs = options.settleMs ?? SETTLE_MS;
+  let state: ActionHoldState = { order: null, undoable: EMPTY, undone: EMPTY, settling: EMPTY, pinned: EMPTY, kept: EMPTY };
   let deadline = 0;
   let timer: unknown;
+  const settleTimers = new Map<string, unknown>();
+
+  function endSettling(id: string): void {
+    const handle = settleTimers.get(id);
+    if (handle !== undefined) clearTimer(handle);
+    settleTimers.delete(id);
+  }
+
+  function clearSettling(): void {
+    for (const id of [...settleTimers.keys()]) endSettling(id);
+  }
 
   function active(): boolean {
     return state.order !== null || state.undoable.size > 0 || state.pinned.size > 0 || state.kept.size > 0;
@@ -123,8 +155,9 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
   function release(): void {
     if (timer !== undefined) clearTimer(timer);
     timer = undefined;
+    clearSettling();
     if (!active()) return;
-    set({ order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY, kept: EMPTY });
+    set({ order: null, undoable: EMPTY, undone: EMPTY, settling: EMPTY, pinned: EMPTY, kept: EMPTY });
   }
 
   function check(): void {
@@ -143,7 +176,8 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
     },
     acked(id) {
       extend();
-      set({ undoable: plus(state.undoable, id), undone: minus(state.undone, id), pinned: plus(state.pinned, id) });
+      endSettling(id);
+      set({ undoable: plus(state.undoable, id), undone: minus(state.undone, id), settling: minus(state.settling, id), pinned: plus(state.pinned, id) });
     },
     snoozed(id) {
       extend();
@@ -153,24 +187,39 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
       extend();
       set({ kept: plus(state.kept, key) });
     },
-    undone(id) {
+    undone(id, pressedAt) {
       extend();
-      if (state.undoable.has(id)) set({ undone: plus(state.undone, id) });
+      if (!state.undoable.has(id)) return;
+      endSettling(id);
+      const left = settleLeft(pressedAt ?? now(), now(), settleMs);
+      if (left > 0) {
+        settleTimers.set(
+          id,
+          setTimer(() => {
+            settleTimers.delete(id);
+            set({ settling: minus(state.settling, id) });
+          }, left),
+        );
+      }
+      set({ undone: plus(state.undone, id), settling: left > 0 ? plus(state.settling, id) : minus(state.settling, id) });
     },
     closeUndo(id) {
-      set({ undoable: minus(state.undoable, id), undone: minus(state.undone, id) });
+      endSettling(id);
+      set({ undoable: minus(state.undoable, id), undone: minus(state.undone, id), settling: minus(state.settling, id) });
     },
     check,
     due: () => active() && now() >= deadline,
     release,
     releaseRows() {
       if (state.order === null && state.undoable.size === 0 && state.pinned.size === 0) return;
-      set({ order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY });
+      clearSettling();
+      set({ order: null, undoable: EMPTY, undone: EMPTY, settling: EMPTY, pinned: EMPTY });
       if (!active()) release();
     },
     dispose() {
       if (timer !== undefined) clearTimer(timer);
       timer = undefined;
+      clearSettling();
     },
   };
 }
@@ -179,14 +228,15 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
  * What a row shows in Acknowledge's place. "undo" from the moment its
  * Acknowledge lands (the list may still say open until it is read again);
  * "settling", an inert Undo, from the moment its Undo lands until the list
- * shows it open; then null, and the row shows what its state allows. So
- * neither press leaves an Acknowledge under the pointer before the list
- * agrees, where a second press would act again.
+ * shows it open and SETTLE_MS have passed since the Undo press; then null,
+ * and the row shows what its state allows. So neither press leaves an
+ * Acknowledge under the pointer before the list agrees, nor in reach of a
+ * slow double press, where the second press would act again.
  */
-export function undoSlot(id: string, state: string, hold: Pick<ActionHoldState, "undoable" | "undone">): "undo" | "settling" | null {
+export function undoSlot(id: string, state: string, hold: Pick<ActionHoldState, "undoable" | "undone"> & { settling?: ReadonlySet<string> }): "undo" | "settling" | null {
   if (!hold.undoable.has(id)) return null;
   if (!hold.undone.has(id)) return "undo";
-  return state === "acknowledged" ? "settling" : null;
+  return state === "acknowledged" || hold.settling?.has(id) ? "settling" : null;
 }
 
 /** A rectangle in viewport pixels, as getBoundingClientRect gives it. */

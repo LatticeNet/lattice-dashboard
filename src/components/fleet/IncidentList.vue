@@ -60,6 +60,8 @@ const props = withDefaults(
     /** Acknowledged rows that offer Undo in Acknowledge's place, and those whose Undo landed (actionHold.undoSlot). */
     undoable?: ReadonlySet<string>;
     undone?: ReadonlySet<string>;
+    /** Undone rows still inside SETTLE_MS of the Undo press (actionHold). */
+    settling?: ReadonlySet<string>;
   }>(),
   {
     busy: () => new Set<string>(),
@@ -68,6 +70,7 @@ const props = withDefaults(
     focusRequest: null,
     undoable: () => new Set<string>(),
     undone: () => new Set<string>(),
+    settling: () => new Set<string>(),
   },
 );
 
@@ -85,15 +88,25 @@ function order(): string[] {
   return props.incidents.map((i) => i.id);
 }
 
-function onAck(incident: Incident, name: string): void {
+/**
+ * A click that is the second of a double click (detail 2 and up) never acts:
+ * the first already did, and what is under the pointer now is the control
+ * that replaced the one pressed (Undo for Acknowledge and back). A key press
+ * has detail 0.
+ */
+function repeatClick(event?: MouseEvent): boolean {
+  return (event?.detail ?? 0) > 1;
+}
+
+function onAck(incident: Incident, name: string, event?: MouseEvent): void {
   // The button stays focusable while busy (aria-disabled, not disabled): a
   // disabled button drops focus to the page.
-  if (props.busy.has(incident.id)) return;
+  if (props.busy.has(incident.id) || repeatClick(event)) return;
   emit("ack", incident, order(), name);
 }
 
-function onUndo(incident: Incident, name: string): void {
-  if (props.busy.has(incident.id)) return;
+function onUndo(incident: Incident, name: string, event?: MouseEvent): void {
+  if (props.busy.has(incident.id) || repeatClick(event)) return;
   emit("undo", incident, name);
 }
 
@@ -306,7 +319,7 @@ const rows = computed(() =>
       phone: phoneLine(incident),
       badges,
       actions: incidentActions(incident, props.now, props.canAdmin),
-      undo: props.canAdmin ? undoSlot(incident.id, incident.state, { undoable: props.undoable, undone: props.undone }) : null,
+      undo: props.canAdmin ? undoSlot(incident.id, incident.state, { undoable: props.undoable, undone: props.undone, settling: props.settling }) : null,
       open: openTarget(incident),
       busy: props.busy.has(incident.id),
     };
@@ -364,7 +377,7 @@ const rows = computed(() =>
             :aria-disabled="row.busy || row.undo === 'settling' || undefined"
             :data-incident-undo="row.incident.id"
             :aria-label="$t('fleet.keepalive.actions.undoLabel', { name: row.claim })"
-            @click="onUndo(row.incident, row.claim)"
+            @click="onUndo(row.incident, row.claim, $event)"
           >
             <Undo2 aria-hidden="true" />
             {{ $t('fleet.keepalive.toast.undo') }}
@@ -379,7 +392,7 @@ const rows = computed(() =>
           :aria-disabled="row.busy || undefined"
           :data-incident-ack="row.incident.id"
           :aria-label="$t('fleet.keepalive.actions.ackLabel', { name: row.claim })"
-          @click="onAck(row.incident, row.claim)"
+          @click="onAck(row.incident, row.claim, $event)"
         >
           <Check aria-hidden="true" />
           {{ $t('fleet.keepalive.actions.ack') }}

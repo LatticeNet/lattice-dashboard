@@ -21,6 +21,7 @@ import { Plus, Wrench } from "lucide-vue-next";
 import { api, type GroupView, type Incident, type IncidentListResponse, type MaintenanceWindow, type Node } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useIncidentActions } from "@/composables/useIncidentActions";
+import { settleLeft } from "@/lib/actionHold";
 import { bindQueryParam } from "@/composables/useQueryParam";
 import type { OwnedRoute } from "@/composables/useOwnedRoute";
 import { useAuthStore } from "@/stores/auth";
@@ -336,6 +337,7 @@ let restoring: string | null = null;
 async function restoreWindow(window: MaintenanceWindow): Promise<void> {
   if (restoring) return;
   restoring = window.id;
+  const pressedAt = Date.now();
   const heldIds = endedUndo.value.get(window.id)?.heldIds ?? [];
   try {
     await api.maintenance.upsert(windowInput(window));
@@ -369,7 +371,11 @@ async function restoreWindow(window: MaintenanceWindow): Promise<void> {
   try {
     await windowsQuery.refresh();
   } finally {
-    // A read that started after the restore has landed: End now acts again.
+    // End now acts again once a read that started after the restore has
+    // landed and SETTLE_MS have passed since the Undo press, so a slow
+    // double press on Undo does not end the window again.
+    const left = settleLeft(pressedAt, Date.now());
+    if (left > 0) await new Promise((resolve) => setTimeout(resolve, left));
     markRestored(window.id, "restored");
   }
 }
@@ -468,6 +474,7 @@ function coverageText(window: MaintenanceWindow): string {
             :focus-request="actions.focusRequest.value"
             :undoable="actions.undoable.value"
             :undone="actions.undone.value"
+            :settling="actions.settling.value"
             @ack="actions.ack"
             @undo="actions.undoAck"
             @snooze="actions.snooze"
