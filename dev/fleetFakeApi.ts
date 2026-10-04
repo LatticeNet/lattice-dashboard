@@ -30,7 +30,7 @@
  * `?latency=one|three|defaults|nosource|off` shapes the Latency layer and the
  * node page's latency card (dev/latencyFixture.ts); `?fail=latency` fails its
  * reads, and saving the probe settings recomputes the plan by the server's rule.
- * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
+ * `?resultsMs=` slows monitor results; `?latencyMs=` slows the latency plan and rollups; `?rollupsMs=` slows the rollups alone (the map's layer reads until both answer). `?audit=old` answers audit reads as a
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
@@ -166,10 +166,29 @@ const principal: Principal = {
 
 // cd-hs-sh joins only on latency renders; every node, it included, carries
 // the keepalive state and loop health the incidents fixture gives it.
-let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : [])].map((node, index) => {
+let nodes = [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : []), ...manyNodes()].map((node, index) => {
   const shaped = { ...node, ...keepaliveNodeState(node) };
   return { ...shaped, loop_health: loopHealthFor(shaped, index) };
 });
+
+/**
+ * `?many=N` (up to 2000) adds N copies of the located nodes, half on their
+ * city's own point and half scattered across the land between 50S and 65N,
+ * to time the map at fleet sizes well past production's 34.
+ */
+function manyNodes(): typeof NODES {
+  const count = Math.max(0, Math.min(2000, Number(PARAMS.get("many")) || 0));
+  const located = NODES.filter((node) => typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number");
+  if (!count || !located.length) return [];
+  let seed = 17;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  return Array.from({ length: count }, (_, i) => {
+    const base = located[i % located.length]!;
+    const piled = i % 2 === 0;
+    const geo = piled ? base.geo : { ...base.geo, lat: -50 + random() * 115, lon: -180 + random() * 360, city: undefined };
+    return { ...base, id: `many_${String(i).padStart(4, "0")}`, name: `${base.name ?? base.id}-x${i}`, geo };
+  });
+}
 let latency = initialConfig();
 let machines = MACHINES.map((machine) => ({ ...machine }));
 let monitors = MONITORS.map((monitor) => ({ ...monitor }));
@@ -466,8 +485,9 @@ export const api = {
       return delay({ ok: true });
     },
     latency: {
-      plan: () => answer("latency", () => planFor(latency.config, latency.stored)),
-      rollups: () => answer("latency", () => rollupsFor(planFor(latency.config, latency.stored))),
+      plan: () => answer("latency", () => planFor(latency.config, latency.stored), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
+      rollups: () =>
+        answer("latency", () => rollupsFor(planFor(latency.config, latency.stored)), Number(PARAMS.get("rollupsMs")) || Number(PARAMS.get("latencyMs")) || LATENCY_MS),
       series: (source: string, target: string, window: LatencyWindow) =>
         answer("latency", () => seriesFor(planFor(latency.config, latency.stored), source, target, window)),
       // A save names the version it was read at, as the server requires.
