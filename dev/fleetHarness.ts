@@ -8,7 +8,7 @@
  *   open http://127.0.0.1:5471/dev/fleet-nodes.html             (Nodes)
  *   open http://127.0.0.1:5471/dev/fleet-node.html?id=node_020  (DMIT-4, offline 6d, a stalled task)
  *   open http://127.0.0.1:5471/dev/fleet-machines.html          (Machines)
- *   open http://127.0.0.1:5471/dev/fleet-map.html               (Map)
+ *   open http://127.0.0.1:5471/dev/fleet-map.html               (Map; ?geo=six&latency=one&layer=latency for a spread and the probe arcs)
  *   open http://127.0.0.1:5471/dev/fleet-monitoring.html        (Monitoring, 0 monitors; ?monitors=some)
  *   open http://127.0.0.1:5471/dev/fleet-groups.html            (Groups)
  *   open http://127.0.0.1:5471/dev/fleet-capabilities.html      (Capability Gates with trust posture)

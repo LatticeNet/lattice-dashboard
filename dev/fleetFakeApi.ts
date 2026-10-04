@@ -30,7 +30,7 @@
  * `?latency=one|three|defaults|nosource|off` shapes the Latency layer and the
  * node page's latency card (dev/latencyFixture.ts); `?fail=latency` fails its
  * reads, and saving the probe settings recomputes the plan by the server's rule.
- * `?resultsMs=` slows monitor results. `?audit=old` answers audit reads as a
+ * `?resultsMs=` slows monitor results; `?latencyMs=` slows the latency plan and rollups. `?audit=old` answers audit reads as a
  * server from before exclude_action (the exclusions are ignored);
  * `?audit=capped` answers them as a scan that stopped at the cap. Writes change the in-memory state, so saving, disabling
  * and deleting can be driven end to end.
@@ -466,8 +466,8 @@ export const api = {
       return delay({ ok: true });
     },
     latency: {
-      plan: () => answer("latency", () => planFor(latency.config, latency.stored)),
-      rollups: () => answer("latency", () => rollupsFor(planFor(latency.config, latency.stored))),
+      plan: () => answer("latency", () => planFor(latency.config, latency.stored), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
+      rollups: () => answer("latency", () => rollupsFor(planFor(latency.config, latency.stored)), Number(PARAMS.get("latencyMs")) || LATENCY_MS),
       series: (source: string, target: string, window: LatencyWindow) =>
         answer("latency", () => seriesFor(planFor(latency.config, latency.stored), source, target, window)),
       // A save names the version it was read at, as the server requires.
