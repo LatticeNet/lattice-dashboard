@@ -77,6 +77,9 @@ export default defineConfig({
       // Exact match only: `@/lib/api/index` and `@/lib/api/client` still
       // resolve to the real modules, which is how the fake re-exports them.
       { find: /^@\/lib\/api$/, replacement: fileURLToPath(new URL("./dev/frameFakeApi.ts", import.meta.url)) },
+      // SSH Guard reads its reality through its own module, as in the
+      // ssh-guard harness.
+      { find: /^@\/views\/networking\/sshGuardReality$/, replacement: fileURLToPath(new URL("./dev/fakeGuardReality.ts", import.meta.url)) },
       { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
     ],
   },
