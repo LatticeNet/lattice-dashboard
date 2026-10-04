@@ -2824,6 +2824,38 @@ export interface TokenCreateResponse {
  * The vpn-core plugin's Users page manages a different record (VpnUser), so
  * this list is not that page's.
  */
+/**
+ * One relay line's downstream route (lattice-server server_linechain.go,
+ * GET /api/network/lines/chains, proxy:read). The line on `source_node_id`
+ * forwards to the line `current.target_line_uuid` on `current.target_node_id`,
+ * its exit. A row the principal cannot read both ends of is left out by the
+ * server. `status` is planned, applying, applied_unobserved, converged,
+ * drifted or failed; `current` is null while the first route is only planned.
+ */
+export interface LineChainView {
+  source_line_uuid: string;
+  source_node_id: string;
+  status: string;
+  current: {
+    target_line_uuid?: string;
+    target_node_id?: string;
+    artifact_digest: string;
+    status: string;
+  } | null;
+  attempt: {
+    operation: string;
+    candidate_target_line_uuid?: string;
+    approval_id: string;
+    candidate_artifact_digest?: string;
+    status: string;
+    error_code?: string;
+    error?: string;
+  } | null;
+  observed_outbound_tag?: string;
+  observed_downstream_line_uuid?: string;
+  last_error?: string;
+}
+
 export interface ProxyUserView {
   id: string;
   name: string;

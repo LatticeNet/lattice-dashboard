@@ -14,7 +14,9 @@
  *                   a never-reported and a disabled node, three approvals
  *                   waiting, due and overdue renewals, a second stalled task
  *   empty           nothing enrolled (first run)
- * `?monitors=some` gives Monitoring an HTTP and a TLS monitor with results.
+ * `?monitors=some` gives Monitoring an HTTP and a TLS monitor with results;
+ * with `?topo=many` it adds a check run from three of the invented US nodes,
+ * so the folded Topology draws a check bundle out of one country.
  * `?monitors=many` gives sixty, past the fifty the list once read one by one:
  * three failing and one whose results stopped arriving (names and targets
  * invented).
@@ -533,6 +535,10 @@ function someMonitors(): MonitorView[] {
     { id: "mon_console", name: "Lattice console", type: "http", target: "https://lattice.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: NODES.slice(0, 3).map((n) => n.id), enabled: true, created_at: iso(-20 * DAY) },
     { id: "mon_tls_sub", name: "sub.example.net", type: "tls", target: "sub.example.net:443", interval_sec: 3600, timeout_sec: 10, threshold_days: 14, assign_all: false, node_ids: [], enabled: true, created_at: iso(-20 * DAY) },
     { id: "mon_hk_tcp", name: "HK relay port", type: "tcp", target: "203.0.113.21:443", interval_sec: 30, timeout_sec: 5, assign_all: false, node_ids: NODES.slice(3, 5).map((n) => n.id), enabled: true, created_at: iso(-3 * DAY) },
+    // dev/latencyFixture.ts: node_x000 and node_x009 are in Los Angeles, node_x001 in San Jose.
+    ...(PARAMS.get("topo") === "many"
+      ? [{ id: "mon_bulk_us", name: "US edge health", type: "http", target: "https://edge.example.net/healthz", interval_sec: 60, timeout_sec: 10, assign_all: false, node_ids: ["node_x000", "node_x001", "node_x009"], enabled: true, created_at: iso(-2 * DAY) }]
+      : []),
   ];
 }
 

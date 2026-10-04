@@ -63,8 +63,43 @@ const NOT_PROBEABLE: Record<string, string> = {
 /** Offline nodes keep the address their monitor had. */
 const LAST_KNOWN = new Set(["[Metix]-DMIT-4"]);
 
+/**
+ * `?topo=many`: 280 more invented nodes across nine cities, so the Topology
+ * layer can be drawn at a few hundred targets (each country folds into one
+ * row). Every fifteenth is offline; a few have no country.
+ */
+const MANY_PLACES: [country: string, city: string, lat: number, lon: number][] = [
+  ["US", "Los Angeles", 34.05, -118.24],
+  ["US", "San Jose", 37.34, -121.89],
+  ["JP", "Tokyo", 35.68, 139.69],
+  ["HK", "Hong Kong", 22.32, 114.17],
+  ["SG", "Singapore", 1.35, 103.82],
+  ["DE", "Falkenstein", 50.48, 12.37],
+  ["GB", "London", 51.5, -0.12],
+  ["AU", "Sydney", -33.87, 151.2],
+  ["KR", "Seoul", 37.57, 126.98],
+];
+export const EXTRA_NODES: Node[] =
+  PARAMS.get("topo") === "many" && NODES.length
+    ? Array.from({ length: 280 }, (_, i) => {
+        const place = MANY_PLACES[i % MANY_PLACES.length]!;
+        const offline = i % 15 === 7;
+        return {
+          ...NODES[0]!,
+          id: `node_x${String(i).padStart(3, "0")}`,
+          name: `[bulk]-${place[1].toLowerCase().replace(/ /g, "-")}-${String(i).padStart(3, "0")}`,
+          public_ip: `198.51.${100 + Math.floor(i / 250)}.${i % 250}`,
+          status: offline ? "offline" : "online",
+          online: !offline,
+          reachability: offline ? "offline" : "online",
+          last_seen: iso(offline ? -(2 + (i % 5)) * HOUR : -3000),
+          geo: i % 47 === 3 ? undefined : { country: place[0], city: place[1], lat: place[2], lon: place[3], source: "auto" },
+        } as Node;
+      })
+    : [];
+
 function allNodes(): Node[] {
-  return SOURCE_NODE ? [...NODES, SOURCE_NODE] : [...NODES];
+  return [...NODES, ...(SOURCE_NODE ? [SOURCE_NODE] : []), ...EXTRA_NODES];
 }
 
 function region(node: Node): string {
@@ -249,10 +284,12 @@ export function rollupsFor(plan: LatencyProbePlan): LatencyRollups {
       const target = byId.get(p.target);
       const windows = Object.fromEntries((["1h", "24h", "7d"] as LatencyWindow[]).map((w) => [w, statsFor(p.source, target, w, plan.config.interval_sec)]));
       const hour = windows["1h"]!;
+      // A pair that went dark keeps its last result, from the day its target stopped answering.
+      const darkLatest = behaviour(target?.name ?? "") === "dark" ? { monitor_id: p.monitor_id!, node_id: p.source, at: iso(-(6 * 24 + 3) * HOUR), success: true, latency_ms: baseMs(target) } : undefined;
       const latest =
-        hour.samples > 0
-          ? { monitor_id: p.monitor_id!, node_id: p.source, at: iso(-25_000), success: hour.p50_ms !== undefined && behaviour(target?.name ?? "") !== "failing", latency_ms: hour.p50_ms, error: behaviour(target?.name ?? "") === "failing" ? `dial tcp ${plan.nodes.find((n) => n.node_id === p.target)?.endpoint}: i/o timeout` : undefined }
-          : undefined;
+        hour.samples === 0
+          ? darkLatest
+          : { monitor_id: p.monitor_id!, node_id: p.source, at: iso(-25_000), success: hour.p50_ms !== undefined && behaviour(target?.name ?? "") !== "failing", latency_ms: hour.p50_ms, error: behaviour(target?.name ?? "") === "failing" ? `dial tcp ${plan.nodes.find((n) => n.node_id === p.target)?.endpoint}: i/o timeout` : undefined };
       return { source: p.source, target: p.target, monitor_id: p.monitor_id!, windows, latest };
     });
   return { generated_at: new Date(NOW).toISOString(), interval_sec: plan.config.interval_sec, pairs };
