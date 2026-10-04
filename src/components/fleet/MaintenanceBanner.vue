@@ -27,8 +27,10 @@ const props = withDefaults(
     busy?: string | null;
     /** Ids among `windows` that End now just ended (passed as they were): their lines offer Undo in End now's place. */
     ended?: ReadonlySet<string>;
+    /** Ids whose Undo just landed: End now is back in Undo's place but inert until the windows are read again. */
+    settling?: ReadonlySet<string>;
   }>(),
-  { nodeNames: () => new Map(), groupNames: () => new Map(), canEdit: false, busy: null, ended: () => new Set<string>() },
+  { nodeNames: () => new Map(), groupNames: () => new Map(), canEdit: false, busy: null, ended: () => new Set<string>(), settling: () => new Set<string>() },
 );
 
 const emit = defineEmits<{ end: [window: MaintenanceWindow]; edit: [window: MaintenanceWindow]; undo: [window: MaintenanceWindow] }>();
@@ -94,20 +96,28 @@ const lines = computed(() =>
           <Undo2 aria-hidden="true" />
           {{ $t('fleet.keepalive.toast.undo') }}
         </Button>
-        <!-- aria-disabled while it runs, not disabled: a disabled button drops focus to the page. -->
+        <!-- aria-disabled while it runs or its Undo settles, not disabled: a disabled button drops focus to the page. -->
         <Button
           v-else
           variant="outline"
           size="sm"
           type="button"
           class="pointer-coarse:h-11 aria-disabled:opacity-50"
-          :aria-disabled="busy === line.window.id || undefined"
+          :aria-disabled="busy === line.window.id || settling.has(line.window.id) || undefined"
+          :aria-label="$t('fleet.keepalive.maintenance.endNowLabel', { name: line.window.name })"
           :data-window-end="line.window.id"
-          @click="busy === line.window.id || emit('end', line.window)"
+          @click="busy === line.window.id || settling.has(line.window.id) || emit('end', line.window)"
         >
           {{ $t('fleet.keepalive.maintenance.endNow') }}
         </Button>
-        <Button variant="ghost" size="sm" type="button" class="pointer-coarse:h-11" @click="emit('edit', line.window)">
+        <Button
+          variant="ghost"
+          size="sm"
+          type="button"
+          class="pointer-coarse:h-11"
+          :aria-label="$t('fleet.keepalive.maintenance.editLabel', { name: line.window.name })"
+          @click="emit('edit', line.window)"
+        >
           {{ $t('common.actions.edit') }}
         </Button>
       </span>
