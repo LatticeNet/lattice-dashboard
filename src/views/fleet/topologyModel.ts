@@ -655,6 +655,8 @@ export const CHECK_H = 52;
 export const CHECK_GAP = 8;
 export const LEFT_W = 208;
 export const CHECK_W = 232;
+/** Where the first probe source sits: right under the control plane box. */
+export const SOURCES_TOP = CP_H + 24;
 /** Rows past this fold by country. */
 export const COLLAPSE_AT = 60;
 
@@ -803,10 +805,13 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   const rowByKey = new Map(rows.map((row) => [row.key, row]));
 
   /* ---- Left column ---- */
+  // The sources sit right under the control plane and the checks start at
+  // the top, so the fan's origin and the first check are on the first screen
+  // however tall the column grows. Curves to the bottom of the column get
+  // longer; an origin below the fold cost more.
   const cp: Box = { x: 0, y: 0, w: LEFT_W, h: CP_H };
   anchorOf.set(CONTROL_PLANE, CONTROL_PLANE);
-  const block = model.sources.length * SOURCE_H + Math.max(0, model.sources.length - 1) * SOURCE_GAP;
-  let sy = Math.max(CP_H + 24, Math.round((rowsHeight - block) / 2));
+  let sy = SOURCES_TOP;
   const sources = model.sources.map((node) => {
     const box: Box = { x: 0, y: sy, w: LEFT_W, h: SOURCE_H };
     anchorOf.set(node.id, `source:${node.id}`);
@@ -816,8 +821,7 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
   const sourceBox = new Map(sources.map((s) => [`source:${s.node.id}`, s.box]));
 
   /* ---- Checks ---- */
-  const checkBlock = model.checks.length * CHECK_H + Math.max(0, model.checks.length - 1) * CHECK_GAP;
-  let cy = Math.max(0, Math.round((rowsHeight - checkBlock) / 2));
+  let cy = 0;
   const checks = model.checks.map((check) => {
     const box: Box = { x: checksX, y: cy, w: checkW, h: CHECK_H };
     anchorOf.set(check.id, check.id);

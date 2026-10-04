@@ -9,6 +9,7 @@ import {
   COLLAPSE_AT,
   LEFT_W,
   ROW_H,
+  SOURCES_TOP,
   TOP_LANE,
   buildTopology,
   chainState,
@@ -313,12 +314,21 @@ test("layout is deterministic and keeps sources left, rows in one column, chains
   assert.ok(a.height >= a.rows[a.rows.length - 1]!.y + ROW_H);
 });
 
-test("the source sits level with the middle of the column, below the control plane", () => {
-  const a = layoutTopology(buildTopology(input()), { width: 1200 });
-  const rowsHeight = a.rows[a.rows.length - 1]!.y + a.rows[a.rows.length - 1]!.h;
-  const src = a.sources[0]!.box;
-  assert.ok(src.y >= a.cp.y + a.cp.h, "never over the control plane box");
-  assert.ok(Math.abs(src.y + src.h / 2 - rowsHeight / 2) <= 24 || src.y === a.cp.h + 24);
+test("the sources sit right under the control plane and the checks start at the top, however tall the column", () => {
+  const monitors = [monitor({ id: "a", node_ids: ["de"] }), monitor({ id: "b", node_ids: ["hk"] })];
+  const small = layoutTopology(buildTopology(input({ monitors })), { width: 1200 });
+  const tall = layoutTopology(buildTopology(fleet(COLLAPSE_AT, { layer: "all", monitors: [monitor({ id: "a", node_ids: ["n000"] }), monitor({ id: "b", node_ids: ["n001"] })] })), { width: 1200 });
+  assert.ok(tall.height > 1500, "a column far taller than one screen");
+  for (const a of [small, tall]) {
+    const src = a.sources[0]!.box;
+    assert.equal(src.y, SOURCES_TOP);
+    assert.ok(src.y >= a.cp.y + a.cp.h, "never over the control plane box");
+    assert.equal(a.checks[0]!.box.y, 0);
+  }
+  // Three sources stack down from the same place.
+  const three = plan({ config: { ...plan().config, sources: ["sh", "bj", "x"] } });
+  const stacked = layoutTopology(buildTopology(input({ plan: three })), { width: 1200 });
+  assert.deepEqual(stacked.sources.map((s) => s.box.y), [SOURCES_TOP, SOURCES_TOP + 68, SOURCES_TOP + 136]);
 });
 
 test("checks take a right column only when there are checks", () => {
