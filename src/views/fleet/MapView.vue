@@ -4,32 +4,45 @@
  * with counts, and a click that opens the node.
  *
  *   observed 4s ago · 31 of 34 located · 2 not reporting · 3 unlocated
- *   [map: clusters coloured by their worst member, a red count of the down]
- *   On one spot: 13 nodes in Los Angeles      Unlocated: 3 nodes [Set location]
+ *   [Latency from cd-hs-sh]                                   [+] [-] [fit]
+ *   [map: clusters coloured by their worst member, a red count of the down;
+ *    a pile no zoom can split spread out on leader lines, its members
+ *    listed beside it]
+ *   Last hour, p50 from cd-hs-sh: up to 50 ms, ... (only with the arcs)
+ *   Unlocated: 3 nodes [Set location]
  *
  * A cluster that a zoom can split zooms in; one node opens the node sheet on
- * ?open=; several mostly on one spot are listed on the first click, in a
- * panel beside the cluster (under the map on a phone), non-reporting first,
- * with focus moved into it. Editing a location
- * moved to the node's Settings, so the map no longer opens an editor, and
- * the trackpad hint is for pointers that have a trackpad, not phones.
+ * ?open=; several on one spot spread out around it (FleetMap), and the page
+ * lists them beside the spread (under the map on a phone), non-reporting
+ * first, a row and its leg lit together under the pointer. A pile the frame
+ * cannot hold apart is listed alone, with focus moved to the list.
+ *
+ * Beside the node list the page reads open incidents and the latency probes
+ * (both need monitor:read) for the map's card and its probe arcs; either
+ * read failing or forbidden says so in the card and the legend rather than
+ * leaving a blank. The arcs are off until asked for, and ?layer=latency
+ * keeps them on across a reload or a shared link.
  */
 import { computed, nextTick, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
 import { toast } from "@/lib/toast";
-import { RotateCw } from "lucide-vue-next";
+import { RotateCw, Waypoints } from "lucide-vue-next";
 
-import { api, unwrap, type Node, type NodeGeoResolveResult } from "@/lib/api";
+import { api, unwrap, type IncidentListResponse, type LatencyProbePlan, type LatencyRollups, type Node, type NodeGeoResolveResult } from "@/lib/api";
 import { useAsyncData } from "@/composables/useAsyncData";
 import { useProof } from "@/composables/useProof";
 import { useOwnedRoute } from "@/composables/useOwnedRoute";
+import { bindQueryParam } from "@/composables/useQueryParam";
 import { bindRouteOpen } from "@/composables/useRouteOpen";
 import { useAuthStore } from "@/stores/auth";
 import { countryName } from "@/lib/fleet";
+import { formatAge } from "@/lib/format";
 import { compareByAttention, describeNodeStatus, isReporting, nodeStatus } from "@/lib/nodeStatus";
 import { useMediaQuery } from "@/composables/useMediaQuery";
 import { clusterPlace } from "./fleetMapModel";
+import { isActive as incidentIsOpen } from "./incidentsModel";
+import { BAND_STYLE, LOSS_ATTENTION, buildLatencyMatrix } from "./latencyModel";
 import { cn } from "@/lib/utils";
 import { proofReason } from "@/components/common/proofModel";
 
@@ -39,13 +52,15 @@ import AttentionList, { type AttentionItem } from "@/components/common/Attention
 import StatusDot from "@/components/common/StatusDot.vue";
 import EmptyState from "@/components/common/EmptyState.vue";
 import DataState from "@/components/common/DataState.vue";
-import FleetMap from "@/components/fleet/FleetMap.vue";
+import FleetMap, { type FleetMapSpread } from "@/components/fleet/FleetMap.vue";
+import type { FactState, FleetMapFacts, LatencyFact } from "@/components/fleet/fleetMapTypes";
 import NodeSheet from "@/components/fleet/NodeSheet.vue";
 import { Button } from "@/components/ui/button";
 
 const auth = useAuthStore();
 const { t, locale } = useI18n();
 const canAdminNodes = computed(() => auth.can("node:admin"));
+const canReadMonitors = auth.can("monitor:read");
 
 const nodesQuery = useAsyncData<Node[]>((signal) => api.nodes.list({ signal }).then((r) => unwrap(r, "nodes")), {
   pollInterval: 10_000,
@@ -55,6 +70,7 @@ const proof = useProof(nodesQuery);
 
 const owned = useOwnedRoute();
 const sheet = bindRouteOpen(owned);
+const arcsOn = bindQueryParam<boolean>(owned, "layer", { parse: (raw) => raw === "latency", format: (on) => (on ? "latency" : undefined) });
 
 function located(node: Node): boolean {
   return typeof node.geo?.lat === "number" && typeof node.geo?.lon === "number";
@@ -69,6 +85,108 @@ const proofSegments = computed<ProofSegment[]>(() => {
   if (unlocated.value.length) out.push({ key: "unlocated", text: t("fleet.map.proof.unlocated", { n: unlocated.value.length }), tone: "muted" });
   return out;
 });
+
+/* ------------------------- incidents and latency ------------------------- */
+
+// Both need monitor:read; without it nothing is asked for and the card leaves the rows out.
+const incidentsQuery = useAsyncData<IncidentListResponse | undefined>(
+  (signal) => (canReadMonitors ? api.incidents.list(undefined, { signal }) : Promise.resolve(undefined)),
+  { pollInterval: 30_000, immediate: canReadMonitors },
+);
+const planQuery = useAsyncData<LatencyProbePlan | undefined>(
+  (signal) => (canReadMonitors ? api.monitors.latency.plan({ signal }) : Promise.resolve(undefined)),
+  { pollInterval: 60_000, immediate: canReadMonitors },
+);
+const rollupsQuery = useAsyncData<LatencyRollups | undefined>(
+  (signal) => (canReadMonitors ? api.monitors.latency.rollups({ signal }) : Promise.resolve(undefined)),
+  { pollInterval: 60_000, immediate: canReadMonitors },
+);
+
+function stateOf(query: { data: { value: unknown }; error: { value: unknown } }): FactState {
+  if (!canReadMonitors) return "denied";
+  if (query.data.value !== undefined) return "ready";
+  return query.error.value ? "failed" : "loading";
+}
+
+const openIncidents = computed(() => {
+  const counts = new Map<string, number>();
+  for (const incident of incidentsQuery.data.value?.incidents ?? []) {
+    if (!incident.node_id || !incidentIsOpen(incident)) continue;
+    counts.set(incident.node_id, (counts.get(incident.node_id) ?? 0) + 1);
+  }
+  return counts;
+});
+
+/** The last hour from the first configured source, one reading per target. */
+const latency = computed(() => {
+  const plan = planQuery.data.value;
+  if (!plan) return undefined;
+  const matrix = buildLatencyMatrix(plan, rollupsQuery.data.value, "1h", "p50");
+  const source = matrix.sources[0];
+  if (!source) return undefined;
+  const readings = new Map<string, LatencyFact>();
+  for (const row of matrix.rows) {
+    const cell = row.cells[0];
+    if (!cell) continue;
+    readings.set(row.node.node_id, {
+      kind: cell.kind,
+      band: cell.band,
+      p50Ms: cell.p50Ms,
+      loss: cell.loss,
+      samples: cell.samples,
+      expected: cell.expected,
+    });
+  }
+  return { sourceId: source.nodeId, sourceName: source.name, readings, lossAttention: LOSS_ATTENTION, otherSources: matrix.sources.length - 1 };
+});
+
+const latencyState = computed<FleetMapFacts["latencyState"]>(() => {
+  const state = stateOf(planQuery);
+  if (state !== "ready") return state;
+  return latency.value ? (rollupsQuery.data.value === undefined && rollupsQuery.error.value ? "failed" : "ready") : "nosource";
+});
+
+const facts = computed<FleetMapFacts>(() => ({
+  incidents: openIncidents.value,
+  incidentsState: stateOf(incidentsQuery),
+  latency: latency.value,
+  latencyState: latencyState.value,
+}));
+
+const sourceNode = computed(() => (latency.value ? nodes.value.find((node) => node.id === latency.value!.sourceId) : undefined));
+const latencyError = computed(() => planQuery.error.value ?? rollupsQuery.error.value);
+
+/** The legend's one line of state while the arcs are asked for, or undefined when the arcs are drawn. */
+const layerNotice = computed(() => {
+  switch (latencyState.value) {
+    case "loading":
+      return t("fleet.map.layer.reading");
+    case "failed":
+      return t("fleet.map.layer.failed", { reason: proofReason(latencyError.value) });
+    case "nosource":
+      return t("fleet.map.layer.noSource");
+    default:
+      if (latency.value && (!sourceNode.value || !located(sourceNode.value))) return t("fleet.map.layer.sourceUnlocated", { source: latency.value.sourceName });
+      return undefined;
+  }
+});
+
+const rollupsAge = computed(() => {
+  const at = Date.parse(rollupsQuery.data.value?.generated_at ?? "");
+  return Number.isFinite(at) ? formatAge(Math.max(0, Date.now() - at), locale.value) : "";
+});
+
+const legendBands = computed(() => [
+  { key: "success", swatch: BAND_STYLE.success.swatch, label: t("fleet.monitoring.latency.legend.under", { ms: 50 }) },
+  { key: "chart-2", swatch: BAND_STYLE["chart-2"].swatch, label: t("fleet.monitoring.latency.legend.under", { ms: 100 }) },
+  { key: "warning", swatch: BAND_STYLE.warning.swatch, label: t("fleet.monitoring.latency.legend.under", { ms: 250 }) },
+  { key: "destructive", swatch: BAND_STYLE.destructive.swatch, label: t("fleet.monitoring.latency.legend.over", { ms: 250 }) },
+]);
+
+function retryLatency(): void {
+  void planQuery.refresh();
+  void rollupsQuery.refresh();
+}
 
 /* ------------------------------ locate missing ------------------------------ */
 
@@ -117,13 +235,16 @@ const attention = computed<AttentionItem[]>(() => {
 /* --------------------------- a cluster on one spot --------------------------- */
 
 /**
- * Members of a cluster that a zoom would not split. From 768 px they open in
- * a panel beside the cluster, over the map; on a phone, under the map,
- * scrolled into view. Either way focus moves to the list's heading, and
- * Escape or Close gives it back to the cluster. Non-reporting members come
- * first: the offline node was eighth of twelve.
+ * Members of a pile on one spot. Spread on the map, they are listed beside
+ * the spread from 768 px, clear of its legs, and under the map on a phone;
+ * focus stays with the map's first leg. A pile too big to spread in the
+ * frame is listed alone, with focus moved to the list's heading. Escape or
+ * Close gives focus back to the cluster either way. Non-reporting members
+ * come first: the offline node was eighth of twelve.
  */
 const listedIds = ref<string[]>([]);
+/** spread: the map shows the members as legs; list: the list is all there is. */
+const listedFrom = ref<"spread" | "list">("list");
 const listed = computed(() =>
   listedIds.value
     .map((id) => nodes.value.find((node) => node.id === id))
@@ -145,32 +266,63 @@ const listedPlace = computed(() => {
 });
 const wide = useMediaQuery("(min-width: 768px)");
 const mapWrap = ref<HTMLElement | null>(null);
+const map = ref<InstanceType<typeof FleetMap> | null>(null);
 const listHeading = ref<HTMLElement | null>(null);
 let listOpener: Element | null = null;
-/** Where the cluster sits inside the map, for the panel beside it. */
-const anchor = ref<{ left: number; top: number; width: number; height: number } | null>(null);
+/** What the panel stays clear of, in px inside the map: the spread's box, or the listed cluster's mark. */
+const anchor = ref<{ left: number; top: number; right: number; bottom: number; width: number; height: number } | null>(null);
 const PANEL_W = 320;
+/** The side of the spread or the mark the panel takes: the right when it fits. */
+const panelSide = computed<"left" | "right" | null>(() => {
+  const at = anchor.value;
+  if (!at || !wide.value || !listed.value.length) return null;
+  return at.right + 16 + PANEL_W <= at.width - 8 ? "right" : "left";
+});
 const panelStyle = computed(() => {
   const at = anchor.value;
   if (!at) return {};
   const maxHeight = Math.max(160, Math.min(360, at.height - 16));
-  const right = at.left + 24 + PANEL_W <= at.width - 8;
-  const left = right ? at.left + 24 : Math.max(8, at.left - 24 - PANEL_W);
-  const top = Math.min(Math.max(8, at.top - 28), Math.max(8, at.height - maxHeight - 8));
+  const left = panelSide.value === "right" ? at.right + 16 : Math.max(8, at.left - 16 - PANEL_W);
+  const top = Math.min(Math.max(8, at.top), Math.max(8, at.height - maxHeight - 8));
   return { left: `${left}px`, top: `${top}px`, width: `${PANEL_W}px`, maxHeight: `${maxHeight}px` };
 });
 
+/** The member under the pointer, on the map or in the list: both light up. */
+const hoverId = ref<string | null>(null);
+let hoverFromMap = false;
+
+/** The map's leg under the pointer; its "none" (sent a moment after the pointer leaves) never clears a row hovered since. */
+function onMapHover(id: string | null): void {
+  if (id) hoverId.value = id;
+  else if (hoverFromMap) hoverId.value = null;
+  hoverFromMap = !!id;
+}
+
+function onRowHover(id: string | null): void {
+  hoverFromMap = false;
+  hoverId.value = id;
+}
+
 function onSelect(ids: string[], opener: Element): void {
   if (ids.length === 1) {
-    closeList(false);
+    if (listedFrom.value === "list") closeList(false);
     sheet.open(ids[0]!, opener as HTMLElement);
     return;
   }
+  // Too many to spread in this frame: list them, focus on the list.
   listOpener = opener;
+  listedFrom.value = "list";
   const wrap = mapWrap.value?.getBoundingClientRect();
   const mark = opener.getBoundingClientRect();
   anchor.value = wrap
-    ? { left: mark.left + mark.width / 2 - wrap.left, top: mark.top + mark.height / 2 - wrap.top, width: wrap.width, height: wrap.height }
+    ? {
+        left: mark.left - wrap.left,
+        top: mark.top - wrap.top - 28,
+        right: mark.right - wrap.left,
+        bottom: mark.bottom - wrap.top,
+        width: wrap.width,
+        height: wrap.height,
+      }
     : null;
   listedIds.value = ids;
   void nextTick(() => {
@@ -181,13 +333,35 @@ function onSelect(ids: string[], opener: Element): void {
   });
 }
 
+function onSpread(spread: FleetMapSpread | null): void {
+  if (!spread) {
+    if (listedFrom.value === "spread") {
+      listedIds.value = [];
+      anchor.value = null;
+    }
+    return;
+  }
+  listOpener = null;
+  listedFrom.value = "spread";
+  const wrap = mapWrap.value?.getBoundingClientRect();
+  anchor.value = wrap ? { ...spread.box, width: wrap.width, height: wrap.height } : null;
+  listedIds.value = spread.ids;
+}
+
 function closeList(returnFocus = true): void {
+  if (listedFrom.value === "spread") {
+    map.value?.collapse();
+    return;
+  }
   listedIds.value = [];
   anchor.value = null;
   const opener = listOpener;
   listOpener = null;
   if (returnFocus && (opener instanceof HTMLElement || opener instanceof SVGElement)) opener.focus();
 }
+
+/** The ring on the map: the open sheet's node, or every member of a pile listed without a spread. */
+const activeIds = computed(() => (sheet.openId.value ? [sheet.openId.value] : listedFrom.value === "list" ? listedIds.value : []));
 
 /** Why the node read failed, for the sheet; null while a first read retries, so the sheet shows it loading. */
 const sheetError = computed(() => (nodesQuery.error.value && !nodesQuery.loading.value ? proofReason(nodesQuery.error.value) : null));
@@ -230,14 +404,46 @@ const STATUS_TEXT: Record<string, string> = {
     <template v-else-if="nodesQuery.data.value !== undefined">
       <div class="min-w-0 space-y-2">
         <div ref="mapWrap" class="relative">
-          <FleetMap :nodes="nodes" :active-ids="sheet.openId.value ? [sheet.openId.value] : listedIds" @select="onSelect" />
-          <!-- From 768 px: the members beside the cluster they came from. -->
+          <FleetMap
+            ref="map"
+            :nodes="nodes"
+            :active-ids="activeIds"
+            :facts="facts"
+            :arcs="arcsOn"
+            :highlight-id="hoverId"
+            :spread-list-side="listedFrom === 'spread' ? panelSide : null"
+            @select="onSelect"
+            @spread="onSpread"
+            @hover="onMapHover"
+          >
+            <template #controls>
+              <button
+                type="button"
+                :class="
+                  cn(
+                    'inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-white disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-11',
+                    arcsOn ? 'border-white/40 bg-white/15 text-white hover:bg-white/20' : 'border-white/15 bg-black/50 text-white/85 hover:bg-black/70',
+                  )
+                "
+                :aria-pressed="arcsOn"
+                :disabled="!canReadMonitors"
+                :title="canReadMonitors ? undefined : $t('fleet.map.layer.denied')"
+                data-testid="map-latency-toggle"
+                @click="arcsOn = !arcsOn"
+              >
+                <Waypoints class="size-3.5 shrink-0" aria-hidden="true" />
+                <span class="truncate">{{ latency ? $t('fleet.map.layer.latency', { source: latency.sourceName }) : $t('fleet.map.layer.latencyPlain') }}</span>
+              </button>
+            </template>
+          </FleetMap>
+          <!-- From 768 px: the members beside the spread or the cluster they came from. -->
           <section
             v-if="listed.length && wide"
             class="absolute z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg"
             :style="panelStyle"
             aria-labelledby="map-listed"
             data-testid="map-listed-panel"
+            :data-from="listedFrom"
             @keydown.esc.stop.prevent="closeList()"
           >
             <header class="flex items-center gap-2 border-b border-border px-3 py-2">
@@ -250,11 +456,16 @@ const STATUS_TEXT: Record<string, string> = {
               <li v-for="node in listed" :key="node.id">
                 <button
                   type="button"
-                  class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                  :class="cn('flex h-8 w-full items-center gap-2 px-3 text-left text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-11', hoverId === node.id && 'bg-muted/40')"
+                  :data-node="node.id"
                   @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
+                  @pointerenter="onRowHover(node.id)"
+                  @pointerleave="onRowHover(null)"
+                  @focus="onRowHover(node.id)"
+                  @blur="onRowHover(null)"
                 >
                   <StatusDot :status="describeNodeStatus(node).health" :pulse="false" />
-                  <span class="min-w-0 truncate font-medium">{{ node.name || node.id }}</span>
+                  <span class="min-w-0 truncate font-mono text-[13px]">{{ node.name || node.id }}</span>
                   <span
                     v-if="nodeStatus(node) !== 'online'"
                     :class="cn('ms-auto shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(node).tone])"
@@ -264,33 +475,69 @@ const STATUS_TEXT: Record<string, string> = {
             </ul>
           </section>
         </div>
+
+        <!-- The arcs' legend, with what the layer last heard; or why there are no arcs. -->
+        <div v-if="arcsOn" class="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground" data-testid="map-latency-legend">
+          <template v-if="layerNotice">
+            <span :class="latencyState === 'failed' ? 'text-destructive' : undefined">{{ layerNotice }}</span>
+            <button v-if="latencyState === 'failed'" type="button" class="underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:min-h-11" @click="retryLatency">
+              {{ $t('common.actions.retry') }}
+            </button>
+          </template>
+          <template v-else-if="latency">
+            <span class="text-foreground">{{ $t('fleet.map.layer.legend', { source: latency.sourceName }) }}</span>
+            <span v-for="band in legendBands" :key="band.key" class="inline-flex items-center gap-1.5">
+              <span :class="cn('h-0.5 w-4 rounded-full', band.swatch)" aria-hidden="true" />{{ band.label }}
+            </span>
+            <span>{{ $t('fleet.map.layer.lossy', { pct: Math.round(LOSS_ATTENTION * 100) }) }}</span>
+            <span>{{ $t('fleet.map.layer.worst') }}</span>
+            <span class="inline-flex items-center gap-1.5">
+              <span class="w-4 border-t-2 border-dotted border-destructive" aria-hidden="true" />{{ $t('fleet.map.layer.failing') }}
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+              <span class="w-4 border-t-2 border-dotted border-muted-foreground" aria-hidden="true" />{{ $t('fleet.map.layer.unknown') }}
+            </span>
+            <span v-if="rollupsAge" class="font-mono">{{ $t('fleet.map.layer.heard', { age: rollupsAge }) }}</span>
+          </template>
+          <span v-if="latency && latency.otherSources > 0">{{ $t('fleet.map.layer.otherSources', { n: latency.otherSources }, latency.otherSources) }}</span>
+          <RouterLink
+            :to="{ name: 'monitoring', query: { view: 'latency' } }"
+            class="underline decoration-dotted underline-offset-2 hover:text-foreground pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+          >
+            {{ $t('fleet.map.layer.open') }}
+          </RouterLink>
+        </div>
         <p class="hidden text-xs text-muted-foreground pointer-fine:block">{{ $t('fleet.map.canvasHint') }}</p>
+        <p class="hidden text-xs text-muted-foreground pointer-coarse:block">{{ $t('fleet.map.touchHint') }}</p>
+        <p id="fleet-map-keys" class="hidden text-xs text-muted-foreground pointer-fine:block">{{ $t('fleet.map.keysHint') }}</p>
       </div>
 
       <div class="grid min-w-0 grid-cols-1 items-start gap-5 lg:grid-cols-2">
-        <!-- On a phone: the members under the map, scrolled into view. -->
+        <!-- On a phone: the members under the map. -->
         <section
           v-if="listed.length && !wide"
           class="overflow-hidden rounded-lg border border-border bg-card"
           aria-labelledby="map-listed"
           data-testid="map-listed-panel"
+          :data-from="listedFrom"
           @keydown.esc.stop.prevent="closeList()"
         >
           <header class="flex items-center gap-2 border-b border-border px-4 py-2.5">
-            <h2 id="map-listed" ref="listHeading" tabindex="-1" class="rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <h2 id="map-listed" ref="listHeading" tabindex="-1" class="min-w-0 truncate rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {{ $t('fleet.map.listed.title', { n: listed.length, place: listedPlace || $t('fleet.map.cluster.somewhere') }) }}
             </h2>
-            <Button variant="ghost" size="sm" class="ms-auto" type="button" @click="closeList()">{{ $t('common.actions.close') }}</Button>
+            <Button variant="ghost" size="sm" class="ms-auto pointer-coarse:h-11" type="button" @click="closeList()">{{ $t('common.actions.close') }}</Button>
           </header>
           <ul class="divide-y divide-border">
             <li v-for="node in listed" :key="node.id">
               <button
                 type="button"
                 class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:min-h-11"
+                :data-node="node.id"
                 @click="sheet.open(node.id, $event.currentTarget as HTMLElement)"
               >
                 <StatusDot :status="describeNodeStatus(node).health" />
-                <span class="min-w-0 truncate font-medium">{{ node.name || node.id }}</span>
+                <span class="min-w-0 truncate font-mono text-[13px]">{{ node.name || node.id }}</span>
                 <span
                   v-if="nodeStatus(node) !== 'online'"
                   :class="cn('ms-auto shrink-0 text-xs', STATUS_TEXT[describeNodeStatus(node).tone])"
