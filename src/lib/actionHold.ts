@@ -14,6 +14,10 @@
  * longer reports anything that needs the rows where they are (the caller's
  * pointer over the list, keyboard focus on an Undo). While blocked it asks
  * again every `recheckMs`, and at once whenever `check()` is called.
+ *
+ * Anything else an action leaves on screen for the same time joins the same
+ * group through `keep()`: End now's ended banner line, which would otherwise
+ * expire on its own clock and move the whole list below it.
  */
 
 export interface ActionHoldState {
@@ -25,6 +29,8 @@ export interface ActionHoldState {
   undone: ReadonlySet<string>;
   /** Rows that stay listed whatever the filter says. */
   pinned: ReadonlySet<string>;
+  /** Other keys the caller keeps on screen until the group goes (ended banner lines). */
+  kept: ReadonlySet<string>;
 }
 
 export interface ActionHoldOptions {
@@ -47,12 +53,16 @@ export interface ActionHold {
   acked(id: string): void;
   /** Snooze was pressed: the row stays listed. */
   snoozed(id: string): void;
+  /** Something else was acted on and stays on screen with the group (`kept`). */
+  keep(key: string): void;
   /** Undo landed: Acknowledge comes back once the list shows the row open (undoSlot). */
   undone(id: string): void;
   /** The row can no longer be undone (the server refused): it shows what its state allows. */
   closeUndo(id: string): void;
   /** Something blocked() reads may have changed: release now if the group may go. */
   check(): void;
+  /** Whether the group's time is up and only a block keeps it: a pointer move may then free it. */
+  due(): boolean;
   /** Drop the group at once: the view changed under it (a filter, a search). */
   release(): void;
   dispose(): void;
@@ -77,12 +87,12 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
   const clearTimer = options.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const now = options.now ?? (() => Date.now());
 
-  let state: ActionHoldState = { order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY };
+  let state: ActionHoldState = { order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY, kept: EMPTY };
   let deadline = 0;
   let timer: unknown;
 
   function active(): boolean {
-    return state.order !== null || state.undoable.size > 0 || state.pinned.size > 0;
+    return state.order !== null || state.undoable.size > 0 || state.pinned.size > 0 || state.kept.size > 0;
   }
 
   function arm(ms: number): void {
@@ -108,7 +118,7 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
     if (timer !== undefined) clearTimer(timer);
     timer = undefined;
     if (!active()) return;
-    set({ order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY });
+    set({ order: null, undoable: EMPTY, undone: EMPTY, pinned: EMPTY, kept: EMPTY });
   }
 
   function check(): void {
@@ -133,6 +143,10 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
       extend();
       set({ pinned: plus(state.pinned, id) });
     },
+    keep(key) {
+      extend();
+      set({ kept: plus(state.kept, key) });
+    },
     undone(id) {
       extend();
       if (state.undoable.has(id)) set({ undone: plus(state.undone, id) });
@@ -141,6 +155,7 @@ export function createActionHold(options: ActionHoldOptions): ActionHold {
       set({ undoable: minus(state.undoable, id), undone: minus(state.undone, id) });
     },
     check,
+    due: () => active() && now() >= deadline,
     release,
     dispose() {
       if (timer !== undefined) clearTimer(timer);
@@ -161,4 +176,60 @@ export function undoSlot(id: string, state: string, hold: Pick<ActionHoldState, 
   if (!hold.undoable.has(id)) return null;
   if (!hold.undone.has(id)) return "undo";
   return state === "acknowledged" ? "settling" : null;
+}
+
+/** A rectangle in viewport pixels, as getBoundingClientRect gives it. */
+export interface ZoneRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * Where the pointer is, for `blocked()`. A mouse or pen is tracked by its
+ * position and compared with the zone's rectangle when the hold asks, not by
+ * the zone's pointerenter and pointerleave: a modal menu sets
+ * `pointer-events: none` on the body, which fires pointerleave on the list
+ * while the pointer has not moved, and nothing fires pointerenter again when
+ * the menu closes. A finger does not hover, so after a tap the hold stays
+ * until the page scrolls.
+ */
+export interface PointerWatch {
+  /** A pointer moved or went down at (x, y). */
+  pointer(type: string, x: number, y: number, down: boolean): void;
+  /** The mouse left the window. */
+  left(): void;
+  /** The page scrolled; true when that ended a finger's hold. */
+  scrolled(): boolean;
+  /** Whether the pointer still needs what is in `zone` to stay where it is. */
+  holds(zone: ZoneRect | null): boolean;
+}
+
+export function createPointerWatch(): PointerWatch {
+  let at: { x: number; y: number } | null = null;
+  let touched = false;
+  return {
+    pointer(type, x, y, down) {
+      if (type === "touch") {
+        if (down) touched = true;
+        return;
+      }
+      at = { x, y };
+      touched = false;
+    },
+    left() {
+      at = null;
+    },
+    scrolled() {
+      if (!touched) return false;
+      touched = false;
+      return true;
+    },
+    holds(zone) {
+      if (touched) return true;
+      if (!at || !zone) return false;
+      return at.x >= zone.left && at.x <= zone.right && at.y >= zone.top && at.y <= zone.bottom;
+    },
+  };
 }

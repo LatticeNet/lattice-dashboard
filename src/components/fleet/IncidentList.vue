@@ -227,7 +227,20 @@ function claim(incident: Incident): string {
   return t(`fleet.keepalive.claim.${kind.replace(".", "_")}`, { subject: nodeName(incident) || subject(incident) });
 }
 
+/**
+ * The phone line, and who acknowledged it when someone has: in the line's
+ * own text rather than a badge, so acknowledging changes the words on a line
+ * that is already there instead of adding a taller piece that wraps at 375
+ * and moves every row below it.
+ */
 function phoneLine(incident: Incident): string {
+  const line = phoneStateLine(incident);
+  if (incident.state !== "acknowledged") return line;
+  const by = t("fleet.keepalive.phone.acknowledgedBy", { who: incident.acked_by || "?", time: clock(Date.parse(incident.acked_at ?? "")) });
+  return line ? `${line} · ${by}` : by;
+}
+
+function phoneStateLine(incident: Incident): string {
   const state = phoneState(incident, props.now);
   switch (state.key) {
     case "pending":
@@ -276,7 +289,6 @@ const rows = computed(() =>
     const snoozed = isSnoozed(incident, props.now);
     const phone = phoneState(incident, props.now);
     const badges: { key: string; text: string; variant: "secondary" | "outline" | "warning" }[] = [];
-    if (incident.state === "acknowledged") badges.push({ key: "ack", text: t("fleet.keepalive.badge.acknowledged", { who: incident.acked_by || "?", time: clock(Date.parse(incident.acked_at ?? "")) }), variant: "secondary" });
     if (snoozed) badges.push({ key: "snooze", text: t("fleet.keepalive.badge.snoozed", { time: clock(Date.parse(incident.snoozed_until ?? "")) }), variant: "secondary" });
     // The phone line already names a window that holds the message.
     const heldByWindow = phone.key === "held" && phone.reason === "maintenance";

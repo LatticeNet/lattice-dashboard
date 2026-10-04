@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createActionHold, undoSlot } from "../actionHold.ts";
+import { createActionHold, createPointerWatch, undoSlot } from "../actionHold.ts";
 
 /** A clock and timers the test moves by hand. */
 function fakeTime() {
@@ -159,4 +159,79 @@ test("a later action keeps the order already held when it does not pass one", ()
   hold.begin(["a", "b", "c"]);
   hold.begin(undefined);
   assert.deepEqual(hold.state().order, ["a", "b", "c"]);
+});
+
+test("an ended banner line is kept with the rows and goes with them, so the list below it moves once", () => {
+  const { hold, time } = setup();
+  // End now on a window, then Acknowledge a row 2 s later.
+  hold.keep("window:mw_kernel");
+  time.advance(2_000);
+  hold.begin(["dmit4", "bandwagon"]);
+  hold.acked("dmit4");
+  // The line's own 10 s are up, but the row acted on later still holds the group.
+  time.advance(8_500);
+  assert.equal(hold.state().kept.has("window:mw_kernel"), true);
+  assert.equal(hold.state().pinned.has("dmit4"), true);
+  time.advance(1_500);
+  assert.equal(hold.state().kept.size, 0);
+  assert.equal(hold.state().pinned.size, 0);
+});
+
+test("a kept line alone is a group: it waits for the block like rows do", () => {
+  let blocked = true;
+  const { hold, time } = setup(() => blocked);
+  hold.keep("window:mw_a");
+  time.advance(30_000);
+  assert.equal(hold.state().kept.has("window:mw_a"), true);
+  blocked = false;
+  hold.check();
+  assert.equal(hold.state().kept.size, 0);
+});
+
+test("due() is true only once the time is up and something still holds the group", () => {
+  const { hold, time } = setup(() => true);
+  assert.equal(hold.due(), false, "nothing held");
+  hold.begin(["a"]);
+  hold.acked("a");
+  time.advance(9_999);
+  assert.equal(hold.due(), false);
+  time.advance(1);
+  assert.equal(hold.due(), true);
+  hold.release();
+  assert.equal(hold.due(), false);
+});
+
+test("a mouse holds while it is inside the zone, by position, whatever the boundary events said", () => {
+  const watch = createPointerWatch();
+  const zone = { left: 0, top: 100, right: 800, bottom: 900 };
+  assert.equal(watch.holds(zone), false, "no pointer seen yet");
+  watch.pointer("mouse", 400, 455, false);
+  // A modal Snooze menu opening fires pointerleave on the list without the
+  // pointer moving; the position still says it is over the list.
+  assert.equal(watch.holds(zone), true);
+  watch.pointer("mouse", 400, 50, false);
+  assert.equal(watch.holds(zone), false, "above the zone");
+  watch.pointer("pen", 10, 120, true);
+  assert.equal(watch.holds(zone), true, "a pen hovers like a mouse");
+  watch.left();
+  assert.equal(watch.holds(zone), false, "left the window");
+  assert.equal(watch.holds(null), false);
+});
+
+test("a finger holds after a tap until the page scrolls, wherever the zone is", () => {
+  const watch = createPointerWatch();
+  watch.pointer("touch", 97, 233, false);
+  assert.equal(watch.holds({ left: 0, top: 0, right: 375, bottom: 800 }), false, "a touch move without a press is not a tap");
+  watch.pointer("touch", 97, 233, true);
+  assert.equal(watch.holds(null), true);
+  assert.equal(watch.scrolled(), true);
+  assert.equal(watch.holds(null), false);
+  assert.equal(watch.scrolled(), false, "a second scroll changes nothing");
+});
+
+test("a mouse after a tap ends the finger's hold: the mouse is the pointer now", () => {
+  const watch = createPointerWatch();
+  watch.pointer("touch", 97, 233, true);
+  watch.pointer("mouse", 1000, 10, false);
+  assert.equal(watch.holds({ left: 0, top: 100, right: 800, bottom: 900 }), false);
 });

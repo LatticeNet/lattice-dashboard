@@ -1668,6 +1668,7 @@ export default {
         paged: "Paged {time}",
         escalated: "reminder re-sent {time}",
         unacknowledged: "not acknowledged",
+        acknowledgedBy: "acknowledged by {who} {time}",
         recoveryOwed: "Recovery queued",
         recoveryHeld: "Recovery held until it stops flapping",
         recovered: "Recovery sent {time}",
@@ -1677,7 +1678,6 @@ export default {
         lasted: "lasted {age}",
       },
       badge: {
-        acknowledged: "Acknowledged by {who} {time}",
         snoozed: "Snoozed until {time}",
         maintenance: "Maintenance: {name}",
         flapping: "Flapped {n} times",
