@@ -532,12 +532,38 @@ export function edgesOf(model: Pick<TopologyModel, "edges">, id: string): TopoEd
   return model.edges.filter((e) => e.from === id || e.to === id);
 }
 
-/** What a node's row says about the probes into it: the worst one, and how many there are. */
+/**
+ * States that describe the path now. Quiet and stale are history, unknown is
+ * silence and paused is off: none of them says how the path behaves today.
+ */
+const LIVE: Record<TopoEdgeKind, ReadonlySet<string>> = {
+  probe: new Set(["measured", "lossy", "failing"]),
+  chain: new Set(["converged", "pending", "drifted", "failed"]),
+  check: new Set(["up", "failing"]),
+};
+
+export function isLive(edge: Pick<TopoEdge, "kind" | "state">): boolean {
+  return LIVE[edge.kind].has(edge.state);
+}
+
+/**
+ * The edge that speaks for several into one place (a row's probes, a folded
+ * bundle): the worst of the live ones, and the worst of the rest only when
+ * none is live. Severity alone ranks quiet above every measured band, so one
+ * source that stopped reporting would grey a row the live sources still
+ * measure. Lists keep plain severity order.
+ */
+export function worstLive(edges: readonly TopoEdge[]): TopoEdge {
+  const live = edges.filter(isLive);
+  const pool = live.length ? live : edges;
+  return pool.reduce((a, b) => (b.severity < a.severity ? b : a));
+}
+
+/** What a node's row says about the probes into it: the worst live one, and how many there are. */
 export function rowProbe(model: Pick<TopologyModel, "edges">, nodeId: string): { edge: TopoEdge; count: number } | undefined {
   const into = model.edges.filter((e) => e.kind === "probe" && e.to === nodeId);
   if (into.length === 0) return undefined;
-  const worst = into.reduce((a, b) => (b.severity < a.severity ? b : a));
-  return { edge: worst, count: into.length };
+  return { edge: worstLive(into), count: into.length };
 }
 
 /** Every path worst first, for the list and for the phone. */
@@ -831,7 +857,7 @@ export function layoutTopology(model: TopologyModel, options: LayoutOptions): To
 
   const edges: LayoutEdge[] = [];
   for (const [key, { edges: list, from, to }] of bundles) {
-    const worst = list.reduce((a, b) => (b.severity < a.severity ? b : a));
+    const worst = worstLive(list);
     let d: string;
     let end: LayoutEdge["end"];
     // A chain out of a probe source rides 6 px below the probe to the same row, so the two never merge.

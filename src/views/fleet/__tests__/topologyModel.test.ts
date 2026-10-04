@@ -385,3 +385,70 @@ test("hovering an endpoint lights itself and its neighbours", () => {
   const m = buildTopology(input());
   assert.deepEqual([...neighbourhood(m, "hk")].sort(), ["bj", "hk", "sh", "us1"]);
 });
+
+/* ---- Fix pass: rows and bundles, reads, boundaries ---- */
+
+/**
+ * One source (sh) and `count` probed targets spread over four countries.
+ * `shape` says how each target's probe reads: measured at 150 ms, failing,
+ * or measured with a last probe two days old (quiet).
+ */
+function fleet(
+  count: number,
+  over: Partial<TopologyInput> & { shape?: (id: string, index: number) => "measured" | "failing" | "old" } = {},
+): TopologyInput {
+  const { shape = () => "measured", ...rest } = over;
+  const nodes: Node[] = [node("sh", "cd-hs-sh", "CN")];
+  const targets: LatencyProbePlan["nodes"] = [{ node_id: "sh", name: "cd-hs-sh", country: "CN", region: "mainland", source: true, target: "none" }];
+  const pairs: LatencyProbePlan["pairs"] = [];
+  const rpairs: LatencyRollups["pairs"] = [];
+  const countries = ["US", "JP", "DE", "SG"];
+  for (let i = 0; i < count; i++) {
+    const id = `n${String(i).padStart(3, "0")}`;
+    const country = countries[i % countries.length]!;
+    nodes.push(node(id, `node-${id}`, country));
+    targets.push({ node_id: id, name: `node-${id}`, country, region: "outside_mainland", source: false, target: "probed", monitor_id: `m_${id}`, endpoint: "203.0.113.1:443" });
+    pairs.push({ source: "sh", target: id, enabled: true, active: true, monitor_id: `m_${id}` });
+    const kind = shape(id, i);
+    const window = kind === "failing" ? { samples: 60, failures: 60, expected: 60, loss: 1 } : { samples: 60, failures: 0, expected: 60, p50_ms: 150, p95_ms: 170, loss: 0 };
+    rpairs.push({ source: "sh", target: id, monitor_id: `m_${id}`, windows: { "1h": window }, latest: latest(`m_${id}`, kind === "old" ? 2 * 86_400_000 : 10_000, kind !== "failing", 150) });
+  }
+  return { nodes, plan: { ...plan(), nodes: targets, pairs }, rollups: { ...ROLLUPS, pairs: rpairs }, chains: [], monitors: [], incidents: [], window: "1h", layer: "probes", now: NOW, ...rest };
+}
+
+test("a row speaks for its live probes: one source that stopped reporting does not grey what the others measure", () => {
+  const nodes = [...NODES.map((n) => (n.id === "bj" ? ({ ...n, status: "offline", online: false, last_seen: ago(3_600_000) } as Node) : n)), node("gz", "cd-gz", "CN")];
+  const three = plan({ config: { ...plan().config, sources: ["sh", "bj", "gz"] } });
+  three.pairs.push({ source: "bj", target: "hk", enabled: true, active: true, monitor_id: "mon_lat_hk" }, { source: "gz", target: "hk", enabled: true, active: true, monitor_id: "mon_lat_hk" });
+  const win = (p50: number) => ({ "1h": { samples: 60, failures: 0, expected: 60, p50_ms: p50, p95_ms: p50 + 10, loss: 0 } });
+  const rollups = {
+    ...ROLLUPS,
+    pairs: [
+      ...ROLLUPS.pairs,
+      { source: "bj", target: "hk", monitor_id: "mon_lat_hk", windows: win(40), latest: latest("mon_lat_hk", 20_000, true, 40) },
+      { source: "gz", target: "hk", monitor_id: "mon_lat_hk", windows: win(160), latest: latest("mon_lat_hk", 20_000, true, 160) },
+    ],
+  };
+  const m = buildTopology(input({ nodes, plan: three, rollups }));
+  assert.equal(edge(m, "probe:bj~hk").state, "quiet", "the dead source's edge is history");
+  const row = rowProbe(m, "hk")!;
+  assert.equal(row.count, 3);
+  assert.equal(row.edge.from, "gz", "the worst live measurement, not the grey history");
+  assert.equal(row.edge.state, "measured");
+  assert.equal(row.edge.p50Ms, 160);
+  // With nothing live, the grey is all there is to show.
+  const allDead = buildTopology(input({ nodes: nodes.map((n) => (n.id === "gz" || n.id === "sh" ? ({ ...n, status: "offline", online: false, last_seen: ago(3_600_000) } as Node) : n)), plan: three, rollups }));
+  assert.equal(rowProbe(allDead, "hk")!.edge.state, "quiet");
+  // Lists still put the quiet path above the healthy ones.
+  assert.ok(pathsWorstFirst(m).findIndex((e) => e.id === "probe:bj~hk") < pathsWorstFirst(m).findIndex((e) => e.id === "probe:gz~hk"));
+});
+
+test("a folded bundle is drawn as its worst live member; grey only when every member is history", () => {
+  // n000, n004, n008 ... are US. One US probe is two days old; the rest measure.
+  const some = layoutTopology(buildTopology(fleet(COLLAPSE_AT + 4, { shape: (id) => (id === "n004" ? "old" : "measured") })), { width: 1200 });
+  const us = some.edges.find((e) => e.key.endsWith(">country:US"))!;
+  assert.ok(us.bundle.some((e) => e.state === "quiet"));
+  assert.equal(us.edge.state, "measured");
+  const allOld = layoutTopology(buildTopology(fleet(COLLAPSE_AT + 4, { shape: (_id, i) => (i % 4 === 0 ? "old" : "measured") })), { width: 1200 });
+  assert.equal(allOld.edges.find((e) => e.key.endsWith(">country:US"))!.edge.state, "quiet");
+});

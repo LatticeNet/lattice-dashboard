@@ -28,6 +28,7 @@ import {
   layoutTopology,
   neighbourhood,
   rowProbe,
+  worstLive,
   type LayoutEdge,
   type LayoutRow,
   type TopoCheck,
@@ -244,7 +245,7 @@ function summarizeCountry(row: Extract<LayoutRow, { type: "country" }>) {
   const median = measured.length ? measured[Math.floor(measured.length / 2)]! : undefined;
   const band = median !== undefined ? latencyBand(median) : undefined;
   return {
-    text: median !== undefined ? formatMs(median) : edgeValue(t, into.reduce((a, b) => (b.severity < a.severity ? b : a))).text,
+    text: median !== undefined ? formatMs(median) : edgeValue(t, worstLive(into)).text,
     tone: band ? BAND_STYLE[band].text : "text-muted-foreground",
     problems,
   };
