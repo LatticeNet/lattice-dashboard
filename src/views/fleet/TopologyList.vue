@@ -122,7 +122,19 @@ function open(edge: TopoEdge, el: HTMLElement): void {
           >
             <!-- The edge's own stroke, so the list and the graph read alike. -->
             <svg class="absolute inset-y-2 start-1.5 w-1" viewBox="0 0 4 40" preserveAspectRatio="none" aria-hidden="true">
+              <!-- A chain's two rails, as in the graph. -->
+              <template v-if="edgeStyle(edge).double">
+                <line
+                  v-for="x in [0.75, 3.25]"
+                  :key="x"
+                  :x1="x" y1="2" :x2="x" y2="38"
+                  stroke-width="1.5"
+                  :stroke-dasharray="edgeStyle(edge).stroke === 'dashed' ? '8 5' : undefined"
+                  :style="{ stroke: `var(${edgeStyle(edge).color})` }"
+                />
+              </template>
               <line
+                v-else
                 x1="2" y1="2" x2="2" y2="38"
                 stroke-linecap="round"
                 :stroke-width="edgeStyle(edge).width + 1"

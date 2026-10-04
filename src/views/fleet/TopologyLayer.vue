@@ -206,21 +206,22 @@ const chainsLoading = computed(
 const showsProbes = computed(() => layerParam.value === "all" || layerParam.value === "probes");
 const showsChains = computed(() => (layerParam.value === "all" || layerParam.value === "chains") && model.value.counts.chains > 0);
 const showsChecks = computed(() => (layerParam.value === "all" || layerParam.value === "checks") && model.value.checks.length > 0);
-const LEGEND_PROBES = computed(() => [
-  { key: "success", color: "--success", dash: undefined, width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 50 }) },
-  { key: "chart-2", color: "--chart-2", dash: undefined, width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 100 }) },
-  { key: "warning", color: "--warning", dash: undefined, width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 250 }) },
-  { key: "destructive", color: "--destructive", dash: undefined, width: 2, label: t("fleet.monitoring.topology.legend.over", { ms: 250 }) },
-  { key: "lossy", color: "--warning", dash: undefined, width: 3.5, label: t("fleet.monitoring.topology.legend.lossy", { pct: Math.round(LOSS_ATTENTION * 100) }) },
+type LegendItem = { key: string; color: string; dash?: string; width: number; double?: boolean; label: string };
+const LEGEND_PROBES = computed<LegendItem[]>(() => [
+  { key: "success", color: "--success", width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 50 }) },
+  { key: "chart-2", color: "--chart-2", width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 100 }) },
+  { key: "warning", color: "--warning", width: 2, label: t("fleet.monitoring.topology.legend.under", { ms: 250 }) },
+  { key: "destructive", color: "--destructive", width: 2, label: t("fleet.monitoring.topology.legend.over", { ms: 250 }) },
+  { key: "lossy", color: "--warning", width: 3.5, label: t("fleet.monitoring.topology.legend.lossy", { pct: Math.round(LOSS_ATTENTION * 100) }) },
   { key: "failing", color: "--destructive", dash: "5 4", width: 2, label: t("fleet.monitoring.topology.legend.failing") },
   { key: "quiet", color: "--muted-foreground", dash: "5 4", width: 1.5, label: t("fleet.monitoring.topology.legend.quiet") },
   { key: "unknown", color: "--muted-foreground", dash: "1.5 3.5", width: 1.5, label: t("fleet.monitoring.topology.legend.unknown") },
 ]);
-const LEGEND_CHAINS = computed(() => [
-  { key: "chain", color: "--primary", dash: undefined, width: 2, label: t("fleet.monitoring.topology.legend.chain") },
-  { key: "chainBroken", color: "--warning", dash: undefined, width: 2, label: t("fleet.monitoring.topology.legend.chainBroken") },
+const LEGEND_CHAINS = computed<LegendItem[]>(() => [
+  { key: "chain", color: "--primary", width: 4.5, double: true, label: t("fleet.monitoring.topology.legend.chain") },
+  { key: "chainBroken", color: "--warning", width: 4.5, double: true, label: t("fleet.monitoring.topology.legend.chainBroken") },
 ]);
-const LEGEND_CHECKS = computed(() => [{ key: "check", color: "--success", dash: undefined, width: 1.5, label: t("fleet.monitoring.topology.legend.check") }]);
+const LEGEND_CHECKS = computed<LegendItem[]>(() => [{ key: "check", color: "--success", width: 1.5, label: t("fleet.monitoring.topology.legend.check") }]);
 const legend = computed(() => [...(showsProbes.value ? LEGEND_PROBES.value : []), ...(showsChains.value ? LEGEND_CHAINS.value : []), ...(showsChecks.value ? LEGEND_CHECKS.value : [])]);
 const folds = computed(() => model.value.members.length > COLLAPSE_AT);
 
@@ -323,7 +324,8 @@ const SEGMENT = "rounded px-2.5 py-1 outline-none transition-colors focus-visibl
             >
               <span v-for="item in legend" :key="item.key" class="inline-flex items-center gap-1.5">
                 <svg width="22" height="8" aria-hidden="true">
-                  <line x1="1" y1="4" x2="21" y2="4" stroke-linecap="round" :stroke-width="item.width" :stroke-dasharray="item.dash" :style="{ stroke: `var(${item.color})` }" />
+                  <line x1="1" y1="4" x2="21" y2="4" :stroke-linecap="item.double ? 'butt' : 'round'" :stroke-width="item.width" :stroke-dasharray="item.dash" :style="{ stroke: `var(${item.color})` }" />
+                  <line v-if="item.double" x1="0" y1="4" x2="22" y2="4" stroke-width="1.5" style="stroke: var(--background)" />
                 </svg>
                 {{ item.label }}
               </span>

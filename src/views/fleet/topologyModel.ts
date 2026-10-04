@@ -585,6 +585,12 @@ export interface EdgeStyle {
   color: string;
   stroke: EdgeStroke;
   width: number;
+  /**
+   * Drawn as two rails (the colour, with the card's colour down its middle).
+   * Chains carry it so that shape, not only hue, tells them from probes: the
+   * accent and the info blue sit next to the two fastest latency bands.
+   */
+  double?: boolean;
 }
 
 const BAND_VAR: Record<LatencyBand, string> = {
@@ -619,13 +625,13 @@ export function edgeStyle(edge: Pick<TopoEdge, "kind" | "state" | "band">): Edge
     case "chain":
       switch (edge.state) {
         case "converged":
-          return { color: "--primary", stroke: "solid", width: 2 };
+          return { color: "--primary", stroke: "solid", width: 4.5, double: true };
         case "drifted":
-          return { color: "--warning", stroke: "solid", width: 2 };
+          return { color: "--warning", stroke: "solid", width: 4.5, double: true };
         case "failed":
-          return { color: "--destructive", stroke: "dashed", width: 2 };
+          return { color: "--destructive", stroke: "dashed", width: 4.5, double: true };
         default:
-          return { color: "--info", stroke: "dashed", width: 1.5 };
+          return { color: "--info", stroke: "dashed", width: 4.5, double: true };
       }
     case "check":
       switch (edge.state) {

@@ -179,7 +179,8 @@ function onEdgeClick(le: LayoutEdge): void {
 
 function dash(le: LayoutEdge): string | undefined {
   const style = edgeStyle(le.edge);
-  if (style.stroke === "dashed") return "5 4";
+  // A double rail has butt caps, so its dashes need their own rhythm to stay apart.
+  if (style.stroke === "dashed") return style.double ? "8 5" : "5 4";
   if (style.stroke === "dotted") return "1.5 3.5";
   return undefined;
 }
@@ -477,10 +478,19 @@ const cardStyle = computed(() => {
             <path
               :d="le.d"
               fill="none"
-              stroke-linecap="round"
+              :stroke-linecap="edgeStyle(le.edge).double ? 'butt' : 'round'"
               :stroke-width="edgeWidth(le)"
               :stroke-dasharray="dash(le)"
               :style="{ stroke: `var(${edgeStyle(le.edge).color})` }"
+            />
+            <!-- A chain's second rail: the card's colour down the middle of the stroke. -->
+            <path
+              v-if="edgeStyle(le.edge).double"
+              :d="le.d"
+              fill="none"
+              stroke-width="1.5"
+              :stroke-dasharray="dash(le)"
+              style="stroke: var(--card)"
             />
             <path v-if="arrow(le)" :d="arrow(le)" :style="{ fill: `var(${edgeStyle(le.edge).color})` }" />
             <path

@@ -462,3 +462,8 @@ test("a folded bundle is drawn as its worst live member; grey only when every me
   const allOld = layoutTopology(buildTopology(fleet(COLLAPSE_AT + 4, { shape: (_id, i) => (i % 4 === 0 ? "old" : "measured") })), { width: 1200 });
   assert.equal(allOld.edges.find((e) => e.key.endsWith(">country:US"))!.edge.state, "quiet");
 });
+
+test("chains are drawn as two rails, so shape and not only hue tells them from probes", () => {
+  const m = buildTopology(input());
+  for (const e of m.edges) assert.equal(!!edgeStyle(e).double, e.kind === "chain", e.id);
+});
