@@ -2,7 +2,7 @@
 import { computed, getCurrentInstance, nextTick, onMounted, ref, watch, type HTMLAttributes } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter, type RouteLocationRaw } from "vue-router";
-import { useDebounceFn, useMediaQuery } from "@vueuse/core";
+import { useDebounceFn, useMediaQuery, useResizeObserver } from "@vueuse/core";
 import { PaginationRoot } from "reka-ui";
 import { ChevronDown, ChevronUp, ChevronsUpDown, ChevronLeft, ChevronRight, Funnel, Search, X } from "lucide-vue-next";
 import { cn } from "@/lib/utils";
@@ -332,6 +332,29 @@ defineSlots<
 >();
 
 const isDesktop = useMediaQuery("(min-width: 768px)");
+
+/**
+ * The header row sticks to the top of the page's scroller while the rows
+ * scroll under it, which it can only do while nothing between them is a
+ * scroll container. The sideways scroller around the table is one whenever
+ * it is `overflow-x: auto` (the other axis turns `auto` with it), so the
+ * header used to stick inside a box that never scrolls vertically and went
+ * off screen with the first rows: Tasks lists 1,771 runs, Approvals history
+ * and Audit as many. So the wrapper scrolls sideways only while the table is
+ * wider than it; a table that fits is clipped instead (`overflow-x: clip`
+ * makes no scroll container) and its header sticks. A phone in the scroll
+ * layout, where the columns do not fit, keeps the sideways scroll and the
+ * header that scrolls with the rows, as before.
+ */
+const scroller = ref<HTMLElement | null>(null);
+const tableEl = ref<HTMLTableElement | null>(null);
+const fitsWidth = ref(true);
+useResizeObserver([scroller, tableEl], () => {
+  const box = scroller.value;
+  const table = tableEl.value;
+  if (!box || !table) return;
+  fitsWidth.value = table.getBoundingClientRect().width <= box.clientWidth + 0.5;
+});
 
 /**
  * The first data column stays in view while a scroll-layout table scrolls
@@ -897,13 +920,15 @@ function alignClass(align: DataTableColumn<T>["align"]): string {
            cell is clipped by the scroller's overflow either way; the
            console's menus are portaled.) -->
       <div
+        ref="scroller"
         :class="[
-          narrowLayout === 'scroll' ? 'relative overflow-x-auto' : 'relative hidden overflow-x-auto md:block',
+          narrowLayout === 'scroll' ? 'relative' : 'relative hidden md:block',
+          fitsWidth ? 'overflow-x-clip' : 'overflow-x-auto',
           $slots['row-detail'] && '[container-type:inline-size]',
         ]"
       >
-        <table class="w-full min-w-[640px] text-sm">
-          <thead class="sticky top-0 z-10 bg-[var(--table-ground,var(--background))]">
+        <table ref="tableEl" class="w-full min-w-[640px] text-sm">
+          <thead class="sticky top-0 z-[15] bg-[var(--table-ground,var(--background))]">
             <tr class="border-b border-border text-xs text-muted-foreground">
               <th v-if="selectable" scope="col" :class="cn('w-10 px-3 py-2 pointer-coarse:h-12 pointer-coarse:w-11 pointer-coarse:px-3.5', selectGutterClass)">
                 <Checkbox
