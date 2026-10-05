@@ -3044,15 +3044,76 @@ export interface TraceFilter {
   dst_patterns?: string[];
 }
 
-/** Per-node collection policy: the always-on floor. */
+/**
+ * Per-node collection policy: the always-on floor.
+ *
+ * `raw`, `raw_effective` and `collector` arrive from servers newer than
+ * alpha-0.2.2a117 (design 26, R1). An older server sends none of them, and
+ * the console then renders as it did before readiness existed; read every one
+ * defensively.
+ */
 export interface TracePolicy {
   node_id: string;
   enabled: boolean;
   level: TraceLevel;
+  /** 0 means the agent's own default (design 26 R1); older servers stored 500. */
   budget_lines_per_sec: number;
   clash_api_addr?: string;
   secret_path?: string;
   updated_at?: string;
+  /**
+   * Raw sing-box lines, switched separately from records. Absent on a policy
+   * written before the switch existed: raw lines then follow `enabled`.
+   */
+  raw?: { enabled: boolean };
+  /** Whether raw lines flow under this policy: records on and raw on (or unset). */
+  raw_effective?: boolean;
+  /** The collector's readiness; absent until a report or a server inference exists. */
+  collector?: TraceCollectorView;
+}
+
+/**
+ * The readiness of a node's sing-box trace collector. The agent sends the
+ * first five; `agent_too_old` is inferred by the server from the agent
+ * version. A string the console does not know is shown as unknown, never as
+ * ready.
+ */
+export type TraceCollectorState =
+  | "off"
+  | "ready"
+  | "no_clash_api"
+  | "secret_unreadable"
+  | "stream_failing"
+  | "agent_too_old";
+
+/** GET /api/trace/policy `collector`: the agent's report, or the server's inference. */
+export interface TraceCollectorView {
+  /** A TraceCollectorState, typed loosely so an unknown value survives to the screen. */
+  state: string;
+  since?: string;
+  level?: string;
+  clash_api_addr?: string;
+  /** "policy" or "config": where the Clash API address came from. */
+  addr_source?: string;
+  /** One bounded line saying why the state is not ready. */
+  detail?: string;
+  raw_lines?: boolean;
+  lines_per_sec?: number;
+  budget_lines_per_sec?: number;
+  /** Connections the agent's line budget refused to observe, cumulative since `counters_since`. */
+  shed_connections?: number;
+  unparsed?: number;
+  counters_since?: string;
+  /** "agent" or "server". */
+  reported_by: string;
+  /** Agent clock at the beat that carried this report. */
+  collected_at?: string;
+  /** Server clock when that beat arrived. */
+  received_at?: string;
+  /** The node went offline, or no beat arrived for 90 s. */
+  stale?: boolean;
+  /** The policy or a capture changed after this report. */
+  pending?: boolean;
 }
 
 export interface TraceSession {
@@ -3190,6 +3251,40 @@ export interface TracePolicyUpsertRequest {
   enabled?: boolean;
   level?: TraceLevel;
   budget_lines_per_sec?: number;
+  /**
+   * Only for servers that report `raw_effective`: alpha-0.2.2a117 decodes
+   * this request strictly and answers 400 to a body carrying `raw`.
+   */
+  raw?: { enabled: boolean };
+}
+
+/**
+ * The local evidence budgets on the control plane (design 26, R1). Sizes in
+ * bytes, durations in seconds.
+ */
+export interface EvidenceSettings {
+  trace_db_max_bytes: number;
+  record_ttl_seconds: number;
+  line_ttl_seconds: number;
+  rollup_5m_ttl_seconds: number;
+  raw_source_max_bytes: number;
+  /** Counts saves; a save names the version it was read at, and 409 means it moved. */
+  version: number;
+  updated_at?: string;
+  updated_by?: string;
+}
+
+export type EvidenceSettingsField = Exclude<keyof EvidenceSettings, "version" | "updated_at" | "updated_by">;
+
+/** GET and POST /api/evidence/settings. */
+export interface EvidenceSettingsResponse {
+  settings: EvidenceSettings;
+  /** False while the server runs on its defaults (and the environment), true once saved. */
+  stored: boolean;
+  /** Environment variables the stored settings override. */
+  env_ignored?: string[];
+  /** Inclusive [min, max] per field, as the server checks them. */
+  bounds?: Partial<Record<EvidenceSettingsField, [number, number]>>;
 }
 
 export interface TraceHopsResponse {

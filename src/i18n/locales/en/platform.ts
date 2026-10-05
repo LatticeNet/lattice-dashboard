@@ -515,6 +515,9 @@ export default {
         plaintext: "not encrypted",
         cap: "{size} cap",
         collecting: "{collecting} of {total} node collecting | {collecting} of {total} nodes collecting",
+        // From a server that reports readiness (design 26, R1): nodes whose
+        // collector is ready, not nodes whose switch is on.
+        recording: "{collecting} of {total} node recording | {collecting} of {total} nodes recording",
         collectingUnread: "collection unread",
         storeOff: "connection tracing is not enabled on this server",
       },
@@ -577,6 +580,111 @@ export default {
           "{count} node: trace off, no raw log source, nothing held. | {count} nodes: trace off, no raw log source, nothing held.",
         showQuiet: "Show it | Show all {count}",
         hideQuiet: "Hide the idle nodes",
+        notReadyNodes:
+          "{count} node asked to record is not recording or has gone quiet | {count} nodes asked to record are not recording or have gone quiet",
+      },
+      // A node's collector in words (design 26, section 4.2). Shared by the
+      // Collection table and the Overview node table.
+      readiness: {
+        ready: "ready",
+        readyLevel: "ready, {level}",
+        recording: "recording",
+        notReady: "not ready: {reason}",
+        waiting: "waiting for the agent",
+        waitingHint:
+          "Collection is switched on. The agent reports its collector on its next beat, about every 10 seconds.",
+        pendingHint:
+          "The policy or a capture changed after the agent's last report. After a save this page checks again every 3 seconds for half a minute.",
+        lastHeard: "last heard {rel}",
+        notHeard: "not heard from",
+        never: "never",
+        staleHint:
+          "No beat from this node's agent for over 90 seconds, or the node is offline. Its last report, received {at}: {state}.",
+        unknownState: "unknown state",
+        unknownStateHint: "The agent reported \"{state}\", which this console does not know. It is not treated as ready.",
+        inferred: "Inferred by the server from the agent version.",
+        inferredNoApi:
+          "Inferred by the server: the policy names no Clash API address, and agents before {version} do not look for one in the sing-box config.",
+        tooOldHint:
+          "Node agent {version} and later report readiness. This agent reports nothing, so whether it records is not known; the policy names a Clash API address, so it may.",
+        remedyNoApi: "Run {command} on the node; sing-box restarts once.",
+        byCapture: "A running capture needs this collector; records are off.",
+        staleNote: "Last report: {state}.",
+        tooOldNote: "Agents from {version} report readiness; this one cannot say whether it records.",
+        unknownNote: "The agent reported \"{state}\".",
+        remedyUpgrade:
+          "Upgrade the agent to {version} or later, which reads the address from the sing-box config; if sing-box has no Clash API, also run {command} on the node.",
+        shed: "{count} connection missed since {since}, over the {budget} lines/s budget | {count} connections missed since {since}, over the {budget} lines/s budget",
+        shedNoBudget: "{count} connection missed since {since}, over the line budget | {count} connections missed since {since}, over the line budget",
+        state: {
+          off: "off",
+          ready: "ready",
+          no_clash_api: "no Clash API",
+          secret_unreadable: "Clash API secret unreadable",
+          stream_failing: "Clash API stream failing",
+          agent_too_old: "agent too old to report",
+        },
+      },
+      // The local evidence budgets under the policy table (design 26, R1).
+      retention: {
+        line: {
+          trace_db_max_bytes: "Local budget {value}",
+          record_ttl_seconds: "records {value}",
+          line_ttl_seconds: "capture lines {value}",
+          rollup_5m_ttl_seconds: "5-minute trends {value}",
+          raw_source_max_bytes: "raw lines {value} per source",
+        },
+        unit: {
+          GiB: "{n} GiB",
+          MiB: "{n} MiB",
+          d: "{n} d",
+          h: "{n} h",
+        },
+        formUnit: {
+          GiB: "GiB",
+          MiB: "MiB",
+          d: "days",
+          h: "hours",
+        },
+        label: {
+          trace_db_max_bytes: "Local budget (trace store)",
+          record_ttl_seconds: "Keep connection records",
+          line_ttl_seconds: "Keep capture lines",
+          rollup_5m_ttl_seconds: "Keep 5-minute trends",
+          raw_source_max_bytes: "Raw lines per source",
+        },
+        reading: "Reading the retention settings",
+        unread: "The retention settings could not be read: {reason}",
+        defaults: "Server defaults; nothing has been saved here.",
+        stored: "Saved settings.",
+        storedAt: "Saved {at} by {by}.",
+        envIgnored: "They override {vars} in the server's environment.",
+        needsFullAdmin: "Changing these needs a full administrator (scope *, no node restriction).",
+        bounds: "{min} to {max}",
+        invalid: "Enter a number above zero.",
+        nowHolds: "holds {size} now",
+        largestSource: "largest source holds {size}",
+        oldestRecord: "oldest record {at}",
+        removes: {
+          trace_db_max_bytes: "the oldest connection records",
+          raw_source_max_bytes: "the oldest raw lines",
+          record_ttl_seconds: "Connection records",
+          line_ttl_seconds: "Capture lines",
+          rollup_5m_ttl_seconds: "5-minute trends",
+        },
+        removeBytes: "About {size} of {what} will be removed on save.",
+        removeUnknown: "Some of {what} will be removed on save; the current size could not be read.",
+        removeAge: "{what} older than {age} will be removed on the next retention pass.",
+        acknowledge: "Yes, remove this data",
+        audited: "Audited as evidence.settings.set, with the old and new values.",
+        saved: "Retention settings saved",
+        saveFailed: "Could not save the retention settings",
+        saveFailedReason: "Not saved: {reason}",
+        conflict:
+          "Someone saved these settings since you opened them. The form now shows their values; check them and save again.",
+        conflictTheirs:
+          "Someone saved these settings since you opened them ({changes}). Fields you left alone now show their values; your own edits are kept. Check and save again.",
+        conflictClash: "You both changed {fields}: your entry is shown and would replace theirs.",
       },
       capture: {
         nodesLabel: "Capture on",
@@ -658,6 +766,21 @@ export default {
         policyHint:
           "A node with its policy on assembles connection records all the time, within its line budget. Leave it off and capture when you need to.",
         policyEnabledFor: "Trace policy on for {node}",
+        colReady: "Ready",
+        colRawLines: "Raw lines",
+        rawEnabledFor: "Raw lines on for {node}",
+        rawNeedsRecords:
+          "Raw lines need records on: the agent's raw path is fed by the lines records keep. The choice is kept for when records are on again.",
+        rawFollowsRecords:
+          "This policy was written before raw lines had their own switch, so raw lines follow records. Saving stores the choice shown.",
+        rawFollows: "follows records",
+        rawOffKept: "Raw lines already held stay until the size cap or their TTL removes them.",
+        rawHint:
+          "Raw lines are the sing-box lines themselves (the singbox:// source). They need records on and stay off unless ticked.",
+        agentDefault: "agent default",
+        budgetDefaultHint:
+          "Empty means each agent's own default: {before} lines a second on agents before {version}, {from} from {version} on.",
+        captureShedHint: "A node over its line budget sheds new connections; the capture's dropped count includes them.",
         historyTitle: "Captures",
         historyEmpty: "No capture has run yet. Start one on Overview.",
         filteredCapture: "Capture with a filter",

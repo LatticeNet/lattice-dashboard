@@ -131,6 +131,8 @@ import type {
   TokenCreateRequest,
   TokenCreateResponse,
   TokenView,
+  EvidenceSettings,
+  EvidenceSettingsResponse,
   TraceConnectionsResponse,
   TraceHopsResponse,
   TraceStatsResponse,
@@ -865,6 +867,18 @@ export const api = {
       opts?: RequestOptions,
     ) => http.get<TraceHopsResponse>("/api/trace/hops", params as Record<string, unknown>, opts),
     stats: (opts?: RequestOptions) => http.get<TraceStatsResponse>("/api/trace/stats", undefined, opts),
+  },
+
+  // The local evidence budgets (design 26, R1). log:read reads them; only a
+  // full administrator (scope *, no node restriction) saves, naming the
+  // version it read (409 when someone saved since). Servers up to
+  // alpha-0.2.2a117 do not have this route, so callers read it only once the
+  // policy list shows a newer server (it carries raw_effective).
+  evidence: {
+    settings: (opts?: RequestOptions) =>
+      http.get<EvidenceSettingsResponse>("/api/evidence/settings", undefined, opts),
+    setSettings: (input: EvidenceSettings) =>
+      http.post<EvidenceSettingsResponse>("/api/evidence/settings", input),
   },
 
   notify: {

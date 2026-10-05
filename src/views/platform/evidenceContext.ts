@@ -8,13 +8,14 @@
  * facts. The proof line, the coverage table and the capture history must not
  * disagree about which nodes collect, and they cannot if they read one list.
  */
-import { computed, inject, provide, ref, type ComputedRef, type InjectionKey, type Ref } from "vue";
+import { computed, inject, provide, ref, watch, type ComputedRef, type InjectionKey, type Ref } from "vue";
 
 import {
   api,
   ApiError,
   unwrap,
   type ConnRecord,
+  type EvidenceSettingsResponse,
   type LogSource,
   type LogSourceStatsView,
   type Node,
@@ -29,6 +30,7 @@ import { shortId } from "@/lib/format";
 import {
   evidenceCoverageRows,
   evidenceStoreProof,
+  serverReportsReadiness,
   summarizeLastHour,
   unresolvedEvidenceTokens,
   type CoverageRow,
@@ -37,6 +39,7 @@ import {
   type LastHourSummary,
   type StoreProof,
 } from "./evidenceModel";
+import { isFullAdministrator } from "./evidenceSettingsModel";
 
 /** Pages of the last-hour sample, at the endpoint's ceiling of 1000 each. */
 const LAST_HOUR_PAGE = 1000;
@@ -66,6 +69,16 @@ export interface EvidenceContext {
   logStats: AsyncData<LogSourceStatsView[]>;
   lastHour: AsyncData<LastHourSample>;
   lastHourSummary: ComputedRef<LastHourSummary | undefined>;
+  /**
+   * The server reports collector readiness and the raw switch (design 26,
+   * R1): some policy carries raw_effective. False against alpha-0.2.2a117 and
+   * older, where every readiness column and the settings line stay away.
+   */
+  readinessReported: ComputedRef<boolean>;
+  /** The local evidence budgets; read only once readinessReported, since older servers lack the route. */
+  settings: AsyncData<EvidenceSettingsResponse>;
+  /** Scope * without a node restriction: the only principal the server lets save the budgets. */
+  canEditSettings: ComputedRef<boolean>;
   /** False only when the server said tracing is not enabled (503). */
   storeReady: ComputedRef<boolean>;
   coverageRows: ComputedRef<CoverageRow[]>;
@@ -202,6 +215,22 @@ export function provideEvidenceContext(): EvidenceContext {
 
   const storeReady = computed(() => !(stats.error.value instanceof ApiError && stats.error.value.status === 503));
 
+  const readinessReported = computed(() => (policies.data.value ?? []).some(serverReportsReadiness));
+  const canEditSettings = computed(() => isFullAdministrator(auth.scopes, auth.serverAllowlist));
+  // Read once the policy list proves the server has the route: a GET to an
+  // older server would be a 404 on every page load.
+  const settings = useAsyncData(
+    (signal) => api.evidence.settings({ signal }),
+    { immediate: false },
+  );
+  watch(
+    readinessReported,
+    (reported) => {
+      if (reported && canRead.value && settings.data.value === undefined) void settings.refresh();
+    },
+    { immediate: true },
+  );
+
   const coverageKnown = computed(() => policies.data.value !== undefined && !policies.error.value);
   const coverageRows = computed(() =>
     evidenceCoverageRows({
@@ -281,6 +310,7 @@ export function provideEvidenceContext(): EvidenceContext {
     sources.refresh();
     logStats.refresh();
     lastHour.refresh();
+    if (readinessReported.value) settings.refresh();
     if (canReadNodes.value) nodesQuery.refresh();
   }
 
@@ -299,6 +329,9 @@ export function provideEvidenceContext(): EvidenceContext {
     logStats,
     lastHour,
     lastHourSummary,
+    readinessReported,
+    settings,
+    canEditSettings,
     storeReady,
     coverageRows,
     coverageKnown,

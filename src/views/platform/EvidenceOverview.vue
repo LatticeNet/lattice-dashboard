@@ -8,7 +8,8 @@
  * When the last hour holds records, three facts follow (how many connections,
  * how many failed and why, where they went), each a link into Explore with
  * the question already asked. The node table closes the page: trace on or
- * off, raw log sources and how fresh they are, what is held.
+ * off (and, from a server that reports it, whether the collector is actually
+ * recording), raw log sources and how fresh they are, what is held.
  */
 import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -32,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import EvidenceReadinessCell from "./EvidenceReadinessCell.vue";
 import { closeReasonDisplay } from "./connTraceModel";
 import { useEvidenceContext } from "./evidenceContext";
 import {
@@ -43,6 +45,7 @@ import {
   captureSessionName,
   isActiveSession,
   readEvidenceQuery,
+  rowWantsCollection,
   seedCaptureNodes,
   writeEvidenceLayer,
   writeEvidenceQuery,
@@ -77,6 +80,14 @@ const sessionsKnown = computed(() => ctx.sessions.data.value !== undefined && !c
 const now = useNow({ interval: 15000 });
 const running = computed(() => (ctx.sessions.data.value ?? []).filter((session) => isActiveSession(session, now.value.getTime())));
 const collecting = computed(() => ctx.storeProof.value.collecting);
+/** Switched on (or captured) but not recording: the sentence above the node table. */
+const notReady = computed(() => ctx.storeProof.value.notReady);
+
+/** Collection, with the node in the query so its row is marked there. */
+function collectionTo(nodeId?: string) {
+  const base = writeEvidenceLayer(ownedRoute.query(), "collection");
+  return { query: writeEvidenceQuery(base, { ...EMPTY_EVIDENCE_QUERY, nodeId: nodeId ?? "" }) };
+}
 
 /** Nodes offered to the capture, named, in the coverage table's order. */
 const nodeChoices = computed(() => ctx.coverageRows.value.map((row) => ({ id: row.nodeId, name: row.name })));
@@ -513,6 +524,12 @@ const coverageLoading = computed(
           {{ $t('platform.evidence.overview.policiesFailed') }}
         </p>
       </div>
+      <!-- One sentence, no banner: the rows themselves lead the table. -->
+      <p v-if="notReady > 0 && ctx.storeReady.value" class="text-sm text-destructive" data-testid="evidence-not-ready">
+        <RouterLink :to="collectionTo()" class="rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring">
+          {{ $t('platform.evidence.overview.notReadyNodes', { count: notReady }, notReady) }}
+        </RouterLink>
+      </p>
 
       <div v-if="coverageLoading" class="space-y-2">
         <Skeleton v-for="n in 4" :key="n" class="h-9 w-full" />
@@ -552,13 +569,29 @@ const coverageLoading = computed(
                 <Badge v-if="row.capturing > 0" variant="info" :title="$t('platform.evidence.overview.capturingUntil', { at: formatDateTime(row.captureEndsAt) })">
                   {{ $t('platform.evidence.overview.traceCapturing') }}
                 </Badge>
-                <span v-else-if="row.trace?.enabled" class="text-sm">
+                <!-- With readiness reported, "on" says "recording" only when
+                     the collector is; every other answer is the readiness
+                     cell after this chain. Without it (alpha-0.2.2a117 and
+                     older) the cell renders exactly as before. -->
+                <span v-else-if="row.trace?.enabled && row.readiness?.kind === 'ready'" class="text-sm">
+                  {{ $t('platform.evidence.readiness.recording') }}
+                  <span class="font-mono text-xs text-muted-foreground">{{ row.readiness.level }}</span>
+                </span>
+                <span v-else-if="row.trace?.enabled && !row.readiness" class="text-sm">
                   {{ $t('platform.evidence.overview.traceOn') }}
                   <span class="font-mono text-xs text-muted-foreground">{{ row.trace.level }}</span>
                 </span>
                 <span v-else-if="!ctx.storeReady.value" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.traceServerOff') }}</span>
-                <span v-else-if="row.trace" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
-                <span v-else class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
+                <span v-else-if="row.trace && !row.trace.enabled" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
+                <span v-else-if="!row.trace" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
+                <EvidenceReadinessCell
+                  v-if="ctx.storeReady.value && row.readiness && rowWantsCollection(row) && row.readiness.kind !== 'ready'"
+                  :class="row.capturing > 0 && 'ms-2'"
+                  :readiness="row.readiness"
+                  wants
+                  compact
+                  :to="collectionTo(row.nodeId)"
+                />
               </td>
               <td class="px-3 py-2">
                 <span v-if="!row.sourcesKnown" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>

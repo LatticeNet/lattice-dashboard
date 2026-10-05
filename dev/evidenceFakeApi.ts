@@ -19,8 +19,27 @@
  *            them fresh and busy.
  *   failing  Every trace and log endpoint answers 500.
  *   storeoff The server has connection tracing disabled (503 on /api/trace).
+ *   readiness  A server with design 26 R1: every policy carries raw and
+ *            raw_effective, and the nodes cover every collector readiness
+ *            (ready with shed connections, ready with raw on, no_clash_api
+ *            from the agent and inferred by the server, secret_unreadable,
+ *            stream_failing, agent_too_old, pending, waiting, stale, an
+ *            unknown state, a pre-switch policy, a capture on a node that is
+ *            not ready, off). Saving a policy answers pending (or the
+ *            server's inference at once) and the agent's report lands about
+ *            7 s later, so the 3 s re-poll can be watched. The retention
+ *            settings line reads /api/evidence/settings.
  *
- * Add `&readonly` to drop log:admin from the principal. Add `&names=fail` to
+ * Every other fixture is an alpha-0.2.2a117 server: policies carry no raw,
+ * raw_effective or collector, a policy POST carrying `raw` is refused with
+ * 400 as a117's strict decoder does, and /api/evidence/settings is a 404.
+ *
+ * Add `&readonly` to drop log:admin from the principal. Add `&full` to make
+ * the principal a full administrator (scope *, no node restriction), the
+ * only one the server lets save the retention settings. With `readiness`,
+ * add `&stored` for settings an administrator already saved (they override
+ * LATTICE_LOG_MAX_SOURCE_BYTES), and `&conflict` to make the first settings
+ * save answer 409 as if someone else had saved first. Add `&names=fail` to
  * make the node list answer 500, or `&names=hang` to make it never answer:
  * the Explore field resolves node names against that list. Add `&now=<ms>` to
  * pin the clock the fixture is built from: records keep their keys across a
@@ -29,12 +48,15 @@
 import { ApiError } from "@/lib/api/client";
 import type {
   ConnRecord,
+  EvidenceSettings,
+  EvidenceSettingsResponse,
   HopPath,
   LogLine,
   LogSource,
   LogSourceStatsView,
   LogSourceUpsertRequest,
   Principal,
+  TraceCollectorView,
   TraceLine,
   TracePolicy,
   TracePolicyUpsertRequest,
@@ -48,6 +70,8 @@ export * from "@/lib/api/index";
 const flags = new URLSearchParams(location.search);
 const FIXTURE = flags.get("fixture") ?? "empty";
 const READONLY = flags.has("readonly");
+const FULL_ADMIN = flags.has("full");
+const READINESS = FIXTURE === "readiness";
 const NAMES = flags.get("names");
 
 const NOW = Number(flags.get("now")) || Date.now();
@@ -81,7 +105,7 @@ function pick<T>(list: readonly T[]): T {
 const principal: Principal = {
   actor_id: "cdcd",
   username: "cdcd",
-  scopes: ["log:read", "node:read", "user:admin", ...(READONLY ? [] : ["log:admin"])],
+  scopes: FULL_ADMIN ? ["*"] : ["log:read", "node:read", "user:admin", ...(READONLY ? [] : ["log:admin"])],
   server_allowlist: [],
   csrf_token: "harness",
 };
@@ -147,6 +171,167 @@ const policies: TracePolicy[] = nodes.map((node) => ({
   budget_lines_per_sec: 500,
 }));
 
+/*
+ * The readiness fixture: what a server with design 26 R1 answers. Each named
+ * node shows one readiness; `finalState` is what the agent reports once a
+ * saved policy reaches it (records on), so a save can be watched resolving.
+ */
+const finalState = new Map<string, string>();
+
+function agentReport(state: string, extra: Partial<TraceCollectorView> = {}): TraceCollectorView {
+  return {
+    state,
+    since: iso(-40 * MIN),
+    budget_lines_per_sec: 5000,
+    counters_since: iso(-2 * HOUR),
+    reported_by: "agent",
+    collected_at: iso(-4_000),
+    received_at: iso(-3_600),
+    ...extra,
+  };
+}
+
+if (READINESS) {
+  for (const policy of policies) {
+    policy.budget_lines_per_sec = 0;
+    policy.raw = { enabled: false };
+    policy.raw_effective = false;
+    finalState.set(policy.node_id, "ready");
+  }
+  const set = (name: string, patch: Partial<TracePolicy>, final = "ready") => {
+    const policy = policies.find((p) => p.node_id === nodeByName(name))!;
+    Object.assign(policy, { updated_at: iso(-50 * MIN) }, patch);
+    if (policy.raw && policy.raw_effective === undefined) policy.raw_effective = policy.enabled && policy.raw.enabled;
+    finalState.set(policy.node_id, final);
+  };
+  set("legend-sg", {
+    enabled: true,
+    raw_effective: false,
+    collector: agentReport("ready", {
+      level: "debug",
+      clash_api_addr: "127.0.0.1:9090",
+      addr_source: "config",
+      lines_per_sec: 41.3,
+      shed_connections: 1204,
+    }),
+  });
+  set("[Metix]-DMIT-1", {
+    enabled: true,
+    raw: { enabled: true },
+    raw_effective: true,
+    collector: agentReport("ready", { level: "debug", clash_api_addr: "127.0.0.1:9090", addr_source: "policy", raw_lines: true, lines_per_sec: 12.8 }),
+  });
+  set(
+    "hk-turin-mini",
+    { enabled: true, collector: agentReport("no_clash_api", { detail: "no experimental.clash_api in /etc/sing-box/config.json" }) },
+    "no_clash_api",
+  );
+  set("[Metix]-VIRCS-ATT-VDS", { enabled: true, collector: { state: "no_clash_api", reported_by: "server" } }, "no_clash_api");
+  set(
+    "kenji-tokyo",
+    {
+      enabled: true,
+      collector: agentReport("secret_unreadable", {
+        clash_api_addr: "127.0.0.1:9090",
+        addr_source: "config",
+        detail: "read secret: open /etc/sing-box/clash.secret: permission denied",
+      }),
+    },
+    "secret_unreadable",
+  );
+  set(
+    "falcon-fra",
+    {
+      enabled: true,
+      collector: agentReport("stream_failing", {
+        clash_api_addr: "127.0.0.1:9090",
+        addr_source: "policy",
+        detail: "GET /logs?level=debug: 401 Unauthorized (wrong secret)",
+      }),
+    },
+    "stream_failing",
+  );
+  set("openjobs-vpn-dmit-1", {
+    enabled: true,
+    clash_api_addr: "127.0.0.1:9090",
+    budget_lines_per_sec: 500,
+    collector: { state: "agent_too_old", reported_by: "server" },
+  });
+  set(
+    "openjobs-vpn-dmit-2",
+    { enabled: true, updated_at: iso(-2_000), collector: agentReport("off", { pending: true, received_at: iso(-6_000) }) },
+    "no_clash_api",
+  );
+  set("cd-xuezhang-jp-nat", { enabled: true, updated_at: iso(-3_000) });
+  set("bwg-la-cn2", {
+    enabled: true,
+    collector: agentReport("ready", { level: "debug", stale: true, received_at: iso(-3 * MIN - 12_000) }),
+  });
+  set("racknerd-sj", { enabled: true, collector: agentReport("warming_up") }, "ready");
+  // Written before the raw switch existed: no raw key, raw lines follow records.
+  set("vultr-tokyo-hp", {
+    enabled: true,
+    raw: undefined,
+    raw_effective: true,
+    budget_lines_per_sec: 500,
+    collector: agentReport("ready", { level: "debug", raw_lines: true, lines_per_sec: 3.1 }),
+  });
+  // Records off, but a capture covers it and its collector has no Clash API.
+  set("vultr-seoul", { enabled: false, collector: agentReport("no_clash_api", { detail: "no experimental.clash_api in /etc/sing-box/config.json" }) }, "no_clash_api");
+  // Records off with a stored raw choice, kept for when records are on again.
+  set("oracle-osaka-arm", { enabled: false, raw: { enabled: true }, raw_effective: false });
+}
+
+/** What the agent says once a saved policy reaches it. */
+function settle(policy: TracePolicy): void {
+  const final = finalState.get(policy.node_id) ?? "ready";
+  if (!policy.enabled) {
+    policy.collector = agentReport("off");
+    return;
+  }
+  policy.collector =
+    final === "ready"
+      ? agentReport("ready", { level: policy.level, raw_lines: policy.raw_effective, lines_per_sec: 18.4 })
+      : agentReport(final, {
+          detail: final === "no_clash_api" ? "no experimental.clash_api in /etc/sing-box/config.json" : undefined,
+        });
+  policy.collector.since = new Date().toISOString();
+  policy.collector.received_at = new Date().toISOString();
+}
+
+/* ------------------------------ settings ------------------------------- */
+
+const GIB = 1024 ** 3;
+const MIB = 1024 ** 2;
+const DAY_S = 86_400;
+const STORED = flags.has("stored");
+let conflictPending = flags.has("conflict");
+
+const settingsState: EvidenceSettingsResponse = {
+  settings: {
+    trace_db_max_bytes: 2 * GIB,
+    record_ttl_seconds: 14 * DAY_S,
+    line_ttl_seconds: 7 * DAY_S,
+    rollup_5m_ttl_seconds: 90 * DAY_S,
+    raw_source_max_bytes: STORED ? 32 * MIB : 64 * MIB,
+    version: STORED ? 4 : 0,
+    ...(STORED ? { updated_at: iso(-3 * DAY), updated_by: "cdcd" } : {}),
+  },
+  stored: STORED,
+  env_ignored: STORED ? ["LATTICE_LOG_MAX_SOURCE_BYTES"] : undefined,
+  bounds: {
+    trace_db_max_bytes: [256 * MIB, 16 * GIB],
+    record_ttl_seconds: [DAY_S, 90 * DAY_S],
+    line_ttl_seconds: [3600, 30 * DAY_S],
+    rollup_5m_ttl_seconds: [DAY_S, 400 * DAY_S],
+    raw_source_max_bytes: [MIB, GIB],
+  },
+};
+
+function copySettings(): EvidenceSettingsResponse {
+  return JSON.parse(JSON.stringify(settingsState)) as EvidenceSettingsResponse;
+}
+
 /* ------------------------------ sessions ------------------------------- */
 
 const sessions: TraceSession[] = [];
@@ -194,6 +379,22 @@ if (FIXTURE === "capture") {
       dropped: 0,
     },
   );
+}
+
+if (READINESS) {
+  sessions.push({
+    id: "trace_r3v1s9e0",
+    name: "capture vultr-seoul 2026-10-05",
+    filter: { node_ids: [nodeByName("vultr-seoul")] },
+    level: "debug",
+    started_at: iso(-12 * MIN),
+    expires_at: iso(48 * MIN),
+    state: "running",
+    started_by: "cdcd",
+    lines: 0,
+    records: 0,
+    dropped: 0,
+  });
 }
 
 /* ------------------------------ records -------------------------------- */
@@ -575,13 +776,31 @@ export const api = {
     },
     policy: () => traceGuard() ?? delay({ policies: policies.map((p) => ({ ...p })) }),
     setPolicy: async (input: TracePolicyUpsertRequest) => {
+      // alpha-0.2.2a117 decodes this body strictly.
+      if (!READINESS && input.raw !== undefined) return fail(400, "bad_request", 'json: unknown field "raw"');
       await delay(undefined);
       const policy = policies.find((p) => p.node_id === input.node_id);
       if (!policy) return fail(404, "not_found", "node not found");
+      const wasEnabled = policy.enabled;
       if (input.enabled !== undefined) policy.enabled = input.enabled;
       if (input.level) policy.level = input.level;
       if (input.budget_lines_per_sec) policy.budget_lines_per_sec = input.budget_lines_per_sec;
       policy.updated_at = new Date().toISOString();
+      if (READINESS) {
+        // Every write stores raw explicitly; a pre-switch policy keeps its meaning.
+        policy.raw = input.raw ? { enabled: input.raw.enabled } : (policy.raw ?? { enabled: wasEnabled });
+        policy.raw_effective = policy.enabled && policy.raw.enabled;
+        const report = policy.collector;
+        if (report?.reported_by === "server") {
+          // Older agents: the server infers on the save's own response.
+          policy.collector = policy.enabled ? { ...report } : { state: "off", reported_by: "server" };
+        } else if (report) {
+          policy.collector = { ...report, pending: true, stale: false };
+          setTimeout(() => settle(policy), 7000);
+        } else if (policy.enabled) {
+          setTimeout(() => settle(policy), 7000);
+        }
+      }
       return { ...policy };
     },
     hops: (params: { node_id: string; core_generation: number; log_id: number; started_at?: string }) => {
@@ -619,11 +838,11 @@ export const api = {
         records: records.length,
         open_records: records.filter((r) => r.open).length,
         lines: records.length * 2,
-        size_bytes: 4096 + records.length * 900,
+        size_bytes: READINESS ? Math.round(1.4 * GIB) : 4096 + records.length * 900,
         max_bytes: 2 * 1024 ** 3,
         cipher_enabled: true,
         newest_record_at: records[0]?.started_at,
-        oldest_record_at: records[records.length - 1]?.started_at,
+        oldest_record_at: READINESS ? iso(-10 * DAY) : records[records.length - 1]?.started_at,
       }),
   },
 
@@ -676,6 +895,45 @@ export const api = {
       const at = sources.findIndex((s) => s.id === id);
       if (at >= 0) sources.splice(at, 1);
       return { ok: true };
+    },
+  },
+
+  evidence: {
+    settings: () => {
+      // alpha-0.2.2a117 has no such route.
+      if (!READINESS) return fail(404, "not_found", "not found");
+      return delay(copySettings());
+    },
+    setSettings: async (input: EvidenceSettings) => {
+      if (!READINESS) return fail(404, "not_found", "not found");
+      await delay(undefined, 400);
+      if (!principal.scopes.includes("*")) {
+        return fail(403, "capability_denied", "control-plane internals need a full administrator (scope *, no node restriction)");
+      }
+      if (conflictPending) {
+        // Someone else saved first.
+        conflictPending = false;
+        settingsState.settings = {
+          ...settingsState.settings,
+          record_ttl_seconds: 21 * DAY_S,
+          version: settingsState.settings.version + 1,
+          updated_at: new Date().toISOString(),
+          updated_by: "ops-bot",
+        };
+        settingsState.stored = true;
+        return fail(409, "conflict", "evidence settings changed since version " + input.version);
+      }
+      if (input.version !== settingsState.settings.version) {
+        return fail(409, "conflict", "evidence settings changed since version " + input.version);
+      }
+      settingsState.settings = {
+        ...input,
+        version: input.version + 1,
+        updated_at: new Date().toISOString(),
+        updated_by: "cdcd",
+      };
+      settingsState.stored = true;
+      return copySettings();
     },
   },
 

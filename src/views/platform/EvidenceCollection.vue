@@ -2,13 +2,15 @@
 /**
  * Evidence Collection (L3): what governs collection, out of the daily path.
  *
- * The per-node trace policy is the always-on floor; the capture history is
+ * The per-node trace policy is the always-on floor, with each node's collector
+ * readiness beside its switch and raw lines switched separately (design 26,
+ * R1; both only from a server that reports them); the capture history is
  * every time-boxed session with what it kept and what it dropped; the raw log
  * sources are the files and virtual streams each node ships. The Overview's
  * capture button covers the common case (these nodes, this long); a capture
  * narrowed to a user, a line or a destination starts here.
  */
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/lib/toast";
 import { CircleStop, Play, RefreshCw, ScrollText } from "lucide-vue-next";
@@ -31,11 +33,24 @@ import {
 } from "@/components/ui/select";
 
 import EvidenceLogSources from "./EvidenceLogSources.vue";
+import EvidenceReadinessCell from "./EvidenceReadinessCell.vue";
+import EvidenceRetention from "./EvidenceRetention.vue";
 import { TRACE_TTL_DEFAULT_SECONDS, TRACE_TTL_MAX_SECONDS, clampTraceTtlSeconds } from "./connTraceModel";
 import { useEvidenceContext } from "./evidenceContext";
 import {
+  AGENT_DEFAULT_BUDGET_BEFORE,
+  AGENT_DEFAULT_BUDGET_FROM,
+  COLLECTOR_STATUS_MIN_AGENT,
   EMPTY_EVIDENCE_QUERY,
+  READINESS_REPOLL_MAX_MS,
+  READINESS_REPOLL_MS,
+  policyRawDraft,
+  rawFollowsRecords,
   readEvidenceQuery,
+  readinessAwaitsAgent,
+  rowWantsCollection,
+  serverReportsReadiness,
+  shedSummary,
   uniformPolicyColumns,
   writeEvidenceLayer,
   writeEvidenceQuery,
@@ -45,7 +60,7 @@ const TRACE_LEVELS: readonly TraceLevel[] = ["info", "debug", "trace"];
 const TAIL_POLL_MS = 2000;
 const TAIL_LINE_CAP = 2000;
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 // Reads go through the owned route: while Evidence is leaving, the router
 // already describes the next page, whose query is not this page's filters.
 const ownedRoute = useOwnedRoute();
@@ -63,9 +78,18 @@ interface PolicyDraft {
   enabled: boolean;
   level: TraceLevel;
   budget: number;
+  /** Raw lines; sent only to a server that reports raw_effective. */
+  raw: boolean;
 }
 
 const policies = computed(() => ctx.policies.data.value ?? []);
+/** Readiness and the raw switch exist on this server (design 26, R1). */
+const readinessShown = computed(() => ctx.readinessReported.value);
+const coverageBy = computed(() => new Map(ctx.coverageRows.value.map((row) => [row.nodeId, row])));
+
+function seedDraft(row: TracePolicy): PolicyDraft {
+  return { enabled: row.enabled, level: row.level, budget: row.budget_lines_per_sec, raw: policyRawDraft(row) };
+}
 
 /**
  * Idle nodes (policy off, no capture, no raw log source, nothing held) read
@@ -100,7 +124,7 @@ watch(
     const next = { ...drafts.value };
     for (const row of rows) {
       if (next[row.node_id]) continue;
-      next[row.node_id] = { enabled: row.enabled, level: row.level, budget: row.budget_lines_per_sec };
+      next[row.node_id] = seedDraft(row);
     }
     drafts.value = next;
   },
@@ -108,13 +132,116 @@ watch(
 );
 
 function draftOf(row: TracePolicy): PolicyDraft {
-  return drafts.value[row.node_id] ?? { enabled: row.enabled, level: row.level, budget: row.budget_lines_per_sec };
+  return drafts.value[row.node_id] ?? seedDraft(row);
 }
 
 function dirty(row: TracePolicy): boolean {
   const d = draftOf(row);
-  return d.enabled !== row.enabled || d.level !== row.level || Number(d.budget) !== row.budget_lines_per_sec;
+  return (
+    d.enabled !== row.enabled ||
+    d.level !== row.level ||
+    Number(d.budget) !== row.budget_lines_per_sec ||
+    (serverReportsReadiness(row) && d.raw !== policyRawDraft(row))
+  );
 }
+
+/* Readiness --------------------------------------------------------- */
+
+function readinessOf(row: TracePolicy) {
+  return coverageBy.value.get(row.node_id)?.readiness;
+}
+
+function wantsOf(row: TracePolicy): boolean {
+  const cov = coverageBy.value.get(row.node_id);
+  return cov ? rowWantsCollection(cov) : row.enabled;
+}
+
+/** 0 is the agent's own default (design 26 R1, question 4): said in words, with both values in the title. */
+const budgetDefaultTitle = computed(() =>
+  t("platform.evidence.collection.budgetDefaultHint", {
+    before: new Intl.NumberFormat(locale.value).format(AGENT_DEFAULT_BUDGET_BEFORE),
+    from: new Intl.NumberFormat(locale.value).format(AGENT_DEFAULT_BUDGET_FROM),
+    version: COLLECTOR_STATUS_MIN_AGENT,
+  }),
+);
+
+/* Raw lines --------------------------------------------------------- */
+
+/** One string, so the sentences keep their spaces whichever of them apply. */
+const policyFootnote = computed(() =>
+  [
+    t("platform.trace.budgetHint"),
+    readinessShown.value ? t("platform.evidence.collection.rawHint") : "",
+    ctx.canAdmin.value ? "" : t("platform.trace.needsAdmin", { scope: "log:admin" }),
+  ]
+    .filter(Boolean)
+    .join(" "),
+);
+
+function rawTitle(row: TracePolicy): string | undefined {
+  if (!ctx.canAdmin.value) return adminReason.value;
+  if (!draftOf(row).enabled) return t("platform.evidence.collection.rawNeedsRecords");
+  if (rawFollowsRecords(row) && !dirty(row)) return t("platform.evidence.collection.rawFollowsRecords");
+  return undefined;
+}
+
+/** Saving would stop raw lines that flow today: say what happens to the ones held (question 10). */
+function rawTurningOff(row: TracePolicy): boolean {
+  const d = draftOf(row);
+  return row.raw_effective === true && !(d.enabled && d.raw);
+}
+
+/* The row Overview pointed at -------------------------------------- */
+
+// A not-ready reason on Overview links here with the node in the query; that
+// row is marked, and scrolled to once the table is there. The mark follows
+// the address bar, so it goes when the query no longer names the node.
+const focusNodeId = computed(() => readEvidenceQuery(ownedRoute.query()).nodeId);
+const policyTable = ref<HTMLElement | null>(null);
+let scrolledTo = "";
+watch(
+  [focusNodeId, () => policies.value.length],
+  async ([nodeId, length]) => {
+    if (!nodeId || length === 0 || scrolledTo === nodeId) return;
+    scrolledTo = nodeId;
+    await nextTick();
+    policyTable.value
+      ?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(nodeId)}"]`)
+      ?.scrollIntoView({ block: "center" });
+  },
+  { immediate: true },
+);
+
+/* After a save: re-read until the agent answers (questions 14, 15) -- */
+
+let repollTimer: ReturnType<typeof setInterval> | undefined;
+
+function stopRepoll(): void {
+  if (repollTimer) clearInterval(repollTimer);
+  repollTimer = undefined;
+}
+
+/**
+ * While the saved node's readiness is still on its way from the agent, read
+ * the policies every 3 s for at most 30 s instead of waiting for the 30 s
+ * poll, so a node without a Clash API says so within one agent beat.
+ */
+function repollUntilAnswered(nodeId: string): void {
+  stopRepoll();
+  const node = policies.value.find((row) => row.node_id === nodeId);
+  if (!node || !readinessAwaitsAgent(readinessOf(node))) return;
+  const started = Date.now();
+  repollTimer = setInterval(async () => {
+    if (Date.now() - started >= READINESS_REPOLL_MAX_MS) return stopRepoll();
+    // On a slow link a tick can come round before the last read answered.
+    if (ctx.policies.refreshing.value) return;
+    await ctx.policies.refresh();
+    const current = policies.value.find((row) => row.node_id === nodeId);
+    if (!current || !readinessAwaitsAgent(readinessOf(current))) stopRepoll();
+  }, READINESS_REPOLL_MS);
+}
+
+onBeforeUnmount(stopRepoll);
 
 function setField<K extends keyof PolicyDraft>(row: TracePolicy, key: K, value: PolicyDraft[K]): void {
   drafts.value = { ...drafts.value, [row.node_id]: { ...draftOf(row), [key]: value } };
@@ -130,11 +257,15 @@ async function savePolicy(row: TracePolicy): Promise<void> {
       enabled: d.enabled,
       level: d.level,
       budget_lines_per_sec: Math.max(0, Math.floor(Number(d.budget) || 0)),
+      // alpha-0.2.2a117 refuses a body carrying raw (strict decode), so the
+      // switch travels only to a server that reports it.
+      ...(serverReportsReadiness(row) ? { raw: { enabled: d.raw } } : {}),
     });
     toast.success(t("platform.trace.policySaved", { node: ctx.nodeLabel(row.node_id) }));
     const { [row.node_id]: _saved, ...rest } = drafts.value;
     drafts.value = rest;
     await ctx.policies.refresh();
+    repollUntilAnswered(row.node_id);
   } catch (error) {
     toast.error(error instanceof Error ? error.message : t("platform.trace.policySaveFailed"));
   } finally {
@@ -319,12 +450,16 @@ async function startFiltered(): Promise<void> {
         :empty-description="$t('platform.trace.policyEmptyDescription')"
         @retry="ctx.policies.refresh"
       >
-        <div v-if="shownPolicies.length" class="relative overflow-x-auto rounded-md border border-border">
-          <table class="w-full min-w-[720px] text-sm">
+        <div v-if="shownPolicies.length" ref="policyTable" class="relative overflow-x-auto rounded-md border border-border">
+          <table class="w-full text-sm" :class="readinessShown ? 'min-w-[960px]' : 'min-w-[720px]'">
             <thead>
               <tr class="border-b border-border text-left text-xs text-muted-foreground">
                 <th scope="col" class="pin-start px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyNode') }}</th>
+                <!-- Fixed widths: a note appearing in a row must not move
+                     the controls under the pointer. -->
+                <th v-if="readinessShown" scope="col" class="w-64 px-3 py-2 font-medium">{{ $t('platform.evidence.collection.colReady') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">{{ $t('platform.trace.colPolicyEnabled') }}</th>
+                <th v-if="readinessShown" scope="col" class="w-44 px-3 py-2 font-medium">{{ $t('platform.evidence.collection.colRawLines') }}</th>
                 <th scope="col" class="px-3 py-2 font-medium">
                   {{ $t('platform.trace.colPolicyLevel') }}
                   <span v-if="uniform.level" class="block pt-0.5 font-normal text-foreground">
@@ -333,8 +468,14 @@ async function startFiltered(): Promise<void> {
                 </th>
                 <th scope="col" class="px-3 py-2 font-medium">
                   {{ $t('platform.trace.colPolicyBudget') }}
-                  <span v-if="uniform.budget !== undefined" class="block pt-0.5 font-normal text-foreground tabular">
-                    {{ $t('platform.evidence.collection.everyNode', { value: uniform.budget }) }}
+                  <span
+                    v-if="uniform.budget !== undefined"
+                    class="block pt-0.5 font-normal text-foreground tabular"
+                    :title="uniform.budget === 0 ? budgetDefaultTitle : undefined"
+                  >
+                    {{ $t('platform.evidence.collection.everyNode', {
+                      value: uniform.budget === 0 ? $t('platform.evidence.collection.agentDefault') : uniform.budget,
+                    }) }}
                   </span>
                 </th>
                 <th scope="col" class="px-3 py-2 font-medium">
@@ -345,21 +486,70 @@ async function startFiltered(): Promise<void> {
                     }) }}
                   </span>
                 </th>
-                <th scope="col" class="pin-end px-3 py-2 text-right font-medium"><span class="sr-only">{{ $t('platform.trace.colPolicyActions') }}</span></th>
+                <!-- Room for Save is kept, so it appearing does not reflow
+                     the columns the pointer is on. -->
+                <th scope="col" class="pin-end px-3 py-2 text-right font-medium" :class="readinessShown && 'w-24'"><span class="sr-only">{{ $t('platform.trace.colPolicyActions') }}</span></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in shownPolicies" :key="row.node_id" class="group border-b border-border last:border-b-0">
+              <tr
+                v-for="row in shownPolicies"
+                :key="row.node_id"
+                :data-node-id="row.node_id"
+                class="group border-b border-border last:border-b-0"
+                :class="[
+                  focusNodeId === row.node_id && 'bg-muted [--row-bg:var(--muted)]',
+                  // With readiness, cells align to the top and every first
+                  // line sits in a 32 px band, so a note growing under one
+                  // cell moves nothing beside it.
+                  readinessShown && '*:align-top',
+                ]"
+                :aria-current="focusNodeId === row.node_id ? 'true' : undefined"
+              >
                 <th scope="row" class="pin-start px-3 py-2 text-left font-medium">
-                  <span class="block truncate" :title="row.node_id">{{ ctx.nodeLabel(row.node_id) }}</span>
+                  <span class="block truncate" :class="readinessShown && 'leading-8'" :title="row.node_id">{{ ctx.nodeLabel(row.node_id) }}</span>
                 </th>
-                <td class="px-3 py-2">
-                  <Checkbox
-                    :model-value="draftOf(row).enabled"
-                    :disabled="!ctx.canAdmin.value"
-                    :aria-label="$t('platform.evidence.collection.policyEnabledFor', { node: ctx.nodeLabel(row.node_id) })"
-                    @update:model-value="(v) => setField(row, 'enabled', v === true)"
+                <td v-if="readinessShown" class="px-3 py-2">
+                  <EvidenceReadinessCell
+                    v-if="readinessOf(row)"
+                    :readiness="readinessOf(row)!"
+                    :wants="wantsOf(row)"
+                    :shed="shedSummary(row.collector)"
+                    :by-capture="!row.enabled && (coverageBy.get(row.node_id)?.capturing ?? 0) > 0"
                   />
+                </td>
+                <td class="px-3 py-2">
+                  <!-- The box's own ::after widens its touch target to 44 px
+                       without moving anything. -->
+                  <span :class="readinessShown && 'inline-flex min-h-8 items-center'">
+                    <Checkbox
+                      class="relative after:absolute after:-inset-3.5"
+                      :model-value="draftOf(row).enabled"
+                      :disabled="!ctx.canAdmin.value"
+                      :aria-label="$t('platform.evidence.collection.policyEnabledFor', { node: ctx.nodeLabel(row.node_id) })"
+                      @update:model-value="(v) => setField(row, 'enabled', v === true)"
+                    />
+                  </span>
+                </td>
+                <!-- Raw lines ride on records: the agent's raw path is fed by
+                     the lines records keep, so the box is disabled while
+                     records are off and keeps the stored choice for later. -->
+                <td v-if="readinessShown" class="px-3 py-2">
+                  <span class="inline-flex min-h-8 items-center" :title="rawTitle(row)">
+                    <Checkbox
+                      class="relative after:absolute after:-inset-3.5"
+                      :model-value="draftOf(row).raw"
+                      :disabled="!ctx.canAdmin.value || !draftOf(row).enabled"
+                      :aria-label="$t('platform.evidence.collection.rawEnabledFor', { node: ctx.nodeLabel(row.node_id) })"
+                      @update:model-value="(v) => setField(row, 'raw', v === true)"
+                    />
+                  </span>
+                  <span v-if="rawFollowsRecords(row) && !dirty(row)" class="block text-xs text-muted-foreground">
+                    {{ $t('platform.evidence.collection.rawFollows') }}
+                  </span>
+                  <span v-if="rawTurningOff(row)" class="block max-w-44 text-xs whitespace-normal text-muted-foreground">
+                    {{ $t('platform.evidence.collection.rawOffKept') }}
+                  </span>
                 </td>
                 <td class="px-3 py-2" :class="revealUnlessEdited(row, 'level')">
                   <Select
@@ -376,18 +566,22 @@ async function startFiltered(): Promise<void> {
                   </Select>
                 </td>
                 <td class="px-3 py-2" :class="revealUnlessEdited(row, 'budget')">
+                  <!-- 0 is the agent's own default: an empty box that says
+                       so, with both agents' values in the title. -->
                   <Input
-                    class="h-8 w-24 font-mono text-xs"
+                    class="h-8 font-mono text-xs placeholder:font-sans"
+                    :class="readinessShown ? 'w-36' : 'w-24'"
                     type="number"
                     min="0"
-                    :model-value="draftOf(row).budget"
+                    :model-value="draftOf(row).budget || (readinessShown ? '' : draftOf(row).budget)"
+                    :placeholder="readinessShown ? $t('platform.evidence.collection.agentDefault') : undefined"
                     :disabled="!ctx.canAdmin.value"
-                    :title="adminReason"
+                    :title="adminReason ?? (readinessShown && !draftOf(row).budget ? budgetDefaultTitle : undefined)"
                     :aria-label="$t('platform.trace.colPolicyBudget')"
                     @update:model-value="(v) => setField(row, 'budget', Number(v) || 0)"
                   />
                 </td>
-                <td class="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground tabular">
+                <td class="px-3 py-2 font-mono text-xs whitespace-nowrap text-muted-foreground tabular" :class="readinessShown && 'leading-8'">
                   <template v-if="uniform.updated === undefined">
                     {{ row.updated_at ? formatDateTime(row.updated_at) : $t('common.misc.none') }}
                   </template>
@@ -424,10 +618,8 @@ async function startFiltered(): Promise<void> {
               : $t('platform.evidence.overview.showQuiet', { count: idlePolicies.length }, idlePolicies.length) }}
           </Button>
         </div>
-        <p class="mt-2 text-xs text-muted-foreground">
-          {{ $t('platform.trace.budgetHint') }}
-          <template v-if="!ctx.canAdmin.value"> {{ $t('platform.trace.needsAdmin', { scope: 'log:admin' }) }}</template>
-        </p>
+        <p class="mt-2 text-xs text-muted-foreground">{{ policyFootnote }}</p>
+        <EvidenceRetention v-if="readinessShown" class="mt-4" />
       </DataState>
     </section>
 
@@ -456,7 +648,10 @@ async function startFiltered(): Promise<void> {
         class="space-y-4 rounded-md border border-border p-4"
         @submit.prevent="startFiltered"
       >
-        <p class="text-xs text-muted-foreground">{{ $t('platform.trace.startHint', { max: TRACE_TTL_MAX_SECONDS / 60 }) }}</p>
+        <p class="text-xs text-muted-foreground">
+          {{ $t('platform.trace.startHint', { max: TRACE_TTL_MAX_SECONDS / 60 }) }}
+          <template v-if="readinessShown"> {{ $t('platform.evidence.collection.captureShedHint') }}</template>
+        </p>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           <div class="grid gap-2">
             <Label for="capture-name">{{ $t('platform.trace.sessionNameLabel') }}</Label>
