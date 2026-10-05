@@ -25,6 +25,7 @@ import {
   evidenceStoreProof,
   formatEvidenceQuery,
   isActiveSession,
+  isRecordingRow,
   legacyEvidenceQuery,
   normalizeEvidenceQuery,
   notReadyNodeCount,
@@ -922,4 +923,38 @@ test("a policy save sends the budget only when the operator changed it", () => {
     enabled: true,
     level: "debug",
   });
+});
+
+test("an agent too old to report counts as recording when its records arrive, and as unknown when none do", () => {
+  // The integrated check against a real 0.3.9 agent: 228 records in the hour
+  // from a node the server can only call too old to report.
+  const tooOld = (node: string) => readyPolicy(node, true, { state: "agent_too_old", reported_by: "server" });
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [tooOld("old-busy"), tooOld("old-quiet"), readyPolicy("new-ready", true, { state: "ready", level: "debug" })],
+    sessions: [],
+    sources: [],
+    stats: [],
+    lastHourByNode: new Map([["old-busy", 228]]),
+    nowMs: NOW,
+  });
+  const by = (id: string) => rows.find((row) => row.nodeId === id)!;
+  assert.equal(isRecordingRow(by("old-busy")), true, "its records say it records");
+  assert.equal(isRecordingRow(by("old-quiet")), false);
+  assert.equal(readinessNeedsAttention(by("old-quiet")), false, "nor is it counted as not recording");
+  assert.equal(collectingNodeCount(rows), 2, "the headline counts the busy old agent and the ready one");
+  assert.equal(notReadyNodeCount(rows), 0);
+  const proof = evidenceStoreProof({ rows, coverageKnown: true });
+  assert.deepEqual([proof.collecting, proof.notReady, proof.total], [2, 0, 3]);
+  // With the hour unread, an old agent is unknown, not recording.
+  const unread = evidenceCoverageRows({
+    nodes: [],
+    policies: [tooOld("old-busy")],
+    sessions: [],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(collectingNodeCount(unread), 0);
+  assert.equal(notReadyNodeCount(unread), 0);
 });

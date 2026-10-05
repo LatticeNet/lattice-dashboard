@@ -44,6 +44,7 @@ import {
   captureRequest,
   captureSessionName,
   isActiveSession,
+  isRecordingRow,
   readEvidenceQuery,
   rowWantsCollection,
   seedCaptureNodes,
@@ -573,9 +574,11 @@ const coverageLoading = computed(
                      the collector is; every other answer is the readiness
                      cell after this chain. Without it (alpha-0.2.2a117 and
                      older) the cell renders exactly as before. -->
-                <span v-else-if="row.trace?.enabled && row.readiness?.kind === 'ready'" class="text-sm">
+                <!-- An agent too old to report counts as recording when its
+                     records arrived this hour, and the row says the same. -->
+                <span v-else-if="row.trace?.enabled && row.readiness && isRecordingRow(row)" class="text-sm">
                   {{ $t('platform.evidence.readiness.recording') }}
-                  <span class="font-mono text-xs text-muted-foreground">{{ row.readiness.level }}</span>
+                  <span class="font-mono text-xs text-muted-foreground">{{ row.readiness.kind === 'ready' ? row.readiness.level : row.trace.level }}</span>
                 </span>
                 <span v-else-if="row.trace?.enabled && !row.readiness" class="text-sm">
                   {{ $t('platform.evidence.overview.traceOn') }}
@@ -585,7 +588,7 @@ const coverageLoading = computed(
                 <span v-else-if="row.trace && !row.trace.enabled" class="text-sm text-muted-foreground">{{ $t('platform.evidence.overview.traceOff') }}</span>
                 <span v-else-if="!row.trace" class="text-xs text-muted-foreground">{{ $t('platform.evidence.overview.unread') }}</span>
                 <EvidenceReadinessCell
-                  v-if="ctx.storeReady.value && row.readiness && rowWantsCollection(row) && row.readiness.kind !== 'ready'"
+                  v-if="ctx.storeReady.value && row.readiness && rowWantsCollection(row) && !isRecordingRow(row)"
                   :class="row.capturing > 0 && 'ms-2'"
                   :readiness="row.readiness"
                   wants

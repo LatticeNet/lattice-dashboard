@@ -570,6 +570,7 @@ export default {
         agentOffHint: "agent 上报采集已关闭，它没有应用这条策略。这次上报是在策略修改之后收到的，所以不是延迟。",
         staleNote: "最后一次上报：{state}。",
         tooOldNote: "{version} 及以后的 agent 才会上报就绪状态；这个 agent 无法说明它是否在记录。",
+        tooOldRecording: "最近一小时记录了 {count} 个连接，所以它在记录。 | 最近一小时记录了 {count} 个连接，所以它在记录。",
         unknownNote: "agent 上报的是 \"{state}\"。",
         remedyUpgrade: "把 agent 升级到 {version} 或更新的版本，它会从 sing-box 配置里读取地址；如果 sing-box 还没有 Clash API，再在节点上运行 {command}。",
         shed: "自 {since} 起超出每秒 {budget} 行的预算，漏掉 {count} 个连接 | 自 {since} 起超出每秒 {budget} 行的预算，漏掉 {count} 个连接",

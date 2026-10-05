@@ -616,6 +616,8 @@ export default {
           "The agent reports collection off; it has not applied the policy. Its report arrived after the policy changed, so this is not a delay.",
         staleNote: "Last report: {state}.",
         tooOldNote: "Agents from {version} report readiness; this one cannot say whether it records.",
+        tooOldRecording:
+          "It recorded {count} connection in the last hour, so it is recording. | It recorded {count} connections in the last hour, so it is recording.",
         unknownNote: "The agent reported \"{state}\".",
         remedyUpgrade:
           "Upgrade the agent to {version} or later, which reads the address from the sing-box config; if sing-box has no Clash API, also run {command} on the node.",

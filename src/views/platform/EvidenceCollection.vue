@@ -504,6 +504,7 @@ async function startFiltered(): Promise<void> {
                     :wants="wantsOf(row)"
                     :shed="shedSummary(row.collector)"
                     :by-capture="!row.enabled && (coverageBy.get(row.node_id)?.capturing ?? 0) > 0"
+                    :recorded-last-hour="coverageBy.get(row.node_id)?.lastHour"
                   />
                 </td>
                 <td class="px-3 py-2">

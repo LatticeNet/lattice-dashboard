@@ -642,9 +642,16 @@ export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
  * a ready collector, not a switch that is on: a node switched on without a
  * Clash API records nothing. From an older server, which reports no
  * readiness, it stays what it was: policy on, or inside a running capture.
+ *
+ * An agent too old to report readiness (the whole fleet on 0.3.9 until it
+ * upgrades) is judged by evidence instead: records from it in the last hour
+ * mean it records. With none, or with the hour unread, it is unknown and is
+ * counted neither as recording nor as not recording, so the headline agrees
+ * with the row's last-hour count and with "Nodes reporting".
  */
-export function isRecordingRow(row: Pick<CoverageRow, "trace" | "capturing" | "readiness">): boolean {
+export function isRecordingRow(row: Pick<CoverageRow, "trace" | "capturing" | "readiness" | "lastHour">): boolean {
   if (!row.readiness) return !!row.trace?.enabled || row.capturing > 0;
+  if (row.readiness.kind === "not_ready" && row.readiness.state === "agent_too_old") return (row.lastHour ?? 0) > 0;
   return row.readiness.kind === "ready";
 }
 

@@ -519,6 +519,37 @@ if (FIXTURE === "capture") {
   records.sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
 
+if (READINESS) {
+  // A 0.3.9 agent the server can only call too old to report, whose records
+  // still arrive: 228 in the last hour, as the integrated check saw.
+  const node = nodeByName("openjobs-vpn-dmit-1");
+  for (let i = 0; i < 228; i++) {
+    const [host, port] = pick(DESTINATIONS);
+    const started = NOW - Math.floor(rand() * 55 * MIN) - 30_000;
+    records.push({
+      node_id: node,
+      inbound_tag: "vless-in-17893",
+      user_kind: "managed",
+      user_id: "usr_bob",
+      user_name: "u_2c90e4d1",
+      log_id: 700000 + i,
+      network: "tcp",
+      dst_host: host,
+      dst_port: port,
+      outbound_tag: "direct",
+      started_at: new Date(started).toISOString(),
+      ended_at: new Date(started + 4000).toISOString(),
+      duration_ms: 4000,
+      bytes_known: true,
+      upload: 2000,
+      download: 90_000,
+      close_reason: "eof",
+      core_generation: 2,
+    });
+  }
+  records.sort((a, b) => b.started_at.localeCompare(a.started_at));
+}
+
 /* ------------------------------ raw log -------------------------------- */
 
 const sources: LogSource[] = [];

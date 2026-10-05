@@ -36,6 +36,8 @@ const props = defineProps<{
   shed?: { count: number; since: string; budget?: number };
   /** Records are off and a running capture is what wants the collector (full cell only). */
   byCapture?: boolean;
+  /** Connections this node recorded in the last hour, when that was read (full cell only). */
+  recordedLastHour?: number;
 }>();
 
 const { t, locale } = useI18n();
@@ -130,7 +132,15 @@ const cell = computed<Cell>(() => {
       if (r.state === "agent_too_old") {
         return {
           text: t("platform.evidence.readiness.state.agent_too_old"),
-          note: t("platform.evidence.readiness.tooOldNote", { version: COLLECTOR_STATUS_MIN_AGENT }),
+          // The agent cannot say; its records can.
+          note:
+            (props.recordedLastHour ?? 0) > 0
+              ? t(
+                  "platform.evidence.readiness.tooOldRecording",
+                  { count: count(props.recordedLastHour ?? 0) },
+                  props.recordedLastHour ?? 0,
+                )
+              : t("platform.evidence.readiness.tooOldNote", { version: COLLECTOR_STATUS_MIN_AGENT }),
           tone: props.wants ? "warning" : "muted",
           title: t("platform.evidence.readiness.tooOldHint", { version: COLLECTOR_STATUS_MIN_AGENT }),
         };
