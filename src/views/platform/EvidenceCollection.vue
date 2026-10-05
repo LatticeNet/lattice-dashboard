@@ -44,8 +44,11 @@ import {
   EMPTY_EVIDENCE_QUERY,
   READINESS_REPOLL_MAX_MS,
   READINESS_REPOLL_MS,
+  policyDraftOf,
   policyRawDraft,
+  policyUpsertRequest,
   rawFollowsRecords,
+  type PolicyDraft,
   readEvidenceQuery,
   readinessAwaitsAgent,
   rowWantsCollection,
@@ -74,21 +77,13 @@ const adminReason = computed(() =>
 /* Collection policy                                                   */
 /* ------------------------------------------------------------------ */
 
-interface PolicyDraft {
-  enabled: boolean;
-  level: TraceLevel;
-  budget: number;
-  /** Raw lines; sent only to a server that reports raw_effective. */
-  raw: boolean;
-}
-
 const policies = computed(() => ctx.policies.data.value ?? []);
 /** Readiness and the raw switch exist on this server (design 26, R1). */
 const readinessShown = computed(() => ctx.readinessReported.value);
 const coverageBy = computed(() => new Map(ctx.coverageRows.value.map((row) => [row.nodeId, row])));
 
 function seedDraft(row: TracePolicy): PolicyDraft {
-  return { enabled: row.enabled, level: row.level, budget: row.budget_lines_per_sec, raw: policyRawDraft(row) };
+  return policyDraftOf(row);
 }
 
 /**
@@ -252,15 +247,8 @@ async function savePolicy(row: TracePolicy): Promise<void> {
   const d = draftOf(row);
   savingNode.value = row.node_id;
   try {
-    await api.trace.setPolicy({
-      node_id: row.node_id,
-      enabled: d.enabled,
-      level: d.level,
-      budget_lines_per_sec: Math.max(0, Math.floor(Number(d.budget) || 0)),
-      // alpha-0.2.2a117 refuses a body carrying raw (strict decode), so the
-      // switch travels only to a server that reports it.
-      ...(serverReportsReadiness(row) ? { raw: { enabled: d.raw } } : {}),
-    });
+    // The budget only when it was changed; raw only to a server that has it.
+    await api.trace.setPolicy(policyUpsertRequest(row, d));
     toast.success(t("platform.trace.policySaved", { node: ctx.nodeLabel(row.node_id) }));
     const { [row.node_id]: _saved, ...rest } = drafts.value;
     drafts.value = rest;

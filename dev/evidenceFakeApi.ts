@@ -285,6 +285,10 @@ if (READINESS) {
   set("oracle-osaka-arm", { enabled: false, raw: { enabled: true }, raw_effective: false });
 }
 
+/** The last policy body the console sent, for the harness to inspect. */
+let lastPolicyBody: TracePolicyUpsertRequest | undefined;
+(globalThis as unknown as { __lastPolicyBody: () => unknown }).__lastPolicyBody = () => lastPolicyBody;
+
 /** What the agent says once a saved policy reaches it. */
 function settle(policy: TracePolicy): void {
   const final = finalState.get(policy.node_id) ?? "ready";
@@ -787,7 +791,11 @@ export const api = {
       const wasEnabled = policy.enabled;
       if (input.enabled !== undefined) policy.enabled = input.enabled;
       if (input.level) policy.level = input.level;
-      if (input.budget_lines_per_sec) policy.budget_lines_per_sec = input.budget_lines_per_sec;
+      if (READINESS) {
+        // R1: an explicit 0 resets to the agent's default; no key keeps it.
+        if (input.budget_lines_per_sec !== undefined) policy.budget_lines_per_sec = Math.max(0, input.budget_lines_per_sec);
+      } else if (input.budget_lines_per_sec) policy.budget_lines_per_sec = input.budget_lines_per_sec;
+      lastPolicyBody = { ...input };
       policy.updated_at = new Date().toISOString();
       if (READINESS) {
         // Every write stores raw explicitly; a pre-switch policy keeps its meaning.

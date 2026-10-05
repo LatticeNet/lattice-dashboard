@@ -591,8 +591,9 @@ export default {
         recording: "recording",
         notReady: "not ready: {reason}",
         waiting: "waiting for the agent",
-        waitingHint:
-          "Collection is switched on. The agent reports its collector on its next beat, about every 10 seconds.",
+        noReport: "no collector report",
+        noReportHint:
+          "Collection is switched on and the agent has sent no collector report. An agent from {version} sends one on its next beat, about every 10 seconds; one whose version the server cannot read, such as a dev build, never does, and then whether it records is not known.",
         pendingHint:
           "The policy or a capture changed after the agent's last report. After a save this page checks again every 3 seconds for half a minute.",
         lastHeard: "last heard {rel}",

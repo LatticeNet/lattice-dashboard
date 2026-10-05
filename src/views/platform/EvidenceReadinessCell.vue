@@ -93,7 +93,14 @@ const cell = computed<Cell>(() => {
         level: r.level,
       };
     case "waiting":
-      return { text: t("platform.evidence.readiness.waiting"), tone: "muted", title: t("platform.evidence.readiness.waitingHint") };
+      // No report at all. A new agent sends one within a beat, but one whose
+      // version the server cannot read (a dev build) never does, so the
+      // words promise nothing.
+      return {
+        text: t("platform.evidence.readiness.noReport"),
+        tone: "muted",
+        title: t("platform.evidence.readiness.noReportHint", { version: COLLECTOR_STATUS_MIN_AGENT }),
+      };
     case "pending":
       return { text: t("platform.evidence.readiness.waiting"), tone: "muted", title: t("platform.evidence.readiness.pendingHint") };
     case "stale":

@@ -18,7 +18,9 @@ import type {
   LogSourceStatsView,
   TraceCollectorState,
   TraceCollectorView,
+  TraceLevel,
   TracePolicy,
+  TracePolicyUpsertRequest,
   TraceSession,
   TraceSessionCreateRequest,
   TraceStatsResponse,
@@ -807,6 +809,36 @@ export function shedSummary(
  */
 export function policyRawDraft(policy: TracePolicy): boolean {
   return policy.raw?.enabled ?? policy.raw_effective ?? false;
+}
+
+/** One row of the Collection policy table as the operator is editing it. */
+export interface PolicyDraft {
+  enabled: boolean;
+  level: TraceLevel;
+  budget: number;
+  /** Raw lines; sent only to a server that reports raw_effective. */
+  raw: boolean;
+}
+
+/** The draft a row starts from: what the server holds. */
+export function policyDraftOf(policy: TracePolicy): PolicyDraft {
+  return { enabled: policy.enabled, level: policy.level, budget: policy.budget_lines_per_sec, raw: policyRawDraft(policy) };
+}
+
+/**
+ * The body a save sends. The budget travels only when the operator changed
+ * it: a server with design 26 R1 reads an explicit 0 as "reset to the
+ * agent's default", so echoing an untouched value would turn every save into
+ * a write of whatever this page last read, and a 0 into a reset. Clearing
+ * the box is how an operator asks for that reset. `raw` travels only to a
+ * server that reports it, because alpha-0.2.2a117 refuses a body carrying it.
+ */
+export function policyUpsertRequest(policy: TracePolicy, draft: PolicyDraft): TracePolicyUpsertRequest {
+  const body: TracePolicyUpsertRequest = { node_id: policy.node_id, enabled: draft.enabled, level: draft.level };
+  const budget = Math.max(0, Math.floor(Number(draft.budget) || 0));
+  if (budget !== policy.budget_lines_per_sec) body.budget_lines_per_sec = budget;
+  if (serverReportsReadiness(policy)) body.raw = { enabled: draft.raw };
+  return body;
 }
 
 /**

@@ -29,7 +29,9 @@ import {
   normalizeEvidenceQuery,
   notReadyNodeCount,
   parseConnKey,
+  policyDraftOf,
   policyRawDraft,
+  policyUpsertRequest,
   rawFollowsRecords,
   readinessAwaitsAgent,
   readinessNeedsAttention,
@@ -893,4 +895,31 @@ test("collectorReadiness: an agent that saw the policy and still reports off is 
   assert.equal(notReadyNodeCount(rows), 1, "counted as not recording");
   assert.equal(rows[0]?.nodeId, "off-applied", "and ranked with the attention rows");
   assert.equal(readinessAwaitsAgent(rows[0]?.readiness), false, "no re-poll waits on it");
+});
+
+test("a policy save sends the budget only when the operator changed it", () => {
+  // R1 server, budget pinned at 500 and untouched: no budget in the body,
+  // so a save of another field can never reset or overwrite it.
+  const pinned: TracePolicy = { ...readyPolicy("a", true), budget_lines_per_sec: 500 };
+  const levelOnly = { ...policyDraftOf(pinned), level: "trace" as const };
+  assert.deepEqual(policyUpsertRequest(pinned, levelOnly), {
+    node_id: "a",
+    enabled: true,
+    level: "trace",
+    raw: { enabled: false },
+  });
+  // Agent default (0) and untouched: still no budget.
+  const byDefault = readyPolicy("b", false);
+  assert.equal("budget_lines_per_sec" in policyUpsertRequest(byDefault, { ...policyDraftOf(byDefault), enabled: true }), false);
+  // Changed: sent. Cleared: an explicit 0, the reset to the agent default.
+  assert.equal(policyUpsertRequest(pinned, { ...policyDraftOf(pinned), budget: 2000 }).budget_lines_per_sec, 2000);
+  assert.equal(policyUpsertRequest(pinned, { ...policyDraftOf(pinned), budget: 0 }).budget_lines_per_sec, 0);
+  assert.equal(policyUpsertRequest(byDefault, { ...policyDraftOf(byDefault), budget: 750.9 }).budget_lines_per_sec, 750);
+  // An a117 policy: no raw key, and the untouched 500 is not echoed either.
+  const old = policy("c", false);
+  assert.deepEqual(policyUpsertRequest(old, { ...policyDraftOf(old), enabled: true }), {
+    node_id: "c",
+    enabled: true,
+    level: "debug",
+  });
 });
