@@ -609,6 +609,10 @@ export default {
           "Node agent {version} and later report readiness. This agent reports nothing, so whether it records is not known; the policy names a Clash API address, so it may.",
         remedyNoApi: "Run {command} on the node; sing-box restarts once.",
         byCapture: "A running capture needs this collector; records are off.",
+        agentOff: "agent reports collection off",
+        agentOffNote: "It has not applied the policy.",
+        agentOffHint:
+          "The agent reports collection off; it has not applied the policy. Its report arrived after the policy changed, so this is not a delay.",
         staleNote: "Last report: {state}.",
         tooOldNote: "Agents from {version} report readiness; this one cannot say whether it records.",
         unknownNote: "The agent reported \"{state}\".",

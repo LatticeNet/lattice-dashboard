@@ -732,9 +732,14 @@ export function collectorReadiness(policy: TracePolicy | undefined, capturing: n
   if (report.state === "ready") {
     base = { kind: "ready", level: typeof report.level === "string" && report.level ? report.level : policy.level };
   }
-  // An agent that still says off after the change was seen has not picked
-  // the policy up from its config poll yet.
-  else if (report.state === "off") base = wants ? { kind: "waiting" } : { kind: "off" };
+  // Off while collection is wanted: an agent that has seen the change (the
+  // server no longer marks the report pending, so it came after the policy)
+  // and still says off has not applied it. That is not waiting; it is a node
+  // that does not record. While the report is pending it stays "pending"
+  // below, and before any report exists it is "waiting" above.
+  else if (report.state === "off") {
+    base = wants ? { kind: "not_ready", state: "off", known: true, inferred: false } : { kind: "off" };
+  }
   else {
     base = {
       kind: "not_ready",
@@ -759,7 +764,7 @@ export function rowWantsCollection(row: Pick<CoverageRow, "trace" | "capturing">
 
 /**
  * Wanted, and the collector cannot record or has gone quiet: an attention
- * row. An agent too old to report is not one: with a Clash API address in
+ * row. An agent reporting collection off after it saw the policy is one. An agent too old to report is not one: with a Clash API address in
  * its policy it may well be recording, so it is neither counted as recording
  * nor as not recording, and its row says it cannot tell.
  */

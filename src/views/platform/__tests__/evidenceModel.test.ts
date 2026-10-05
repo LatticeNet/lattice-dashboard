@@ -729,8 +729,6 @@ test("collectorReadiness: an older agent without an address is not ready, inferr
 test("collectorReadiness: records on with no collector yet is waiting, never ready", () => {
   assert.deepEqual(collectorReadiness(readyPolicy("a", true), 0), { kind: "waiting" });
   assert.deepEqual(collectorReadiness(readyPolicy("a", false), 0), { kind: "off" });
-  // An agent still saying off after the change was seen has not picked it up yet.
-  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "off" }), 0), { kind: "waiting" });
   assert.deepEqual(collectorReadiness(readyPolicy("a", false, { state: "off" }), 0), { kind: "off" });
 });
 
@@ -871,4 +869,28 @@ test("shed connections are shown only when the budget refused some", () => {
     }),
     { count: 1204, since: "2026-10-05T08:00:00Z", budget: 5000 },
   );
+});
+
+test("collectorReadiness: an agent that saw the policy and still reports off is not recording", () => {
+  // The report came after the policy (the server does not mark it pending).
+  const applied = collectorReadiness(readyPolicy("a", true, { state: "off" }), 0);
+  assert.deepEqual(applied, { kind: "not_ready", state: "off", known: true, inferred: false });
+  // While the report predates the change it is pending, not a failure.
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "off", pending: true }), 0), { kind: "pending" });
+  // Before any report exists it is waiting.
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true), 0), { kind: "waiting" });
+  // A capture wanting the node counts the same as records on.
+  assert.equal(collectorReadiness(readyPolicy("a", false, { state: "off" }), 1)?.kind, "not_ready");
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [readyPolicy("off-applied", true, { state: "off" }), readyPolicy("ready", true, { state: "ready" })],
+    sessions: [],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(collectingNodeCount(rows), 1);
+  assert.equal(notReadyNodeCount(rows), 1, "counted as not recording");
+  assert.equal(rows[0]?.nodeId, "off-applied", "and ranked with the attention rows");
+  assert.equal(readinessAwaitsAgent(rows[0]?.readiness), false, "no re-poll waits on it");
 });

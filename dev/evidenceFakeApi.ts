@@ -24,7 +24,8 @@
  *            (ready with shed connections, ready with raw on, no_clash_api
  *            from the agent and inferred by the server, secret_unreadable,
  *            stream_failing, agent_too_old, pending, waiting, stale, an
- *            unknown state, a pre-switch policy, a capture on a node that is
+ *            agent that saw the policy and still reports off, an unknown
+ *            state, a pre-switch policy, a capture on a node that is
  *            not ready, off). Saving a policy answers pending (or the
  *            server's inference at once) and the agent's report lands about
  *            7 s later, so the 3 s re-poll can be watched. The retention
@@ -268,6 +269,8 @@ if (READINESS) {
     collector: agentReport("ready", { level: "debug", stale: true, received_at: iso(-3 * MIN - 12_000) }),
   });
   set("racknerd-sj", { enabled: true, collector: agentReport("warming_up") }, "ready");
+  // Records on, and the agent's report (after the change) still says off.
+  set("hetzner-hel-cx22", { enabled: true, updated_at: iso(-20 * MIN), collector: agentReport("off") });
   // Written before the raw switch existed: no raw key, raw lines follow records.
   set("vultr-tokyo-hp", {
     enabled: true,

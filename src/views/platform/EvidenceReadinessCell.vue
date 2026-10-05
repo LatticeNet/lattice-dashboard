@@ -110,6 +110,16 @@ const cell = computed<Cell>(() => {
         link: props.wants,
       };
     case "not_ready": {
+      // The agent saw the policy and still collects nothing.
+      if (r.state === "off") {
+        return {
+          text: t("platform.evidence.readiness.agentOff"),
+          note: t("platform.evidence.readiness.agentOffNote"),
+          tone: props.wants ? "warning" : "muted",
+          title: t("platform.evidence.readiness.agentOffHint"),
+          link: props.wants,
+        };
+      }
       if (r.state === "agent_too_old") {
         return {
           text: t("platform.evidence.readiness.state.agent_too_old"),
