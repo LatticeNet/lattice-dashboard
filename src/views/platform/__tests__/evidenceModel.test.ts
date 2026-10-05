@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import type { ConnRecord, LogSource, LogSourceStatsView, TracePolicy, TraceSession } from "../../../lib/api/types.ts";
+import type {
+  ConnRecord,
+  LogSource,
+  LogSourceStatsView,
+  TraceCollectorView,
+  TracePolicy,
+  TraceSession,
+} from "../../../lib/api/types.ts";
 import { connRecordKey, readConnTraceFilters, resolveTraceWindow } from "../connTraceModel.ts";
 import {
   EMPTY_EVIDENCE_QUERY,
@@ -10,6 +17,7 @@ import {
   captureRequest,
   captureSessionName,
   collectingNodeCount,
+  collectorReadiness,
   connMatchesText,
   connectionOnlyTokens,
   evidenceCoverageRows,
@@ -17,9 +25,19 @@ import {
   evidenceStoreProof,
   formatEvidenceQuery,
   isActiveSession,
+  isRecordingRow,
   legacyEvidenceQuery,
   normalizeEvidenceQuery,
+  notReadyNodeCount,
   parseConnKey,
+  policyDraftOf,
+  policyRawDraft,
+  policyUpsertRequest,
+  rawFollowsRecords,
+  readinessAwaitsAgent,
+  readinessNeedsAttention,
+  serverReportsReadiness,
+  shedSummary,
   parseEvidenceQuery,
   unresolvedEvidenceTokens,
   pickLogSource,
@@ -509,17 +527,18 @@ test("the proof line uses full stats when it has them and the page count otherwi
       rows,
       coverageKnown: true,
     }),
-    { records: 0, encrypted: true, capBytes: 2 * 1024 ** 3, collecting: 1, total: 2 },
+    { records: 0, encrypted: true, capBytes: 2 * 1024 ** 3, collecting: 1, notReady: 0, total: 2 },
   );
   assert.deepEqual(
     evidenceStoreProof({ stats: { scoped: true, cipher_enabled: true }, collectedTotal: 5, rows, coverageKnown: false }),
-    { records: 5, encrypted: true, capBytes: undefined, collecting: 1, total: undefined },
+    { records: 5, encrypted: true, capBytes: undefined, collecting: 1, notReady: 0, total: undefined },
   );
   assert.deepEqual(evidenceStoreProof({ rows: [], coverageKnown: false }), {
     records: undefined,
     encrypted: undefined,
     capBytes: undefined,
     collecting: 0,
+    notReady: 0,
     total: undefined,
   });
 });
@@ -664,4 +683,278 @@ test("the tokens an applied query sent as typed are the ones no list resolved", 
   // With the lists, the same question names a known node and nothing is unresolved.
   const resolved = parseEvidenceQuery("node:legend-sg reason:timeout", resolvers).query;
   assert.deepEqual(unresolvedEvidenceTokens(resolved, resolvers), []);
+});
+
+/* ------------------------------------------------------------------ */
+/* Collector readiness (design 26, R1)                                 */
+/* ------------------------------------------------------------------ */
+
+/** A policy as a server with readiness sends it (raw_effective is always present). */
+function readyPolicy(node_id: string, enabled: boolean, collector?: Partial<TraceCollectorView>): TracePolicy {
+  return {
+    ...policy(node_id, enabled),
+    budget_lines_per_sec: 0,
+    raw: { enabled: false },
+    raw_effective: false,
+    collector: collector ? ({ reported_by: "agent", ...collector } as TraceCollectorView) : undefined,
+  };
+}
+
+test("collectorReadiness: an older server reports no readiness, so there is none to show", () => {
+  assert.equal(collectorReadiness(policy("a", true), 0), undefined);
+  assert.equal(collectorReadiness(undefined, 1), undefined);
+  assert.equal(serverReportsReadiness(policy("a", true)), false);
+  assert.equal(serverReportsReadiness(readyPolicy("a", false)), true);
+});
+
+test("collectorReadiness: records on and no_clash_api reads not ready with the reason", () => {
+  const detail = "no experimental.clash_api in /etc/sing-box/config.json";
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "no_clash_api", detail }), 0), {
+    kind: "not_ready",
+    state: "no_clash_api",
+    known: true,
+    detail,
+    inferred: false,
+  });
+  // The other agent-reported states read the same way.
+  for (const state of ["secret_unreadable", "stream_failing"]) {
+    assert.equal(collectorReadiness(readyPolicy("a", true, { state }), 0)?.kind, "not_ready");
+  }
+});
+
+test("collectorReadiness: an older agent without an address is not ready, inferred", () => {
+  const inferred = collectorReadiness(readyPolicy("a", true, { state: "no_clash_api", reported_by: "server" }), 0);
+  assert.deepEqual(inferred, { kind: "not_ready", state: "no_clash_api", known: true, detail: undefined, inferred: true });
+  const tooOld = collectorReadiness(readyPolicy("a", true, { state: "agent_too_old", reported_by: "server" }), 0);
+  assert.deepEqual(tooOld, { kind: "not_ready", state: "agent_too_old", known: true, detail: undefined, inferred: true });
+});
+
+test("collectorReadiness: records on with no collector yet is waiting, never ready", () => {
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true), 0), { kind: "waiting" });
+  assert.deepEqual(collectorReadiness(readyPolicy("a", false), 0), { kind: "off" });
+  assert.deepEqual(collectorReadiness(readyPolicy("a", false, { state: "off" }), 0), { kind: "off" });
+});
+
+test("collectorReadiness: ready names the level the stream delivers", () => {
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "ready", level: "trace" }), 0), {
+    kind: "ready",
+    level: "trace",
+  });
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "ready" }), 0), { kind: "ready", level: "debug" });
+  const odd = readyPolicy("a", true, { state: "ready", level: 7 as unknown as string });
+  assert.deepEqual(collectorReadiness(odd, 0), { kind: "ready", level: "debug" }, "a level of the wrong type is not shown");
+});
+
+test("collectorReadiness: a pending report is pending", () => {
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "no_clash_api", pending: true }), 0), {
+    kind: "pending",
+  });
+  assert.equal(readinessAwaitsAgent({ kind: "pending" }), true);
+  assert.equal(readinessAwaitsAgent({ kind: "waiting" }), true);
+  assert.equal(readinessAwaitsAgent({ kind: "ready", level: "debug" }), false);
+  assert.equal(readinessAwaitsAgent(undefined), false);
+});
+
+test("collectorReadiness: a stale report keeps its last state and says stale", () => {
+  const stale = collectorReadiness(
+    readyPolicy("a", true, { state: "ready", level: "debug", stale: true, received_at: "2026-09-29T07:57:00Z" }),
+    0,
+  );
+  assert.deepEqual(stale, { kind: "stale", last: { kind: "ready", level: "debug" }, heardAt: "2026-09-29T07:57:00Z" });
+  // Stale outranks pending: a node gone quiet will not answer the change either.
+  assert.equal(collectorReadiness(readyPolicy("a", true, { state: "ready", stale: true, pending: true }), 0)?.kind, "stale");
+  // Nothing asks a quiet node with records off to collect.
+  assert.deepEqual(collectorReadiness(readyPolicy("a", false, { state: "ready", stale: true }), 0), { kind: "off" });
+});
+
+test("collectorReadiness: a capture on a node with records off still needs readiness", () => {
+  assert.deepEqual(collectorReadiness(readyPolicy("a", false), 1), { kind: "waiting" });
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [readyPolicy("a", false, { state: "no_clash_api" })],
+    sessions: [session("s1", ["a"])],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(rows[0]?.readiness?.kind, "not_ready");
+  assert.equal(readinessNeedsAttention(rows[0]!), true);
+  assert.equal(collectingNodeCount(rows), 0, "a capture on a node that cannot record is not recording");
+});
+
+test("collectorReadiness: an unknown state string is not ready", () => {
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "warming_up" }), 0), {
+    kind: "not_ready",
+    state: "warming_up",
+    known: false,
+    detail: undefined,
+    inferred: false,
+  });
+  // A collector object without a state is no report at all.
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "" }), 0), { kind: "waiting" });
+});
+
+test("collectingNodeCount counts recording nodes, not switched-on nodes", () => {
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [
+      readyPolicy("ready", true, { state: "ready", level: "debug" }),
+      readyPolicy("noapi", true, { state: "no_clash_api" }),
+      readyPolicy("waiting", true),
+      readyPolicy("stale", true, { state: "ready", stale: true }),
+      readyPolicy("old", true, { state: "agent_too_old", reported_by: "server" }),
+      readyPolicy("off", false),
+    ],
+    sessions: [],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(collectingNodeCount(rows), 1);
+  assert.equal(
+    notReadyNodeCount(rows),
+    2,
+    "not ready and stale; waiting is on its way, and an agent too old to report may be recording",
+  );
+  assert.equal(readinessNeedsAttention(rows.find((row) => row.nodeId === "old")!), false);
+  const proof = evidenceStoreProof({ rows, coverageKnown: true });
+  assert.equal(proof.collecting, 1);
+  assert.equal(proof.notReady, 2);
+});
+
+test("evidenceCoverageRows ranks on-but-not-ready first", () => {
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [
+      readyPolicy("a-ready", true, { state: "ready" }),
+      readyPolicy("b-capture", false, { state: "ready" }),
+      readyPolicy("c-noapi", true, { state: "no_clash_api" }),
+      readyPolicy("d-off", false),
+    ],
+    sessions: [session("s1", ["b-capture"])],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.deepEqual(
+    rows.map((row) => row.nodeId),
+    ["c-noapi", "b-capture", "a-ready", "d-off"],
+  );
+  assert.equal(rows[0]?.rawLines, false);
+});
+
+test("raw draft: a pre-switch policy that is on reads raw as on", () => {
+  const preSwitchOn: TracePolicy = { ...policy("a", true), raw_effective: true };
+  assert.equal(policyRawDraft(preSwitchOn), true);
+  assert.equal(rawFollowsRecords(preSwitchOn), true);
+  const preSwitchOff: TracePolicy = { ...policy("a", false), raw_effective: false };
+  assert.equal(policyRawDraft(preSwitchOff), false);
+  assert.equal(rawFollowsRecords(preSwitchOff), false, "switched on, it gets records only");
+  // The stored choice survives records going off and on again.
+  const storedOn: TracePolicy = { ...policy("a", false), raw: { enabled: true }, raw_effective: false };
+  assert.equal(policyRawDraft(storedOn), true);
+  assert.equal(rawFollowsRecords(storedOn), false);
+  // An older server has no switch to follow.
+  assert.equal(rawFollowsRecords(policy("a", true)), false);
+  assert.equal(policyRawDraft(policy("a", true)), false);
+});
+
+test("shed connections are shown only when the budget refused some", () => {
+  assert.equal(shedSummary(undefined), undefined);
+  assert.equal(shedSummary({ state: "ready", reported_by: "agent", shed_connections: 0 }), undefined);
+  assert.deepEqual(
+    shedSummary({
+      state: "ready",
+      reported_by: "agent",
+      shed_connections: 1204,
+      counters_since: "2026-10-05T08:00:00Z",
+      budget_lines_per_sec: 5000,
+    }),
+    { count: 1204, since: "2026-10-05T08:00:00Z", budget: 5000 },
+  );
+});
+
+test("collectorReadiness: an agent that saw the policy and still reports off is not recording", () => {
+  // The report came after the policy (the server does not mark it pending).
+  const applied = collectorReadiness(readyPolicy("a", true, { state: "off" }), 0);
+  assert.deepEqual(applied, { kind: "not_ready", state: "off", known: true, inferred: false });
+  // While the report predates the change it is pending, not a failure.
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true, { state: "off", pending: true }), 0), { kind: "pending" });
+  // Before any report exists it is waiting.
+  assert.deepEqual(collectorReadiness(readyPolicy("a", true), 0), { kind: "waiting" });
+  // A capture wanting the node counts the same as records on.
+  assert.equal(collectorReadiness(readyPolicy("a", false, { state: "off" }), 1)?.kind, "not_ready");
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [readyPolicy("off-applied", true, { state: "off" }), readyPolicy("ready", true, { state: "ready" })],
+    sessions: [],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(collectingNodeCount(rows), 1);
+  assert.equal(notReadyNodeCount(rows), 1, "counted as not recording");
+  assert.equal(rows[0]?.nodeId, "off-applied", "and ranked with the attention rows");
+  assert.equal(readinessAwaitsAgent(rows[0]?.readiness), false, "no re-poll waits on it");
+});
+
+test("a policy save sends the budget only when the operator changed it", () => {
+  // R1 server, budget pinned at 500 and untouched: no budget in the body,
+  // so a save of another field can never reset or overwrite it.
+  const pinned: TracePolicy = { ...readyPolicy("a", true), budget_lines_per_sec: 500 };
+  const levelOnly = { ...policyDraftOf(pinned), level: "trace" as const };
+  assert.deepEqual(policyUpsertRequest(pinned, levelOnly), {
+    node_id: "a",
+    enabled: true,
+    level: "trace",
+    raw: { enabled: false },
+  });
+  // Agent default (0) and untouched: still no budget.
+  const byDefault = readyPolicy("b", false);
+  assert.equal("budget_lines_per_sec" in policyUpsertRequest(byDefault, { ...policyDraftOf(byDefault), enabled: true }), false);
+  // Changed: sent. Cleared: an explicit 0, the reset to the agent default.
+  assert.equal(policyUpsertRequest(pinned, { ...policyDraftOf(pinned), budget: 2000 }).budget_lines_per_sec, 2000);
+  assert.equal(policyUpsertRequest(pinned, { ...policyDraftOf(pinned), budget: 0 }).budget_lines_per_sec, 0);
+  assert.equal(policyUpsertRequest(byDefault, { ...policyDraftOf(byDefault), budget: 750.9 }).budget_lines_per_sec, 750);
+  // An a117 policy: no raw key, and the untouched 500 is not echoed either.
+  const old = policy("c", false);
+  assert.deepEqual(policyUpsertRequest(old, { ...policyDraftOf(old), enabled: true }), {
+    node_id: "c",
+    enabled: true,
+    level: "debug",
+  });
+});
+
+test("an agent too old to report counts as recording when its records arrive, and as unknown when none do", () => {
+  // The integrated check against a real 0.3.9 agent: 228 records in the hour
+  // from a node the server can only call too old to report.
+  const tooOld = (node: string) => readyPolicy(node, true, { state: "agent_too_old", reported_by: "server" });
+  const rows = evidenceCoverageRows({
+    nodes: [],
+    policies: [tooOld("old-busy"), tooOld("old-quiet"), readyPolicy("new-ready", true, { state: "ready", level: "debug" })],
+    sessions: [],
+    sources: [],
+    stats: [],
+    lastHourByNode: new Map([["old-busy", 228]]),
+    nowMs: NOW,
+  });
+  const by = (id: string) => rows.find((row) => row.nodeId === id)!;
+  assert.equal(isRecordingRow(by("old-busy")), true, "its records say it records");
+  assert.equal(isRecordingRow(by("old-quiet")), false);
+  assert.equal(readinessNeedsAttention(by("old-quiet")), false, "nor is it counted as not recording");
+  assert.equal(collectingNodeCount(rows), 2, "the headline counts the busy old agent and the ready one");
+  assert.equal(notReadyNodeCount(rows), 0);
+  const proof = evidenceStoreProof({ rows, coverageKnown: true });
+  assert.deepEqual([proof.collecting, proof.notReady, proof.total], [2, 0, 3]);
+  // With the hour unread, an old agent is unknown, not recording.
+  const unread = evidenceCoverageRows({
+    nodes: [],
+    policies: [tooOld("old-busy")],
+    sessions: [],
+    sources: [],
+    stats: [],
+    nowMs: NOW,
+  });
+  assert.equal(collectingNodeCount(unread), 0);
+  assert.equal(notReadyNodeCount(unread), 0);
 });

@@ -135,9 +135,12 @@ const proofSegments = computed<ProofSegment[]>(() => {
   // A collecting count over a policy list that was never read would be a
   // confident zero; it is said to be unread instead.
   if (proof.total !== undefined) {
+    // From a server that reports readiness the count is of nodes recording,
+    // not nodes switched on (design 26, R1), and the words say so.
+    const key = ctx.readinessReported.value ? "platform.evidence.proof.recording" : "platform.evidence.proof.collecting";
     parts.push({
       key: "collecting",
-      text: t("platform.evidence.proof.collecting", { collecting: proof.collecting, total: proof.total }, proof.total),
+      text: t(key, { collecting: proof.collecting, total: proof.total }, proof.total),
     });
   } else if (ctx.policies.error.value) {
     parts.push({ key: "collecting", text: t("platform.evidence.proof.collectingUnread") });

@@ -24,7 +24,7 @@ import { legacyEvidenceQuery } from "@/views/platform/evidenceModel";
 
 import "@/style/app.css";
 
-const FIXTURES = ["empty", "capture", "rawlog", "failing", "storeoff"] as const;
+const FIXTURES = ["empty", "capture", "rawlog", "failing", "storeoff", "readiness"] as const;
 
 const Shell = defineComponent({
   name: "EvidenceHarnessShell",

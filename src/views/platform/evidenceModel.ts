@@ -16,7 +16,11 @@ import type {
   ConnRecord,
   LogSource,
   LogSourceStatsView,
+  TraceCollectorState,
+  TraceCollectorView,
+  TraceLevel,
   TracePolicy,
+  TracePolicyUpsertRequest,
   TraceSession,
   TraceSessionCreateRequest,
   TraceStatsResponse,
@@ -495,6 +499,14 @@ export interface CoverageRow {
   /** Connections this node recorded in the last-hour sample; undefined when no sample was read. */
   lastHour?: number;
   /**
+   * The collector's readiness. Undefined when the policy was not read or the
+   * server predates readiness (alpha-0.2.2a117 and older): the row then reads
+   * as it did before readiness existed.
+   */
+  readiness?: Readiness;
+  /** Raw sing-box lines flow under this policy; undefined from an older server. */
+  rawLines?: boolean;
+  /**
    * Trace read as off, no capture, the source list read and empty, nothing
    * held: the row says nothing new. A row whose policy or sources were not
    * read is never quiet, because "off" and "none" would then be guesses.
@@ -602,18 +614,249 @@ export function evidenceCoverageRows(input: CoverageInput): CoverageRow[] {
       sourcesKnown,
       heldLines: sourcesKnown ? heldLines : undefined,
       lastHour,
+      readiness: collectorReadiness(policy, covering.length),
+      rawLines: policy?.raw_effective,
       quiet: (policy?.enabled === false || input.traceUnavailable === true) && sourcesKnown && covering.length === 0 && sources.length === 0 && !lastHour,
     };
   });
 
+  // Nodes switched on but not recording lead: they are the rows that need
+  // someone (design 26, section 4.2), ahead of captures that are working.
   const rank = (row: CoverageRow) =>
-    row.capturing > 0 ? 0 : row.trace?.enabled ? 1 : (row.lastHour ?? 0) > 0 ? 2 : row.sources.length > 0 ? 3 : 4;
+    readinessNeedsAttention(row)
+      ? 0
+      : row.capturing > 0
+        ? 1
+        : row.trace?.enabled
+          ? 2
+          : (row.lastHour ?? 0) > 0
+            ? 3
+            : row.sources.length > 0
+              ? 4
+              : 5;
   return rows.sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
 }
 
-/** Nodes collecting connection records right now: policy on, or inside a running capture. */
+/**
+ * The node is recording connection records. With readiness reported, that is
+ * a ready collector, not a switch that is on: a node switched on without a
+ * Clash API records nothing. From an older server, which reports no
+ * readiness, it stays what it was: policy on, or inside a running capture.
+ *
+ * An agent too old to report readiness (the whole fleet on 0.3.9 until it
+ * upgrades) is judged by evidence instead: records from it in the last hour
+ * mean it records. With none, or with the hour unread, it is unknown and is
+ * counted neither as recording nor as not recording, so the headline agrees
+ * with the row's last-hour count and with "Nodes reporting".
+ */
+export function isRecordingRow(row: Pick<CoverageRow, "trace" | "capturing" | "readiness" | "lastHour">): boolean {
+  if (!row.readiness) return !!row.trace?.enabled || row.capturing > 0;
+  if (row.readiness.kind === "not_ready" && row.readiness.state === "agent_too_old") return (row.lastHour ?? 0) > 0;
+  return row.readiness.kind === "ready";
+}
+
+/** Nodes recording connection records right now (see isRecordingRow). */
 export function collectingNodeCount(rows: readonly CoverageRow[]): number {
-  return rows.filter((row) => row.trace?.enabled || row.capturing > 0).length;
+  return rows.filter(isRecordingRow).length;
+}
+
+/** Nodes that are switched on (or captured) and whose collector is not ready, or not heard from. */
+export function notReadyNodeCount(rows: readonly CoverageRow[]): number {
+  return rows.filter(readinessNeedsAttention).length;
+}
+
+/* ------------------------------------------------------------------ */
+/* Collector readiness (design 26, R1)                                 */
+/* ------------------------------------------------------------------ */
+
+/** The collector states this console knows (lattice-sdk model.CollectorState). */
+export const COLLECTOR_STATES = [
+  "off",
+  "ready",
+  "no_clash_api",
+  "secret_unreadable",
+  "stream_failing",
+  "agent_too_old",
+] as const satisfies readonly TraceCollectorState[];
+
+/**
+ * The first node-agent version that reports collector status
+ * (lattice-server traceCollectorStatusMinAgent). Older agents get a state the
+ * server infers, and the console names this version when it says so.
+ */
+export const COLLECTOR_STATUS_MIN_AGENT = "0.3.10-alpha.4";
+
+/**
+ * What the agent's line budget is when a policy says 0: each agent's own
+ * default, 500 lines a second up to 0.3.10-alpha.3 and 5,000 from
+ * 0.3.10-alpha.4 (design 26, section 4.3).
+ */
+export const AGENT_DEFAULT_BUDGET_BEFORE = 500;
+export const AGENT_DEFAULT_BUDGET_FROM = 5000;
+
+export type Readiness =
+  /** Nothing asks this node to collect, and its collector says so. */
+  | { kind: "off" }
+  /** The /logs stream is open and /connections answers. */
+  | { kind: "ready"; level: string }
+  /**
+   * The collector cannot record. `known` is false for a state string this
+   * console does not know; `inferred` when the server worked it out from the
+   * agent version rather than hearing it from the agent.
+   */
+  | { kind: "not_ready"; state: string; known: boolean; detail?: string; inferred: boolean }
+  /** The policy or a capture changed after the agent's last report. */
+  | { kind: "pending" }
+  /** Collection is wanted and the agent has not reported yet. */
+  | { kind: "waiting" }
+  /** The agent has gone quiet; `last` is what it said before that. */
+  | { kind: "stale"; last: Readiness; heardAt: string };
+
+/** The server reports readiness at all: it sends raw_effective (and collector) on every policy. */
+export function serverReportsReadiness(policy: TracePolicy | undefined): boolean {
+  return !!policy && (typeof policy.raw_effective === "boolean" || isCollectorView(policy.collector));
+}
+
+function isCollectorView(value: unknown): value is TraceCollectorView {
+  return !!value && typeof value === "object" && typeof (value as TraceCollectorView).state === "string";
+}
+
+function isKnownState(state: string): state is TraceCollectorState {
+  return (COLLECTOR_STATES as readonly string[]).includes(state);
+}
+
+/**
+ * One node's readiness, from its policy view and the running captures that
+ * cover it. Undefined when the server predates readiness. Never `ready`
+ * unless the agent said ready: no report is `waiting`, an unknown state is
+ * `not_ready`, and a report from a node gone quiet is `stale`.
+ */
+export function collectorReadiness(policy: TracePolicy | undefined, capturing: number): Readiness | undefined {
+  if (!policy || !serverReportsReadiness(policy)) return undefined;
+  const wants = policy.enabled || capturing > 0;
+  const report = policy.collector;
+  if (!isCollectorView(report) || !report.state) return wants ? { kind: "waiting" } : { kind: "off" };
+
+  let base: Readiness;
+  if (report.state === "ready") {
+    base = { kind: "ready", level: typeof report.level === "string" && report.level ? report.level : policy.level };
+  }
+  // Off while collection is wanted: an agent that has seen the change (the
+  // server no longer marks the report pending, so it came after the policy)
+  // and still says off has not applied it. That is not waiting; it is a node
+  // that does not record. While the report is pending it stays "pending"
+  // below, and before any report exists it is "waiting" above.
+  else if (report.state === "off") {
+    base = wants ? { kind: "not_ready", state: "off", known: true, inferred: false } : { kind: "off" };
+  }
+  else {
+    base = {
+      kind: "not_ready",
+      state: report.state,
+      known: isKnownState(report.state),
+      detail: report.detail || undefined,
+      inferred: report.reported_by === "server",
+    };
+  }
+  if (report.stale) {
+    // A quiet node that nothing asks to collect is simply off.
+    return wants ? { kind: "stale", last: base, heardAt: report.received_at ?? "" } : { kind: "off" };
+  }
+  if (report.pending) return { kind: "pending" };
+  return base;
+}
+
+/** Collection is wanted on the row: policy on, or a running capture covers it. */
+export function rowWantsCollection(row: Pick<CoverageRow, "trace" | "capturing">): boolean {
+  return !!row.trace?.enabled || row.capturing > 0;
+}
+
+/**
+ * Wanted, and the collector cannot record or has gone quiet: an attention
+ * row. An agent reporting collection off after it saw the policy is one. An agent too old to report is not one: with a Clash API address in
+ * its policy it may well be recording, so it is neither counted as recording
+ * nor as not recording, and its row says it cannot tell.
+ */
+export function readinessNeedsAttention(row: Pick<CoverageRow, "trace" | "capturing" | "readiness">): boolean {
+  const r = row.readiness;
+  if (!r || !rowWantsCollection(row)) return false;
+  return r.kind === "stale" || (r.kind === "not_ready" && r.state !== "agent_too_old");
+}
+
+/**
+ * After a save, the console re-reads the policy every few seconds while the
+ * answer is still on its way from the agent, instead of waiting for the
+ * 30 s poll (design 26 R1, questions 14 and 15).
+ */
+export const READINESS_REPOLL_MS = 3000;
+export const READINESS_REPOLL_MAX_MS = 30_000;
+
+export function readinessAwaitsAgent(readiness: Readiness | undefined): boolean {
+  return readiness?.kind === "pending" || readiness?.kind === "waiting";
+}
+
+/**
+ * Connections the budget refused to observe, for the readiness cell's second
+ * line. Undefined when none were shed: loss is shown when it happened, not as
+ * a standing zero.
+ */
+export function shedSummary(
+  report: TraceCollectorView | undefined,
+): { count: number; since: string; budget?: number } | undefined {
+  if (!isCollectorView(report)) return undefined;
+  const count = Number(report.shed_connections) || 0;
+  if (count <= 0) return undefined;
+  const budget = Number(report.budget_lines_per_sec) || undefined;
+  return { count, since: report.counters_since ?? "", budget };
+}
+
+/**
+ * The raw-lines checkbox's saved value: the stored switch, else (a policy
+ * written before the switch existed) what flows today, which follows records.
+ */
+export function policyRawDraft(policy: TracePolicy): boolean {
+  return policy.raw?.enabled ?? policy.raw_effective ?? false;
+}
+
+/** One row of the Collection policy table as the operator is editing it. */
+export interface PolicyDraft {
+  enabled: boolean;
+  level: TraceLevel;
+  budget: number;
+  /** Raw lines; sent only to a server that reports raw_effective. */
+  raw: boolean;
+}
+
+/** The draft a row starts from: what the server holds. */
+export function policyDraftOf(policy: TracePolicy): PolicyDraft {
+  return { enabled: policy.enabled, level: policy.level, budget: policy.budget_lines_per_sec, raw: policyRawDraft(policy) };
+}
+
+/**
+ * The body a save sends. The budget travels only when the operator changed
+ * it: a server with design 26 R1 reads an explicit 0 as "reset to the
+ * agent's default", so echoing an untouched value would turn every save into
+ * a write of whatever this page last read, and a 0 into a reset. Clearing
+ * the box is how an operator asks for that reset. `raw` travels only to a
+ * server that reports it, because alpha-0.2.2a117 refuses a body carrying it.
+ */
+export function policyUpsertRequest(policy: TracePolicy, draft: PolicyDraft): TracePolicyUpsertRequest {
+  const body: TracePolicyUpsertRequest = { node_id: policy.node_id, enabled: draft.enabled, level: draft.level };
+  const budget = Math.max(0, Math.floor(Number(draft.budget) || 0));
+  if (budget !== policy.budget_lines_per_sec) body.budget_lines_per_sec = budget;
+  if (serverReportsReadiness(policy)) body.raw = { enabled: draft.raw };
+  return body;
+}
+
+/**
+ * A policy written before the raw switch existed, whose raw lines flow today
+ * because records are on. Only such a row says "follows records": a
+ * pre-switch row with records off gets records only when switched on (the
+ * server materialises raw from the policy as it was), so the label would
+ * promise raw lines it will not get.
+ */
+export function rawFollowsRecords(policy: TracePolicy): boolean {
+  return !policy.raw && policy.raw_effective === true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -630,7 +873,10 @@ export interface StoreProof {
   encrypted?: boolean;
   /** Size cap in bytes; undefined when the answer was scoped or unread. */
   capBytes?: number;
+  /** Nodes recording (see isRecordingRow). */
   collecting: number;
+  /** Nodes switched on (or captured) whose collector is not ready or not heard from. */
+  notReady: number;
   /** Nodes the coverage counts over; undefined while the list is unread. */
   total?: number;
 }
@@ -654,6 +900,7 @@ export function evidenceStoreProof(input: {
     encrypted: stats ? stats.cipher_enabled === true : undefined,
     capBytes: full && stats.max_bytes ? stats.max_bytes : undefined,
     collecting: collectingNodeCount(input.rows),
+    notReady: notReadyNodeCount(input.rows),
     total: input.coverageKnown ? input.rows.length : undefined,
   };
 }
