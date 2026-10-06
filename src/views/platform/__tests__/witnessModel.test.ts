@@ -7,6 +7,7 @@ import {
   channelFallbackChoices,
   channelFallbackForSave,
   isLoopbackBaseURL,
+  isWitnessHealthURL,
   witnessAttention,
   witnessConfigState,
   witnessConfiguredCount,
@@ -15,6 +16,7 @@ import {
   witnessLine,
   witnessPlanRequest,
   witnessPushLine,
+  witnessWatch,
   type WitnessForm,
 } from "../witnessModel.ts";
 
@@ -174,6 +176,68 @@ test("witnessFormDefaults picks the only node and Bark channel and leaves the ba
   assert.deepEqual(barkChannels(channels).map((c) => c.id), ["ch_bark_urgent"]);
 });
 
+// A new setup watches the default; a change keeps an operator's watch URL, so
+// changing the timing never points the witness back at an address it cannot
+// reach, and a plan that watched the default leaves the field empty.
+test("witnessFormDefaults starts the watch URL empty unless the applied plan set one", () => {
+  assert.equal(witnessFormDefaults(status, channels).healthUrl, "");
+  const ready = "https://lattice-ready.example.org/readyz";
+  assert.equal(witnessFormDefaults(status, channels, node({ configured: { ...applied, health_url: ready } })).healthUrl, ready);
+  assert.equal(witnessFormDefaults(status, channels, node({ configured: { ...applied, health_url: status.health_url } })).healthUrl, "");
+  assert.equal(witnessFormDefaults(status, channels, node()).healthUrl, "");
+});
+
+// The same rule the server applies to health_url.
+test("isWitnessHealthURL accepts only an https /readyz with nothing after it", () => {
+  for (const ok of [
+    "https://lattice-ready.example.org/readyz",
+    " https://lattice-ready.example.org/readyz ",
+    "HTTPS://lattice-ready.example.org/readyz",
+    "https://lattice-ready.example.org:8443/readyz",
+    "https://[2001:db8::1]/readyz",
+  ]) {
+    assert.equal(isWitnessHealthURL(ok), true, ok);
+  }
+  for (const bad of [
+    "",
+    "http://lattice-ready.example.org/readyz",
+    "http://127.0.0.1:8080/readyz",
+    "ftp://lattice-ready.example.org/readyz",
+    "lattice-ready.example.org/readyz",
+    "https://lattice-ready.example.org",
+    "https://lattice-ready.example.org/",
+    "https://lattice-ready.example.org/healthz",
+    "https://lattice-ready.example.org/readyz/",
+    "https://lattice-ready.example.org/READYZ",
+    "https://lattice-ready.example.org/x/readyz",
+    "https://lattice-ready.example.org/./readyz",
+    "https://lattice-ready.example.org/ready%7Az",
+    "https://lattice-ready.example.org/readyz?probe=1",
+    "https://lattice-ready.example.org/readyz?",
+    "https://lattice-ready.example.org/readyz#top",
+    "https://lattice-ready.example.org/readyz#",
+    "https://ops:secret@lattice-ready.example.org/readyz",
+    "https://ops@lattice-ready.example.org/readyz",
+    "https://lattice ready.example.org/readyz",
+    "https:///readyz",
+  ]) {
+    assert.equal(isWitnessHealthURL(bad), false, bad);
+  }
+});
+
+// Per node: what the applied plan wrote, else what the witness reports, else
+// the server's default; marked when it is not the default.
+test("witnessWatch names what each witness watches", () => {
+  const def = status.health_url;
+  const ready = "https://lattice-ready.example.org/readyz";
+  assert.deepEqual(witnessWatch(node({ configured: { ...applied, health_url: ready } }), def), { url: ready, custom: true });
+  assert.deepEqual(witnessWatch(node({ configured: { ...applied, health_url: def } }), def), { url: def, custom: false });
+  // An applied plan from before the field existed: the witness's own report.
+  assert.deepEqual(witnessWatch(node({ report: report({ health_url: ready }) }), def), { url: ready, custom: true });
+  assert.deepEqual(witnessWatch(node(), def), { url: def, custom: false });
+  assert.equal(witnessWatch(node({ configured: undefined, report: undefined }), undefined), undefined);
+});
+
 test("witnessFormProblems mirrors the witness bounds", () => {
   const good: WitnessForm = { ...witnessFormDefaults(status, channels), barkUrl: "http://127.0.0.1:7001" };
   assert.deepEqual(witnessFormProblems(good), []);
@@ -186,6 +250,9 @@ test("witnessFormProblems mirrors the witness bounds", () => {
   assert.deepEqual(witnessFormProblems({ ...good, interval: "60", hold: "90", recover: "30" }), ["hold", "recover"]);
   assert.deepEqual(witnessFormProblems({ ...good, hold: "3601" }), ["hold"]);
   assert.deepEqual(witnessFormProblems({ ...good, recover: "1.5" }), ["recover"]);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "  " }), []);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/readyz" }), []);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/healthz", interval: "5" }), ["healthUrl", "interval"]);
 });
 
 test("witnessPlanRequest trims, parses and leaves empty references to the server", () => {
@@ -201,6 +268,10 @@ test("witnessPlanRequest trims, parses and leaves empty references to the server
     recover_seconds: 60,
   });
   assert.equal(witnessPlanRequest({ ...form, references: "" }).reference_urls, undefined);
+  // health_url is sent only when set, trimmed: an a118 server refuses the unknown field.
+  assert.equal("health_url" in witnessPlanRequest(form), false);
+  assert.equal("health_url" in witnessPlanRequest({ ...form, healthUrl: "   " }), false);
+  assert.equal(witnessPlanRequest({ ...form, healthUrl: " https://lattice-ready.example.org/readyz " }).health_url, "https://lattice-ready.example.org/readyz");
 });
 
 // A channel may hand critical messages to any other channel; clearing sends

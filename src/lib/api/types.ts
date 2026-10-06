@@ -2465,6 +2465,8 @@ export interface WitnessApprovalView {
   key_sha256_prefix?: string;
   created_at: string;
   updated_at?: string;
+  /** The URL the plan's config tells the witness to watch: the server's default unless the operator set another. */
+  health_url?: string;
 }
 
 export interface WitnessNodeView {
@@ -2487,7 +2489,7 @@ export interface WitnessNodeView {
 }
 
 export interface WitnessStatusResponse {
-  /** The address the witness watches: this server's public URL plus /readyz. */
+  /** The address a witness watches by default: this server's public URL plus /readyz. A plan may name another (WitnessApprovalView.health_url). */
   health_url?: string;
   /** Why there is no health URL (the server has no public URL). */
   health_url_error?: string;
@@ -2516,6 +2518,8 @@ export interface WitnessPlanRequest {
   interval_seconds?: number;
   hold_seconds?: number;
   recover_seconds?: number;
+  /** Replaces the server's public /readyz: https, the path /readyz exactly, nothing more. Sent only when set. */
+  health_url?: string;
 }
 
 export interface NotifyTestRequest {

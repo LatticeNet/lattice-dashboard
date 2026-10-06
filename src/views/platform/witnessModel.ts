@@ -10,12 +10,12 @@ import type {
  * The control-plane witness as the Notifications page reads it.
  *
  * The witness is `lattice-agent -witness` on one node: it watches this
- * server's public /readyz and pushes through that node's own Bark server when
- * the control plane stops answering. The server reports, per node, the last
- * applied plan, any plan still waiting, and the status file the node's agent
- * relays on every heartbeat. Everything below turns that into one sentence per
- * node, and the form into the plan request. Pure, so the node test runner
- * covers it.
+ * server's public /readyz, or the URL the operator set in its place, and
+ * pushes through that node's own Bark server when the control plane stops
+ * answering. The server reports, per node, the last applied plan, any plan
+ * still waiting, and the status file the node's agent relays on every
+ * heartbeat. Everything below turns that into one sentence per node, and the
+ * form into the plan request. Pure, so the node test runner covers it.
  */
 
 export type WitnessTone = "muted" | "warning" | "danger";
@@ -165,6 +165,23 @@ export function witnessAttention(nodes: readonly WitnessNodeView[]): WitnessAtte
   return out.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "danger" ? -1 : 1));
 }
 
+/** The URL a witness watches, and whether the operator set it in place of the server's default. */
+export interface WitnessWatch {
+  url: string;
+  custom: boolean;
+}
+
+/**
+ * What a node's witness watches: what its applied plan wrote, else what the
+ * witness itself reports, else the server's default. Undefined when there is
+ * nothing to name (no plan, no report, and no public URL).
+ */
+export function witnessWatch(node: WitnessNodeView, defaultURL: string | undefined): WitnessWatch | undefined {
+  const url = node.configured?.health_url || node.report?.health_url || defaultURL;
+  if (!url) return undefined;
+  return { url, custom: url !== defaultURL };
+}
+
 /** Whether any node has an applied witness, so the page can say nothing watches the control plane. */
 export function witnessConfiguredCount(status?: WitnessStatusResponse): number {
   return (status?.nodes ?? []).filter((node) => !!node.configured).length;
@@ -176,6 +193,8 @@ export interface WitnessForm {
   nodeId: string;
   channelId: string;
   barkUrl: string;
+  /** Empty watches the server's own public /readyz. */
+  healthUrl: string;
   barkLevel: string;
   /** One reference URL per line. */
   references: string;
@@ -190,9 +209,11 @@ export function barkChannels<T extends Pick<NotifyChannelView, "id" | "kind" | "
 
 /**
  * The form a setup or change starts from. A change starts from the node and
- * channel of its applied plan; a new setup picks the only capable node and
- * the only Bark channel when there is exactly one, and leaves the bark-server
- * URL for the operator, since only they know where it listens.
+ * channel of its applied plan, and from its watch URL when the operator set
+ * one, so changing the timing does not quietly point the witness back at the
+ * default; a new setup picks the only capable node and the only Bark channel
+ * when there is exactly one, and leaves the bark-server URL for the operator,
+ * since only they know where it listens.
  */
 export function witnessFormDefaults(
   status: WitnessStatusResponse,
@@ -203,10 +224,12 @@ export function witnessFormDefaults(
   const capable = status.capable_nodes;
   const d = status.defaults;
   const applied = node?.configured?.channel_id;
+  const watched = node?.configured?.health_url;
   return {
     nodeId: node?.node_id ?? (capable.length === 1 ? (capable[0]?.node_id ?? "") : ""),
     channelId: applied && bark.some((c) => c.id === applied) ? applied : bark.length === 1 ? (bark[0]?.id ?? "") : "",
     barkUrl: "",
+    healthUrl: watched && watched !== status.health_url ? watched : "",
     barkLevel: d.bark_level,
     references: d.reference_urls.join("\n"),
     interval: String(d.interval_seconds),
@@ -229,6 +252,23 @@ export function isLoopbackBaseURL(raw: string): boolean {
   return host === "localhost" || host === "::1" || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
+/**
+ * Mirrors the server's rule for a watch URL the operator sets: https, the path
+ * /readyz exactly, and no query, fragment, credentials or spaces. Checked on
+ * the text as typed, because the browser's URL parser resolves "/./readyz"
+ * and the server does not.
+ */
+export function isWitnessHealthURL(raw: string): boolean {
+  const value = raw.trim();
+  // The scheme is case-insensitive, as it is for the server; the path is not.
+  if (!/^https:\/\//i.test(value) || !/^[^:]+:\/\/[^/?#@\s]+\/readyz$/.test(value)) return false;
+  try {
+    return new URL(value).hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
 export function parseReferences(raw: string): string[] {
   return raw
     .split(/\r?\n/)
@@ -236,7 +276,7 @@ export function parseReferences(raw: string): string[] {
     .filter(Boolean);
 }
 
-export type WitnessFormProblem = "node" | "channel" | "barkUrl" | "barkUrlLoopback" | "references" | "interval" | "hold" | "recover";
+export type WitnessFormProblem = "node" | "channel" | "barkUrl" | "barkUrlLoopback" | "healthUrl" | "references" | "interval" | "hold" | "recover";
 
 function whole(raw: string): number | undefined {
   if (!/^\d+$/.test(raw.trim())) return undefined;
@@ -255,6 +295,7 @@ export function witnessFormProblems(form: WitnessForm): WitnessFormProblem[] {
   if (!form.channelId) problems.push("channel");
   if (!form.barkUrl.trim()) problems.push("barkUrl");
   else if (!isLoopbackBaseURL(form.barkUrl)) problems.push("barkUrlLoopback");
+  if (form.healthUrl.trim() && !isWitnessHealthURL(form.healthUrl)) problems.push("healthUrl");
   const refs = parseReferences(form.references);
   if (refs.length > 3 || refs.some((ref) => !/^https:\/\/[^\s/]+/.test(ref) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(ref))) problems.push("references");
   const interval = whole(form.interval);
@@ -266,13 +307,18 @@ export function witnessFormProblems(form: WitnessForm): WitnessFormProblem[] {
   return problems;
 }
 
-/** The plan request the form files. Empty references fall back to the server's defaults. */
+/**
+ * The plan request the form files. Empty references fall back to the server's
+ * defaults, and an empty watch URL is left out, so the server derives its own.
+ */
 export function witnessPlanRequest(form: WitnessForm): WitnessPlanRequest {
   const refs = parseReferences(form.references);
+  const healthUrl = form.healthUrl.trim();
   return {
     node_id: form.nodeId,
     channel_id: form.channelId,
     bark_url: form.barkUrl.trim().replace(/\/+$/, ""),
+    ...(healthUrl ? { health_url: healthUrl } : {}),
     bark_level: form.barkLevel || undefined,
     reference_urls: refs.length ? refs : undefined,
     interval_seconds: whole(form.interval),
