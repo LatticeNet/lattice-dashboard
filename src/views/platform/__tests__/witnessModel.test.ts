@@ -240,19 +240,34 @@ test("witnessWatch names what each witness watches", () => {
 
 test("witnessFormProblems mirrors the witness bounds", () => {
   const good: WitnessForm = { ...witnessFormDefaults(status, channels), barkUrl: "http://127.0.0.1:7001" };
-  assert.deepEqual(witnessFormProblems(good), []);
-  assert.deepEqual(witnessFormProblems({ ...good, nodeId: "", channelId: "", barkUrl: "" }), ["node", "channel", "barkUrl"]);
-  assert.deepEqual(witnessFormProblems({ ...good, barkUrl: "https://bark.example.com" }), ["barkUrlLoopback"]);
-  assert.deepEqual(witnessFormProblems({ ...good, references: "https://a.example\nhttps://b.example\nhttps://c.example\nhttps://d.example" }), ["references"]);
-  assert.deepEqual(witnessFormProblems({ ...good, references: "http://example.com" }), ["references"]);
-  assert.deepEqual(witnessFormProblems({ ...good, references: "" }), []);
-  assert.deepEqual(witnessFormProblems({ ...good, interval: "5" }), ["interval"]);
-  assert.deepEqual(witnessFormProblems({ ...good, interval: "60", hold: "90", recover: "30" }), ["hold", "recover"]);
-  assert.deepEqual(witnessFormProblems({ ...good, hold: "3601" }), ["hold"]);
-  assert.deepEqual(witnessFormProblems({ ...good, recover: "1.5" }), ["recover"]);
-  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "  " }), []);
-  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/readyz" }), []);
-  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/healthz", interval: "5" }), ["healthUrl", "interval"]);
+  assert.deepEqual(witnessFormProblems(good, status.health_url), []);
+  assert.deepEqual(witnessFormProblems({ ...good, nodeId: "", channelId: "", barkUrl: "" }, status.health_url), ["node", "channel", "barkUrl"]);
+  assert.deepEqual(witnessFormProblems({ ...good, barkUrl: "https://bark.example.com" }, status.health_url), ["barkUrlLoopback"]);
+  assert.deepEqual(witnessFormProblems({ ...good, references: "https://a.example\nhttps://b.example\nhttps://c.example\nhttps://d.example" }, status.health_url), ["references"]);
+  assert.deepEqual(witnessFormProblems({ ...good, references: "http://example.com" }, status.health_url), ["references"]);
+  assert.deepEqual(witnessFormProblems({ ...good, references: "" }, status.health_url), []);
+  assert.deepEqual(witnessFormProblems({ ...good, interval: "5" }, status.health_url), ["interval"]);
+  assert.deepEqual(witnessFormProblems({ ...good, interval: "60", hold: "90", recover: "30" }, status.health_url), ["hold", "recover"]);
+  assert.deepEqual(witnessFormProblems({ ...good, hold: "3601" }, status.health_url), ["hold"]);
+  assert.deepEqual(witnessFormProblems({ ...good, recover: "1.5" }, status.health_url), ["recover"]);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "  " }, status.health_url), []);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/readyz" }, status.health_url), []);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/healthz", interval: "5" }, status.health_url), ["healthUrl", "interval"]);
+});
+
+// Without a public URL the server has no default to watch, but it accepts an
+// operator's watch URL: the form asks for one instead of refusing outright.
+test("witnessFormProblems needs a watch URL only when the server has no default", () => {
+  const good: WitnessForm = { ...witnessFormDefaults(status, channels), barkUrl: "http://127.0.0.1:7001" };
+  assert.deepEqual(witnessFormProblems(good, undefined), ["healthUrlRequired"]);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "   " }, undefined), ["healthUrlRequired"]);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/readyz" }, undefined), []);
+  assert.deepEqual(witnessFormProblems({ ...good, healthUrl: "https://lattice-ready.example.org/healthz" }, undefined), ["healthUrl"]);
+  assert.deepEqual(witnessFormProblems(good, status.health_url), []);
+  // A server without a public URL still files a plan whose request names the override.
+  const noDefault = witnessFormDefaults({ ...status, health_url: undefined }, channels);
+  assert.equal(noDefault.healthUrl, "");
+  assert.equal(witnessPlanRequest({ ...noDefault, barkUrl: "http://127.0.0.1:7001", healthUrl: "https://lattice-ready.example.org/readyz" }).health_url, "https://lattice-ready.example.org/readyz");
 });
 
 test("witnessPlanRequest trims, parses and leaves empty references to the server", () => {

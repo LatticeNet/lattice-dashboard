@@ -276,7 +276,17 @@ export function parseReferences(raw: string): string[] {
     .filter(Boolean);
 }
 
-export type WitnessFormProblem = "node" | "channel" | "barkUrl" | "barkUrlLoopback" | "healthUrl" | "references" | "interval" | "hold" | "recover";
+export type WitnessFormProblem =
+  | "node"
+  | "channel"
+  | "barkUrl"
+  | "barkUrlLoopback"
+  | "healthUrl"
+  | "healthUrlRequired"
+  | "references"
+  | "interval"
+  | "hold"
+  | "recover";
 
 function whole(raw: string): number | undefined {
   if (!/^\d+$/.test(raw.trim())) return undefined;
@@ -288,14 +298,18 @@ function whole(raw: string): number | undefined {
  * the plan so the operator learns it here and not from a 400. The bounds are
  * the witness's: a 15 to 600 s interval, a hold of at least two intervals and
  * a recovery of at least one, both at most an hour, one to three references.
+ * A watch URL is needed only when the server has no default of its own
+ * (no public URL); the server accepts an override in that case.
  */
-export function witnessFormProblems(form: WitnessForm): WitnessFormProblem[] {
+export function witnessFormProblems(form: WitnessForm, defaultHealthURL: string | undefined): WitnessFormProblem[] {
   const problems: WitnessFormProblem[] = [];
   if (!form.nodeId) problems.push("node");
   if (!form.channelId) problems.push("channel");
   if (!form.barkUrl.trim()) problems.push("barkUrl");
   else if (!isLoopbackBaseURL(form.barkUrl)) problems.push("barkUrlLoopback");
-  if (form.healthUrl.trim() && !isWitnessHealthURL(form.healthUrl)) problems.push("healthUrl");
+  if (!form.healthUrl.trim()) {
+    if (!defaultHealthURL) problems.push("healthUrlRequired");
+  } else if (!isWitnessHealthURL(form.healthUrl)) problems.push("healthUrl");
   const refs = parseReferences(form.references);
   if (refs.length > 3 || refs.some((ref) => !/^https:\/\/[^\s/]+/.test(ref) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(ref))) problems.push("references");
   const interval = whole(form.interval);
